@@ -115,7 +115,11 @@ impl FrameRegions<'_> {
         }));
     }
 
-    pub(crate) fn views(&self, sky: Option<&SkyDraw>, out: &mut Vec<MapView>) {
+    pub(crate) fn views(
+        &self,
+        (sky, sample_texels): (Option<&SkyDraw>, f32),
+        out: &mut Vec<MapView>,
+    ) {
         out.clear();
         let shift = self.basis.shift;
         for region in &self.plan.regions {
@@ -127,6 +131,7 @@ impl FrameRegions<'_> {
                 refresh: Refresh::Kept(KeptRefresh {
                     planes: planes(self.basis.rows, rect, region.depth[1] - shift.z),
                     texel: region.texel,
+                    finest_spacing: sample_texels * region.texel,
                 }),
             });
         }
@@ -134,12 +139,14 @@ impl FrameRegions<'_> {
             let [x0, y0, x1, y1] = self.clipmap.tile_rect(tile.level, tile.tile);
             let rect = [x0 - shift.x, y0 - shift.y, x1 - shift.x, y1 - shift.y];
             let depth = self.clipmap.band(tile.level);
+            let texel = self.clipmap.texel(tile.level);
             out.push(MapView {
                 view: self.moving_clip(tile).0,
                 map: CasterMap::Moving,
                 refresh: Refresh::Kept(KeptRefresh {
                     planes: planes(self.basis.rows, rect, depth[1] - shift.z),
-                    texel: self.clipmap.texel(tile.level),
+                    texel,
+                    finest_spacing: sample_texels * texel,
                 }),
             });
         }
@@ -151,6 +158,7 @@ impl FrameRegions<'_> {
                 refresh: Refresh::Kept(KeptRefresh {
                     planes: planes(rows, draw.rect, draw.depth),
                     texel: 0.0,
+                    finest_spacing: 0.0,
                 }),
             });
         }
@@ -227,7 +235,7 @@ impl FrameRegions<'_> {
 
     pub(crate) fn lookup_piece(
         &self,
-        tile_texels: u32,
+        (tile_texels, sample_texels): (u32, f32),
         (shown, sky): (u32, [f32; 4]),
     ) -> ShadowPiece {
         let (width, height) = self.layout.size();
@@ -240,7 +248,7 @@ impl FrameRegions<'_> {
                 levels as f32,
                 self.clipmap.texel(0),
                 tile_texels as f32,
-                0.0,
+                sample_texels,
             ],
             atlas: [
                 self.clipmap.side() as f32,

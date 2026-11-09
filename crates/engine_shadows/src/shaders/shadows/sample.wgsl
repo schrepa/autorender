@@ -1,4 +1,5 @@
-import package::engine::view::{DetailLevel, PI, detail_across, detail_level, fade_noise};
+import package::engine::math::PI;
+import package::engine::view::{DetailLevel, detail_across, detail_level, fade_noise};
 import package::generated::pieces::shadows::piece;
 import package::generated::shadows::{LEVEL_BAND, LEVEL_BEFORE, LEVEL_WINDOW, LEVEL_WORDS,
     SHADOW_APRON, tile_entry_moving, tile_entry_old_sun, tile_entry_still};

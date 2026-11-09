@@ -27,7 +27,7 @@ pub enum CacheOptions {
 
 impl Default for JobOptions {
     fn default() -> Self {
-        let cores = std::thread::available_parallelism().map_or(4, usize::from);
+        let cores = std::thread::available_parallelism().map_or(1, usize::from);
         Self {
             workers: policy::default_workers(u32::try_from(cores).unwrap_or(u32::MAX)) as usize,
             cache: CacheOptions::Keep {
@@ -317,7 +317,7 @@ impl JobPool {
         if let Some(store) = &mut self.store {
             store.close_packs();
         }
-        let bytes = cook.write(path)?;
+        let bytes = cook.write(path, self.count)?;
         Ok(Written {
             records: cook.len(),
             bytes,

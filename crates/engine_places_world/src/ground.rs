@@ -7,14 +7,12 @@ use engine_heightfield::tile::{
     H_READS, H_STACK, H_WET_BIOMES, MAX_MATERIALS, MAX_STACK, OP_ADD, OP_CONSTANT, OP_CURVATURE,
     OP_DEPOSIT, OP_END, OP_FACING, OP_FLOOD, OP_FLOW, OP_GRADIENT, OP_GRAIN, OP_HEIGHT, OP_INVERT,
     OP_LAKE, OP_MAX, OP_MIN, OP_MULTIPLY, OP_NOISE, OP_PATH, OP_POWER, OP_REMAP, OP_RIVER,
-    OP_VALUE, OP_WETNESS, OP_WORN,
+    OP_VALUE, OP_WETNESS, OP_WORN, Placed, Steep,
 };
 use engine_place::{Feed, List, MaterialHandle, MeshHandle, Slot, Stamp, TextureHandle};
 use engine_places_simulation::ground::{Pyramid, TILE_QUADS, TileKey};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
-
-pub use engine_heightfield::tile::{Placed, Steep};
 
 pub const PALETTE_ENTRIES: u32 = 113;
 

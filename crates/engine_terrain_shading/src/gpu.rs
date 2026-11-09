@@ -53,7 +53,13 @@ gpu_consts! {
     pub const VIEW_WORDS: u32 = 36;
     pub const NO_PLACED: u32 = u32::MAX;
     pub const CANOPY_GROUP: u32 = 64;
+    pub const DETAIL_ANISOTROPY: f32 = 16.0;
 }
+
+const _: () = assert!(
+    DETAIL_ANISOTROPY.to_bits() == (engine_core::Sampler::ANISOTROPY as f32).to_bits(),
+    "DETAIL_ANISOTROPY differs from Sampler::ANISOTROPY"
+);
 
 pub const HEIGHT_FORMAT: engine_render::wgpu::TextureFormat =
     engine_render::wgpu::TextureFormat::R32Float;

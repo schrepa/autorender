@@ -6,6 +6,8 @@ use engine_core::{
 };
 use engine_places_rendering::shadows::{SHADOW_PASS, ShadowChange, ShadowChanges};
 
+use crate::ShadowSettings;
+
 const MESH: DrawKind = DrawKind::MESH;
 
 type Group = (MeshHandle, Option<MaterialHandle>);
@@ -57,9 +59,13 @@ fn groups(table: &DrawnTable) -> Vec<Group> {
 
 pub(crate) fn publish_shadow_changes(
     (table, globals, passes): (Res<DrawnTable>, Res<GlobalTransforms>, Option<Res<ScenePasses>>),
+    settings: Res<ShadowSettings>,
     mut held: Local<HeldCasters>,
     mut shadows: ResMut<ShadowChanges>,
 ) {
+    shadows
+        .bypass_change_detection()
+        .resize(settings.changes as usize);
     let held = &mut *held;
     let shadow = passes
         .and_then(|passes| passes.bit(SHADOW_PASS))

@@ -3,8 +3,10 @@ use engine_core::glam::{Mat4, UVec2, Vec4};
 use engine_core::math::{clamp, half, max, pow};
 use engine_core::{
     AttachPoint, DrawKind, DrawnTable, Error, ErrorCode, GpuBits, Interest, Joined, Operation,
-    PassMask, PassViews, Readable, Readback, ScenePasses, ViewFacts, Views, WholeFrames,
+    PassMask, PassViews, Readable, Readback, SceneIds, ScenePasses, ViewFacts, Views, WholeFrames,
 };
+use engine_places::meshes::{DEBUG_FADING, DEBUG_LEVEL_AT, DEBUG_LEVEL_MASK};
+use engine_places_rendering::impostors::DEBUG_CARD;
 use engine_render::debug::DebugRecord;
 use engine_render::{
     AfterRead, Allocation, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, DEBUG_TARGETS,
@@ -90,6 +92,7 @@ impl Probe {
         bytes: &[u8],
         modes: &Joined<'_, DebugModes>,
         (table, passes): (Option<&DrawnTable>, Option<&ScenePasses>),
+        authored_ids: &SceneIds<'_, '_>,
     ) -> Value {
         let record = word(bytes, IDS);
         let decoded = DebugRecord::unpack(record);
@@ -127,9 +130,9 @@ impl Probe {
         let probe = PixelProbe {
             pixel: [self.pixel.0, self.pixel.1],
             kind: kind.map(DrawKind::name),
-            card: decoded.is_some_and(|decoded| decoded.card),
-            level: decoded.map_or(0, |decoded| decoded.level),
-            fading: decoded.is_some_and(|decoded| decoded.fading),
+            card: record & DEBUG_CARD != 0,
+            level: (record >> DEBUG_LEVEL_AT) & DEBUG_LEVEL_MASK,
+            fading: record & DEBUG_FADING != 0,
             passes: membership,
             object: drawn.then_some(object),
             detail: drawn.then_some(detail),
@@ -157,9 +160,13 @@ impl Probe {
                 }
             }
         }
-        if let Some(entity) = entity {
-            fields.insert(String::from("entity"), Value::from(entity.to_bits()));
-        }
+        let authored = entity.and_then(|entity| authored_ids.authored(entity));
+        fields.insert(
+            String::from("entity"),
+            authored.map_or(Value::Null, |authored| {
+                json!({ "id": authored.id, "scene": authored.scene, "name": authored.name })
+            }),
+        );
         Value::Object(fields)
     }
 }
@@ -255,7 +262,6 @@ pub(crate) struct ProbePixel;
 
 impl Operation for ProbePixel {
     const NAME: &'static str = "probe_pixel";
-    const LISTED: bool = false;
     type Params = (
         Res<'static, Views>,
         ResMut<'static, Probe>,
@@ -297,21 +303,21 @@ pub(crate) struct ProbedPixel;
 
 impl Operation for ProbedPixel {
     const NAME: &'static str = "probed_pixel";
-    const LISTED: bool = false;
     type Params = (
         Res<'static, Probe>,
         Joined<'static, DebugModes>,
         (Option<Res<'static, DrawnTable>>, Option<Res<'static, ScenePasses>>),
+        SceneIds<'static, 'static>,
     );
     type Request = ProbedRequest;
 
     fn run(
-        (probe, modes, (table, passes)): SystemParamItem<'_, '_, Self::Params>,
+        (probe, modes, (table, passes), ids): SystemParamItem<'_, '_, Self::Params>,
         _: ProbedRequest,
     ) -> Result<Value, Error> {
-        let result = probe
-            .read()
-            .map(|bytes| probe.result(bytes, &modes, (table.as_deref(), passes.as_deref())));
+        let result = probe.read().map(|bytes| {
+            probe.result(bytes, &modes, (table.as_deref(), passes.as_deref()), &ids)
+        });
         Ok(json!({ "probing": probe.probing(), "probe": result }))
     }
 }

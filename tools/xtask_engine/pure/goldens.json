@@ -54,15 +54,6 @@
       "got": "ground",
       "path": "$.args.filter.exclude"
     },
-    "refusal inspector_limit at $.name": {
-      "allowed": {
-        "kind": "at_most",
-        "max": 64
-      },
-      "code": "inspector_limit",
-      "got": "Probe64",
-      "path": "$.name"
-    },
     "refusal inspector_too_large at $.schema": {
       "allowed": {
         "kind": "at_most",
@@ -230,12 +221,6 @@
       "expected": "present",
       "path": "$.version"
     },
-    "refusal missing_plugin at $.name": {
-      "code": "missing_plugin",
-      "expected": "present",
-      "got": "engine_terrain",
-      "path": "$.name"
-    },
     "refusal missing_resource at $.assets": {
       "code": "missing_resource",
       "expected": "present",
@@ -393,7 +378,6 @@
           "SceneDebugView",
           "SceneDepthBias",
           "SceneDither",
-          "SceneDynamicResolution",
           "SceneEmitter",
           "SceneEnvironment",
           "SceneFilter",
@@ -401,6 +385,7 @@
           "SceneFrameLimits",
           "SceneGrading",
           "SceneGroundCover",
+          "SceneGrounding",
           "SceneHaze",
           "SceneHighlights",
           "SceneImpostors",
@@ -418,6 +403,7 @@
           "SceneObject",
           "SceneOcclusionCulling",
           "SceneOccupancy",
+          "ScenePacing",
           "SceneParticleBlend",
           "SceneParticleShape",
           "SceneParticles",
@@ -553,7 +539,6 @@
           "dither",
           "drawn",
           "drawn_component",
-          "dynamic_resolution",
           "exposure_stats",
           "feeds",
           "foliage",
@@ -563,6 +548,7 @@
           "ground_cover",
           "ground_cover_stats",
           "grounded",
+          "grounding",
           "haze",
           "haze_stats",
           "highlights",
@@ -581,6 +567,7 @@
           "node",
           "occlusion_culling",
           "occupancy",
+          "pacing",
           "particle_stats",
           "particles",
           "particles_component",
@@ -658,6 +645,7 @@
           "collision_events",
           "terrain_sweep",
           "collider",
+          "probed_pixel",
           "mesh_drawn",
           "meshes_listing",
           "nav_path",
@@ -718,18 +706,18 @@
     }
   },
   "scenes": {
-    "document components": "975779be2d183b64",
+    "document components": "965248892c35836e",
     "document components counts": {
-      "bytes": 8756,
+      "bytes": 16605,
       "entities": 10,
       "materials": 3,
       "meshes": 3,
       "prefabs": 1,
       "textures": 1
     },
-    "document garden": "dfb0732efc571268",
+    "document garden": "4d991fdda9951c59",
     "document garden counts": {
-      "bytes": 97126,
+      "bytes": 104975,
       "entities": 31,
       "materials": 9,
       "meshes": 6,
@@ -961,16 +949,6 @@
       "got": 17,
       "path": "$.entities[0].tags"
     },
-    "refusal invalid_value at $.prefabs[0].entities": {
-      "allowed": {
-        "kind": "at_most",
-        "max": 10000
-      },
-      "code": "invalid_value",
-      "expected": "array",
-      "got": 10001,
-      "path": "$.prefabs[0].entities"
-    },
     "refusal invalid_world_transform at $.entities[1].transform": {
       "code": "invalid_world_transform",
       "expected": "invertible",
@@ -1112,7 +1090,6 @@
         "values": [
           "cube",
           "plane",
-          "octahedron",
           "inline",
           "buffer",
           "provided"
@@ -1306,7 +1283,7 @@
       "steepest": 0.016481399536132812,
       "tunnels": 1
     },
-    "bakes": "84bc7e212a2034a4",
+    "bakes": "2a55969b162f79f9",
     "bounce": {
       "blocks": 1024,
       "detailed blocks": 474,
@@ -1330,7 +1307,7 @@
       ],
       "texels": 65536
     },
-    "pack": "256e93a88a50c929",
+    "pack": "495136115f99168e",
     "pack records": 46,
     "portals 0/0/0": "fb26e1b9f5bd9fd8",
     "portals 0/0/1": "29e88506dde27d87",

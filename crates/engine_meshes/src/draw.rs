@@ -1,12 +1,10 @@
 use engine_core::{MaterialHandle, MeshHandle};
 use engine_render::{Draw, Pipeline, Scene, SceneDraw, Shape};
 
-use crate::debug::{DrawKind, DrawRecord};
+use crate::debug::DrawRecord;
 use crate::gpu::{BlendedStreams, Drawing, Looked, MeshesGpu, Streams, ViewStreams};
-use crate::layouts::{DRAW_ARGS_BYTES, LOD_LEVELS};
+use crate::layouts::LOD_LEVELS;
 use crate::presentation::{PHASE_ONE, ViewSlot};
-
-const FADE_CARDS_START: u64 = 16;
 
 impl MeshesGpu {
     pub(crate) fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
@@ -34,17 +32,8 @@ impl MeshesGpu {
             return 0;
         };
         match &joined.drawing {
-            Drawing::Placed {
-                looks,
-                card,
-                streams,
-            } => {
-                let meshes = self.draw_meshes(draw, streams, looks, (PHASE_ONE, skinned));
-                if skinned {
-                    meshes
-                } else {
-                    meshes + self.draw_cards(draw, streams, card, PHASE_ONE)
-                }
+            Drawing::Placed { looks, streams } => {
+                self.draw_meshes(draw, streams, looks, (PHASE_ONE, skinned))
             }
             Drawing::Views { looks, streams } => {
                 let Some(slot) = self.state.view_slot(scene.pass.name(), scene.view) else {
@@ -65,7 +54,7 @@ impl MeshesGpu {
         (streams, looks): (&BlendedStreams, &Looked<Pipeline<Self, Scene>>),
         skinned: bool,
     ) -> u32 {
-        let records = (streams.records, self.record(DrawKind::Mesh, 0));
+        let records = (streams.records, self.record(0));
         let mut drawn = 0;
         for batch in &self.state.blended.batches {
             if batch.look.skinned != skinned {
@@ -86,8 +75,8 @@ impl MeshesGpu {
         drawn
     }
 
-    pub(crate) fn record(&self, kind: DrawKind, level: usize) -> u64 {
-        DrawRecord::of(kind, level).offset()
+    pub(crate) fn record(&self, level: usize) -> u64 {
+        DrawRecord::of(level).offset()
     }
 
     pub(crate) fn draw_meshes<S: 'static>(
@@ -121,7 +110,7 @@ impl MeshesGpu {
                         offset: args,
                         streams: &[
                             (streams.ids, ids),
-                            (streams.records, self.record(DrawKind::Mesh, level)),
+                            (streams.records, self.record(level)),
                         ],
                     },
                     || draw_label((mesh, material), (phase, level)),
@@ -132,44 +121,6 @@ impl MeshesGpu {
         drawn
     }
 
-    pub(crate) fn draw_cards<S: 'static>(
-        &self,
-        draw: &mut Draw<'_, Self, S>,
-        streams: &Streams<S>,
-        card: &Pipeline<Self, S>,
-        phase: usize,
-    ) -> u32 {
-        if !self.state.cards {
-            return 0;
-        }
-        let records = (
-            streams.records,
-            self.record(DrawKind::Card, LOD_LEVELS as usize),
-        );
-        let args = u64::from(LOD_LEVELS) * u64::from(self.state.groups.batch_count);
-        draw.draw(
-            card,
-            Shape::IndirectAt {
-                vertices: &[(streams.cards, 0), records],
-                indices: None,
-                args: streams.args,
-                offset: args * DRAW_ARGS_BYTES,
-            },
-        );
-        if phase != PHASE_ONE {
-            return 1;
-        }
-        draw.draw(
-            card,
-            Shape::IndirectAt {
-                vertices: &[(streams.fading, FADE_CARDS_START), records],
-                indices: None,
-                args: streams.fading,
-                offset: 0,
-            },
-        );
-        2
-    }
 
     fn draw_view(
         &self,

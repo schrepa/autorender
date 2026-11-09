@@ -27,7 +27,6 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::list::<ground::FarCover>(),
     PlaceDecl::slot::<ground::Foliage>(),
     PlaceDecl::slot::<water::Waterline>(),
-    PlaceDecl::slot::<water::WaterFlow>(),
     PlaceDecl::slot::<water::Hydrology>(),
     PlaceDecl::component::<splines::SplineMesh>("spline_mesh"),
     PlaceDecl::component::<streaming::StreamingFocus>("streaming_focus"),

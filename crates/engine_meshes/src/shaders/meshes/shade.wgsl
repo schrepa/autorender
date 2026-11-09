@@ -1,11 +1,11 @@
 import package::engine::materials::alpha_test;
-import package::engine::mesh::declarations::{MotionOutput, VertexOutput};
+import package::engine::mesh::declarations::VertexOutput;
 import package::engine::mesh::vertex::output_color;
 import package::engine::shading::{SurfaceInput, SurfacePoint};
 import package::engine::slots::{shade_model, slot_output};
 import package::engine::surface::{masked_out, opacity_cut, surface_point};
 import package::engine::view::{camera, material_bias};
-import package::meshes::vertex::{ExtendedOutput, ExtendedMotionOutput};
+import package::meshes::vertex::{ExtendedMotionOutput, ExtendedOutput, MotionOutput};
 import package::place::instances::{SlotFragment, SlotShaded};
 
 fn surface_input(input: SlotFragment, front: bool) -> SurfaceInput {

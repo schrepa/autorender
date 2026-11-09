@@ -6,7 +6,7 @@ use engine_registry::{JobBatch, JobOrder, JobQueue};
 
 use crate::jobs::{MESH_LODS_NAME, record_key};
 use crate::{
-    Interest, JobRef, MESH_LODS, RecordKey, Records, Request, VIEW_JOBS, content_hash,
+    Detail, Interest, JobRef, MESH_LODS, RecordKey, Records, Request, VIEW_JOBS, content_hash,
     job_priority,
 };
 
@@ -19,6 +19,9 @@ pub struct MeshLevels {
     #[serde(skip)]
     #[cfg_attr(feature = "schema", schemars(skip))]
     ended: Vec<(MeshHandle, Interest<RecordKey>)>,
+    #[serde(skip)]
+    #[cfg_attr(feature = "schema", schemars(skip))]
+    skipped: Vec<MeshHandle>,
 }
 
 fn lod_record(input: &[u8]) -> RecordKey {
@@ -30,15 +33,27 @@ fn lod_record(input: &[u8]) -> RecordKey {
 }
 
 pub(crate) fn settle(world: &mut World) {
-    let awaiting = world.resource_mut::<AssetLibrary>().take_awaiting_lods();
+    let mut awaiting = world.resource_mut::<AssetLibrary>().take_awaiting_lods();
+    let building = world.get_resource::<Detail>().is_none_or(|detail| detail.enabled);
     let mut orders = Vec::new();
     world.resource_scope(|world, mut levels: Mut<MeshLevels>| {
         let levels = &mut *levels;
+        if building {
+            awaiting.append(&mut levels.skipped);
+        }
         let mut inputs = Vec::new();
         {
             let mut assets = world.resource_mut::<AssetLibrary>();
             for handle in awaiting {
-                match assets.mesh(handle).and_then(|mesh| lod_input(mesh)) {
+                let Some(mesh) = assets.mesh(handle) else {
+                    continue;
+                };
+                if !building {
+                    let _ = assets.settle_lods(handle, None);
+                    levels.skipped.push(handle);
+                    continue;
+                }
+                match lod_input(mesh) {
                     Some(input) => inputs.push((handle, input)),
                     None => {
                         let _ = assets.settle_lods(handle, None);
@@ -76,15 +91,15 @@ pub(crate) fn settle(world: &mut World) {
         }
         let mut assets = world.resource_mut::<AssetLibrary>();
         for (handle, lods) in landed {
-            if assets.mesh(handle).is_none() {
-                continue;
-            }
             if lods.is_some() && assets.settle_lods(handle, lods).is_ok() {
                 continue;
             }
-            let _ = assets.settle_lods(handle, None);
+            if assets.mesh(handle).is_some() && assets.mesh_lods(handle).is_none() {
+                let _ = assets.settle_lods(handle, None);
+            }
         }
         levels.ended.retain(|&(handle, _)| assets.mesh(handle).is_some());
+        levels.skipped.retain(|&handle| assets.mesh(handle).is_some());
     });
     if !orders.is_empty() {
         let batch = JobBatch { owner: 0, run: 0 };

@@ -5,6 +5,7 @@
 
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
+mod bounds;
 mod bvh;
 mod geometry;
 mod placed;

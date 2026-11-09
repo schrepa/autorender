@@ -24,8 +24,8 @@ use crate::results::{
     TextureAsset, TextureState, TypeKind, result,
 };
 use crate::{
-    BrowserControl, MAX_INSPECTOR_BYTES, MAX_INSPECTORS, MAX_PAGE_SIZE, MAX_REQUEST_BYTES,
-    MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
+    BrowserControl, MAX_INSPECTOR_BYTES, MAX_PAGE_SIZE, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
+    MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
     views::{
         DrawnMeshView, GlobalTransformView, HierarchyView, LodLevelView, MeshBoundsView,
         MeshRenderView, MeshView, TextureView, TransformView,
@@ -48,16 +48,14 @@ pub fn reserved_names() -> impl Iterator<Item = &'static str> {
         .chain(TOOLING_TYPES.iter().copied())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum InspectorKind {
     Component,
     Resource,
 }
 
-#[derive(Debug, Clone, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct InspectorDescriptor {
     pub name: String,
     pub schema: Value,
@@ -201,28 +199,25 @@ struct InspectSelector<'a> {
 
 pub struct DevTools {
     pub(crate) inspectors: BTreeMap<String, Inspector>,
-    builtins: Option<usize>,
-    pub(crate) schemas: Value,
-    pub(crate) standard: crate::bricks::StandardBricks,
+    frame_stats: Value,
 }
 
 impl DevTools {
     pub(crate) fn bare() -> Self {
         Self {
             inspectors: BTreeMap::new(),
-            builtins: None,
-            schemas: Value::Null,
-            standard: crate::bricks::StandardBricks::default(),
+            frame_stats: Value::Null,
         }
     }
 
-    pub fn with_schemas(schemas: &Value) -> Self {
-        let mut tools = Self::bare();
-        tools.register_poses(schemas);
-        tools.register_components(schemas);
-        tools.builtins = Some(tools.inspectors.len());
-        tools.schemas = schemas.clone();
-        tools.standard = crate::bricks::StandardBricks::of(schemas);
+    pub fn new(frame_stats: Value) -> Self {
+        let schemas = crate::schemas::builtins();
+        let mut tools = Self {
+            frame_stats,
+            ..Self::bare()
+        };
+        tools.register_poses(&schemas);
+        tools.register_components(&schemas);
         tools
     }
 
@@ -238,17 +233,18 @@ impl DevTools {
     }
 }
 
-impl Default for DevTools {
-    fn default() -> Self {
-        let schemas: Value = serde_json::from_str(include_str!("../generated/inspectors.json"))
-            .expect("generated_schema_json");
-        Self::with_schemas(&schemas)
-    }
+fn verb_schema(world: &World, verb: Verb) -> Value {
+    world.get_resource::<Registry>().map_or_else(
+        || json!({ "type": "object" }),
+        |registry| crate::schemas::verb_schema(registry, verb),
+    )
 }
 
-fn scene_schema(definition: Option<&str>) -> Result<Value, Error> {
-    let mut schema: Value = serde_json::from_str(include_str!("../generated/scene.schema.json"))
-        .expect("generated_schema_json");
+fn scene_schema(world: &World, definition: Option<&str>) -> Result<Value, Error> {
+    let mut schema = world.get_resource::<Registry>().map_or_else(
+        || json!({ "type": "object" }),
+        |registry| crate::schemas::scene(world, registry),
+    );
     let definitions = schema
         .as_object_mut()
         .and_then(|schema| schema.remove("$defs"))
@@ -357,13 +353,6 @@ impl DevTools {
                 .expected(Expected::Unique)
                 .got(name));
         }
-        if let Some(builtins) = self.builtins
-            && self.inspectors.len() >= builtins + MAX_INSPECTORS
-        {
-            return Err(Error::new(ErrorCode::InspectorLimit, "$.name")
-                .at_most(MAX_INSPECTORS as u64)
-                .got(name));
-        }
         if encode(&inspector.descriptor, MAX_INSPECTOR_BYTES).is_err() {
             return Err(Error::new(ErrorCode::InspectorTooLarge, "$.schema")
                 .at_most(MAX_INSPECTOR_BYTES as u64));
@@ -410,7 +399,7 @@ impl DevTools {
                         return Err(refused());
                     }
                     engine.refresh_transforms();
-                    return crate::bricks::run(engine.app.world_mut(), name, args);
+                    return engine_registry::run_operation(engine.app.world_mut(), name, args);
                 }
                 if !Query::NAMES.contains(&name) {
                     return Err(Error::new(ErrorCode::UnknownVariant, "$.name")
@@ -482,9 +471,7 @@ impl DevTools {
             limit: request.limit,
         };
         engine.refresh_transforms();
-        let mut inspected = self.inspect(engine.app.world(), context, selector)?;
-        drawn_levels(engine.app.world_mut(), &mut inspected);
-        Ok(inspected)
+        self.inspect(engine.app.world(), context, selector)
     }
 
     fn status(&self, engine: &Engine, scene: Option<&SceneInstance>) -> StatusResult {
@@ -498,9 +485,6 @@ impl DevTools {
             culling_enabled: frustum_culling(world),
             features: registry.map(|registry| registry.names().collect()),
             presentation: *engine.presentation(),
-            collision: registry
-                .and_then(|registry| registry.stats_section("collision_stats"))
-                .map(|stats| stats.read(world)),
             fixed_delta_seconds: world
                 .get_resource::<FixedTime>()
                 .map(|time| time.delta_seconds),
@@ -546,7 +530,7 @@ impl DevTools {
             return Ok(DescribeResult::Verb {
                 name: name.to_owned(),
                 kind: TypeKind::Verb,
-                schema: self.schema_named(verb.name()),
+                schema: verb_schema(world, verb),
                 control_state: (verb == Verb::Control).then(|| control_state(world)),
             });
         }
@@ -555,7 +539,7 @@ impl DevTools {
                 return Ok(DescribeResult::Authoring {
                     name: name.to_owned(),
                     kind: TypeKind::Authoring,
-                    schema: scene_schema(request.definition.as_deref())?,
+                    schema: scene_schema(world, request.definition.as_deref())?,
                 });
             }
             "ErrorCodes" => {
@@ -570,7 +554,7 @@ impl DevTools {
                 return Ok(DescribeResult::Observation {
                     name: name.to_owned(),
                     kind: TypeKind::Observation,
-                    schema: frame_stats_schema(),
+                    schema: self.frame_stats.clone(),
                 });
             }
             _ => {}
@@ -598,16 +582,8 @@ impl DevTools {
                 kind: TypeKind::Stats,
                 brick: stats.brick,
                 at: source_line(stats.at),
-                schema: stats_schema(name),
+                schema: crate::bricks::schema_value(stats.schema()),
             });
-        }
-        if let Some(brick) = self
-            .standard
-            .of_inspector(name)
-            .or_else(|| self.standard.of_operation(name))
-            && !crate::bricks::added(world, brick)
-        {
-            return Err(crate::bricks::missing_brick(brick, "$.name"));
         }
         Err(Error::new(ErrorCode::UnknownInspector, "$.name")
             .got(name)
@@ -636,7 +612,7 @@ impl DevTools {
             brick: registered.map(|operation| operation.brick),
             at: registered.map(|operation| source_line(operation.at)),
             shows: shows.filter(|shows| !shows.is_empty()),
-            args: operation_args(&self.schema_named(verb.name()), name),
+            args: operation_args(&verb_schema(world, verb), name),
         })
     }
 
@@ -673,18 +649,12 @@ impl DevTools {
 
     fn inspector<'a>(
         &'a self,
-        world: &World,
         bricks: &'a BrickInspectors,
         name: &str,
     ) -> Result<&'a Inspector, Error> {
         validate_name(name, "$.component")?;
         if let Some(inspector) = self.inspectors.get(name).or_else(|| bricks.get(name)) {
             return Ok(inspector);
-        }
-        if let Some(brick) = self.standard.of_inspector(name)
-            && !crate::bricks::added(world, brick)
-        {
-            return Err(crate::bricks::missing_brick(brick, "$.component"));
         }
         let known: Vec<String> = self
             .all_inspectors(bricks)
@@ -726,7 +696,7 @@ impl DevTools {
         }
         let bricks = self.brick_inspectors(world);
         let inspector = component
-            .map(|name| self.inspector(world, &bricks, name))
+            .map(|name| self.inspector(&bricks, name))
             .transpose()?;
         if let Some(inspector) =
             inspector.filter(|inspector| inspector.kind == InspectorKind::Resource)
@@ -871,23 +841,6 @@ fn read_value(
             .got(&inspector.descriptor.name)
     })?;
     Ok(value)
-}
-
-fn drawn_levels(world: &mut World, inspected: &mut InspectResult) {
-    let rows = match inspected {
-        InspectResult::Entity { entity } => std::slice::from_mut(entity),
-        InspectResult::Page { entities, .. } => entities.as_mut_slice(),
-        InspectResult::Resource { .. } => return,
-    };
-    for row in rows {
-        let EntityComponents::Values(components) = &mut row.components else {
-            continue;
-        };
-        if let Some(view) = components.get_mut("DrawnMesh") {
-            let drawn = crate::bricks::mesh_drawn(world, &row.id);
-            view["drawn_level"] = drawn.get("drawn_level").cloned().unwrap_or(Value::Null);
-        }
-    }
 }
 
 pub(crate) fn validate_name(name: &str, path: &str) -> Result<(), Error> {
@@ -1086,7 +1039,6 @@ fn described_brick(brick: &BrickRecord, full: bool) -> DescribedBrick {
         operations: brick
             .operations()
             .iter()
-            .filter(|operation| operation.listed)
             .map(|operation| DescribedEntry {
                 name: operation.name,
                 key: None,
@@ -1111,16 +1063,6 @@ fn inspector_at(registry: &Registry, name: &str) -> Option<String> {
         .map(|section| section.at)
         .or_else(|| registry.stats_section(name).map(|stats| stats.at))
         .map(source_line)
-}
-
-fn frame_stats_schema() -> Value {
-    serde_json::from_str(crate::FRAME_STATS_SCHEMA).expect("generated_schema_json")
-}
-
-fn stats_schema(key: &str) -> Value {
-    let schema = frame_stats_schema();
-    let property = &schema["properties"][key];
-    with_definitions(property.clone(), &schema["$defs"])
 }
 
 fn operation_args(verb: &Value, name: &str) -> Value {

@@ -52,7 +52,7 @@ impl GpuPart for PondGpu {
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use crate::bricks::pond::shaders::pond::surface;
         let ponds = cx.buffer("ponds", Lifetime::Kept);
-        let pass = cx.pass("pond").at(AttachPoint::Sky).id();
+        let pass = cx.pass("pond").at(AttachPoint::LateOpaque).id();
         let pipeline = cx.render_pipeline(
             pass,
             &RenderPipeline {

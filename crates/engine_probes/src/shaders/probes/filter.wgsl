@@ -1,4 +1,4 @@
-import package::engine::view::PI;
+import package::engine::math::PI;
 import package::face::lighting::distribution;
 
 @group(1) @binding(0) var level_source: texture_cube<f32>;

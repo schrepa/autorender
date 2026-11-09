@@ -18,7 +18,6 @@ macro_rules! results {
 
         pub const TYPED_RESULTS: &[&str] = &[$(stringify!($op)),*];
 
-        #[cfg(not(target_arch = "wasm32"))]
         pub fn result_schemas() -> Vec<(&'static str, schemars::Schema)> {
             vec![$((stringify!($op), schemars::schema_for!($result))),*]
         }
@@ -39,7 +38,6 @@ results! {
     step: crate::results::StepResult,
     environment: crate::results::EnvironmentResult,
     frames: crate::results::FramesResult,
-    probe: crate::results::ProbeResult,
     game: crate::results::GameResult,
     pause: crate::results::StatusResult,
     resume: crate::results::StatusResult,
@@ -47,8 +45,7 @@ results! {
     profile: crate::results::ProfileResult,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct StatusResult {
     pub world_entities: u32,
     pub authored_entities: Option<usize>,
@@ -56,17 +53,11 @@ pub struct StatusResult {
     pub culling_enabled: bool,
     pub features: Option<Vec<&'static str>>,
     pub presentation: PresentationState,
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        schemars(with = "Option<serde_json::Map<String, Value>>")
-    )]
-    pub collision: Option<Value>,
     pub fixed_delta_seconds: Option<f32>,
     pub limits: StatusLimits,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct StatusLimits {
     pub request_bytes: usize,
     pub response_bytes: usize,
@@ -74,8 +65,7 @@ pub struct StatusLimits {
     pub scan_entities: usize,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct AssetsResult {
     pub meshes: usize,
     pub materials: usize,
@@ -88,8 +78,7 @@ pub struct AssetsResult {
     pub missing_total: usize,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct MissingAsset {
     pub entity: AuthoredEntity,
     pub draws: &'static str,
@@ -97,8 +86,7 @@ pub struct MissingAsset {
     pub position: Option<[f32; 3]>,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct TextureAsset {
     pub id: String,
     pub state: TextureState,
@@ -108,45 +96,37 @@ pub struct TextureAsset {
     pub gpu_resident: Option<bool>,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TextureState {
     CpuReady,
     Missing,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct DigestResult {
     pub entities: usize,
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        schemars(with = "std::collections::BTreeMap<String, DigestEntry>")
-    )]
+    #[schemars(with = "std::collections::BTreeMap<String, DigestEntry>")]
     pub components: Value,
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(with = "Option<AssetDigests>"))]
+    #[schemars(with = "Option<AssetDigests>")]
     pub assets: Value,
     pub hash: String,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct DigestEntry {
     pub count: usize,
     pub hash: String,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct AssetDigests {
     pub meshes: DigestEntry,
     pub materials: DigestEntry,
     pub textures: DigestEntry,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum InspectResult {
     Resource {
@@ -165,8 +145,7 @@ pub enum InspectResult {
     },
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct EntityRow {
     pub id: String,
     pub name: String,
@@ -174,16 +153,14 @@ pub struct EntityRow {
     pub components: EntityComponents,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum EntityComponents {
     Values(serde_json::Map<String, Value>),
     Names(Vec<String>),
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum DescribeResult {
     Listing {
@@ -244,8 +221,7 @@ pub enum DescribeResult {
     },
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct DescribedType {
     pub name: String,
     pub kind: TypeKind,
@@ -253,8 +229,7 @@ pub struct DescribedType {
     pub brick: Option<Option<&'static str>>,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct DescribedBrick {
     pub name: &'static str,
     #[serde(rename = "crate")]
@@ -266,8 +241,7 @@ pub struct DescribedBrick {
     pub operations: Vec<DescribedEntry>,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct DescribedEntry {
     pub name: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -278,8 +252,7 @@ pub struct DescribedEntry {
     pub at: Option<String>,
 }
 
-#[derive(Clone, Copy, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum TypeKind {
     Component,
@@ -302,60 +275,52 @@ impl From<InspectorKind> for TypeKind {
     }
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct PresentResult {
     pub temporary: bool,
     pub rendered: bool,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct CameraResult {
     pub temporary: bool,
     pub camera_changed: bool,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct RenderResult {
     pub rendered: bool,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct ParentResult {
     pub temporary: bool,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct InputResult {
     pub temporary: bool,
     pub applies_on: &'static str,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct StepResult {
     pub ticks: u32,
     pub temporary: bool,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct EnvironmentResult {
     pub temporary: bool,
     pub environment_changed: Vec<String>,
     pub before: serde_json::Map<String, Value>,
     pub after: serde_json::Map<String, Value>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(with = "Vec<Value>"))]
+    #[schemars(with = "Vec<Value>")]
     pub skipped: Vec<engine_settings::Error>,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct FramesResult {
     pub frames: u32,
     pub interval_ms: f64,
@@ -364,8 +329,7 @@ pub struct FramesResult {
     pub artifact: Option<KeptArtifact>,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct CaptureResult {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub temporary: Option<bool>,
@@ -376,8 +340,7 @@ pub struct CaptureResult {
     pub digest: Option<DigestResult>,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct ProfileResult {
     pub frames: u32,
     pub interval_ms: f64,
@@ -391,8 +354,7 @@ pub struct ProfileResult {
     pub artifact: Option<KeptArtifact>,
 }
 
-#[derive(Clone, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Clone, Serialize, schemars::JsonSchema)]
 pub struct ProfiledBrick {
     pub brick: &'static str,
     pub cpu_ms: f64,
@@ -413,16 +375,7 @@ pub struct ProfiledBrick {
     pub duplicate_upload_bytes: Option<u64>,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
-pub struct ProbeResult {
-    #[serde(flatten)]
-    pub probe: serde_json::Map<String, Value>,
-    pub entity: Option<AuthoredEntity>,
-}
-
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct AuthoredEntity {
     pub id: Option<String>,
     pub scene: Option<String>,
@@ -440,8 +393,7 @@ impl AuthoredEntity {
     }
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct KeptArtifact {
     pub path: String,
     pub mime_type: String,
@@ -451,8 +403,7 @@ pub struct KeptArtifact {
     pub tick: Option<String>,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct GameResult {
     pub game: String,
     pub result: Value,

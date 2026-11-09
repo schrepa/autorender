@@ -31,22 +31,8 @@ const CLOSED: &[(&str, &[&str])] = &[
             "engine_smoke",
         ],
     ),
-    (
-        "core",
-        &[
-            "engine_ecs",
-            "engine_place",
-            "engine_gpu_bits",
-            "engine_core",
-            "engine_render",
-            "engine_assets",
-            "engine_settings",
-            "engine_scene",
-            "engine_profile",
-            "engine_panic",
-        ],
-    ),
-    ("core-internal", &["engine_registry", "engine_textures"]),
+    ("core", engine_registry::CORE_CRATES),
+    ("core-internal", engine_registry::CORE_INTERNAL_CRATES),
     (
         "host",
         &[
@@ -55,7 +41,6 @@ const CLOSED: &[(&str, &[&str])] = &[
             "engine_dev",
             "engine_worker",
             "engine_profiler",
-            "engine_texture_cook",
         ],
     ),
 ];
@@ -71,6 +56,7 @@ const RINGS: &[(&str, &[&str])] = &[
             "engine_registry",
             "engine_render",
             "engine_meshes",
+            "engine_texture_cook",
             "engine_assets",
             "engine_textures",
             "engine_settings",

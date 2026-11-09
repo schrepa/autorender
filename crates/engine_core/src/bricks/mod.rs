@@ -145,8 +145,7 @@ impl Bricks<'_> {
     pub fn operation<O: Operation>(&mut self) -> &mut Self {
         self.record.operation(
             OperationEntry::of::<O::Params>(O::NAME, O::CONTROL, run_operation::<O>)
-                .schemas(O::schema, O::result_schema)
-                .listed(O::LISTED),
+                .schemas(O::schema, O::result_schema),
         );
         self
     }
@@ -158,8 +157,7 @@ impl Bricks<'_> {
     {
         self.record.operation(
             OperationEntry::of::<O::Params>(O::NAME, false, run_operation::<O>)
-                .schemas(O::schema, O::result_schema)
-                .listed(O::LISTED),
+                .schemas(O::schema, O::result_schema),
         );
         self
     }

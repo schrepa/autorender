@@ -52,10 +52,5 @@ export interface Runtime {
   dev_resume?(outcome: string, context: string): Json<Step>;
   dev_reloaded?(source: string, context: string, files?: unknown): Json<Step>;
   dev_refusal?(error: string): Json<Reply>;
-  profiling_start?(max_events: number): void;
-  profiling_stop?(): string;
-  profiling_poll?(): void;
-  profiling_report?(): string;
-  profiling_status?(): string;
   free(): void;
 }

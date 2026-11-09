@@ -136,24 +136,21 @@ impl Native {
 
     fn run(&self) -> engine::Result<()> {
         #[cfg(feature = "dev")]
-        let source = self.source()?;
-        #[cfg(not(feature = "dev"))]
-        let source = crate::scene::SCENE.to_owned();
-        #[cfg(feature = "dev")]
         if self.host.dev {
-            return self.run_dev(&source);
+            return self.run_dev();
         }
-        let build = |engine: &mut Engine| self.build(engine, &source);
+        let build = |engine: &mut Engine| self.build(engine);
         self.host.run("Highlands", crate::bricks, build)
     }
 
-    fn build(&self, engine: &mut Engine, source: &str) -> engine::Result<Highlands> {
+    fn build(&self, engine: &mut Engine) -> engine::Result<Highlands> {
+        let source = self.source()?;
         let rocks = if self.options.rocks {
             rocks(&self.assets.join("highlands/rocks"))
         } else {
             RockMaps::default()
         };
-        Highlands::build(engine, self.options.clone(), &rocks, source)
+        Highlands::build(engine, self.options.clone(), &rocks, &source)
     }
 
     #[cfg(feature = "dev")]
@@ -164,9 +161,14 @@ impl Native {
             .map_err(|error| engine_native::file_error("--source", &path, &error))
     }
 
+    #[cfg(not(feature = "dev"))]
+    fn source(&self) -> engine::Result<String> {
+        Ok(crate::scene::SCENE.to_owned())
+    }
+
     #[cfg(feature = "dev")]
-    fn run_dev(&self, source: &str) -> engine::Result<()> {
-        let build = |engine: &mut Engine| self.build(engine, source);
+    fn run_dev(&self) -> engine::Result<()> {
+        let build = |engine: &mut Engine| self.build(engine);
         let session = self
             .host
             .dev_session(crate::bricks, build)?

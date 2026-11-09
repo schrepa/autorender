@@ -31,6 +31,5 @@ pub use record::{
     MESH_BUFFER_EXTRAS_MAGIC, MESH_BUFFER_MAGIC, MeshBuffer, MeshStreams, encode_mesh_buffer_with,
 };
 pub use texture::{
-    ColorSpace, MAX_TEXTURE_DIMENSION, Texture, TextureFormat, TextureSummary, full_chain,
-    srgb_decoded,
+    ColorSpace, Texture, TextureFormat, TextureSummary, full_chain, srgb_decoded,
 };

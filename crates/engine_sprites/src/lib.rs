@@ -65,6 +65,8 @@ impl Brick for SpritesBrick {
                 kind: SPRITES,
                 vertex: shaders::sprites::draw::VS_SPRITE.name(),
                 needs: Attributes::NONE,
+                casts_shadows: false,
+                seen_by_probes: false,
             })
             .draws::<SpritesGpu>(SPRITES, SpritesGpu::draw);
     }
@@ -135,7 +137,7 @@ fn drawn_in(cx: &Install<'_, SpritesGpu>) -> Vec<ScenePass> {
         .iter()
         .filter(|listed| {
             listed.bit.is_some()
-                && (listed.pass.takes)(SPRITES)
+                && cx.passes().takes(&listed.pass, SPRITES)
                 && listed.pass.views != PassViews::Owned
                 && listed.pass.at != AttachPoint::Transparent
         })

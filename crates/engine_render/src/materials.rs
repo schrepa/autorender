@@ -12,9 +12,9 @@ use engine_core::{
     Sampler, Texture, TextureFormat, TextureHandle, Wrap,
 };
 
-use crate::bindings::Table;
 use crate::encode::Compiler;
 use crate::gpu_data::{level_copy, mip_chain_bytes, mip_levels};
+use crate::linker::Declaration;
 use crate::mipmaps::MipGenerator;
 use crate::surface::{MaterialLayout, MaterialVariant, RECORD};
 
@@ -45,8 +45,8 @@ struct Defaults {
 
 pub struct MaterialStore {
     layout: MaterialLayout,
-    table: &'static Table,
-    group_layout: crate::pipelines::GroupLayout,
+    declared: Vec<Declaration>,
+    group_layout: wgpu::BindGroupLayout,
     samplers: HashMap<Sampler, wgpu::Sampler>,
     textures: BTreeMap<TextureHandle, GpuTexture>,
     materials: BTreeMap<MaterialHandle, GpuMaterial>,
@@ -60,8 +60,7 @@ pub struct MaterialStore {
 impl MaterialStore {
     pub(crate) fn new(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Self {
         let layout = MaterialLayout::standard();
-        let table = layout.table();
-        let group_layout = crate::pipelines::layout(device, table);
+        let (declared, group_layout) = group_of(device, &layout);
         let texture = crate::targets::texel(
             device,
             queue,
@@ -74,14 +73,14 @@ impl MaterialStore {
         sampler(device, &mut samplers, Sampler::CLAMP);
         let (group, uniform) = default_group(
             device,
-            (&layout, table, &group_layout),
+            (&layout, &declared, &group_layout),
             &white,
             &samplers[&Sampler::CLAMP],
         );
         let variant = layout.variant(None, &layout.plain_record());
         Self {
             layout,
-            table,
+            declared,
             group_layout,
             samplers,
             textures: BTreeMap::new(),
@@ -104,11 +103,10 @@ impl MaterialStore {
         if self.layout == layout {
             return;
         }
-        let table = layout.table();
-        self.group_layout = crate::pipelines::layout(device, table);
+        (self.declared, self.group_layout) = group_of(device, &layout);
         let (group, uniform) = default_group(
             device,
-            (&layout, table, &self.group_layout),
+            (&layout, &self.declared, &self.group_layout),
             &self.defaults.white,
             &self.samplers[&Sampler::CLAMP],
         );
@@ -116,7 +114,6 @@ impl MaterialStore {
         self.defaults._uniform = uniform;
         self.defaults.variant = layout.variant(None, &layout.plain_record());
         self.layout = layout;
-        self.table = table;
         self.materials.clear();
         self.generation += 1;
         self.synced = None;
@@ -181,10 +178,10 @@ impl MaterialStore {
                 let gpu = create_texture(
                     device,
                     queue,
-                    (source, revision),
+                    (texture, source, revision),
                     (&self.mips, &mut *compiler),
                     encoder,
-                    &mut levels,
+                    (&mut levels, &mut self.refused),
                 );
                 bytes += gpu.byte_len;
                 self.textures.insert(texture, gpu);
@@ -230,10 +227,10 @@ impl MaterialStore {
         let gpu = create_texture(
             device,
             queue,
-            (source, revision),
+            (handle, source, revision),
             (&self.mips, compiler),
             encoder,
-            &mut levels,
+            (&mut levels, &mut self.refused),
         );
         let bytes = gpu.byte_len;
         entry.insert(gpu);
@@ -289,7 +286,7 @@ impl MaterialStore {
         GpuMaterial {
             group: bind_group(
                 device,
-                (&self.layout, self.table, &self.group_layout),
+                (&self.layout, &self.declared, &self.group_layout),
                 &views,
                 &uniform,
             ),
@@ -339,16 +336,32 @@ impl MaterialStore {
     }
 }
 
+fn group_of(
+    device: &wgpu::Device,
+    layout: &MaterialLayout,
+) -> (Vec<Declaration>, wgpu::BindGroupLayout) {
+    let declared = crate::linker::declarations(&layout.materials_source());
+    let entries: Vec<wgpu::BindGroupLayoutEntry> = declared
+        .iter()
+        .map(crate::surface::material_entry)
+        .collect();
+    let group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        label: Some("engine/material-group"),
+        entries: &entries,
+    });
+    (declared, group_layout)
+}
+
 fn default_group(
     device: &wgpu::Device,
-    (layout, table, group_layout): (&MaterialLayout, &Table, &crate::pipelines::GroupLayout),
+    (layout, declared, group_layout): (&MaterialLayout, &[Declaration], &wgpu::BindGroupLayout),
     white: &wgpu::TextureView,
     clamp: &wgpu::Sampler,
 ) -> (wgpu::BindGroup, wgpu::Buffer) {
     let views: Vec<(&wgpu::TextureView, &wgpu::Sampler)> =
         layout.maps().iter().map(|_| (white, clamp)).collect();
     let uniform = uniform_buffer(device, &layout.plain_record());
-    let group = bind_group(device, (layout, table, group_layout), &views, &uniform);
+    let group = bind_group(device, (layout, declared, group_layout), &views, &uniform);
     (group, uniform)
 }
 
@@ -362,6 +375,7 @@ fn sampler<'a>(
         .or_insert_with(|| gpu_sampler(device, "engine/material-sampler", key))
 }
 
+#[expect(clippy::disallowed_methods, reason = "the one way samplers are made")]
 pub(crate) fn gpu_sampler(
     device: &wgpu::Device,
     label: &'static str,
@@ -427,22 +441,34 @@ fn uniform_buffer(device: &wgpu::Device, words: &[u32]) -> wgpu::Buffer {
 
 fn bind_group(
     device: &wgpu::Device,
-    (layout, table, group_layout): (&MaterialLayout, &Table, &crate::pipelines::GroupLayout),
+    (layout, declared, group_layout): (&MaterialLayout, &[Declaration], &wgpu::BindGroupLayout),
     views: &[(&wgpu::TextureView, &wgpu::Sampler)],
     uniform: &wgpu::Buffer,
 ) -> wgpu::BindGroup {
-    let names: Vec<(String, String)> = layout
-        .maps()
+    let resource = |name: &str| {
+        if name == RECORD {
+            return Some(uniform.as_entire_binding());
+        }
+        layout
+            .maps()
+            .iter()
+            .zip(views)
+            .find_map(|(map, (view, sampler))| match name.strip_prefix(map)? {
+                "_map" => Some(crate::pipelines::view(view)),
+                "_sampler" => Some(crate::pipelines::sampler(sampler)),
+                _ => None,
+            })
+    };
+    let entries: Vec<wgpu::BindGroupEntry<'_>> = declared
         .iter()
-        .map(|name| (format!("{name}_map"), format!("{name}_sampler")))
+        .filter_map(|declared| {
+            Some(wgpu::BindGroupEntry {
+                binding: declared.binding,
+                resource: resource(&declared.name)?,
+            })
+        })
         .collect();
-    let mut resources = Vec::with_capacity(2 * names.len() + 1);
-    resources.push((RECORD, uniform.as_entire_binding()));
-    for ((texture_name, sampler_name), (view, sampler)) in names.iter().zip(views) {
-        resources.push((texture_name.as_str(), crate::pipelines::view(view)));
-        resources.push((sampler_name.as_str(), crate::pipelines::sampler(sampler)));
-    }
-    crate::pipelines::group(device, "engine/material-group", table, group_layout, &resources)
+    crate::pipelines::bind_group(device, "engine/material-group", group_layout, &entries)
 }
 
 pub fn gpu_format(
@@ -555,17 +581,29 @@ fn create_target(device: &wgpu::Device, source: &Texture, revision: u64) -> GpuT
 fn create_texture(
     device: &wgpu::Device,
     queue: &crate::gpu_calls::Queue,
-    (source, revision): (&Texture, u64),
+    (handle, source, revision): (TextureHandle, &Texture, u64),
     (mips, compiler): (&MipGenerator, &mut Compiler<'_>),
     encoder: &mut Option<wgpu::CommandEncoder>,
-    generated: &mut u32,
+    (generated, refused): (&mut u32, &mut Vec<Error>),
 ) -> GpuTexture {
-    if source.is_target() {
+    let most = device.limits().max_texture_dimension_2d;
+    let fits = source.width().max(source.height()) <= most;
+    if !fits {
+        refused.push(
+            Error::new(
+                engine_core::ErrorCode::InvalidTexture,
+                format!("$.textures.{}", handle.slot()),
+            )
+            .at_most(u64::from(most))
+            .got([source.width(), source.height()]),
+        );
+    }
+    if source.is_target() && fits {
         return create_target(device, source, revision);
     }
     let space = source.color_space();
     let (format, feature) = gpu_format(source.format(), space);
-    if !device.features().contains(feature) {
+    if !fits || !device.features().contains(feature) {
         let texture = crate::targets::texel(
             device,
             queue,

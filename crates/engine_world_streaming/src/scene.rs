@@ -8,10 +8,11 @@ use engine_core::{
     MAX_ID_BYTES, Placed, Placement, Rule, SceneContext, Section, Setting, Transform,
     fields, is_id, math, parse_value_at, state, valid_global_matrix,
 };
+use engine_heightfield::layer::LayerKind;
 use engine_places_simulation::ground::Grounded;
 use engine_places_world::paths::{ScenePath, ScenePathSources, ScenePaths};
 use engine_places_world::streaming::{StreamedKey, StreamedKeys, Streams};
-use engine_places_world::terrain::{LayerKind, TerrainLayers};
+use engine_places_world::terrain::TerrainLayers;
 use glam::{EulerRot, Mat4, Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

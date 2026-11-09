@@ -270,6 +270,10 @@ impl<G: Game> GameHost<G> {
         }
     }
 
+    pub(crate) fn set_preparation_ms(&mut self, milliseconds: f64) {
+        self.app.set_preparation_ms(milliseconds);
+    }
+
     pub fn preparing(&self) -> bool {
         self.frames.preparing()
     }
@@ -281,14 +285,12 @@ impl<G: Game> GameHost<G> {
 
     pub fn mouse_button(&mut self, button: MouseButton, down: bool) -> bool {
         self.input.mouse_button(button, down);
-        button == MouseButton::Left
-            || self
-                .app
-                .engine()
-                .app
-                .world()
-                .resource::<Input>()
-                .uses_mouse(button)
+        self.app
+            .engine()
+            .app
+            .world()
+            .resource::<Input>()
+            .uses_mouse(button)
     }
 
     pub fn motion(&mut self, dx: f32, dy: f32) {
@@ -510,12 +512,6 @@ impl<G: Game> GameHost<G> {
         self.app.frame_times()
     }
 
-    pub fn eye(&self) -> Option<[f32; 3]> {
-        let world = self.app.engine().app.world();
-        let main = world.get_resource::<engine_core::Views>()?.main()?;
-        Some(main.detail_eye.to_array())
-    }
-
     pub fn stats(&self) -> String {
         self.app.stats_json()
     }
@@ -595,11 +591,6 @@ impl<G: Game> GameHost<G> {
         self.app.collect_pipelines();
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) fn deliver_readbacks(&mut self) {
-        self.app.deliver();
-    }
-
     pub(crate) fn dev_handle(
         &mut self,
         request: &str,
@@ -657,7 +648,7 @@ impl<G: Game> GameHost<G> {
                 self.app.reloaded();
                 self.suspend();
                 let skipped = self.game.scene().map(|scene| scene.skipped().to_vec());
-                let mut reloaded = serde_json::json!({"reloaded": true, "saved_by_reload": false});
+                let mut reloaded = serde_json::json!({"reloaded": true});
                 if let Some(skipped) = skipped.filter(|skipped| !skipped.is_empty()) {
                     reloaded["skipped"] = serde_json::json!(skipped);
                 }
@@ -687,10 +678,6 @@ impl<G: Game> GameHost<G> {
 
     pub fn profiling_report(&mut self) -> serde_json::Value {
         self.app.profiling_report()
-    }
-
-    pub fn profiling_status(&self) -> serde_json::Value {
-        self.app.profiling_status()
     }
 
     pub fn profile_bricks(&self) -> Vec<&'static str> {

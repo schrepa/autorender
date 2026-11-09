@@ -73,6 +73,12 @@ impl MaterialHandle {
     }
 }
 
+impl TextureHandle {
+    pub fn slot(self) -> usize {
+        self.0.slot
+    }
+}
+
 impl engine_settings::Setting for MeshHandle {}
 impl engine_settings::Setting for MaterialHandle {}
 impl engine_settings::Setting for TextureHandle {}
@@ -483,10 +489,6 @@ impl Default for AssetLibrary {
 }
 
 impl AssetLibrary {
-    pub fn set_budget(&mut self, budget: AssetBudget) {
-        self.budget = budget;
-    }
-
     pub fn budget(&self) -> AssetBudget {
         self.budget
     }
@@ -525,10 +527,6 @@ impl AssetLibrary {
         Ok(handle)
     }
 
-    pub fn insert_cube(&mut self) -> Result<MeshHandle, Error> {
-        self.insert_mesh(Mesh::cube())
-    }
-
     pub fn reserve_mesh(&mut self) -> Result<MeshHandle, Error> {
         if !self.meshes.has_capacity(self.budget.max_meshes) {
             return Err(full("$.meshes", self.budget.max_meshes));
@@ -563,7 +561,7 @@ impl AssetLibrary {
         let held = self
             .meshes
             .get_mut(self.id, handle.0)
-            .filter(|held| held.awaits())
+            .filter(|held| !matches!(held.lods, Levels::Built(_)))
             .ok_or_else(|| dead(ErrorCode::InvalidMesh, "$.mesh"))?;
         if let Some(lods) = &lods {
             lods.check(held.mesh.indices().len(), held.mesh.vertices().len())?;

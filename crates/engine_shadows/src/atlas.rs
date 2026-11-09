@@ -45,6 +45,7 @@ pub(crate) struct MapsKey {
     pub(crate) tile_texels: u32,
     pub(crate) levels: u32,
     pub(crate) side: u32,
+    sample_texels: u32,
 }
 
 impl MapsKey {
@@ -63,6 +64,7 @@ impl MapsKey {
                 .min(held.min(u64::from(u32::MAX)) as u32)
                 .max(1),
             side,
+            sample_texels: settings.sample_texels.to_bits(),
         }
     }
 

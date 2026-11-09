@@ -5,6 +5,7 @@ use std::sync::Arc;
 use engine_codec as codec;
 use engine_core::{JobKind, JobRef, RecordKey};
 use engine_heightfield::layer::LayerKind;
+use engine_heightfield::path::lay_decks;
 use engine_heightfield::tile::{
     BiomeRules, Generator, StackView, TerrainRecipe, Tile, TileJob, shaded_elsewhere,
 };
@@ -15,7 +16,7 @@ use engine_navigation::{
     Gait, NavOptions, NavPath, PORTALS, PortalsJob, Stepped, TilePortals, WalkData, WalkGround,
     WalkSearch,
 };
-use engine_places_simulation::ground::{GroundBridge, GroundGrid, GroundObstacle};
+use engine_places_simulation::ground::{GroundGrid, GroundObstacle};
 use engine_places_world::terrain::TerrainLayers;
 use engine_scene::{SceneDocument, SceneKinds};
 use engine_terrain::jobs::{self, BAKE, BakeJob, GROUND_GRID, GroundIdentity, TILE_BUILD};
@@ -578,20 +579,12 @@ fn walk_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> GroundGrid {
         }
         holes = any.then(|| bits.into_boxed_slice());
     }
+    lay_decks(&layers.bridges(), first, spacing, &mut heights);
     GroundGrid {
         key,
         spacing,
         heights,
         holes,
-        bridges: layers
-            .bridges()
-            .into_iter()
-            .map(|bridge| GroundBridge {
-                deck: bridge.deck,
-                width: bridge.width,
-                tunnel: bridge.tunnel,
-            })
-            .collect(),
         water: None,
     }
 }

@@ -5,13 +5,6 @@ use serde_json::{Map, Value, json};
 use crate::protocol::{self, Verb};
 use crate::views;
 
-pub struct Generated {
-    pub files: Vec<(&'static str, String)>,
-    pub summary: Value,
-    pub frame_stats: Value,
-    pub inspectors: Value,
-}
-
 fn registry(world: &World) -> Result<&Registry, String> {
     world
         .get_resource::<Registry>()
@@ -40,8 +33,36 @@ fn definition_of(mut schema: Value, definitions: &mut Map<String, Value>) -> (St
     (name, schema)
 }
 
-pub fn reply(world: &World) -> Result<Value, String> {
-    let registry = registry(world)?;
+pub fn builtins() -> Value {
+    json!({
+        "Transform": schemars::schema_for!(views::TransformView),
+        "GlobalTransform": schemars::schema_for!(views::GlobalTransformView),
+        "NodeWord": schemars::schema_for!(engine_core::NodeWord),
+        "PresentationState": schemars::schema_for!(engine_core::PresentationState),
+        "Readiness": schemars::schema_for!(engine_core::Readiness),
+        "FrameBudget": schemars::schema_for!(engine_core::FrameBudget),
+        "Level": schemars::schema_for!(engine_core::Level),
+        "Records": schemars::schema_for!(engine_core::Records),
+        "MeshLevels": schemars::schema_for!(engine_core::MeshLevels),
+        "Hierarchy": schemars::schema_for!(views::HierarchyView),
+        "DrawnMesh": schemars::schema_for!(views::DrawnMeshView),
+        "Input": schemars::schema_for!(engine_core::Input),
+        "Devices": schemars::schema_for!(engine_core::Devices),
+        "Contexts": schemars::schema_for!(engine_core::Contexts),
+        "CursorRequests": schemars::schema_for!(engine_core::CursorRequests),
+        "Jobs": schemars::schema_for!(views::JobsView),
+    })
+}
+
+fn scene_text(world: &World, registry: &Registry) -> String {
+    engine_scene::SceneDocument::schema_json(registry, &engine_scene::SceneKinds::of(world))
+}
+
+pub(crate) fn scene(world: &World, registry: &Registry) -> Value {
+    serde_json::from_str(&scene_text(world, registry)).expect("scene_schema_json")
+}
+
+pub fn reply() -> Result<Value, String> {
     let mut reply = serialized(schemars::schema_for!(crate::Reply));
     let mut definitions = reply["$defs"].as_object().cloned().unwrap_or_default();
     for schema in [
@@ -61,14 +82,8 @@ pub fn reply(world: &World) -> Result<Value, String> {
         definitions.insert(name, schema);
     }
     let mut results = Map::new();
-    let typed = crate::results::result_schemas()
-        .into_iter()
-        .map(|(op, schema)| (op, serialized(schema)))
-        .chain(registry.operations().filter_map(|operation| {
-            Some((operation.name, serialized(operation.result_schema()?)))
-        }));
-    for (op, schema) in typed {
-        let (name, schema) = definition_of(schema, &mut definitions);
+    for (op, schema) in crate::results::result_schemas() {
+        let (name, schema) = definition_of(serialized(schema), &mut definitions);
         if name.is_empty() {
             return Err(format!("{op}'s result schema names no type"));
         }
@@ -94,38 +109,38 @@ pub fn verbs(world: &World) -> Result<Vec<(&'static str, Value)>, String> {
         .collect())
 }
 
-pub fn generated(world: &World, frame_stats_schema: Value) -> Result<Generated, String> {
+pub fn summary() -> Value {
+    json!({
+        "version": protocol::PROTOCOL_VERSION,
+        "max_request_bytes": protocol::MAX_REQUEST_BYTES,
+        "profile_max_events": engine_profile::MAX_EVENTS,
+        "verbs": Verb::names().collect::<Vec<_>>(),
+        "queries": protocol::Query::NAMES,
+        "controls": protocol::BrowserControl::NAMES,
+        "errors": engine_settings::ErrorCode::NAMES,
+    })
+}
+
+pub fn game(world: &World) -> Result<Vec<(&'static str, String)>, String> {
     let registry = registry(world)?;
     let mut problems = Vec::new();
-    let mut schemas = json!({
-        "Transform": schemars::schema_for!(views::TransformView),
-        "GlobalTransform": schemars::schema_for!(views::GlobalTransformView),
-        "NodeWord": schemars::schema_for!(engine_core::NodeWord),
-        "PresentationState": schemars::schema_for!(engine_core::PresentationState),
-        "Readiness": schemars::schema_for!(engine_core::Readiness),
-        "FrameBudget": schemars::schema_for!(engine_core::FrameBudget),
-        "Level": schemars::schema_for!(engine_core::Level),
-        "Records": schemars::schema_for!(engine_core::Records),
-        "MeshLevels": schemars::schema_for!(engine_core::MeshLevels),
-        "Hierarchy": schemars::schema_for!(views::HierarchyView),
-        "DrawnMesh": schemars::schema_for!(views::DrawnMeshView),
-        "Input": schemars::schema_for!(engine_core::Input),
-        "Devices": schemars::schema_for!(engine_core::Devices),
-        "Contexts": schemars::schema_for!(engine_core::Contexts),
-        "CursorRequests": schemars::schema_for!(engine_core::CursorRequests),
-        "Jobs": schemars::schema_for!(views::JobsView),
-        "FrameStats": frame_stats(frame_stats_schema, registry, &mut problems),
-    });
+    let mut schemas = builtins();
     if let Some(all) = schemas.as_object_mut() {
         for verb in Verb::ALL {
             all.insert(verb.name().to_owned(), verb_schema(registry, verb));
         }
+        for section in registry.sections() {
+            let schema = registry
+                .section_schema(section.key)
+                .unwrap_or_else(|| section.schema());
+            all.insert(section.key.to_owned(), serialized(schema));
+        }
+        for stats in registry.stats() {
+            all.insert(stats.key.to_owned(), serialized(stats.schema()));
+        }
     }
     reserved_inspectors(&mut problems);
-    let Some(described) = schemas.as_object() else {
-        return Err("the inspectors' schemas are not an object".to_owned());
-    };
-    for (name, schema) in described {
+    for (name, schema) in schemas.as_object().into_iter().flatten() {
         let bytes = schema.to_string().len();
         if bytes + 8 * 1024 > protocol::MAX_RESPONSE_BYTES {
             problems.push(format!(
@@ -134,22 +149,7 @@ pub fn generated(world: &World, frame_stats_schema: Value) -> Result<Generated, 
             ));
         }
     }
-    let mut sections = Map::new();
-    for section in registry.sections() {
-        let schema = registry
-            .section_schema(section.key)
-            .unwrap_or_else(|| section.schema());
-        sections.insert(section.key.to_owned(), serialized(schema));
-    }
-    for stats in registry.stats() {
-        sections.insert(stats.key.to_owned(), serialized(stats.schema()));
-    }
-    if let Some(all) = schemas.as_object_mut() {
-        all.extend(sections);
-        all.insert("bricks".to_owned(), bricks_summary(registry));
-    }
-    let scene_schema =
-        engine_scene::SceneDocument::schema_json(registry, &engine_scene::SceneKinds::of(world));
+    let scene_schema = scene_text(world, registry);
     let queries = names(&schemas[Verb::Query.name()], &mut problems);
     let controls = names(&schemas[Verb::Control.name()], &mut problems);
     core_names(
@@ -183,59 +183,12 @@ pub fn generated(world: &World, frame_stats_schema: Value) -> Result<Generated, 
         "bricks": registry.names().collect::<Vec<_>>(),
         "errors": registry.error_codes(),
     });
-    let pretty = |value: &Value| {
-        serde_json::to_string_pretty(value).map_err(|error| format!("cannot write JSON: {error}"))
-    };
-    let files = vec![
-        (
-            "crates/engine_dev/src/generated/inspectors.json",
-            schemas.to_string(),
-        ),
-        (
-            "crates/engine_dev/src/generated/frame_stats.schema.json",
-            pretty(&schemas["FrameStats"])?,
-        ),
-        (
-            "crates/engine_dev/src/generated/scene.schema.json",
-            scene_schema,
-        ),
-        ("web/src/generated/protocol.json", pretty(&summary)? + "\n"),
-    ];
-    Ok(Generated {
-        files,
-        summary,
-        frame_stats: schemas["FrameStats"].clone(),
-        inspectors: schemas,
-    })
-}
-
-fn bricks_summary(registry: &Registry) -> Value {
-    registry
-        .names()
-        .map(|brick| {
-            let operations: Vec<&str> = registry
-                .operations()
-                .filter(|operation| operation.brick == brick)
-                .map(|operation| operation.name)
-                .collect();
-            let inspectors: Vec<&str> = registry
-                .sections()
-                .filter(|section| section.brick == brick)
-                .map(|section| section.key)
-                .chain(
-                    registry
-                        .stats()
-                        .filter(|stats| stats.brick == brick)
-                        .map(|stats| stats.key),
-                )
-                .collect();
-            json!({
-                "name": brick,
-                "operations": operations,
-                "inspectors": inspectors,
-            })
-        })
-        .collect()
+    let protocol = serde_json::to_string_pretty(&summary)
+        .map_err(|error| format!("cannot write JSON: {error}"))?;
+    Ok(vec![
+        ("scene.schema.json", scene_schema),
+        ("protocol.json", protocol + "\n"),
+    ])
 }
 
 fn core_names(
@@ -297,7 +250,7 @@ fn version_schema() -> Value {
     serialized(schemars::SchemaGenerator::default().subschema_for::<u32>())
 }
 
-fn verb_schema(registry: &Registry, verb: Verb) -> Value {
+pub(crate) fn verb_schema(registry: &Registry, verb: Verb) -> Value {
     match verb {
         Verb::Describe => enveloped(verb, schemars::schema_for!(protocol::DescribeRequest)),
         Verb::Inspect => enveloped(verb, schemars::schema_for!(protocol::InspectRequest)),
@@ -550,39 +503,6 @@ fn references(value: &Value, names: &mut Vec<String>) {
         }
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
-}
-
-fn frame_stats(mut schema: Value, registry: &Registry, problems: &mut Vec<String>) -> Value {
-    let mut definitions = schema["$defs"].as_object().cloned().unwrap_or_default();
-    let mut properties = schema["properties"]
-        .as_object()
-        .cloned()
-        .unwrap_or_default();
-    let mut required = schema["required"].as_array().cloned().unwrap_or_default();
-    for stats in registry.stats() {
-        let (name, definition) = definition_of(serialized(stats.schema()), &mut definitions);
-        let mut definition = definition;
-        if let Some(fields) = definition.as_object_mut() {
-            fields.remove("title");
-        }
-        if name.is_empty() {
-            problems.push(format!(
-                "the {} brick's stats schema names no type",
-                stats.brick
-            ));
-            continue;
-        }
-        definitions.insert(name.clone(), definition);
-        properties.insert(
-            stats.key.to_owned(),
-            json!({ "$ref": format!("#/$defs/{name}") }),
-        );
-        required.push(json!(stats.key));
-    }
-    schema["$defs"] = Value::Object(definitions);
-    schema["properties"] = Value::Object(properties);
-    schema["required"] = Value::Array(required);
-    schema
 }
 
 fn reserved_inspectors(problems: &mut Vec<String>) {

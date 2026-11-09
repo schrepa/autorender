@@ -1,10 +1,9 @@
-import package::engine::mesh::declarations::MotionOutput;
 import package::engine::shading::ViewPixel;
 import package::engine::view::view_pixel;
 import package::generated::writes::{Outputs, blended_outputs, outputs};
 import package::meshes::shade::{extended_fragment, extended_motion_output, fragment, masked_depth,
     shade, motion_output};
-import package::meshes::vertex::ExtendedMotionOutput;
+import package::meshes::vertex::{ExtendedMotionOutput, MotionOutput};
 import package::place::instances::SlotShaded;
 
 fn drawn_pixel(clip_position: vec4<f32>, previous: vec3<f32>) -> ViewPixel {

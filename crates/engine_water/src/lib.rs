@@ -136,6 +136,8 @@ impl Brick for WaterBrick {
                 kind: water::WATER_KIND,
                 vertex: shaders::water::surface::VS_WATER.name(),
                 needs: Attributes::NONE,
+                casts_shadows: false,
+                seen_by_probes: false,
             })
             .pass::<water::WaterPass>()
             .draws::<water::WaterGpu>(water::WATER_KIND, water::WaterGpu::draw);

@@ -28,7 +28,36 @@
       "meshes": [
         {"id": "box", "source": {"kind": "cube"}},
         {"id": "floor", "source": {"kind": "plane"}},
-        {"id": "gem", "source": {"kind": "octahedron"}}
+        {"id": "gem", "source": {
+          "kind": "inline",
+          "vertices": [
+            {"position": [0, -0.5, 0], "normal": [0.57735026, -0.57735026, 0.57735026], "uv": [0.5, 0]},
+            {"position": [0.5, 0, 0], "normal": [0.57735026, -0.57735026, 0.57735026], "uv": [0, 1]},
+            {"position": [0, 0, 0.5], "normal": [0.57735026, -0.57735026, 0.57735026], "uv": [1, 1]},
+            {"position": [0, -0.5, 0], "normal": [-0.57735026, -0.57735026, 0.57735026], "uv": [0.5, 0]},
+            {"position": [0, 0, 0.5], "normal": [-0.57735026, -0.57735026, 0.57735026], "uv": [0, 1]},
+            {"position": [-0.5, 0, 0], "normal": [-0.57735026, -0.57735026, 0.57735026], "uv": [1, 1]},
+            {"position": [0, -0.5, 0], "normal": [-0.57735026, -0.57735026, -0.57735026], "uv": [0.5, 0]},
+            {"position": [-0.5, 0, 0], "normal": [-0.57735026, -0.57735026, -0.57735026], "uv": [0, 1]},
+            {"position": [0, 0, -0.5], "normal": [-0.57735026, -0.57735026, -0.57735026], "uv": [1, 1]},
+            {"position": [0, -0.5, 0], "normal": [0.57735026, -0.57735026, -0.57735026], "uv": [0.5, 0]},
+            {"position": [0, 0, -0.5], "normal": [0.57735026, -0.57735026, -0.57735026], "uv": [0, 1]},
+            {"position": [0.5, 0, 0], "normal": [0.57735026, -0.57735026, -0.57735026], "uv": [1, 1]},
+            {"position": [0, 0.5, 0], "normal": [0.57735026, 0.57735026, 0.57735026], "uv": [0.5, 0]},
+            {"position": [0, 0, 0.5], "normal": [0.57735026, 0.57735026, 0.57735026], "uv": [0, 1]},
+            {"position": [0.5, 0, 0], "normal": [0.57735026, 0.57735026, 0.57735026], "uv": [1, 1]},
+            {"position": [0, 0.5, 0], "normal": [-0.57735026, 0.57735026, 0.57735026], "uv": [0.5, 0]},
+            {"position": [-0.5, 0, 0], "normal": [-0.57735026, 0.57735026, 0.57735026], "uv": [0, 1]},
+            {"position": [0, 0, 0.5], "normal": [-0.57735026, 0.57735026, 0.57735026], "uv": [1, 1]},
+            {"position": [0, 0.5, 0], "normal": [-0.57735026, 0.57735026, -0.57735026], "uv": [0.5, 0]},
+            {"position": [0, 0, -0.5], "normal": [-0.57735026, 0.57735026, -0.57735026], "uv": [0, 1]},
+            {"position": [-0.5, 0, 0], "normal": [-0.57735026, 0.57735026, -0.57735026], "uv": [1, 1]},
+            {"position": [0, 0.5, 0], "normal": [0.57735026, 0.57735026, -0.57735026], "uv": [0.5, 0]},
+            {"position": [0.5, 0, 0], "normal": [0.57735026, 0.57735026, -0.57735026], "uv": [0, 1]},
+            {"position": [0, 0, -0.5], "normal": [0.57735026, 0.57735026, -0.57735026], "uv": [1, 1]}
+          ],
+          "indices": [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+        }}
       ],
       "prefabs": [{"id": "lamp", "entities": [
         {"id": "post", "drawn": {"mesh": "box", "material": "plain"}, "transform": {"scale": [0.1, 2, 0.1]}},
@@ -79,7 +108,6 @@
     {"rule": "invalid_collider_transform", "path": "$.entities[0].collider", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "e", "transform": {"scale": [100, 1, 1]}, "collider": {"shape": {"kind": "cuboid", "half_extents": [1000, 1, 1]}}}]}},
     {"rule": "invalid_spline", "path": "$.entities[0].spline.points", "document": {"id": "a", "revision": 1, "materials": [{"id": "m", "color": [1, 1, 1, 1]}], "meshes": [{"id": "box", "source": {"kind": "cube"}}], "entities": [{"id": "e", "spline": {"points": [[0, 0, 0]], "mesh": "box", "material": "m"}}]}},
     {"rule": "invalid_value", "path": "$.entities[0].tags", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "e", "tags": ["t0", "t1", "t2", "t3", "t4", "t5", "t6", "t7", "t8", "t9", "t10", "t11", "t12", "t13", "t14", "t15", "t16"]}]}},
-    {"rule": "invalid_value", "path": "$.prefabs[0].entities", "prefab": 10001},
     {"rule": "invalid_terrain", "path": "$.entities[0].terrain.layers", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "e", "terrain": {"origin": [0, 0, 0], "tiles": [1, 1], "spacing": 1, "layers": []}}]}},
     {"rule": "invalid_streamed", "path": "$.environment.streamed.streamed[0].terrain", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [], "environment": {"streamed": {"streamed": [{"id": "s", "terrain": {"origin": [0, 0, 0], "tiles": [1, 1], "spacing": 1, "layers": [{"type": "noise", "seed": 1, "height": 1, "wavelength": 10}]}}]}}}},
     {"rule": "unreadable_map", "path": "$.entities[0].terrain.surface.biomes[0].layers[0].mask.map", "document": {"id": "a", "revision": 1, "materials": [{"id": "plain", "color": [1, 1, 1, 1]}], "meshes": [{"id": "box", "source": {"kind": "cube"}}], "entities": [{"id": "e", "terrain": {"origin": [0, 0, 0], "tiles": [1, 1], "spacing": 1, "layers": [{"type": "noise", "seed": 1, "height": 1, "wavelength": 400}], "surface": {"materials": [{"id": "m", "color": [0.1, 0.1, 0.1]}], "biomes": [{"id": "b", "layers": [{"material": "m", "mask": {"map": "custom"}}]}]}}}]}},

@@ -5,7 +5,7 @@ import clients from "../generated/clients.json";
 import type { HighlandsGame, HighlandsRocks } from "../../pkg/highlands";
 import JobWorker from "./worker.ts?worker";
 
-declare const __PUBLIC_KTX2__: readonly string[];
+declare const __HIGHLANDS_ROCKS__: readonly string[];
 
 const FOLDER = "highlands/";
 const parameters: Record<string, string> = {};
@@ -20,7 +20,7 @@ function sceneSource() {
 }
 
 async function rocks(found: HighlandsRocks, signal: AbortSignal): Promise<HighlandsRocks> {
-  await Promise.all(__PUBLIC_KTX2__.filter(path => path.startsWith(`${FOLDER}rocks/`)).map(async path => {
+  await Promise.all(__HIGHLANDS_ROCKS__.map(async path => {
     try {
       const response = await fetch(new URL(`${import.meta.env.BASE_URL}${path}`, location.href), { signal });
       if (response.ok) found.add(path.slice(FOLDER.length), new Uint8Array(await response.arrayBuffer()));

@@ -191,7 +191,6 @@ dependencies = [
  "engine_sources",
  "engine_standard_rendering",
  "glam 0.30.9",
- "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -1244,6 +1243,7 @@ dependencies = [
  "engine_core",
  "engine_ecs",
  "engine_places",
+ "engine_places_rendering",
  "engine_render",
  "engine_sources",
  "serde",
@@ -1368,6 +1368,7 @@ dependencies = [
  "engine_core",
  "engine_ecs",
  "engine_places",
+ "engine_places_rendering",
  "engine_render",
  "engine_sources",
  "serde_json",
@@ -1567,7 +1568,6 @@ dependencies = [
  "engine",
  "engine_core",
  "engine_profiler",
- "engine_texture_cook",
  "engine_worker",
  "gilrs",
  "gltf",
@@ -1846,6 +1846,7 @@ dependencies = [
  "bytemuck",
  "engine_core",
  "engine_ecs",
+ "engine_heightfield",
  "engine_math",
  "engine_places",
  "engine_places_rendering",
@@ -2031,6 +2032,7 @@ dependencies = [
  "engine_sun",
  "engine_taa",
  "engine_text",
+ "engine_texture_cook",
  "engine_time_of_day",
  "engine_tonemap",
  "engine_ui",
@@ -2127,12 +2129,12 @@ dependencies = [
 name = "engine_texture_cook"
 version = "0.1.0"
 dependencies = [
- "engine_assets",
  "engine_codec",
  "engine_core",
  "engine_ecs",
  "engine_math",
- "engine_textures",
+ "engine_sources",
+ "libm",
 ]
 
 [[package]]
@@ -2141,8 +2143,6 @@ version = "0.1.0"
 dependencies = [
  "engine_assets",
  "engine_codec",
- "engine_math",
- "libm",
  "png",
  "serde_json",
  "zune-jpeg",
@@ -2244,6 +2244,7 @@ dependencies = [
  "engine_codec",
  "engine_core",
  "engine_ecs",
+ "engine_heightfield",
  "engine_places_rendering",
  "engine_places_simulation",
  "engine_places_world",
@@ -2984,6 +2985,7 @@ dependencies = [
 name = "kinds"
 version = "0.1.0"
 dependencies = [
+ "engine_registry",
  "serde_json",
  "toml_edit",
 ]

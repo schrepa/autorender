@@ -1,7 +1,6 @@
 use engine_core::PauseReason;
 
 use super::now_ms;
-use super::policy::{BETWEEN_MARGIN_MS, PREPARE_LIMIT_MS};
 use crate::{Game, GameHost};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -143,24 +142,26 @@ impl FrameLoop {
             Stage::Preparing { since } => since,
         };
         let preparing = Stage::Preparing { since };
-        let late = now_ms() - since > PREPARE_LIMIT_MS as f64;
+        host.set_preparation_ms(now_ms() - since);
         host.frame(timestamp, width, height)?;
         self.spare(host);
         let after = host.frame_stats();
-        if after.readiness.compiling > 0 && !late {
+        if after.readiness.compiling > 0 {
             return Ok((preparing, FramePhase::Compiling));
         }
         let listing = host.prepare_pipelines();
-        if (listing || after.render.pipelines_created > 0 || !after.readiness.settled()) && !late {
+        if listing || after.render.pipelines_created > 0 || !after.readiness.settled() {
             return Ok((preparing, FramePhase::Preparing));
         }
+        host.set_preparation_ms(now_ms() - since);
         host.hold_preparation(false);
         host.suspend();
         Ok((Stage::Playing, FramePhase::Started))
     }
 
     fn spare<G: Game>(&self, host: &mut GameHost<G>) {
-        let spare = self.started + host.refresh_interval() - now_ms() - BETWEEN_MARGIN_MS;
+        let margin = crate::pacing::of(host.engine().app.world()).margin_ms;
+        let spare = self.started + host.refresh_interval() - now_ms() - margin;
         host.set_spare_time(spare);
     }
 }

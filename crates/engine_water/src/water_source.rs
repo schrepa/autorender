@@ -1,7 +1,7 @@
-use engine_core::math::{GRAVITY, max, min};
+use engine_math::{GRAVITY, max, min};
 use engine_heightfield::{Fall, Pyramid};
 use engine_places_simulation::ground::GroundRead;
-use engine_places_simulation::water::{WaterKind, WaterSample};
+use engine_places_simulation::water::WaterSample;
 use glam::{Vec2, Vec3};
 
 use crate::WaterPoint;
@@ -20,15 +20,10 @@ pub(crate) fn water_at(
         let local = point - origin;
         let read = water_point(terrain, Vec2::new(local.x, local.z));
         let held = read.ready().flatten().map(|water| WaterSample {
-            kind: if water.lake {
-                WaterKind::Lake
-            } else {
-                WaterKind::River
-            },
             surface: water.surface,
             depth: water.depth,
             velocity: [water.flow.x, 0.0, water.flow.y],
-            foam: water.state.breaking,
+            falling: false,
         });
         let found = [held, fall(&terrain.falls, local)]
             .into_iter()
@@ -97,11 +92,10 @@ fn fall(falls: &[Fall], point: Vec3) -> Option<WaterSample> {
             let falling = (2.0 * GRAVITY * max(top.y - height, 0.0)).sqrt();
             let heading = across.normalize_or(Vec2::X) * horizontal;
             Some(WaterSample {
-                kind: WaterKind::Fall,
                 surface: height,
                 depth: SHEET,
                 velocity: [heading.x, -falling, heading.y],
-                foam: 1.0,
+                falling: true,
             })
         })
     })

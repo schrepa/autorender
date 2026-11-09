@@ -467,15 +467,8 @@ fn missing_record(path: &str) -> Error {
     Error::new(ErrorCode::InvalidRecord, path).got(MISSING_RECORD)
 }
 
-#[doc(hidden)]
-pub static TEXTURE_COOK_SOURCE: Source =
-    Source::generated("engine_texture_cook", false, crate::sources::TEXTURE_COOK, &[]);
-
 static LODBUILD: Source =
     Source::generated("engine_lodbuild", false, crate::sources::LODBUILD, &[]);
-
-#[doc(hidden)]
-pub const TEXTURE_COOK_NAME: &str = "engine::texture_cook";
 
 pub(crate) const MESH_LODS_NAME: &str = "engine::mesh_lods";
 

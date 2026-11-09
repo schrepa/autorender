@@ -1,5 +1,5 @@
 use super::*;
-use engine_core::{SceneIds, bounds};
+use engine_core::SceneIds;
 use engine_places_simulation::ground::UNKNOWN_TERRAIN;
 
 #[derive(Serialize, schemars::JsonSchema)]
@@ -24,8 +24,10 @@ pub(super) fn out_of_range(invalid: InvalidSetting, path: impl Into<String>) -> 
     }
 }
 
+const COORDINATE: Rule = Rule::Range(-1.0e6, 1.0e6);
+
 pub(super) fn coordinate(value: f64, path: &str) -> Result<f32, Error> {
-    within(value, bounds::COORDINATE, path).map(|value| value as f32)
+    within(value, COORDINATE, path).map(|value| value as f32)
 }
 
 pub(super) fn within(value: f64, rule: Rule, path: &str) -> Result<f64, Error> {

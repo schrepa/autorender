@@ -1,6 +1,5 @@
-import package::engine::math::{GRAVITY, pcg, unit};
-import package::engine::view::PI;
-import package::generated::water::{BREAK_THINNEST, TURBULENT_SPEED};
+import package::engine::math::{PI, pcg, unit};
+import package::generated::water::{BREAK_THINNEST, GRAVITY, TURBULENT_SPEED};
 
 const WATER_STEEPEST: f32 = 0.44879895;
 

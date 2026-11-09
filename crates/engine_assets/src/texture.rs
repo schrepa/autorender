@@ -2,8 +2,6 @@ use std::sync::OnceLock;
 
 use engine_codec::{Error, ErrorCode, Expected};
 
-pub const MAX_TEXTURE_DIMENSION: u32 = 8192;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TextureFormat {
     Rgba8,
@@ -14,12 +12,15 @@ pub enum TextureFormat {
 
 impl TextureFormat {
     pub fn level_bytes(self, width: u32, height: u32) -> usize {
-        match self {
-            Self::Rgba8 => width as usize * height as usize * 4,
+        let (columns, rows, block) = match self {
+            Self::Rgba8 => (width, height, 4),
             Self::Bc7 | Self::Etc2Rgba8 | Self::Astc4x4 => {
-                width.div_ceil(4) as usize * height.div_ceil(4) as usize * 16
+                (width.div_ceil(4), height.div_ceil(4), 16)
             }
-        }
+        };
+        (columns as usize)
+            .saturating_mul(rows as usize)
+            .saturating_mul(block)
     }
 
     pub fn is_compressed(self) -> bool {
@@ -264,10 +265,8 @@ impl Texture {
 
 fn check_size(format: TextureFormat, width: u32, height: u32) -> Result<(), Error> {
     for (path, size) in [("$.width", width), ("$.height", height)] {
-        if !(1..=MAX_TEXTURE_DIMENSION).contains(&size) {
-            return Err(invalid(path)
-                .range(1.0, f64::from(MAX_TEXTURE_DIMENSION))
-                .got(size));
+        if size == 0 {
+            return Err(invalid(path).at_least(1).got(size));
         }
         if format.is_compressed() && !size.is_multiple_of(4) {
             return Err(invalid(path)

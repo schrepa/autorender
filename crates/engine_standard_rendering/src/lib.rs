@@ -26,12 +26,14 @@ pub use engine_sky::SkyBrick;
 pub use engine_sun::SunBrick;
 pub use engine_taa::TaaBrick;
 pub use engine_text::TextBrick;
+pub use engine_texture_cook::TextureCook;
 pub use engine_time_of_day::TimeOfDayBrick;
 pub use engine_tonemap::TonemapBrick;
 pub use engine_ui::UiBrick;
 
 pub fn rendering<L: Listing>(list: L) -> L {
-    list.with::<TimeOfDayBrick>()
+    list.with::<TextureCook>()
+        .with::<TimeOfDayBrick>()
         .with::<SunBrick>()
         .with::<LightingModelBrick>()
         .with::<MeshesBrick>()

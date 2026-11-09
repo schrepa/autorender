@@ -124,3 +124,11 @@ fn material_look(base: u32, material: u32) -> MaterialLook {
 fn ground_sky(terrain: u32, local: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(1.0, 0.5, 0.5, 0.5);
 }
+
+fn detail_span(world: vec3<f32>, normal: vec3<f32>) -> vec4<f32> {
+    return vec4<f32>(0.0);
+}
+
+fn detail_resolved(span: vec2<f32>) -> f32 {
+    return 0.0;
+}

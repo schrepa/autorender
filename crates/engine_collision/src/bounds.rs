@@ -1,4 +1,4 @@
-use engine_settings::Rule;
+use engine_core::Rule;
 
 pub const MAX_PAGE_SIZE: usize = 100;
 pub const MAX_SCAN_ENTITIES: usize = 10_000;

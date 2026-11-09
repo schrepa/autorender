@@ -174,7 +174,6 @@ pub struct SceneMesh {
 pub enum MeshSource {
     Cube {},
     Plane {},
-    Octahedron {},
     Inline {
         #[cfg_attr(feature = "schema", schemars(length(min = 1)))]
         vertices: Vec<SceneVertex>,
@@ -206,7 +205,6 @@ impl MeshSource {
             Self::Provided { name } => Some(name),
             Self::Cube {}
             | Self::Plane {}
-            | Self::Octahedron {}
             | Self::Inline { .. }
             | Self::Buffer { .. } => None,
         }
@@ -216,7 +214,6 @@ impl MeshSource {
         match self {
             Self::Cube {} => Ok(Mesh::cube()),
             Self::Plane {} => Ok(Mesh::plane()),
-            Self::Octahedron {} => Ok(Mesh::octahedron()),
             Self::Provided { name } => {
                 crate::validation::identifier(name, &format!("{path}.name"))?;
                 Ok(Mesh::cube())
@@ -304,7 +301,7 @@ engine_settings::fields! {
     #[serde(deny_unknown_fields)]
     pub struct ScenePrefab {
         pub id: String = String::new() => id,
-        pub entities: Vec<SceneObject> = Vec::new() => count(0, 10_000),
+        pub entities: Vec<SceneObject> = Vec::new() => any,
     }
 }
 

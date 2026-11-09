@@ -3,8 +3,8 @@ use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use engine_core::{AttachPoint, Entry, Error, ErrorCode};
+use wgpu::ShaderStages;
 
-use crate::bindings::Stages;
 use crate::frame_group::{Class, FrameVariable, Reach};
 use crate::graph::{
     Access as GraphAccess, Clear, Declared as GraphPass, FAR, Life, PassEntry, PassId,
@@ -126,7 +126,7 @@ pub(crate) fn layout_key(pipeline: &BuiltPipeline) -> String {
 
 pub(crate) struct FrameVariant {
     pub(crate) layout: wgpu::BindGroupLayout,
-    pub(crate) entries: Vec<(u32, Stages)>,
+    pub(crate) entries: Vec<(u32, ShaderStages)>,
     pub(crate) camera: bool,
 }
 
@@ -162,30 +162,16 @@ pub(crate) struct Machine {
     pub(crate) over_limit: Vec<Error>,
 }
 
-fn layout_entries(entries: &[(u32, Ty, Stages)]) -> Vec<wgpu::BindGroupLayoutEntry> {
+fn layout_entries(entries: &[(u32, Ty, ShaderStages)]) -> Vec<wgpu::BindGroupLayoutEntry> {
     entries
         .iter()
-        .map(|&(binding, ty, stages)| wgpu::BindGroupLayoutEntry {
+        .map(|&(binding, ty, visibility)| wgpu::BindGroupLayoutEntry {
             binding,
-            visibility: shader_stages(stages),
+            visibility,
             ty: ty.binding(true, false),
             count: None,
         })
         .collect()
-}
-
-pub(crate) fn shader_stages(stages: Stages) -> wgpu::ShaderStages {
-    let mut shader = wgpu::ShaderStages::NONE;
-    if stages.vertex() {
-        shader |= wgpu::ShaderStages::VERTEX;
-    }
-    if stages.fragment() {
-        shader |= wgpu::ShaderStages::FRAGMENT;
-    }
-    if stages.compute() {
-        shader |= wgpu::ShaderStages::COMPUTE;
-    }
-    shader
 }
 
 fn class(ty: Ty, dynamic: bool) -> Class {
@@ -198,21 +184,21 @@ fn class(ty: Ty, dynamic: bool) -> Class {
     }
 }
 
-fn stage_of(entry: Entry, linker: &Linker) -> Stages {
+fn stage_of(entry: Entry, linker: &Linker) -> ShaderStages {
     let (path, name) = crate::linker::path_of((entry.module(), entry.name()));
     let text = linker.text(path).unwrap_or_default();
     let Some(at) = text.find(&format!("fn {name}(")) else {
-        return Stages::FRAGMENT;
+        return ShaderStages::FRAGMENT;
     };
     let before = &text[..at];
     let start = before.rfind(['}', ';']).map_or(0, |end| end + 1);
     let attributes = &before[start..];
     if attributes.contains("@compute") {
-        Stages::COMPUTE
+        ShaderStages::COMPUTE
     } else if attributes.contains("@vertex") {
-        Stages::VERTEX
+        ShaderStages::VERTEX
     } else {
-        Stages::FRAGMENT
+        ShaderStages::FRAGMENT
     }
 }
 
@@ -424,7 +410,7 @@ pub(crate) fn core_target(name: &str) -> Option<Target> {
     }
 }
 
-type Reached = Vec<(String, crate::linker::Declaration, Stages)>;
+type Reached = Vec<(String, crate::linker::Declaration, ShaderStages)>;
 
 fn own_writes(decl: &PipelineDecl, reached: &Reached, linker: &Linker) -> Vec<Handle> {
     reached
@@ -487,10 +473,7 @@ impl Machine {
         declared: Declared,
         outputs: Vec<OutputDecl>,
         switches: Vec<(u32, engine_registry::GateId)>,
-        (limits, material_table): (
-            &crate::pipelines::StageLimits,
-            &'static crate::bindings::Table,
-        ),
+        limits: &crate::pipelines::StageLimits,
         problems: &mut Vec<Error>,
     ) -> Option<Self> {
         let numbered = linker.number();
@@ -517,8 +500,19 @@ impl Machine {
                 frame_bound.insert(number, bind.bound.clone());
             }
         }
-        let material = crate::pipelines::layout(device, material_table);
-        let material_layout: wgpu::BindGroupLayout = (*material).clone();
+        let material_group = crate::linker::declarations(
+            linker
+                .text(crate::surface::MATERIALS_MODULE)
+                .unwrap_or_default(),
+        );
+        let material_entries: Vec<wgpu::BindGroupLayoutEntry> = material_group
+            .iter()
+            .map(crate::surface::material_entry)
+            .collect();
+        let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("engine/material-group"),
+            entries: &material_entries,
+        });
         let empty = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("engine/empty-group"),
             entries: &[],
@@ -549,7 +543,7 @@ impl Machine {
                             match reached.iter_mut().find(|(known, found, _)| {
                                 *known == module && found.name == declaration.name
                             }) {
-                                Some((_, _, stages)) => *stages = Stages(stages.0 | at.0),
+                                Some((_, _, stages)) => *stages |= at,
                                 None => reached.push((module, declaration, at)),
                             }
                         }
@@ -594,7 +588,7 @@ impl Machine {
             }
             let label: &'static str = Box::leak(named.into_boxed_str());
             let is_material = |module: &str, group: u32| group == 1 && linker.is_core(module);
-            let mut own: Vec<(Class, Stages)> = reached
+            let mut own: Vec<(Class, ShaderStages)> = reached
                 .iter()
                 .filter(|(module, found, _)| found.group > 0 && !is_material(module, found.group))
                 .map(|(_, found, stages)| (class(found.ty, false), *stages))
@@ -603,16 +597,12 @@ impl Machine {
                 .iter()
                 .any(|(module, found, _)| is_material(module, found.group))
             {
-                own.extend(material_table.bindings.iter().map(|binding| {
-                    let class = match binding.kind {
-                        crate::bindings::Kind::Uniform { dynamic, .. } => {
-                            Class::Uniform { dynamic }
-                        }
-                        crate::bindings::Kind::Texture { .. } => Class::Texture,
-                        crate::bindings::Kind::Sampler(_) => Class::Sampler,
-                    };
-                    (class, Stages::FRAGMENT)
-                }));
+                own.extend(
+                    material_group
+                        .iter()
+                        .zip(&material_entries)
+                        .map(|(declared, entry)| (class(declared.ty, false), entry.visibility)),
+                );
             }
             let groups = reached
                 .iter()
@@ -620,7 +610,7 @@ impl Machine {
                 .map(|(_, found, _)| found.group)
                 .max()
                 .unwrap_or(0);
-            let frame_reached: Vec<(u32, Stages)> = reached
+            let frame_reached: Vec<(u32, ShaderStages)> = reached
                 .iter()
                 .filter(|(_, found, _)| found.group == 0)
                 .filter_map(|(module, found, stages)| {
@@ -716,7 +706,7 @@ impl Machine {
             .variants
             .iter()
             .map(|variant| {
-                let entries: Vec<(u32, Ty, Stages)> = variant
+                let entries: Vec<(u32, Ty, ShaderStages)> = variant
                     .entries
                     .iter()
                     .map(|&(at, stages)| (numbers[at as usize], core_frame[at as usize].2, stages))
@@ -758,7 +748,7 @@ impl Machine {
                 (variant, format!("{layout:?}"))
             })
             .unzip();
-        let material_key = format!("{material_table:?}");
+        let material_key = format!("{material_entries:?}");
         let mut pipelines = Vec::with_capacity(staged.len());
         for (index, (decl, stages, reached)) in staged.into_iter().enumerate() {
             let skipped = plan.skipped.get(index).copied().unwrap_or(false);
@@ -819,15 +809,18 @@ impl Machine {
                     .entries
                     .iter()
                     .map(|(binding, bound, ty)| {
-                        let stages = reached
+                        let visibility = reached
                             .iter()
                             .find(|(_, found, _)| {
                                 found.group == group.index && found.binding == *binding
                             })
-                            .map_or(Stages::VERTEX_FRAGMENT_COMPUTE, |(_, _, stages)| *stages);
+                            .map_or(
+                                ShaderStages::VERTEX_FRAGMENT | ShaderStages::COMPUTE,
+                                |(_, _, stages)| *stages,
+                            );
                         wgpu::BindGroupLayoutEntry {
                             binding: *binding,
-                            visibility: shader_stages(stages),
+                            visibility,
                             ty: ty
                                 .binding(filterable_bound(Some(bound), &declared), bound.window()),
                             count: None,

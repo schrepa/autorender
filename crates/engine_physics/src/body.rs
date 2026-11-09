@@ -2,7 +2,6 @@ use std::borrow::Cow;
 
 use engine_core::{Error, ErrorCode, InvalidSetting, Rule, Setting};
 use engine_places_simulation::physics::{BodyChange, BodyPush, RigidBody};
-use engine_places_simulation::water::WaterKind;
 use glam::Vec3;
 use serde::Serialize;
 use serde_json::Value;
@@ -37,7 +36,7 @@ pub(crate) enum BodyProblem {
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 pub(crate) struct BodyWater {
-    pub kind: WaterKind,
+    pub falling: bool,
     pub submerged: f32,
     pub current: [f32; 3],
 }

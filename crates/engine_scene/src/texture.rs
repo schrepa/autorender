@@ -1,5 +1,5 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use engine_core::{Error, MAX_TEXTURE_DIMENSION, Texture};
+use engine_core::{Error, Texture};
 use engine_settings::{ErrorCode, Expected, valid_uri};
 use serde::{Deserialize, Serialize};
 
@@ -15,16 +15,10 @@ pub struct SceneTexture {
     )]
     pub id: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(
-        feature = "schema",
-        schemars(range(min = 1, max = engine_core::MAX_TEXTURE_DIMENSION))
-    )]
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     pub width: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(
-        feature = "schema",
-        schemars(range(min = 1, max = engine_core::MAX_TEXTURE_DIMENSION))
-    )]
+    #[cfg_attr(feature = "schema", schemars(range(min = 1)))]
     pub height: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rgba8: Option<String>,
@@ -90,17 +84,17 @@ impl SceneTexture {
             }
             (None, None, Some(width), Some(height), Some(rgba8)) => {
                 for (field, size) in [("width", width), ("height", height)] {
-                    if !(1..=MAX_TEXTURE_DIMENSION).contains(&size) {
+                    if size == 0 {
                         return Err(Error::new(
                             ErrorCode::InvalidTexture,
                             format!("{path}.{field}"),
                         )
-                        .range(1.0, f64::from(MAX_TEXTURE_DIMENSION))
+                        .at_least(1)
                         .got(size));
                     }
                 }
-                let bytes = width as usize * height as usize * 4;
-                let encoded = bytes.div_ceil(3) * 4;
+                let bytes = engine_core::TextureFormat::Rgba8.level_bytes(width, height);
+                let encoded = bytes.div_ceil(3).saturating_mul(4);
                 if rgba8.len() != encoded {
                     return Err(
                         Error::new(ErrorCode::InvalidTexture, format!("{path}.rgba8"))

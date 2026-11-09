@@ -54,14 +54,14 @@ pub struct MipGenerator {
 
 impl MipGenerator {
     pub fn new(device: &wgpu::Device) -> Self {
-        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("engine/texture-mip-sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
+        let sampler = crate::materials::gpu_sampler(
+            device,
+            "engine/texture-mip-sampler",
+            engine_core::Sampler {
+                mipmap_filter: Some(engine_core::Filter::Nearest),
+                ..engine_core::Sampler::LINEAR_CLAMP
+            },
+        );
         Self { sampler }
     }
 

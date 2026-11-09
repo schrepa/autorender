@@ -52,15 +52,6 @@ macro_rules! __game_surface {
                 fn dev_reloaded(source: &str, context: &str, files: Option<SceneFileSet>) -> String as Json<Step>;
                 fn dev_refusal(error: &str) -> String as Json<Reply>;
             }
-            profiling_mut {
-                fn profiling_start(max_events: u32) -> Result<(), $crate::__private::JsValue>;
-                fn profiling_stop() -> Result<String, $crate::__private::JsValue>;
-                fn profiling_poll();
-                fn profiling_report() -> String;
-            }
-            profiling_ref {
-                fn profiling_status() -> String;
-            }
         }
     };
 }
@@ -137,8 +128,6 @@ macro_rules! __export_game {
         always_mut { $( fn $am:ident($($am_arg:ident: $am_ty:ty),*) $(-> $am_ret:ty $(as $am_json:ty)?)?; )* }
         always_ref { $( fn $ar:ident($($ar_arg:ident: $ar_ty:ty),*) $(-> $ar_ret:ty $(as $ar_json:ty)?)?; )* }
         dev_mut { $( fn $dm:ident($($dm_arg:ident: $dm_ty:ty),*) $(-> $dm_ret:ty $(as $dm_json:ty)?)?; )* }
-        profiling_mut { $( fn $pm:ident($($pm_arg:ident: $pm_ty:ty),*) $(-> $pm_ret:ty $(as $pm_json:ty)?)?; )* }
-        profiling_ref { $( fn $pr:ident($($pr_arg:ident: $pr_ty:ty),*) $(-> $pr_ret:ty $(as $pr_json:ty)?)?; )* }
     ) => {
         #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
         #[derive(Default)]
@@ -239,12 +228,6 @@ macro_rules! __export_game {
         }
 
         $crate::__if_profiling! {
-            #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
-            impl $name {
-                $( pub fn $pm(&mut self, $($pm_arg: $pm_ty),*) $(-> $pm_ret)? { self.host.$pm($($pm_arg),*) } )*
-                $( pub fn $pr(&self, $($pr_arg: $pr_ty),*) $(-> $pr_ret)? { self.host.$pr($($pr_arg),*) } )*
-            }
-
             #[global_allocator]
             static ALLOCATOR: $crate::profiling::TrackingAllocator<::std::alloc::System> =
                 $crate::profiling::TrackingAllocator::new(::std::alloc::System);

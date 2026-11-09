@@ -8,6 +8,7 @@ extern crate engine_ecs as bevy_ecs;
 pub mod animation;
 pub mod audio;
 pub mod exposure;
+pub mod impostors;
 pub mod lighting;
 pub mod lights;
 pub mod occlusion;
@@ -70,6 +71,9 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<audio::Sounds>(),
     PlaceDecl::component::<audio::SoundSource>("sound_source"),
     PlaceDecl::slot::<screens::Screens>(),
+    PlaceDecl::slot::<impostors::Impostors>(),
+    PlaceDecl::component::<impostors::ImpostorAsks>("impostor_asks"),
+    PlaceDecl::component::<impostors::ImpostorRecords>("impostor_records"),
     PlaceDecl::component::<screens::Screen>("screen"),
     PlaceDecl::ask::<screens::ScreenAsk>(),
 ];

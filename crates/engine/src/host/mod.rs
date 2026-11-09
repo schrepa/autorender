@@ -4,7 +4,6 @@ mod frame_loop;
 mod input;
 mod jobs;
 mod level;
-mod looks;
 mod pipeline_list;
 pub mod policy;
 mod resolution;
@@ -27,16 +26,15 @@ pub(crate) use jobs::{Finished, JobScheduler};
 pub use jobs::JobOrder;
 pub(crate) use level::{LevelLoad, LevelStep};
 pub(crate) use pipeline_list::PipelineList;
-pub(crate) use resolution::DynamicScale;
 pub use resolution::{render_size, view_size};
 pub use scene_load::{
     FileRead, IMAGE_FORMATS, Image, ImageFormat, SceneLoad, decode_image, image_format,
 };
+pub use engine_registry::run_operation;
 pub use settings::{
     HostSettings, OVERLAY, SETTINGS, Setting, SettingsLog, apply_setting, apply_settings,
-    has_setting, reset_setting, run_operation,
+    has_setting, reset_setting,
 };
-pub use looks::show_look;
 
 #[cfg(all(feature = "schema", not(target_arch = "wasm32")))]
 pub fn typescript() -> String {

@@ -492,6 +492,13 @@
           "minimum": 0.0,
           "type": "number"
         },
+        "margin": {
+          "default": 0.10000000149011612,
+          "format": "float",
+          "maximum": 0.5,
+          "minimum": 0.0,
+          "type": "number"
+        },
         "pixel_error": {
           "default": 1.0,
           "format": "float",
@@ -1431,19 +1438,6 @@
         {
           "additionalProperties": false,
           "properties": {
-            "kind": {
-              "const": "octahedron",
-              "type": "string"
-            }
-          },
-          "required": [
-            "kind"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "properties": {
             "indices": {
               "items": {
                 "format": "uint32",
@@ -2055,6 +2049,40 @@
           "type": "array"
         }
       },
+      "type": "object"
+    },
+    "Pond": {
+      "additionalProperties": false,
+      "properties": {
+        "center": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "size": {
+          "items": {
+            "exclusiveMinimum": 0.0,
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "surface": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "center",
+        "size",
+        "surface"
+      ],
       "type": "object"
     },
     "Projection": {
@@ -2870,39 +2898,6 @@
       },
       "type": "object"
     },
-    "SceneDynamicResolution": {
-      "additionalProperties": false,
-      "properties": {
-        "budget_ms": {
-          "format": "float",
-          "maximum": 1000.0,
-          "minimum": 1.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
-        "enabled": {
-          "default": false,
-          "type": "boolean"
-        },
-        "max_scale": {
-          "default": 1.0,
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.25,
-          "type": "number"
-        },
-        "min_scale": {
-          "default": 0.5,
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.25,
-          "type": "number"
-        }
-      },
-      "type": "object"
-    },
     "SceneEmitter": {
       "additionalProperties": false,
       "properties": {
@@ -3244,20 +3239,20 @@
             }
           ]
         },
-        "dynamic_resolution": {
+        "feeds": {
           "anyOf": [
             {
-              "$ref": "#/$defs/SceneDynamicResolution"
+              "$ref": "#/$defs/FeedSettings"
             },
             {
               "type": "null"
             }
           ]
         },
-        "feeds": {
+        "fly_camera": {
           "anyOf": [
             {
-              "$ref": "#/$defs/FeedSettings"
+              "$ref": "#/$defs/SceneFlyCamera"
             },
             {
               "type": "null"
@@ -3308,6 +3303,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneGroundCover"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "grounding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneGrounding"
             },
             {
               "type": "null"
@@ -3398,6 +3403,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneOccupancy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pacing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScenePacing"
             },
             {
               "type": "null"
@@ -3644,6 +3659,37 @@
       ],
       "type": "string"
     },
+    "SceneFlyCamera": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "look_sensitivity": {
+          "default": 0.003000000026077032,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "speed": {
+          "default": 22.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "turn_speed": {
+          "default": 1.7999999523162842,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
     "SceneFoliage": {
       "additionalProperties": false,
       "properties": {
@@ -3785,6 +3831,19 @@
       },
       "type": "object"
     },
+    "SceneGrounding": {
+      "additionalProperties": false,
+      "properties": {
+        "deck_above": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
     "SceneHaze": {
       "additionalProperties": false,
       "properties": {
@@ -3866,6 +3925,13 @@
     "SceneImpostors": {
       "additionalProperties": false,
       "properties": {
+        "cutoff": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
         "enabled": {
           "default": false,
           "type": "boolean"
@@ -3877,6 +3943,12 @@
             "integer",
             "null"
           ]
+        },
+        "min_triangles": {
+          "default": 64,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
         "pixels": {
           "default": 128.0,
@@ -4489,6 +4561,16 @@
             }
           ]
         },
+        "pond": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Pond"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "prefab": {
           "maxLength": 64,
           "minLength": 1,
@@ -4691,6 +4773,31 @@
       },
       "type": "object"
     },
+    "ScenePacing": {
+      "additionalProperties": false,
+      "properties": {
+        "interval_limit_ms": {
+          "default": 100.0,
+          "exclusiveMinimum": 0.0,
+          "format": "double",
+          "type": "number"
+        },
+        "margin_ms": {
+          "default": 4.0,
+          "format": "double",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "smoothing": {
+          "default": 0.1,
+          "exclusiveMinimum": 0.0,
+          "format": "double",
+          "maximum": 1.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
     "SceneParticleBlend": {
       "enum": [
         "alpha",
@@ -4778,7 +4885,6 @@
           "items": {
             "$ref": "#/$defs/SceneObject"
           },
-          "maxItems": 10000,
           "type": "array"
         },
         "id": {
@@ -4897,22 +5003,28 @@
       "additionalProperties": false,
       "properties": {
         "max_height": {
-          "default": 1440,
           "format": "uint32",
           "minimum": 1,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "max_pixel_ratio": {
-          "default": 1.5,
           "exclusiveMinimum": 0.0,
           "format": "float",
-          "type": "number"
+          "type": [
+            "number",
+            "null"
+          ]
         },
         "max_width": {
-          "default": 2560,
           "format": "uint32",
           "minimum": 1,
-          "type": "integer"
+          "type": [
+            "integer",
+            "null"
+          ]
         },
         "scale": {
           "default": 1.0,
@@ -5024,6 +5136,12 @@
           "minimum": 64,
           "type": "integer"
         },
+        "changes": {
+          "default": 1024,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
         "enabled": {
           "default": true,
           "type": "boolean"
@@ -5046,6 +5164,12 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "sample_texels": {
+          "default": 2.0,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
         },
         "tile_texels": {
           "default": 128,
@@ -5501,6 +5625,18 @@
         },
         "specular": {
           "default": 1.0,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "specular_limit": {
+          "default": 0.20000000298023224,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "specular_variance": {
+          "default": 0.15000000596046448,
           "format": "float",
           "minimum": 0.0,
           "type": "number"
@@ -6158,7 +6294,6 @@
       "properties": {
         "height": {
           "format": "uint32",
-          "maximum": 8192,
           "minimum": 1,
           "type": [
             "integer",
@@ -6197,7 +6332,6 @@
         },
         "width": {
           "format": "uint32",
-          "maximum": 8192,
           "minimum": 1,
           "type": [
             "integer",

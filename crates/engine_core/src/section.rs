@@ -48,7 +48,6 @@ pub const RESERVED_REPLY_KEYS: [&str; 4] = ["observation", "paused", "source", "
 pub trait Operation: Send + Sync + 'static {
     const NAME: &'static str;
     const CONTROL: bool = true;
-    const LISTED: bool = true;
     type Params: SystemParam + 'static;
     type Request: DeserializeOwned + 'static;
     fn run(

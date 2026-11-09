@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use bevy_ecs::system::SystemState;
 use bevy_ecs::world::World;
-use engine_core::{DrawKind, Error, ErrorCode};
+use engine_core::{DrawKind, Error, ErrorCode, KindDecl};
 use engine_registry::Scope;
 
 use crate::draws::RawDraw;
@@ -86,7 +86,7 @@ impl KindDraw {
 #[derive(Clone)]
 pub(crate) struct KindMember {
     pub(crate) part: u32,
-    pub(crate) kind: DrawKind,
+    pub(crate) kind: KindDecl,
     pub(crate) call: KindCall,
 }
 

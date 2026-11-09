@@ -4,11 +4,12 @@ use engine_codec::{self as codec, Reader, Writer, record};
 use engine_core::{Error, ErrorCode, Expected, Job, JobCx, JobKind, RecordKey};
 use engine_heightfield::grid::{Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey};
 use engine_heightfield::layer::LayerKind;
+use engine_heightfield::path::lay_decks;
 use engine_heightfield::tile::{
     Generator, Recipe, TerrainRecipe, Tile, TileJob, shaded_elsewhere, stamped,
 };
 use engine_heightfield::{INVALID_TERRAIN, Layers, Stamp, reaches};
-use engine_places_simulation::ground::{GroundBridge, GroundGrid};
+use engine_places_simulation::ground::GroundGrid;
 use engine_places_world::terrain::TerrainLayers;
 use glam::Vec2;
 
@@ -211,31 +212,11 @@ impl Job for Gridding {
             .advance(&mut whole)
             .ok_or_else(invalid_heights)?;
         let tile: Tile = codec::decode(&codec::encode(&tile))?;
-        let bridges = ground_bridges(&layers);
-        Ok(Some(codec::encode(&ground_grid(
-            &tile, &layers, &pyramid, bridges,
-        ))))
+        Ok(Some(codec::encode(&ground_grid(&tile, &layers, &pyramid))))
     }
 }
 
-pub(crate) fn ground_bridges(layers: &Layers) -> Arc<[GroundBridge]> {
-    layers
-        .bridges()
-        .into_iter()
-        .map(|bridge| GroundBridge {
-            deck: bridge.deck,
-            width: bridge.width,
-            tunnel: bridge.tunnel,
-        })
-        .collect()
-}
-
-fn ground_grid(
-    tile: &Tile,
-    layers: &Layers,
-    pyramid: &Pyramid,
-    bridges: Arc<[GroundBridge]>,
-) -> GroundGrid {
+fn ground_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> GroundGrid {
     let side = TILE_SAMPLES as usize;
     let key = tile.key();
     let spacing = pyramid.spacing(u32::from(key.level));
@@ -248,12 +229,12 @@ fn ground_grid(
         }
     }
     let first = pyramid.first_sample(key);
+    lay_decks(&layers.bridges(), first, spacing, &mut heights);
     GroundGrid {
         key,
         spacing,
         heights,
         holes: holes(layers, first, spacing),
-        bridges,
         water: tile_surfaces(tile),
     }
 }

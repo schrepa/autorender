@@ -33,6 +33,7 @@ engine_taa.workspace = true
 engine_auto_exposure.workspace = true
 engine_tonemap.workspace = true
 engine_debug_view.workspace = true
+engine_texture_cook.workspace = true
 
 [lints]
 workspace = true

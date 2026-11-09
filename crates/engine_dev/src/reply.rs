@@ -4,8 +4,7 @@ use serde_json::Value;
 
 use engine_core::PresentationState;
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct Reply {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub version: Option<u32>,
@@ -13,17 +12,13 @@ pub struct Reply {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub observation: Option<Observation>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        schemars(with = "Option<serde_json::Map<String, Value>>")
-    )]
+    #[schemars(with = "Option<serde_json::Map<String, Value>>")]
     pub result: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<Error>,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct Observation {
     pub frame: Option<String>,
     pub tick: Option<String>,
@@ -31,8 +26,7 @@ pub struct Observation {
     pub presentation: PresentationState,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct SceneObservation {
     pub id: String,
     pub revision: String,

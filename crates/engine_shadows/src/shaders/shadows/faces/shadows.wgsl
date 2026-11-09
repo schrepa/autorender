@@ -1,5 +1,4 @@
 import package::generated::pieces::shadows::piece;
-import package::generated::shadows::KEPT_GROUND_TEXELS;
 import package::place::shadows::KeptTexels;
 import package::shadows::sample::{air_visibility, level_window, shadow_level, sun_shadowed};
 
@@ -22,7 +21,8 @@ fn kept_texels(world: vec3<f32>) -> KeptTexels {
 
 fn kept_level(texel: f32, spacing: f32, levels: u32) -> u32 {
     var level = 0u;
-    while level + 1u < levels && spacing * f32(1u << level) < KEPT_GROUND_TEXELS * texel {
+    let finest = piece().level_state.w * texel;
+    while level + 1u < levels && spacing * f32(1u << level) < finest {
         level++;
     }
     return level;

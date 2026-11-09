@@ -40,7 +40,7 @@ pub use passes::{
     PassBit, PassCull, PassEntry, PassMask, PassName, PassRaster, PassViews, ScenePass, ScenePasses,
     SlotSet,
     TargetName, Writes,
-    every, never,
+    every, never, wgsl_name,
 };
 pub use readback::{FrameId, Readable, Readback};
 pub use readiness::Readiness;

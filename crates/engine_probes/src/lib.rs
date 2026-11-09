@@ -14,7 +14,7 @@ mod probes;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AttachPoint, Brick, Bricks, ComponentKind, Cut, DrawKind, Pass, PassName, PassViews,
+    AttachPoint, Brick, Bricks, ComponentKind, Cut, KindDecl, Pass, PassName, PassViews,
     SceneComponents, Schedule, SlotSet, Source, Writes, gpu_consts, settings, stats,
 };
 use engine_places_rendering::lighting::{Ambient, Interiors};
@@ -40,11 +40,8 @@ impl PassName for ProbePass {
     };
 }
 
-fn reflected(kind: DrawKind) -> bool {
-    !matches!(
-        kind.name(),
-        "particles" | "sprites" | "text" | "ui" | "water" | "cover"
-    )
+fn reflected(kind: &KindDecl) -> bool {
+    kind.seen_by_probes
 }
 
 settings! {

@@ -4,7 +4,7 @@ use bevy_ecs::resource::Resource;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::{DrawKind, Error, ErrorCode, gpu_bits};
+use crate::{DrawKind, Error, ErrorCode, KindDecl, gpu_bits};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -13,7 +13,7 @@ pub enum AttachPoint {
     Depth,
     Inputs,
     Opaque,
-    Sky,
+    LateOpaque,
     Transparent,
     Post,
     Display,
@@ -25,7 +25,7 @@ impl AttachPoint {
         Self::Depth,
         Self::Inputs,
         Self::Opaque,
-        Self::Sky,
+        Self::LateOpaque,
         Self::Transparent,
         Self::Post,
         Self::Display,
@@ -37,7 +37,7 @@ impl AttachPoint {
             Self::Depth => "depth",
             Self::Inputs => "inputs",
             Self::Opaque => "opaque",
-            Self::Sky => "sky",
+            Self::LateOpaque => "late_opaque",
             Self::Transparent => "transparent",
             Self::Post => "post",
             Self::Display => "display",
@@ -47,7 +47,7 @@ impl AttachPoint {
 
     pub const fn scene(self) -> bool {
         match self {
-            Self::Depth | Self::Opaque | Self::Sky | Self::Transparent => true,
+            Self::Depth | Self::Opaque | Self::LateOpaque | Self::Transparent => true,
             Self::Inputs | Self::Post | Self::Display | Self::Overlay => false,
         }
     }
@@ -168,7 +168,7 @@ pub struct Pass {
     pub reads: SlotSet,
     pub views: PassViews,
     pub at: AttachPoint,
-    pub takes: fn(DrawKind) -> bool,
+    pub takes: fn(&KindDecl) -> bool,
 }
 
 impl Pass {
@@ -177,11 +177,11 @@ impl Pass {
     }
 }
 
-pub fn every(_: DrawKind) -> bool {
+pub fn every(_: &KindDecl) -> bool {
     true
 }
 
-pub fn never(_: DrawKind) -> bool {
+pub fn never(_: &KindDecl) -> bool {
     false
 }
 
@@ -310,6 +310,7 @@ pub struct ScenePass {
 #[derive(Resource, Clone, Debug, Default)]
 pub struct ScenePasses {
     listed: Vec<ScenePass>,
+    kinds: Vec<KindDecl>,
 }
 
 pub const CORE_PASSES: [PassEntry; 2] = [
@@ -319,7 +320,7 @@ pub const CORE_PASSES: [PassEntry; 2] = [
 
 pub const CORE_BRICK: &str = "engine_render";
 
-fn wgsl_name(name: &str) -> String {
+pub fn wgsl_name(name: &str) -> String {
     name.chars()
         .map(|character| {
             if character.is_ascii_alphanumeric() {
@@ -332,7 +333,10 @@ fn wgsl_name(name: &str) -> String {
 }
 
 impl ScenePasses {
-    pub fn of(registered: impl IntoIterator<Item = (&'static str, PassEntry)>) -> (Self, Vec<Error>) {
+    pub fn of(
+        registered: impl IntoIterator<Item = (&'static str, PassEntry)>,
+        kinds: Vec<KindDecl>,
+    ) -> (Self, Vec<Error>) {
         let mut entries: Vec<(&'static str, PassEntry)> = registered.into_iter().collect();
         entries.sort_by(|first, second| (first.0, first.1.name).cmp(&(second.0, second.1.name)));
         let mut listed: Vec<ScenePass> = Vec::with_capacity(entries.len() + CORE_PASSES.len());
@@ -362,11 +366,19 @@ impl ScenePasses {
                 bit,
             });
         }
-        (Self { listed }, problems)
+        (Self { listed, kinds }, problems)
     }
 
     pub fn listed(&self) -> &[ScenePass] {
         &self.listed
+    }
+
+    pub fn kind(&self, kind: DrawKind) -> Option<&KindDecl> {
+        self.kinds.iter().find(|decl| decl.kind == kind)
+    }
+
+    pub fn takes(&self, pass: &Pass, kind: DrawKind) -> bool {
+        self.kind(kind).is_some_and(|decl| (pass.takes)(decl))
     }
 
     pub fn get(&self, name: &str) -> Option<&ScenePass> {
@@ -390,7 +402,7 @@ impl ScenePasses {
     pub fn defaults(&self, kind: DrawKind) -> PassMask {
         self.listed
             .iter()
-            .filter_map(|listed| listed.bit.filter(|_| (listed.pass.takes)(kind)))
+            .filter_map(|listed| listed.bit.filter(|_| self.takes(&listed.pass, kind)))
             .fold(PassMask::NONE, |mask, bit| mask.set(bit, true))
     }
 

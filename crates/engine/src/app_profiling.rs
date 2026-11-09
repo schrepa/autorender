@@ -2,6 +2,10 @@ use super::{AppHost, now_ms};
 use engine_core::{Error, ErrorCode};
 use engine_settings::Expected;
 use serde_json::{Value, json};
+use std::ops::RangeInclusive;
+
+pub const PROFILE_EVENTS: RangeInclusive<usize> = 256..=engine_profile::MAX_EVENTS;
+pub const PROFILE_DURATION_MS: RangeInclusive<u64> = 100..=5000;
 
 fn linear_memory_bytes() -> Option<usize> {
     #[cfg(target_arch = "wasm32")]
@@ -40,9 +44,9 @@ impl AppHost {
 
     pub fn profiling_start(&mut self, max_events: usize) -> Result<(), Error> {
         engine_profile::set_clock(now_ms);
-        if !(1..=engine_profile::MAX_EVENTS).contains(&max_events) {
+        if !PROFILE_EVENTS.contains(&max_events) {
             return Err(Error::new(ErrorCode::InvalidArguments, "$.max_events")
-                .range(1.0, engine_profile::MAX_EVENTS as f64)
+                .range(*PROFILE_EVENTS.start() as f64, *PROFILE_EVENTS.end() as f64)
                 .got(max_events));
         }
         if engine_profile::active() {
@@ -74,11 +78,6 @@ impl AppHost {
 
     pub fn profiling_poll(&mut self) {
         self.renderer.profile_poll();
-    }
-
-    pub fn profiling_status(&self) -> Value {
-        json!({"enabled": true, "active": engine_profile::active(),
-            "capture_id": engine_profile::capture_id(), "gpu": self.renderer.profile_status()})
     }
 
     pub fn profiling_report(&mut self) -> Value {

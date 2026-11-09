@@ -7,7 +7,6 @@ extern crate self as engine_core;
 
 mod assets;
 mod authoring;
-pub mod bounds;
 mod bricks;
 mod clock;
 mod cook;
@@ -66,7 +65,7 @@ pub use engine_assets::{
     Aabb, AlphaMode, Asset, AssetBudget, AssetLibrary, Attribute, Attributes, GeometryStream,
     AttributeFormat, InstanceInput, VertexSkin,
     ColorSpace, Compare, Cull, DepthBias, Filter, LightingModel, LodInput,
-    LodLevel, MAX_TEXTURE_DIMENSION, Material, MaterialBinding, Mesh,
+    LodLevel, Material, MaterialBinding, Mesh,
     MeshLods, MeshVertex, BASE_COLOR_MAP, EMISSIVE_MAP, MAPPED, MAPPED_MAPS, MAPPED_SLOTS,
     METALLIC_ROUGHNESS_MAP, NORMAL_MAP, OCCLUSION_MAP, RenderState, Sampler,
     Surface, SurfaceSlot, Texture, TextureFormat, TextureRef, UvTransform, Wrap, attributes_wgsl,
@@ -129,6 +128,12 @@ pub mod codec {
 }
 
 #[doc(hidden)]
+pub mod textures {
+    pub use engine_assets::srgb_decoded;
+    pub use engine_textures::{bc7, plain, record};
+}
+
+#[doc(hidden)]
 pub mod __private {
     pub use ::bytemuck;
     pub use ::schemars;
@@ -164,8 +169,6 @@ use schedules::{
     TransformPropagation, ViewSync, WorldSync,
 };
 
-pub const MAX_DEV_TICKS: u32 = 120;
-
 static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::list::<SceneComponents>(),
     PlaceDecl::list::<CursorRequests>(),
@@ -174,6 +177,7 @@ static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::list::<WholeFrames>(),
     PlaceDecl::list::<Pause>(),
     PlaceDecl::list::<CookList>(),
+    PlaceDecl::list::<TextureJobs>(),
     PlaceDecl::ledger::<FrameBudget>("frame_budget"),
     PlaceDecl::ledger::<Readiness>("readiness"),
     PlaceDecl::ledger::<AssetLibrary>("asset_library"),
@@ -190,11 +194,11 @@ static CORE_PLACES: &[PlaceDecl] = &[
 
 #[cfg(feature = "dev")]
 pub fn check_dev_ticks(ticks: u32) -> Result<(), Error> {
-    if (1..=MAX_DEV_TICKS).contains(&ticks) {
+    if ticks >= 1 {
         Ok(())
     } else {
         Err(Error::new(ErrorCode::InvalidStep, "$.ticks")
-            .range(1.0, f64::from(MAX_DEV_TICKS))
+            .at_least(1)
             .got(ticks))
     }
 }
@@ -321,7 +325,11 @@ fn install_passes(world: &mut World) {
                 .map(move |entry| (record.package, *entry))
         })
         .collect();
-    let (passes, problems) = ScenePasses::of(registered);
+    let kinds = world
+        .get_resource::<DrawnTable>()
+        .map(|table| table.kinds().to_vec())
+        .unwrap_or_default();
+    let (passes, problems) = ScenePasses::of(registered, kinds);
     world.insert_resource(passes);
     if let Some(mut registry) = world.get_resource_mut::<Registry>() {
         for problem in problems {
@@ -346,9 +354,7 @@ impl Engine {
 
     fn on_board(config: EngineConfig, board: Board) -> Self {
         let clock = FixedClock::new(config);
-        let mut assets = AssetLibrary::default();
-        assets.insert_cube().expect("unlimited_library_holds_cube");
-        assets.set_budget(config.asset_budget);
+        let assets = AssetLibrary::new(config.asset_budget);
         let exchange = JobExchange::default();
         let listed = JobListed::of(exchange.list());
         let cores = std::thread::available_parallelism()
@@ -467,8 +473,9 @@ impl Engine {
         let labels: [InternedScheduleLabel; 8] = Schedule::ALL.map(Schedule::label);
         let mut gates = registry.install(world, &labels);
         moves::install_kinds(world);
-        install_passes(world);
         drawn::install_kinds(world);
+        install_passes(world);
+        records::install_jobs(world);
         let mut twice = world
             .get_resource::<MembersOf<SceneComponents>>()
             .map(|members| members.names_twice(|kind| kind.key()))

@@ -1,8 +1,8 @@
-import package::engine::math::GRAVITY;
-import package::engine::view::{PI, detail_across, eye_world};
+import package::engine::math::PI;
+import package::engine::view::{detail_across, eye_world};
 import package::face::heightfield::{terrain_uniform, terrain_view_uniform, use_terrain};
 import package::generated::water::{BREAK_FULL, BREAK_ONSET, BREAK_THINNEST, DENSITY, FOAM_LIFE,
-    FOAM_LOSS, FOAM_POWER, FOAM_WET, PARTICLE_ARGS, PARTICLE_DRAW, PARTICLE_FOAM_BEFORE,
+    FOAM_LOSS, FOAM_POWER, FOAM_WET, GRAVITY, PARTICLE_ARGS, PARTICLE_DRAW, PARTICLE_FOAM_BEFORE,
     PARTICLE_FOAM_BORN, PARTICLE_FOAM_DROPPED, PARTICLE_FOAM_LIVE, PARTICLE_GROUP, PARTICLE_ITEMS,
     PARTICLE_LATTICE, PARTICLE_MARGIN, PARTICLE_SIDE, PARTICLE_WAVES_BEFORE, PARTICLE_WAVES_BORN,
     PARTICLE_WAVES_DROPPED, PARTICLE_WAVES_LIVE, ParticleFrame, SURFACE_BEND, SURFACE_BEND_MOST,

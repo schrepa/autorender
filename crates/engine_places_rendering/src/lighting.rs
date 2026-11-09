@@ -3,9 +3,6 @@ use engine_place::{List, Slot};
 
 use crate::shadows::{DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL, DEBUG_SUN_NONE};
 
-pub const SPECULAR_VARIANCE: f32 = 0.15;
-pub const SPECULAR_LIMIT: f32 = 0.2;
-
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Lighting {
     pub highlights: bool,
@@ -13,11 +10,7 @@ pub struct Lighting {
 
 impl Slot for Lighting {
     const NAME: &'static str = "lighting";
-    const WGSL: Option<&'static str> = Some(engine_places::contract!(
-        "places/lighting.wgsl";
-        SPECULAR_VARIANCE,
-        SPECULAR_LIMIT,
-    ));
+    const WGSL: Option<&'static str> = Some(include_str!("places/lighting.wgsl"));
 }
 
 pub struct SunBlockers;

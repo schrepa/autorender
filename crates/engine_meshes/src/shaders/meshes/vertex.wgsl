@@ -1,5 +1,5 @@
-import package::engine::mesh::declarations::{AffinePose as PoseRows, MotionOutput,
-    drawn_slot_moved, drawn_slot_slot};
+import package::engine::mesh::declarations::{AffinePose as PoseRows, drawn_slot_moved,
+    drawn_slot_slot};
 import package::engine::drawn::{GeometryExtra, GeometrySkin, GeometryVertex, INPUT_DRAW,
     INPUT_SLOT, drawn_clip, drawn_flags_own_projection, drawn_records};
 import package::engine::mesh::vertex::{pose_matrix, transform_vertex};
@@ -9,6 +9,14 @@ import package::engine::view::{camera, detail_across, view_clip};
 import package::face::skin::skin_pose;
 import package::meshes::slots::{instance_colors, slot_pose, slot_previous_pose};
 import package::place::instances::{AffinePose, SlotColor};
+
+struct MotionOutput {
+    @invariant @builtin(position) clip_position: vec4<f32>,
+    @location(0) normal_u: vec4<f32>,
+    @location(1) world_v: vec4<f32>,
+    @location(2) @interpolate(flat) material: vec4<u32>,
+    @location(3) previous: vec3<f32>,
+}
 
 fn rows(pose: AffinePose) -> PoseRows {
     return PoseRows(pose.row_0, pose.row_1, pose.row_2);

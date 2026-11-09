@@ -136,18 +136,6 @@ pub(crate) struct Reading {
     pub(crate) slot_bytes: Option<u64>,
 }
 
-fn post_sampler(device: &wgpu::Device) -> wgpu::Sampler {
-    device.create_sampler(&wgpu::SamplerDescriptor {
-        label: Some("engine/post-sampler"),
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Linear,
-        ..Default::default()
-    })
-}
-
 fn stale_holders(machine: &Machine) -> std::collections::BTreeSet<Holder> {
     (0..machine.variants.len())
         .map(|variant| Holder::Frame(variant as u32))
@@ -195,7 +183,11 @@ impl Run {
         assets: Assets,
     ) -> Self {
         let camera = uniform_buffer(&device, "engine/cameras", CAMERA_STRIDE);
-        let linear = post_sampler(&device);
+        let linear = crate::materials::gpu_sampler(
+            &device,
+            "engine/post-sampler",
+            engine_core::Sampler::LINEAR_CLAMP,
+        );
         let pieces = uniform_buffer(&device, "engine/pieces", crate::pieces::PIECE_ALIGN);
         let samplers = machine
             .declared

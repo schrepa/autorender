@@ -1,5 +1,4 @@
 // @ts-check
-import { readFileSync } from "node:fs";
 import { copyFile, mkdir, readFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { AgentError, VERSION, atMost, checkOptions, failure, options } from "./agent-protocol.mjs";
@@ -30,13 +29,6 @@ function poses(plan) {
     if (!Number.isInteger(ticks) || ticks < 0) throw new AgentError("invalid_value", `${path}.ticks`, { expected: "integer", got: ticks });
     return { name: pose.name, camera: pose.camera, ticks, views };
   });
-}
-
-function stepLimit() {
-  const controls = JSON.parse(readFileSync(new URL("../../crates/engine_dev/src/generated/inspectors.json", import.meta.url), "utf8")).control.oneOf;
-  const most = controls.find(control => control.properties?.name?.const === "step")?.properties?.args?.properties?.ticks?.maximum;
-  if (!Number.isInteger(most) || most < 1) throw new AgentError("missing_field", "$.control.step.ticks.maximum", { expected: "integer", got: most ?? null });
-  return most;
 }
 
 async function listedViews(ask) {
@@ -95,11 +87,10 @@ async function look(owned, values) {
       const moved = await ask({ verb: "control", name: "camera", args: pose.camera });
       if (!moved.ok) { failed(pose.name, { request: "camera", error: moved.error }); continue; }
     }
-    const most = pose.ticks > 0 ? stepLimit() : 0;
-    for (let left = pose.ticks; left > 0; left -= most) {
-      const stepped = await ask({ verb: "control", name: "step", args: { ticks: Math.min(left, most) } });
-      if (!stepped.ok) { failed(pose.name, { request: "step", error: stepped.error }); break; }
-      ticked += Math.min(left, most);
+    if (pose.ticks > 0) {
+      const stepped = await ask({ verb: "control", name: "step", args: { ticks: pose.ticks } });
+      if (stepped.ok) ticked += pose.ticks;
+      else failed(pose.name, { request: "step", error: stepped.error });
     }
     for (const view of [OFF, ...pose.views]) {
       const name = view === OFF ? pose.name : `${pose.name}/${view}`;
@@ -122,7 +113,7 @@ async function look(owned, values) {
       if (!captured.ok) { failed(name, { request: "capture", error: captured.error }); continue; }
       const drawn = captured.result?.rendering ?? rendering;
       judged(name, drawn);
-      const meshes = drawn.meshes_stats ?? {};
+      const meshes = drawn.bricks?.meshes_stats ?? {};
       const png = resolve(out, `${String(++shot).padStart(2, "0")}-${name.replace(/[^A-Za-z0-9_]+/g, "-")}.png`);
       await copyFile(resolve(workspace, captured.result.artifact.path), png);
       if (!settled) failures++;

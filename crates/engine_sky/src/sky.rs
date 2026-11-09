@@ -625,7 +625,7 @@ impl GpuPart for SkyGpu {
         cx.frame(piece::SKY_AIR, Bind::Buffer(air_buffer))?;
         let dome_pass = cx
             .pass("sky_dome")
-            .at(AttachPoint::Sky)
+            .at(AttachPoint::LateOpaque)
             .label("engine/sky-dome")
             .span("sky_dome")
             .id();

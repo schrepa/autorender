@@ -5,10 +5,9 @@ import package::engine::mapped::mask_coverage;
 import package::engine::mapped::metalness as mapped_metalness;
 import package::engine::mapped::normal as mapped_normal;
 import package::engine::mapped::roughness as mapped_roughness;
-import package::engine::surfaces::SURFACE_THIN;
 import package::engine::view::fade_noise;
 import package::face::foliage::foliage;
-import package::face::lighting::LightInputs;
+import package::face::lighting::{LightInputs, SURFACE_THIN};
 import package::scatter::grounding::{grounded_color, grounded_metalness, grounded_normal,
     grounded_roughness};
 import package::scatter::values::placed_values_of;

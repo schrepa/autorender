@@ -1,6 +1,6 @@
 use engine_core::{Error, ErrorCode};
+use wgpu::ShaderStages;
 
-use crate::bindings::Stages;
 use crate::pipelines::StageLimits;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -25,13 +25,13 @@ pub(crate) struct Reach {
     pub(crate) pass: u32,
     pub(crate) alone: bool,
     pub(crate) own_groups: u32,
-    pub(crate) own: Vec<(Class, Stages)>,
-    pub(crate) reached: Vec<(u32, Stages)>,
+    pub(crate) own: Vec<(Class, ShaderStages)>,
+    pub(crate) reached: Vec<(u32, ShaderStages)>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Variant {
-    pub(crate) entries: Vec<(u32, Stages)>,
+    pub(crate) entries: Vec<(u32, ShaderStages)>,
     pub(crate) members: Vec<u32>,
 }
 
@@ -77,10 +77,10 @@ impl Counted {
     }
 }
 
-const STAGES: [(&str, Stages); 3] = [
-    ("vertex", Stages::VERTEX),
-    ("fragment", Stages::FRAGMENT),
-    ("compute", Stages::COMPUTE),
+const STAGES: [(&str, ShaderStages); 3] = [
+    ("vertex", ShaderStages::VERTEX),
+    ("fragment", ShaderStages::FRAGMENT),
+    ("compute", ShaderStages::COMPUTE),
 ];
 
 fn dynamic(kind: Class) -> bool {
@@ -93,7 +93,7 @@ fn storage(kind: Class) -> bool {
 
 fn fits(
     reach: &Reach,
-    entries: &[(u32, Stages)],
+    entries: &[(u32, ShaderStages)],
     variables: &[FrameVariable],
     limits: &StageLimits,
 ) -> Result<(), (&'static str, &'static str)> {
@@ -111,12 +111,12 @@ fn fits(
     for (name, stage) in STAGES {
         let mut counted = Counted::default();
         for &(kind, visible) in &reach.own {
-            if visible.covers(stage) {
+            if visible.intersects(stage) {
                 counted.add(kind);
             }
         }
         for &(variable, visible) in entries {
-            if visible.covers(stage) {
+            if visible.intersects(stage) {
                 counted.add(variables[variable as usize].kind);
             }
         }
@@ -156,11 +156,14 @@ fn refused(
     .got(reached)
 }
 
-fn joined(first: &[(u32, Stages)], second: &[(u32, Stages)]) -> Vec<(u32, Stages)> {
-    let mut entries: Vec<(u32, Stages)> = first.to_vec();
+fn joined(
+    first: &[(u32, ShaderStages)],
+    second: &[(u32, ShaderStages)],
+) -> Vec<(u32, ShaderStages)> {
+    let mut entries: Vec<(u32, ShaderStages)> = first.to_vec();
     for &(variable, stages) in second {
         match entries.iter_mut().find(|(known, _)| *known == variable) {
-            Some((_, visible)) => *visible = Stages(visible.0 | stages.0),
+            Some((_, visible)) => *visible |= stages,
             None => entries.push((variable, stages)),
         }
     }
@@ -168,7 +171,11 @@ fn joined(first: &[(u32, Stages)], second: &[(u32, Stages)]) -> Vec<(u32, Stages
     entries
 }
 
-fn adds_storage(reach: &Reach, entries: &[(u32, Stages)], variables: &[FrameVariable]) -> bool {
+fn adds_storage(
+    reach: &Reach,
+    entries: &[(u32, ShaderStages)],
+    variables: &[FrameVariable],
+) -> bool {
     entries.iter().any(|&(variable, _)| {
         storage(variables[variable as usize].kind)
             && !reach.reached.iter().any(|&(known, _)| known == variable)

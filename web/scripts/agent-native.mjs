@@ -185,14 +185,6 @@ export async function launchNativeSession({ program, args = [] }) {
       session, url: `native:${relative(workspace, program).split(sep).join("/")}`, instance: identity.instance,
       adapter: identity.adapter, close, setInvalidated,
       async execute(command) {
-        if (command.verb === "describe" && command.name === "ProfileCapture") {
-          if (Object.keys(command).some(key => !["verb", "name"].includes(key))) throw new AgentError("unknown_field", "$", { allowed: variants(["verb", "name"]) });
-          const response = await request(status);
-          if (!response.ok) return response;
-          const { nativeProfileDescriptor } = await import("./agent-profile.mjs");
-          response.result = { ...nativeProfileDescriptor, status: { available: identity.profiling === true, native: true, counters: identity.counters === true, pix: identity.pix === true } };
-          return response;
-        }
         if (command.verb === "capture" && command.compare !== undefined) {
           const { compare, ...capture } = command;
           if (typeof compare?.b === "string") return compareCaptures(compare, request);

@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use engine_codec::Error;
 use engine_core::GpuBits;
-use engine_core::math::GRAVITY;
+use engine_math::GRAVITY;
 use engine_heightfield::noise::smooth;
 use engine_heightfield::rivers::{RiverRaster, Rivers};
 use engine_heightfield::tile::{
@@ -34,7 +34,6 @@ pub struct WaterPoint {
     pub flow: Vec2,
     pub span: f32,
     pub lake: bool,
-    pub state: PointState,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -199,12 +198,6 @@ impl TileWater {
     pub(crate) fn sample_info(&self, x: i32, z: i32) -> (Vec2, bool, f32) {
         let stride = TILE_STRIDE as i32;
         unpack(self.info[((z + 1) * stride + x + 1) as usize][0])
-    }
-
-    #[inline]
-    pub(crate) fn sample_state(&self, x: i32, z: i32) -> PointState {
-        let stride = TILE_STRIDE as i32;
-        unpack_state(self.info[((z + 1) * stride + x + 1) as usize][1])
     }
 }
 
@@ -747,7 +740,6 @@ fn point_on(
         return None;
     }
     let info = at.map(|(x, z)| water.sample_info(x, z));
-    let states = at.map(|(x, z)| water.sample_state(x, z));
     Some(WaterPoint {
         surface,
         depth,
@@ -757,12 +749,6 @@ fn point_on(
         ),
         span: on_triangle(info.map(|(_, _, span)| span), fu, fv),
         lake: info[corners[0]].1,
-        state: PointState {
-            turbulence: on_triangle(states.map(|state| state.turbulence), fu, fv),
-            breaking: on_triangle(states.map(|state| state.breaking), fu, fv),
-            shear: on_triangle(states.map(|state| state.shear), fu, fv),
-            reach: states[corners[0]].reach,
-        },
     })
 }
 

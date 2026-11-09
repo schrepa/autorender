@@ -846,7 +846,9 @@ impl Run {
         };
         self.installs.draw_entries
             .iter()
-            .filter(|member| pass.members.contains(&member.part) && (scene.pass.takes)(member.kind))
+            .filter(|member| {
+                pass.members.contains(&member.part) && (scene.pass.takes)(&member.kind)
+            })
             .cloned()
             .collect()
     }

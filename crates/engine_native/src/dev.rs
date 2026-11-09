@@ -17,6 +17,7 @@ use crate::{file_error, files};
 
 const FRAME: Duration = Duration::from_micros(16_667);
 const TIMING: &str = "offscreen_gpu_waited";
+const PROFILE_CAPTURE: &str = "ProfileCapture";
 
 pub struct GameControl<G: Game> {
     pub values: String,
@@ -109,9 +110,6 @@ impl<G: Game> DevSession<G> {
             "instance": self.instance,
             "size": [size.0, size.1],
             "adapter": adapter(self.game.host()),
-            "profiling": cfg!(feature = "profiling"),
-            "counters": counting(),
-            "pix": self.pix.is_some(),
             "controls": self.controls.iter().map(|(name, control)| (name.clone(), json!(control.values))).collect::<Map<_, _>>(),
             "parameters": self.parameters,
         }));
@@ -171,19 +169,26 @@ impl<G: Game> DevSession<G> {
     fn request(&mut self, line: &str, late: &dyn Fn() -> Option<Value>) -> Value {
         if line.len() <= engine::dev::MAX_REQUEST_BYTES
             && let Ok(Value::Object(command)) = serde_json::from_str::<Value>(line)
-            && command.get("verb") == Some(&json!("profile"))
-            && let Some(deep) = command.get("deep")
         {
-            return match deep {
-                Value::Object(deep) => self.profile(deep),
-                Value::Null
-                | Value::Bool(_)
-                | Value::Number(_)
-                | Value::String(_)
-                | Value::Array(_) => self.error(
-                    &Error::new(ErrorCode::InvalidType, "$.deep").expected(Expected::Object),
-                ),
-            };
+            if command.get("verb") == Some(&json!("profile"))
+                && let Some(deep) = command.get("deep")
+            {
+                return match deep {
+                    Value::Object(deep) => self.profile(deep),
+                    Value::Null
+                    | Value::Bool(_)
+                    | Value::Number(_)
+                    | Value::String(_)
+                    | Value::Array(_) => self.error(
+                        &Error::new(ErrorCode::InvalidType, "$.deep").expected(Expected::Object),
+                    ),
+                };
+            }
+            if command.get("verb") == Some(&json!("describe"))
+                && command.get("name") == Some(&json!(PROFILE_CAPTURE))
+            {
+                return self.describe_profile(&command);
+            }
         }
         let context = self.context();
         let mut step = self.game.host_mut().dev_request(line, &context);
@@ -380,19 +385,26 @@ impl<G: Game> DevSession<G> {
                     .as_u64()
                     .filter(|value| (minimum..=maximum).contains(value)),
             };
-        let max = engine::profiling::MAX_EVENTS as u64;
+        let durations = (
+            *engine::PROFILE_DURATION_MS.start(),
+            *engine::PROFILE_DURATION_MS.end(),
+        );
+        let events = (
+            *engine::PROFILE_EVENTS.start() as u64,
+            *engine::PROFILE_EVENTS.end() as u64,
+        );
         let out_of_range = |name: &str, (minimum, maximum): (u64, u64)| {
             Error::new(ErrorCode::OutOfRange, format!("$.deep.{name}"))
                 .range(minimum as f64, maximum as f64)
                 .got(command.get(name))
         };
         let (duration, max_events) = match (
-            bounded("duration_ms", (100, 5000), 5000),
-            bounded("max_events", (256, max), max),
+            bounded("duration_ms", durations, durations.1),
+            bounded("max_events", events, events.1),
         ) {
             (Some(duration), Some(max_events)) => (duration, max_events),
-            (None, _) => return self.error(&out_of_range("duration_ms", (100, 5000))),
-            (Some(_), None) => return self.error(&out_of_range("max_events", (256, max))),
+            (None, _) => return self.error(&out_of_range("duration_ms", durations)),
+            (Some(_), None) => return self.error(&out_of_range("max_events", events)),
         };
         let pix = match command.get("vendor") {
             None => false,
@@ -482,6 +494,57 @@ impl<G: Game> DevSession<G> {
             &Error::new(ErrorCode::ProfilingUnavailable, "$.deep").expected(Expected::Supported),
         )
     }
+
+    #[cfg(feature = "profiling")]
+    fn describe_profile(&mut self, command: &Map<String, Value>) -> Value {
+        let fields = ["verb", "name"];
+        if let Some(unknown) = command.keys().find(|key| !fields.contains(&key.as_str())) {
+            return self.error(
+                &Error::new(ErrorCode::UnknownField, "$")
+                    .got(unknown)
+                    .variants(fields),
+            );
+        }
+        let mut reply = self.status();
+        if reply["ok"] != true {
+            return reply;
+        }
+        let (durations, events) = (engine::PROFILE_DURATION_MS, engine::PROFILE_EVENTS);
+        reply["result"] = json!({
+            "name": PROFILE_CAPTURE,
+            "kind": "tooling",
+            "schema": {"type": "object", "additionalProperties": false, "properties": {
+                "deep": {"type": "object", "additionalProperties": false, "properties": {
+                    "duration_ms": {
+                        "type": "integer",
+                        "minimum": durations.start(),
+                        "maximum": durations.end(),
+                        "default": durations.end(),
+                    },
+                    "max_events": {
+                        "type": "integer",
+                        "minimum": events.start(),
+                        "maximum": events.end(),
+                        "default": events.end(),
+                    },
+                    "cpu_samples": {"type": "boolean", "default": true},
+                    "vendor": {"enum": ["pix"]},
+                }},
+            }},
+            "status": {
+                "available": true,
+                "native": true,
+                "counters": engine_profiler::counters::enabled(),
+                "pix": self.pix.is_some(),
+            },
+        });
+        reply
+    }
+
+    #[cfg(not(feature = "profiling"))]
+    fn describe_profile(&mut self, _: &Map<String, Value>) -> Value {
+        self.error(&Error::new(ErrorCode::ProfilingUnavailable, "$").expected(Expected::Supported))
+    }
 }
 
 impl<G: Game> engine::smokes::GpuSession for DevSession<G> {
@@ -530,11 +593,4 @@ fn read_lines() -> Receiver<String> {
         })
         .expect("thread_starts");
     lines
-}
-
-fn counting() -> bool {
-    #[cfg(feature = "profiling")]
-    return engine_profiler::counters::enabled();
-    #[cfg(not(feature = "profiling"))]
-    false
 }

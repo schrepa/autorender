@@ -1,13 +1,12 @@
-import package::engine::math::GRAVITY;
 import package::generated::water::{BLOCK_GROUND, BREAK_FULL, BREAK_ONSET, BREAK_THINNEST,
-    CELL_MEANS, COURANT, DEEPEST, DENSITY, DRY, FASTEST, FERGUSON_A1, FERGUSON_A2, LOCAL_SHARE,
-    NO_BLOCK, NO_WATER_SURFACE, SHALLOWEST, SIM_BLOCK_LOOKS, SIM_CELL_SUMS, SIM_LIVE_LOOKS,
-    SIM_RIM, SIM_SLOTS, SIM_STANDING, SIM_TOUCHES, SLOWEST, SOURCE_SPEED, STRICKLER, SimFrame,
-    SimSlot, SimTouch, THETA, THIN, TURBULENT_SPEED, TURBULENT_SWIRL, UNHELD, WATER_FLOW_RANGE,
-    WATER_SHEAR_RANGE, WATER_SIM_GROUP, WATER_SIM_SOURCE_GROUP, WET_MOST, sim_flags_bursting,
-    sim_flags_keeping, sim_flags_live, sim_flags_local, sim_flags_looking, sim_flags_open,
-    sim_flags_sparse, sim_flags_stepping, sim_flags_summing, block_place_x, block_place_z,
-    water_info_word_kind, water_info_word_with_kind, water_state_word_reach,
+    CELL_MEANS, COURANT, DEEPEST, DENSITY, DRY, FASTEST, FERGUSON_A1, FERGUSON_A2, GRAVITY,
+    LOCAL_SHARE, NO_BLOCK, NO_WATER_SURFACE, SHALLOWEST, SIM_BLOCK_LOOKS, SIM_CELL_SUMS,
+    SIM_LIVE_LOOKS, SIM_RIM, SIM_SLOTS, SIM_STANDING, SIM_TOUCHES, SLOWEST, SOURCE_SPEED, STRICKLER,
+    SimFrame, SimSlot, SimTouch, THETA, THIN, TURBULENT_SPEED, TURBULENT_SWIRL, UNHELD,
+    WATER_FLOW_RANGE, WATER_SHEAR_RANGE, WATER_SIM_GROUP, WATER_SIM_SOURCE_GROUP, WET_MOST,
+    sim_flags_bursting, sim_flags_keeping, sim_flags_live, sim_flags_local, sim_flags_looking,
+    sim_flags_open, sim_flags_sparse, sim_flags_stepping, sim_flags_summing, block_place_x,
+    block_place_z, water_info_word_kind, water_info_word_with_kind, water_state_word_reach,
     water_state_word_with_reach};
 import package::water::bursts::water_burst;
 import package::water::sim_shared::sim_minmod;

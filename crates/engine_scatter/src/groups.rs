@@ -6,8 +6,9 @@ use engine_core::{
     ResidentMesh, SurfaceSlot, TextureHandle,
 };
 use engine_math::collections::HashMap;
-use engine_places::impostors::{IMPOSTOR_MIN_TRIANGLES, ImpostorAsk, ImpostorRecord};
-use engine_places_world::ground::{Placed, PlacedAsset};
+use engine_heightfield::tile::Placed;
+use engine_places_rendering::impostors::{ImpostorAsk, ImpostorRecord};
+use engine_places_world::ground::PlacedAsset;
 use engine_render::{pack_color, pack_surface};
 use glam::Vec3;
 
@@ -485,9 +486,6 @@ fn impostor_asks(
                 return None;
             }
             let asset = resolved().find(|asset| asset.mesh.handle == group.meshes[0])?;
-            if asset.mesh.mesh.indices().len() / 3 < IMPOSTOR_MIN_TRIANGLES {
-                return None;
-            }
             let parts = groups[index + 1..]
                 .iter()
                 .take_while(|drawn| drawn.objects == index as u32)

@@ -28,7 +28,6 @@ const MIN_STORAGE_BYTES: u64 = 256;
 const NODE_LEVELS: usize = MAX_HIERARCHY_DEPTH + 1;
 const PYRAMID_LEVELS: usize = 16;
 const PYRAMID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
-const NODE_STRIDE: usize = size_of::<PoseRows>();
 const NODE_BYTES: usize =
     2 * size_of::<NodePose>() + size_of::<NodeInfo>() + size_of::<PoseRows>();
 
@@ -805,7 +804,7 @@ impl DrawnGpu {
             Since::Listed(listed)
                 if !whole && listed.iter().all(|&node| (node as usize) < count) =>
             {
-                listed_ranges(listed, count, NODE_STRIDE, &mut held.bits, &mut held.ranges);
+                listed_ranges(listed, count, &mut held.bits, &mut held.ranges);
                 false
             }
             Since::Same | Since::Listed(_) | Since::All => {

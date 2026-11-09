@@ -53,12 +53,6 @@ impl BrowserControl {
                     "$.interval_ms",
                 )?;
             }
-            Self::Probe {
-                alpha: Some(alpha), ..
-            } => {
-                validated_presentation_alpha(*alpha)?;
-            }
-            Self::Probe { alpha: None, .. } => {}
             Self::Game { name, .. } => {
                 let valid = name.len() <= 64
                     && name.starts_with(|first: char| first.is_ascii_lowercase())
@@ -92,8 +86,10 @@ impl BrowserControl {
                     }
                 }
             }
-            Self::Present { .. }
-            | Self::Environment(_)
+            Self::Present { alpha } => {
+                validated_presentation_alpha(*alpha)?;
+            }
+            Self::Environment(_)
             | Self::Camera { .. }
             | Self::Step { .. }
             | Self::Input { .. }
@@ -223,7 +219,7 @@ impl OperationCall {
     ) -> Result<Value, Error> {
         match self {
             Self::Brick { name, request } => {
-                crate::bricks::run(engine.app.world_mut(), name, request.clone())
+                engine_registry::run_operation(engine.app.world_mut(), name, request.clone())
             }
             Self::Environment(control) => {
                 environment(engine.app.world_mut(), control).map_err(|error| {

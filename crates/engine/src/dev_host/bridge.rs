@@ -1,8 +1,5 @@
-use bevy_ecs::prelude::Entity;
 use engine_core::{Error, ErrorCode};
-use engine_dev::results::{
-    AuthoredEntity, CaptureResult, FramesResult, GameResult, KeptArtifact, ProbeResult, result,
-};
+use engine_dev::results::{CaptureResult, FramesResult, GameResult, KeptArtifact, result};
 use engine_dev::{
     BenchmarkInput, BenchmarkMode, BrowserControl, CaptureRequest, Effect, HostContext, Outcome,
     ProfileRequest, Step, ToolCall,
@@ -13,7 +10,7 @@ use engine_settings::Expected;
 use serde_json::{Map, Value, json};
 
 use super::{Call, Handled, Looped};
-use crate::host::policy::{BENCHMARK_LIMIT_MS, READ_BACK_LIMIT_MS};
+use crate::host::policy::BENCHMARK_LIMIT_MS;
 use crate::host::{
     AdapterStatus, Distribution, HostEnvironment, InputSource, KNOWN_DIFFERENCES, now_ms,
 };
@@ -39,10 +36,6 @@ pub(crate) enum Pending {
         revision: String,
     },
     Benchmark(Box<BenchmarkRun>),
-    ReadBack {
-        alpha: Option<f64>,
-        since: f64,
-    },
     Profile(Box<ProfileRun>),
 }
 
@@ -60,7 +53,6 @@ impl Pending {
             | Self::Shown { .. }
             | Self::Game { .. }
             | Self::Reload { .. }
-            | Self::ReadBack { .. }
             | Self::Profile(_) => InputSource::Player,
         }
     }
@@ -393,86 +385,8 @@ impl<G: Game> GameHost<G> {
                 })
             }
             Pending::Benchmark(run) => self.dev_benchmark(run, &outcome, context),
-            Pending::ReadBack { alpha, since } => {
-                if let Some(failed) = outcome.failed {
-                    return self.dev_refused(Error::new(ErrorCode::RenderFailed, "$").got(failed));
-                }
-                self.dev_read_back(alpha, since, context)
-            }
             Pending::Profile(run) => self.dev_profile(run, &outcome, context),
         }
-    }
-
-    fn dev_read_back(&mut self, alpha: Option<f64>, since: f64, context: &HostContext) -> Step {
-        let reply = self.dev_invoke(shown(alpha), context);
-        if reply["ok"] != true {
-            return self.dev_done(reply, context);
-        }
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            if let Err(error) = self.wait_for_gpu() {
-                return self.dev_refused(Error::new(ErrorCode::RenderFailed, "$").got(error));
-            }
-            self.deliver_readbacks();
-        }
-        let probed = self.dev_invoke(query("probed_pixel"), context);
-        if probed["ok"] != true || probed["result"]["probing"] != true {
-            return self.dev_probed(probed, context);
-        }
-        let waited = now_ms() - since;
-        if waited >= READ_BACK_LIMIT_MS as f64 {
-            return self.dev_refused(
-                Error::new(ErrorCode::RenderFailed, "$")
-                    .at_most(READ_BACK_LIMIT_MS)
-                    .got(waited),
-            );
-        }
-        self.dev_effect(
-            Pending::ReadBack { alpha, since },
-            Effect::Wait { within_ms: 1000.0 },
-        )
-    }
-
-    fn dev_probe_start(
-        &mut self,
-        (x, y): (u32, u32),
-        alpha: Option<f64>,
-        context: &HostContext,
-    ) -> Step {
-        let armed = self.dev_invoke(
-            Call::Control("probe_pixel", json!({ "x": x, "y": y })),
-            context,
-        );
-        if armed["ok"] != true {
-            return self.dev_done(armed, context);
-        }
-        let reply = self.dev_invoke(shown(alpha), context);
-        if reply["ok"] != true {
-            return self.dev_done(reply, context);
-        }
-        self.dev_read_back(alpha, now_ms(), context)
-    }
-
-    fn dev_probed(&mut self, mut probed: Value, context: &HostContext) -> Step {
-        if probed["ok"] != true {
-            return self.dev_done(probed, context);
-        }
-        let mut probe = match probed["result"]["probe"].take() {
-            Value::Object(probe) => probe,
-            Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) | Value::Array(_) => {
-                return self.dev_refused(
-                    Error::new(ErrorCode::RenderFailed, "$.probe").expected(Expected::Present),
-                );
-            }
-        };
-        let entity = probe
-            .remove("entity")
-            .as_ref()
-            .and_then(Value::as_u64)
-            .and_then(Entity::try_from_bits)
-            .map(|entity| AuthoredEntity::of(self.engine().app.world(), entity));
-        probed["result"] = result::probe(ProbeResult { probe, entity });
-        self.dev_done(probed, context)
     }
 
     pub fn dev_reloaded(
@@ -536,7 +450,6 @@ impl<G: Game> GameHost<G> {
                 };
                 self.dev_effect(pending, Effect::Frame { timestamp: 0.0 })
             }
-            BrowserControl::Probe { x, y, alpha } => self.dev_probe_start((x, y), alpha, context),
             BrowserControl::Game { name, args } => {
                 let pending = Pending::Game { name: name.clone() };
                 self.dev_effect(pending, Effect::Game { name, args })

@@ -11,8 +11,8 @@ use engine_registry::{JobBatch, JobOrder, JobQueue};
 
 use crate::jobs::record_key;
 use crate::{
-    Interest, JobExchange, JobRef, RecordKey, Records, Requests, TEXTURE_COOK_NAME,
-    TEXTURE_COOK_SOURCE, URGENT_JOBS, job_priority,
+    Interest, JobExchange, JobKind, JobRef, List, RecordKey, Records, Requests, URGENT_JOBS,
+    job_priority,
 };
 
 const TEXTURE_RECORD: &str = "texture";
@@ -37,6 +37,13 @@ impl TextureSampling {
 
 pub type MakeTextures = Arc<dyn Fn() -> Result<Vec<TextureSource>, String> + Send + Sync>;
 
+pub struct TextureJobs;
+
+impl List for TextureJobs {
+    const NAME: &'static str = "texture_jobs";
+    type Member = &'static JobKind;
+}
+
 #[derive(Clone)]
 pub struct TextureSet {
     pub source: [u8; 32],
@@ -46,10 +53,12 @@ pub struct TextureSet {
 }
 
 impl TextureSet {
-    pub fn key(&self, index: usize, family: TextureFamily) -> RecordKey {
+    pub fn key(&self, job: Option<&JobKind>, index: usize, family: TextureFamily) -> RecordKey {
         let mut identity =
             format!("{}/{}/{}", self.name, self.textures[index].0, family.name()).into_bytes();
-        identity.extend_from_slice(&crate::sources::TEXTURE_COOK);
+        if let Some(job) = job {
+            identity.extend_from_slice(&job.source().hash());
+        }
         record_key(&self.source, TEXTURE_RECORD, &identity)
     }
 
@@ -66,10 +75,6 @@ impl TextureSet {
             ))
         }
     }
-}
-
-fn texture_cook() -> JobRef {
-    JobRef::named(TEXTURE_COOK_NAME, TEXTURE_COOK_SOURCE.hash())
 }
 
 enum Make {
@@ -112,6 +117,7 @@ struct Batch {
 #[doc(hidden)]
 #[derive(Resource, Default)]
 pub struct RecordExchange {
+    job: Option<&'static JobKind>,
     sampling: Option<TextureSampling>,
     asking: Vec<Asking>,
     sets: Vec<AskedSet>,
@@ -210,6 +216,7 @@ impl RecordExchange {
             return;
         };
         let shown = sampling.family();
+        let job = self.job;
         for asked in self.sets.iter_mut().filter(|asked| !asked.asked) {
             asked.asked = true;
             let batch = self.next_batch;
@@ -220,7 +227,7 @@ impl RecordExchange {
                 sources: None,
             });
             for (index, &handle) in asked.handles.iter().enumerate() {
-                let key = asked.set.key(index, shown);
+                let key = asked.set.key(job, index, shown);
                 self.asking.push(Asking {
                     interest: self.records.ask(key),
                     handle: Some(handle),
@@ -289,7 +296,7 @@ fn step(
             Stage::Asking => {
                 let kind = match request.make {
                     Make::Here(_) => None,
-                    Make::Texture { .. } => Some(texture_cook()),
+                    Make::Texture { .. } => records.job.map(JobRef::from),
                 };
                 let key = request.key();
                 orders.push(JobOrder::Look {
@@ -332,6 +339,11 @@ fn step(
             Some(Err(_)) => request.stage = Stage::Making,
         }
     }
+}
+
+pub(crate) fn install_jobs(world: &mut World) {
+    let job = crate::members_in::<TextureJobs>(world).first().copied();
+    world.resource_mut::<RecordExchange>().job = job;
 }
 
 pub(crate) fn exchange(world: &mut World) {

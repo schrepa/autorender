@@ -8,8 +8,7 @@ use engine_core::{
     Settling, Since, Views, Spawner, Transform, gpu_bits, mover_of,
 };
 use engine_places_rendering::shadows::{
-    CasterMap, GROUND_TEXELS, Refresh, Region as MapView, ShadowChange, ShadowChanges,
-    ShadowMaps,
+    CasterMap, Refresh, Region as MapView, ShadowChange, ShadowChanges, ShadowMaps,
 };
 use engine_places_rendering::sun::Sun;
 use engine_render::DebugShown;
@@ -251,11 +250,11 @@ impl ShadowPlan {
         still_changed
     }
 
-    fn change(&mut self, change: &ShadowChange) -> bool {
+    fn change(&mut self, change: &ShadowChange, sample_texels: f32) -> bool {
         match *change {
             ShadowChange::Box { min, max, spacing } => {
                 for level in 0..self.clipmap.len() {
-                    if spacing >= GROUND_TEXELS * self.clipmap.texel(level) {
+                    if spacing >= sample_texels * self.clipmap.texel(level) {
                         self.clipmap.dirty_level_box(level, min, max);
                     }
                 }
@@ -424,7 +423,7 @@ pub(crate) fn plan_shadows(
         Since::Same => {}
         Since::Listed(listed) => {
             for change in listed {
-                casters_changed |= plan.change(change);
+                casters_changed |= plan.change(change, settings.sample_texels);
             }
         }
         Since::All => {
@@ -456,7 +455,10 @@ pub(crate) fn plan_shadows(
         plan: &plan.plan,
         layout: key.atlas,
     };
-    regions.views(plan.sky_draw.as_ref(), &mut plan.views);
+    regions.views(
+        (plan.sky_draw.as_ref(), settings.sample_texels),
+        &mut plan.views,
+    );
     regions.placed(
         (key.region_side(), plan.sky_draw.as_ref()),
         &mut plan.placed,
@@ -472,7 +474,7 @@ pub(crate) fn plan_shadows(
         if sky.enabled { 1.0 } else { 0.0 },
     ];
     piece.set_if_neq(regions.lookup_piece(
-        settings.tile_texels,
+        (settings.tile_texels, settings.sample_texels),
         (crate::debug::shown(*shown), open),
     ));
     plan.moving = plan.plan.moving.len() as u32;

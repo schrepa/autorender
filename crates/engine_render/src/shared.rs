@@ -62,7 +62,7 @@ pub(crate) fn stage_of(
             AttachPoint::Depth
             | AttachPoint::Inputs
             | AttachPoint::Opaque
-            | AttachPoint::Sky
+            | AttachPoint::LateOpaque
             | AttachPoint::Transparent
             | AttachPoint::Post
             | AttachPoint::Display
@@ -129,7 +129,7 @@ impl GpuPart for ScenePart {
                 cx.core
                     .draws
                     .iter()
-                    .any(|member| (listed.pass.takes)(member.kind))
+                    .any(|member| (listed.pass.takes)(&member.kind))
             })
             .copied()
             .collect();
@@ -214,7 +214,7 @@ pub(crate) struct PostUniform {
     pub(crate) size: [f32; 4],
     pub(crate) extent: [f32; 4],
     pub(crate) detail: [f32; 4],
-    pub(crate) kept: [f32; 4],
+    pub(crate) kept: [u32; 4],
     pub(crate) applied: [u32; 4],
 }
 
@@ -236,7 +236,7 @@ pub(crate) fn post_uniform(
         size: [width, height, 1.0 / width, 1.0 / height],
         extent: [wide, tall, 1.0 / wide, 1.0 / tall],
         detail: detail.extend(0.0).to_array(),
-        kept: [0.0; 4],
+        kept: [0; 4],
         applied: [0; 4],
     }
 }
@@ -290,7 +290,7 @@ import package::generated::applied::{applied_color, applied_display};
 import package::face::resolve::resolved;
 
 fn uncovered(pixel: vec2<i32>) -> bool {
-    return post.kept.x > 0.5 && textureLoad(depth_texture, pixel, 0) <= 0.0;
+    return post.kept.x != 0u && textureLoad(depth_texture, pixel, 0) <= 0.0;
 }
 
 @fragment

@@ -2,7 +2,6 @@ use bevy_ecs::system::SystemParamItem;
 use engine_core::{
     AssetLibrary, CullPlan, DrawnTable, Error, ErrorCode, GlobalTransforms, GpuBits, Since, Views,
 };
-use engine_places::impostors::{IMPOSTOR_VERTICES, ImpostorRecord};
 use engine_render::{AfterRead, Allocation, GpuPart, Prepare, UploadRange, listed_ranges};
 
 use crate::gpu::{Drawing, MeshesGpu, VIEW_FRAME_BYTES};
@@ -12,19 +11,20 @@ use crate::layouts::{
 };
 use crate::order::{capacity_for, instance_limit};
 use crate::presentation::{
-    FADE_MARGIN, Kept, PresentationTotals, TOTALS_BYTES, UploadSources, VIEWS, ViewSlot,
-    WATCHED, grow, storage_bytes,
+    Kept, PresentationTotals, TOTALS_BYTES, UploadSources, VIEWS, ViewSlot, WATCHED, grow,
+    storage_bytes,
 };
 use crate::uploads::{ColorData, color_data};
 
 const TOTALS: u32 = 0;
+const LIST_HEADER: u64 = 16;
 
 struct View {
     eye: glam::Vec3,
     occlusion: bool,
     lod_error: f32,
-    impostors: bool,
     fade: f32,
+    margin: f32,
     watched: Option<u32>,
 }
 
@@ -38,7 +38,6 @@ impl MeshesGpu {
                 plan,
                 hierarchy,
                 detail,
-                impostors,
                 time,
                 limits,
             ),
@@ -68,8 +67,7 @@ impl MeshesGpu {
             .single()
             .ok()
             .filter(|held| held.generation == generation)
-            .map_or(&[][..], |held| held.records.as_slice());
-        self.write_impostors(held, cx);
+            .map_or(&[][..], |held| held.levels.as_slice());
         self.state.groups.first_instance = limits.indirect_first_instance;
         self.state.instance_count = self.state.batches.ordered.len();
         if self.state.capacity == 0 || slots > self.state.capacity {
@@ -86,8 +84,8 @@ impl MeshesGpu {
             } else {
                 0.0
             },
-            impostors: impostors.enabled,
             fade,
+            margin: detail.margin,
             watched: watched.slot,
         };
         let group_bytes = self.prepare_presentation(
@@ -98,7 +96,7 @@ impl MeshesGpu {
                 assets: &assets,
                 residency: &residency,
                 hierarchy: &hierarchy,
-                impostors: held,
+                last: held,
             },
             cx,
         );
@@ -156,15 +154,6 @@ impl MeshesGpu {
         }
     }
 
-    fn write_impostors(&mut self, records: &[ImpostorRecord], cx: &mut Prepare<'_, Self>) {
-        self.state.cards = records.iter().any(|record| record.sphere[3] > 0.0);
-        let bytes = (records.len().max(1) * size_of::<ImpostorRecord>()) as u64;
-        let (Allocation::Fresh | Allocation::Kept) =
-            cx.allocate_buffer(self.instances.impostors, bytes);
-        if !records.is_empty() {
-            cx.write(self.instances.impostors, 0, records);
-        }
-    }
 
     fn prepare_instances(
         &mut self,
@@ -213,7 +202,6 @@ impl MeshesGpu {
                 listed_ranges(
                     slots,
                     records,
-                    stride,
                     &mut state.color_bits,
                     &mut state.color_ranges,
                 );
@@ -252,7 +240,7 @@ impl MeshesGpu {
     ) -> u64 {
         let kept = Kept {
             phase_two: view.occlusion,
-            impostors: view.impostors && view.lod_error > 0.0,
+            last: view.lod_error > 0.0 && sources.last.iter().any(|level| level.error > 0.0),
         };
         let batches = &self.state.batches;
         let counts = (batches.ordered.len(), batches.batches.len());
@@ -328,13 +316,13 @@ impl MeshesGpu {
         }
         let batch_capacity = groups.batch_capacity as u64;
         let planes = u64::from(LOD_LEVELS);
-        let args = (planes * batch_capacity + 1) * DRAW_ARGS_BYTES;
+        let args = planes * batch_capacity * DRAW_ARGS_BYTES;
         let ids = planes * capacity * 4;
-        let [two_ids, two_args, impostor_ids, two_impostor_ids] = [
+        let [two_ids, two_args, last_ids, two_last_ids] = [
             (kept.phase_two, ids),
             (kept.phase_two, args),
-            (kept.impostors, capacity * 8),
-            (kept.impostors && kept.phase_two, capacity * 8),
+            (kept.last, LIST_HEADER + capacity * 8),
+            (kept.last && kept.phase_two, LIST_HEADER + capacity * 8),
         ]
         .map(|(wanted, bytes)| storage_bytes(if wanted { bytes } else { 0 }));
         let rebuilt = [
@@ -347,13 +335,16 @@ impl MeshesGpu {
             (presented.draws[0], storage_bytes(args)),
             (presented.visible[1], two_ids),
             (presented.draws[1], two_args),
-            (presented.impostor_ids[0], impostor_ids),
-            (presented.impostor_ids[1], two_impostor_ids),
+            (presented.last_ids[0], last_ids),
+            (presented.last_ids[1], two_last_ids),
             (presented.counts, storage_bytes(16)),
             (presented.totals, storage_bytes(TOTALS_BYTES)),
         ];
         for (buffer, bytes) in rebuilt {
             let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, bytes);
+        }
+        for buffer in presented.last_ids {
+            cx.write(buffer, 0, &[0_u32; 4]);
         }
         groups.kept = kept;
     }
@@ -364,8 +355,8 @@ impl MeshesGpu {
         if slots > state.fade_slots {
             state.fade_slots = slots;
         }
-        if state.groups.capacity > state.card_capacity {
-            state.card_capacity = state.groups.capacity;
+        if state.groups.capacity > state.fading_capacity {
+            state.fading_capacity = state.groups.capacity;
         }
         let states = cx.allocate_buffer(
             self.presented.lod_states,
@@ -375,10 +366,10 @@ impl MeshesGpu {
             state.groups.key = None;
         }
         let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(
-            self.presented.fade_cards,
-            storage_bytes(16 + state.card_capacity as u64 * 8),
+            self.presented.fading_ids,
+            storage_bytes(LIST_HEADER + state.fading_capacity as u64 * 8),
         );
-        cx.write(self.presented.fade_cards, 0, &[IMPOSTOR_VERTICES, 0, 0, 0]);
+        cx.write(self.presented.fading_ids, 0, &[0_u32; 4]);
     }
 
     fn write_batches(
@@ -392,12 +383,7 @@ impl MeshesGpu {
         groups.stage_batches(
             &state.batches.batches,
             (sources.assets, sources.residency),
-            |index| {
-                sources
-                    .impostors
-                    .get(index)
-                    .map_or(0.0, ImpostorRecord::error)
-            },
+            |index| sources.last.get(index).copied().unwrap_or_default(),
             |material| {
                 material
                     .and_then(|material| sources.assets.material(material))
@@ -444,7 +430,6 @@ impl MeshesGpu {
         let state = &mut self.state;
         let candidates = state.groups.count;
         state.candidates = candidates;
-        let unbudgeted = plan.frustum && plan.budget >= candidates;
         state.occlusion = view.occlusion && candidates != 0;
         let mut uniform = PresentationFrame {
             candidates,
@@ -465,16 +450,13 @@ impl MeshesGpu {
             .pack(),
             occlusion: u32::from(state.occlusion),
             plane: state.groups.capacity as u32,
-            lod_error: if unbudgeted { view.lod_error } else { 0.0 },
+            lod_error: view.lod_error,
             watched: state.watched.unwrap_or(UNWATCHED),
-            pad_0: 0,
+            last_level: u32::from(state.groups.kept.last),
             pad_1: 0,
             pad_2: 0,
-            eye: view
-                .eye
-                .extend(if view.impostors { 1.0 } else { 0.0 })
-                .to_array(),
-            fade: [view.fade, FADE_MARGIN, 0.0, 0.0],
+            eye: view.eye.extend(0.0).to_array(),
+            fade: [view.fade, view.margin, 0.0, 0.0],
             bases: [0; 4],
         };
         let (Allocation::Fresh | Allocation::Kept) =
@@ -501,7 +483,7 @@ impl MeshesGpu {
         state.views.clear();
         let base = state.frame.filter(|_| state.candidates != 0);
         let capacity = state.groups.capacity as u64;
-        let arg_count = u64::from(LOD_LEVELS) * u64::from(state.groups.batch_count) + 1;
+        let arg_count = u64::from(LOD_LEVELS) * u64::from(state.groups.batch_count);
         let (mut ids, mut args, mut refused) = (0_u64, 0_u64, 0_u32);
         let mut frames: Vec<PresentationFrame> = Vec::new();
         for (global, view) in views.drawn().iter().enumerate() {
@@ -535,6 +517,7 @@ impl MeshesGpu {
                 uniform.budget = u32::MAX;
                 uniform.lod_error = view.detail;
                 uniform.watched = UNWATCHED;
+                uniform.last_level = 0;
                 uniform.eye = view.eye.extend(0.0).to_array();
                 uniform.bases = [ids as u32, args as u32, global as u32, 0];
                 state.views.push(ViewSlot {

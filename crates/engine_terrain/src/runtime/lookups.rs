@@ -2,7 +2,7 @@ use super::operations::{coordinate, reply};
 use super::*;
 use crate::{HydrologySample, PATH_FAR};
 use engine_core::{Operation, SceneIds};
-use engine_places_simulation::water::{WaterBody, WaterKind, WaterSample};
+use engine_places_simulation::water::{WaterBody, WaterSample};
 use serde_json::Value;
 
 const MAX_POINTS: usize = 256;
@@ -157,7 +157,7 @@ fn heights(
                     Some(water.at(local.0, local.1, terrain.pyramid.spacing(0)))
                 });
                 let standing = water_at(bodies, Vec3::new(x, sample.height, z))
-                    .filter(|water| water.kind != WaterKind::Fall)
+                    .filter(|water| !water.falling)
                     .map(|water| StandingWater {
                         surface: water.surface,
                         depth: water.depth,

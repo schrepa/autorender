@@ -20,7 +20,7 @@ mod sky;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AttachPoint, Brick, Bricks, DrawKind, Pass, PassCull, PassName, PassRaster, PassViews,
+    AttachPoint, Brick, Bricks, KindDecl, Pass, PassCull, PassName, PassRaster, PassViews,
     Schedule, SlotSet, Source, Writes,
 };
 use engine_places_rendering::lighting::SunBlockers;
@@ -49,11 +49,8 @@ impl PassName for ShadowPass {
     };
 }
 
-fn casts(kind: DrawKind) -> bool {
-    !matches!(
-        kind.name(),
-        "particles" | "sprites" | "text" | "ui" | "water" | "cover"
-    )
+fn casts(kind: &KindDecl) -> bool {
+    kind.casts_shadows
 }
 
 pub struct ShadowsBrick;

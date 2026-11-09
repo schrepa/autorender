@@ -2,11 +2,24 @@ import package::debug_view::shown::{DEBUG_EMPTY, DEBUG_OTHER, debug_normal};
 import package::engine::debug::debug_kind_color;
 import package::generated::debug_view::{DEBUG_VIEW_CARDS, DEBUG_VIEW_KINDS, DEBUG_VIEW_LEVELS,
     DEBUG_VIEW_NORMALS, DEBUG_VIEW_OVERDRAW};
+import package::face::impostors::DEBUG_CARD;
+import package::face::instances::{DEBUG_FADING, DEBUG_LEVEL_AT, DEBUG_LEVEL_MASK};
 import package::generated::pieces::debug_view::piece;
-import package::place::debug::{DebugShade, DebugTargets, debug_record_card, debug_record_fading,
-    debug_record_kind, debug_record_level};
+import package::place::debug::{DebugShade, DebugTargets, debug_record_kind};
 
 const DEBUG_CARDS = vec3<f32>(0.95, 0.25, 0.85);
+
+fn debug_record_card(record: u32) -> bool {
+    return (record & DEBUG_CARD) != 0u;
+}
+
+fn debug_record_fading(record: u32) -> bool {
+    return (record & DEBUG_FADING) != 0u;
+}
+
+fn debug_record_level(record: u32) -> u32 {
+    return (record >> DEBUG_LEVEL_AT) & DEBUG_LEVEL_MASK;
+}
 
 const DEBUG_LEVELS = array<vec3<f32>, 8>(
     vec3<f32>(0.9, 0.2, 0.2), vec3<f32>(0.95, 0.6, 0.15), vec3<f32>(0.9, 0.9, 0.2),

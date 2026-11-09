@@ -1,58 +1,47 @@
 use bevy_ecs::prelude::*;
-use engine_core::{AssetLibrary, DrawnTable, Spawner};
-use engine_places::impostors::{
-    IMPOSTOR_MIN_TRIANGLES, ImpostorAsk, ImpostorAsks, ImpostorRecords,
-};
+use engine_core::{DrawnTable, Spawner};
+use engine_places::meshes::{LastLevels, LevelBatch, LevelBatches};
 
-use crate::MeshesBrick;
 use crate::order::MeshBatches;
+use crate::{MESH, MeshesBrick, SKIN};
 
 #[derive(Component)]
 pub(crate) struct MeshAssets;
 
-fn asks(assets: &AssetLibrary, batches: &MeshBatches) -> ImpostorAsks {
-    ImpostorAsks {
+fn listed(batches: &MeshBatches) -> LevelBatches {
+    LevelBatches {
         generation: batches.generation(),
-        hemisphere: false,
-        asks: batches
+        batches: batches
             .batches
             .iter()
-            .map(|batch| {
-                assets
-                    .mesh(batch.mesh)
-                    .filter(|_| !batch.skinned)
-                    .is_some_and(|mesh| {
-                        mesh.takes_impostor() && mesh.indices().len() / 3 >= IMPOSTOR_MIN_TRIANGLES
-                    })
-                    .then(|| ImpostorAsk {
-                        mesh: batch.mesh,
-                        material: batch.material,
-                        parts: Vec::new(),
-                    })
+            .map(|batch| LevelBatch {
+                kind: if batch.skinned { SKIN } else { MESH },
+                mesh: batch.mesh,
+                material: batch.material,
             })
             .collect(),
     }
 }
 
 pub(crate) fn publish_assets(
-    (assets, table): (Res<AssetLibrary>, Res<DrawnTable>),
+    table: Res<DrawnTable>,
     mut batches: Local<MeshBatches>,
-    own: Query<(Entity, &ImpostorAsks), With<MeshAssets>>,
+    own: Query<(Entity, &LevelBatches), With<MeshAssets>>,
     mut spawner: Spawner<MeshesBrick>,
 ) {
     let held = own.single();
     if !batches.settle(&table) && held.is_ok() {
         return;
     }
-    let asked = asks(&assets, &batches);
+    let listed = listed(&batches);
     match held {
-        Ok((entity, held_asks)) => {
-            if *held_asks != asked {
-                spawner.insert(entity, asked);
+        Ok((entity, held)) => {
+            if *held != listed {
+                spawner.insert(entity, listed);
             }
         }
         Err(_) => {
-            spawner.spawn((MeshAssets, asked, ImpostorRecords::default()));
+            spawner.spawn((MeshAssets, listed, LastLevels::default()));
         }
     }
 }

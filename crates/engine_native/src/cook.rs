@@ -38,7 +38,7 @@ impl PackWriter {
         kinds
     }
 
-    pub(crate) fn write(&self, path: &Path) -> Result<u64, Error> {
+    pub(crate) fn write(&self, path: &Path, threads: usize) -> Result<u64, Error> {
         let listing =
             engine_worker::listing_bytes(self.records.iter().map(|(key, kind, _)| (key, &**kind)));
         let records: Vec<([u8; 32], &[u8])> =
@@ -49,8 +49,7 @@ impl PackWriter {
                         .map(|(key, _, bytes)| (*key, bytes.as_slice())),
                 )
                 .collect();
-        let cores = std::thread::available_parallelism().map_or(4, usize::from);
-        let chunk = records.len().div_ceil(cores).max(1);
+        let chunk = records.len().div_ceil(threads.max(1)).max(1);
         let compressed: Vec<Vec<u8>> = std::thread::scope(|scope| {
             let parts: Vec<_> = records
                 .chunks(chunk)

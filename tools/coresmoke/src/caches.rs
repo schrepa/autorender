@@ -3,7 +3,7 @@ use engine_core::collections::HashMap;
 use engine_core::glam::{Quat, Vec3};
 use engine_core::{
     Camera, DrawKind, Drawn, Engine, GlobalTransforms, Listing, Material, MaterialHandle, Mesh,
-    MeshHandle, Mover, MoverId, Pace, Parent, Schedule, Transform, make_fresh,
+    MeshHandle, MeshVertex, Mover, MoverId, Pace, Parent, Schedule, Transform, make_fresh,
     set_parent, set_parents,
 };
 use engine_meshes::MeshesBrick;
@@ -37,7 +37,7 @@ impl Assets {
             .app
             .world_mut()
             .resource_mut::<engine_core::AssetLibrary>();
-        let meshes = [Mesh::cube(), Mesh::plane(), Mesh::octahedron()]
+        let meshes = [Mesh::cube(), Mesh::plane(), octahedron()?]
             .into_iter()
             .map(|mesh| library.insert_mesh(mesh).map_err(|error| error.to_string()))
             .collect::<Result<_, _>>()?;
@@ -55,6 +55,34 @@ impl Assets {
         .collect::<Result<_, _>>()?;
         Ok(Self { meshes, materials })
     }
+}
+
+fn octahedron() -> Result<Mesh, String> {
+    let mut vertices = Vec::with_capacity(24);
+    for y in [-1.0, 1.0] {
+        for (a, b) in [
+            (Vec3::X, Vec3::Z),
+            (Vec3::Z, Vec3::NEG_X),
+            (Vec3::NEG_X, Vec3::NEG_Z),
+            (Vec3::NEG_Z, Vec3::X),
+        ] {
+            let tip = Vec3::Y * y;
+            let (a, b) = if y > 0.0 { (b, a) } else { (a, b) };
+            let normal = (a - tip).cross(b - tip).normalize().to_array();
+            for (position, uv) in [tip, a, b]
+                .into_iter()
+                .zip([[0.5, 0.0], [0.0, 1.0], [1.0, 1.0]])
+            {
+                vertices.push(MeshVertex {
+                    position: (position * 0.5).to_array(),
+                    normal,
+                    uv,
+                });
+            }
+        }
+    }
+    let indices = (0..vertices.len() as u32).collect();
+    Mesh::new(vertices, indices).map_err(|error| error.to_string())
 }
 
 #[derive(Clone, Copy, Debug)]

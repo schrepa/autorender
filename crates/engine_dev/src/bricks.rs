@@ -4,58 +4,13 @@ use bevy_ecs::prelude::World;
 use engine_registry::{BrickStates, Registry};
 use engine_scene::SceneEnvironment;
 use engine_settings::{Error, ErrorCode, Expected};
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::inspect::Inspector;
 use crate::protocol::{Envelope, Query, Verb};
 use crate::{BrowserControl, Control, DevTools, InspectorDescriptor, InspectorKind};
 
-#[derive(Debug, Default, Deserialize)]
-pub(crate) struct StandardBrick {
-    name: String,
-    #[serde(default)]
-    operations: Vec<String>,
-    #[serde(default)]
-    inspectors: Vec<String>,
-}
-
-#[derive(Debug, Default)]
-pub(crate) struct StandardBricks(Vec<StandardBrick>);
-
-impl StandardBricks {
-    pub(crate) fn of(schemas: &Value) -> Self {
-        Self(
-            schemas
-                .get("bricks")
-                .and_then(|bricks| serde_json::from_value(bricks.clone()).ok())
-                .unwrap_or_default(),
-        )
-    }
-
-    fn find(&self, listed: impl Fn(&StandardBrick) -> &[String], name: &str) -> Option<&str> {
-        self.0
-            .iter()
-            .find(|brick| listed(brick).iter().any(|listed| listed == name))
-            .map(|brick| brick.name.as_str())
-    }
-
-    pub(crate) fn of_operation(&self, op: &str) -> Option<&str> {
-        self.find(|brick| brick.operations.as_slice(), op)
-    }
-
-    pub(crate) fn of_inspector(&self, name: &str) -> Option<&str> {
-        self.find(|brick| brick.inspectors.as_slice(), name)
-    }
-}
-
-pub(crate) fn added(world: &World, brick: &str) -> bool {
-    world
-        .get_resource::<Registry>()
-        .is_some_and(|registry| registry.has(brick))
-}
-
-pub(crate) fn missing_brick(name: &str, path: impl Into<String>) -> Error {
+fn missing_brick(name: &str, path: impl Into<String>) -> Error {
     Error::new(ErrorCode::MissingPlugin, path)
         .expected(Expected::Present)
         .got(name)
@@ -122,39 +77,13 @@ pub fn operation_names(world: &World, verb: Verb) -> Vec<&'static str> {
         .collect()
 }
 
-pub(crate) fn run(world: &mut World, name: &str, args: Value) -> Result<Value, Error> {
-    let operation = world
-        .get_resource::<Registry>()
-        .and_then(|registry| registry.operation(name))
-        .copied()
-        .ok_or_else(|| missing_brick(name, "$.name"))?;
-    operation
-        .run(world, args)
-        .map_err(|error| error.within("$.args"))
-}
-
-pub(crate) fn mesh_drawn(world: &mut World, id: &str) -> Value {
-    run(world, "mesh_drawn", json!({ "entity": id })).unwrap_or(Value::Null)
-}
-
 impl DevTools {
     pub(crate) fn query_operation(
         &self,
         world: &World,
         name: &str,
     ) -> Result<Option<&'static str>, Error> {
-        if let Some(name) = registered(world, name, false)? {
-            return Ok(Some(name));
-        }
-        self.unadded(world, name)?;
-        Ok(None)
-    }
-
-    fn unadded(&self, world: &World, name: &str) -> Result<(), Error> {
-        match self.standard.of_operation(name) {
-            Some(brick) if !added(world, brick) => Err(missing_brick(brick, "$.name")),
-            Some(_) | None => Ok(()),
-        }
+        registered(world, name, false)
     }
 
     pub fn parse_control(
@@ -185,7 +114,6 @@ impl DevTools {
                 request: args,
             }));
         }
-        self.unadded(world, name)?;
         if !BrowserControl::NAMES.contains(&name) {
             return Err(Error::new(ErrorCode::UnknownVariant, "$.name")
                 .got(name)
@@ -313,13 +241,6 @@ impl DevTools {
             },
         );
         inspectors
-    }
-
-    pub(crate) fn schema_named(&self, name: &str) -> Value {
-        self.schemas
-            .get(name)
-            .cloned()
-            .unwrap_or_else(|| json!({ "type": "object" }))
     }
 }
 

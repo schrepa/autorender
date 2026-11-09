@@ -101,6 +101,8 @@ impl Brick for TerrainShadingBrick {
                 kind: terrain::TERRAIN,
                 vertex: shaders::terrain_shading::draw::VS_TERRAIN.name(),
                 needs: Attributes::NONE,
+                casts_shadows: true,
+                seen_by_probes: true,
             })
             .draws::<TerrainGpu>(terrain::TERRAIN, TerrainGpu::draw);
     }

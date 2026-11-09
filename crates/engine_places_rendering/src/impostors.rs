@@ -2,8 +2,7 @@ use bevy_ecs::prelude::{Component, Resource};
 use engine_place::{GpuBits, MaterialHandle, MeshHandle, Slot, gpu_bits, gpu_struct};
 
 pub const IMPOSTOR_VERTICES: u32 = 6;
-pub const IMPOSTOR_MIN_TRIANGLES: usize = 64;
-pub const IMPOSTOR_CUTOFF: f32 = 0.5;
+pub const DEBUG_CARD: u32 = 1 << 13;
 
 #[gpu_bits(crate = engine_place)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -69,24 +68,20 @@ pub struct ImpostorRecords {
 
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct Impostors {
-    pub enabled: bool,
     pub pixels: f32,
 }
 
 impl Default for Impostors {
     fn default() -> Self {
-        Self {
-            enabled: false,
-            pixels: 128.0,
-        }
+        Self { pixels: 128.0 }
     }
 }
 
 impl Slot for Impostors {
     const NAME: &'static str = "impostors";
-    const WGSL: Option<&'static str> = Some(crate::contract!(
+    const WGSL: Option<&'static str> = Some(engine_places::contract!(
         "places/impostors.wgsl",
-        IMPOSTOR_VERTICES;
-        IMPOSTOR_CUTOFF,
+        IMPOSTOR_VERTICES,
+        DEBUG_CARD,
     ));
 }

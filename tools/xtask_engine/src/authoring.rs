@@ -1,6 +1,7 @@
 use std::{
     fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
 use engine_dev::authoring::{read_scene_source, validate_scene};
@@ -80,21 +81,16 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
         engine_standard::everything,
         &mut crate::bricks::standard_engine().map_err(|error| error.to_string())?,
     )?;
-    let engine = crate::bricks::standard_engine().map_err(|error| error.to_string())?;
-    let world = engine.app.world();
-    let development = engine_dev::schemas::generated(world, engine::tooling::frame_stats_schema())?;
     tooling_types(root)?;
-    let stats = &development.frame_stats;
-    let mut files: Vec<(String, String)> = development
-        .files
-        .iter()
-        .map(|(path, contents)| ((*path).to_owned(), contents.clone()))
-        .collect();
+    let protocol = serde_json::to_string_pretty(&engine_dev::schemas::summary())
+        .map_err(|error| format!("cannot write JSON: {error}"))?;
+    let mut files = game_schemas(root)?;
     files.extend([
         ("web/src/generated/clients.json".to_owned(), clients),
+        ("web/src/generated/protocol.json".to_owned(), protocol + "\n"),
         (
             "web/src/generated/stats.ts".to_owned(),
-            engine::tooling::declarations(stats, "FrameStats")
+            engine::tooling::declarations(&engine::stats::frame_stats_schema(), "FrameStats")
                 .trim_start()
                 .to_owned(),
         ),
@@ -109,24 +105,54 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
         (
             "web/src/generated/reply.ts".to_owned(),
             engine::tooling::message_interfaces(
-                &engine_dev::schemas::reply(world)?,
+                &engine_dev::schemas::reply()?,
                 "Reply",
                 &[("ErrorCode", "./errors")],
             ),
         ),
-        ("web/src/generated/errors.ts".to_owned(), error_codes(world)),
+        ("web/src/generated/errors.ts".to_owned(), error_codes()),
         (engine_checks::bricks::FILE.to_owned(), bricks),
     ]);
     Ok(files)
 }
 
-fn error_codes(world: &bevy_ecs::world::World) -> String {
-    let codes: String = world
-        .get_resource::<engine_registry::Registry>()
-        .map_or_else(
-            || engine::ErrorCode::NAMES.to_vec(),
-            engine_registry::Registry::error_codes,
-        )
+fn game_schemas(root: &Path) -> Result<Vec<(String, String)>, String> {
+    let mut files = Vec::new();
+    for package in crate::rules::repository(root)?.projects() {
+        let Some(folder) = package.path.as_deref() else {
+            continue;
+        };
+        let project = crate::process::Project::read(root, folder)?;
+        let program = crate::pipeline::build_native(root, &project)?;
+        let output = Command::new(&program)
+            .arg("--schemas")
+            .current_dir(root)
+            .output()
+            .map_err(|error| format!("{program}: {error}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "{program} --schemas: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        let printed = String::from_utf8_lossy(&output.stdout);
+        let listed: serde_json::Map<String, serde_json::Value> = printed
+            .lines()
+            .rev()
+            .find_map(|line| serde_json::from_str(line).ok())
+            .ok_or_else(|| format!("{program} --schemas printed no files"))?;
+        for (name, contents) in listed {
+            let contents = contents
+                .as_str()
+                .ok_or_else(|| format!("{program} --schemas printed {name} as no text"))?;
+            files.push((format!("{folder}/generated/{name}"), contents.to_owned()));
+        }
+    }
+    Ok(files)
+}
+
+fn error_codes() -> String {
+    let codes: String = engine::ErrorCode::NAMES
         .iter()
         .map(|code| format!("\n  | \"{code}\""))
         .collect();

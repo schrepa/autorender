@@ -3592,9 +3592,6 @@
         4.0
       ]
     },
-    "dynamic_resolution": {
-      "enabled": true
-    },
     "ground_cover": {
       "looks": {
         "dry_grass": {
@@ -3651,6 +3648,11 @@
     "reflections": {
       "distance": 4000.0,
       "enabled": true
+    },
+    "resolution": {
+      "max_height": 1440,
+      "max_pixel_ratio": 1.5,
+      "max_width": 2560
     },
     "scatter": {
       "looks": [

@@ -2,9 +2,7 @@ use bevy_ecs::prelude::Resource;
 use engine_place::{Cursor, Feed, Since, Slot};
 use glam::{Mat4, Vec3};
 
-pub const GROUND_TEXELS: f32 = 2.0;
 pub const SHADOW_REGIONS: u32 = 7;
-pub const SHADOW_CHANGES: usize = 1024;
 pub const SHADOW_PASS: &str = "shadow";
 pub const DEBUG_SUN_NONE: u32 = 0;
 pub const DEBUG_SUN_HORIZON: u32 = 1;
@@ -17,13 +15,6 @@ pub struct SunShown {
     #[bits(7)]
     pub source: u32,
     pub shadowed: bool,
-}
-
-pub fn ground_level(levels: u32, spacing: impl Fn(u32) -> f32, texel: f32) -> u32 {
-    let coarsest = levels.saturating_sub(1);
-    (0..coarsest)
-        .find(|&level| spacing(level) >= GROUND_TEXELS * texel)
-        .unwrap_or(coarsest)
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
@@ -58,8 +49,7 @@ impl Slot for ShadowMaps {
         DEBUG_SUN_NONE,
         DEBUG_SUN_LEVEL,
         DEBUG_SUN_HORIZON,
-        DEBUG_SUN_BEYOND;
-        GROUND_TEXELS,
+        DEBUG_SUN_BEYOND,
     ));
 }
 
@@ -81,6 +71,7 @@ pub enum CasterMap {
 pub struct KeptRefresh {
     pub planes: [[f32; 4]; 6],
     pub texel: f32,
+    pub finest_spacing: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -124,15 +115,17 @@ pub struct ShadowChanges {
 
 impl Default for ShadowChanges {
     fn default() -> Self {
-        Self {
-            feed: Feed::new(SHADOW_CHANGES),
-        }
+        Self { feed: Feed::new(1) }
     }
 }
 
 impl ShadowChanges {
     pub fn push(&mut self, change: ShadowChange) {
         self.feed.push(change);
+    }
+
+    pub fn resize(&mut self, size: usize) {
+        self.feed.resize(size);
     }
 
     pub fn since<'a>(&'a self, cursor: &mut Cursor) -> Since<'a, ShadowChange> {

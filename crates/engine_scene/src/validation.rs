@@ -58,7 +58,6 @@ impl SceneDocument {
                 MeshSource::Buffer { uri } => add(uri, SceneFileKind::Buffer),
                 MeshSource::Cube { .. }
                 | MeshSource::Plane { .. }
-                | MeshSource::Octahedron { .. }
                 | MeshSource::Inline { .. }
                 | MeshSource::Provided { .. } => {}
             }

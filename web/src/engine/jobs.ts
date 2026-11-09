@@ -1,5 +1,5 @@
 import { engineFailure } from "../generated/errors";
-import { FRAME_CORES, MAX_WORKERS, PANIC_PREFIX } from "../generated/host";
+import { FRAME_CORES, PANIC_PREFIX } from "../generated/host";
 import type { Runtime } from "../generated/runtime";
 import { type IndexBindings, JobStore, jobCacheSettings, type Unpacker } from "./job-cache";
 import { fatal, type PanicReport } from "./panic";
@@ -297,9 +297,9 @@ export function jobPool(): JobPool | undefined {
 
 function workerCount(requested: string | null): number {
   if (requested === null) {
-    return Math.max(1, Math.min(MAX_WORKERS, (navigator.hardwareConcurrency || 4) - FRAME_CORES));
+    return Math.max(0, navigator.hardwareConcurrency - FRAME_CORES);
   }
   if (requested === "off") return 0;
-  if (/^\d+$/.test(requested) && Number(requested) <= MAX_WORKERS) return Number(requested);
-  throw engineFailure({ code: "invalid_value", path: "?workers", allowed: { kind: "range", min: 0, max: MAX_WORKERS }, got: requested });
+  if (/^\d+$/.test(requested) && Number.isSafeInteger(Number(requested))) return Number(requested);
+  throw engineFailure({ code: "invalid_value", path: "?workers", allowed: { kind: "at_least", min: 0 }, got: requested });
 }

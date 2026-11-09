@@ -2,7 +2,7 @@ import type { Runtime } from "./host";
 import { adapterInfo } from "./adapter";
 import { fatal } from "./panic";
 import { engineError, engineFailure, type EngineError } from "../generated/errors";
-import type { AdapterStatus } from "../generated/host";
+import { READ_BACK_LIMIT_MS, type AdapterStatus } from "../generated/host";
 import type { Effect, Error as Failure, HostContext, Outcome, Reply, Step } from "../generated/reply";
 import { parseJson } from "../generated/runtime";
 import protocol from "../generated/protocol.json";
@@ -65,7 +65,7 @@ export function connectDevelopment(host: Host): () => void {
       return;
     }
     gpuWaits++;
-    const gpu = within(done, GPU_WORK_LIMIT_MS, "gpu_work", host.signal)
+    const gpu = within(done, READ_BACK_LIMIT_MS, "gpu_work", host.signal)
       .finally(() => { gpuWaits--; });
     await animationFrames(count, host.signal, undefined, gpu);
   }
@@ -191,7 +191,6 @@ async function nameAdapters(reply: Reply) {
 
 const PRESENTATION_TIMEOUT_MS = 5000;
 const CLOSED: Failure = { code: "session_closed", path: "$" };
-const GPU_WORK_LIMIT_MS = 180_000;
 
 function within<T>(promise: Promise<T>, limit: number, waited: string, signal: AbortSignal): Promise<T> {
   return new Promise((resolve, reject) => {

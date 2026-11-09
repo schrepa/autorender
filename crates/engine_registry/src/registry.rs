@@ -39,6 +39,21 @@ impl BrickId {
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BrickSet(pub &'static str);
 
+pub fn run_operation(world: &mut World, name: &str, request: Value) -> Result<Value, Error> {
+    let operation = world
+        .get_resource::<Registry>()
+        .and_then(|registry| registry.operation(name))
+        .copied()
+        .ok_or_else(|| {
+            Error::new(ErrorCode::UnknownVariant, "$.name")
+                .expected(engine_settings::Expected::Present)
+                .got(name)
+        })?;
+    operation
+        .run(world, request)
+        .map_err(|error| error.within("$.args"))
+}
+
 #[derive(Resource, Default)]
 pub struct Registry {
     bricks: Vec<BrickRecord>,
@@ -423,17 +438,13 @@ impl Registry {
     }
 
     pub fn operations(&self) -> impl Iterator<Item = &OperationEntry> + '_ {
-        self.all_operations().filter(|entry| entry.listed)
-    }
-
-    pub fn operation(&self, name: &str) -> Option<&OperationEntry> {
-        self.all_operations().find(|entry| entry.name == name)
-    }
-
-    fn all_operations(&self) -> impl Iterator<Item = &OperationEntry> + '_ {
         self.core_operations
             .iter()
             .chain(self.bricks.iter().flat_map(|record| record.operations()))
+    }
+
+    pub fn operation(&self, name: &str) -> Option<&OperationEntry> {
+        self.operations().find(|entry| entry.name == name)
     }
 
     pub fn check_named(&self, key: &str, value: &Value, path: &str) -> Result<(), Error> {

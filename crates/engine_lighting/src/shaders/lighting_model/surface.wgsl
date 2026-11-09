@@ -103,7 +103,7 @@ fn shade_surface(point: SurfacePoint, pixel: vec2<f32>, local: vec3<f32>) -> Sha
     let specular = piece().model.z;
     var facing = 1.0;
     let face = cross(point.world_dx, point.world_dy); // filter: none, the face's own plane across the pixel, a direction
-    if dot(face, face) > 1.0e-20 && point.thickness == 0.0 && !point.inputs.ignore_face {
+    if dot(face, face) > 1.0e-20 && point.inputs.thickness == 0.0 && !point.inputs.ignore_face {
         let toward = select(-1.0, 1.0, dot(face, point.geometric) >= 0.0);
         facing = smoothstep(-0.05, 0.1, dot(normalize(face) * toward, sun));
     }
@@ -136,10 +136,10 @@ fn shade_surface(point: SurfacePoint, pixel: vec2<f32>, local: vec3<f32>) -> Sha
     let sunlit = (point.diffuse_color * wrapped + highlight * specular + transmitted(point))
         * sun_color();
     var visible = 1.0;
-    if any(sunlit != vec3<f32>(0.0)) && point.sun_blocked != 1.0 && inside.y != 0.0 {
+    if any(sunlit != vec3<f32>(0.0)) && point.inputs.sun_blocked != 1.0 && inside.y != 0.0 {
         visible = sun_visibility(surface_sun(point));
     }
-    let sun_light = sunlit * visible * (1.0 - point.sun_blocked) * inside.y;
+    let sun_light = sunlit * visible * (1.0 - point.inputs.sun_blocked) * inside.y;
     let emitted = point.emissive * piece().model.y;
     let lit = sky_light + sun_light + emitted + local;
     let through = atmospheric(lit, camera.position.xyz, point.world, -view);

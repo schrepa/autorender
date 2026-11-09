@@ -171,57 +171,6 @@ export interface MissingAsset {
   position?: number[] | null;
 }
 
-export interface NavAgent {
-  destination?: number[] | null;
-  level?: number;
-  max_slope?: number;
-  max_water?: number;
-  radius?: number;
-  speed?: number;
-  turn?: number;
-}
-
-export interface NavAgentRow {
-  destination?: number[] | null;
-  id?: string | null;
-  left: number;
-  position: number[];
-  status: NavStatus;
-}
-
-export interface NavAgentView {
-  agent: NavAgent;
-  blocked_by?: string | null;
-  left: number;
-  length: number;
-  moved_by?: string | null;
-  next: number;
-  points: number;
-  refused?: string | null;
-  searched: number;
-  searched_for?: number[] | null;
-  status: NavStatus;
-}
-
-export interface NavAgentsView {
-  agents: number;
-  arrived: number;
-  collision_errors: number;
-  failed_jobs: number;
-  first: NavAgentRow[];
-  grounds: number;
-  latest_job_failure?: string | null;
-  portals: number;
-  refused: number;
-  searching: number;
-  unreachable: number;
-  waiting: number;
-  walking: number;
-  work: number;
-}
-
-export type NavStatus = "idle" | "searching" | "walking" | "arrived" | "unreachable" | "refused";
-
 export interface Observation {
   frame?: string | null;
   presentation: PresentationState;
@@ -240,18 +189,14 @@ export interface OpResults {
   game: GameResult;
   input: InputResult;
   inspect: InspectResult;
-  nav_agent: NavAgentView;
-  nav_agents: NavAgentsView;
   parent: ParentResult;
   pause: StatusResult;
   present: PresentResult;
-  probe: ProbeResult;
   profile: ProfileResult;
   render: RenderResult;
   resume: StatusResult;
   status: StatusResult;
   step: StepResult;
-  terrain_sweep: TerrainSweepResult;
 }
 
 export interface Outcome {
@@ -286,10 +231,6 @@ export interface PresentationState {
 }
 
 export type Presented = { kind: "tick" } | { alpha: number; kind: "between" } | { alpha: number; kind: "paced" };
-
-export interface ProbeResult {
-  entity?: AuthoredEntity | null;
-}
 
 export interface ProfileResult {
   artifact?: KeptArtifact | null;
@@ -335,7 +276,6 @@ export interface StatusLimits {
 
 export interface StatusResult {
   authored_entities?: number | null;
-  collision?: Record<string, unknown> | null;
   culling_enabled: boolean;
   features?: string[] | null;
   fixed_delta_seconds?: number | null;
@@ -352,27 +292,6 @@ export interface StepResult {
   ticks: number;
 }
 
-export interface SweepExample {
-  at: number[];
-  height: number;
-}
-
-export interface SweepRays {
-  compared: number;
-  missed: number;
-  placed_first: number;
-  worst: Worst;
-}
-
-export interface TerrainSweepResult {
-  collision?: SweepRays | null;
-  examples: SweepExample[];
-  holes: number;
-  level_zero: number;
-  points: number;
-  resident: number;
-}
-
 export interface TextureAsset {
   bytes?: number | null;
   gpu_resident?: boolean | null;
@@ -385,8 +304,3 @@ export interface TextureAsset {
 export type TextureState = "cpu_ready" | "missing";
 
 export type TypeKind = "component" | "resource" | "authoring" | "verb" | "operation" | "brick" | "stats" | "observation" | "catalog";
-
-export interface Worst {
-  at?: number[] | null;
-  max_difference: number;
-}

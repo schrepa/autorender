@@ -2,8 +2,8 @@ use std::path::Path;
 
 use engine_assets::Texture;
 use engine_core::math::sin;
-use engine_core::{BrickList, Listing};
-use engine_texture_cook::{TEXTURE_COOK, TextureCook};
+use engine_core::BrickList;
+use engine_texture_cook::TEXTURE_COOK;
 use engine_textures::{Family, Source, Usage};
 use serde_json::{Map, json};
 
@@ -149,10 +149,9 @@ fn reference(texture: &Texture, level: usize) -> Result<Vec<u8>, String> {
 }
 
 pub fn run(_: &Path, observed: &mut Observations) -> Result<(), String> {
-    let mut worker =
-        JobLog::of(|list: BrickList| engine_standard::everything(list).with::<TextureCook>())?;
+    let mut worker = JobLog::of(engine_standard::everything::<BrickList>)?;
     for image in images() {
-        let levels = engine_textures::levels(&image.source);
+        let levels = engine_texture_cook::cook_levels(&image.source);
         let mut observation = Map::new();
         for (family, floor) in Family::ALL.into_iter().zip(image.floors) {
             let texture = engine_texture_cook::cook(&image.source, family)
@@ -169,7 +168,7 @@ pub fn run(_: &Path, observed: &mut Observations) -> Result<(), String> {
                     )
                 },
             );
-            let input = engine_textures::cook_input(&image.source, family);
+            let input = engine_texture_cook::cook_input(&image.source, family);
             let whole = worker.run(&TEXTURE_COOK, &input)?;
             let sliced = worker.sliced(&TEXTURE_COOK, &input, SLICE)?;
             observed.check(whole == record && sliced == record, || {

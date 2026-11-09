@@ -645,13 +645,13 @@ fn cloud_passes(
     );
     let view_pass = cx
         .pass("cloud_march")
-        .at(AttachPoint::Sky)
+        .at(AttachPoint::LateOpaque)
         .label("engine/cloud-view")
         .span("cloud_view")
         .id();
     let composite_pass = cx
         .pass("cloud_composite")
-        .at(AttachPoint::Sky)
+        .at(AttachPoint::LateOpaque)
         .after(view_pass)
         .after(dome)
         .label("engine/cloud-composite")

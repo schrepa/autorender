@@ -10,9 +10,9 @@ use engine_core::{
     ErrorCode, Feed, Filter, FrameBudget, FrameTime, GpuBits, IDLE_JOBS, Interest, Job, JobCx,
     JobKind, Jobs, LightingModel, Material, MaterialHandle, MeshHandle, RecordKey, Records,
     Request, Requests, Settling, TextureRef, VIEW_JOBS, WorkClock, Wrap, content_hash,
-    job_priority,
+    gpu_struct, job_priority,
 };
-use engine_places::impostors::{
+use engine_places_rendering::impostors::{
     ImpostorAsk, ImpostorAsks, ImpostorFlags, ImpostorRecord, ImpostorRecords, Impostors,
 };
 use engine_render::wgpu;
@@ -994,13 +994,23 @@ pub(crate) fn cook(world: &World, asks: &mut CookAsks<'_>) {
     asks.left(books.left());
 }
 
+gpu_struct! {
+    #[derive(Resource)]
+    pub struct ImpostorPiece {
+        pub cutoff: [f32; 4],
+    }
+}
+
 pub(crate) fn policy(
     settings: Res<ImpostorSettings>,
     mut impostors: ResMut<Impostors>,
+    mut piece: ResMut<ImpostorPiece>,
 ) {
     impostors.set_if_neq(Impostors {
-        enabled: settings.enabled,
         pixels: settings.pixels,
+    });
+    piece.set_if_neq(ImpostorPiece {
+        cutoff: [settings.cutoff, 0.0, 0.0, 0.0],
     });
 }
 
@@ -1008,6 +1018,7 @@ struct Frame {
     enabled: bool,
     pixels: f32,
     max: Option<u32>,
+    least: usize,
     detail: bool,
     cooking: bool,
     now: Option<f64>,
@@ -1038,6 +1049,7 @@ pub(crate) fn settle(
         enabled: settings.enabled,
         pixels: settings.pixels,
         max: settings.max,
+        least: settings.min_triangles as usize,
         detail: detail.enabled,
         cooking,
         now: clock.now().filter(|_| !cooking),
@@ -1058,9 +1070,11 @@ pub(crate) fn settle(
     }
     let unsettled = books.book.as_ref().map_or(0, Book::unsettled);
     books.settling.left(unsettled);
-    stats.set_if_neq(ImpostorStats {
+    let next = ImpostorStats {
         failed: books.census().failed,
-    });
+        ..stats.clone()
+    };
+    stats.set_if_neq(next);
 }
 
 fn settle_books(
@@ -1189,9 +1203,16 @@ fn supply_ask(
     cx: &mut Supplying<'_, '_, '_>,
     sources: Sources<'_>,
     (ask, hemisphere): (&ImpostorAsk, bool),
-    budget: Option<u32>,
+    (budget, least): (Option<u32>, usize),
 ) -> Option<Supplied> {
     if !sources.1.resident(ask.mesh) {
+        return None;
+    }
+    if sources
+        .0
+        .mesh(ask.mesh)
+        .is_none_or(|mesh| mesh.indices().len() / 3 < least)
+    {
         return None;
     }
     let material = ask.material.and_then(current_material(sources));
@@ -1207,12 +1228,12 @@ fn supply_all(
     book: &mut Book,
     cx: &mut Supplying<'_, '_, '_>,
     sources: Sources<'_>,
-    (asked, enabled, budget): (&ImpostorAsks, bool, Option<u32>),
+    (asked, enabled, limits): (&ImpostorAsks, bool, (Option<u32>, usize)),
     settled: &mut ImpostorRecords,
 ) {
     for ask in &asked.asks {
         let supplied = match ask {
-            Some(ask) if enabled => supply_ask(book, cx, sources, (ask, asked.hemisphere), budget),
+            Some(ask) if enabled => supply_ask(book, cx, sources, (ask, asked.hemisphere), limits),
             Some(_) | None => None,
         };
         let record = match supplied {
@@ -1261,7 +1282,7 @@ fn settle_book(
             book,
             cx,
             sources,
-            (*asks, shown, frame.max),
+            (*asks, shown, (frame.max, frame.least)),
             &mut settled,
         );
         book.drawn |= book.capacity > 0 && !settled.records.is_empty();

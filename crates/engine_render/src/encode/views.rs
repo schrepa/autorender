@@ -307,7 +307,7 @@ impl Run {
         self.pass = u32::MAX;
         for parity in 0..2 {
             self.frames.parity = parity;
-            let entries: Vec<(u32, crate::bindings::Stages)> =
+            let entries: Vec<(u32, wgpu::ShaderStages)> =
                 self.machine.variants[variant].entries.clone();
             let mut resolved = Vec::with_capacity(entries.len());
             for (binding, _) in entries {
@@ -756,13 +756,19 @@ fn placeholder(device: &wgpu::Device, (ty, bytes): (Ty, u64)) -> Placeholder {
     match ty {
         Ty::Uniform => buffer(wgpu::BufferUsages::UNIFORM),
         Ty::Storage { .. } => buffer(wgpu::BufferUsages::STORAGE),
-        Ty::Sampler => {
-            Placeholder::Sampler(device.create_sampler(&wgpu::SamplerDescriptor::default()))
-        }
-        Ty::Comparison => Placeholder::Sampler(device.create_sampler(&wgpu::SamplerDescriptor {
-            compare: Some(wgpu::CompareFunction::LessEqual),
-            ..Default::default()
-        })),
+        Ty::Sampler => Placeholder::Sampler(crate::materials::gpu_sampler(
+            device,
+            "engine/placeholder",
+            engine_core::Sampler::NEAREST,
+        )),
+        Ty::Comparison => Placeholder::Sampler(crate::materials::gpu_sampler(
+            device,
+            "engine/placeholder",
+            engine_core::Sampler {
+                compare: Some(engine_core::Compare::LessEqual),
+                ..engine_core::Sampler::NEAREST
+            },
+        )),
         Ty::Texture { sample, view } => {
             let format = match sample {
                 Sample::Float => wgpu::TextureFormat::Rgba8Unorm,

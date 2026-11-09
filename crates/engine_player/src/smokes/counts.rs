@@ -11,7 +11,7 @@ struct Counted {
 }
 
 fn meshes(reply: &Value) -> &Value {
-    &reply["result"]["rendering"]["meshes_stats"]
+    &reply["result"]["rendering"]["bricks"]["meshes_stats"]
 }
 
 fn partition(reply: &Value) -> Result<(), SmokeFailure> {

@@ -3,7 +3,10 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::math::max;
-use engine_core::{DrawKind, Entry, Error, PassName, PassViews, ScenePass, SlotSet, Var, Writes};
+use engine_core::{
+    DrawKind, Entry, Error, KindDecl, PassName, PassViews, ScenePass, ScenePasses, SlotSet, Var,
+    Writes,
+};
 use engine_heightfield::Fall;
 use engine_places_world::ground::{GroundTiles, Heightfield};
 use engine_render::{
@@ -35,13 +38,13 @@ impl PassName for WaterPass {
         writes: Writes::LIT,
         reads: SlotSet::ALL,
         views: PassViews::Main,
-        at: AttachPoint::Sky,
+        at: AttachPoint::LateOpaque,
         takes: takes_water,
     };
 }
 
-fn takes_water(kind: DrawKind) -> bool {
-    kind == WATER_KIND
+fn takes_water(kind: &KindDecl) -> bool {
+    kind.kind == WATER_KIND
 }
 
 type BuiltFalls = (Entity, Vec3, Arc<[Fall]>, Option<u32>, Range<u32>);
@@ -88,10 +91,10 @@ pub(crate) fn reached(
         .collect()
 }
 
-fn shows_water(listed: &ScenePass) -> bool {
+fn shows_water(passes: &ScenePasses, listed: &ScenePass) -> bool {
     listed.bit.is_some()
         && listed.pass.views != PassViews::Owned
-        && (listed.pass.takes)(WATER_KIND)
+        && passes.takes(&listed.pass, WATER_KIND)
         && listed.pass.writes.contains(DEBUG_TARGETS[0])
 }
 
@@ -314,7 +317,7 @@ impl GpuPart for WaterGpu {
             .passes()
             .listed()
             .iter()
-            .filter(|listed| shows_water(listed))
+            .filter(|listed| shows_water(cx.passes(), listed))
             .map(|listed| listed.name)
             .collect();
         let inputs = [leaf_args, leaf_pattern, fall_vertices, fall_indices];

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use glam::{IVec2, Vec2};
 
 use engine_core::GpuBits;
-use engine_core::math::GRAVITY;
+use engine_math::GRAVITY;
 use engine_math::collections::HashMap;
 use engine_math::{clamp, max, min};
 

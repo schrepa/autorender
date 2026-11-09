@@ -1,8 +1,9 @@
 import { defineConfig } from "vite";
 import { resolve, sep } from "node:path";
-import { createReadStream, existsSync, readdirSync } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { json } from "node:stream/consumers";
+import { pathToFileURL } from "node:url";
 import clients from "./src/generated/clients.json";
 import { wasmImport } from "./scripts/wasm-alias.mjs";
 
@@ -13,24 +14,20 @@ const publicFolder = resolve(import.meta.dirname, "public");
 const packIndex = resolve(publicFolder, "cooked/index.json");
 const workspace = resolve(import.meta.dirname, "..");
 const gameFolders = clients.map(client => resolve(workspace, client.folder) + sep);
-const ktx2 = existsSync(publicFolder)
-  ? readdirSync(publicFolder, { recursive: true, encoding: "utf8" })
-    .map(path => path.replaceAll("\\", "/")).filter(path => path.endsWith(".ktx2")).sort()
-  : [];
+const pagePlugins = clients.map(({ game }) => resolve(import.meta.dirname, "src", game, "vite.mjs")).filter(existsSync);
 
-export default defineConfig(({ command, mode }) => ({
-  define: { __PUBLIC_KTX2__: JSON.stringify(ktx2), __PUBLIC_PACKS__: JSON.stringify(existsSync(packIndex)) },
+export default defineConfig(async ({ command, mode }) => ({
+  define: { __PUBLIC_PACKS__: JSON.stringify(existsSync(packIndex)) },
   server: { watch: { ignored: ["**/public/scenes/**"] } },
-  plugins: [{
+  plugins: [...(await Promise.all(pagePlugins.map(async file => (await import(pathToFileURL(file).href)).default))).flat(), {
     name: "explicit-scene-reload",
     configureServer(server) {
       const types = new Map([["json", "application/json; charset=utf-8"], ["png", "image/png"], ["jpg", "image/jpeg"],
-        ["jpeg", "image/jpeg"], ["webp", "image/webp"], ["ktx2", "image/ktx2"], ["bin", "application/octet-stream"],
-        ["etr", "application/octet-stream"], ["r16", "application/octet-stream"]]);
+        ["jpeg", "image/jpeg"], ["webp", "image/webp"], ["ktx2", "image/ktx2"]]);
       server.middlewares.use(async (request, response, next) => {
         const path = request.url?.split("?")[0];
         const scene = !!path && /^\/scenes\/[A-Za-z0-9_-]+\.scene\.json$/.test(path);
-        const asset = !!path && /^\/scenes\/[A-Za-z0-9_-][A-Za-z0-9_\/-]*(\.[A-Za-z0-9_-]+)*\.(png|jpe?g|webp|ktx2|bin|etr|r16)$/.test(path)
+        const asset = !!path && /^\/scenes\/[A-Za-z0-9_-][A-Za-z0-9_\/-]*(\.[A-Za-z0-9_-]+)+$/.test(path)
           && !path.split("/").some(part => part === "." || part === "..");
         if (!path || (!scene && !asset)) return next();
         if (request.method !== "GET" && request.method !== "HEAD") { response.statusCode = 405; response.end(); return; }

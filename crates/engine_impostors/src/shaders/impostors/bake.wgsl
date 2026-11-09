@@ -4,8 +4,8 @@ import package::engine::mesh::vertex::octahedral_normal;
 import package::engine::shading::SurfaceInput;
 import package::engine::mapped::{base_texel, emissive_texel};
 import package::engine::surface::{masked_out, opacity_cut, surface_point};
-import package::engine::surfaces::SURFACE_THIN;
 import package::engine::view::stable_normalize;
+import package::face::lighting::SURFACE_THIN;
 import package::generated::impostors::ImpostorBake;
 import package::impostors::faces::impostors::{impostor_basis, impostor_flags_hemisphere,
     impostor_frame_direction, impostor_frames};

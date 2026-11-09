@@ -278,24 +278,6 @@ export async function launchBrowserSession({ url: value, browserPath }) {
         return typeof waiting === "boolean" ? { waiting_on_gpu: waiting } : {};
       },
       async execute(command) {
-        if (command.verb === "describe" && command.name === "ProfileCapture") {
-          if (Object.keys(command).some(key => !["verb", "name"].includes(key))) throw new AgentError("unknown_field", "$", { allowed: variants(["verb", "name"]) });
-          const response = await requestBrowser(status);
-          if (!response.ok) return response;
-          const { profileDescriptor } = await import("./agent-profile.mjs");
-          const available = await page.evaluate(() => window.__engineProfile?.status() ?? { available: false });
-          response.result = { ...profileDescriptor, status: available };
-          return response;
-        }
-        if (command.verb === "profile" && command.deep !== undefined) {
-          const { captureProfile } = await import("./agent-profile.mjs");
-          try { return await captureProfile({ page, requestBrowser, command: command.deep, artifacts, workspace }); }
-          catch (error) {
-            if (!(error instanceof AgentError)) throw error;
-            const { observation } = await requestBrowser(status);
-            return { ok: false, ...(observation ? { observation } : {}), error: refusal(error) };
-          }
-        }
         if (command.verb === "capture" && command.compare !== undefined) {
           const { compare, ...capture } = command;
           if (typeof compare?.b === "string") return compareCaptures(compare, requestBrowser, page);
@@ -312,7 +294,6 @@ export async function launchBrowserSession({ url: value, browserPath }) {
         }
         const response = await requestBrowser(command);
         if (command.verb === "describe" && command.name === undefined && response.ok && Array.isArray(response.result?.types)) {
-          response.result.types.push({ name: "ProfileCapture", kind: "tooling" });
           const { controls, parameters } = await page.evaluate(() => ({ controls: window.__engineDev?.controls ?? {}, parameters: window.__engineDev?.parameters ?? {} }));
           response.result.types.push({ name: "GameControls", kind: "tooling", controls });
           response.result.types.push({ name: "PageParameters", kind: "tooling", parameters });

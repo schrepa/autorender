@@ -16,7 +16,6 @@ mod views;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub mod authoring;
-#[cfg(not(target_arch = "wasm32"))]
 pub mod schemas;
 
 pub use bricks::operation_names;
@@ -38,10 +37,7 @@ pub use protocol::{
 };
 pub use reply::{Observation, Reply, SceneObservation};
 
-pub const FRAME_STATS_SCHEMA: &str = include_str!("generated/frame_stats.schema.json");
-
 pub const MAX_INSPECTOR_BYTES: usize = 16 * 1024;
-pub const MAX_INSPECTORS: usize = 64;
 
 pub(crate) fn bounded<T: engine_settings::Setting>(
     value: T,

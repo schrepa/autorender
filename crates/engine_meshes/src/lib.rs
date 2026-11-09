@@ -32,7 +32,6 @@ const GENERATED: &[&str] = &[
     <layouts::CandidateState as engine_core::GpuBits>::WGSL,
     <layouts::LodHistory as engine_core::BitValue>::WGSL,
     <layouts::LodFade as engine_core::GpuBits>::WGSL,
-    <layouts::CardFrames as engine_core::GpuBits>::WGSL,
     <layouts::PresentationFrame as engine_core::GpuStruct>::WGSL,
     <layouts::CandidateData as engine_core::GpuStruct>::WGSL,
     <layouts::BatchData as engine_core::GpuStruct>::WGSL,
@@ -61,11 +60,15 @@ impl Brick for MeshesBrick {
                 kind: MESH,
                 vertex: shaders::meshes::vertex::VS_MESH.name(),
                 needs: Attributes::BASE,
+                casts_shadows: true,
+                seen_by_probes: true,
             })
             .draw_kind(KindDecl {
                 kind: SKIN,
                 vertex: shaders::meshes::vertex::VS_SKIN.name(),
                 needs: Attributes::SKINNED,
+                casts_shadows: true,
+                seen_by_probes: true,
             })
             .draws::<gpu::MeshesGpu>(MESH, gpu::MeshesGpu::draw)
             .draws::<gpu::MeshesGpu>(SKIN, gpu::MeshesGpu::draw_skins);

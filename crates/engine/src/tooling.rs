@@ -10,10 +10,13 @@ pub fn print_generated(files: &[(&str, String)]) {
     println!("{}", Value::Object(files));
 }
 
-#[cfg(feature = "schema")]
-pub fn frame_stats_schema() -> Value {
-    serde_json::to_value(schemars::schema_for!(crate::stats::FrameStats))
-        .expect("schema_serializes")
+#[cfg(feature = "dev")]
+pub fn print_schemas(
+    bricks: impl FnOnce(crate::BrickList) -> crate::BrickList,
+) -> Result<(), String> {
+    let engine = crate::engine(bricks).map_err(|error| error.to_string())?;
+    print_generated(&engine_dev::schemas::game(engine.app.world())?);
+    Ok(())
 }
 
 pub fn declarations(schema: &Value, root: &str) -> String {

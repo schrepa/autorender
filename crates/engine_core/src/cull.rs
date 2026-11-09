@@ -4,7 +4,7 @@ use bevy_ecs::world::World;
 use glam::{Mat4, Vec3, Vec4};
 
 use crate::presentation_bounds::MAX_COEFFICIENT;
-use crate::{DrawnState, DrawnTable, Views, settings};
+use crate::{DrawnState, DrawnTable, settings};
 
 settings! {
     #[section("culling")]
@@ -46,6 +46,7 @@ pub struct CullPlan {
     pub occlusion: bool,
     pub subpixel: bool,
     pub budget: u32,
+    pub over_budget: bool,
 }
 
 pub fn frustum_planes(view_projection: Mat4) -> [Vec4; 6] {
@@ -86,10 +87,6 @@ pub(crate) fn settle(world: &mut World) {
     let subpixel = world
         .get_resource::<SubpixelCulling>()
         .is_none_or(|subpixel| subpixel.enabled);
-    let bounded = world
-        .get_resource::<Views>()
-        .and_then(Views::main)
-        .is_some_and(|main| frustum_bounded(main.view_projection));
     let drawn = world.get_resource::<DrawnTable>().map_or(0, |table| {
         table
             .states()
@@ -97,12 +94,12 @@ pub(crate) fn settle(world: &mut World) {
             .count()
     });
     let budget = culling.budget();
-    let unbudgeted = culling.frustum && bounded && budget as usize >= drawn && drawn != 0;
     let plan = CullPlan {
         frustum: culling.frustum,
-        occlusion: occlusion && unbudgeted,
-        subpixel: subpixel && unbudgeted,
+        occlusion,
+        subpixel,
         budget,
+        over_budget: drawn > budget as usize,
     };
     if let Some(mut held) = world.get_resource_mut::<CullPlan>() {
         held.set_if_neq(plan);

@@ -1,8 +1,7 @@
-import package::engine::math::GRAVITY;
 import package::face::heightfield::{TERRAIN_GRID, TerrainGroundRise, TerrainGroundSamples,
     terrain_ground_rise, terrain_ground_samples, terrain_level_height, terrain_uniform,
     use_terrain};
-import package::generated::water::{BLOCK_GROUND, COVER_POINTS, DRY, GROUND_D84, LIVE_CELL,
+import package::generated::water::{BLOCK_GROUND, COVER_POINTS, DRY, GRAVITY, GROUND_D84, LIVE_CELL,
     LIVE_HEAD, LIVE_HELD, LIVE_NONE, NO_WATER_SURFACE, SETUP_RISEN, SETUP_SOLID_ENTRIES,
     SETUP_STANDS, SETUP_WHOLE, SimSetup, THIN, TURBULENT_SPEED, UNHELD, WATER_SETUP_RING_GROUP};
 import package::generated::water::{NO_WATER_BLOCK, WATER_LIVE_BLOCK, WATER_TILE_PATCHES,

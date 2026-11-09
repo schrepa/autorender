@@ -1,6 +1,6 @@
 mod harness;
 
-use engine_core::{BrickList, Engine, ErrorCode, MAX_DEV_TICKS};
+use engine_core::{BrickList, Engine, ErrorCode};
 pub use engine_core::{Smoke, SmokeFailure, SmokeSession};
 use engine_registry::Registry;
 use engine_scene::{SceneFiles, SceneInstance, SceneKinds};
@@ -234,14 +234,11 @@ pub fn answered(reply: Value) -> std::result::Result<Value, Value> {
     }
 }
 
-pub fn step_lines(ticks: u32) -> impl Iterator<Item = String> {
-    (0..ticks.div_ceil(MAX_DEV_TICKS)).map(move |chunk| {
-        let count = (ticks - chunk * MAX_DEV_TICKS).min(MAX_DEV_TICKS);
-        request_line(
-            "control",
-            json!({ "name": "step", "args": { "ticks": count } }),
-        )
-    })
+pub fn step_line(ticks: u32) -> String {
+    request_line(
+        "control",
+        json!({ "name": "step", "args": { "ticks": ticks } }),
+    )
 }
 
 pub fn scene_files(document: &str, kinds: &SceneKinds) -> Result<SceneFiles> {

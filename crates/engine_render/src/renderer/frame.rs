@@ -13,10 +13,9 @@ use crate::profiling::{GpuProfiler, Span};
 use crate::readback::{Arrival, Reader};
 
 const BATCHES: [&str; 3] = ["batch_0", "batch_1", "batch_2"];
-const OPAQUE_MESHES: &str = "opaque_meshes";
-const MEMORY: [&str; 8] = [
+const OPAQUE_SCENE: &str = "opaque_scene";
+const MEMORY: [&str; 7] = [
     "memory.gpu_previous_pose_bytes",
-    "memory.gpu_presentation_bytes",
     "memory.render_staging_capacity_bytes",
     "memory.gpu_instance_buffer_bytes",
     "memory.gpu_mesh_payload_bytes",
@@ -64,7 +63,7 @@ fn opaque_span(
         passes.get(planned.pass.index()).is_some_and(|pass| {
             crate::machine::shared(pass)
                 && crate::machine::pass_layer(pass)
-                    .is_some_and(|layer| layer <= engine_core::AttachPoint::Sky)
+                    .is_some_and(|layer| layer < engine_core::AttachPoint::Transparent)
         })
     };
     Some((
@@ -516,9 +515,9 @@ impl Renderer {
                 (facts.render.x, facts.render.y),
                 (size.x, size.y),
             );
-            post.kept[0] = f32::from(u8::from(
+            post.kept[0] = u32::from(
                 run.canvas.load && !run.canvas.carried && facts.clear != engine_core::Clear::All,
-            ));
+            );
             post.applied = applied_mask(run, &plan, &facts, states);
             run.uniforms.post = post;
             run.write_post();
@@ -541,7 +540,7 @@ impl Renderer {
                     mark_span(
                         &self.core.profiler,
                         run.recording.encoder(),
-                        OPAQUE_MESHES,
+                        OPAQUE_SCENE,
                         true,
                     );
                     opaque_open = false;
@@ -605,7 +604,7 @@ impl Renderer {
                     }
                     timed = span;
                     if !opaque_open && opaque.is_some_and(|(first, _)| first == at) {
-                        mark_span(&self.core.profiler, encoder.as_mut(), OPAQUE_MESHES, false);
+                        mark_span(&self.core.profiler, encoder.as_mut(), OPAQUE_SCENE, false);
                         opaque_open = true;
                     }
                     if !keeps && let Some(began) = wanted {
@@ -658,7 +657,7 @@ impl Renderer {
             run.flush_clears();
             run.leave();
             if opaque_open {
-                mark_span(&self.core.profiler, run.recording.encoder(), OPAQUE_MESHES, true);
+                mark_span(&self.core.profiler, run.recording.encoder(), OPAQUE_SCENE, true);
             }
             if run.canvas.rect.is_some() {
                 run.copy_canvas(false);

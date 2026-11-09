@@ -24,6 +24,8 @@ pub struct KindDecl {
     pub kind: DrawKind,
     pub vertex: &'static str,
     pub needs: Attributes,
+    pub casts_shadows: bool,
+    pub seen_by_probes: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

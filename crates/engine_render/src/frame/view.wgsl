@@ -13,13 +13,9 @@ fn view_clip(world: vec3<f32>) -> vec4<f32> {
     return clip;
 }
 
-const PI: f32 = 3.14159265;
-
 fn eye_world(relative: vec3<f32>) -> vec3<f32> {
     return relative + camera.position.xyz;
 }
-
-const DETAIL_EDGE_ON: f32 = 0.0625;
 
 fn view_pixel(position: vec4<f32>, previous: vec4<f32>) -> ViewPixel {
     let current = vec2<f32>(position.x * camera.jitter.z - 1.0, 1.0 - position.y * camera.jitter.w) - camera.jitter.xy;
@@ -32,21 +28,6 @@ fn detail_distance(world: vec3<f32>) -> f32 {
 
 fn detail_across(world: vec3<f32>) -> f32 {
     return detail_distance(world) * camera.pixel_angle;
-}
-
-fn detail_span(world: vec3<f32>, normal: vec3<f32>) -> vec4<f32> {
-    let across = detail_across(world);
-    let toward = world - camera.detail.xyz;
-    let ray = toward / max(length(toward), 1.0e-6);
-    let cosine = dot(normal, ray);
-    let facing = max(abs(cosine), DETAIL_EDGE_ON);
-    let laid = ray - normal * cosine;
-    let way = laid.xz * inverseSqrt(max(dot(laid, laid), 1.0e-12));
-    return vec4<f32>(across, across / facing, way);
-}
-
-fn detail_resolved(span: vec2<f32>) -> f32 {
-    return max(min(span.x, span.y), max(span.x, span.y) / DETAIL_ANISOTROPY);
 }
 
 struct DetailLevel {

@@ -1,4 +1,4 @@
-import package::engine::view::PI;
+import package::engine::math::PI;
 import package::generated::pieces::terrain_shading::piece;
 import package::generated::terrain_shading::{HORIZON_DIRECTIONS, HORIZON_LAYERS, HORIZON_RECORDS};
 

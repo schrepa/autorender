@@ -1,11 +1,9 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetResidency, CullPlan, Culling, Cut, Detail, DrawnTable, OcclusionCulling,
-    SubpixelCulling, stats,
+    AssetResidency, CullPlan, Culling, Detail, DrawnTable, OcclusionCulling, SubpixelCulling,
+    stats,
 };
-use engine_places::impostors::ImpostorRecords;
 
-use crate::assets::MeshAssets;
 use crate::MESH;
 use crate::presentation::PresentationTotals;
 
@@ -25,10 +23,8 @@ pub struct DetailStats {
     pub lod0_instances: Option<u32>,
     pub lod1_instances: Option<u32>,
     pub lod2_instances: Option<u32>,
-    pub impostor_instances: Option<u32>,
-    pub impostors: u32,
+    pub last_level_instances: Option<u32>,
     pub meshes_without_levels: u32,
-    pub impostor_cut: Cut,
 }
 
 #[derive(
@@ -84,7 +80,6 @@ pub(crate) fn mesh_stats(
     ),
     residency: Res<AssetResidency>,
     totals: Res<PresentationTotals>,
-    impostors: Query<&ImpostorRecords, With<MeshAssets>>,
     frame: Res<engine_core::FrameTime>,
     mut stats: ResMut<MeshStats>,
 ) {
@@ -99,10 +94,6 @@ pub(crate) fn mesh_stats(
     let listed = census.drawn;
     let visible = gpu_visible.unwrap_or(listed);
     let levels = last.filter(|_| detail.enabled).map(|totals| totals.levels);
-    let records = impostors.single().ok();
-    let impostor_cut = records.map_or_else(Cut::default, |records| {
-        Cut::of(records.asked, records.asked.saturating_sub(records.refused))
-    });
     let next = MeshStats {
         invalid_transforms: census.unplaced,
         render_candidates: census.drawn + census.unplaced + census.waiting,
@@ -121,13 +112,11 @@ pub(crate) fn mesh_stats(
             lod0_instances: levels.map(|levels| levels[0]),
             lod1_instances: levels.map(|levels| levels[1]),
             lod2_instances: levels.map(|levels| levels[2]),
-            impostor_instances: levels.map(|levels| levels[3]),
-            impostors: records.map_or(0, |records| records.live),
+            last_level_instances: levels.map(|levels| levels[3]),
             meshes_without_levels: residency
                 .meshes()
                 .filter(|(_, mesh)| mesh.without_levels())
                 .count() as u32,
-            impostor_cut,
         },
         occlusion_culling: CullingStats {
             active: plan.occlusion,

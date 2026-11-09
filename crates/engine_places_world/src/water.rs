@@ -4,7 +4,6 @@ use bevy_ecs::prelude::{Entity, Resource};
 use engine_heightfield::HydrologyBake;
 use engine_place::{Slot, Stamp};
 use engine_places_simulation::ground::TileKey;
-use engine_places_simulation::water::WaterSample;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct WaterTileErrors {
@@ -25,15 +24,6 @@ pub struct Waterline {
 impl Slot for Waterline {
     const NAME: &'static str = "water";
     const WGSL: Option<&'static str> = Some(include_str!("places/water.wgsl"));
-}
-
-#[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub struct WaterFlow {
-    pub samples: Vec<WaterSample>,
-}
-
-impl Slot for WaterFlow {
-    const NAME: &'static str = "water_flow";
 }
 
 #[derive(Resource, Clone, Default)]

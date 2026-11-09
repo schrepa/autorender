@@ -4,8 +4,6 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-use crate::bindings::{Kind, Sample, Sampling, Table, View};
-
 pub const UNIFORM_BINDING_BYTES: u64 = 16_384;
 
 #[derive(Clone, Copy, Debug)]
@@ -107,99 +105,12 @@ impl Ledger {
     }
 }
 
-fn binding_type(kind: Kind) -> wgpu::BindingType {
-    match kind {
-        Kind::Uniform { min_size, dynamic } => wgpu::BindingType::Buffer {
-            ty: wgpu::BufferBindingType::Uniform,
-            has_dynamic_offset: dynamic,
-            min_binding_size: wgpu::BufferSize::new(min_size),
-        },
-        Kind::Texture { sample, view } => wgpu::BindingType::Texture {
-            sample_type: match sample {
-                Sample::Float => wgpu::TextureSampleType::Float { filterable: true },
-            },
-            view_dimension: match view {
-                View::D2 => wgpu::TextureViewDimension::D2,
-            },
-            multisampled: false,
-        },
-        Kind::Sampler(sampling) => wgpu::BindingType::Sampler(match sampling {
-            Sampling::Filtering => wgpu::SamplerBindingType::Filtering,
-        }),
-    }
-}
-
-pub fn layout(device: &wgpu::Device, table: &'static Table) -> GroupLayout {
-    let entries: Vec<wgpu::BindGroupLayoutEntry> = table
-        .bindings
-        .iter()
-        .zip(0..)
-        .map(|(binding, number)| wgpu::BindGroupLayoutEntry {
-            binding: number,
-            visibility: crate::machine::shader_stages(binding.stages),
-            ty: binding_type(binding.kind),
-            count: None,
-        })
-        .collect();
-    GroupLayout {
-        label: table.label,
-        layout: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some(table.label),
-            entries: &entries,
-        }),
-    }
-}
-
-#[derive(Clone, Debug)]
-pub struct GroupLayout {
-    label: &'static str,
-    layout: wgpu::BindGroupLayout,
-}
-
-impl std::ops::Deref for GroupLayout {
-    type Target = wgpu::BindGroupLayout;
-
-    fn deref(&self) -> &wgpu::BindGroupLayout {
-        &self.layout
-    }
-}
-
 pub fn view(view: &wgpu::TextureView) -> wgpu::BindingResource<'_> {
     wgpu::BindingResource::TextureView(view)
 }
 
 pub fn sampler(sampler: &wgpu::Sampler) -> wgpu::BindingResource<'_> {
     wgpu::BindingResource::Sampler(sampler)
-}
-
-pub fn group(
-    device: &wgpu::Device,
-    label: &str,
-    table: &Table,
-    layout: &GroupLayout,
-    resources: &[(&str, wgpu::BindingResource<'_>)],
-) -> wgpu::BindGroup {
-    debug_assert_eq!(layout.label, table.label, "layout_matches {label}");
-    debug_assert_eq!(
-        resources.len(),
-        table.bindings.len(),
-        "binds_every_binding {label} {}",
-        table.label
-    );
-    let entries: Vec<wgpu::BindGroupEntry<'_>> = resources
-        .iter()
-        .map(|(name, resource)| wgpu::BindGroupEntry {
-            binding: table
-                .bindings
-                .iter()
-                .zip(0..)
-                .find(|(binding, _)| binding.name == *name)
-                .map(|(_, number)| number)
-                .unwrap_or_else(|| panic!("binding_unknown {} {name}", table.label)),
-            resource: resource.clone(),
-        })
-        .collect();
-    bind_group(device, label, layout, &entries)
 }
 
 #[expect(clippy::disallowed_methods, reason = "the one way to make bind groups")]

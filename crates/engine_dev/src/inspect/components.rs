@@ -135,6 +135,5 @@ pub(super) fn mesh_view(
         mesh,
         material,
         textures,
-        drawn_level: None,
     }
 }

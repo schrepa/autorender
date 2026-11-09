@@ -1,7 +1,6 @@
 import { CURSOR_MODES, TOUCH_PHASES, WHEEL_PIXELS } from "../generated/host";
 import type { Runtime } from "../generated/runtime";
 
-const MAX_TOUCH_POINTERS = 32;
 const MOUSE_RIGHT = 2;
 const WHEEL_LINES = 3;
 
@@ -36,7 +35,6 @@ export class BrowserInput {
     canvas.addEventListener("pointerdown", event => {
       canvas.focus();
       if (event.pointerType === "touch") {
-        if (this.touches.size >= MAX_TOUCH_POINTERS) return;
         this.touches.set(event.pointerId, { x: event.clientX, y: event.clientY });
         canvas.setPointerCapture(event.pointerId);
         event.preventDefault();
@@ -79,7 +77,8 @@ export class BrowserInput {
       event.preventDefault();
     }, options);
     window.addEventListener("mouseup", event => {
-      if (this.buttons.delete(event.button)) this.game?.mouse_button(event.button, false);
+      this.buttons.delete(event.button);
+      this.game?.mouse_button(event.button, false);
     }, options);
     canvas.addEventListener("contextmenu", event => { if (!this.contextMenu) event.preventDefault(); }, options);
     canvas.addEventListener("wheel", event => {
@@ -100,7 +99,7 @@ export class BrowserInput {
     for (const button of document.querySelectorAll<HTMLElement>("[data-key]")) {
       const key = button.dataset.key!;
       button.addEventListener("pointerdown", event => {
-        if (event.button !== 0 || this.pointers.has(event.pointerId) || this.pointers.size >= MAX_TOUCH_POINTERS) return;
+        if (event.button !== 0 || this.pointers.has(event.pointerId)) return;
         if (!this.game?.key(key, true)) return;
         event.preventDefault(); button.setPointerCapture(event.pointerId);
         this.pointers.set(event.pointerId, { key, target: button });

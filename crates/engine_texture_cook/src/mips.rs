@@ -1,8 +1,7 @@
 use std::sync::OnceLock;
 
-use engine_assets::srgb_decoded;
-
-use crate::Usage;
+use engine_core::TextureUsage as Usage;
+use engine_core::textures::srgb_decoded;
 
 fn srgb_thresholds() -> &'static [f32; 255] {
     static TABLE: OnceLock<[f32; 255]> = OnceLock::new();

@@ -282,10 +282,10 @@ impl Ground {
         self.0.edits()
     }
 
-    pub fn stand(&self, at: Vec2, walked: Option<f32>) -> Option<Stand> {
+    pub fn stand(&self, at: Vec2, walked: Option<f32>, deck_above: f32) -> Option<Stand> {
         let point = self.point(at).solid();
         match (point, walked) {
-            (Some(point), Some(walked)) if walked > point.height + DECK_ABOVE => Some(Stand {
+            (Some(point), Some(walked)) if walked > point.height + deck_above => Some(Stand {
                 height: walked,
                 level: None,
             }),
@@ -301,8 +301,6 @@ impl Ground {
         }
     }
 }
-
-pub const DECK_ABOVE: f32 = 1.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Stand {
@@ -326,15 +324,7 @@ pub struct GroundGrid {
     pub spacing: f32,
     pub heights: Box<[f32]>,
     pub holes: Option<Box<[u64]>>,
-    pub bridges: Arc<[GroundBridge]>,
     pub water: Option<Box<[f32]>>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct GroundBridge {
-    pub deck: Vec<Vec3>,
-    pub width: f32,
-    pub tunnel: bool,
 }
 
 engine_codec::record!(GroundGrid {
@@ -342,14 +332,7 @@ engine_codec::record!(GroundGrid {
     spacing,
     heights,
     holes,
-    bridges,
     water,
-});
-
-engine_codec::record!(GroundBridge {
-    deck,
-    width,
-    tunnel,
 });
 
 #[derive(
@@ -392,6 +375,7 @@ impl GroundedAt {
         ground: &Ground,
         (position, offset): (Vec2, f32),
         walked: Option<f32>,
+        deck_above: f32,
     ) -> Option<(Self, Option<f32>)> {
         let (revision, edits) = (ground.revision(), ground.edits());
         let holds = match self {
@@ -417,7 +401,7 @@ impl GroundedAt {
         if holds {
             return None;
         }
-        Some(match ground.stand(position, walked) {
+        Some(match ground.stand(position, walked, deck_above) {
             Some(stand) => (
                 Self::Stood {
                     position,

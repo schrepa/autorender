@@ -10,6 +10,7 @@ pub fn engine(bricks: impl FnOnce(BrickList) -> BrickList) -> crate::Result<Engi
 pub(crate) fn listed(list: BrickList) -> crate::Result<Engine> {
     let mut engine = Engine::listed(list.with_core(Renderer::register_places))?;
     crate::resolution::register(&mut engine);
+    crate::pacing::register(&mut engine);
     engine
         .operation::<SceneLookControl>()
         .operation::<SceneMaterialControl>();

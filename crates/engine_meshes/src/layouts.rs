@@ -43,19 +43,6 @@ impl LodFade {
     }
 }
 
-#[gpu_bits]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct CardFrames {
-    #[bits(8)]
-    pub first: u32,
-    #[bits(8)]
-    pub second: u32,
-    #[bits(8)]
-    pub third: u32,
-    #[bits(8)]
-    pub origin: u32,
-}
-
 gpu_consts! {
     pub const LOD_LEVELS: u32 = 3;
     pub const LOD_FADED: u32 = 65535;
@@ -69,6 +56,11 @@ gpu_consts! {
 const _: () = assert!(
     LOD_FADED == <LodFade as GpuBits>::FIELDS[2].mask(),
     "lod_faded_is_the_progress_mask"
+);
+
+const _: () = assert!(
+    LOD_LEVELS == engine_places::meshes::LAST_LEVEL,
+    "the_last_level_follows_the_mesh_levels"
 );
 
 gpu_struct! {
@@ -93,7 +85,7 @@ gpu_struct! {
         pub plane: u32,
         pub lod_error: f32,
         pub watched: u32,
-        pub pad_0: u32,
+        pub last_level: u32,
         pub pad_1: u32,
         pub pad_2: u32,
         pub eye: [f32; 4],
@@ -116,7 +108,7 @@ gpu_struct! {
         pub start: u32,
         pub count: u32,
         pub index_count: u32,
-        pub pad: u32,
+        pub last_triangles: u32,
         pub bounds_min: [f32; 4],
         pub bounds_max: [f32; 4],
         pub first_index: u32,

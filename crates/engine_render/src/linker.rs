@@ -913,7 +913,7 @@ fn imports(text: &str) -> Vec<String> {
     found
 }
 
-fn declarations(text: &str) -> Vec<Declaration> {
+pub(crate) fn declarations(text: &str) -> Vec<Declaration> {
     text.lines()
         .filter_map(|line| {
             let (_, group, name, rest) = declared_binding(line)?;

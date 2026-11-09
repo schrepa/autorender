@@ -44,12 +44,10 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         let rule = refusal["rule"].as_str().unwrap_or_default();
         let path = refusal["path"].as_str().unwrap_or_default();
         let name = format!("refusal {rule} at {path}");
-        let generated = (refusal["chain"].as_u64(), refusal["prefab"].as_u64());
-        let source = match (&refusal["source"], generated) {
+        let source = match (&refusal["source"], refusal["chain"].as_u64()) {
             (Value::String(source), _) if source == "OVERSIZED" => " ".repeat(MAX_SOURCE_BYTES + 1),
             (Value::String(source), _) => source.clone(),
-            (_, (Some(length), _)) => chain(length),
-            (_, (_, Some(count))) => prefab(count),
+            (_, Some(length)) => chain(length),
             _ => refusal["document"].to_string(),
         };
         let stage = refusal["stage"].as_str().unwrap_or("parse");
@@ -103,21 +101,6 @@ fn chain(length: u64) -> String {
         .collect();
     json!({"id": "chain", "revision": 1, "materials": [], "meshes": [], "entities": entities})
         .to_string()
-}
-
-fn prefab(count: u64) -> String {
-    let entities: Vec<Value> = (0..count)
-        .map(|index| json!({"id": format!("e{index}")}))
-        .collect();
-    json!({
-        "id": "prefab",
-        "revision": 1,
-        "materials": [],
-        "meshes": [],
-        "prefabs": [{"id": "large", "entities": entities}],
-        "entities": [],
-    })
-    .to_string()
 }
 
 fn read(root: &Path, path: &str) -> Result<String, String> {

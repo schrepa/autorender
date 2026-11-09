@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Cursor, DeviceLimits, Error, PassViews, ScenePass, TargetName, Views,
+    AssetLibrary, Cursor, DeviceLimits, Error, PassViews, ScenePass, ScenePasses, TargetName,
+    Views,
 };
 use engine_places_rendering::probes::{MIRRORED, ProbeCaptures};
 use engine_places_rendering::shadows::{CasterMap, KeptRefresh, Refresh, ShadowMaps};
@@ -113,8 +114,8 @@ enum Joined {
     },
 }
 
-fn joins(listed: &ScenePass) -> bool {
-    listed.bit.is_some() && (listed.pass.takes)(TERRAIN)
+fn joins(passes: &ScenePasses, listed: &ScenePass) -> bool {
+    listed.bit.is_some() && passes.takes(&listed.pass, TERRAIN)
 }
 
 pub(crate) struct TerrainGpu {
@@ -441,7 +442,7 @@ impl GpuPart for TerrainGpu {
             .passes()
             .listed()
             .iter()
-            .filter(|listed| joins(listed))
+            .filter(|listed| joins(cx.passes(), listed))
             .copied()
             .collect();
         let mut joined = Vec::with_capacity(listed.len());

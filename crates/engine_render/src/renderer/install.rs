@@ -719,10 +719,11 @@ fn install_with(
         });
     }
     for draw in &draws {
-        if let Some(index) = listed.iter().position(|entry| entry.record.part == draw.part) {
+        let index = listed.iter().position(|entry| entry.record.part == draw.part);
+        if let (Some(index), Some(kind)) = (index, core.passes.kind(draw.kind).copied()) {
             core.draws.push(KindMember {
                 part: index as u32,
-                kind: draw.kind,
+                kind,
                 call: std::sync::Arc::clone(&draw.call),
             });
         }
@@ -785,7 +786,7 @@ fn install_with(
         declared,
         outputs,
         switches,
-        (&limits, material.table()),
+        &limits,
         &mut problems,
     );
     if let Some(Some(error)) = crate::platform::ready(scope.pop()) {

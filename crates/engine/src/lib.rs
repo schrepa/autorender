@@ -14,7 +14,6 @@ pub use engine_settings::{Allowed, Expected, InvalidSetting, JS_ERROR_NAME};
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-pub const DYNAMIC_RESOLUTION: &str = "dynamic_resolution.enabled";
 #[doc(hidden)]
 pub mod surface;
 pub use game::{Game, Inspectors, engine};
@@ -28,8 +27,9 @@ pub use engine_command_line as command_line;
 pub use engine_core::smoke_eq;
 
 mod games {
-    pub use crate::frame_stats::{DynamicResolutionStats, ResolutionStats};
-    pub use crate::resolution::{DynamicResolution, Resolution};
+    pub use crate::frame_stats::ResolutionStats;
+    pub use crate::pacing::Pacing;
+    pub use crate::resolution::Resolution;
     pub use engine_core::{
         Aabb, AlphaMode, AssetBudget, AssetLibrary, Attribute,
         Attributes, BrickList, Camera, Clear, ColorSpace, CursorAsk, Hit,
@@ -54,9 +54,8 @@ mod games {
 pub use games::*;
 
 pub use engine_core::{
-    ErrorCode, HierarchyReport, LodLevel, MAX_HIERARCHY_DEPTH, MAX_TEXTURE_DIMENSION,
-    MAX_TRANSFORM_NODES, MeshLods, TextureFamily, TextureFormat, TextureSampling,
-    TransformNodeLimit,
+    ErrorCode, HierarchyReport, LodLevel, MAX_HIERARCHY_DEPTH, MAX_TRANSFORM_NODES, MeshLods,
+    TextureFamily, TextureFormat, TextureSampling, TransformNodeLimit,
 };
 
 pub mod bricks {
@@ -67,6 +66,8 @@ pub mod bricks {
 
 pub mod stats {
     pub use crate::frame_stats::FrameStats;
+    #[cfg(feature = "schema")]
+    pub use crate::frame_stats::frame_stats_schema;
     pub use engine_core::{Cut, JobStats, RenderStats};
 }
 
@@ -82,6 +83,7 @@ mod app_host;
 #[cfg(feature = "dev")]
 mod dev_host;
 mod game_host;
+mod pacing;
 mod resolution;
 pub use engine_render::{AdapterInfo, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
@@ -89,6 +91,8 @@ pub use engine_render::{
     GpuPreference, NativeWindow, keep_pipeline_cache_in, start_native_instances_with,
 };
 pub use game_host::GameHost;
+#[cfg(feature = "profiling")]
+pub use app_host::{PROFILE_DURATION_MS, PROFILE_EVENTS};
 
 pub fn scene_kinds(
     bricks: impl FnOnce(BrickList) -> BrickList,

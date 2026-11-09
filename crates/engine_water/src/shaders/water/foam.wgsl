@@ -1,6 +1,5 @@
-import package::engine::math::GRAVITY;
 import package::engine::view::{detail_across, detail_level, material_detail};
-import package::generated::water::{BREAK_THINNEST, WATER_GRADIENT_RANGE};
+import package::generated::water::{BREAK_THINNEST, GRAVITY, WATER_GRADIENT_RANGE};
 import package::water::footprint::{WaterFootprint, water_spread};
 import package::water::particles::PARTICLE_SMALLEST;
 import package::water::surface::water;

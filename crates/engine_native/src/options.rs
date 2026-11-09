@@ -3,8 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use engine::command_line::CommandOption;
-use engine::host::{HostSettings, JobRef, OVERLAY, SETTINGS, policy};
-use engine::bricks::Listing;
+use engine::host::{HostSettings, JobRef, OVERLAY, SETTINGS};
 use engine::{BrickList, Engine, Error, ErrorCode, Expected, Game, GpuPreference};
 use serde_json::json;
 
@@ -38,14 +37,10 @@ pub fn options() -> Vec<CommandOption> {
     let mut options = vec![
         CommandOption::taking("--size", "WxH").in_unit("px"),
         CommandOption::taking("--gpu", "discrete|integrated").defaults_to(gpu),
-        CommandOption::taking("--workers", format!("0-{}|off", policy::MAX_WORKERS))
-            .defaults_to(defaults.jobs.workers),
-        CommandOption::taking(
-            "--jobcache",
-            format!("off|verify|verify:N|0-{}", policy::MAX_JOB_CACHE_MIB),
-        )
-        .defaults_to(jobcache)
-        .in_unit("MiB"),
+        CommandOption::taking("--workers", "N|off").defaults_to(defaults.jobs.workers),
+        CommandOption::taking("--jobcache", "off|verify|verify:N|N")
+            .defaults_to(jobcache)
+            .in_unit("MiB"),
         CommandOption::taking("--vsync", "on|off").defaults_to(switch(defaults.vsync)),
         CommandOption::taking("--environment", "NAME"),
     ];
@@ -65,9 +60,9 @@ pub fn options() -> Vec<CommandOption> {
         CommandOption::taking("--vendor-counters", "LIST"),
         CommandOption::taking("--packs", "DIR"),
         CommandOption::taking("--cook", "FILE"),
-        CommandOption::taking("--flight", "SECONDS:LOOK:TURN"),
         CommandOption::flag("--dev"),
         CommandOption::taking("--smoke", "NAME,...|all|list"),
+        CommandOption::flag("--schemas"),
         CommandOption::taking("--dev-artifacts", "DIR").defaults_to(default_artifacts().display()),
         CommandOption::flag("--help"),
         CommandOption::flag("--json"),
@@ -204,7 +199,7 @@ pub struct HostOptions {
     pub dev: bool,
     pub dev_artifacts: Option<PathBuf>,
     pub smoke: Option<String>,
-    pub flight: Option<crate::window::Flight>,
+    pub schemas: bool,
     pub cook: Option<PathBuf>,
     pub workers_given: bool,
 }
@@ -229,7 +224,7 @@ impl Default for HostOptions {
             dev: false,
             dev_artifacts: None,
             smoke: None,
-            flight: None,
+            schemas: false,
             cook: None,
             workers_given: false,
         }
@@ -260,14 +255,8 @@ fn job_cache(argument: &Argument, arguments: &mut Arguments) -> Result<CacheOpti
             budget: mebibytes
                 .parse::<u64>()
                 .ok()
-                .filter(|&mebibytes| mebibytes <= policy::MAX_JOB_CACHE_MIB)
-                .ok_or_else(|| {
-                    argument
-                        .invalid(&cache)
-                        .range(0.0, policy::MAX_JOB_CACHE_MIB as f64)
-                })?
-                * 1024
-                * 1024,
+                .and_then(|mebibytes| mebibytes.checked_mul(MIB))
+                .ok_or_else(|| argument.invalid(&cache).range(0.0, (u64::MAX / MIB) as f64))?,
         },
     })
 }
@@ -311,14 +300,8 @@ impl HostOptions {
                 self.jobs.workers = match workers.as_str() {
                     "off" => 0,
                     count => count
-                        .parse()
-                        .ok()
-                        .filter(|&count: &u32| count <= policy::MAX_WORKERS)
-                        .ok_or_else(|| {
-                            argument
-                                .invalid(&workers)
-                                .range(0.0, f64::from(policy::MAX_WORKERS))
-                        })? as usize,
+                        .parse::<usize>()
+                        .map_err(|_| argument.invalid(&workers).at_least(0))?,
                 };
             }
             "--jobcache" => self.jobs.cache = job_cache(argument, arguments)?,
@@ -367,18 +350,9 @@ impl HostOptions {
             }
             "--dev-artifacts" => self.dev_artifacts = Some(arguments.value(argument)?.into()),
             "--smoke" => self.smoke = Some(arguments.value(argument)?),
-            "--flight" => {
-                let text = arguments.value(argument)?;
-                let mut parts = text.split(':');
-                let mut next = || parts.next().and_then(|part| part.parse::<f32>().ok());
-                let flight = (|| {
-                    Some(crate::window::Flight {
-                        seconds: next()? as u32,
-                        look: next()?,
-                        turn: next()?,
-                    })
-                })();
-                self.flight = Some(flight.ok_or_else(|| argument.invalid(&text))?);
+            "--schemas" => {
+                arguments.flag(argument)?;
+                self.schemas = true;
             }
             _ => return Ok(false),
         }
@@ -403,7 +377,6 @@ impl HostOptions {
                 ("--dev", self.dev),
                 ("--vendor", self.vendor.is_some()),
                 ("--cook", self.cook.is_some()),
-                ("--flight", self.flight.is_some()),
                 ("--smoke", self.smoke.is_some()),
             ];
             if let Some((other, _)) = others.iter().find(|(_, given)| *given) {
@@ -432,6 +405,11 @@ impl HostOptions {
                 Error::new(ErrorCode::InvalidArguments, "--smoke").expected(Expected::Supported)
             );
         }
+        if self.schemas && !cfg!(feature = "dev") {
+            return Err(
+                Error::new(ErrorCode::InvalidArguments, "--schemas").expected(Expected::Supported)
+            );
+        }
         let others = [
             ("--offscreen", self.offscreen.is_some()),
             ("--dev", self.dev),
@@ -449,6 +427,13 @@ impl HostOptions {
         }
         if self.cook.is_some()
             && let Some(other) = other
+        {
+            return Err(excludes(other));
+        }
+        if self.schemas
+            && let Some(other) = other
+                .or(self.smoke.is_some().then_some("--smoke"))
+                .or(self.cook.is_some().then_some("--cook"))
         {
             return Err(excludes(other));
         }
@@ -471,6 +456,12 @@ impl HostOptions {
         bricks: impl FnOnce(BrickList) -> BrickList,
         build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> engine::Result<()> {
+        #[cfg(feature = "dev")]
+        if self.schemas {
+            return engine::tooling::print_schemas(bricks).map_err(|problems| {
+                Error::new(ErrorCode::InvalidArguments, "--schemas").got(problems)
+            });
+        }
         let build = move |engine: &mut Engine| self.shown(engine, build);
         self.start_tools()?;
         #[cfg(feature = "profiling")]
@@ -498,7 +489,6 @@ impl HostOptions {
                             settle: Duration::from_millis(NSIGHT_SETTLE_MS),
                             frames: NSIGHT_FRAMES,
                         }),
-                        flight: self.flight,
                         profile: self.sample_to.clone(),
                         ..Window::new(title)
                     },
@@ -531,7 +521,7 @@ impl HostOptions {
         let game = build(engine).map_err(Into::<engine::Error>::into)?;
         let world = engine.app.world_mut();
         if let Some(environment) = &self.environment {
-            engine::host::show_look(world, environment, "--environment")?;
+            engine::scene::show_look(world, environment, "--environment")?;
         }
         Ok(game)
     }
@@ -584,10 +574,8 @@ impl HostOptions {
         let started = Instant::now();
         let mut jobs = self.jobs.clone();
         if !self.workers_given {
-            let cores = std::thread::available_parallelism().map_or(1, usize::from);
-            jobs.workers = policy::cook_workers(u32::try_from(cores).unwrap_or(u32::MAX)) as usize;
+            jobs.workers = std::thread::available_parallelism().map_or(1, usize::from);
         }
-        let bricks = move |list: BrickList| bricks(list).with::<engine_texture_cook::TextureCook>();
         let mut game = Offscreen::launch_with(size, self.gpu, jobs.pool(true), bricks, build)?;
         self.settings.apply(game.host_mut())?;
         let read = game.jobs_mut().packed();
@@ -798,7 +786,6 @@ fn window_report(report: &WindowReport) -> serde_json::Value {
         "cpu_ms": distribution(&report.cpu_ms),
         "adapter": {"name": report.adapter.name, "backend": report.adapter.backend},
         "main_stack_peak_bytes": engine_profiler::stack::peak(),
-        "flight": report.flight,
         "slow": engine::profiling::take_slow()
             .iter()
             .map(|(frame, name, ms)| json!({ "frame": frame, "name": name, "ms": ms }))

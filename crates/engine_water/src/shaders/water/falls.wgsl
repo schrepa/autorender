@@ -1,8 +1,8 @@
 import package::engine::color::luminance;
 import package::engine::shading::{Shaded, SurfacePoint};
 import package::engine::surfaces::SURFACE_WATER;
-import package::engine::view::{camera, detail_resolved, detail_span, eye_world, stable_normalize,
-    view_pixel};
+import package::engine::view::{camera, eye_world, stable_normalize, view_pixel};
+import package::face::ground_tiles::{detail_resolved, detail_span};
 import package::face::heightfield::{terrain_uniform, use_terrain};
 import package::face::lighting::{environment_brdf, sun_visibility};
 import package::face::lit::finish;

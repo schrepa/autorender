@@ -5,10 +5,11 @@ use engine_core::{
 use engine_registry::Registry;
 use engine_render::{RenderTarget, Renderer};
 
-use crate::frame_stats::{DynamicResolutionStats, FrameStats, ResolutionStats};
-use crate::host::policy::{FRAME_INTERVAL_MS, PACE_INTERVAL_LIMIT_MS, PACE_SMOOTHING};
+use crate::frame_stats::{FrameStats, ResolutionStats};
+use crate::host::policy::FRAME_INTERVAL_MS;
 use crate::host::InputSource;
-use crate::resolution::{DynamicResolution, Resolution};
+use crate::pacing::Pacing;
+use crate::resolution::Resolution;
 use crate::{Error, Result};
 
 #[path = "app_attribution.rs"]
@@ -16,6 +17,8 @@ mod attribution;
 #[cfg(feature = "profiling")]
 #[path = "app_profiling.rs"]
 mod profiling;
+#[cfg(feature = "profiling")]
+pub use profiling::{PROFILE_DURATION_MS, PROFILE_EVENTS};
 
 pub fn now_ms() -> f64 {
     #[cfg(target_arch = "wasm32")]
@@ -86,10 +89,10 @@ impl Refresh {
         }
     }
 
-    fn measured(self, interval: f64) -> Self {
+    fn measured(self, interval: f64, pacing: &Pacing) -> Self {
         match self {
-            Self::Measured(ms) if interval > 0.0 && interval < PACE_INTERVAL_LIMIT_MS => {
-                Self::Measured(ms + (interval - ms) * PACE_SMOOTHING)
+            Self::Measured(ms) if interval > 0.0 && interval < pacing.interval_limit_ms => {
+                Self::Measured(ms + (interval - ms) * pacing.smoothing)
             }
             Self::Measured(_) | Self::Declared(_) => self,
         }
@@ -113,7 +116,6 @@ pub(crate) struct AppHost {
     pipeline_list: crate::host::PipelineList,
     pixel_ratio: f64,
     refresh: Refresh,
-    dynamic: crate::host::DynamicScale,
     gpu_ms: Option<f32>,
     #[cfg(feature = "profiling")]
     profile_frame: u64,
@@ -157,7 +159,6 @@ impl AppHost {
             pipeline_list: crate::host::PipelineList::default(),
             pixel_ratio: 1.0,
             refresh: Refresh::Measured(FRAME_INTERVAL_MS),
-            dynamic: crate::host::DynamicScale::default(),
             gpu_ms: None,
             #[cfg(feature = "profiling")]
             profile_frame: 0,
@@ -274,54 +275,27 @@ impl AppHost {
 
     pub(crate) fn paced(&mut self) {
         let interval = self.engine.frame_time().real_seconds * 1000.0;
-        self.refresh = self.refresh.measured(interval);
+        let pacing = crate::pacing::of(self.engine.app.world());
+        self.refresh = self.refresh.measured(interval, &pacing);
     }
 
-    fn resolution_settings(&self) -> (Resolution, DynamicResolution) {
-        let world = self.engine.app.world();
-        (
-            world
-                .get_resource::<Resolution>()
-                .copied()
-                .unwrap_or_default(),
-            world
-                .get_resource::<DynamicResolution>()
-                .copied()
-                .unwrap_or_default(),
-        )
+    pub(crate) fn set_preparation_ms(&mut self, milliseconds: f64) {
+        self.stats.preparation_ms = milliseconds;
     }
 
-    fn resolution_budget(&self, settings: &DynamicResolution) -> f64 {
-        settings
-            .budget_ms
-            .map_or_else(|| self.refresh.ms(), f64::from)
-    }
-
-    fn size_frame(
-        &mut self,
-        interval: Option<f64>,
-        (width, height): (u32, u32),
-    ) -> (DynamicResolutionStats, (u32, u32)) {
-        let timing = self.renderer.take_frame_time();
-        if let Some((ms, _)) = timing {
+    fn size_frame(&mut self, (width, height): (u32, u32)) -> (u32, u32) {
+        if let Some(ms) = self.renderer.take_frame_time() {
             self.gpu_ms = Some(ms as f32);
         }
-        let (resolution, dynamic) = self.resolution_settings();
-        self.adapt_resolution(&dynamic, timing, interval);
-        let scale = self.dynamic.scale(&dynamic);
-        let (render_width, render_height) =
-            crate::host::render_size((width, height), self.pixel_ratio, &resolution, scale)
-                .unwrap_or((width, height));
-        let stats = DynamicResolutionStats {
-            active: dynamic.enabled,
-            scale: scale as f32,
-            budget_ms: if dynamic.enabled {
-                self.resolution_budget(&dynamic) as f32
-            } else {
-                0.0
-            },
-        };
-        (stats, (render_width, render_height))
+        let resolution = self
+            .engine
+            .app
+            .world()
+            .get_resource::<Resolution>()
+            .copied()
+            .unwrap_or_default();
+        crate::host::render_size((width, height), self.pixel_ratio, &resolution)
+            .unwrap_or((width, height))
     }
 
     fn resolution_stats(&self, (width, height): (u32, u32)) -> ResolutionStats {
@@ -335,30 +309,6 @@ impl AppHost {
             dropped_pixels: (u64::from(width) * u64::from(height))
                 .saturating_sub(u64::from(display_width) * u64::from(display_height)),
             gpu_ms: self.gpu_ms,
-        }
-    }
-
-    fn adapt_resolution(
-        &mut self,
-        settings: &DynamicResolution,
-        timing: Option<(f64, (u32, u32))>,
-        interval: Option<f64>,
-    ) {
-        if !settings.enabled {
-            self.dynamic.reset();
-            return;
-        }
-        let budget = self.resolution_budget(settings);
-        if self.renderer.times_frames() {
-            if let Some((ms, size)) = timing
-                && Some(size) == self.renderer.render_size()
-            {
-                self.dynamic.frame(settings, ms, budget, true);
-            }
-        } else if let Some(interval) =
-            interval.filter(|&ms| ms > 0.0 && ms < PACE_INTERVAL_LIMIT_MS)
-        {
-            self.dynamic.frame(settings, interval, budget, false);
         }
     }
 
@@ -469,14 +419,8 @@ impl AppHost {
             let start = now_ms();
             self.engine.frame(timestamp_ms * 0.001)?;
             let simulation_ms = now_ms() - start;
-            let time = self.engine.frame_time();
-            self.render_frame(
-                width,
-                height,
-                simulation_ms,
-                time.ticks,
-                Some(time.real_seconds * 1000.0),
-            )?;
+            let ticks = self.engine.frame_time().ticks;
+            self.render_frame(width, height, simulation_ms, ticks)?;
         }
         drop(profile);
         self.end_attribution();
@@ -504,7 +448,7 @@ impl AppHost {
                 fixed_steps += self.engine.frame_time().ticks;
             }
             let simulation_ms = now_ms() - start;
-            self.render_frame(width, height, simulation_ms, fixed_steps, None)?;
+            self.render_frame(width, height, simulation_ms, fixed_steps)?;
         }
         drop(profile);
         self.end_attribution();
@@ -525,7 +469,7 @@ impl AppHost {
             let _core = attribution::core_scope();
             self.deliver();
             self.engine.frame_without_ticks();
-            self.render_frame(width, height, 0.0, 0, None)?;
+            self.render_frame(width, height, 0.0, 0)?;
         }
         self.end_attribution();
         Ok(())
@@ -541,7 +485,7 @@ impl AppHost {
             self.deliver();
             self.engine
                 .present(engine_core::Presented::Between { alpha })?;
-            self.render_frame(width, height, 0.0, 0, None)?;
+            self.render_frame(width, height, 0.0, 0)?;
         }
         self.end_attribution();
         Ok(())
@@ -563,14 +507,12 @@ impl AppHost {
         height: u32,
         simulation_ms: f64,
         fixed_steps: u32,
-        interval: Option<f64>,
     ) -> Result<()> {
         if self.size != (width, height) {
             self.renderer.resize(width, height);
             self.size = (width, height);
         }
-        let (dynamic_resolution, (render_width, render_height)) =
-            self.size_frame(interval, (width, height));
+        let (render_width, render_height) = self.size_frame((width, height));
         let time = self.engine.frame_time();
         let tick = self
             .engine
@@ -593,6 +535,7 @@ impl AppHost {
             extraction_ms,
             render_ms: acquire_ms + draw_ms,
             fixed_steps,
+            preparation_ms: self.stats.preparation_ms,
             dropped_seconds: time.dropped_seconds,
             cut_seconds: time.cut_seconds,
             pipelines_listed: 0,
@@ -600,7 +543,6 @@ impl AppHost {
             readiness: self.engine.readiness().clone(),
             budget: self.engine.budget().uses().to_vec(),
             resolution: self.resolution_stats((width, height)),
-            dynamic_resolution,
             jobs: engine_core::JobStats::default(),
             refused_views: 0,
             disabled_features: self.renderer.disabled_features(self.engine.app.world()),
@@ -711,7 +653,6 @@ impl AppHost {
     }
 
     pub fn suspend(&mut self) {
-        self.dynamic.reset();
         self.engine.reset_clock();
         engine_core::suspend_input(self.engine.app.world_mut());
     }

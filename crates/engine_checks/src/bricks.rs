@@ -191,7 +191,6 @@ fn record(
         "operations": brick
             .operations()
             .iter()
-            .filter(|operation| operation.listed)
             .map(|operation| json!({ "name": operation.name, "control": operation.control }))
             .collect::<Vec<_>>(),
         "piece": brick

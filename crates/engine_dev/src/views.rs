@@ -1,7 +1,6 @@
 use serde::Serialize;
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct JobsView {
     pub workers: u32,
     pub running: u32,
@@ -20,24 +19,21 @@ pub struct JobsView {
     pub in_place: u64,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct TransformView {
     pub translation: [f32; 3],
     pub rotation: [f32; 4],
     pub scale: [f32; 3],
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct GlobalTransformView {
     pub valid: bool,
     pub matrix: Option<[f32; 16]>,
     pub translation: Option<[f32; 3]>,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct HierarchyView {
     pub parent: Option<String>,
     pub parent_scene: Option<String>,
@@ -49,17 +45,14 @@ pub struct HierarchyView {
     pub prefab_local_id: Option<String>,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct DrawnMeshView {
     pub mesh: Option<MeshView>,
     pub material: Option<engine_scene::SceneMaterial>,
     pub textures: Vec<TextureView>,
-    pub drawn_level: Option<u32>,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct MeshView {
     pub id: Option<String>,
     pub source: Option<engine_scene::MeshOrigin>,
@@ -71,21 +64,18 @@ pub struct MeshView {
     pub rendered: Option<MeshRenderView>,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct MeshRenderView {
     pub levels: Vec<LodLevelView>,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct LodLevelView {
     pub indices: u32,
     pub error: f32,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct TextureView {
     pub id: Option<String>,
     pub uri: Option<String>,
@@ -97,8 +87,7 @@ pub struct TextureView {
     pub gpu_resident: Option<bool>,
 }
 
-#[derive(Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct MeshBoundsView {
     pub min: [f32; 3],
     pub max: [f32; 3],

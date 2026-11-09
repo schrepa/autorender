@@ -5,26 +5,29 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 
-#[cfg(not(target_arch = "wasm32"))]
 use engine_settings::stated;
 
-pub(crate) use engine_core::bounds::default_limit;
+pub(crate) use bounds::default_limit;
 
 pub mod bounds {
     use engine_settings::Rule;
 
-    pub use engine_core::bounds::{
-        COORDINATE, MAX_PAGE_SIZE, MAX_SCAN_ENTITIES, PAGE, default_limit,
-    };
+    pub const MAX_PAGE_SIZE: usize = 100;
+    pub const MAX_SCAN_ENTITIES: usize = 10_000;
+    pub const PAGE: Rule = Rule::Range(1.0, MAX_PAGE_SIZE as f64);
+    pub const COORDINATE: Rule = Rule::Range(-1.0e6, 1.0e6);
+
+    pub fn default_limit() -> usize {
+        20
+    }
 
     pub const ALPHA: Rule = Rule::Range(0.0, 1.0);
     pub const WARMUP: Rule = Rule::Range(0.0, 120.0);
     pub const SAMPLES: Rule = Rule::Range(1.0, 240.0);
-    pub const TICKS: Rule = Rule::Range(1.0, engine_core::MAX_DEV_TICKS as f64);
+    pub const TICKS: Rule = Rule::AtLeast(1.0);
     pub const FRAMES: Rule = Rule::Range(1.0, 240.0);
     pub const FRAME_INTERVAL: Rule = Rule::Range(1.0, 1000.0);
     pub const TURN: Rule = Rule::Range(-1000.0, 1000.0);
-    pub const PIXEL: Rule = Rule::Range(0.0, 16_384.0);
 }
 
 pub const PROTOCOL_VERSION: u32 = 1;
@@ -45,11 +48,9 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("game", "GameControls"),
     ("reload", "status"),
     ("parent", ""),
-    ("probe", ""),
 ];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Verb {
     Describe,
@@ -94,8 +95,9 @@ impl Verb {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Detail {
     #[default]
@@ -223,8 +225,7 @@ fn check_version(version: Option<Value>) -> Result<(), Error> {
     Ok(())
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Query {
     Status {},
@@ -232,8 +233,7 @@ pub enum Query {
     Digest {},
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DescribeRequest {
     #[serde(default)]
@@ -244,8 +244,7 @@ pub struct DescribeRequest {
     pub detail: Detail,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct InspectRequest {
     #[serde(default)]
@@ -257,12 +256,11 @@ pub struct InspectRequest {
     #[serde(default)]
     pub offset: usize,
     #[serde(default = "default_limit")]
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PAGE)))]
+    #[schemars(transform = stated(bounds::PAGE))]
     pub limit: usize,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CaptureRequest {
     #[serde(
@@ -270,10 +268,7 @@ pub struct CaptureRequest {
         skip_serializing_if = "Option::is_none",
         deserialize_with = "deserialize_optional_alpha"
     )]
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        schemars(with = "f64", transform = stated(bounds::ALPHA))
-    )]
+    #[schemars(with = "f64", transform = stated(bounds::ALPHA))]
     pub alpha: Option<f64>,
     #[serde(default)]
     pub digest: bool,
@@ -281,11 +276,10 @@ pub struct CaptureRequest {
     pub compare: Option<CompareRequest>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct CompareRequest {
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 512)))]
+    #[schemars(length(min = 1, max = 512))]
     pub a: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub b: Option<String>,
@@ -293,18 +287,17 @@ pub struct CompareRequest {
     pub tolerance: u8,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct ProfileRequest {
     #[serde(default = "default_profile_frames")]
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::FRAMES)))]
+    #[schemars(transform = stated(bounds::FRAMES))]
     pub frames: u32,
     #[serde(default = "default_interval_ms")]
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::FRAME_INTERVAL)))]
+    #[schemars(transform = stated(bounds::FRAME_INTERVAL))]
     pub interval_ms: f64,
     #[serde(default = "default_top")]
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PAGE)))]
+    #[schemars(transform = stated(bounds::PAGE))]
     pub top: usize,
     #[serde(default)]
     pub detail: Detail,
@@ -312,8 +305,7 @@ pub struct ProfileRequest {
     pub deep: Option<DeepProfile>,
 }
 
-#[derive(Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct DeepProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -326,8 +318,7 @@ pub struct DeepProfile {
     pub vendor: Option<Vendor>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Vendor {
     Pix,
@@ -342,84 +333,60 @@ pub enum Control {
     Host(BrowserControl),
 }
 
-#[derive(Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PointerControl {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        schemars(with = "[f32; 2]", transform = stated(bounds::COORDINATE))
-    )]
+    #[schemars(with = "[f32; 2]", transform = stated(bounds::COORDINATE))]
     pub position_pixels: Option<[f32; 2]>,
     #[serde(default)]
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
+    #[schemars(transform = stated(bounds::TURN))]
     pub motion_pixels: [f32; 2],
     #[serde(default)]
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
+    #[schemars(transform = stated(bounds::TURN))]
     pub wheel_notches: [f32; 2],
     #[serde(default)]
     pub buttons: Vec<engine_core::MouseButton>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct TouchControl {
     pub id: u32,
-    #[cfg_attr(
-        not(target_arch = "wasm32"),
-        schemars(transform = stated(bounds::COORDINATE))
-    )]
+    #[schemars(transform = stated(bounds::COORDINATE))]
     pub position_pixels: [f32; 2],
     #[serde(default)]
-    #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TURN)))]
+    #[schemars(transform = stated(bounds::TURN))]
     pub motion_pixels: [f32; 2],
     pub phase: engine_core::TouchPhase,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum BrowserControl {
     Present {
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::ALPHA)))]
+        #[schemars(transform = stated(bounds::ALPHA))]
         alpha: f64,
     },
     Environment(EnvironmentControl),
     Camera {
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(transform = stated(bounds::COORDINATE))
-        )]
+        #[schemars(transform = stated(bounds::COORDINATE))]
         position: [f32; 3],
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(transform = stated(bounds::COORDINATE))
-        )]
+        #[schemars(transform = stated(bounds::COORDINATE))]
         target: [f32; 3],
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(transform = stated(camera_fov()))
-        )]
+        #[schemars(transform = stated(camera_fov()))]
         vertical_fov_radians: f32,
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(transform = stated(camera_depth()))
-        )]
+        #[schemars(transform = stated(camera_depth()))]
         near: f32,
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(transform = stated(camera_depth()))
-        )]
+        #[schemars(transform = stated(camera_depth()))]
         far: f32,
     },
     Benchmark {
         #[serde(default = "default_warmup")]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::WARMUP)))]
+        #[schemars(transform = stated(bounds::WARMUP))]
         warmup: u32,
         #[serde(default = "default_samples")]
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::SAMPLES)))]
+        #[schemars(transform = stated(bounds::SAMPLES))]
         samples: u32,
         #[serde(default)]
         mode: BenchmarkMode,
@@ -427,13 +394,13 @@ pub enum BrowserControl {
         script: Vec<BenchmarkInput>,
     },
     Step {
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::TICKS)))]
+        #[schemars(transform = stated(bounds::TICKS))]
         ticks: u32,
     },
     Frames {
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::FRAMES)))]
+        #[schemars(transform = stated(bounds::FRAMES))]
         count: u32,
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::FRAME_INTERVAL)))]
+        #[schemars(transform = stated(bounds::FRAME_INTERVAL))]
         interval_ms: f64,
         #[serde(default)]
         capture: bool,
@@ -454,52 +421,27 @@ pub enum BrowserControl {
     Pause {},
     Resume {},
     Game {
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(regex(pattern = r"^[a-z][a-z0-9_]{0,63}$"))
-        )]
+        #[schemars(regex(pattern = r"^[a-z][a-z0-9_]{0,63}$"))]
         name: String,
         #[serde(default)]
         args: serde_json::Map<String, serde_json::Value>,
     },
     Reload {
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(regex(pattern = r"^(0|[1-9][0-9]*)$"))
-        )]
+        #[schemars(regex(pattern = r"^(0|[1-9][0-9]*)$"))]
         expected_revision: String,
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(regex(pattern = r"^(0|[1-9][0-9]*)$"))
-        )]
+        #[schemars(regex(pattern = r"^(0|[1-9][0-9]*)$"))]
         revision: String,
     },
     Parent {
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 192)))]
+        #[schemars(length(min = 1, max = 192))]
         entity: String,
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(length(min = 1, max = 192)))]
+        #[schemars(length(min = 1, max = 192))]
         parent: String,
-    },
-    Probe {
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PIXEL)))]
-        x: u32,
-        #[cfg_attr(not(target_arch = "wasm32"), schemars(transform = stated(bounds::PIXEL)))]
-        y: u32,
-        #[serde(
-            default,
-            skip_serializing_if = "Option::is_none",
-            deserialize_with = "deserialize_optional_alpha"
-        )]
-        #[cfg_attr(
-            not(target_arch = "wasm32"),
-            schemars(with = "f64", transform = stated(bounds::ALPHA))
-        )]
-        alpha: Option<f64>,
     },
 }
 
 impl BrowserControl {
-    pub const NAMES: [&'static str; 14] = [
+    pub const NAMES: [&'static str; 13] = [
         "present",
         "environment",
         "camera",
@@ -513,7 +455,6 @@ impl BrowserControl {
         "game",
         "reload",
         "parent",
-        "probe",
     ];
 
     pub fn route(self) -> Control {
@@ -533,7 +474,6 @@ impl BrowserControl {
             | Self::Frames { .. }
             | Self::Pause { .. }
             | Self::Resume { .. }
-            | Self::Probe { .. }
             | Self::Game { .. }
             | Self::Reload { .. }) => Control::Host(control),
         }
@@ -549,7 +489,6 @@ impl BrowserControl {
             | Self::Frames { .. }
             | Self::Input { .. }
             | Self::Render { .. }
-            | Self::Probe { .. }
             | Self::Game { .. }
             | Self::Reload { .. }
             | Self::Parent { .. } => true,
@@ -574,7 +513,6 @@ impl EnvironmentControl {
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 impl schemars::JsonSchema for EnvironmentControl {
     fn schema_name() -> std::borrow::Cow<'static, str> {
         "EnvironmentControl".into()
@@ -591,8 +529,7 @@ impl schemars::JsonSchema for EnvironmentControl {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BenchmarkMode {
     #[default]
@@ -602,8 +539,7 @@ pub enum BenchmarkMode {
     Paced,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-#[cfg_attr(not(target_arch = "wasm32"), derive(schemars::JsonSchema))]
+#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BenchmarkInput {
     pub at: u32,
@@ -640,7 +576,6 @@ fn deserialize_optional_alpha<'de, D: serde::Deserializer<'de>>(
     f64::deserialize(deserializer).map(Some)
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn camera_fov() -> engine_settings::Rule {
     engine_settings::Rule::range(
         f64::from(engine_core::Camera::MIN_FOV_DEGREES.to_radians()),
@@ -648,7 +583,6 @@ fn camera_fov() -> engine_settings::Rule {
     )
 }
 
-#[cfg(not(target_arch = "wasm32"))]
 fn camera_depth() -> engine_settings::Rule {
     engine_settings::Rule::range(
         f64::from(engine_core::Camera::MIN_DEPTH),

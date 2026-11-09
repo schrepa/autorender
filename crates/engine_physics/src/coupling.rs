@@ -152,8 +152,7 @@ impl Along {
                     surface: blend(a.surface, b.surface),
                     depth: blend(a.depth, b.depth),
                     velocity: [0, 1, 2].map(|i| blend(a.velocity[i], b.velocity[i])),
-                    foam: blend(a.foam, b.foam),
-                    kind: if t < 0.5 { a.kind } else { b.kind },
+                    falling: if t < 0.5 { a.falling } else { b.falling },
                 })
             }
             (one, other) => one.or(other),
@@ -216,7 +215,7 @@ pub(crate) fn push(
                 let current = Vec3::from_array(middle.velocity);
                 push.running = current.length() > STILL_WATER;
                 push.water = Some(BodyWater {
-                    kind: middle.kind,
+                    falling: middle.falling,
                     submerged: share,
                     current: middle.velocity,
                 });

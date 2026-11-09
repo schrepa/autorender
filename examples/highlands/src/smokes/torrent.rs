@@ -1,4 +1,4 @@
-use engine_smoke::{Checked, control, environment, number};
+use engine_smoke::{Checked, control, environment, number, query, render};
 use engine_core::{SmokeFailure, SmokeSession, smoke_eq};
 use serde_json::{Value, json};
 
@@ -52,6 +52,17 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     Ok(())
 }
 
+fn probed_at(session: &mut dyn SmokeSession, x: u32, y: u32) -> Checked<Value> {
+    control(session, "probe_pixel", json!({"x": x, "y": y}))?;
+    loop {
+        render(session)?;
+        let mut probed = query(session, "probed_pixel", json!({}))?;
+        if probed["probing"] != true {
+            return Ok(probed["probe"].take());
+        }
+    }
+}
+
 fn probed(session: &mut dyn SmokeSession) -> Checked<()> {
     aim(session, TORRENT)?;
     environment(session, json!({"debug_view": {"view": "water_depth"}}))?;
@@ -73,7 +84,7 @@ fn probed(session: &mut dyn SmokeSession) -> Checked<()> {
     pixels.sort_by(|a, b| off_center(a).total_cmp(&off_center(b)));
     let mut probe = Value::Null;
     for [x, y] in pixels {
-        probe = control(session, "probe", json!({"x": x as u32, "y": y as u32}))?;
+        probe = probed_at(session, x as u32, y as u32)?;
         if probe["kind"] == "water" && probe["water"].is_object() {
             break;
         }

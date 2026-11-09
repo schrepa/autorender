@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use crate::files::Image;
 use crate::jobs::{JobOptions, JobPool};
-use crate::{DYNAMIC_RESOLUTION, Pix, RenderDoc, file_error};
+use crate::{Pix, RenderDoc, file_error};
 
 pub struct Offscreen<G: Game> {
     host: Box<GameHost<G>>,
@@ -79,7 +79,6 @@ impl<G: Game> Offscreen<G> {
         let mut host = Box::new(pollster::block_on(Box::pin(GameHost::launch(
             target, bricks, build,
         )))?);
-        host.set_setting(DYNAMIC_RESOLUTION, false.into())?;
         jobs.attach(&mut host);
         Ok(Self { host, size, jobs })
     }

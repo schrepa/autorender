@@ -1,5 +1,5 @@
 import { engineFailure } from "../generated/errors";
-import { JOB_CACHE_MIB, MAX_JOB_CACHE_MIB } from "../generated/host";
+import { JOB_CACHE_MIB } from "../generated/host";
 
 declare const __PUBLIC_PACKS__: boolean;
 
@@ -41,8 +41,8 @@ export type Unpacker = (stored: Uint8Array, raw: number) => Promise<Uint8Array> 
 export function jobCacheSettings(): { budget: number; verify: boolean } | undefined {
   const requested = new URLSearchParams(location.search).get("jobcache");
   const mebibytes = requested !== null && /^\d+$/.test(requested) ? Number(requested) : undefined;
-  if (requested !== null && requested !== "off" && requested !== "verify" && !(mebibytes !== undefined && mebibytes <= MAX_JOB_CACHE_MIB)) {
-    throw engineFailure({ code: "invalid_value", path: "?jobcache", allowed: { kind: "range", min: 0, max: MAX_JOB_CACHE_MIB }, got: requested });
+  if (requested !== null && requested !== "off" && requested !== "verify" && mebibytes === undefined) {
+    throw engineFailure({ code: "invalid_value", path: "?jobcache", allowed: { kind: "at_least", min: 0 }, got: requested });
   }
   if (requested === "off" || typeof navigator === "undefined" || !navigator.storage?.getDirectory) return undefined;
   return { budget: (mebibytes ?? JOB_CACHE_MIB) * MIB, verify: requested === "verify" };

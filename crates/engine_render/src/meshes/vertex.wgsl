@@ -7,14 +7,6 @@ fn pose_matrix(pose: AffinePose) -> mat4x4<f32> {
         vec4<f32>(0.0, 0.0, 0.0, 1.0)));
 }
 
-fn origin_key(origin: vec3<f32>) -> u32 {
-    let cell = bitcast<vec2<u32>>(vec2<i32>(floor(origin.xz * 4.0)));
-    var h = (cell.x * 0x8da6b343u) ^ (cell.y * 0xd8163841u);
-    h = (h ^ (h >> 16u)) * 0x7feb352du;
-    h = (h ^ (h >> 15u)) * 0x846ca68bu;
-    return (h ^ (h >> 16u)) & 0xffff0000u;
-}
-
 fn output_color(material: vec4<u32>) -> vec4<f32> {
     return vec4<f32>(unpack2x16unorm(material.x), unpack2x16unorm(material.y));
 }

@@ -268,6 +268,8 @@ impl Brick for TextBrick {
                 kind: TEXT,
                 vertex: shaders::text::draw::VS_LABEL.name(),
                 needs: Attributes::NONE,
+                casts_shadows: false,
+                seen_by_probes: false,
             })
             .draws::<TextGpu>(TEXT, TextGpu::draw);
     }
@@ -392,7 +394,7 @@ impl GpuPart for TextGpu {
             .iter()
             .filter(|listed| {
                 listed.bit.is_some()
-                    && (listed.pass.takes)(TEXT)
+                    && cx.passes().takes(&listed.pass, TEXT)
                     && listed.pass.views != PassViews::Owned
                     && listed.pass.at != AttachPoint::Transparent
             })

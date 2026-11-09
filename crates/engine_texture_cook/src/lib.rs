@@ -3,24 +3,88 @@
     clippy::match_wildcard_for_single_variants
 )]
 
+include!(concat!(env!("OUT_DIR"), "/brick.rs"));
+
 mod astc;
 mod bc7;
 mod brick;
+mod mips;
 
 pub use brick::{TEXTURE_COOK, TextureCook};
-use engine_assets::Texture;
-use engine_codec::Error;
-use engine_textures::{Family, Source};
+use engine_codec::{Error, ErrorCode, Expected};
+use engine_core::{
+    Texture, TextureFamily as Family, TextureSource as Source, TextureUsage as Usage,
+};
+
+const COOK_HEADER: usize = 10;
+
+pub fn cook_input(source: &Source, family: Family) -> Vec<u8> {
+    let mut input = Vec::with_capacity(COOK_HEADER + source.pixels.len());
+    input.extend_from_slice(&source.width.to_le_bytes());
+    input.extend_from_slice(&source.height.to_le_bytes());
+    input.push(match source.usage {
+        Usage::Color => 0,
+        Usage::Data => 1,
+        Usage::Normal => 2,
+    });
+    input.push(match family {
+        Family::Bc7 => 0,
+        Family::Astc => 1,
+    });
+    input.extend_from_slice(&source.pixels);
+    input
+}
+
+pub fn cook_source(input: &[u8]) -> Result<(Source, Family), Error> {
+    let header = input.get(..COOK_HEADER).ok_or_else(|| {
+        Error::new(ErrorCode::InvalidTexture, "$.input")
+            .expected(Expected::Present)
+            .at_least(COOK_HEADER as u64)
+            .got(input.len())
+    })?;
+    let word = |at: usize| {
+        u32::from_le_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]])
+    };
+    let usage = match header[8] {
+        0 => Usage::Color,
+        1 => Usage::Data,
+        2 => Usage::Normal,
+        other => {
+            return Err(Error::new(ErrorCode::InvalidTexture, "$.input.usage")
+                .range(0.0, 2.0)
+                .got(other));
+        }
+    };
+    let family = match header[9] {
+        0 => Family::Bc7,
+        1 => Family::Astc,
+        other => {
+            return Err(Error::new(ErrorCode::InvalidTexture, "$.input.family")
+                .range(0.0, 1.0)
+                .got(other));
+        }
+    };
+    let source = Source {
+        width: word(0),
+        height: word(4),
+        pixels: input[COOK_HEADER..].to_vec(),
+        usage,
+    };
+    Ok((source, family))
+}
+
+pub fn cook_levels(source: &Source) -> Vec<Vec<u8>> {
+    mips::chain(source.width, source.height, &source.pixels, source.usage)
+}
 
 pub fn cook_job(input: &[u8]) -> Result<Vec<u8>, Error> {
-    let (source, family) = engine_textures::cook_source(input)?;
-    cook(&source, family).map(|texture| engine_textures::record(&texture))
+    let (source, family) = cook_source(input)?;
+    cook(&source, family).map(|texture| engine_core::textures::record(&texture))
 }
 
 pub fn cook(source: &Source, family: Family) -> Result<Texture, Error> {
-    let plain = engine_textures::plain(source)?;
-    let levels = plain
-        .levels()
+    let plain = engine_core::textures::plain(source)?;
+    let levels = cook_levels(source)
         .iter()
         .enumerate()
         .map(|(level, pixels)| {

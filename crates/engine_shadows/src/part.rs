@@ -200,7 +200,7 @@ impl GpuPart for ShadowsGpu {
             .pass("shadow_marks")
             .label("engine/shadow-marks")
             .span("shadow_marks")
-            .at(AttachPoint::Sky)
+            .at(AttachPoint::LateOpaque)
             .id();
         let opening = cx
             .pass("sky_occlusion")

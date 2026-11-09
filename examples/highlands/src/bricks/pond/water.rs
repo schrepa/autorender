@@ -3,7 +3,7 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::Spawner;
 use engine_places_simulation::ground::{Ground, GroundRead};
-use engine_places_simulation::water::{WaterBody, WaterKind, WaterQuery, WaterSample};
+use engine_places_simulation::water::{WaterBody, WaterQuery, WaterSample};
 use glam::{Vec2, Vec3};
 
 use crate::bricks::pond::{Pond, PondBrick};
@@ -36,11 +36,10 @@ impl WaterQuery for PondWater {
         };
         let depth = surface - ground.height;
         GroundRead::Ready((depth > 0.0 && !ground.hole).then_some(WaterSample {
-            kind: WaterKind::Lake,
             surface,
             depth,
             velocity: [0.0; 3],
-            foam: 0.0,
+            falling: false,
         }))
     }
 }

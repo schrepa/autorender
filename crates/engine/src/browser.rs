@@ -273,7 +273,7 @@ impl<G: Game> PageHost<G> {
         }
         let world = self.host.engine_mut().app.world_mut();
         if let Some(environment) = parameters.get("environment") {
-            crate::host::show_look(world, &environment, "?environment").map_err(js)?;
+            crate::scene::show_look(world, &environment, "?environment").map_err(js)?;
         }
         settings.apply(&mut self.host).map_err(js)
     }
@@ -342,25 +342,6 @@ fn read<T: serde::de::DeserializeOwned>(json: &str, at: &str) -> crate::Result<T
 #[cfg(feature = "dev")]
 fn written(step: &engine_dev::Step) -> String {
     serde_json::to_string(step).expect("step_serializes")
-}
-
-#[cfg(feature = "profiling")]
-impl<G: Game> PageHost<G> {
-    pub fn profiling_start(&mut self, max_events: u32) -> Result<(), JsValue> {
-        self.host.profiling_start(max_events as usize).map_err(js)
-    }
-
-    pub fn profiling_stop(&mut self) -> Result<String, JsValue> {
-        Ok(self.host.profiling_stop().map_err(js)?.to_string())
-    }
-
-    pub fn profiling_report(&mut self) -> String {
-        self.host.profiling_report().to_string()
-    }
-
-    pub fn profiling_status(&self) -> String {
-        self.host.profiling_status().to_string()
-    }
 }
 
 fn job_id(id: f64) -> Option<JobId> {

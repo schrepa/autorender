@@ -19,11 +19,20 @@ impl RendererFacts for Facts<'_> {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct DevHost {
     pub(crate) tools: DevTools,
     agent: crate::host::DeviceGatherer,
     input: InputBatch,
+}
+
+impl Default for DevHost {
+    fn default() -> Self {
+        Self {
+            tools: DevTools::new(crate::stats::frame_stats_schema()),
+            agent: crate::host::DeviceGatherer::default(),
+            input: InputBatch::default(),
+        }
+    }
 }
 
 #[derive(Default)]
@@ -90,7 +99,6 @@ impl DevHost {
                 | BrowserControl::Frames { .. }
                 | BrowserControl::Pause { .. }
                 | BrowserControl::Resume { .. }
-                | BrowserControl::Probe { .. }
                 | BrowserControl::Game { .. }
                 | BrowserControl::Reload { .. }
                 | BrowserControl::Environment(_)

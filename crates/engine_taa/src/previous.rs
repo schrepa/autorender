@@ -5,7 +5,7 @@ pub(crate) const JITTER_SAMPLES: u64 = 8;
 pub(crate) const MOTION: TargetDecl = TargetDecl {
     name: TargetName::MOTION,
     format: wgpu::TextureFormat::Rg16Float,
-    written: &[AttachPoint::Opaque, AttachPoint::Sky],
+    written: &[AttachPoint::Opaque, AttachPoint::LateOpaque],
     module: Some(crate::shaders::taa::motion::MODULE),
 };
 

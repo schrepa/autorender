@@ -214,18 +214,7 @@ impl DrawnTable {
     pub fn wgsl(&self) -> String {
         let mut text = String::new();
         for decl in &self.kinds {
-            let name: String = decl
-                .kind
-                .name()
-                .chars()
-                .map(|character| {
-                    if character.is_ascii_alphanumeric() {
-                        character.to_ascii_uppercase()
-                    } else {
-                        '_'
-                    }
-                })
-                .collect();
+            let name = engine_place::wgsl_name(decl.kind.name());
             if let Some(id) = self.kind_id(decl.kind) {
                 let _ = writeln!(text, "const KIND_{name}: u32 = {id}u;");
             }

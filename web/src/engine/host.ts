@@ -95,11 +95,10 @@ class FrameHud {
     metric("draws", String(stats.draw_calls));
     element("uploads").textContent = `${(stats.upload_bytes / 1024).toFixed(0)} KiB / frame`;
     const triangles = stats.triangles === null ? "" : ` · ${stats.triangles.toLocaleString("en-US")} triangles`;
-    element("render-time").textContent = `${stats.instances} drawn${triangles} · ${stats.meshes_stats.culled_instances} culled · CPU render ${(this.submission / this.samples).toFixed(2)} ms · GPU time not measured`;
+    element("render-time").textContent = `${stats.instances} drawn${triangles} · CPU render ${(this.submission / this.samples).toFixed(2)} ms · GPU time not measured`;
     const dataset = this.canvas.dataset;
     dataset.frames = String(this.frames);
     dataset.instances = String(stats.instances);
-    dataset.renderCandidates = String(stats.meshes_stats.render_candidates);
     dataset.residentMeshes = String(stats.resident_meshes);
     dataset.meshUploadBytes = String(stats.mesh_upload_bytes);
     dataset.residentMeshBytes = String(stats.resident_mesh_bytes);

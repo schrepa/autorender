@@ -14,7 +14,6 @@ import package::generated::meshes::{ARGS_GROUP, BatchData as Batch, CULL_GROUP,
     candidate_state_with_phase_two, candidate_state_with_subpixel,
     candidate_state_with_view, candidate_state_with_view_level, candidate_state_with_visible,
     lod_fade, lod_fade_history, lod_fade_previous, lod_fade_progress, lod_fade_shown};
-import package::face::impostors::IMPOSTOR_VERTICES;
 
 struct DrawArgs {
     index_count: u32,
@@ -33,12 +32,12 @@ struct DrawArgs {
 @group(1) @binding(12) var<storage, read_write> draws: array<DrawArgs>;
 @group(1) @binding(14) var<storage, read> slot_candidates: array<Candidate>;
 @group(1) @binding(19) var<storage, read_write> occlusion_counts: array<atomic<u32>>;
-@group(1) @binding(24) var<storage, read_write> impostor_ids: array<vec2<u32>>;
+@group(1) @binding(24) var<storage, read_write> last_ids: array<u32>;
 @group(1) @binding(25) var<storage, read_write> lod_states: array<u32>;
-@group(1) @binding(26) var<storage, read_write> fade_cards: array<atomic<u32>>;
+@group(1) @binding(26) var<storage, read_write> fading_ids: array<atomic<u32>>;
 @group(1) @binding(27) var<storage, read_write> totals: array<u32, 26>;
 
-const IMPOSTOR: u32 = LOD_LEVELS;
+const LAST: u32 = LOD_LEVELS;
 
 var<workgroup> shared_values: array<u32, GROUP>;
 var<workgroup> shared_counts: array<vec4<u32>, GROUP>;
@@ -68,8 +67,8 @@ fn lod_level(batch: Batch, model: mat4x4<f32>, view: u32) -> u32 {
 
 fn lod_level_at(batch: Batch, model: mat4x4<f32>, scale_distance: f32, view: u32) -> u32 {
     let levels = u32(batch.lod_errors.z);
-    let impostor = frame.eye.w != 0.0 && batch.lod_errors.w > 0.0;
-    if (levels <= 1u && !impostor) || !(frame.lod_error > 0.0) {
+    let last = frame.last_level != 0u && batch.lod_errors.w > 0.0;
+    if (levels <= 1u && !last) || !(frame.lod_error > 0.0) {
         return 0u;
     }
     let center = (model * vec4<f32>((batch.bounds_min.xyz + batch.bounds_max.xyz) * 0.5, 1.0)).xyz;
@@ -83,12 +82,12 @@ fn lod_level_at(batch: Batch, model: mat4x4<f32>, scale_distance: f32, view: u32
     let to_eye = center - frame.eye.xyz;
     let distance_squared = dot(to_eye, to_eye) * scale_distance * scale_distance;
     var level = 0u;
-    for (var l = 1u; l < IMPOSTOR + 1u; l++) {
+    for (var l = 1u; l < LAST + 1u; l++) {
         var error = select(batch.lod_errors.y, batch.lod_errors.x, l == 1u);
-        if l == IMPOSTOR {
+        if l == LAST {
             error = batch.lod_errors.w;
         }
-        if (l < IMPOSTOR && l >= levels) || (l == IMPOSTOR && !impostor) {
+        if (l < LAST && l >= levels) || (l == LAST && !last) {
             continue;
         }
         let projected = error * scale * pixels;
@@ -99,7 +98,7 @@ fn lod_level_at(batch: Batch, model: mat4x4<f32>, scale_distance: f32, view: u32
         }
         if fits {
             level = l;
-            if l < IMPOSTOR && level_indices(batch, l) == 0u {
+            if l < LAST && level_indices(batch, l) == 0u {
                 return l;
             }
         }
@@ -147,9 +146,9 @@ fn fade_levels(@builtin(global_invocation_id) id: vec3<u32>) {
             shown = wanted;
             progress = LOD_FADED - progress;
         }
-        let cards = frame.eye.w != 0.0 && batch.lod_errors.w > 0.0;
-        let card_switch = (shown == IMPOSTOR) != (previous == IMPOSTOR);
-        if !card_switch || !cards || candidate_state_moving(flags) {
+        let last = frame.last_level != 0u && batch.lod_errors.w > 0.0;
+        let last_switch = (shown == LAST) != (previous == LAST);
+        if !last_switch || !last || candidate_state_moving(flags) {
             progress = LOD_FADED;
         }
         progress = min(progress + u32(frame.fade.x * f32(LOD_FADED)), LOD_FADED);
@@ -157,12 +156,12 @@ fn fade_levels(@builtin(global_invocation_id) id: vec3<u32>) {
     lod_states[candidate.slot] = lod_fade(shown, previous, progress, LOD_HISTORY_HELD);
     var steady = shown;
     if progress < LOD_FADED {
-        steady = select(shown, previous, shown == IMPOSTOR);
+        steady = select(shown, previous, shown == LAST);
         let faded = u32(f32(progress) / f32(LOD_FADED) * f32(FADE_LEVEL_MAX));
-        set_drawn_fade(candidate.slot, fade_word(faded, shown != IMPOSTOR, true));
-        let index = atomicAdd(&fade_cards[1], 1u);
-        atomicStore(&fade_cards[4u + 2u * index], drawn_slot(candidate.slot, false));
-        atomicStore(&fade_cards[5u + 2u * index], candidate.batch);
+        set_drawn_fade(candidate.slot, fade_word(faded, shown != LAST, true));
+        let index = atomicAdd(&fading_ids[0], 1u);
+        atomicStore(&fading_ids[4u + 2u * index], drawn_slot(candidate.slot, false));
+        atomicStore(&fading_ids[5u + 2u * index], candidate.batch);
     }
     scan[candidate.position] = candidate_state_with_level(flags, steady);
 }
@@ -352,20 +351,16 @@ fn batch_args(@builtin(global_invocation_id) id: vec3<u32>) {
     draws[at + id.x] = DrawArgs(batch.index_count, instances, batch.first_index, batch.base_vertex,
         first);
     if !candidate_state_view(frame.mask) {
-        let triangles = saturating_add(saturating_add(
+        let triangles = saturating_add(saturating_add(saturating_add(
             saturating_mul(batch.index_count / 3u, instances),
             saturating_mul(batch.lod_ranges.y / 3u, visible.y)),
-            saturating_mul(batch.lod_ranges.w / 3u, visible.z));
+            saturating_mul(batch.lod_ranges.w / 3u, visible.z)),
+            saturating_mul(batch.last_triangles, visible.w));
         if triangles != 0u {
             atomicAdd(&occlusion_counts[2], triangles);
         }
-    }
-    if id.x == 0u {
-        let impostors = load_sums(frame.groups)[IMPOSTOR];
-        draws[at + LOD_LEVELS * frame.batches] = DrawArgs(IMPOSTOR_VERTICES, impostors, 0u, 0,
-            0u);
-        if impostors != 0u {
-            atomicAdd(&occlusion_counts[2], saturating_mul(IMPOSTOR_VERTICES / 3u, impostors));
+        if id.x == 0u {
+            last_ids[0] = load_sums(frame.groups)[LAST];
         }
     }
     let levels = u32(batch.lod_errors.z);
@@ -404,11 +399,11 @@ fn scatter(
     if any(hot != vec4<u32>(0u)) {
         let level = bucket(stored);
         let global = (load_sums(group.x) + shared_counts[lane] - hot)[level];
-        if level == IMPOSTOR {
+        if level == LAST {
             let candidate = candidates[id.x];
-            impostor_ids[global] = vec2<u32>(
-                drawn_slot(candidate.slot, candidate_state_moving(stored)),
-                candidate.batch);
+            let entry = 4u + 2u * global;
+            last_ids[entry] = drawn_slot(candidate.slot, candidate_state_moving(stored));
+            last_ids[entry + 1u] = candidate.batch;
         } else if level != 0u || global < frame.budget {
             let candidate = candidates[id.x];
             let batch = candidate.batch;

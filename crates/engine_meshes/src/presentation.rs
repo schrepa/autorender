@@ -3,6 +3,7 @@ use engine_core::{
     AlphaMode, AssetLibrary, AssetResidency, Cull, Cursor, FrameId, MaterialHandle, MeshHandle,
     MeshResidence, Readable, Readback, ResidentMesh,
 };
+use engine_places::meshes::LastLevel;
 use engine_render::UploadRange;
 use glam::Vec3;
 
@@ -15,7 +16,6 @@ pub(crate) const TOTALS_BYTES: u64 = 104;
 pub(crate) const WATCHED: u32 = 2;
 pub(crate) const VIEWS: u32 = 4;
 const POSE_WORD: usize = 14;
-pub(crate) const FADE_MARGIN: f32 = 0.1;
 pub(crate) const PHASE_ONE: usize = 0;
 pub(crate) const PHASE_TWO: usize = 1;
 
@@ -122,7 +122,7 @@ impl Readable for PresentationTotals {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Kept {
     pub phase_two: bool,
-    pub impostors: bool,
+    pub last: bool,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -148,7 +148,7 @@ pub(crate) struct UploadSources<'a> {
     pub assets: &'a AssetLibrary,
     pub residency: &'a AssetResidency,
     pub hierarchy: &'a engine_core::GlobalTransforms,
-    pub impostors: &'a [engine_places::impostors::ImpostorRecord],
+    pub last: &'a [LastLevel],
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -319,7 +319,7 @@ impl DrawGroups {
         &mut self,
         batches: &[DrawBatch],
         (assets, residency): (&AssetLibrary, &AssetResidency),
-        impostor: impl Fn(usize) -> f32,
+        last: impl Fn(usize) -> LastLevel,
         reach: impl Fn(Option<MaterialHandle>) -> f32,
     ) {
         let planes = (self.first_instance, self.capacity);
@@ -336,7 +336,7 @@ impl DrawGroups {
                 batch_record(
                     batch,
                     (residency.mesh(batch.mesh), bounds),
-                    impostor(index),
+                    last(index),
                     planes,
                 )
             }));
@@ -411,7 +411,7 @@ impl DrawGroups {
 fn batch_record(
     batch: &DrawBatch,
     (mesh, bounds): (Option<&ResidentMesh>, (Vec3, Vec3)),
-    impostor: f32,
+    last: LastLevel,
     (first_instance, capacity): (bool, usize),
 ) -> BatchData {
     let first_index = mesh.map_or(0, ResidentMesh::first_index);
@@ -428,6 +428,7 @@ fn batch_record(
         start: batch.instances.start,
         count: batch.instances.end - batch.instances.start,
         index_count: mesh.map_or(0, ResidentMesh::index_count),
+        last_triangles: last.triangles,
         first_index,
         base_vertex: mesh.map_or(0, ResidentMesh::base_vertex),
         first_instance: if first_instance {
@@ -437,8 +438,7 @@ fn batch_record(
         },
         first_plane: if first_instance { capacity as u32 } else { 0 },
         lod_ranges: [lod(0).0, lod(0).1, lod(1).0, lod(1).1],
-        lod_errors: [lod(0).2, lod(1).2, (1 + lods) as f32, impostor],
-        pad: 0,
+        lod_errors: [lod(0).2, lod(1).2, (1 + lods) as f32, last.error],
         bounds_min: bounds.0.extend(0.0).to_array(),
         bounds_max: bounds.1.extend(0.0).to_array(),
     }
@@ -456,12 +456,11 @@ pub(crate) struct FrameState {
     pub colors_library: Option<(u64, u64)>,
     pub prepared_at: Option<f32>,
     pub faded_at: Option<f32>,
-    pub cards: bool,
     pub draws: Draws,
     pub blended: Blended,
     pub groups: DrawGroups,
     pub fade_slots: u64,
-    pub card_capacity: usize,
+    pub fading_capacity: usize,
     pub frame: Option<crate::layouts::PresentationFrame>,
     pub candidates: u32,
     pub occlusion: bool,

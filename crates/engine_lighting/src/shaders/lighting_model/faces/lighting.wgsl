@@ -1,5 +1,6 @@
+import package::engine::math::PI;
 import package::engine::shading::{Shaded, SurfacePoint};
-import package::engine::view::PI;
+import package::engine::surfaces::SURFACE_THIN as THIN_KIND;
 import package::face::lights::{cluster_light, kept_regions, light_cluster, lights_on,
     shaped_lights};
 import package::face::sun::sun_direction;
@@ -8,7 +9,9 @@ import package::generated::pieces::lighting_model::piece;
 import package::lighting_model::inputs::sun_seen;
 import package::lighting_model::local::shaped_light;
 import package::lighting_model::surface::{reflected, shade_surface};
-import package::place::lighting::{LightInputs, Reflecting, SPECULAR_LIMIT, SPECULAR_VARIANCE};
+import package::place::lighting::{LightInputs, Reflecting};
+
+const SURFACE_THIN: u32 = THIN_KIND;
 
 fn highlights() -> vec4<f32> {
     return piece().highlights;
@@ -16,6 +19,10 @@ fn highlights() -> vec4<f32> {
 
 fn specular() -> f32 {
     return piece().model.z;
+}
+
+fn specular_widening() -> vec2<f32> {
+    return piece().widening.xy;
 }
 
 fn distribution(n_h: f32, alpha: f32) -> f32 {
@@ -43,9 +50,9 @@ fn environment_brdf(f0: vec3<f32>, roughness: f32, n_v: f32) -> vec3<f32> {
 }
 
 fn surface_sun(point: SurfacePoint) -> SunAt {
-    return SunAt(point.world + sun_direction() * point.thickness, point.geometric, point.world_dx,
-        point.world_dy, point.inputs.shadow_softness, point.kind, point.inputs.shadow_lift_first,
-        point.inputs.shadow_lifts);
+    return SunAt(point.world + sun_direction() * point.inputs.thickness, point.geometric,
+        point.world_dx, point.world_dy, point.inputs.shadow_softness, point.kind,
+        point.inputs.shadow_lift_first, point.inputs.shadow_lifts);
 }
 
 fn sun_visibility(at: SunAt) -> f32 {
@@ -110,8 +117,9 @@ fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
 
 fn widened(point: SurfacePoint) -> SurfacePoint {
     var result = point;
+    let spread = specular_widening();
     let turned = dot(point.normal_dx, point.normal_dx) + dot(point.normal_dy, point.normal_dy);
-    let widening = min(2.0 * SPECULAR_VARIANCE * turned, SPECULAR_LIMIT);
+    let widening = min(2.0 * spread.x * turned, spread.y);
     result.alpha = sqrt(saturate(point.alpha * point.alpha + widening));
     result.roughness = sqrt(result.alpha);
     return result;

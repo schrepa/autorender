@@ -1,9 +1,9 @@
 import package::engine::color::luminance;
-import package::engine::math::GRAVITY;
+import package::engine::math::PI;
 import package::engine::shading::{Shaded, SurfacePoint};
 import package::engine::surfaces::SURFACE_WATER;
-import package::engine::view::{PI, camera, detail_across, detail_level, eye_world,
-    stable_normalize, view_pixel};
+import package::engine::view::{camera, detail_across, detail_level, eye_world, stable_normalize,
+    view_pixel};
 import package::face::heightfield::{SURFACE_LEAF_INDICES, surface_leaf, surface_leaf_count,
     surface_vertex, terrain_level_height, terrain_uniform, terrain_view_uniform, use_terrain};
 import package::face::lighting::{distribution, environment_brdf, fresnel, highlights, specular,
@@ -13,8 +13,8 @@ import package::face::sky::{ambient, atmospheric_cover, sky_average};
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
 import package::generated::writes::{Outputs, outputs};
-import package::generated::water::{BREAK_THINNEST, NO_WATER_BLOCK, NO_WATER_SURFACE, SIM_LIVE_LOOKS,
-    SIM_RIM, WATER_LEAF_FIRST, WATER_LIVE_BLOCK, WaterUniform};
+import package::generated::water::{BREAK_THINNEST, GRAVITY, NO_WATER_BLOCK, NO_WATER_SURFACE,
+    SIM_LIVE_LOOKS, SIM_RIM, WATER_LEAF_FIRST, WATER_LIVE_BLOCK, WaterUniform};
 import package::place::water::{WATER_HELD, WaterAt};
 import package::water::faces::water::{water_at_level, water_cell, water_info_at, water_read,
     water_smooth, water_texel, water_words, water_words_add};
@@ -500,7 +500,7 @@ fn water_light(surface: WaterSurface, pixel: vec2<f32>) -> WaterLit {
     point.world_dx = surface.world_dx;
     point.world_dy = surface.world_dy;
     point.kind = SURFACE_WATER;
-    point.sun_blocked = 1.0;
+    point.inputs.sun_blocked = 1.0;
     var lit: WaterLit;
     lit.point = point;
     lit.shaded = finish(point, pixel, mix(body + glint, foam, surface.foam));

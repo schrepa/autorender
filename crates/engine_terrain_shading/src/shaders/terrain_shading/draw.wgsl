@@ -8,13 +8,16 @@ import package::face::foliage::foliage;
 import package::face::lit::finish;
 import package::face::shadows::{kept_level, kept_texels};
 import package::face::sun::sun_direction;
-import package::engine::view::{DETAIL_EDGE_ON, PI, camera, detail_across, detail_distance, detail_level,
-    detail_resolved, detail_span, eye_world, fade_noise, material_detail, stable_normalize, view_pixel};
+import package::engine::math::PI;
+import package::engine::view::{camera, detail_across, detail_distance, detail_level, eye_world,
+    fade_noise, material_detail, stable_normalize, view_pixel};
 import package::engine::shading::{Shaded, SurfacePoint};
 import package::engine::surfaces::SURFACE_GROUND;
 import package::face::water::{WATER_HELD, WaterCell, water_cell, water_level};
 import package::generated::writes::{DepthOutputs, depth_outputs};
 import package::terrain_shading::draw_shared::{terrain_hash2, terrain_value, terrain_value2};
+import package::terrain_shading::faces::ground_tiles::{DETAIL_EDGE_ON, detail_resolved,
+    detail_span};
 import package::terrain_shading::faces::heightfield::{surface_vertex, terrain, terrain_index, terrain_level_height, terrain_view, use_terrain};
 import package::terrain_shading::field::spread_slopes;
 import package::terrain_shading::sky::terrain_sky_map;

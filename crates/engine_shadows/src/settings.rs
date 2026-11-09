@@ -12,6 +12,8 @@ settings! {
         pub tile_texels: u32 = 128 => power_of_two(64, 512),
         pub atlas_slots: u32 = 1024 => range(64, 4096),
         pub moving_tiles: u32 = 256 => any,
+        pub sample_texels: f32 = 2.0 => at_least(0.0),
+        pub changes: u32 = 1024 => at_least(1),
     }
 }
 

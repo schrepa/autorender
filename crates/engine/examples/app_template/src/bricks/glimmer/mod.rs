@@ -64,8 +64,8 @@ impl PassName for GlimmerPass {
     };
 }
 
-fn ringed(kind: DrawKind) -> bool {
-    kind == GLIMMER
+fn ringed(kind: &KindDecl) -> bool {
+    kind.kind == GLIMMER
 }
 
 #[derive(Component)]
@@ -105,6 +105,8 @@ impl Brick for GlimmerBrick {
                 kind: GLIMMER,
                 vertex: shaders::glimmer::draw::VS_GLIMMER.name(),
                 needs: Attributes::NONE,
+                casts_shadows: true,
+                seen_by_probes: true,
             })
             .pass::<GlimmerPass>()
             .material_slot(SlotModule {
@@ -239,7 +241,7 @@ impl GpuPart for GlimmerGpu {
             .filter(|listed| {
                 listed.bit.is_some()
                     && listed.name != GlimmerPass::NAME
-                    && (listed.pass.takes)(GLIMMER)
+                    && cx.passes().takes(&listed.pass, GLIMMER)
                     && listed.pass.views != PassViews::Owned
                     && listed.pass.at != AttachPoint::Transparent
             })

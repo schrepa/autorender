@@ -3,7 +3,7 @@ use engine_core::{
     AssetLibrary, AssetResidency, CullPlan, Detail, DeviceLimits, DrawnTable, Entry, Error,
     FrameTime, GeometryStream, GlobalTransforms, InstanceInput, PassViews, ScenePass, Views,
 };
-use engine_places::impostors::{ImpostorRecords, Impostors};
+use engine_places::meshes::LastLevels;
 use engine_render::{
     AttachPoint, Bind, Buffer, ComputePipeline, DEBUG_BLEND, DEBUG_TARGETS, DepthUse,
     DrawInput, Encode, GpuPart,
@@ -17,9 +17,7 @@ use crate::drawn::WatchedSlot;
 use crate::layouts::PresentationFrame;
 use crate::order::BatchLook;
 use crate::presentation::{FrameState, PresentationTotals};
-use crate::shaders::meshes::{
-    blended, cards, debug, forward, presentation, vertex,
-};
+use crate::shaders::meshes::{blended, debug, forward, presentation, vertex};
 use crate::{MESH, SKIN};
 
 pub(crate) const VIEW_FRAME_BYTES: u64 = 512;
@@ -64,19 +62,6 @@ const EXTENDED_VIEW_STREAMS: &[VertexLayout] =
     &[VERTEX, EXTRA, VertexLayout::Buffer(SLOT_STREAM)];
 const SKIN_VIEW_STREAMS: &[VertexLayout] =
     &[VERTEX, EXTRA, SKIN_STREAM, VertexLayout::Buffer(SLOT_STREAM)];
-const CARD_ATTRIBUTES: [wgpu::VertexAttribute; 2] = [
-    instance_input(InstanceInput::Slot, 0),
-    instance_input(InstanceInput::Batch, 4),
-];
-const CARD_STREAM: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
-    array_stride: 8,
-    step_mode: wgpu::VertexStepMode::Instance,
-    attributes: &CARD_ATTRIBUTES,
-};
-const CARD_STREAMS: &[VertexLayout] = &[
-    VertexLayout::Buffer(CARD_STREAM),
-    VertexLayout::Buffer(RECORD_STREAM),
-];
 pub(crate) struct Compaction {
     pub sum: ComputePipeline<MeshesGpu>,
     pub scan: ComputePipeline<MeshesGpu>,
@@ -104,7 +89,6 @@ pub(crate) struct Sorted {
 
 pub(crate) struct Instances {
     pub records: Buffer<MeshesGpu>,
-    pub impostors: Buffer<MeshesGpu>,
     pub colors: Buffer<MeshesGpu>,
 }
 
@@ -121,9 +105,9 @@ pub(crate) struct Presented {
     pub visible: [Buffer<MeshesGpu>; 2],
     pub view_draws: Buffer<MeshesGpu>,
     pub view_visible: Buffer<MeshesGpu>,
-    pub impostor_ids: [Buffer<MeshesGpu>; 2],
+    pub last_ids: [Buffer<MeshesGpu>; 2],
     pub lod_states: Buffer<MeshesGpu>,
-    pub fade_cards: Buffer<MeshesGpu>,
+    pub fading_ids: Buffer<MeshesGpu>,
     pub counts: Buffer<MeshesGpu>,
     pub totals: Buffer<MeshesGpu>,
 }
@@ -198,8 +182,6 @@ pub(crate) struct Streams<S> {
     pub ids: DrawInput<MeshesGpu, S>,
     pub args: DrawInput<MeshesGpu, S>,
     pub records: DrawInput<MeshesGpu, S>,
-    pub cards: DrawInput<MeshesGpu, S>,
-    pub fading: DrawInput<MeshesGpu, S>,
 }
 
 pub(crate) struct ViewStreams {
@@ -216,7 +198,6 @@ pub(crate) struct BlendedStreams {
 pub(crate) enum Drawing {
     Placed {
         looks: Looked<Pipeline<MeshesGpu, Scene>>,
-        card: Pipeline<MeshesGpu, Scene>,
         streams: Streams<Scene>,
     },
     Views {
@@ -236,7 +217,6 @@ pub(crate) struct ScenePipelines {
 
 pub(crate) struct Occluded {
     pub lit: Looked<Pipeline<MeshesGpu, Own>>,
-    pub card: Pipeline<MeshesGpu, Own>,
     pub streams: Streams<Own>,
 }
 
@@ -254,7 +234,7 @@ pub(crate) struct MeshesGpu {
 pub(crate) type MeshReads = (
     FrameReads,
     (
-        Query<'static, 'static, &'static ImpostorRecords, With<MeshAssets>>,
+        Query<'static, 'static, &'static LastLevels, With<MeshAssets>>,
         Res<'static, Views>,
         Res<'static, WatchedSlot>,
         Res<'static, PresentationTotals>,
@@ -268,7 +248,6 @@ pub(crate) type FrameReads = (
     Res<'static, CullPlan>,
     Res<'static, GlobalTransforms>,
     Res<'static, Detail>,
-    Res<'static, Impostors>,
     Res<'static, FrameTime>,
     Res<'static, DeviceLimits>,
 );
@@ -278,7 +257,7 @@ impl GpuPart for MeshesGpu {
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         let instances = install_instances(cx)?;
-        let presented = install_presented(cx);
+        let presented = install_presented(cx)?;
         let passes = install_passes(cx);
         let computes = install_computes(cx, &passes, &presented)?;
         let sorted = install_sorted(cx, passes.blended, &presented)?;
@@ -317,15 +296,14 @@ fn install_instances(cx: &mut Install<'_, MeshesGpu>) -> Result<Instances, Error
     use crate::shaders::meshes::slots;
     let instances = Instances {
         records: cx.buffer("debug_view_records", Lifetime::Kept),
-        impostors: cx.buffer("impostor_records", Lifetime::Kept),
         colors: cx.buffer("colors", Lifetime::Kept),
     };
     cx.frame(slots::INSTANCE_COLORS, Bind::Buffer(instances.colors))?;
-    cx.frame(cards::IMPOSTOR_RECORDS, Bind::Buffer(instances.impostors))?;
     Ok(instances)
 }
 
-fn install_presented(cx: &mut Install<'_, MeshesGpu>) -> Presented {
+fn install_presented(cx: &mut Install<'_, MeshesGpu>) -> Result<Presented, Error> {
+    use crate::shaders::meshes::faces::instances as face;
     let mut buffer = |label: &'static str| cx.buffer(label, Lifetime::Kept);
     let frame = buffer("presentation_frame");
     let frame_two = buffer("presentation_frame_two");
@@ -345,16 +323,19 @@ fn install_presented(cx: &mut Install<'_, MeshesGpu>) -> Presented {
     ];
     let view_draws = buffer("presentation_view_draws");
     let view_visible = buffer("presentation_view_ids");
-    let impostor_ids = [
-        buffer("presentation_impostor_ids"),
-        buffer("presentation_impostor_ids_two"),
+    let last_ids = [
+        buffer("presentation_last_ids"),
+        buffer("presentation_last_ids_two"),
     ];
     let lod_states = buffer("presentation_lod_states");
-    let fade_cards = buffer("presentation_fading_cards");
+    let fading_ids = buffer("presentation_fading_ids");
     let counts = buffer("presentation_occlusion_counts");
     let totals = buffer("presentation_totals");
     cx.window(view_frames, size_of::<PresentationFrame>() as u64);
-    Presented {
+    cx.frame(face::LAST_IDS, Bind::Buffer(last_ids[0]))?;
+    cx.frame(face::LAST_LATE_IDS, Bind::Buffer(last_ids[1]))?;
+    cx.frame(face::LAST_FADING_IDS, Bind::Buffer(fading_ids))?;
+    Ok(Presented {
         frame,
         frame_two,
         view_frames,
@@ -367,12 +348,12 @@ fn install_presented(cx: &mut Install<'_, MeshesGpu>) -> Presented {
         visible,
         view_draws,
         view_visible,
-        impostor_ids,
+        last_ids,
         lod_states,
-        fade_cards,
+        fading_ids,
         counts,
         totals,
-    }
+    })
 }
 
 fn install_passes(cx: &mut Install<'_, MeshesGpu>) -> Passes {
@@ -380,13 +361,13 @@ fn install_passes(cx: &mut Install<'_, MeshesGpu>) -> Passes {
     let views = cx.pass("view_cull").after(presentation).id();
     let occlusion = cx
         .pass("occlusion_lists")
-        .at(AttachPoint::Sky)
+        .at(AttachPoint::LateOpaque)
         .after(presentation)
         .after(views)
         .id();
     let occluded = cx
         .pass("occluded")
-        .at(AttachPoint::Sky)
+        .at(AttachPoint::LateOpaque)
         .after(occlusion)
         .id();
     let blended = cx
@@ -450,7 +431,7 @@ fn compaction(
     cx: &mut Install<'_, MeshesGpu>,
     pass: Pass<MeshesGpu>,
     presented: &Presented,
-    (frame, visible, draws, impostors): (
+    (frame, visible, draws, last): (
         Buffer<MeshesGpu>,
         Buffer<MeshesGpu>,
         Buffer<MeshesGpu>,
@@ -486,6 +467,7 @@ fn compaction(
                 (p::BATCH_BASES, Bind::Buffer(presented.batch_bases)),
                 (p::DRAWS, Bind::Buffer(draws)),
                 (p::OCCLUSION_COUNTS, Bind::Buffer(presented.counts)),
+                (p::LAST_IDS, Bind::Buffer(last)),
             ],
         )?,
         scatter: cx.compute_pipeline(
@@ -498,7 +480,7 @@ fn compaction(
                 (p::BATCHES, Bind::Buffer(presented.batches)),
                 (p::BATCH_BASES, Bind::Buffer(presented.batch_bases)),
                 (p::VISIBLE_IDS, Bind::Buffer(visible)),
-                (p::IMPOSTOR_IDS, Bind::Buffer(impostors)),
+                (p::LAST_IDS, Bind::Buffer(last)),
             ],
         )?,
     })
@@ -530,7 +512,7 @@ fn install_computes(
             (p::SCAN, Bind::Buffer(presented.scan)),
             (p::SLOT_CANDIDATES, Bind::Buffer(presented.slot_candidates)),
             (p::LOD_STATES, Bind::Buffer(presented.lod_states)),
-            (p::FADE_CARDS, Bind::Buffer(presented.fade_cards)),
+            (p::FADING_IDS, Bind::Buffer(presented.fading_ids)),
         ],
     )?;
     let one = compaction(
@@ -541,7 +523,7 @@ fn install_computes(
             presented.frame,
             presented.visible[0],
             presented.draws[0],
-            presented.impostor_ids[0],
+            presented.last_ids[0],
         ),
     )?;
     let gather = |cx: &mut Install<'_, MeshesGpu>, pass, entry, frame| {
@@ -567,7 +549,7 @@ fn install_computes(
             presented.frame_two,
             presented.visible[1],
             presented.draws[1],
-            presented.impostor_ids[1],
+            presented.last_ids[1],
         ),
     )?;
     let gather_two = gather(cx, late, p::GATHER_PHASE_TWO, presented.frame_two)?;
@@ -599,7 +581,7 @@ fn install_computes(
             presented.view_frames,
             presented.view_visible,
             presented.view_draws,
-            presented.impostor_ids[0],
+            presented.last_ids[0],
         ),
     )?;
     Ok(Computes {
@@ -762,37 +744,6 @@ fn view_looks(
     Ok(Looked { looks })
 }
 
-fn card_pipeline<S: Scope<MeshesGpu>>(
-    cx: &mut Install<'_, MeshesGpu>,
-    scope: S,
-    (lit, shown): (bool, bool),
-) -> Result<Pipeline<MeshesGpu, S::Tag>, Error> {
-    let fragment = if shown {
-        cards::FS_DEBUG_CARD
-    } else if lit {
-        cards::FS_CARD
-    } else {
-        cards::FS_CARD_DEPTH
-    };
-    cx.render_pipeline(
-        scope,
-        &RenderPipeline {
-            vertex: cards::VS_CARD,
-            fragment: Some(fragment),
-            vertices: CARD_STREAMS,
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth: WRITE,
-            blend: shown.then_some(DEBUG_BLEND),
-            writes: wgpu::ColorWrites::ALL,
-        },
-        &[],
-    )
-}
-
 fn streams<S: Scope<MeshesGpu> + Copy>(
     cx: &mut Install<'_, MeshesGpu>,
     scope: S,
@@ -803,8 +754,6 @@ fn streams<S: Scope<MeshesGpu> + Copy>(
         ids: cx.draw_input(scope, presented.visible[phase]),
         args: cx.draw_input(scope, presented.draws[phase]),
         records: cx.draw_input(scope, instances.records),
-        cards: cx.draw_input(scope, presented.impostor_ids[phase]),
-        fading: cx.draw_input(scope, presented.fade_cards),
     }
 }
 
@@ -819,7 +768,8 @@ fn install_scenes(
         .listed()
         .iter()
         .filter(|listed| {
-            listed.bit.is_some() && ((listed.pass.takes)(MESH) || (listed.pass.takes)(SKIN))
+            listed.bit.is_some()
+                && (cx.passes().takes(&listed.pass, MESH) || cx.passes().takes(&listed.pass, SKIN))
         })
         .copied()
         .collect();
@@ -855,7 +805,6 @@ fn install_scenes(
                 } else {
                     unlit_looks(cx, scene)?
                 },
-                card: card_pipeline(cx, scene, (lit, shown))?,
                 streams: streams(cx, scene, (instances, presented), 0),
             }
         };
@@ -875,7 +824,6 @@ fn install_occluded(
 ) -> Result<Occluded, Error> {
     Ok(Occluded {
         lit: lit_looks(cx, pass, false)?,
-        card: card_pipeline(cx, pass, (true, false))?,
         streams: streams(cx, pass, (instances, presented), 1),
     })
 }

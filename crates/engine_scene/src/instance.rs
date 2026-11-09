@@ -45,7 +45,6 @@ struct Origins {
 pub enum MeshOrigin {
     Cube,
     Plane,
-    Octahedron,
     Inline { vertices: usize, indices: usize },
     Buffer { uri: String },
     Provided { name: String },
@@ -56,7 +55,6 @@ impl From<&crate::MeshSource> for MeshOrigin {
         match source {
             crate::MeshSource::Cube {} => Self::Cube,
             crate::MeshSource::Plane {} => Self::Plane,
-            crate::MeshSource::Octahedron {} => Self::Octahedron,
             crate::MeshSource::Inline { vertices, indices } => Self::Inline {
                 vertices: vertices.len(),
                 indices: indices.len(),

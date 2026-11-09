@@ -1,9 +1,10 @@
 import package::cover::faces::cover::{COVER_FAR_SIDE, COVER_ROUGHNESS};
 import package::cover::laws::{COVER_LEAF_STEPS, COVER_ROOT_OCCLUSION, STRAIGHT_FIRST_VERTEX,
     STRAIGHT_JOINTS};
+import package::engine::math::PI;
 import package::engine::shading::SurfacePoint;
-import package::engine::surfaces::SURFACE_THIN;
-import package::engine::view::{PI, camera, stable_normalize, view_pixel};
+import package::engine::view::{camera, stable_normalize, view_pixel};
+import package::face::lighting::SURFACE_THIN;
 import package::face::lit::finish;
 import package::face::foliage::foliage;
 import package::face::sun::sun_direction;

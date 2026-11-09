@@ -60,6 +60,8 @@ impl Brick for ParticlesBrick {
                 kind: PARTICLES,
                 vertex: shaders::particles::draw::VS_PARTICLE.name(),
                 needs: Attributes::NONE,
+                casts_shadows: false,
+                seen_by_probes: false,
             })
             .pass::<part::WeightedPass>()
             .pass::<part::CompositePass>()

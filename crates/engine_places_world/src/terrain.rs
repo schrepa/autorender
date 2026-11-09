@@ -1,6 +1,5 @@
+use engine_heightfield::layer::LayerKind;
 use engine_place::List;
-
-pub use engine_heightfield::layer::LayerKind;
 
 pub struct TerrainLayers;
 

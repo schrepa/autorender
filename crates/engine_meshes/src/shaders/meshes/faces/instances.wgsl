@@ -1,36 +1,42 @@
-import package::engine::mesh::declarations::{faded_entry_fade, faded_slot_slot};
-import package::face::impostors::ImpostorRecord;
-import package::engine::shading::ViewPixel;
-import package::meshes::cards::{card_debug, card_depth, placed_card, placed_card_lit,
-    placed_card_point};
-import package::meshes::forward::drawn_pixel;
-import package::meshes::slots::slot_pose;
-import package::place::instances::{AffinePose, CardDebugTargets, CardShaded, CardVertex,
-    SlotColor};
+import package::meshes::slots::{instance_colors, slot_pose, slot_previous_pose};
+import package::place::instances::{AffinePose, SlotColor};
+
+@group(0) @binding(0) var<storage, read> last_ids: array<u32>;
+@group(0) @binding(0) var<storage, read> last_late_ids: array<u32>;
+@group(0) @binding(0) var<storage, read> last_fading_ids: array<u32>;
 
 fn instance_pose(slot: u32) -> AffinePose {
     return slot_pose(slot);
 }
 
-fn placed_card_vertex(vertex: u32, batch: u32, pose: AffinePose, previous: AffinePose,
-        color: SlotColor, impostor: ImpostorRecord) -> CardVertex {
-    return placed_card(vertex, batch, pose, previous, color, impostor);
+fn instance_previous_pose(slot: u32) -> AffinePose {
+    return slot_previous_pose(slot);
 }
 
-fn placed_card_shade(input: CardVertex, impostor: ImpostorRecord) -> CardShaded {
-    return placed_card_lit(input, impostor);
+fn instance_color(slot: u32) -> SlotColor {
+    return instance_colors[slot];
 }
 
-fn placed_card_depth(input: CardVertex, impostor: ImpostorRecord) -> f32 {
-    return card_depth(input, placed_card_point(input, impostor), false);
+fn last_count() -> u32 {
+    return last_ids[0];
 }
 
-fn placed_card_pixel(input: CardVertex) -> ViewPixel {
-    return drawn_pixel(input.clip_position, input.previous);
+fn last_entry(index: u32) -> vec2<u32> {
+    return vec2<u32>(last_ids[4u + 2u * index], last_ids[5u + 2u * index]);
 }
 
-fn placed_card_debug(input: CardVertex, record: u32, object: u32, impostor: ImpostorRecord)
-        -> CardDebugTargets {
-    return card_debug(input, placed_card_point(input, impostor), vec2<u32>(record, object),
-        faded_slot_slot(input.batch), faded_entry_fade(input.batch), false);
+fn last_late_count() -> u32 {
+    return last_late_ids[0];
+}
+
+fn last_late_entry(index: u32) -> vec2<u32> {
+    return vec2<u32>(last_late_ids[4u + 2u * index], last_late_ids[5u + 2u * index]);
+}
+
+fn last_fading_count() -> u32 {
+    return last_fading_ids[0];
+}
+
+fn last_fading_entry(index: u32) -> vec2<u32> {
+    return vec2<u32>(last_fading_ids[4u + 2u * index], last_fading_ids[5u + 2u * index]);
 }

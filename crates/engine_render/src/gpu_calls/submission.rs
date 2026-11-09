@@ -51,9 +51,6 @@ impl Submission {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-const THREADS: usize = 4;
-
-#[cfg(not(target_arch = "wasm32"))]
 struct Threads {
     inbox: Option<mpsc::Sender<(u64, Handover)>>,
     workers: Vec<std::thread::JoinHandle<()>>,
@@ -68,7 +65,7 @@ impl Threads {
         let (inbox, handovers) = mpsc::channel::<(u64, Handover)>();
         let handovers = Arc::new(Mutex::new(handovers));
         let turns = Arc::new(Turns::default());
-        let workers: Vec<_> = (0..spare.clamp(1, THREADS))
+        let workers: Vec<_> = (0..spare.max(1))
             .map_while(|index| {
                 let (queue, handovers, turns) =
                     (queue.clone(), Arc::clone(&handovers), Arc::clone(&turns));

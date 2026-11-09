@@ -1,4 +1,4 @@
-use engine_core::math::GRAVITY;
+use engine_math::GRAVITY;
 use engine_heightfield::Bed;
 
 pub use super::gpu::{

@@ -1,8 +1,9 @@
+import package::engine::view::{camera, detail_across};
 import package::place::ground_tiles::{GroundHeight, GroundMaterial, GroundTerrain, GroundTile,
     LevelTile, MaterialLook, NOT_RESIDENT, PALETTE_ENTRIES, PEAK_CELLS, PEAK_MIPS, TILE_QUADS,
     TerrainInfo};
-import package::generated::terrain_shading::{CONTROL_PLANE, NORMAL_PLANE, PaletteEntry, TILE_PLANES,
-    control_a, control_b, control_blend};
+import package::generated::terrain_shading::{CONTROL_PLANE, DETAIL_ANISOTROPY, NORMAL_PLANE,
+    PaletteEntry, TILE_PLANES, control_a, control_b, control_blend};
 import package::terrain_shading::tables::{table_terrain, terrain_tables};
 
 @group(0) @binding(0) var heights: texture_2d_array<f32>;
@@ -159,4 +160,21 @@ fn macro_color(colors: vec4<f32>) -> vec3<f32> {
 fn material_look(base: u32, material: u32) -> MaterialLook {
     let entry = palette[min(base + material, PALETTE_ENTRIES - 1u)];
     return MaterialLook(entry.far);
+}
+
+const DETAIL_EDGE_ON: f32 = 0.0625;
+
+fn detail_span(world: vec3<f32>, normal: vec3<f32>) -> vec4<f32> {
+    let across = detail_across(world);
+    let toward = world - camera.detail.xyz;
+    let ray = toward / max(length(toward), 1.0e-6);
+    let cosine = dot(normal, ray);
+    let facing = max(abs(cosine), DETAIL_EDGE_ON);
+    let laid = ray - normal * cosine;
+    let way = laid.xz * inverseSqrt(max(dot(laid, laid), 1.0e-12));
+    return vec4<f32>(across, across / facing, way);
+}
+
+fn detail_resolved(span: vec2<f32>) -> f32 {
+    return max(min(span.x, span.y), max(span.x, span.y) / DETAIL_ANISOTROPY);
 }

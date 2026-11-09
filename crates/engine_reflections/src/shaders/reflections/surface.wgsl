@@ -1,6 +1,5 @@
 import package::engine::shading::{Shaded, SurfacePoint, ViewPixel};
-import package::engine::surfaces::SURFACE_THIN;
-import package::face::lighting::reflecting;
+import package::face::lighting::{SURFACE_THIN, reflecting};
 import package::face::trace_depths::{TRACE_DEPTH_SOLID, TRACE_DEPTH_THIN, trace_depth};
 import package::generated::pieces::reflections::piece;
 

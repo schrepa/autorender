@@ -23,7 +23,6 @@ use crate::machine::OutputDecl;
 pub use engine_core::{AttachPoint, TargetName};
 pub use wgpu;
 
-mod bindings;
 mod draws;
 mod drawn;
 mod encode;
@@ -108,10 +107,6 @@ pub mod debug {
     pub struct DebugRecord {
         #[bits(8)]
         pub kind: u32,
-        #[bits(4)]
-        pub level: u32,
-        pub fading: bool,
-        pub card: bool,
         #[bits(8, at = 16)]
         pub source: u32,
     }

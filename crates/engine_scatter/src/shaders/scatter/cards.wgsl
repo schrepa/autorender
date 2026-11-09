@@ -1,7 +1,6 @@
-import package::face::instances::{
-    AffinePose, CardDebugTargets, CardVertex, SlotColor, placed_card_debug, placed_card_depth,
-    placed_card_pixel, placed_card_shade, placed_card_vertex
-};
+import package::face::impostors::{CardDebugTargets, CardVertex, placed_card_debug,
+    placed_card_depth, placed_card_pixel, placed_card_shade, placed_card_vertex};
+import package::face::instances::{AffinePose, SlotColor};
 import package::engine::drawn::{INPUT_BATCH, INPUT_DRAW, INPUT_SLOT};
 import package::engine::mesh::declarations::faded_slot_slot;
 import package::face::debug::debug_record_with_kind;

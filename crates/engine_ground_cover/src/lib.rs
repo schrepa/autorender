@@ -42,6 +42,8 @@ impl Brick for GroundCoverBrick {
                 kind: part::COVER,
                 vertex: shaders::cover::draw::VS_COVER.name(),
                 needs: Attributes::NONE,
+                casts_shadows: false,
+                seen_by_probes: false,
             })
             .draws::<part::CoverGpu>(part::COVER, part::CoverGpu::draw);
     }

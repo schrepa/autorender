@@ -6,69 +6,11 @@
 #[doc(hidden)]
 pub mod bc7;
 mod image;
-mod mips;
 
 pub use image::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
 
 use engine_assets::{ColorSpace, Texture, TextureFormat, TextureSummary};
 use engine_codec::{Error, ErrorCode, Expected};
-
-const COOK_HEADER: usize = 10;
-
-pub fn cook_input(source: &Source, family: Family) -> Vec<u8> {
-    let mut input = Vec::with_capacity(COOK_HEADER + source.pixels.len());
-    input.extend_from_slice(&source.width.to_le_bytes());
-    input.extend_from_slice(&source.height.to_le_bytes());
-    input.push(match source.usage {
-        Usage::Color => 0,
-        Usage::Data => 1,
-        Usage::Normal => 2,
-    });
-    input.push(match family {
-        Family::Bc7 => 0,
-        Family::Astc => 1,
-    });
-    input.extend_from_slice(&source.pixels);
-    input
-}
-
-pub fn cook_source(input: &[u8]) -> Result<(Source, Family), Error> {
-    let header = input.get(..COOK_HEADER).ok_or_else(|| {
-        Error::new(ErrorCode::InvalidTexture, "$.input")
-            .expected(Expected::Present)
-            .at_least(COOK_HEADER as u64)
-            .got(input.len())
-    })?;
-    let word = |at: usize| {
-        u32::from_le_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]])
-    };
-    let usage = match header[8] {
-        0 => Usage::Color,
-        1 => Usage::Data,
-        2 => Usage::Normal,
-        other => {
-            return Err(Error::new(ErrorCode::InvalidTexture, "$.input.usage")
-                .range(0.0, 2.0)
-                .got(other));
-        }
-    };
-    let family = match header[9] {
-        0 => Family::Bc7,
-        1 => Family::Astc,
-        other => {
-            return Err(Error::new(ErrorCode::InvalidTexture, "$.input.family")
-                .range(0.0, 1.0)
-                .got(other));
-        }
-    };
-    let source = Source {
-        width: word(0),
-        height: word(4),
-        pixels: input[COOK_HEADER..].to_vec(),
-        usage,
-    };
-    Ok((source, family))
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Usage {
@@ -118,10 +60,6 @@ pub struct Source {
     pub usage: Usage,
 }
 
-pub fn levels(source: &Source) -> Vec<Vec<u8>> {
-    mips::chain(source.width, source.height, &source.pixels, source.usage)
-}
-
 pub fn plain(source: &Source) -> Result<Texture, Error> {
     let expected = TextureFormat::Rgba8.level_bytes(source.width, source.height);
     if source.pixels.len() != expected {
@@ -131,7 +69,7 @@ pub fn plain(source: &Source) -> Result<Texture, Error> {
             .got(source.pixels.len()));
     }
     Ok(
-        Texture::from_levels(TextureFormat::Rgba8, source.width, source.height, levels(source))?
+        Texture::from_rgba(source.width, source.height, source.pixels.clone())?
             .with_summary(TextureSummary::of_rgba8(&source.pixels))
             .with_color_space(source.usage.space()),
     )

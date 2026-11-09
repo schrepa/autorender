@@ -25,82 +25,57 @@ impl Setting {
 
 pub const OVERLAY: &str = "set";
 
-macro_rules! words {
-    ([$($word:literal => $value:expr),+ $(,)?]) => {
-        &[$($word),+]
-    };
-}
+const JOB_CLOCK: Setting = Setting {
+    name: "job-clock",
+    values: &["wall", "frames"],
+};
 
-macro_rules! parse {
-    ($value:ident, [$($word:literal => $set:expr),+ $(,)?]) => {
-        match $value {
-            $($word => Some($set),)+
-            _ => None,
-        }
-    };
-}
+pub const SETTINGS: &[Setting] = &[JOB_CLOCK];
 
-macro_rules! settings {
-    ($(
-        $field:ident: $ty:ty = $name:literal, $values:tt => $apply:ident;
-    )*) => {
-        #[derive(Clone, Debug, Default, PartialEq)]
-        pub struct HostSettings {
-            $(pub $field: Option<$ty>,)*
-            pub overlay: Vec<(String, Value)>,
-            #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
-            pub source: Option<std::path::PathBuf>,
-        }
-
-        pub const SETTINGS: &[Setting] = &[$(Setting {
-            name: $name,
-            values: words!($values),
-        }),*];
-
-        impl HostSettings {
-            pub fn set(&mut self, name: &str, value: &str) -> Result<bool, Error> {
-                match name {
-                    $($name => {
-                        let Some(parsed) = parse!(value, $values) else {
-                            let values: &[&str] = words!($values);
-                            return Err(Error::new(ErrorCode::InvalidValue, "$")
-                                .got(value)
-                                .variants(values.iter().copied()));
-                        };
-                        self.$field = parsed;
-                        Ok(true)
-                    })*
-                    OVERLAY => {
-                        self.overlay.push(overlaid(value)?);
-                        Ok(true)
-                    }
-                    _ => Ok(false),
-                }
-            }
-
-            pub fn apply<G: Game>(&self, host: &mut GameHost<G>) -> Result<(), Error> {
-                $(if let Some(value) = self.$field {
-                    host.$apply(value);
-                })*
-                #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
-                if let Some(path) = &self.source {
-                    host.watch_source(path);
-                }
-                host.set_settings(&self.overlay)
-                    .map_err(|error| error.within(OVERLAY))
-            }
-        }
-    };
-}
-
-settings! {
-    job_clock: JobClock = "job-clock",
-        ["wall" => Some(JobClock::Wall), "frames" => Some(JobClock::Frames)] => set_job_clock;
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct HostSettings {
+    pub job_clock: Option<JobClock>,
+    pub overlay: Vec<(String, Value)>,
+    #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+    pub source: Option<std::path::PathBuf>,
 }
 
 impl HostSettings {
     pub fn takes(name: &str) -> bool {
         name == OVERLAY || SETTINGS.iter().any(|setting| setting.name == name)
+    }
+
+    pub fn set(&mut self, name: &str, value: &str) -> Result<bool, Error> {
+        if name == OVERLAY {
+            self.overlay.push(overlaid(value)?);
+        } else if name == JOB_CLOCK.name {
+            self.job_clock = Some(job_clock(value)?);
+        } else {
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    pub fn apply<G: Game>(&self, host: &mut GameHost<G>) -> Result<(), Error> {
+        if let Some(clock) = self.job_clock {
+            host.set_job_clock(clock);
+        }
+        #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+        if let Some(path) = &self.source {
+            host.watch_source(path);
+        }
+        host.set_settings(&self.overlay)
+            .map_err(|error| error.within(OVERLAY))
+    }
+}
+
+fn job_clock(value: &str) -> Result<JobClock, Error> {
+    match value {
+        "wall" => Ok(JobClock::Wall),
+        "frames" => Ok(JobClock::Frames),
+        _ => Err(Error::new(ErrorCode::InvalidValue, "$")
+            .got(value)
+            .variants(JOB_CLOCK.values.iter().copied())),
     }
 }
 
@@ -247,19 +222,4 @@ pub fn reset_setting(world: &mut World, key: &str) -> Result<(), Error> {
         }
         entry.set(world, &current)
     })
-}
-
-pub fn run_operation(world: &mut World, name: &str, request: Value) -> Result<Value, Error> {
-    let operation = world
-        .get_resource::<engine_registry::Registry>()
-        .and_then(|registry| registry.operation(name))
-        .copied()
-        .ok_or_else(|| {
-            Error::new(ErrorCode::UnknownVariant, "$.name")
-                .expected(Expected::Present)
-                .got(name)
-        })?;
-    operation
-        .run(world, request)
-        .map_err(|error| error.within("$.args"))
 }

@@ -1,9 +1,9 @@
+import package::engine::math::PI;
 import package::face::cover::{COVER_FAR_SIDE, cover_seen, cover_tint, material_canopy};
 import package::face::ground_tiles::macro_color;
 import package::face::horizons::terrain_visibility;
 import package::face::sky::{ambient, cloud_passing, sky_average};
 import package::face::sun::{sun_color, sun_direction};
-import package::engine::view::PI;
 import package::generated::pieces::terrain_shading::piece;
 import package::terrain_shading::horizons::{terrain_horizon_sampler, terrain_horizons};
 import package::generated::terrain_shading::{BOUNCE_BINS, BOUNCE_GROUP, BOUNCE_NEAREST, BOUNCE_PROBE_LAYERS, BOUNCE_RECORD_WORDS, BOUNCE_STEPS, BounceFrame, BounceTerrain, HORIZON_LAYERS, HORIZON_RECORD_VECTORS, PaletteEntry};

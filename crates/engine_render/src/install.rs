@@ -560,7 +560,7 @@ impl InstallCore {
         let mut members: Vec<u32> = self
             .draws
             .iter()
-            .filter(|member| (listed.takes)(member.kind))
+            .filter(|member| (listed.takes)(&member.kind))
             .map(|member| member.part)
             .collect();
         members.sort_unstable();

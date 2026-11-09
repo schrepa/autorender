@@ -8,10 +8,10 @@ use engine_place::{Error, ErrorCode, PlaceKind};
 use crate::BrickId;
 use crate::record::crate_segment;
 
-const CORE_CRATES: &[&str] = &[
-    "bevy_ecs",
+pub const CORE_CRATES: &[&str] = &[
     "engine_ecs",
     "engine_place",
+    "engine_gpu_bits",
     "engine_core",
     "engine_render",
     "engine_assets",
@@ -19,12 +19,11 @@ const CORE_CRATES: &[&str] = &[
     "engine_scene",
     "engine_profile",
     "engine_panic",
-    "engine_registry",
-    "engine_textures",
-    "core",
-    "alloc",
-    "std",
 ];
+
+pub const CORE_INTERNAL_CRATES: &[&str] = &["engine_registry", "engine_textures"];
+
+const STANDARD_CRATES: &[&str] = &["bevy_ecs", "core", "alloc", "std"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Catalogued {
@@ -148,7 +147,7 @@ impl AccessRule {
                 );
                 continue;
             }
-            if own || CORE_CRATES.contains(&crate_segment(&name)) {
+            if own || core_type(&name) {
                 continue;
             }
             problems.push(foreign(package, system, &name));
@@ -212,7 +211,10 @@ impl AccessRule {
 }
 
 pub(crate) fn core_type(type_name: &str) -> bool {
-    CORE_CRATES.contains(&crate_segment(type_name))
+    let name = crate_segment(type_name);
+    [CORE_CRATES, CORE_INTERNAL_CRATES, STANDARD_CRATES]
+        .iter()
+        .any(|crates| crates.contains(&name))
 }
 
 fn foreign(package: &str, system: &str, type_name: &str) -> Error {

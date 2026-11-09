@@ -223,9 +223,8 @@ impl Node {
             None if positioned_before => 2,
             None => 0,
             Some(AttachPoint::Depth | AttachPoint::Inputs | AttachPoint::Opaque) => 1,
-            Some(AttachPoint::Sky) if self.entry.shared => 1,
             Some(
-                AttachPoint::Sky
+                AttachPoint::LateOpaque
                 | AttachPoint::Transparent
                 | AttachPoint::Post
                 | AttachPoint::Display

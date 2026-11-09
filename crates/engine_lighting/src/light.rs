@@ -9,5 +9,7 @@ settings! {
         pub rim: f32 = 0.2 => at_least(0.0),
         pub specular: f32 = 1.0 => at_least(0.0),
         pub emission: f32 = 0.5 => at_least(0.0),
+        pub specular_variance: f32 = 0.15 => at_least(0.0),
+        pub specular_limit: f32 = 0.2 => at_least(0.0),
     }
 }

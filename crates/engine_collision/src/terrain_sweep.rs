@@ -1,11 +1,12 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, ErrorCode, Filled, Operation, Rule, Slot, bounds, stated};
+use engine_core::{Error, ErrorCode, Filled, Operation, Rule, Slot, stated};
 use engine_places_simulation::ground::Ground;
 use engine_places_simulation::physics::{Collide, CollisionRay, QueryFilter};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::bounds;
 use crate::queries::{bounded, reply, schema_of};
 use crate::types::missing_brick;
 use crate::world::{CollisionWorld, Fresh};

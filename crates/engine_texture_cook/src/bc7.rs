@@ -1,5 +1,5 @@
+use engine_core::textures::bc7::{MODES, Parity, WEIGHTS, anchor_of, expand, subset_of, weights};
 use engine_math::{max, min};
-use engine_textures::bc7::{MODES, Parity, WEIGHTS, anchor_of, expand, subset_of, weights};
 
 const NEAREST_ENTRY: [[u8; 65]; 3] = {
     let mut table = [[0_u8; 65]; 3];

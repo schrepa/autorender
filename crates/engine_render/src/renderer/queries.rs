@@ -49,11 +49,7 @@ impl Renderer {
         (!self.core.display.suspended()).then(|| self.core.display.region.render.pixels())
     }
 
-    pub fn times_frames(&self) -> bool {
-        self.core.display.times_frames()
-    }
-
-    pub fn take_frame_time(&self) -> Option<(f64, (u32, u32))> {
+    pub fn take_frame_time(&self) -> Option<f64> {
         self.core.display.take_frame_time()
     }
 
@@ -65,11 +61,6 @@ impl Renderer {
     #[cfg(feature = "profiling")]
     pub fn profile_poll(&mut self) {
         self.collect();
-    }
-
-    #[cfg(feature = "profiling")]
-    pub fn profile_status(&self) -> serde_json::Value {
-        self.core.profiler.status()
     }
 
     #[cfg(feature = "profiling")]

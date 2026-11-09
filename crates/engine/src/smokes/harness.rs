@@ -2,7 +2,7 @@ use bevy_ecs::world::World;
 use engine_core::{BrickList, ErrorCode, SmokeFailure, SmokeSession};
 use serde_json::{Value, json};
 
-use super::{Build, SmokeEntry, SmokeRecord, answered, fault, routed, select, step_lines};
+use super::{Build, SmokeEntry, SmokeRecord, answered, fault, routed, select, step_line};
 use crate::{Game, Result};
 
 pub trait GpuSession {
@@ -122,12 +122,9 @@ impl<G: Game, H: SmokeHost<G>> SmokeSession for Harness<'_, '_, G, H> {
     }
 
     fn step(&mut self, ticks: u32) {
-        for line in step_lines(ticks) {
-            let reply = self.send(&line);
-            if reply["ok"] != true {
-                self.faults.push(fault("step", &reply));
-                return;
-            }
+        let reply = self.send(&step_line(ticks));
+        if reply["ok"] != true {
+            self.faults.push(fault("step", &reply));
         }
     }
 

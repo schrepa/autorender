@@ -3,6 +3,7 @@ import package::face::sun_blockers::SunAt;
 import package::engine::surfaces::SURFACE_GROUND;
 import package::engine::view::eye_world;
 import package::face::debug::{DEBUG_NO_MATERIAL, DebugTargets, debug_record, debug_targets};
+import package::face::instances::DEBUG_LEVEL_AT;
 import package::generated::kinds::KIND_TERRAIN;
 import package::generated::terrain_shading::{shown_materials, shown_tile, terrain_debug};
 import package::terrain_shading::draw::{TerrainOutput, terrain_forward_look, terrain_holes_test, terrain_seen, terrain_shared_ground, terrain_shares};
@@ -40,7 +41,7 @@ fn debug_terrain(input: TerrainOutput, holes: bool) -> DebugTargets {
     let width = fwidth(input.cell) * 1.5;
     let tile_edge = abs(fract(input.cell / 256.0 + 0.5) - 0.5) * 256.0;
     let patch_edge = abs(fract(input.cell / 16.0 + 0.5) - 0.5) * 16.0;
-    let record = debug_record(KIND_TERRAIN, level, false, false, 0u)
+    let record = debug_record(KIND_TERRAIN, 0u) | (level << DEBUG_LEVEL_AT)
         | terrain_debug(any(tile_edge < width * 2.0), any(patch_edge < width), within.x, within.y);
     let made = pack4x8unorm(vec4<f32>(sky, ground.detailed, ground.averaged, ground.canopy));
     var targets = debug_targets(record, made, pack4x8unorm(shares.weights), normal,

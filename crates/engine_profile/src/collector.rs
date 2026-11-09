@@ -29,7 +29,6 @@ pub struct AllocationDelta {
 
 #[derive(Debug, Serialize)]
 pub struct Capture {
-    pub version: u32,
     pub id: u64,
     pub start_ms: f64,
     pub end_ms: f64,
@@ -151,7 +150,6 @@ pub fn finish() -> Capture {
         let events = std::mem::take(&mut collector.events);
         let incomplete_spans = events.iter().filter(|event| !event.complete).count();
         Capture {
-            version: 1,
             id: collector.generation,
             start_ms: collector.start_ms,
             end_ms,

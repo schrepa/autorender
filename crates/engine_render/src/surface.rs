@@ -1,12 +1,11 @@
 use std::fmt::Write as _;
-use std::sync::Mutex;
 
 use engine_core::{
     AlphaMode, BitValue, Error, ErrorCode, GpuBits, LightingModel, MAPPED, MAPPED_SLOTS, Material,
     MaterialHandle, Module, SurfaceSlot, UvTransform, gpu_bits,
 };
 
-use crate::bindings::{Sample, Sampling, Stages, Table, View, sampler, texture, uniform_of};
+use crate::linker::{Declaration, Ty};
 
 pub const MATERIALS_MODULE: &str = "engine::materials";
 pub const SLOTS_MODULE: &str = "engine::slots";
@@ -155,7 +154,6 @@ pub struct SurfaceKind {
 
 impl SurfaceKind {
     pub const SOLID: Self = Self { name: "solid" };
-    pub const THIN: Self = Self { name: "thin" };
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -229,7 +227,7 @@ impl MaterialLayout {
             values: Vec::new(),
             slots: Vec::new(),
             models: Vec::new(),
-            kinds: vec![SurfaceKind::SOLID, SurfaceKind::THIN],
+            kinds: vec![SurfaceKind::SOLID],
         };
         for (declared, path) in slots {
             if layout
@@ -499,43 +497,6 @@ impl MaterialLayout {
         source
     }
 
-    pub(crate) fn table(&self) -> &'static Table {
-        static TABLES: Mutex<Vec<MadeTable>> = Mutex::new(Vec::new());
-        let size = self.record_bytes();
-        let mut tables = TABLES
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some((_, _, table)) = tables
-            .iter()
-            .find(|(maps, bytes, _)| *maps == self.maps && *bytes == size)
-        {
-            return table;
-        }
-        let number = tables.len();
-        let leak = |text: String| -> &'static str { Box::leak(text.into_boxed_str()) };
-        let mut bindings = Vec::with_capacity(2 * self.maps.len() + 1);
-        bindings.push(uniform_of(RECORD, size, Stages::VERTEX_FRAGMENT));
-        for name in &self.maps {
-            bindings.push(texture(
-                leak(format!("{name}_map")),
-                Sample::Float,
-                View::D2,
-                Stages::FRAGMENT,
-            ));
-            bindings.push(sampler(
-                leak(format!("{name}_sampler")),
-                Sampling::Filtering,
-                Stages::FRAGMENT,
-            ));
-        }
-        let table: &'static Table = Box::leak(Box::new(Table {
-            label: leak(format!("engine/material-layout-{number}")),
-            bindings: Box::leak(bindings.into_boxed_slice()),
-        }));
-        tables.push((self.maps.clone(), size, table));
-        table
-    }
-
     pub(crate) fn record(&self, handle: MaterialHandle, material: &Material) -> (Vec<u32>, Vec<Error>) {
         let path = format!("$.materials.{}", handle.slot());
         let mut problems = Vec::new();
@@ -682,7 +643,18 @@ pub fn material_state(material: Option<&Material>) -> u32 {
         .pack()
 }
 
-type MadeTable = (Vec<&'static str>, usize, &'static Table);
+pub(crate) fn material_entry(declared: &Declaration) -> wgpu::BindGroupLayoutEntry {
+    wgpu::BindGroupLayoutEntry {
+        binding: declared.binding,
+        visibility: if declared.ty == Ty::Uniform {
+            wgpu::ShaderStages::VERTEX_FRAGMENT
+        } else {
+            wgpu::ShaderStages::FRAGMENT
+        },
+        ty: declared.ty.binding(true, false),
+        count: None,
+    }
+}
 
 fn material_functions(source: &mut String) {
     let _ = write!(

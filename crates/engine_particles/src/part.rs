@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AttachPoint, DeviceLimits, DrawKind, Entry, Error, PassName, PassViews, SlotSet, TargetName,
+    AttachPoint, DeviceLimits, Entry, Error, KindDecl, PassName, PassViews, SlotSet, TargetName,
     Views, Writes, gpu_struct,
 };
 use engine_render::{
@@ -76,8 +76,8 @@ const OVER: [(Option<wgpu::BlendState>, wgpu::ColorWrites); 1] = [(
     wgpu::ColorWrites::ALL,
 )];
 
-fn weighted(kind: DrawKind) -> bool {
-    kind == PARTICLES
+fn weighted(kind: &KindDecl) -> bool {
+    kind.kind == PARTICLES
 }
 
 pub(crate) struct WeightedPass;

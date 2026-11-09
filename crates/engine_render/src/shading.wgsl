@@ -38,8 +38,6 @@ struct SurfacePoint {
     world_dy: vec3<f32>,
     distance: f32,
     kind: u32,
-    thickness: f32,
-    sun_blocked: f32,
     inputs: LightInputs,
 }
 

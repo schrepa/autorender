@@ -1,0 +1,7903 @@
+{
+  "$defs": {
+    "AuthoredPlacement": {
+      "additionalProperties": false,
+      "properties": {
+        "align": {
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "asset": {
+          "type": "string"
+        },
+        "level": {
+          "format": "uint8",
+          "maximum": 15,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "position": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "scale": {
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "sink": {
+          "format": "float",
+          "type": "number"
+        },
+        "yaw": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "asset",
+        "position"
+      ],
+      "type": "object"
+    },
+    "Binding": {
+      "additionalProperties": false,
+      "properties": {
+        "context": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "dead_zone": {
+          "format": "float",
+          "type": "number"
+        },
+        "invert": {
+          "type": "boolean"
+        },
+        "modifier": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Button"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "player": {
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "scale": {
+          "format": "float",
+          "type": "number"
+        },
+        "source": {
+          "$ref": "#/$defs/BindingSource"
+        },
+        "verb": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "verb",
+        "source"
+      ],
+      "type": "object"
+    },
+    "BindingSource": {
+      "oneOf": [
+        {
+          "enum": [
+            "mouse_motion",
+            "touch_motion",
+            "wheel"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "key"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "mouse": {
+              "$ref": "#/$defs/MouseButton"
+            }
+          },
+          "required": [
+            "mouse"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "pad": {
+              "$ref": "#/$defs/PadButton"
+            }
+          },
+          "required": [
+            "pad"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "keys": {
+              "additionalProperties": false,
+              "properties": {
+                "down": {
+                  "type": "string"
+                },
+                "left": {
+                  "type": "string"
+                },
+                "right": {
+                  "type": "string"
+                },
+                "up": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "right",
+                "left",
+                "up",
+                "down"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "keys"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "stick": {
+              "$ref": "#/$defs/Stick"
+            }
+          },
+          "required": [
+            "stick"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "trigger": {
+              "$ref": "#/$defs/Trigger"
+            }
+          },
+          "required": [
+            "trigger"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Biome": {
+      "additionalProperties": false,
+      "properties": {
+        "fitness": {
+          "$ref": "#/$defs/Expr"
+        },
+        "id": {
+          "type": "string"
+        },
+        "layers": {
+          "items": {
+            "$ref": "#/$defs/BiomeLayer"
+          },
+          "type": "array"
+        },
+        "wetness": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Expr"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "layers"
+      ],
+      "type": "object"
+    },
+    "BiomeLayer": {
+      "additionalProperties": false,
+      "properties": {
+        "mask": {
+          "$ref": "#/$defs/Expr"
+        },
+        "material": {
+          "type": "string"
+        },
+        "opacity": {
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "material"
+      ],
+      "type": "object"
+    },
+    "Blend": {
+      "enum": [
+        "add",
+        "max",
+        "min",
+        "replace"
+      ],
+      "type": "string"
+    },
+    "BodyMotion": {
+      "enum": [
+        "dynamic",
+        "kinematic"
+      ],
+      "type": "string"
+    },
+    "Bus": {
+      "enum": [
+        "master",
+        "music",
+        "effects",
+        "ambient",
+        "voice"
+      ],
+      "type": "string"
+    },
+    "Button": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "key": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "key"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "mouse": {
+              "$ref": "#/$defs/MouseButton"
+            }
+          },
+          "required": [
+            "mouse"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "pad": {
+              "$ref": "#/$defs/PadButton"
+            }
+          },
+          "required": [
+            "pad"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Camera": {
+      "additionalProperties": false,
+      "properties": {
+        "far": {
+          "format": "float",
+          "type": "number"
+        },
+        "near": {
+          "format": "float",
+          "type": "number"
+        },
+        "projection": {
+          "$ref": "#/$defs/Projection"
+        }
+      },
+      "required": [
+        "near",
+        "far",
+        "projection"
+      ],
+      "type": "object"
+    },
+    "Clear": {
+      "enum": [
+        "all",
+        "depth_only",
+        "nothing"
+      ],
+      "type": "string"
+    },
+    "Clock": {
+      "enum": [
+        "game",
+        "real"
+      ],
+      "type": "string"
+    },
+    "CollisionConfig": {
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "max_candidate_pairs": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_colliders": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_query_candidates": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_query_hits": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_sensor_pairs": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "sensor_feed": {
+          "default": 1024,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Cover": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "default": [
+            0.12999999523162842,
+            0.20000000298023224,
+            0.05000000074505806
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "density": {
+          "default": 90.0,
+          "format": "float",
+          "maximum": 400.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "height": {
+          "default": [
+            0.11999999731779099,
+            0.4000000059604645
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 4.0,
+            "minimum": 0.01,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "sway": {
+          "default": 0.6000000238418579,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "width": {
+          "default": 0.02500000037252903,
+          "format": "float",
+          "maximum": 0.25,
+          "minimum": 0.001,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "Detail": {
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "fade_seconds": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "margin": {
+          "default": 0.10000000149011612,
+          "format": "float",
+          "maximum": 0.5,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "pixel_error": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 0.25,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "DrawnForm": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "layers": {
+          "$ref": "#/$defs/Layers",
+          "default": 1
+        },
+        "material": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "mesh": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "order": {
+          "default": 0,
+          "format": "int16",
+          "maximum": 32767,
+          "minimum": -32768,
+          "type": "integer"
+        },
+        "passes": {
+          "additionalProperties": {
+            "type": "boolean"
+          },
+          "type": "object"
+        },
+        "projection": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DrawnProjection"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "values": {
+          "$ref": "#/$defs/InstanceValues",
+          "default": {
+            "emission": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "floats": [],
+            "tint": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "type": "object"
+    },
+    "DrawnProjection": {
+      "properties": {
+        "depth_scale": {
+          "format": "float",
+          "type": "number"
+        },
+        "vertical_fov": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "vertical_fov",
+        "depth_scale"
+      ],
+      "type": "object"
+    },
+    "DrawnSettings": {
+      "properties": {
+        "changes": {
+          "default": 16384,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "instance_floats": {
+          "default": 16,
+          "format": "uint32",
+          "maximum": 1024,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "ErosionLayer": {
+      "properties": {
+        "creep": {
+          "default": 20.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "debris": {
+          "default": 0.004000000189989805,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "incision": {
+          "default": 0.0020000000949949026,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "level": {
+          "default": 4,
+          "format": "uint32",
+          "maximum": 15,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rounds": {
+          "default": 60,
+          "format": "uint32",
+          "maximum": 400,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Expr": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "constant": {
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "constant"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "map": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "map"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "ramp": {
+              "$ref": "#/$defs/Ramp"
+            }
+          },
+          "required": [
+            "ramp"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "remap": {
+              "$ref": "#/$defs/Remap"
+            }
+          },
+          "required": [
+            "remap"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "facing": {
+              "$ref": "#/$defs/Facing"
+            }
+          },
+          "required": [
+            "facing"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "noise": {
+              "$ref": "#/$defs/NoiseMask"
+            }
+          },
+          "required": [
+            "noise"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "mul": {
+              "items": {
+                "$ref": "#/$defs/Expr"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "mul"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "add": {
+              "items": {
+                "$ref": "#/$defs/Expr"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "add"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "min": {
+              "items": {
+                "$ref": "#/$defs/Expr"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "min"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "max": {
+              "items": {
+                "$ref": "#/$defs/Expr"
+              },
+              "type": "array"
+            }
+          },
+          "required": [
+            "max"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "invert": {
+              "$ref": "#/$defs/Expr"
+            }
+          },
+          "required": [
+            "invert"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ExpressionSettings": {
+      "properties": {
+        "blend": {
+          "$ref": "#/$defs/Blend"
+        },
+        "height": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Expr"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "level": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "maps": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Expr"
+          },
+          "type": "object"
+        }
+      },
+      "type": "object"
+    },
+    "Facing": {
+      "additionalProperties": false,
+      "properties": {
+        "heading": {
+          "format": "float",
+          "maximum": 360.0,
+          "minimum": -360.0,
+          "type": "number"
+        },
+        "ramp": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "required": [
+        "heading",
+        "ramp"
+      ],
+      "type": "object"
+    },
+    "FarPlacement": {
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "format": "uint8",
+          "maximum": 15,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "level"
+      ],
+      "type": "object"
+    },
+    "FeedSettings": {
+      "properties": {
+        "mesh_residency": {
+          "default": 4096,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "transforms": {
+          "default": 16384,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "FrameBudgetSettings": {
+      "properties": {
+        "upload_bytes": {
+          "default": 16777216,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "work_ms": {
+          "default": 4.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.1,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "GivenRiver": {
+      "additionalProperties": false,
+      "properties": {
+        "depth": {
+          "items": {
+            "exclusiveMinimum": 0.0,
+            "format": "float",
+            "maximum": 500.0,
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "discharge": {
+          "items": {
+            "exclusiveMinimum": 0.0,
+            "format": "float",
+            "maximum": 1000000.0,
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "name": {
+          "maxLength": 1024,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "points": {
+          "items": {
+            "items": {
+              "format": "float",
+              "maximum": 10000000.0,
+              "minimum": -10000000.0,
+              "type": "number"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "maxItems": 16384,
+          "minItems": 2,
+          "type": "array"
+        },
+        "width": {
+          "items": {
+            "exclusiveMinimum": 0.0,
+            "format": "float",
+            "maximum": 50000.0,
+            "type": "number"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "points"
+      ],
+      "type": "object"
+    },
+    "Grounded": {
+      "additionalProperties": false,
+      "properties": {
+        "offset": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": -10000.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "HeightmapSettings": {
+      "properties": {
+        "attribution": {
+          "maxLength": 1024,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "blend": {
+          "$ref": "#/$defs/Blend",
+          "default": "add"
+        },
+        "falloff": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 10000000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "height": {
+          "format": "uint32",
+          "maximum": 16384,
+          "minimum": 2,
+          "type": "integer"
+        },
+        "high": {
+          "format": "float",
+          "maximum": 20000.0,
+          "minimum": -20000.0,
+          "type": "number"
+        },
+        "low": {
+          "format": "float",
+          "maximum": 20000.0,
+          "minimum": -20000.0,
+          "type": "number"
+        },
+        "min": {
+          "items": {
+            "format": "float",
+            "maximum": 10000000.0,
+            "minimum": -10000000.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "size": {
+          "items": {
+            "format": "float",
+            "maximum": 10000000.0,
+            "minimum": 0.001,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "source": {
+          "maxLength": 1024,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uri": {
+          "type": "string"
+        },
+        "width": {
+          "format": "uint32",
+          "maximum": 16384,
+          "minimum": 2,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "uri",
+        "width",
+        "height",
+        "min",
+        "size",
+        "low",
+        "high"
+      ],
+      "type": "object"
+    },
+    "HummocksLayer": {
+      "properties": {
+        "across": {
+          "default": 1.5,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.1,
+          "type": "number"
+        },
+        "cover": {
+          "default": 0.699999988079071,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "height": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 10.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "patches": {
+          "default": 80.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "seed": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "slope": {
+          "default": [
+            15.0,
+            6.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 89.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "wetness": {
+          "default": [
+            8.0,
+            11.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 25.0,
+            "minimum": -5.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "HydrologyLayer": {
+      "properties": {
+        "discharge": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "level": {
+          "default": 0,
+          "format": "uint32",
+          "maximum": 15,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "InstanceValues": {
+      "additionalProperties": false,
+      "properties": {
+        "emission": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "floats": {
+          "default": [],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "tint": {
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Interior": {
+      "additionalProperties": false,
+      "properties": {
+        "sky": {
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "sun": {
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "sky",
+        "sun"
+      ],
+      "type": "object"
+    },
+    "Label": {
+      "additionalProperties": false,
+      "properties": {
+        "align": {
+          "$ref": "#/$defs/TextAlign",
+          "default": "left"
+        },
+        "anchor": {
+          "default": [
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "color": {
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "font": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "max_width": {
+          "default": null,
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "offset": {
+          "default": [
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "pivot": {
+          "default": [
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "size": {
+          "default": 16.0,
+          "format": "float",
+          "type": "number"
+        },
+        "text": {
+          "default": "",
+          "type": "string"
+        },
+        "visible": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "Layers": {
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "MacroCauses": {
+      "additionalProperties": false,
+      "properties": {
+        "aspect": {
+          "default": 0.20000000298023224,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "broad": {
+          "default": 0.05999999865889549,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "deposit": {
+          "default": 0.20000000298023224,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "dust": {
+          "default": 0.20000000298023224,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "heading": {
+          "default": 180.0,
+          "format": "float",
+          "maximum": 360.0,
+          "minimum": -360.0,
+          "type": "number"
+        },
+        "patchy": {
+          "default": 0.029999999329447746,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "relief": {
+          "default": 0.15000000596046448,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "steep": {
+          "default": 0.15000000596046448,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "warmth": {
+          "default": 0.03999999910593033,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "wet": {
+          "default": 0.30000001192092896,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "worn": {
+          "default": 0.20000000298023224,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "MeshSource": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "cube",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "plane",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "indices": {
+              "items": {
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "minItems": 3,
+              "type": "array"
+            },
+            "kind": {
+              "const": "inline",
+              "type": "string"
+            },
+            "vertices": {
+              "items": {
+                "$ref": "#/$defs/SceneVertex"
+              },
+              "minItems": 1,
+              "type": "array"
+            }
+          },
+          "required": [
+            "kind",
+            "vertices",
+            "indices"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "buffer",
+              "type": "string"
+            },
+            "uri": {
+              "maxLength": 256,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_./-]*$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "uri"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "provided",
+              "type": "string"
+            },
+            "name": {
+              "maxLength": 64,
+              "minLength": 1,
+              "pattern": "^[A-Za-z0-9_.-]+$",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "name"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Mobility": {
+      "enum": [
+        "static",
+        "moving"
+      ],
+      "type": "string"
+    },
+    "MouseButton": {
+      "enum": [
+        "left",
+        "middle",
+        "right",
+        "back",
+        "forward"
+      ],
+      "type": "string"
+    },
+    "Mover": {
+      "additionalProperties": false,
+      "properties": {
+        "by": {
+          "$ref": "#/$defs/MoverId"
+        },
+        "pace": {
+          "$ref": "#/$defs/Pace"
+        }
+      },
+      "required": [
+        "by",
+        "pace"
+      ],
+      "type": "object"
+    },
+    "MoverId": {
+      "type": "string"
+    },
+    "NavAgent": {
+      "additionalProperties": false,
+      "properties": {
+        "destination": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "level": {
+          "default": 0,
+          "format": "uint32",
+          "maximum": 15,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "max_slope": {
+          "default": 0.800000011920929,
+          "format": "float",
+          "maximum": 10.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "max_water": {
+          "default": 0.6000000238418579,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "radius": {
+          "default": 0.4000000059604645,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "speed": {
+          "default": 1.399999976158142,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "turn": {
+          "default": 360.0,
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": 1.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "Node": {
+      "additionalProperties": false,
+      "properties": {
+        "active": {
+          "default": true,
+          "type": "boolean"
+        },
+        "clock": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Clock"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "mobility": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Mobility"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "visible": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "NoiseLayer": {
+      "properties": {
+        "blend": {
+          "$ref": "#/$defs/Blend",
+          "default": "add"
+        },
+        "erosion": {
+          "default": 0.699999988079071,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "height": {
+          "default": 900.0,
+          "format": "float",
+          "maximum": 20000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "offset": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 20000.0,
+          "minimum": -20000.0,
+          "type": "number"
+        },
+        "ridges": {
+          "default": 0.30000001192092896,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "roughness": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "seed": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "smoothing": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "valleys": {
+          "default": 0.699999988079071,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "warp": {
+          "default": 0.3499999940395355,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "wavelength": {
+          "default": 3000.0,
+          "format": "float",
+          "maximum": 1000000.0,
+          "minimum": 16.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "NoiseMask": {
+      "additionalProperties": false,
+      "properties": {
+        "octaves": {
+          "default": 1,
+          "format": "uint32",
+          "maximum": 8,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "seed": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "wavelength": {
+          "format": "float",
+          "maximum": 1000000.0,
+          "minimum": 0.01,
+          "type": "number"
+        }
+      },
+      "required": [
+        "wavelength"
+      ],
+      "type": "object"
+    },
+    "Pace": {
+      "enum": [
+        "tick",
+        "frame"
+      ],
+      "type": "string"
+    },
+    "PadButton": {
+      "enum": [
+        "south",
+        "east",
+        "west",
+        "north",
+        "left_shoulder",
+        "right_shoulder",
+        "select",
+        "start",
+        "left_stick",
+        "right_stick",
+        "up",
+        "down",
+        "left",
+        "right"
+      ],
+      "type": "string"
+    },
+    "PathLayer": {
+      "properties": {
+        "bridge_fill": {
+          "default": 4.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "points": {
+          "items": {
+            "items": {
+              "format": "float",
+              "maximum": 10000000.0,
+              "minimum": -10000000.0,
+              "type": "number"
+            },
+            "maxItems": 2,
+            "minItems": 2,
+            "type": "array"
+          },
+          "maxItems": 4096,
+          "minItems": 2,
+          "type": "array"
+        },
+        "shoulder": {
+          "default": 6.0,
+          "format": "float",
+          "maximum": 500.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "smoothing": {
+          "default": 80.0,
+          "format": "float",
+          "maximum": 5000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "tunnel_cut": {
+          "default": 25.0,
+          "format": "float",
+          "maximum": 2000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "width": {
+          "default": 6.0,
+          "format": "float",
+          "maximum": 200.0,
+          "minimum": 0.5,
+          "type": "number"
+        }
+      },
+      "required": [
+        "points"
+      ],
+      "type": "object"
+    },
+    "PlacedLod": {
+      "additionalProperties": false,
+      "properties": {
+        "error": {
+          "format": "float",
+          "type": "number"
+        },
+        "mesh": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mesh",
+        "error"
+      ],
+      "type": "object"
+    },
+    "PlacedLook": {
+      "additionalProperties": false,
+      "properties": {
+        "lods": {
+          "items": {
+            "$ref": "#/$defs/PlacedLod"
+          },
+          "type": "array"
+        },
+        "mesh": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "parts": {
+          "items": {
+            "$ref": "#/$defs/PlacedPart"
+          },
+          "type": "array"
+        },
+        "shadow": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "sway": {
+          "format": "float",
+          "maximum": 10.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "mesh"
+      ],
+      "type": "object"
+    },
+    "PlacedPart": {
+      "additionalProperties": false,
+      "properties": {
+        "material": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "meshes": {
+          "items": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.-]+$",
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "material",
+        "meshes"
+      ],
+      "type": "object"
+    },
+    "PlacementChoice": {
+      "additionalProperties": false,
+      "properties": {
+        "asset": {
+          "type": "string"
+        },
+        "weight": {
+          "default": 1.0,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "asset"
+      ],
+      "type": "object"
+    },
+    "PlacementLayer": {
+      "additionalProperties": false,
+      "properties": {
+        "align": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "assets": {
+          "items": {
+            "$ref": "#/$defs/PlacementChoice"
+          },
+          "type": "array"
+        },
+        "bed": {
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "density": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "downhill": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "far": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FarPlacement"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "footprint": {
+          "format": "float",
+          "maximum": 256.0,
+          "minimum": 0.25,
+          "type": "number"
+        },
+        "id": {
+          "type": "string"
+        },
+        "level": {
+          "format": "uint8",
+          "maximum": 15,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "mask": {
+          "$ref": "#/$defs/Expr",
+          "default": {
+            "constant": 1.0
+          }
+        },
+        "materials": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "scale": {
+          "default": [
+            1.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000.0,
+            "minimum": 0.001,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "sink": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "id",
+        "assets",
+        "density",
+        "footprint"
+      ],
+      "type": "object"
+    },
+    "PlayerDevices": {
+      "additionalProperties": false,
+      "properties": {
+        "keyboard_mouse": {
+          "type": "boolean"
+        },
+        "pads": {
+          "items": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Projection": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "Perspective": {
+              "properties": {
+                "vertical_fov_radians": {
+                  "format": "float",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "vertical_fov_radians"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Perspective"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "Orthographic": {
+              "properties": {
+                "height": {
+                  "format": "float",
+                  "type": "number"
+                }
+              },
+              "required": [
+                "height"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Orthographic"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "Fitted": {
+              "properties": {
+                "clip": {
+                  "items": {
+                    "items": {
+                      "format": "float",
+                      "type": "number"
+                    },
+                    "maxItems": 4,
+                    "minItems": 4,
+                    "type": "array"
+                  },
+                  "maxItems": 4,
+                  "minItems": 4,
+                  "type": "array"
+                }
+              },
+              "required": [
+                "clip"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "Fitted"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "Ramp": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "format": "float",
+          "type": "number"
+        },
+        "map": {
+          "type": "string"
+        },
+        "to": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "map",
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "Rect": {
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "format": "float",
+          "type": "number"
+        },
+        "width": {
+          "format": "float",
+          "type": "number"
+        },
+        "x": {
+          "format": "float",
+          "type": "number"
+        },
+        "y": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y",
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "Remap": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "format": "float",
+          "type": "number"
+        },
+        "of": {
+          "$ref": "#/$defs/Expr"
+        },
+        "to": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "of",
+        "from",
+        "to"
+      ],
+      "type": "object"
+    },
+    "RenderSettings": {
+      "properties": {
+        "readback_slot_bytes": {
+          "default": null,
+          "format": "uint64",
+          "minimum": 4,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "readback_slots": {
+          "default": 3,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "RiversLayer": {
+      "properties": {
+        "attribution": {
+          "maxLength": 1024,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "lines": {
+          "items": {
+            "$ref": "#/$defs/GivenRiver"
+          },
+          "maxItems": 4096,
+          "minItems": 1,
+          "type": "array"
+        },
+        "precision": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "source": {
+          "maxLength": 1024,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "lines"
+      ],
+      "type": "object"
+    },
+    "ScatterSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "lods": {
+          "default": 4,
+          "format": "uint32",
+          "maximum": 4,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "looks": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PlacedLook"
+          },
+          "type": "array"
+        },
+        "parts": {
+          "default": 2,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "SceneAlong": {
+      "additionalProperties": false,
+      "properties": {
+        "every": {
+          "format": "float",
+          "maximum": 10000000.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "first": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 10000000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "grounded": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grounded"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": {
+            "offset": 0.0
+          }
+        },
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "layer": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "offset": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": -10000.0,
+          "type": "number"
+        },
+        "prefab": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "streamed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneAlongStreamed"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terrain": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "prefab",
+        "terrain",
+        "layer",
+        "every"
+      ],
+      "type": "object"
+    },
+    "SceneAlongStreamed": {
+      "additionalProperties": false,
+      "properties": {
+        "reach": {
+          "format": "float",
+          "maximum": 1000000.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "reach"
+      ],
+      "type": "object"
+    },
+    "SceneAlphaMode": {
+      "enum": [
+        "opaque",
+        "mask",
+        "blend",
+        "additive"
+      ],
+      "type": "string"
+    },
+    "SceneAmbientOcclusion": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "intensity": {
+          "default": 0.800000011920929,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "radius": {
+          "default": 2.5,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneAudio": {
+      "additionalProperties": false,
+      "properties": {
+        "ambient": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "effects": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "master": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "max_voices": {
+          "default": 64,
+          "format": "uint32",
+          "maximum": 512,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "music": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "voice": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneAutoExposure": {
+      "additionalProperties": false,
+      "properties": {
+        "brighten": {
+          "default": 3.0,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "center": {
+          "default": 2.0,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "compensation": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 8.0,
+          "minimum": -8.0,
+          "type": "number"
+        },
+        "darken": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "skip_bright": {
+          "default": 0.05000000074505806,
+          "format": "float",
+          "maximum": 0.45,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "skip_dark": {
+          "default": 0.30000001192092896,
+          "format": "float",
+          "maximum": 0.45,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "sky": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "strength": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "to_brighter": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 60.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "to_darker": {
+          "default": 2.0,
+          "format": "float",
+          "maximum": 60.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneBloom": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "intensity": {
+          "default": 0.6000000238418579,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "threshold": {
+          "default": 2.0,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneBodyPush": {
+      "additionalProperties": false,
+      "properties": {
+        "force": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000000000.0,
+            "minimum": -1000000000.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "torque": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000000000.0,
+            "minimum": -1000000000.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "SceneClouds": {
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "default": 1800.0,
+          "format": "float",
+          "maximum": 30000.0,
+          "minimum": -10000.0,
+          "type": "number"
+        },
+        "coverage": {
+          "default": 0.44999998807907104,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "density": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "in_view": {
+          "default": true,
+          "type": "boolean"
+        },
+        "resolution": {
+          "default": 2048,
+          "format": "uint32",
+          "maximum": 4096,
+          "minimum": 256,
+          "multipleOf": 64,
+          "type": "integer"
+        },
+        "scale": {
+          "default": 3000.0,
+          "format": "float",
+          "maximum": 50000.0,
+          "minimum": 200.0,
+          "type": "number"
+        },
+        "seed": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "shadows": {
+          "default": 0.75,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "slices": {
+          "default": 64,
+          "format": "uint32",
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "thickness": {
+          "default": 1400.0,
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": 50.0,
+          "type": "number"
+        },
+        "wind": {
+          "default": [
+            8.0,
+            3.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": -100.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "SceneCollider": {
+      "additionalProperties": false,
+      "properties": {
+        "filter": {
+          "default": 4294967295,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "memberships": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sensor": {
+          "default": false,
+          "type": "boolean"
+        },
+        "shape": {
+          "$ref": "#/$defs/SceneColliderShape"
+        }
+      },
+      "required": [
+        "shape"
+      ],
+      "type": "object"
+    },
+    "SceneColliderShape": {
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "properties": {
+            "half_extents": {
+              "items": {
+                "format": "float",
+                "maximum": 10000.0,
+                "minimum": 0.00009999999747378752,
+                "type": "number"
+              },
+              "maxItems": 3,
+              "minItems": 3,
+              "type": "array"
+            },
+            "kind": {
+              "const": "cuboid",
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "half_extents"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "sphere",
+              "type": "string"
+            },
+            "radius": {
+              "format": "float",
+              "maximum": 10000.0,
+              "minimum": 0.00009999999747378752,
+              "type": "number"
+            }
+          },
+          "required": [
+            "kind",
+            "radius"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SceneCull": {
+      "enum": [
+        "back",
+        "front",
+        "none"
+      ],
+      "type": "string"
+    },
+    "SceneCulling": {
+      "additionalProperties": false,
+      "properties": {
+        "frustum": {
+          "default": true,
+          "type": "boolean"
+        },
+        "instances": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SceneDebugView": {
+      "additionalProperties": false,
+      "properties": {
+        "shade": {
+          "default": true,
+          "type": "boolean"
+        },
+        "view": {
+          "default": "off",
+          "enum": [
+            "off",
+            "kinds",
+            "levels",
+            "cards",
+            "overdraw",
+            "normals",
+            "shadows",
+            "casters",
+            "tiles",
+            "materials",
+            "sky",
+            "detail",
+            "water_depth",
+            "water_speed",
+            "water_froude",
+            "water_turbulence",
+            "water_white",
+            "water_reach",
+            "water_span",
+            "water_eddies",
+            "water_roughness"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "SceneDepthBias": {
+      "additionalProperties": false,
+      "properties": {
+        "constant": {
+          "format": "int32",
+          "type": "integer"
+        },
+        "slope": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "constant",
+        "slope"
+      ],
+      "type": "object"
+    },
+    "SceneDither": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "SceneEmitter": {
+      "additionalProperties": false,
+      "properties": {
+        "acceleration": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "blend": {
+          "$ref": "#/$defs/SceneParticleBlend",
+          "default": "alpha"
+        },
+        "brightness": {
+          "default": 1.0,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 64.0,
+          "type": "number"
+        },
+        "color": {
+          "default": [
+            [
+              1.0,
+              1.0,
+              1.0,
+              0.6000000238418579
+            ],
+            [
+              1.0,
+              1.0,
+              1.0,
+              0.0
+            ]
+          ],
+          "items": {
+            "items": {
+              "format": "float",
+              "maximum": 1.0,
+              "minimum": 0.0,
+              "type": "number"
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "type": "array"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "direction": {
+          "default": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "emitting": {
+          "default": true,
+          "type": "boolean"
+        },
+        "extent": {
+          "default": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "fade_in": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "formula": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "lifetime": {
+          "default": 2.0,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 60.0,
+          "type": "number"
+        },
+        "lifetime_spread": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "offset": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "params": {
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 8,
+          "minItems": 8,
+          "type": "array"
+        },
+        "rate": {
+          "default": 20.0,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "type": "number"
+        },
+        "seed": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "shape": {
+          "$ref": "#/$defs/SceneParticleShape",
+          "default": "ball"
+        },
+        "size": {
+          "default": [
+            0.30000001192092896,
+            0.6000000238418579
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "size_spread": {
+          "default": 0.20000000298023224,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "speed": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": -10000.0,
+          "type": "number"
+        },
+        "speed_spread": {
+          "default": 0.25,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "spread_degrees": {
+          "default": 17.18873405456543,
+          "format": "float",
+          "maximum": 180.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "stretch": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 10.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneEnvironment": {
+      "additionalProperties": false,
+      "properties": {
+        "ambient_occlusion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneAmbientOcclusion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "audio": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneAudio"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "auto_exposure": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneAutoExposure"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "bloom": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneBloom"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "clouds": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneClouds"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "collision": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CollisionConfig"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "culling": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneCulling"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "debug_view": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneDebugView"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "detail": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Detail"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dither": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneDither"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "drawn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DrawnSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "feeds": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FeedSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fly_camera": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneFlyCamera"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "foliage": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneFoliage"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "frame_budget": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FrameBudgetSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "frame_limits": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneFrameLimits"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "grading": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneGrading"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ground_cover": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneGroundCover"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "grounding": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneGrounding"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "haze": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneHaze"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "highlights": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneHighlights"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "impostors": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneImpostors"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "input": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneInput"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "local_lights": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneLocalLights"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "navigation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneNavigation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "night_sky": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneNightSky"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "occlusion_culling": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneOcclusionCulling"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "occupancy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneOccupancy"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pacing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScenePacing"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "particles": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneParticles"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "physics": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScenePhysics"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reflection_probes": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneReflectionProbes"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reflections": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneReflections"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "render": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RenderSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "resolution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneResolution"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "scatter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ScatterSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "shadows": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneShadows"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sky": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSky"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sky_occlusion": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSkyOcclusion"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "streamed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneStreamed"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "subpixel_culling": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSubpixelCulling"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sun": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSun"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "surface_light": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSurfaceLight"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "temporal_antialiasing": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneTemporalAntialiasing"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terrain": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneTerrainSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "terrain_shading": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerrainShading"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TextSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "time_of_day": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneTimeOfDay"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "ui": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "water": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneWater"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wind": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneWind"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "world_streaming": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneWorldStreaming"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SceneFilter": {
+      "enum": [
+        "nearest",
+        "linear"
+      ],
+      "type": "string"
+    },
+    "SceneFlyCamera": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "look_sensitivity": {
+          "default": 0.003000000026077032,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "speed": {
+          "default": 22.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "turn_speed": {
+          "default": 1.7999999523162842,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneFoliage": {
+      "additionalProperties": false,
+      "properties": {
+        "ground_blend": {
+          "default": 0.4000000059604645,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "hashed_cutoff": {
+          "default": false,
+          "type": "boolean"
+        },
+        "transmission": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "variation": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneFrameLimits": {
+      "additionalProperties": false,
+      "properties": {
+        "max_fixed_steps": {
+          "default": 5,
+          "format": "uint32",
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_frame_seconds": {
+          "default": 0.25,
+          "exclusiveMinimum": 0.0,
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneGrading": {
+      "additionalProperties": false,
+      "properties": {
+        "contrast": {
+          "default": 1.100000023841858,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "exposure": {
+          "default": 1.0,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "highlight_tint": {
+          "default": [
+            1.0399999618530273,
+            1.0,
+            0.9599999785423279
+          ],
+          "items": {
+            "format": "float",
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "saturation": {
+          "default": 1.0499999523162842,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "shadow_tint": {
+          "default": [
+            0.949999988079071,
+            0.9800000190734863,
+            1.059999942779541
+          ],
+          "items": {
+            "format": "float",
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "vibrance": {
+          "default": 0.15000000596046448,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneGroundCover": {
+      "additionalProperties": false,
+      "properties": {
+        "density": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "looks": {
+          "additionalProperties": {
+            "$ref": "#/$defs/Cover"
+          },
+          "type": "object"
+        },
+        "max_blades": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SceneGrounding": {
+      "additionalProperties": false,
+      "properties": {
+        "deck_above": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneHaze": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "forward": {
+          "default": 0.6000000238418579,
+          "format": "float",
+          "maximum": 0.95,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "reach": {
+          "default": 300.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "size": {
+          "default": 60.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 0.1,
+          "type": "number"
+        },
+        "spread": {
+          "default": 0.6000000238418579,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "strength": {
+          "default": 0.699999988079071,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "visibility": {
+          "default": 0.0,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneHighlights": {
+      "additionalProperties": false,
+      "properties": {
+        "cap": {
+          "default": 4.0,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "capped": {
+          "default": true,
+          "type": "boolean"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "light_radius": {
+          "default": 0.10000000149011612,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneImpostors": {
+      "additionalProperties": false,
+      "properties": {
+        "cutoff": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "max": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "min_triangles": {
+          "default": 64,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "pixels": {
+          "default": 128.0,
+          "format": "float",
+          "maximum": 4096.0,
+          "minimum": 8.0,
+          "type": "number"
+        },
+        "work": {
+          "default": 64,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "SceneInput": {
+      "additionalProperties": false,
+      "properties": {
+        "bindings": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Binding"
+          },
+          "type": "array"
+        },
+        "players": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PlayerDevices"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "SceneLight": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "default": [
+            1.0,
+            0.8500000238418579,
+            0.6000000238418579
+          ],
+          "items": {
+            "format": "float",
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "intensity": {
+          "default": 20.0,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "length": {
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "offset": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "radius": {
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "range": {
+          "default": 12.0,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 10000.0,
+          "type": "number"
+        },
+        "region": {
+          "$ref": "#/$defs/SceneLightRegion"
+        },
+        "spot": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSpot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SceneLightRegion": {
+      "enum": [
+        "both",
+        "interior",
+        "exterior"
+      ],
+      "type": "string"
+    },
+    "SceneLocalLights": {
+      "additionalProperties": false,
+      "properties": {
+        "distance": {
+          "default": 250.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "intensity": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "lights_per_cluster": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_lights": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SceneLook": {
+      "additionalProperties": false,
+      "properties": {
+        "environment": {
+          "$ref": "#/$defs/SceneEnvironment"
+        },
+        "name": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "environment"
+      ],
+      "type": "object"
+    },
+    "SceneMap": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/SceneTextureMap"
+        }
+      ]
+    },
+    "SceneMaterial": {
+      "additionalProperties": false,
+      "properties": {
+        "alpha_cutoff": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "alpha_mode": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneAlphaMode"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "color": {
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "cull": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneCull"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "depth_bias": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneDepthBias"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "depth_test": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "depth_write": {
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "emissive": {
+          "items": {
+            "format": "float",
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "lighting": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "normal_scale": {
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "occlusion_strength": {
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "opacity": {
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "provided": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "slots": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SceneSlot"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "surface": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSurface"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "transmission": {
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "values": {
+          "additionalProperties": {
+            "format": "float",
+            "type": "number"
+          },
+          "type": [
+            "object",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "SceneMesh": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/MeshSource"
+        }
+      },
+      "required": [
+        "id",
+        "source"
+      ],
+      "type": "object"
+    },
+    "SceneMipmapFilter": {
+      "enum": [
+        "none",
+        "nearest",
+        "linear"
+      ],
+      "type": "string"
+    },
+    "SceneNavigation": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "grounds_per_tick": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "kept_grounds": {
+          "default": 64,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "kept_portals": {
+          "default": 8192,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "obstacle_layers": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "samples_per_tick": {
+          "default": 32768,
+          "format": "uint32",
+          "minimum": 1024,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "SceneNightSky": {
+      "additionalProperties": false,
+      "properties": {
+        "cirrus": {
+          "default": 0.3499999940395355,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "cirrus_drift": {
+          "default": [
+            6.0,
+            1.5
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000.0,
+            "minimum": -1000.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "cirrus_height": {
+          "default": 9000.0,
+          "format": "float",
+          "maximum": 50000.0,
+          "minimum": 500.0,
+          "type": "number"
+        },
+        "moon": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 8.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "moon_size": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.25,
+          "type": "number"
+        },
+        "star_density": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 2.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "stars": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 8.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneObject": {
+      "additionalProperties": false,
+      "properties": {
+        "body_push": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneBodyPush"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "camera": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Camera"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "collider": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneCollider"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "drawn": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DrawnForm"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "grounded": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Grounded"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "light": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneLight"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mover": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Mover"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "name": {
+          "default": "",
+          "maxLength": 128,
+          "type": "string"
+        },
+        "nav_agent": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NavAgent"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "node": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Node"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "parent": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "particles": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneEmitter"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "prefab": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "prefetch": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TerrainPrefetch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reflection_probe": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneReflectionProbe"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "rigid_body": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneRigidBody"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "screen": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneScreen"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "sound": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSound"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "spline": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSpline"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tags": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "maxItems": 16,
+          "type": "array"
+        },
+        "terrain": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneTerrain"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "text": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Label"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "transform": {
+          "$ref": "#/$defs/SceneTransform",
+          "default": {
+            "rotation_degrees": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ],
+            "translation": [
+              0.0,
+              0.0,
+              0.0
+            ]
+          }
+        },
+        "ui": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiRoot"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "view": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ViewForm"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "walker": true,
+        "world_text": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Label"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "SceneOcclusionCulling": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "SceneOccupancy": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "levels": {
+          "default": 4,
+          "format": "uint32",
+          "maximum": 8,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "radius": {
+          "default": 512.0,
+          "format": "float",
+          "maximum": 4096.0,
+          "minimum": 64.0,
+          "type": "number"
+        },
+        "resolution": {
+          "default": 1024,
+          "format": "uint32",
+          "maximum": 4096,
+          "minimum": 128,
+          "multipleOf": 32,
+          "type": "integer"
+        },
+        "strength": {
+          "default": 0.75,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "ScenePacing": {
+      "additionalProperties": false,
+      "properties": {
+        "interval_limit_ms": {
+          "default": 100.0,
+          "exclusiveMinimum": 0.0,
+          "format": "double",
+          "type": "number"
+        },
+        "margin_ms": {
+          "default": 4.0,
+          "format": "double",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "smoothing": {
+          "default": 0.1,
+          "exclusiveMinimum": 0.0,
+          "format": "double",
+          "maximum": 1.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneParticleBlend": {
+      "enum": [
+        "alpha",
+        "additive",
+        "mist"
+      ],
+      "type": "string"
+    },
+    "SceneParticleShape": {
+      "enum": [
+        "box",
+        "ball"
+      ],
+      "type": "string"
+    },
+    "SceneParticles": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "max_particles": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "ScenePhysics": {
+      "additionalProperties": false,
+      "properties": {
+        "air_density": {
+          "default": 1.225000023841858,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "gravity": {
+          "default": [
+            0.0,
+            -9.8100004196167,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": -100.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "iterations": {
+          "default": 4,
+          "format": "uint32",
+          "maximum": 16,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "water_density": {
+          "default": 1000.0,
+          "format": "float",
+          "maximum": 20000.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "ScenePrefab": {
+      "additionalProperties": false,
+      "properties": {
+        "entities": {
+          "items": {
+            "$ref": "#/$defs/SceneObject"
+          },
+          "type": "array"
+        },
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "entities"
+      ],
+      "type": "object"
+    },
+    "SceneReflectionProbe": {
+      "additionalProperties": false,
+      "properties": {
+        "blend": {
+          "default": 1.0,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "extent": {
+          "items": {
+            "exclusiveMinimum": 0.0,
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "interior": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Interior"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "extent"
+      ],
+      "type": "object"
+    },
+    "SceneReflectionProbes": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "max_probes": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "resolution": {
+          "default": 128,
+          "enum": [
+            16,
+            32,
+            64,
+            128,
+            256,
+            512,
+            1024
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "SceneReflections": {
+      "additionalProperties": false,
+      "properties": {
+        "distance": {
+          "default": 120.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "intensity": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "max_roughness": {
+          "default": 0.75,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.05,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneResolution": {
+      "additionalProperties": false,
+      "properties": {
+        "max_height": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "max_pixel_ratio": {
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "max_width": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "scale": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 2.0,
+          "minimum": 0.25,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneRigidBody": {
+      "additionalProperties": false,
+      "properties": {
+        "density": {
+          "default": 600.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "drag": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 10.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "fast": {
+          "default": false,
+          "type": "boolean"
+        },
+        "friction": {
+          "default": 0.6000000238418579,
+          "format": "float",
+          "maximum": 10.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "motion": {
+          "$ref": "#/$defs/BodyMotion",
+          "default": "dynamic"
+        },
+        "restitution": {
+          "default": 0.05000000074505806,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "spin": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000.0,
+            "minimum": -1000.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "velocity": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000.0,
+            "minimum": -1000.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "SceneScreen": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "pauses": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "SceneShadows": {
+      "additionalProperties": false,
+      "properties": {
+        "atlas_slots": {
+          "default": 1024,
+          "format": "uint32",
+          "maximum": 4096,
+          "minimum": 64,
+          "type": "integer"
+        },
+        "changes": {
+          "default": 1024,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "finest_texel": {
+          "default": 0.03999999910593033,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.005,
+          "type": "number"
+        },
+        "levels": {
+          "default": 16,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "moving_tiles": {
+          "default": 256,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "sample_texels": {
+          "default": 2.0,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "tile_texels": {
+          "default": 128,
+          "enum": [
+            64,
+            128,
+            256,
+            512
+          ],
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "SceneSky": {
+      "additionalProperties": false,
+      "properties": {
+        "adaptation": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "aerial": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "altitude": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "ambient": {
+          "default": 1.0,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "atmosphere_height": {
+          "default": 100.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "ground_albedo": {
+          "default": [
+            0.30000001192092896,
+            0.30000001192092896,
+            0.30000001192092896
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "mie": {
+          "default": 0.003996000159531832,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "mie_absorption": {
+          "default": 0.004399999976158142,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "mie_g": {
+          "default": 0.800000011920929,
+          "format": "float",
+          "maximum": 0.99,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "mie_height": {
+          "default": 1.2000000476837158,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.1,
+          "type": "number"
+        },
+        "ozone": {
+          "default": [
+            0.0006500000017695129,
+            0.0018810000037774444,
+            0.00008499999967170879
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "planet_radius": {
+          "default": 6360.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 100.0,
+          "type": "number"
+        },
+        "rayleigh": {
+          "default": [
+            0.005801999941468239,
+            0.013558000326156616,
+            0.03310000151395798
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "rayleigh_height": {
+          "default": 8.0,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.1,
+          "type": "number"
+        },
+        "sun_intensity": {
+          "default": 3.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "sun_size": {
+          "default": 0.27000001072883606,
+          "format": "float",
+          "maximum": 10.0,
+          "minimum": 0.01,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneSkyOcclusion": {
+      "additionalProperties": false,
+      "properties": {
+        "directions": {
+          "default": 13,
+          "format": "uint32",
+          "maximum": 13,
+          "minimum": 5,
+          "type": "integer"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "fade_seconds": {
+          "default": 0.20000000298023224,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "far_distance": {
+          "default": 400.0,
+          "format": "float",
+          "maximum": 4000.0,
+          "minimum": 64.0,
+          "type": "number"
+        },
+        "floor": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "near_distance": {
+          "default": 48.0,
+          "format": "float",
+          "maximum": 256.0,
+          "minimum": 8.0,
+          "type": "number"
+        },
+        "strength": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneSlot": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "$ref": "#/$defs/SceneSlotFill"
+        }
+      ]
+    },
+    "SceneSlotFill": {
+      "additionalProperties": false,
+      "properties": {
+        "maps": {
+          "additionalProperties": {
+            "$ref": "#/$defs/SceneMap"
+          },
+          "type": "object"
+        },
+        "module": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "module"
+      ],
+      "type": "object"
+    },
+    "SceneSound": {
+      "additionalProperties": false,
+      "properties": {
+        "autoplay": {
+          "default": true,
+          "type": "boolean"
+        },
+        "bus": {
+          "$ref": "#/$defs/Bus",
+          "default": "effects"
+        },
+        "file": {
+          "default": "",
+          "type": "string"
+        },
+        "looping": {
+          "default": false,
+          "type": "boolean"
+        },
+        "pitch": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 0.0625,
+          "type": "number"
+        },
+        "radius": {
+          "default": 30.0,
+          "format": "float",
+          "maximum": 1000000.0,
+          "minimum": 0.125,
+          "type": "number"
+        },
+        "spatial": {
+          "default": false,
+          "type": "boolean"
+        },
+        "stream": {
+          "default": false,
+          "type": "boolean"
+        },
+        "volume": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneSpline": {
+      "additionalProperties": false,
+      "properties": {
+        "material": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "mesh": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "points": {
+          "items": {
+            "items": {
+              "format": "float",
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": "array"
+          },
+          "maxItems": 4096,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "required": [
+        "points",
+        "mesh",
+        "material"
+      ],
+      "type": "object"
+    },
+    "SceneSpot": {
+      "additionalProperties": false,
+      "properties": {
+        "direction": {
+          "default": [
+            0.0,
+            -1.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "inner_angle_degrees": {
+          "default": 25.0,
+          "format": "float",
+          "maximum": 89.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "outer_angle_degrees": {
+          "default": 40.0,
+          "format": "float",
+          "maximum": 89.0,
+          "minimum": 0.1,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneStreamed": {
+      "additionalProperties": false,
+      "properties": {
+        "along": {
+          "items": {
+            "$ref": "#/$defs/SceneAlong"
+          },
+          "type": "array"
+        },
+        "streamed": {
+          "items": {
+            "$ref": "#/$defs/SceneObject"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "SceneSubpixelCulling": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "SceneSun": {
+      "additionalProperties": false,
+      "properties": {
+        "sun_direction": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "SceneSurface": {
+      "additionalProperties": false,
+      "properties": {
+        "emission": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "metalness": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "roughness": {
+          "default": 0.800000011920929,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneSurfaceLight": {
+      "additionalProperties": false,
+      "properties": {
+        "emission": {
+          "default": 0.5,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "rim": {
+          "default": 0.20000000298023224,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "specular": {
+          "default": 1.0,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "specular_limit": {
+          "default": 0.20000000298023224,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "specular_variance": {
+          "default": 0.15000000596046448,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneSurroundings": {
+      "additionalProperties": false,
+      "properties": {
+        "blend": {
+          "format": "float",
+          "maximum": 1000000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "reach": {
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 1000000.0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "reach"
+      ],
+      "type": "object"
+    },
+    "SceneTemporalAntialiasing": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "nearest_motion": {
+          "default": true,
+          "type": "boolean"
+        },
+        "particle_response": {
+          "default": 2.0,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "rounded_clamp": {
+          "default": false,
+          "type": "boolean"
+        }
+      },
+      "type": "object"
+    },
+    "SceneTerrain": {
+      "additionalProperties": false,
+      "properties": {
+        "collision": {
+          "type": "boolean"
+        },
+        "edits": {
+          "items": {
+            "$ref": "#/$defs/SceneTerrainEdit"
+          },
+          "type": "array"
+        },
+        "layers": {
+          "items": {
+            "$ref": "#/$defs/SceneTerrainLayer"
+          },
+          "type": "array"
+        },
+        "origin": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "rivers": {
+          "items": {
+            "$ref": "#/$defs/SceneTerrainRiver"
+          },
+          "maxItems": 4096,
+          "type": "array"
+        },
+        "spacing": {
+          "format": "float",
+          "maximum": 1024.0,
+          "minimum": 0.015625,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "surface": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneTerrainSurface"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "surroundings": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneSurroundings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tiles": {
+          "items": {
+            "format": "uint32",
+            "maximum": 4096,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "origin"
+      ],
+      "type": "object"
+    },
+    "SceneTerrainAsset": {
+      "additionalProperties": false,
+      "properties": {
+        "collider": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneTerrainCollider"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "material": {
+          "type": "string"
+        },
+        "mesh": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "mesh",
+        "material"
+      ],
+      "type": "object"
+    },
+    "SceneTerrainCollider": {
+      "additionalProperties": false,
+      "properties": {
+        "center": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "filter": {
+          "default": 4294967295,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "memberships": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "shape": {
+          "$ref": "#/$defs/SceneColliderShape"
+        }
+      },
+      "required": [
+        "shape"
+      ],
+      "type": "object"
+    },
+    "SceneTerrainEdit": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "stamp": {
+          "$ref": "#/$defs/Stamp"
+        }
+      },
+      "required": [
+        "id",
+        "stamp"
+      ],
+      "type": "object"
+    },
+    "SceneTerrainLayer": {
+      "oneOf": [
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/ErosionLayer"
+            }
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "erosion"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/ExpressionSettings"
+            }
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "expression"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/HeightmapSettings"
+            }
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "heightmap"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/HummocksLayer"
+            }
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "hummocks"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/HydrologyLayer"
+            }
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "hydrology"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/NoiseLayer"
+            }
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "noise"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/PathLayer"
+            }
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "path"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/RiversLayer"
+            }
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "rivers"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/Stamp"
+            }
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "stamp"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/StepsLayer"
+            }
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "steps"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false
+        }
+      ]
+    },
+    "SceneTerrainMaterial": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "default": [
+            0.5,
+            0.5,
+            0.5
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "depth": {
+          "format": "float",
+          "maximum": 2.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "height_contrast": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "id": {
+          "type": "string"
+        },
+        "material": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "projection": {
+          "$ref": "#/$defs/SurfaceProjection",
+          "default": "top"
+        },
+        "roughness": {
+          "default": 0.8999999761581421,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.03,
+          "type": "number"
+        },
+        "tiling": {
+          "default": 4.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.01,
+          "type": "number"
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "SceneTerrainMotionDetail": {
+      "additionalProperties": false,
+      "properties": {
+        "fastest": {
+          "default": 300.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "levels": {
+          "default": 2,
+          "format": "uint32",
+          "maximum": 8,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "settle": {
+          "default": 0.20000000298023224,
+          "format": "float",
+          "maximum": 10.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "speed": {
+          "default": 30.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneTerrainRiver": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "river": {
+          "$ref": "#/$defs/GivenRiver"
+        }
+      },
+      "required": [
+        "id",
+        "river"
+      ],
+      "type": "object"
+    },
+    "SceneTerrainSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "cache_bytes": {
+          "default": 268435456,
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "collision_radius": {
+          "default": 192.0,
+          "format": "float",
+          "maximum": 4096.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "gpu_materials": {
+          "default": true,
+          "type": "boolean"
+        },
+        "max_tiles": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "motion_detail": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneTerrainMotionDetail"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "pinned_levels": {
+          "default": 2,
+          "format": "uint32",
+          "maximum": 8,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "pixel_error": {
+          "default": 6.0,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "surroundings": {
+          "default": true,
+          "type": "boolean"
+        },
+        "tile_feed": {
+          "default": 4096,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "SceneTerrainSurface": {
+      "additionalProperties": false,
+      "properties": {
+        "assets": {
+          "items": {
+            "$ref": "#/$defs/SceneTerrainAsset"
+          },
+          "type": "array"
+        },
+        "biomes": {
+          "items": {
+            "$ref": "#/$defs/Biome"
+          },
+          "type": "array"
+        },
+        "bridge": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "macro_colors": {
+          "$ref": "#/$defs/MacroCauses"
+        },
+        "materials": {
+          "items": {
+            "$ref": "#/$defs/SceneTerrainMaterial"
+          },
+          "type": "array"
+        },
+        "placed": {
+          "items": {
+            "$ref": "#/$defs/AuthoredPlacement"
+          },
+          "type": "array"
+        },
+        "placements": {
+          "items": {
+            "$ref": "#/$defs/PlacementLayer"
+          },
+          "type": "array"
+        },
+        "steep": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SteepLayer"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "materials",
+        "biomes"
+      ],
+      "type": "object"
+    },
+    "SceneTexture": {
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "provided": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rgba8": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "uri": {
+          "maxLength": 256,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_-][A-Za-z0-9_./-]*$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "width": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "SceneTextureMap": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "mag_filter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneFilter"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "min_filter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneFilter"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "mipmap_filter": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneMipmapFilter"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "offset": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "rotation": {
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "scale": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "tex_coord": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "wrap_u": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneWrap"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "wrap_v": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneWrap"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id"
+      ],
+      "type": "object"
+    },
+    "SceneTimeOfDay": {
+      "additionalProperties": false,
+      "properties": {
+        "day": {
+          "default": 172.0,
+          "format": "float",
+          "maximum": 365.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "hours": {
+          "default": 15.0,
+          "format": "float",
+          "maximum": 24.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "latitude": {
+          "default": 45.0,
+          "format": "float",
+          "maximum": 90.0,
+          "minimum": -90.0,
+          "type": "number"
+        },
+        "moon_age": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "north": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 360.0,
+          "minimum": -360.0,
+          "type": "number"
+        },
+        "speed": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 24.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "step": {
+          "default": 2.0,
+          "format": "float",
+          "maximum": 60.0,
+          "minimum": 0.1,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneTransform": {
+      "additionalProperties": false,
+      "properties": {
+        "rotation_degrees": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 360000.0,
+            "minimum": -360000.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "scale": {
+          "default": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 10000.0,
+            "minimum": 0.0001,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "translation": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "SceneVertex": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "normal": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "position": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "skin": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VertexSkin"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "uv": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "uv1": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": [
+            "array",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "position",
+        "normal"
+      ],
+      "type": "object"
+    },
+    "SceneWater": {
+      "additionalProperties": false,
+      "properties": {
+        "clarity": {
+          "default": 2.5,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.1,
+          "type": "number"
+        },
+        "color": {
+          "default": [
+            0.012000000104308128,
+            0.04500000178813934,
+            0.05000000074505806
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "foam_points": {
+          "default": 1024,
+          "format": "uint32",
+          "maximum": 8192,
+          "minimum": 64,
+          "type": "integer"
+        },
+        "live_budget": {
+          "default": 2097152,
+          "format": "uint32",
+          "maximum": 67108864,
+          "minimum": 65536,
+          "type": "integer"
+        },
+        "sediment": {
+          "default": 0.15000000596046448,
+          "format": "float",
+          "maximum": 50.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "sediment_color": {
+          "default": [
+            0.05000000074505806,
+            0.06499999761581421,
+            0.029999999329447746
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "simulation_cell": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 8.0,
+          "minimum": 0.25,
+          "type": "number"
+        },
+        "subdivision_error": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 0.25,
+          "type": "number"
+        },
+        "subdivision_leaves": {
+          "default": 65536,
+          "format": "uint32",
+          "maximum": 4000000,
+          "minimum": 1024,
+          "type": "integer"
+        },
+        "tile_feed": {
+          "default": 4096,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "SceneWind": {
+      "additionalProperties": false,
+      "properties": {
+        "gusts": {
+          "default": 0.44999998807907104,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "velocity": {
+          "default": [
+            2.5,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 40.0,
+            "minimum": -40.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "SceneWorldStreaming": {
+      "additionalProperties": false,
+      "properties": {
+        "distance": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 20.0,
+          "minimum": 0.05,
+          "type": "number"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "frozen": {
+          "default": false,
+          "type": "boolean"
+        },
+        "prefetch": {
+          "default": 1.5,
+          "format": "float",
+          "maximum": 10.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "spawns_per_frame": {
+          "default": 2048,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "unload": {
+          "default": 1.25,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 1.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneWrap": {
+      "enum": [
+        "repeat",
+        "mirrored_repeat",
+        "clamp_to_edge"
+      ],
+      "type": "string"
+    },
+    "Stamp": {
+      "properties": {
+        "center": {
+          "items": {
+            "format": "float",
+            "maximum": 10000000.0,
+            "minimum": -10000000.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "falloff": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 10000000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "op": {
+          "$ref": "#/$defs/StampOp"
+        },
+        "radius": {
+          "format": "float",
+          "maximum": 10000000.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "required": [
+        "center",
+        "radius",
+        "op"
+      ],
+      "type": "object"
+    },
+    "StampOp": {
+      "oneOf": [
+        {
+          "enum": [
+            "hole"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "raise": {
+              "format": "float",
+              "maximum": 20000.0,
+              "minimum": 0.0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "raise"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "lower": {
+              "format": "float",
+              "maximum": 20000.0,
+              "minimum": 0.0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "lower"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "flatten": {
+              "format": "float",
+              "maximum": 20000.0,
+              "minimum": -20000.0,
+              "type": "number"
+            }
+          },
+          "required": [
+            "flatten"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "SteepLayer": {
+      "additionalProperties": false,
+      "properties": {
+        "material": {
+          "type": "string"
+        },
+        "slope": {
+          "items": {
+            "format": "float",
+            "maximum": 90.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "required": [
+        "material",
+        "slope"
+      ],
+      "type": "object"
+    },
+    "StepsLayer": {
+      "properties": {
+        "cover": {
+          "default": 0.6000000238418579,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "height": {
+          "default": 3.0,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.1,
+          "type": "number"
+        },
+        "joints": {
+          "default": 4.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.5,
+          "type": "number"
+        },
+        "patches": {
+          "default": 60.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "seed": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "slope": {
+          "default": [
+            33.02386474609375,
+            40.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 89.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "wetness": {
+          "default": [
+            8.0,
+            5.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 25.0,
+            "minimum": -5.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Stick": {
+      "enum": [
+        "left",
+        "right"
+      ],
+      "type": "string"
+    },
+    "SurfaceProjection": {
+      "enum": [
+        "top",
+        "biplanar"
+      ],
+      "type": "string"
+    },
+    "TerrainPrefetch": {
+      "additionalProperties": false,
+      "properties": {
+        "reach": {
+          "default": 2.0,
+          "format": "float",
+          "maximum": 8.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "TerrainShading": {
+      "properties": {
+        "bounce": {
+          "default": true,
+          "type": "boolean"
+        },
+        "bounce_columns": {
+          "default": 64,
+          "format": "uint32",
+          "maximum": 1024,
+          "minimum": 8,
+          "multipleOf": 2,
+          "type": "integer"
+        },
+        "bounce_levels": {
+          "default": 8,
+          "format": "uint32",
+          "maximum": 8,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "bounce_spacing": {
+          "default": 16.0,
+          "format": "float",
+          "maximum": 1024.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "macro_resolution": {
+          "default": 2048,
+          "format": "uint32",
+          "maximum": 4096,
+          "minimum": 64,
+          "type": "integer"
+        },
+        "relief_steps": {
+          "default": 8,
+          "format": "uint32",
+          "maximum": 64,
+          "minimum": 2,
+          "type": "integer"
+        },
+        "shadow_resolution": {
+          "default": 512,
+          "format": "uint32",
+          "maximum": 4096,
+          "minimum": 64,
+          "type": "integer"
+        },
+        "shadow_softness": {
+          "default": 0.009999999776482582,
+          "format": "float",
+          "maximum": 0.2,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "sky_resolution": {
+          "default": 1024,
+          "format": "uint32",
+          "maximum": 4096,
+          "minimum": 64,
+          "type": "integer"
+        },
+        "sky_visibility": {
+          "default": true,
+          "type": "boolean"
+        },
+        "subdivision_depth": {
+          "default": 27,
+          "format": "uint32",
+          "maximum": 29,
+          "minimum": 10,
+          "type": "integer"
+        },
+        "subdivision_error": {
+          "default": 2.0,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 0.25,
+          "type": "number"
+        },
+        "subdivision_leaves": {
+          "default": 131072,
+          "format": "uint32",
+          "maximum": 4000000,
+          "minimum": 1024,
+          "type": "integer"
+        },
+        "sun_shadows": {
+          "default": true,
+          "type": "boolean"
+        },
+        "tile_feed": {
+          "default": 4096,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "TextAlign": {
+      "enum": [
+        "left",
+        "center",
+        "right"
+      ],
+      "type": "string"
+    },
+    "TextSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "atlas_size": {
+          "default": 2048,
+          "format": "uint32",
+          "maximum": 8192,
+          "minimum": 256,
+          "type": "integer"
+        },
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "max_glyphs": {
+          "default": 65536,
+          "format": "uint32",
+          "maximum": 2000000,
+          "minimum": 1,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Trigger": {
+      "enum": [
+        "left",
+        "right"
+      ],
+      "type": "string"
+    },
+    "UiAction": {
+      "oneOf": [
+        {
+          "enum": [
+            "pop"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "go": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "go"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "push": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "push"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "emit": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "emit"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UiAlign": {
+      "enum": [
+        "start",
+        "center",
+        "end",
+        "stretch"
+      ],
+      "type": "string"
+    },
+    "UiBind": {
+      "additionalProperties": false,
+      "properties": {
+        "color": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "image": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "offset": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "value": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "UiDirection": {
+      "enum": [
+        "column",
+        "row"
+      ],
+      "type": "string"
+    },
+    "UiImageRect": {
+      "additionalProperties": false,
+      "properties": {
+        "height": {
+          "format": "float",
+          "type": "number"
+        },
+        "u": {
+          "format": "float",
+          "type": "number"
+        },
+        "v": {
+          "format": "float",
+          "type": "number"
+        },
+        "width": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "u",
+        "v",
+        "width",
+        "height"
+      ],
+      "type": "object"
+    },
+    "UiInsets": {
+      "additionalProperties": false,
+      "properties": {
+        "bottom": {
+          "default": null,
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "left": {
+          "default": null,
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "right": {
+          "default": null,
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "top": {
+          "default": null,
+          "format": "float",
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "UiJustify": {
+      "enum": [
+        "start",
+        "center",
+        "end",
+        "space_between",
+        "space_around",
+        "space_evenly"
+      ],
+      "type": "string"
+    },
+    "UiKind": {
+      "enum": [
+        "panel",
+        "label",
+        "image",
+        "bar",
+        "button",
+        "list"
+      ],
+      "type": "string"
+    },
+    "UiLength": {
+      "oneOf": [
+        {
+          "enum": [
+            "auto"
+          ],
+          "type": "string"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "px": {
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "px"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "properties": {
+            "percent": {
+              "format": "float",
+              "type": "number"
+            }
+          },
+          "required": [
+            "percent"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "UiNode": {
+      "additionalProperties": false,
+      "properties": {
+        "absolute": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiInsets"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "action": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UiAction"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "align": {
+          "$ref": "#/$defs/UiAlign",
+          "default": "stretch"
+        },
+        "bar_color": {
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "bar_value": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "bind": {
+          "$ref": "#/$defs/UiBind",
+          "default": {
+            "color": null,
+            "image": null,
+            "offset": null,
+            "value": null
+          }
+        },
+        "border_color": {
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "border_width": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "children": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/UiNode"
+          },
+          "type": "array"
+        },
+        "color": {
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "direction": {
+          "$ref": "#/$defs/UiDirection",
+          "default": "column"
+        },
+        "focus_color": {
+          "default": null,
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "gap": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "grow": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "height": {
+          "$ref": "#/$defs/UiLength",
+          "default": "auto"
+        },
+        "hover_color": {
+          "default": null,
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "id": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "image": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "image_rect": {
+          "$ref": "#/$defs/UiImageRect",
+          "default": {
+            "height": 1.0,
+            "u": 0.0,
+            "v": 0.0,
+            "width": 1.0
+          }
+        },
+        "justify": {
+          "$ref": "#/$defs/UiJustify",
+          "default": "start"
+        },
+        "kind": {
+          "$ref": "#/$defs/UiKind",
+          "default": "panel"
+        },
+        "margin": {
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "padding": {
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "press_color": {
+          "default": null,
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "radius": {
+          "default": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "text": {
+          "default": "",
+          "type": "string"
+        },
+        "text_align": {
+          "$ref": "#/$defs/TextAlign",
+          "default": "left"
+        },
+        "text_color": {
+          "default": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "text_size": {
+          "default": 16.0,
+          "format": "float",
+          "type": "number"
+        },
+        "width": {
+          "$ref": "#/$defs/UiLength",
+          "default": "auto"
+        }
+      },
+      "type": "object"
+    },
+    "UiRoot": {
+      "additionalProperties": false,
+      "properties": {
+        "font": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "menu": {
+          "default": false,
+          "type": "boolean"
+        },
+        "order": {
+          "default": 0,
+          "format": "int32",
+          "type": "integer"
+        },
+        "root": {
+          "$ref": "#/$defs/UiNode",
+          "default": {
+            "absolute": null,
+            "action": null,
+            "align": "stretch",
+            "bar_color": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "bar_value": 0.0,
+            "bind": {
+              "color": null,
+              "image": null,
+              "offset": null,
+              "value": null
+            },
+            "border_color": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "border_width": 0.0,
+            "children": [],
+            "color": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "direction": "column",
+            "focus_color": null,
+            "gap": 0.0,
+            "grow": 0.0,
+            "height": "auto",
+            "hover_color": null,
+            "id": null,
+            "image": null,
+            "image_rect": {
+              "height": 1.0,
+              "u": 0.0,
+              "v": 0.0,
+              "width": 1.0
+            },
+            "justify": "start",
+            "kind": "panel",
+            "margin": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "padding": [
+              0.0,
+              0.0,
+              0.0,
+              0.0
+            ],
+            "press_color": null,
+            "radius": 0.0,
+            "text": "",
+            "text_align": "left",
+            "text_color": [
+              1.0,
+              1.0,
+              1.0,
+              1.0
+            ],
+            "text_size": 16.0,
+            "width": "auto"
+          }
+        },
+        "screen": {
+          "default": null,
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
+    "UiSettings": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
+        },
+        "events": {
+          "default": 256,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_nodes": {
+          "default": 4096,
+          "format": "uint32",
+          "maximum": 1000000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_rects": {
+          "default": 8192,
+          "format": "uint32",
+          "maximum": 1000000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "scale": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 8.0,
+          "minimum": 0.25,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "VertexSkin": {
+      "additionalProperties": false,
+      "properties": {
+        "joints": {
+          "items": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "weights": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        }
+      },
+      "required": [
+        "joints",
+        "weights"
+      ],
+      "type": "object"
+    },
+    "ViewForm": {
+      "additionalProperties": false,
+      "properties": {
+        "camera": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "clear": {
+          "$ref": "#/$defs/Clear",
+          "default": "all"
+        },
+        "clear_color": {
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "layers": {
+          "$ref": "#/$defs/Layers",
+          "default": 4294967295
+        },
+        "order": {
+          "default": 0,
+          "format": "int32",
+          "type": "integer"
+        },
+        "steady": {
+          "default": false,
+          "type": "boolean"
+        },
+        "texture": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "viewport": {
+          "$ref": "#/$defs/Rect",
+          "default": {
+            "height": 1.0,
+            "width": 1.0,
+            "x": 0.0,
+            "y": 0.0
+          }
+        }
+      },
+      "type": "object"
+    }
+  },
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "entities": {
+      "items": {
+        "$ref": "#/$defs/SceneObject"
+      },
+      "type": "array"
+    },
+    "environment": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/SceneEnvironment"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "id": {
+      "maxLength": 64,
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9_.-]+$",
+      "type": "string"
+    },
+    "looks": {
+      "items": {
+        "$ref": "#/$defs/SceneLook"
+      },
+      "type": "array"
+    },
+    "materials": {
+      "items": {
+        "$ref": "#/$defs/SceneMaterial"
+      },
+      "type": "array"
+    },
+    "meshes": {
+      "items": {
+        "$ref": "#/$defs/SceneMesh"
+      },
+      "type": "array"
+    },
+    "prefabs": {
+      "items": {
+        "$ref": "#/$defs/ScenePrefab"
+      },
+      "type": "array"
+    },
+    "revision": {
+      "format": "uint64",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "textures": {
+      "items": {
+        "$ref": "#/$defs/SceneTexture"
+      },
+      "type": "array"
+    }
+  },
+  "required": [
+    "id",
+    "revision",
+    "materials",
+    "meshes",
+    "entities"
+  ],
+  "title": "SceneDocument",
+  "type": "object"
+}

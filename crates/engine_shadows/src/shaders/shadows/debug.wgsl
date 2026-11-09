@@ -1,5 +1,6 @@
-import package::face::debug::{DEBUG_CARDS, DEBUG_EMPTY, DEBUG_OTHER, DebugShade, DebugTargets,
-    debug_record_card, debug_record_kind, debug_record_source};
+import package::face::debug::{DEBUG_EMPTY, DEBUG_OTHER, DebugShade, DebugTargets,
+    debug_record_kind, debug_record_source};
+import package::face::impostors::DEBUG_CARD;
 import package::engine::debug::debug_kind_color;
 import package::engine::drawn::drawn_records;
 import package::engine::shading::SurfacePoint;
@@ -11,6 +12,8 @@ import package::generated::shadows::{DEBUG_SHOWN_CASTERS, DEBUG_SHOWN_SHADOWS,
     sun_shown_shadowed, sun_shown_source};
 import package::place::sun_blockers::{DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL,
     DEBUG_SUN_NONE};
+
+const DEBUG_CARDS: vec3<f32> = vec3<f32>(0.95, 0.25, 0.85);
 
 fn debug_sun_color(sun: u32) -> vec3<f32> {
     let source = sun_shown_source(sun);
@@ -46,7 +49,7 @@ fn debug_caster_color(record: u32, object: u32) -> vec3<f32> {
     if !drawn_casts(kind, object) {
         return DEBUG_OTHER;
     }
-    if debug_record_card(record) {
+    if (record & DEBUG_CARD) != 0u {
         return DEBUG_CARDS;
     }
     return debug_kind_color(kind);

@@ -115,7 +115,7 @@ mod capture {
     const DRAW_STAMPS_AT: u64 = QUERY_BYTES;
     const DRAW_STATISTICS_AT: u64 = DRAW_STAMPS_AT + 2 * DRAWS as u64 * 8;
     const SLOT_BYTES: u64 = DRAW_STATISTICS_AT + DRAWS as u64 * 24;
-    const OPAQUE: &str = "opaque_meshes";
+    const OPAQUE: &str = "opaque_scene";
     const BUSY: &str = "busy";
 
     #[derive(Clone, Copy)]

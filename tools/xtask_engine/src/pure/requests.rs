@@ -4,7 +4,7 @@ use std::path::Path;
 
 use engine::{Engine, Error, ErrorCode};
 use engine_dev::{
-    Context, Control, DevTools, Envelope, InspectorDescriptor, MAX_INSPECTORS, MAX_REQUEST_BYTES,
+    Context, Control, DevTools, Envelope, InspectorDescriptor, MAX_REQUEST_BYTES,
     MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
 };
 use engine_scene::{SceneDocument, SceneInstance, SceneKinds};
@@ -113,6 +113,10 @@ const UNREACHED: &[(&str, &str)] = &[
     ("lint_missing", CHECKS),
     ("marker", CHECKS),
     ("missing_layer", LAYERS),
+    (
+        "missing_plugin",
+        "a brick answers it when a request needs a brick or face the game left out or gated off (crates/engine_dev/src/bricks.rs, crates/engine_collision, crates/engine_navigation, crates/engine_terrain); the corpora list every brick and gate none off",
+    ),
     ("missing_runtime_identity", BRIDGE),
     ("module_outside_brick", APP_BUILD),
     ("not_inherited", CHECKS),
@@ -126,7 +130,6 @@ const UNREACHED: &[(&str, &str)] = &[
     ("place_cycle", APP_BUILD),
     ("place_not_filled", APP_BUILD),
     ("place_unlisted", LINKER),
-    ("profile_too_large", NATIVE_PROFILE),
     ("profiling_unavailable", NATIVE_PROFILE),
     ("queue_full", BRIDGE),
     ("queue_timeout", BRIDGE),
@@ -190,7 +193,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let mut bare = Engine::default();
     let mut other = engine_with_features()?;
     let foreign = instantiate(&mut other, &components)?;
-    let tools = DevTools::default();
+    let tools = DevTools::new(engine::stats::frame_stats_schema());
     let mut reached = BTreeSet::new();
     for refusal in fixtures["refusals"]
         .as_array()
@@ -362,30 +365,18 @@ fn control(
 }
 
 fn register(refusal: &Value) -> Option<Error> {
-    let mut tools = DevTools::default();
-    let count = match &refusal["count"] {
-        Value::String(beyond) if beyond == "beyond" => MAX_INSPECTORS as u64 + 1,
-        count => count.as_u64().unwrap_or(1),
-    };
+    let mut tools = DevTools::new(engine::stats::frame_stats_schema());
     let repeat = refusal["repeat"].as_u64().unwrap_or(1) as usize;
-    let mut last = None;
-    for index in 0..count {
-        let name = match refusal["name"].as_str() {
-            Some(name) if count == 1 => name.to_owned(),
-            Some(name) => format!("{name}{index}"),
-            None => format!("Probe{index}"),
-        };
-        let description = refusal["description"]
-            .as_str()
-            .unwrap_or("a probe")
-            .repeat(repeat);
-        let descriptor =
-            InspectorDescriptor::new(name, json!({"type": "object", "title": description}));
-        last = tools
-            .register_resource::<engine::FixedTime>(descriptor, |_| Value::Null)
-            .err();
-    }
-    last
+    let name = refusal["name"].as_str().unwrap_or("Probe");
+    let description = refusal["description"]
+        .as_str()
+        .unwrap_or("a probe")
+        .repeat(repeat);
+    let descriptor =
+        InspectorDescriptor::new(name, json!({"type": "object", "title": description}));
+    tools
+        .register_resource::<engine::FixedTime>(descriptor, |_| Value::Null)
+        .err()
 }
 
 fn authoring(root: &Path, refusal: &Value) -> Result<Option<Error>, String> {

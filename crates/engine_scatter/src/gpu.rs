@@ -4,7 +4,7 @@ use engine_core::{
     InstanceInput, MaterialHandle, MeshHandle, PassBit, PassViews, ScenePass, Since, TargetName,
     Var, Views,
 };
-use engine_places::impostors::IMPOSTOR_VERTICES;
+use engine_places_rendering::impostors::IMPOSTOR_VERTICES;
 use engine_places_world::ground::{GroundTiles, TerrainTiles};
 use engine_render::{
     Access, AfterRead, Allocation, Attach, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND,
@@ -575,7 +575,7 @@ impl ScatterGpu {
             .listed()
             .iter()
             .filter(|listed| listed.pass.at != AttachPoint::Transparent)
-            .filter(|listed| (listed.pass.takes)(PLACED))
+            .filter(|listed| cx.passes().takes(&listed.pass, PLACED))
             .copied()
             .collect();
         let mut joined = Vec::with_capacity(listed.len());

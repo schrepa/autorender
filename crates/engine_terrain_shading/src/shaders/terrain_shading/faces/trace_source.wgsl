@@ -1,4 +1,4 @@
-import package::engine::mesh::declarations::MASK_MIP_SCALE;
+import package::engine::materials::MASK_MIP_SCALE;
 import package::engine::post::frame::post;
 import package::engine::surfaces::{SURFACE_GROUND, SURFACE_SOLID};
 import package::engine::view::{camera, stable_normalize};
@@ -11,7 +11,7 @@ import package::face::ground_tiles::{
     triangle_height,
 };
 import package::face::impostors::{
-    IMPOSTOR_CUTOFF, impostor_albedo, impostor_basis, impostor_facing, impostor_flags_hemisphere,
+    impostor_albedo, impostor_basis, impostor_cutoff, impostor_facing, impostor_flags_hemisphere,
     impostor_flags_texels, impostor_frame_direction, impostor_frames, impostor_geometry,
     impostor_grid, impostor_met, impostor_surface,
 };
@@ -365,7 +365,7 @@ fn test_placed(slot: u32, p: vec3<f32>, direction: vec3<f32>, nearest: f32, spre
     at = clamp(crossed + slope * (0.5 * span_uv * along), first + inset,
         first + span_uv - inset);
     let covered = impostor_albedo(at, impostor.layer, level).a;
-    if covered * scale < IMPOSTOR_CUTOFF {
+    if covered * scale < impostor_cutoff() {
         return;
     }
     along = clamp(impostor_met(impostor_geometry(at, impostor.layer, level).w,

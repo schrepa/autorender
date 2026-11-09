@@ -637,6 +637,7 @@ settings! {
         pub enabled: bool = true => any,
         pub pixel_error: f32 = 1.0 => range(0.25, 64.0),
         pub fade_seconds: f32 = 0.5 => range(0.0, 4.0),
+        pub margin: f32 = 0.1 => range(0.0, 0.5),
     }
 }
 

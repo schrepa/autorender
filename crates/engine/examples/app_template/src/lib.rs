@@ -32,7 +32,6 @@ pub fn bricks<L: Listing>(list: L) -> L {
 
 pub fn build(engine: &mut Engine) -> engine::Result<Template> {
     let world = engine.app.world_mut();
-    engine::host::apply_setting(world, engine::DYNAMIC_RESOLUTION, &serde_json::json!(true))?;
     let (mesh, ground, block) = {
         let mut assets = world.resource_mut::<AssetLibrary>();
         (

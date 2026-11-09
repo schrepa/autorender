@@ -32,7 +32,7 @@ impl PassName for ReflectionsPass {
     };
 }
 
-const SURFACE_POINTS: &[AttachPoint] = &[AttachPoint::Opaque, AttachPoint::Sky];
+const SURFACE_POINTS: &[AttachPoint] = &[AttachPoint::Opaque, AttachPoint::LateOpaque];
 
 const SURFACE: TargetDecl = TargetDecl {
     name: TargetName("surface"),

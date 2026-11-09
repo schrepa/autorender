@@ -19,7 +19,7 @@ mod scene;
 mod services;
 mod state;
 
-pub use access::{AccessRule, MoverRule};
+pub use access::{AccessRule, CORE_CRATES, CORE_INTERNAL_CRATES, MoverRule};
 pub use attribution::{
     BrickCost, BrickCosts, BrickRow, BrickTable, CORE_ROW, GPU_IDLE_ROW, UNATTRIBUTED_ROW,
 };
@@ -35,7 +35,9 @@ pub use jobs::{
 pub use members::MembersOf;
 pub use owners::{Shared, ValueKind};
 pub use record::{BrickRecord, PlainSystems, RecordExt, SectionRule};
-pub use registry::{BrickId, BrickSet, Registry, RegistryBuilder, check_sections, settings};
+pub use registry::{
+    BrickId, BrickSet, Registry, RegistryBuilder, check_sections, run_operation, settings,
+};
 pub use scene::{
     AuthoredId, OperationScene, SceneEntity, SceneRead, SpawnedBy, authored_entity, authored_id,
 };

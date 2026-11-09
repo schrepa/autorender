@@ -11,7 +11,7 @@ mod light;
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, Schedule, Source, gpu_struct};
 use engine_places_rendering::lighting::Lighting;
-use engine_render::Lit;
+use engine_render::{Lit, RenderBricks, SurfaceKind};
 use engine_places_rendering::sky::SkyLight;
 
 pub use highlights::Highlights;
@@ -22,6 +22,7 @@ gpu_struct! {
     pub struct LightingPiece {
         pub model: [f32; 4],
         pub highlights: [f32; 4],
+        pub widening: [f32; 4],
     }
 }
 
@@ -35,6 +36,7 @@ impl Brick for LightingModelBrick {
             .settings::<SurfaceLight>()
             .settings::<Highlights>()
             .piece::<LightingPiece>()
+            .surface_kind(SurfaceKind { name: "thin" })
             .fill::<Lighting>(Some(shaders::lighting_model::faces::lighting::MODULE))
             .fill::<Lit>(Some(shaders::lighting_model::faces::lighting::MODULE))
             .systems(Schedule::ViewSync, (publish_lighting, publish_piece));
@@ -56,6 +58,7 @@ fn publish_piece(
     piece.set_if_neq(LightingPiece {
         model: [surface.rim, surface.emission, surface.specular, 0.0],
         highlights: sized_highlights(&highlights, &sky),
+        widening: [surface.specular_variance, surface.specular_limit, 0.0, 0.0],
     });
 }
 

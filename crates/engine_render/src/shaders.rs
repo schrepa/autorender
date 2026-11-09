@@ -57,7 +57,6 @@ pub(crate) fn core_module(path: &str) -> Module {
 pub const PRESENTATION_MODULE: &str = "engine::presentation";
 pub const DEBUG_MODULE: &str = "engine::debug";
 pub const DECLARATIONS_MODULE: &str = "engine::mesh::declarations";
-pub const MATH_MODULE: &str = "engine::math";
 pub const VIEW_MODULE: &str = "engine::view";
 pub const PYRAMID_MODULE: &str = "engine::pyramid";
 
@@ -127,25 +126,14 @@ pub fn declarations_source() -> String {
     source
 }
 
-pub fn math_source() -> String {
-    let mut source = String::from(include_str!("math.wgsl"));
-    float(&mut source, "GRAVITY", engine_core::math::GRAVITY);
-    source
-}
-
 pub fn view_source() -> String {
     use engine_core::GpuStruct;
     let mut source = String::from(include_str!("frame/view.wgsl"));
     source.push_str(<crate::CameraUniform as GpuStruct>::WGSL);
-    float(
-        &mut source,
-        "DETAIL_ANISOTROPY",
-        f32::from(engine_core::Sampler::ANISOTROPY),
-    );
     source
 }
 
-pub fn generated_core() -> [(&'static str, String); 13] {
+pub fn generated_core() -> [(&'static str, String); 12] {
     let standard = crate::surface::MaterialLayout::standard();
     [
         (PRESENTATION_MODULE, presentation_source()),
@@ -154,7 +142,6 @@ pub fn generated_core() -> [(&'static str, String); 13] {
         (crate::surface::MATERIALS_MODULE, standard.materials_source()),
         (crate::surface::SLOTS_MODULE, standard.slots_source(false)),
         (crate::surface::SURFACES_MODULE, standard.surfaces_source()),
-        (MATH_MODULE, math_source()),
         (VIEW_MODULE, view_source()),
         (PYRAMID_MODULE, crate::pyramid::source()),
         (crate::drawn::DRAWN_MODULE, crate::drawn::source()),

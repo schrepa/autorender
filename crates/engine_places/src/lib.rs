@@ -19,7 +19,6 @@ macro_rules! contract {
     }};
 }
 
-pub mod impostors;
 pub mod meshes;
 pub mod queries;
 pub mod skin;
@@ -173,7 +172,6 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<meshes::Instances>(),
     PlaceDecl::slot::<skin::Skin>(),
     PlaceDecl::slot::<queries::SceneQueries>(),
-    PlaceDecl::slot::<impostors::Impostors>(),
-    PlaceDecl::component::<impostors::ImpostorAsks>("impostor_asks"),
-    PlaceDecl::component::<impostors::ImpostorRecords>("impostor_records"),
+    PlaceDecl::component::<meshes::LevelBatches>("level_batches"),
+    PlaceDecl::component::<meshes::LastLevels>("last_levels"),
 ];

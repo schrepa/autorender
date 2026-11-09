@@ -22,6 +22,7 @@ gpu_consts! {
     pub const WET_MOST: f32 = 0.5;
     pub const UNHELD: f32 = -1.0e30;
     pub const DENSITY: f32 = 1000.0;
+    pub const GRAVITY: f32 = 9.81;
     pub const FERGUSON_A1: f32 = 6.5;
     pub const FERGUSON_A2: f32 = 2.5;
     pub const SHALLOWEST: f32 = 0.1;
@@ -41,6 +42,11 @@ gpu_consts! {
 const _: () = assert!(
     WATER_BLOCK == PATCH_QUADS + 3,
     "WATER_BLOCK is not PATCH_QUADS + 3"
+);
+
+const _: () = assert!(
+    GRAVITY.to_bits() == engine_math::GRAVITY.to_bits(),
+    "GRAVITY differs from engine_math::GRAVITY"
 );
 
 #[gpu_bits]

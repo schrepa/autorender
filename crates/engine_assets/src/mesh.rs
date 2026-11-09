@@ -42,7 +42,6 @@ pub struct Mesh {
     uv1: Option<Box<[[f32; 2]]>>,
     skin: Option<Box<[VertexSkin]>>,
     lods: Option<Arc<MeshLods>>,
-    impostor: bool,
     identity: OnceLock<u128>,
 }
 
@@ -96,7 +95,6 @@ impl Mesh {
             uv1: None,
             skin: None,
             lods: None,
-            impostor: true,
             identity: OnceLock::new(),
         })
     }
@@ -148,16 +146,6 @@ impl Mesh {
 
     pub fn lods(&self) -> Option<&Arc<MeshLods>> {
         self.lods.as_ref()
-    }
-
-    #[must_use]
-    pub fn without_impostor(mut self) -> Self {
-        self.impostor = false;
-        self
-    }
-
-    pub fn takes_impostor(&self) -> bool {
-        self.impostor
     }
 
     pub fn with_colors(mut self, colors: Vec<[f32; 4]>) -> Result<Self, Error> {
@@ -320,35 +308,5 @@ impl Mesh {
         })
         .collect();
         Self::new(vertices, vec![0, 1, 2, 0, 2, 3]).expect("plane_valid")
-    }
-
-    pub fn octahedron() -> Self {
-        let mut vertices = Vec::with_capacity(24);
-        let mut indices = Vec::with_capacity(24);
-        for y in [-1.0, 1.0] {
-            for (a, b) in [
-                (Vec3::X, Vec3::Z),
-                (Vec3::Z, Vec3::NEG_X),
-                (Vec3::NEG_X, Vec3::NEG_Z),
-                (Vec3::NEG_Z, Vec3::X),
-            ] {
-                let tip = Vec3::Y * y;
-                let (a, b) = if y > 0.0 { (b, a) } else { (a, b) };
-                let normal = (a - tip).cross(b - tip).normalize().to_array();
-                for (position, uv) in
-                    [tip, a, b]
-                        .into_iter()
-                        .zip([[0.5, 0.0], [0.0, 1.0], [1.0, 1.0]])
-                {
-                    indices.push(vertices.len() as u32);
-                    vertices.push(MeshVertex {
-                        position: (position * 0.5).to_array(),
-                        normal,
-                        uv,
-                    });
-                }
-            }
-        }
-        Self::new(vertices, indices).expect("octahedron_valid")
     }
 }

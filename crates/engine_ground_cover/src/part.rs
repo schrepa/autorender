@@ -91,7 +91,7 @@ impl GpuPart for CoverGpu {
             .iter()
             .filter(|listed| {
                 listed.bit.is_some()
-                    && (listed.pass.takes)(COVER)
+                    && cx.passes().takes(&listed.pass, COVER)
                     && listed.pass.views != PassViews::Owned
                     && listed.pass.at != AttachPoint::Transparent
             })

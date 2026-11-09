@@ -3,7 +3,6 @@ use std::sync::Arc;
 use bevy_ecs::prelude::{Component, Resource};
 use engine_place::Slot;
 use glam::{Mat3, Vec3};
-use serde::Serialize;
 
 use crate::ground::GroundRead;
 
@@ -38,21 +37,12 @@ impl Slot for WaterObstacles {
     const NAME: &'static str = "water_obstacles";
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum WaterKind {
-    River,
-    Lake,
-    Fall,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, schemars::JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct WaterSample {
-    pub kind: WaterKind,
     pub surface: f32,
     pub depth: f32,
     pub velocity: [f32; 3],
-    pub foam: f32,
+    pub falling: bool,
 }
 
 pub trait WaterQuery: Send + Sync + 'static {

@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::Resource;
 use bytemuck::{Pod, Zeroable};
 use engine_core::{GpuBits, gpu_bits, gpu_consts, gpu_struct};
-use engine_places::impostors::ImpostorRecord;
-use engine_render::debug::DebugRecord;
+use engine_places::meshes::DEBUG_LEVEL_AT;
+use engine_places_rendering::impostors::{DEBUG_CARD, ImpostorRecord};
 use glam::Mat4;
 
 gpu_struct! {
@@ -223,14 +223,12 @@ impl DrawRecord {
     }
 
     fn word(self) -> u32 {
-        DebugRecord {
-            kind: 0,
-            level: self.level.min(RECORD_LEVELS - 1),
-            fading: false,
-            card: self.kind == DrawKind::PlacedCard,
-            source: 0,
-        }
-        .pack()
+        let card = if self.kind == DrawKind::PlacedCard {
+            DEBUG_CARD
+        } else {
+            0
+        };
+        (self.level.min(RECORD_LEVELS - 1) << DEBUG_LEVEL_AT) | card
     }
 }
 

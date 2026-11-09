@@ -6,7 +6,9 @@ use engine_core::{
     Readable, Readback, Spawner, Transform, Views,
 };
 use engine_math::collections::HashMap;
-use engine_places::impostors::{ImpostorAsks, ImpostorRecord, ImpostorRecords, Impostors};
+use engine_places_rendering::impostors::{
+    ImpostorAsks, ImpostorRecord, ImpostorRecords, Impostors,
+};
 use engine_places_rendering::occlusion::OcclusionSource;
 use engine_places_rendering::shadows::{ShadowChange, ShadowChanges};
 use engine_places_simulation::ground::TileKey;
@@ -24,8 +26,6 @@ use crate::layouts::{
 use crate::occupancy::{OccupancyWindows, canopy, texel_share};
 use crate::pool::{Pooled, ScatterPool};
 use crate::settings::{FoliageSettings, OccupancySettings, ScatterSettings, ScatterStats};
-
-const FADE_MARGIN: f32 = 0.1;
 
 const SLOT_STRIDES: [u64; 4] = [
     size_of::<PoseData>() as u64,
@@ -463,7 +463,7 @@ pub(crate) fn plan_cull(
             u32::from(impostors.is_some()),
             state.objects,
         ],
-        fade: [state.fade, FADE_MARGIN, cards, spanned],
+        fade: [state.fade, detail.margin, cards, spanned],
         drawn: [0; 4],
     });
     plan.prepared = true;

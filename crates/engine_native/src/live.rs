@@ -1,16 +1,15 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use engine::host::{FramePhase, median, now_ms};
+use engine::host::{Distribution, FramePhase, now_ms};
 use engine::{Game, GameHost};
 use engine_profiler::DeepCapture;
 use engine_profiler::sampler::SampledThread;
 use serde_json::{Value, json};
 use winit::event::WindowEvent;
 
-const HITCH_OVER_MEDIAN: f64 = 1.5;
 const INTERVAL: usize = 1;
-const COLUMNS: [&str; 19] = [
+const COLUMNS: [&str; 18] = [
     "at_ms",
     "interval_ms",
     "busy_ms",
@@ -25,7 +24,6 @@ const COLUMNS: [&str; 19] = [
     "draw_calls",
     "pipelines_created",
     "render_width",
-    "scale",
     "compiling",
     "motion",
     "mark",
@@ -119,7 +117,6 @@ impl LiveProfile {
             render.draw_calls as f64,
             render.pipelines_created as f64,
             stats.resolution.render_width as f64,
-            stats.dynamic_resolution.scale as f64,
             f64::from(stats.readiness.compiling),
             std::mem::take(&mut self.motion),
             engine::profiling::frame_mark() as f64,
@@ -129,19 +126,10 @@ impl LiveProfile {
 
     pub(crate) fn finish<G: Game>(self, host: &mut GameHost<G>) -> engine::Result<()> {
         let intervals: Vec<f64> = self.frames.iter().map(|frame| frame[INTERVAL]).collect();
-        let limit = median(&intervals).unwrap_or(0.0) * HITCH_OVER_MEDIAN;
-        let hitches: Vec<Value> = self
-            .frames
-            .iter()
-            .filter(|frame| frame[INTERVAL] > limit)
-            .map(row)
-            .collect();
         let frames: Vec<Value> = self.frames.iter().map(row).collect();
         let play = json!({
             "columns": COLUMNS,
-            "median_interval_ms": median(&intervals),
-            "hitch_over_ms": limit,
-            "hitches": hitches,
+            "interval_ms": Distribution::of(&intervals),
             "events": self.events,
             "frames": frames,
         });

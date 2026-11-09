@@ -27,9 +27,7 @@ pub use job_cache::JobStore;
 pub use jobs::{CacheOptions, JobOptions, JobPool, Written};
 pub use offscreen::{Frames, Offscreen, PixRecord, ProfileRecord, Record, Recorded};
 pub use options::{Argument, Arguments, HostOptions, Vendor, options, parameters};
-pub use window::{Flight, Measure, Window, WindowReport, run};
-
-pub(crate) use engine::DYNAMIC_RESOLUTION;
+pub use window::{Measure, Window, WindowReport, run};
 
 pub fn main<G: engine::Game, E: Into<engine::Error>>(
     title: &str,
