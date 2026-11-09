@@ -2,6 +2,7 @@ import { defineConfig } from "vite";
 import { resolve, sep } from "node:path";
 import { createReadStream, existsSync, readdirSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
+import { json } from "node:stream/consumers";
 import clients from "./src/generated/clients.json";
 import { wasmImport } from "./scripts/wasm-alias.mjs";
 
@@ -83,6 +84,14 @@ export default defineConfig(({ command, mode }) => ({
         for (const environment of Object.values(server.environments)) environment.moduleGraph.invalidateAll();
         server.ws.send({ type: "full-reload", path: "*" });
         response.end();
+      });
+      server.middlewares.use("/_engine/scene", async (request, response) => {
+        if (request.method !== "POST") { response.statusCode = 405; response.end(); return; }
+        try {
+          const { files } = await json(request) as { files: string[] };
+          server.ws.send({ type: "custom", event: "engine:scene-changed", data: { urls: files.map(file => `/_engine/source/${file}`) } });
+          response.end();
+        } catch { response.statusCode = 400; response.end(); }
       });
       server.middlewares.use("/_engine/source", async (request, response) => {
         try {

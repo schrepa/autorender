@@ -114,7 +114,7 @@ impl Changes {
         self.affected.contains(package)
     }
 
-    pub fn any(&self, covered: fn(&str) -> bool) -> bool {
+    pub fn any(&self, covered: impl Fn(&str) -> bool) -> bool {
         self.every || self.paths.iter().any(|path| covered(path))
     }
 }

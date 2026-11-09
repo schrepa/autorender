@@ -117,9 +117,8 @@ export interface GameOptions<T extends Runtime> {
   controls?: Record<string, { values: string; run(game: T, args: Record<string, unknown>): unknown }>;
   parameters?: Record<string, string>;
   poll?(game: T): void;
-  reload?(game: T, signal: AbortSignal): Promise<void>;
   level?(game: T, path: string, signal: AbortSignal, progress: (done: number, total: number) => void): Promise<void>;
-  source?: { url: string; load(signal: AbortSignal): Promise<string>; files?(source: string, signal: AbortSignal): Promise<unknown> };
+  source?: { url: string; load(signal: AbortSignal): Promise<string>; files(source: string, signal: AbortSignal): Promise<unknown> };
   ready?(game: T, controls: HostControls<T>): void;
   beforeFrame?(game: T, timestamp: number): void;
   afterFrame?(game: T, timestamp: number): void;
@@ -351,29 +350,6 @@ reset.addEventListener("click", () => {
   const current = live();
   if (current && !current.busy) guarded(() => current.game.reset_camera());
 }, listenerOptions);
-const reload = document.getElementById("reload") as HTMLButtonElement | null;
-reload?.addEventListener("click", async () => {
-  const current = live();
-  const reloadScene = options.reload?.bind(options);
-  if (!current || reload.disabled || !reloadScene) return;
-  const notice = element("notice");
-  const reloading = exclusive(async () => {
-    try {
-      await reloadScene(current.game, lifecycle.signal);
-      if (live() !== current) return;
-      current.game.suspend(); hud.reset();
-      notice.textContent = "Scene reloaded from its source file.";
-    } catch (error) {
-      if (fatal(error)) fail(error);
-      else if (!disposed()) notice.textContent = `Reload failed; the current scene is still running. ${String(error)}`;
-    }
-  });
-  if (!reloading) return;
-  reload.disabled = true;
-  await reloading;
-  if (!disposed()) reload.disabled = false;
-}, listenerOptions);
-
 async function start() {
   if (disposed()) return;
   pause.disabled = true;
@@ -468,5 +444,46 @@ if (import.meta.hot) import.meta.hot.dispose(() => {
   state = { kind: "disposed" };
   current?.game.free();
 });
+const source = options.source;
+const followed = import.meta.hot && source && URL.parse(source.url, location.href)?.href;
+if (import.meta.hot && source && followed) {
+  let edited = false;
+  let following = false;
+  let shown = false;
+  const reloadSource = async () => {
+    edited = false;
+    const current = live();
+    if (!current) return;
+    try {
+      const text = await source.load(lifecycle.signal);
+      const files = await source.files(text, lifecycle.signal);
+      if (live() !== current) return;
+      current.game.reload_scene(text, files);
+      hud.reset();
+      if (shown) message.hidden = true;
+      shown = false;
+    } catch (error) {
+      if (fatal(error)) { fail(error); return; }
+      if (disposed()) return;
+      const refused = engineError(error);
+      shown = true;
+      message.hidden = false;
+      message.textContent = `The scene edit was not applied; the previous scene is still running.\n${refused?.message ?? String(error)}`;
+      console.error(`{"event":"source_changed","error":${refused?.message ?? JSON.stringify(String(error))}}`);
+    }
+  };
+  const follow = async () => {
+    following = true;
+    while (edited && (state.kind === "starting" || live())) {
+      await (exclusive(reloadSource) ?? new Promise(resolve => setTimeout(resolve, 100)));
+    }
+    following = false;
+  };
+  import.meta.hot.on("engine:scene-changed", ({ urls }: { urls: string[] }) => {
+    if (!urls.some(url => URL.parse(url, location.href)?.href === followed)) return;
+    edited = true;
+    if (!following) void follow();
+  });
+}
 void start().catch(fail);
 }

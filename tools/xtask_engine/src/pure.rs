@@ -8,7 +8,7 @@ mod tables;
 mod terrain;
 mod textures;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::Path;
 use std::sync::Arc;
@@ -67,10 +67,18 @@ pub(crate) const CORPORA: &[Corpus] = &[
     },
 ];
 
-const REPLAYED: &[(&str, &str)] = &[
-    ("terrain", terrain::JOBS),
-    ("tables", tables::JOBS),
+const REPLAYED: &[(&str, &str, &[&JobKind])] = &[
+    ("terrain", terrain::JOBS, terrain::KINDS),
+    ("tables", tables::JOBS, tables::KINDS),
 ];
+
+pub(crate) fn replayed() -> BTreeSet<&'static str> {
+    REPLAYED
+        .iter()
+        .flat_map(|(_, _, kinds)| kinds.iter())
+        .map(|kind| kind.source().package())
+        .collect()
+}
 
 #[derive(Default)]
 pub(crate) struct Observations {
@@ -277,7 +285,7 @@ pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
             }
         }
     }
-    for &(name, jobs) in REPLAYED {
+    for &(name, jobs, _) in REPLAYED {
         if !(wasm && chosen.iter().any(|corpus| corpus.name == name)) {
             continue;
         }

@@ -69,8 +69,12 @@ pub fn dev(root: &Path, arguments: &[String]) -> Result<(), String> {
             "{}",
             json!({"event": "changed", "files": listed, "rebuild": rebuild})
         );
-        if !rebuild || build(root, game) {
-            reload(port)?;
+        if !rebuild {
+            post(port, "/_engine/scene", &json!({"files": changed}).to_string())?;
+            println!("{}", json!({"event": "scene_sent"}));
+        } else if build(root, game) {
+            post(port, "/_engine/reload", "")?;
+            println!("{}", json!({"event": "reloaded"}));
         }
     }
 }
@@ -104,22 +108,22 @@ fn build(root: &Path, game: Option<&str>) -> bool {
     built.is_ok()
 }
 
-fn reload(port: u16) -> Result<(), String> {
-    let failed = |error: std::io::Error| format!("cannot reload through Vite: {error}");
+fn post(port: u16, path: &str, body: &str) -> Result<(), String> {
+    let failed = |error: std::io::Error| format!("cannot post {path} to Vite: {error}");
     let mut stream = TcpStream::connect(("127.0.0.1", port)).map_err(failed)?;
     stream.set_read_timeout(Some(REPLY)).map_err(failed)?;
     write!(
         stream,
-        "POST /_engine/reload HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+        "POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
     )
     .map_err(failed)?;
     let mut reply = String::new();
     stream.read_to_string(&mut reply).map_err(failed)?;
     let status = reply.lines().next().unwrap_or_default();
     if !status.starts_with("HTTP/1.1 200") {
-        return Err(format!("Vite refused the reload: {status}"));
+        return Err(format!("Vite refused {path}: {status}"));
     }
-    println!("{}", json!({"event": "reloaded"}));
     Ok(())
 }
 

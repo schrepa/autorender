@@ -31,12 +31,6 @@ startGame({
     signal.throwIfAborted();
     return PlayerGame.create(canvas, source, files, params.get("without") ?? "");
   },
-  async reload(game, signal) {
-    const source = await loadScene(signal);
-    const files = await loadFiles(source, signal);
-    signal.throwIfAborted();
-    game.reload_scene(source, files);
-  },
   async level(game, path, signal, progress) {
     const url = checkedScene(path, checkedSource());
     const source = await loadSceneSource(url, signal);

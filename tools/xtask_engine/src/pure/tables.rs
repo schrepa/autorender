@@ -7,6 +7,7 @@ use engine_sky::tables::{CLOUD_TABLES, SKY_TABLES, clouds, f16_value, sky};
 use super::{JobLog, Observations};
 
 pub const JOBS: &str = "target/pure/tables-jobs.json";
+pub const KINDS: &[&JobKind] = &[&SKY_TABLES, &CLOUD_TABLES];
 const SLICE: u64 = 4096;
 
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {

@@ -3,7 +3,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use engine_codec as codec;
-use engine_core::{JobRef, RecordKey};
+use engine_core::{JobKind, JobRef, RecordKey};
 use engine_heightfield::layer::LayerKind;
 use engine_heightfield::tile::{
     BiomeRules, Generator, StackView, TerrainRecipe, Tile, TileJob, shaded_elsewhere,
@@ -41,6 +41,16 @@ const HORIZON_TEXELS: u32 = 128;
 const BOUNCE_PROBES: u32 = 64;
 const MACRO_TEXELS: u32 = 256;
 pub const JOBS: &str = "target/pure/terrain-jobs.json";
+pub const KINDS: &[&JobKind] = &[
+    &BAKE,
+    &TILE_BUILD,
+    &GROUND_GRID,
+    &LIGHTING,
+    &BOUNCE,
+    &MACRO_COLORS,
+    &PARTS,
+    &PORTALS,
+];
 
 #[expect(
     clippy::too_many_lines,

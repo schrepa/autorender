@@ -20,7 +20,7 @@ interface Host {
   gpuWorkDone?(): Promise<void> | undefined;
   fail(error: unknown): void;
   stopped(): string | undefined;
-  source?: { url: string; load(signal: AbortSignal): Promise<string>; files?(source: string, signal: AbortSignal): Promise<unknown> };
+  source?: { url: string; load(signal: AbortSignal): Promise<string>; files(source: string, signal: AbortSignal): Promise<unknown> };
   controls?: Record<string, PageControl>;
   parameters?: Record<string, string>;
 }
@@ -115,7 +115,7 @@ export function connectDevelopment(host: Host): () => void {
       case "source": {
         if (!host.source) return resumed({ missing: [] });
         const source = await host.source.load(host.signal);
-        const files = await host.source.files?.(source, host.signal);
+        const files = await host.source.files(source, host.signal);
         if (closed()) throw engineFailure(CLOSED);
         return parseJson(runtime.dev_reloaded!(source, context(), files));
       }

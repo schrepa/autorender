@@ -6005,6 +6005,7 @@ dependencies = [
  "engine_registry",
  "engine_scene",
  "engine_sky",
+ "engine_sources",
  "engine_standard",
  "engine_terrain",
  "engine_terrain_shading",

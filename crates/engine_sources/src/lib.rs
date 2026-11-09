@@ -283,6 +283,55 @@ pub fn emit_of(named: &[(&str, &str)]) {
     fs::write(out.join("sources.rs"), code).expect("OUT_DIR is writable");
 }
 
+fn sources(
+    manifest: &Path,
+    root: &Path,
+    every: bool,
+    folder: Option<&Path>,
+) -> BTreeMap<PathBuf, (Vec<PathBuf>, Vec<PathBuf>)> {
+    let own = normal(manifest);
+    let mut crates = BTreeSet::new();
+    crates.insert(own.clone());
+    reach(manifest, root, &mut crates, every);
+    crates
+        .into_iter()
+        .map(|dir| {
+            let mut files = Vec::new();
+            let found = match folder.filter(|_| dir == own) {
+                Some(folder) => {
+                    list(&normal(folder), &mut files);
+                    included(&files)
+                }
+                None => {
+                    list(&dir.join("src"), &mut files);
+                    Vec::new()
+                }
+            };
+            files.extend_from_slice(&found);
+            files.push(dir.join("Cargo.toml"));
+            files.sort();
+            files.dedup();
+            (dir, (found, files))
+        })
+        .collect()
+}
+
+pub fn job_key_files(manifest: &Path) -> Vec<String> {
+    let root = workspace_root(manifest);
+    let jobs = manifest.join("src").join("jobs");
+    let folder = jobs.is_dir().then_some(jobs.as_path());
+    let crates = sources(manifest, &root, false, folder);
+    let mut files: Vec<String> = crates
+        .values()
+        .flat_map(|(_, files)| files)
+        .map(|file| relative(&root, file))
+        .collect();
+    if !locked_externals(crates.keys(), &root).is_empty() {
+        files.push(relative(&root, &root.join("Cargo.lock")));
+    }
+    files
+}
+
 fn digest(
     package: &str,
     manifest: &Path,
@@ -290,37 +339,20 @@ fn digest(
     every: bool,
     folder: Option<&Path>,
 ) -> [u8; 32] {
-    let own = normal(manifest);
-    let mut crates = BTreeSet::new();
-    crates.insert(own.clone());
-    reach(manifest, root, &mut crates, every);
-
+    let crates = sources(manifest, root, every, folder);
     let mut hash = Sha256::new();
     hash.update(package.as_bytes());
     hash.update([0]);
-    for dir in &crates {
-        let src = dir.join("src");
-        let mut files = Vec::new();
-        match folder.filter(|_| *dir == own) {
-            Some(folder) => {
-                list(&normal(folder), &mut files);
-                let included = included(&files);
-                for file in &included {
-                    println!("cargo:rerun-if-changed={}", file.display());
-                }
-                files.extend(included);
-            }
-            None => list(&src, &mut files),
+    for (dir, (included, files)) in &crates {
+        for file in included {
+            println!("cargo:rerun-if-changed={}", file.display());
         }
-        files.push(dir.join("Cargo.toml"));
-        files.sort();
-        files.dedup();
-        println!("cargo:rerun-if-changed={}", src.display());
+        println!("cargo:rerun-if-changed={}", dir.join("src").display());
         println!(
             "cargo:rerun-if-changed={}",
             dir.join("Cargo.toml").display()
         );
-        for file in &files {
+        for file in files {
             hash.update(relative(root, file).as_bytes());
             hash.update([0]);
             hash.update(hashed(file));
@@ -331,14 +363,17 @@ fn digest(
         "cargo:rerun-if-changed={}",
         root.join("Cargo.lock").display()
     );
-    for locked in locked_externals(&crates, root) {
+    for locked in locked_externals(crates.keys(), root) {
         hash.update(locked.as_bytes());
         hash.update([0]);
     }
     hash.finalize().into()
 }
 
-fn locked_externals(crates: &BTreeSet<PathBuf>, root: &Path) -> BTreeSet<String> {
+fn locked_externals<'a>(
+    crates: impl IntoIterator<Item = &'a PathBuf>,
+    root: &Path,
+) -> BTreeSet<String> {
     let mut found = BTreeSet::new();
     let Some(lock) = read(&root.join("Cargo.lock")) else {
         return found;
