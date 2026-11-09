@@ -745,27 +745,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "coresmoke"
-version = "0.1.0"
-dependencies = [
- "bevy_ecs",
- "engine",
- "engine_command_line",
- "engine_core",
- "engine_meshes",
- "engine_native",
- "engine_places",
- "engine_places_rendering",
- "engine_places_simulation",
- "engine_places_world",
- "engine_registry",
- "engine_scene",
- "engine_standard",
- "engine_terrain",
- "serde_json",
-]
-
-[[package]]
 name = "cosmic-text"
 version = "0.19.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1083,19 +1062,13 @@ dependencies = [
 name = "engine_assetc"
 version = "0.1.0"
 dependencies = [
- "engine_command_line",
  "engine_core",
- "engine_heightfield",
- "engine_layer_hydrology",
  "engine_lodbuild",
  "engine_scene",
  "glam 0.30.9",
  "gltf",
- "png",
- "serde",
  "serde_json",
  "sha2",
- "tiff",
 ]
 
 [[package]]
@@ -1276,6 +1249,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_dynamic_resolution"
+version = "0.1.0"
+dependencies = [
+ "engine_core",
+ "engine_ecs",
+ "engine_sources",
+]
+
+[[package]]
 name = "engine_ecs"
 version = "0.1.0"
 dependencies = [
@@ -1397,6 +1379,7 @@ name = "engine_layer_heightmap"
 version = "0.1.0"
 dependencies = [
  "engine_codec",
+ "engine_command_line",
  "engine_core",
  "engine_ecs",
  "engine_heightfield",
@@ -1404,9 +1387,11 @@ dependencies = [
  "engine_places_world",
  "engine_sources",
  "glam 0.30.9",
+ "png",
  "schemars",
  "serde",
  "serde_json",
+ "tiff",
 ]
 
 [[package]]
@@ -1565,9 +1550,11 @@ dependencies = [
 name = "engine_native"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "engine",
  "engine_core",
  "engine_profiler",
+ "engine_registry",
  "engine_worker",
  "gilrs",
  "gltf",
@@ -1722,19 +1709,30 @@ dependencies = [
  "engine_core",
  "engine_ecs",
  "engine_fly_camera",
+ "engine_heightfield",
+ "engine_meshes",
  "engine_native",
+ "engine_navigation",
+ "engine_places",
+ "engine_places_rendering",
  "engine_places_simulation",
+ "engine_places_world",
  "engine_smoke",
  "engine_sources",
  "engine_standard",
  "engine_standard_smokes",
+ "engine_terrain",
+ "engine_terrain_shading",
+ "engine_water",
  "engine_worker",
  "glam 0.30.9",
  "serde",
  "serde_json",
+ "sha2",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "zstd",
 ]
 
 [[package]]
@@ -2016,6 +2014,7 @@ dependencies = [
  "engine_core",
  "engine_debug_view",
  "engine_dither",
+ "engine_dynamic_resolution",
  "engine_impostors",
  "engine_lighting",
  "engine_lights",
@@ -2135,6 +2134,8 @@ dependencies = [
  "engine_math",
  "engine_sources",
  "libm",
+ "serde_json",
+ "texture2ddecoder",
 ]
 
 [[package]]
@@ -5987,46 +5988,30 @@ dependencies = [
 name = "xtask_engine"
 version = "0.1.0"
 dependencies = [
- "base64",
  "bevy_ecs",
  "engine",
  "engine_assetc",
- "engine_assets",
  "engine_checks",
- "engine_codec",
  "engine_command_line",
  "engine_core",
  "engine_dev",
- "engine_heightfield",
  "engine_lodbuild",
  "engine_native",
- "engine_navigation",
  "engine_place",
  "engine_places_simulation",
- "engine_places_world",
  "engine_registry",
  "engine_scene",
- "engine_sky",
  "engine_sources",
  "engine_standard",
- "engine_terrain",
- "engine_terrain_shading",
- "engine_texture_cook",
- "engine_textures",
- "engine_water",
- "engine_worker",
- "glam 0.30.9",
  "gltf",
  "naga",
  "png",
  "serde_json",
  "sha2",
- "texture2ddecoder",
  "tiff",
  "toml_edit",
  "xtask",
  "zip",
- "zstd",
 ]
 
 [[package]]

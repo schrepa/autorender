@@ -173,6 +173,17 @@ impl RenderTarget {
         }
     }
 
+    pub fn on_display(&self) -> bool {
+        match self {
+            #[cfg(target_arch = "wasm32")]
+            Self::Canvas(_) => true,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Window { .. } => true,
+            #[cfg(not(target_arch = "wasm32"))]
+            Self::Offscreen { .. } => false,
+        }
+    }
+
     pub fn size(&self) -> (u32, u32) {
         match self {
             #[cfg(target_arch = "wasm32")]

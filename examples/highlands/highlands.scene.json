@@ -3592,6 +3592,9 @@
         4.0
       ]
     },
+    "dynamic_resolution": {
+      "enabled": true
+    },
     "ground_cover": {
       "looks": {
         "dry_grass": {

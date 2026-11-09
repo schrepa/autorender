@@ -108,21 +108,38 @@ fn clients_changed(lint: &Lint) -> bool {
 }
 
 fn replay_changed(lint: &Lint) -> bool {
-    let Ok(repository) = repository(&lint.root) else {
+    let (Ok(repository), Ok(corpora)) = (repository(&lint.root), pure::listed(&lint.root)) else {
         return true;
     };
+    let found = |package: Option<&str>| {
+        repository
+            .own()
+            .find(|own| Some(own.name.as_str()) == package)
+    };
     let mut keys = BTreeSet::new();
-    for package in pure::replayed() {
-        let Some(found) = repository.own().find(|own| own.name == package) else {
+    let mut folders = vec![
+        "crates/engine_worker/".to_owned(),
+        "tools/xtask_engine/src/pure".to_owned(),
+        "tools/xtask_engine/pure/".to_owned(),
+    ];
+    for corpus in &corpora {
+        let Some(owner) = found(corpus["owner"].as_str()) else {
             return true;
         };
-        keys.extend(engine_sources::job_key_files(&found.folder));
+        folders.extend(owner.file("src/pure/"));
+        for package in corpus["replays"].as_array().into_iter().flatten() {
+            let Some(replayed) = found(package.as_str()) else {
+                return true;
+            };
+            keys.extend(engine_sources::job_key_files(&replayed.folder));
+        }
     }
     lint.changes.any(|path| {
         keys.contains(path)
-            || path.starts_with("crates/engine_worker/")
-            || path.starts_with("tools/xtask_engine/src/pure")
-            || path.starts_with("tools/xtask_engine/pure/")
+            || folders
+                .iter()
+                .any(|folder| path.starts_with(folder.as_str()))
+            || path == pure::LISTED
             || path == "tools/xtask_engine/src/bricks.rs"
     })
 }
@@ -152,7 +169,20 @@ fn clippy_changed(lint: &Lint) -> Result<(), String> {
         .into_iter()
         .filter(|package| changes.affects(package))
         .collect();
+    let strict: Vec<&str> = changes
+        .affected
+        .iter()
+        .map(String::as_str)
+        .filter(|package| !free.contains(package))
+        .collect();
+    let (features, free_features) = (
+        required_features(&lint.root, &strict)?,
+        required_features(&lint.root, &free)?,
+    );
     let mut selection = vec!["--all-targets"];
+    if !features.is_empty() {
+        selection.extend(["--features", features.as_str()]);
+    }
     if changes.every {
         selection.push("--workspace");
         for package in &free {
@@ -168,7 +198,26 @@ fn clippy_changed(lint: &Lint) -> Result<(), String> {
     if changes.affected.len() > free.len() {
         clippy(&lint.root, &selection)?;
     }
-    clippy_free(&lint.root, &free, &["--all-targets"])
+    let mut options = vec!["--all-targets"];
+    if !free_features.is_empty() {
+        options.extend(["--features", free_features.as_str()]);
+    }
+    clippy_free(&lint.root, &free, &options)
+}
+
+fn required_features(root: &Path, packages: &[&str]) -> Result<String, String> {
+    let repository = repository(root)?;
+    Ok(packages
+        .iter()
+        .filter_map(|name| repository.package(name))
+        .flat_map(|package| {
+            package
+                .required_features
+                .iter()
+                .map(|feature| format!("{}/{feature}", package.name))
+        })
+        .collect::<Vec<_>>()
+        .join(","))
 }
 
 fn clippy_wasm(lint: &Lint) -> Result<(), String> {

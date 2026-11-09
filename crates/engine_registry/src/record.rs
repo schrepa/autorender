@@ -64,6 +64,7 @@ pub struct BrickRecord {
     source: [u8; 32],
     prefix: Option<&'static str>,
     smokes: &'static [Smoke],
+    corpora: Vec<&'static (dyn Any + Send + Sync)>,
     pub(crate) scopes: Vec<ScopeEntry>,
     current: Scope,
     pub(crate) spawned: fn(&mut World) -> ComponentId,
@@ -87,6 +88,7 @@ impl BrickRecord {
         package: &'static str,
         source: [u8; 32],
         smokes: &'static [Smoke],
+        corpora: Vec<&'static (dyn Any + Send + Sync)>,
     ) -> Self {
         let type_name = std::any::type_name::<B>();
         Self {
@@ -100,6 +102,7 @@ impl BrickRecord {
             source,
             prefix: None,
             smokes,
+            corpora,
             scopes: vec![ScopeEntry {
                 parent: None,
                 condition: None,
@@ -152,6 +155,12 @@ impl BrickRecord {
 
     pub fn smokes(&self) -> &'static [Smoke] {
         self.smokes
+    }
+
+    pub fn corpora<C: Any>(&self) -> impl Iterator<Item = &'static C> + '_ {
+        self.corpora
+            .iter()
+            .filter_map(|&corpus| corpus.downcast_ref::<C>())
     }
 
     pub fn error_codes(&self) -> &[&'static ErrorCode] {

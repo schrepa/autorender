@@ -4,8 +4,6 @@ use std::sync::{
     atomic::{AtomicU64, Ordering},
 };
 
-pub const UNIFORM_BINDING_BYTES: u64 = 16_384;
-
 #[derive(Clone, Copy, Debug)]
 pub struct StageLimits {
     pub bind_groups: u32,

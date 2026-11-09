@@ -22,14 +22,39 @@ use serde_json::Value;
 use crate::moves::NodeKind;
 use crate::{
     Error, ErrorCode, GpuStruct, JobKind, KindDecl, List, Module, Mover, MoverId, Operation, Pace,
-    PlaceDecl, SceneContext, SceneIds, Section, Slot, Smoke, Source, SubScene,
+    PlaceDecl, RecordKey, SceneContext, SceneIds, Section, Slot, Smoke, Source, SubScene,
 };
 
 pub trait Brick: 'static {
     const SOURCE: &'static Source;
     const JOBS: &'static [&'static JobKind] = &[];
     const SMOKES: &'static [Smoke] = &[];
+    const CORPORA: &'static [Corpus] = &[];
     fn register(bricks: &mut Bricks<'_>);
+}
+
+#[derive(Clone, Copy)]
+pub struct Corpus {
+    pub name: &'static str,
+    pub replays: &'static [&'static JobKind],
+    pub run: fn(&mut dyn PureSession) -> Result<(), String>,
+}
+
+pub trait PureSession {
+    fn root(&self) -> &std::path::Path;
+    fn list(&self) -> &JobList;
+    fn record(&mut self, name: &str, value: Value);
+    fn hash(&mut self, name: &str, bytes: &[u8]);
+    fn digest(&self, bytes: &[u8]) -> String;
+    fn check(&mut self, holds: bool, what: &dyn Fn() -> String);
+    fn share(&mut self, bytes: &[u8]) -> RecordKey;
+    fn run(&mut self, kind: &'static JobKind, input: &[u8]) -> Result<Vec<u8>, String>;
+    fn sliced(
+        &mut self,
+        kind: &'static JobKind,
+        input: &[u8],
+        slice: u64,
+    ) -> Result<Vec<u8>, String>;
 }
 
 pub struct Bricks<'r> {
@@ -348,7 +373,11 @@ impl Listed {
 
 fn record_of<B: Brick>() -> BrickRecord {
     let source = B::SOURCE;
-    let mut record = BrickRecord::new::<B>(source.package(), source.hash(), B::SMOKES);
+    let corpora = B::CORPORA
+        .iter()
+        .map(|corpus| corpus as &'static (dyn Any + Send + Sync))
+        .collect();
+    let mut record = BrickRecord::new::<B>(source.package(), source.hash(), B::SMOKES, corpora);
     record.set_game(source.game());
     if let Some(first) = source.modules().first() {
         let path = first.path();

@@ -96,6 +96,7 @@ const RINGS: &[(&str, &[&str])] = &[
             "engine_audio",
             "engine_fly_camera",
             "engine_follow_camera",
+            "engine_dynamic_resolution",
         ],
     ),
     (
@@ -134,8 +135,6 @@ const RINGS: &[(&str, &[&str])] = &[
 ];
 
 const RINGED: &[&str] = &["core", "core-internal", "place", "brick"];
-
-const ENGINE_GAMES: &[&str] = &["engine_player", "highlands"];
 
 const PLACE_EXTERNALS: &[&str] = &[
     "glam",
@@ -217,6 +216,7 @@ fn check(root: &Path, problems: &mut Vec<String>) -> Result<usize, String> {
         .collect();
     closed(&members, problems);
     placed(&members, problems);
+    implementors(&root, &members, problems)?;
     for member in &members {
         check_member(&root, &workspace, member, &folders, problems)?;
     }
@@ -372,6 +372,58 @@ fn placed(members: &[Member], problems: &mut Vec<String>) {
     }
 }
 
+fn implementors(root: &Path, members: &[Member], problems: &mut Vec<String>) -> Result<(), String> {
+    for member in members {
+        let kind = member.kind.as_deref().unwrap_or("no kind");
+        let source = member.dir.join("src");
+        if matches!(kind, "brick" | "game") || !source.is_dir() {
+            continue;
+        }
+        let mut files = Vec::new();
+        brick_files(&source, &mut files)?;
+        for file in files {
+            problems.push(format!(
+                "{}: a {kind} crate implements Brick in {}; only a brick in a ring or a game may",
+                member.label(),
+                relative(root, &file)
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn brick_files(folder: &Path, found: &mut Vec<PathBuf>) -> Result<(), String> {
+    let fail = |error: std::io::Error| format!("{}: {error}", folder.display());
+    let mut paths = fs::read_dir(folder)
+        .map_err(fail)?
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(fail)?;
+    paths.sort();
+    for path in paths {
+        if path.is_dir() {
+            brick_files(&path, found)?;
+        } else if path.extension().is_some_and(|extension| extension == "rs")
+            && fs::read_to_string(&path)
+                .map_err(|error| format!("{}: {error}", path.display()))?
+                .lines()
+                .any(implements_brick)
+        {
+            found.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn implements_brick(line: &str) -> bool {
+    let mut words = line.split_whitespace();
+    words.next() == Some("impl")
+        && words
+            .next()
+            .is_some_and(|path| path.rsplit("::").next() == Some("Brick"))
+        && words.next() == Some("for")
+}
+
 fn check_member(
     root: &Path,
     workspace: &Item,
@@ -402,9 +454,6 @@ fn check_member(
         problems.push(format!(
             "{at}: engine_rules is true on a game crate or absent"
         ));
-    }
-    if ENGINE_GAMES.contains(&member.name.as_str()) && member.engine_rules != true {
-        problems.push(format!("{at}: an engine game needs engine_rules = true"));
     }
     if matches!(kind, "brick" | "place" | "list")
         && !forbids_unsafe(&read(&member.manifest)?, workspace)
@@ -484,8 +533,9 @@ fn allowed(member: &Member, kind: &str, target: &Member) -> bool {
             "host" | "list" | "brick" | "place" | "core" | "support"
         ),
         "tool" => {
-            !target.at.starts_with("examples/")
-                || game(&member.at).is_some_and(|own| game(&target.at) == Some(own))
+            target_kind != "brick"
+                && (!target.at.starts_with("examples/")
+                    || game(&member.at).is_some_and(|own| game(&target.at) == Some(own)))
         }
         _ => false,
     }

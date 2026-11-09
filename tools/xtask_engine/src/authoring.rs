@@ -147,8 +147,32 @@ fn game_schemas(root: &Path) -> Result<Vec<(String, String)>, String> {
                 .ok_or_else(|| format!("{program} --schemas printed {name} as no text"))?;
             files.push((format!("{folder}/generated/{name}"), contents.to_owned()));
         }
+        files.push((
+            format!("{folder}/generated/corpora.json"),
+            corpora(root, &program)?,
+        ));
     }
     Ok(files)
+}
+
+fn corpora(root: &Path, program: &str) -> Result<String, String> {
+    let output = Command::new(program)
+        .args(["--pure", engine::smokes::LIST])
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("{program}: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "{program} --pure list: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let listed = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+        .find(|record| record["event"] == "corpora")
+        .ok_or_else(|| format!("{program} --pure list printed no corpora"))?;
+    Ok(serde_json::to_string_pretty(&listed["corpora"]).map_err(|error| error.to_string())? + "\n")
 }
 
 fn error_codes() -> String {

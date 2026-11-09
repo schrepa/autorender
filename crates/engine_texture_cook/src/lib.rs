@@ -9,6 +9,8 @@ mod astc;
 mod bc7;
 mod brick;
 mod mips;
+#[cfg(not(target_arch = "wasm32"))]
+mod pure;
 
 pub use brick::{TEXTURE_COOK, TextureCook};
 use engine_codec::{Error, ErrorCode, Expected};

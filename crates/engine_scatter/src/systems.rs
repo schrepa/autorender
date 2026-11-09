@@ -12,7 +12,9 @@ use engine_places_rendering::impostors::{
 use engine_places_rendering::occlusion::OcclusionSource;
 use engine_places_rendering::shadows::{ShadowChange, ShadowChanges};
 use engine_places_simulation::ground::TileKey;
-use engine_places_world::ground::{Foliage, PlacedTiles, PooledTile, TerrainTiles, TileFace};
+use engine_places_world::ground::{
+    Foliage, GroundTiles, PlacedTiles, PooledTile, TerrainTiles, TileFace,
+};
 use glam::Vec3;
 
 use crate::ScatterBrick;
@@ -334,7 +336,7 @@ type PlaceReads<'w> = (
 pub(crate) fn place_pool(
     (tiles, settings, library, residency, limits): PlaceReads<'_>,
     (detail, time): (Res<Detail>, Res<FrameTime>),
-    mut far: ResMut<FarCoverTable>,
+    (ground, mut far): (Res<GroundTiles>, ResMut<FarCoverTable>),
     mut state: ResMut<ScatterState>,
 ) {
     let state = &mut *state;
@@ -355,8 +357,12 @@ pub(crate) fn place_pool(
     }
     let (resolved, kept) = resolve_all(&tiles, &settings, &library);
     state.kept = kept;
-    if tiles.is_changed() || settings.is_changed() || library.is_changed() {
-        far.fill(&tiles.terrains, &resolved, &library);
+    if tiles.is_changed() || ground.is_changed() || settings.is_changed() || library.is_changed() {
+        far.set_if_neq(FarCoverTable::of(
+            (&tiles.terrains, &ground.palette),
+            &resolved,
+            &library,
+        ));
     }
     let wanted = asset_uses(&resolved);
     if state.uses.assets() != wanted.as_slice() {

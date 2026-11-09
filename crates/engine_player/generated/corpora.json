@@ -1,0 +1,29 @@
+[
+  {
+    "name": "terrain",
+    "owner": "engine_player",
+    "replays": [
+      "engine_navigation",
+      "engine_terrain",
+      "engine_terrain_shading",
+      "engine_water"
+    ]
+  },
+  {
+    "name": "caches",
+    "owner": "engine_player",
+    "replays": []
+  },
+  {
+    "name": "tables",
+    "owner": "engine_sky",
+    "replays": [
+      "engine_sky"
+    ]
+  },
+  {
+    "name": "textures",
+    "owner": "engine_texture_cook",
+    "replays": []
+  }
+]

@@ -3,15 +3,15 @@ use engine_core::AssetLibrary;
 use engine_heightfield::tile::shaded_elsewhere;
 use engine_places_simulation::ground::{Pyramid, TileKey};
 use engine_places_world::ground::{
-    PALETTE_ENTRIES, SurfaceMaps, SurfaceMaterial, SurfaceProjection, TerrainEntry, TerrainTiles,
-    TileFace,
+    PALETTE_ENTRIES, PaletteEntry, SurfaceMaps, SurfaceMaterial, SurfaceProjection, TerrainEntry,
+    TerrainTiles, TileFace,
 };
 use engine_render::{Allocation, Prepare};
 
 use super::part::{Handles, TerrainGpu};
 use super::{DIRECTORY_AT, HOLE_WORDS, NO_HOLES, VIEWS};
 use crate::gpu::{
-    NOT_RESIDENT, PaletteEntry, TABLE_FADES, TABLE_NOW, TABLE_TERRAINS, TABLE_VIEWS, TERRAIN_WORDS,
+    NOT_RESIDENT, TABLE_FADES, TABLE_NOW, TABLE_TERRAINS, TABLE_VIEWS, TERRAIN_WORDS,
     TerrainUniform, VIEW_WORDS, ViewUniform,
 };
 use crate::state::{Atlas, AtlasMoves, TileId, Upload, listed_tile};

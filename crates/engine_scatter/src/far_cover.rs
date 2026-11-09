@@ -1,11 +1,11 @@
 use bevy_ecs::prelude::{Entity, Resource};
 use engine_core::{AssetLibrary, BASE_COLOR_MAP};
-use engine_places_world::ground::{PALETTE_ENTRIES, PlacedLayer, TerrainEntry};
+use engine_places_world::ground::{PlacedLayer, TerrainEntry};
 
 use crate::groups::Resolved;
 use crate::layouts::PlacedFar;
 
-#[derive(Resource, Default)]
+#[derive(Resource, Default, PartialEq)]
 pub(crate) struct FarCoverTable {
     pub(crate) bases: Vec<u32>,
     pub(crate) entries: Vec<PlacedFar>,
@@ -31,23 +31,22 @@ impl PlacedSums {
 }
 
 impl FarCoverTable {
-    pub(crate) fn fill(
-        &mut self,
-        terrains: &[TerrainEntry],
+    pub(crate) fn of(
+        (terrains, palette): (&[TerrainEntry], &[(Entity, Option<u32>)]),
         resolved: &[(Entity, Vec<Option<Resolved<'_>>>)],
         library: &AssetLibrary,
-    ) {
-        let mut bases = Vec::with_capacity(terrains.len());
-        let mut entries = Vec::with_capacity(PALETTE_ENTRIES as usize);
+    ) -> Self {
+        let mut table = Self::default();
         let mut sums = Vec::new();
         for (terrain, (_, assets)) in terrains.iter().zip(resolved) {
-            let room = PALETTE_ENTRIES as usize - entries.len();
-            let kept = terrain.materials.len().min(room);
-            bases.push(if kept == terrain.materials.len() {
-                entries.len() as u32
-            } else {
-                0
-            });
+            let base = palette
+                .iter()
+                .find(|(entity, _)| *entity == terrain.terrain)
+                .and_then(|&(_, base)| base);
+            table.bases.push(base.unwrap_or(0));
+            let Some(base) = base else {
+                continue;
+            };
             sums.clear();
             sums.extend(
                 terrain
@@ -55,23 +54,16 @@ impl FarCoverTable {
                     .iter()
                     .map(|layer| placed_sums(assets, library, layer)),
             );
-            entries.extend((0..kept).map(|material| {
+            let end = base as usize + terrain.materials.len();
+            if table.entries.len() < end {
+                table.entries.resize(end, PlacedFar::default());
+            }
+            for (material, held) in table.entries[base as usize..end].iter_mut().enumerate() {
                 let (placed, size) = placed_terms(&terrain.layers, &sums, material);
-                PlacedFar { placed, size }
-            }));
+                *held = PlacedFar { placed, size };
+            }
         }
-        self.bases = bases;
-        if entries.is_empty() {
-            return;
-        }
-        self.entries.resize(
-            PALETTE_ENTRIES as usize,
-            PlacedFar {
-                placed: [0.0; 4],
-                size: [0.0; 4],
-            },
-        );
-        self.entries[..entries.len()].copy_from_slice(&entries);
+        table
     }
 
     pub(crate) fn words(&self) -> Vec<u32> {

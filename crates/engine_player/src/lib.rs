@@ -10,8 +10,11 @@ mod browser;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;
 mod player;
+#[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+mod pure;
 
 pub mod bricks {
+    pub mod corpora;
     pub mod walk;
 }
 
@@ -28,6 +31,7 @@ pub fn bricks<L: Listing>(list: L) -> L {
         .with::<FlyCameraBrick>()
         .with::<bricks::walk::PlayerWalkBrick>()
         .with::<StandardSmokesBrick>()
+        .with::<bricks::corpora::PlayerCorporaBrick>()
 }
 
 engine_worker::export_worker!(bricks);

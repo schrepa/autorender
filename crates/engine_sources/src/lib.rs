@@ -385,7 +385,7 @@ fn locked_externals<'a>(
     let members = workspace
         .as_ref()
         .and_then(|item| item.get("workspace")?.get("dependencies"));
-    let mut pending: Vec<&Table> = Vec::new();
+    let mut pending: Vec<(&Table, BTreeSet<String>)> = Vec::new();
     for dir in crates {
         let Some(manifest) = read(&dir.join("Cargo.toml")) else {
             continue;
@@ -394,11 +394,17 @@ fn locked_externals<'a>(
             .get("package")
             .and_then(|package| package.get("name"))
             .and_then(Item::as_str);
-        pending.extend(packages.iter().filter(|package| {
-            field(package, "source").is_none() && field(package, "name") == name
-        }));
+        let unused = unused_optional(&manifest);
+        pending.extend(
+            packages
+                .iter()
+                .filter(|package| {
+                    field(package, "source").is_none() && field(package, "name") == name
+                })
+                .map(|package| (package, unused.clone())),
+        );
     }
-    while let Some(package) = pending.pop() {
+    while let Some((package, unused)) = pending.pop() {
         let Some(dependencies) = package.get("dependencies").and_then(Item::as_array) else {
             continue;
         };
@@ -407,6 +413,9 @@ fn locked_externals<'a>(
                 continue;
             };
             let name = field(entry, "name").unwrap_or_default();
+            if unused.contains(name) {
+                continue;
+            }
             let member = members
                 .and_then(|members| members.get(name))
                 .is_some_and(|member| member.get("path").is_some());
@@ -417,7 +426,7 @@ fn locked_externals<'a>(
                 .map(|key| field(entry, key).unwrap_or_default())
                 .join(" ");
             if found.insert(identity) {
-                pending.push(entry);
+                pending.push((entry, BTreeSet::new()));
             }
         }
     }
@@ -511,16 +520,66 @@ fn dependency_tables(manifest: &Item) -> Vec<&Item> {
     tables
 }
 
+fn unused_optional(manifest: &Item) -> BTreeSet<String> {
+    let features = manifest.get("features");
+    let (mut seen, mut enabled) = (BTreeSet::new(), BTreeSet::new());
+    let mut pending = vec!["default".to_owned()];
+    while let Some(feature) = pending.pop() {
+        if !seen.insert(feature.clone()) {
+            continue;
+        }
+        let listed = features
+            .and_then(|features| features.get(feature.as_str()))
+            .and_then(Item::as_array);
+        for item in listed.into_iter().flatten().filter_map(Value::as_str) {
+            let dependency = match item.split_once('/') {
+                Some((dependency, _)) => dependency,
+                None => {
+                    pending.push(item.to_owned());
+                    item.strip_prefix("dep:").unwrap_or(item)
+                }
+            };
+            if !dependency.ends_with('?') {
+                enabled.insert(dependency.to_owned());
+            }
+        }
+    }
+    let mut unused = BTreeSet::new();
+    for table in dependency_tables(manifest) {
+        let Some(dependencies) = table.as_table_like() else {
+            continue;
+        };
+        for (key, entry) in dependencies.iter() {
+            if entry.get("optional").and_then(Item::as_bool) != Some(true) || enabled.contains(key)
+            {
+                continue;
+            }
+            unused.insert(key.to_owned());
+            unused.extend(
+                entry
+                    .get("package")
+                    .and_then(Item::as_str)
+                    .map(str::to_owned),
+            );
+        }
+    }
+    unused
+}
+
 fn reach(dir: &Path, root: &Path, found: &mut BTreeSet<PathBuf>, every: bool) {
     let Some(manifest) = read(&dir.join("Cargo.toml")) else {
         return;
     };
     let workspace = read(&root.join("Cargo.toml"));
+    let unused = unused_optional(&manifest);
     for table in dependency_tables(&manifest) {
         let Some(dependencies) = table.as_table_like() else {
             continue;
         };
         for (key, entry) in dependencies.iter() {
+            if unused.contains(key) {
+                continue;
+            }
             let inherited = entry.get("workspace").and_then(Item::as_bool) == Some(true);
             let (source, base) = if inherited {
                 let declared = workspace
@@ -644,7 +703,7 @@ fn scratch(name: &str) -> bool {
 
 fn test_code(name: &str) -> bool {
     let stem = name.strip_suffix(".rs").unwrap_or(name);
-    ["smoke", "smokes", "tests"].contains(&stem)
+    ["smoke", "smokes", "tests", "pure"].contains(&stem)
         || stem.ends_with("_smoke")
         || stem.ends_with("_smokes")
 }

@@ -35,6 +35,7 @@ pub fn render_size(
     (width, height): (u32, u32),
     pixel_ratio: f64,
     settings: &Resolution,
+    scale: f64,
 ) -> Option<(u32, u32)> {
     if width == 0 || height == 0 {
         return None;
@@ -46,5 +47,9 @@ pub fn render_size(
         ratio,
         settings,
     )?;
-    Some((wide.min(width), tall.min(height)))
+    let scale = known(scale);
+    let scaled = |policy: u32, display: u32| {
+        ((f64::from(policy.min(display)) * scale).round() as u32).clamp(1, display)
+    };
+    Some((scaled(wide, width), scaled(tall, height)))
 }

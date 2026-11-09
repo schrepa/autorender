@@ -63,6 +63,7 @@ pub fn options() -> Vec<CommandOption> {
         CommandOption::flag("--dev"),
         CommandOption::taking("--smoke", "NAME,...|all|list"),
         CommandOption::flag("--schemas"),
+        CommandOption::taking("--pure", "NAME,...|all|list"),
         CommandOption::taking("--dev-artifacts", "DIR").defaults_to(default_artifacts().display()),
         CommandOption::flag("--help"),
         CommandOption::flag("--json"),
@@ -200,6 +201,7 @@ pub struct HostOptions {
     pub dev_artifacts: Option<PathBuf>,
     pub smoke: Option<String>,
     pub schemas: bool,
+    pub pure: Option<String>,
     pub cook: Option<PathBuf>,
     pub workers_given: bool,
 }
@@ -225,6 +227,7 @@ impl Default for HostOptions {
             dev_artifacts: None,
             smoke: None,
             schemas: false,
+            pure: None,
             cook: None,
             workers_given: false,
         }
@@ -354,6 +357,7 @@ impl HostOptions {
                 arguments.flag(argument)?;
                 self.schemas = true;
             }
+            "--pure" => self.pure = Some(arguments.value(argument)?),
             _ => return Ok(false),
         }
         Ok(true)
@@ -410,6 +414,11 @@ impl HostOptions {
                 Error::new(ErrorCode::InvalidArguments, "--schemas").expected(Expected::Supported)
             );
         }
+        if self.pure.is_some() && !cfg!(feature = "dev") {
+            return Err(
+                Error::new(ErrorCode::InvalidArguments, "--pure").expected(Expected::Supported)
+            );
+        }
         let others = [
             ("--offscreen", self.offscreen.is_some()),
             ("--dev", self.dev),
@@ -437,6 +446,14 @@ impl HostOptions {
         {
             return Err(excludes(other));
         }
+        if self.pure.is_some()
+            && let Some(other) = other
+                .or(self.smoke.is_some().then_some("--smoke"))
+                .or(self.cook.is_some().then_some("--cook"))
+                .or(self.schemas.then_some("--schemas"))
+        {
+            return Err(excludes(other));
+        }
         if self.counters.is_some() && self.sample_to.is_none() && !self.dev {
             return Err(needs("--sample-to"));
         }
@@ -461,6 +478,10 @@ impl HostOptions {
             return engine::tooling::print_schemas(bricks).map_err(|problems| {
                 Error::new(ErrorCode::InvalidArguments, "--schemas").got(problems)
             });
+        }
+        #[cfg(feature = "dev")]
+        if let Some(names) = &self.pure {
+            return crate::pure::run(names, bricks);
         }
         let build = move |engine: &mut Engine| self.shown(engine, build);
         self.start_tools()?;

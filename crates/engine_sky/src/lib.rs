@@ -9,12 +9,16 @@ mod clouds;
 mod environment;
 mod gpu_layouts;
 mod haze;
+#[cfg(not(target_arch = "wasm32"))]
+mod pure;
 mod settings;
 mod sky;
 pub mod tables;
 mod views;
 
 use bevy_ecs::prelude::*;
+#[cfg(not(target_arch = "wasm32"))]
+use engine_core::Corpus;
 use engine_core::{
     AttachPoint, Brick, Bricks, JobKind, Pass, PassName, PassViews, Schedule, Slot, SlotSet,
     Source, Writes, never,
@@ -51,6 +55,12 @@ pub struct SkyBrick;
 impl Brick for SkyBrick {
     const SOURCE: &'static Source = &SOURCE;
     const JOBS: &'static [&'static JobKind] = &[&tables::SKY_TABLES, &tables::CLOUD_TABLES];
+    #[cfg(not(target_arch = "wasm32"))]
+    const CORPORA: &'static [Corpus] = &[Corpus {
+        name: "tables",
+        replays: Self::JOBS,
+        run: pure::tables::run,
+    }];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

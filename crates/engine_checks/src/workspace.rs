@@ -25,6 +25,7 @@ pub struct Package {
     pub path: Option<String>,
     pub member: bool,
     pub dependencies: Vec<Dependency>,
+    pub required_features: Vec<String>,
     pub engine: Value,
 }
 
@@ -138,6 +139,16 @@ impl Repository {
                     })
                 })
                 .collect();
+            let mut required_features: Vec<String> = package["targets"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .flat_map(|target| target["required-features"].as_array().into_iter().flatten())
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect();
+            required_features.sort();
+            required_features.dedup();
             packages.push(Package {
                 name,
                 folder,
@@ -145,6 +156,7 @@ impl Repository {
                 path,
                 member,
                 dependencies,
+                required_features,
                 engine: package["metadata"]["engine"].clone(),
             });
         }

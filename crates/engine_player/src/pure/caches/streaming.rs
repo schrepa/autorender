@@ -1,21 +1,23 @@
 use std::path::Path;
 
+use bevy_ecs::world::World;
+use engine::scene::{SceneDocument, SceneKinds};
 use engine_core::glam::Vec3;
 use engine_core::{
-    BrickList, Camera, Engine, Projection, Readiness, Teleport, Transform, main_camera,
-    place_camera, send_ask,
+    BrickList, Camera, Engine, Projection, PureSession, Readiness, Section, Teleport, Transform,
+    main_camera, place_camera, send_ask,
 };
-use engine_registry::Registry;
-use engine_scene::{SceneDocument, SceneKinds};
-use engine_terrain::TileKey;
+use engine_terrain::{TerrainStats, TileKey};
+use engine_terrain_shading::TerrainShadingStats;
+use engine_water::WaterStats;
 use serde_json::{Map, Value, json};
 
-use crate::{Report, hash};
+use super::hash;
 
+const TRACE: &str = "target/pure/caches-trace.txt";
 const FIXTURE: &str = "web/scripts/fixtures/terrain.scene.json";
 const FRAMES: u32 = 400;
 const LISTING: &str = "terrain_listing";
-const SECTIONS: [&str; 3] = ["terrain_stats", "water_stats", "terrain_shading_stats"];
 const FIELDS: [&str; 29] = [
     "terrains",
     "resident_tiles",
@@ -48,8 +50,8 @@ const FIELDS: [&str; 29] = [
     "surroundings_tiles",
 ];
 
-pub fn run(trace: Option<&Path>, report: &mut Report) -> Result<(), String> {
-    let mut engine = load()?;
+pub fn run(session: &mut dyn PureSession) -> Result<(), String> {
+    let mut engine = load(session.root())?;
     let main = main_camera(engine.app.world()).ok_or("the engine holds no main view")?;
     let mut lines = Vec::with_capacity(FRAMES as usize);
     for frame in 0..FRAMES {
@@ -82,36 +84,35 @@ pub fn run(trace: Option<&Path>, report: &mut Report) -> Result<(), String> {
         lines.push(line);
     }
     let text = lines.join("\n") + "\n";
-    if let Some(path) = trace {
-        if let Some(folder) = path.parent() {
-            std::fs::create_dir_all(folder)
-                .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
-        }
-        std::fs::write(path, &text)
-            .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+    let path = session.root().join(TRACE);
+    if let Some(folder) = path.parent() {
+        std::fs::create_dir_all(folder)
+            .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
     }
-    report.record("terrain trace", hash(text.as_bytes()));
-    report.record("terrain frames", FRAMES);
-    report.record(
+    std::fs::write(&path, &text)
+        .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+    session.record("terrain trace", hash(text.as_bytes()).into());
+    session.record("terrain frames", FRAMES.into());
+    session.record(
         "terrain last frame",
-        lines.last().cloned().unwrap_or_default(),
+        lines.last().cloned().unwrap_or_default().into(),
     );
     Ok(())
 }
 
-fn stats(world: &bevy_ecs::world::World) -> Result<Value, String> {
-    let registry = world
-        .get_resource::<Registry>()
-        .ok_or("the engine holds no brick registry")?;
-    let sections: Vec<Value> = SECTIONS
-        .iter()
-        .map(|key| {
-            registry
-                .stats_section(key)
-                .map(|entry| entry.read(world))
-                .ok_or_else(|| format!("no listed brick keeps the stats section {key}"))
-        })
-        .collect::<Result<_, _>>()?;
+fn section<S: Section>(world: &World) -> Result<Value, String> {
+    let stats = world
+        .get_resource::<S>()
+        .ok_or_else(|| format!("no listed brick keeps the stats section {}", S::KEY))?;
+    serde_json::to_value(stats).map_err(|error| error.to_string())
+}
+
+fn stats(world: &World) -> Result<Value, String> {
+    let sections = [
+        section::<TerrainStats>(world)?,
+        section::<WaterStats>(world)?,
+        section::<TerrainShadingStats>(world)?,
+    ];
     let mut fields = Map::new();
     for field in FIELDS {
         let value = sections
@@ -127,7 +128,7 @@ fn stats(world: &bevy_ecs::world::World) -> Result<Value, String> {
     Ok(Value::Object(fields))
 }
 
-fn listing(world: &mut bevy_ecs::world::World) -> Result<Vec<(bool, Vec<TileKey>, bool)>, String> {
+fn listing(world: &mut World) -> Result<Vec<(bool, Vec<TileKey>, bool)>, String> {
     let listed = engine::host::run_operation(world, LISTING, json!({}))
         .map_err(|error| format!("{LISTING}: {error}"))?;
     let unread = || format!("{LISTING} answered {listed}");
@@ -189,17 +190,13 @@ fn camera(frame: u32) -> (Transform, bool) {
     )
 }
 
-fn load() -> Result<Engine, String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .ok_or("cannot locate the workspace above tools/coresmoke")?;
+fn load(root: &Path) -> Result<Engine, String> {
     let path = root.join(FIXTURE);
     let source = std::fs::read_to_string(&path)
         .map_err(|error| format!("cannot read {FIXTURE}: {error}"))?;
     let mut engine = engine::engine(engine_standard::everything::<BrickList>)
         .map_err(|error| error.to_string())?;
-    engine.set_frame(crate::FRAME);
+    engine.set_frame(super::FRAME);
     let kinds = SceneKinds::of(engine.app.world());
     let document = SceneDocument::from_json(&source).map_err(|error| error.to_string())?;
     document

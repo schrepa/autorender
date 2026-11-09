@@ -378,6 +378,7 @@
           "SceneDebugView",
           "SceneDepthBias",
           "SceneDither",
+          "SceneDynamicResolution",
           "SceneEmitter",
           "SceneEnvironment",
           "SceneFilter",
@@ -539,6 +540,8 @@
           "dither",
           "drawn",
           "drawn_component",
+          "dynamic_resolution",
+          "dynamic_resolution_stats",
           "exposure_stats",
           "feeds",
           "foliage",
@@ -1283,7 +1286,7 @@
       "steepest": 0.016481399536132812,
       "tunnels": 1
     },
-    "bakes": "2a55969b162f79f9",
+    "bakes": "d6840f3d3b015b87",
     "bounce": {
       "blocks": 1024,
       "detailed blocks": 474,
@@ -1307,7 +1310,7 @@
       ],
       "texels": 65536
     },
-    "pack": "495136115f99168e",
+    "pack": "075f75971c5a7eb0",
     "pack records": 46,
     "portals 0/0/0": "fb26e1b9f5bd9fd8",
     "portals 0/0/1": "29e88506dde27d87",

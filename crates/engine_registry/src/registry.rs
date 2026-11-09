@@ -507,6 +507,13 @@ impl Registry {
         bricks.chain(places)
     }
 
+    pub fn corpora<C: Any>(&self) -> impl Iterator<Item = (&'static str, &'static C)> + '_ {
+        self.bricks.iter().flat_map(|record| {
+            let owner = record.owner().unwrap_or(record.package);
+            record.corpora::<C>().map(move |corpus| (owner, corpus))
+        })
+    }
+
     pub fn smoke(&self, name: &str) -> Option<(&'static str, &'static Smoke)> {
         self.smokes().find(|(_, smoke)| smoke.name == name)
     }

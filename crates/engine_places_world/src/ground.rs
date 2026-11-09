@@ -9,12 +9,26 @@ use engine_heightfield::tile::{
     OP_LAKE, OP_MAX, OP_MIN, OP_MULTIPLY, OP_NOISE, OP_PATH, OP_POWER, OP_REMAP, OP_RIVER,
     OP_VALUE, OP_WETNESS, OP_WORN, Placed, Steep,
 };
-use engine_place::{Feed, List, MaterialHandle, MeshHandle, Slot, Stamp, TextureHandle};
+use engine_place::{
+    Feed, List, MaterialHandle, MeshHandle, Slot, Stamp, TextureHandle, UNIFORM_BINDING_BYTES,
+    gpu_struct,
+};
 use engine_places_simulation::ground::{Pyramid, TILE_QUADS, TileKey};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
-pub const PALETTE_ENTRIES: u32 = 113;
+gpu_struct! {
+    pub struct PaletteEntry {
+        pub color: [f32; 4],
+        pub params: [f32; 4],
+        pub maps: [f32; 4],
+        pub far: [f32; 4],
+        pub relief: [f32; 4],
+        pub heights: [f32; 4],
+    }
+}
+
+pub const PALETTE_ENTRIES: u32 = (UNIFORM_BINDING_BYTES / size_of::<PaletteEntry>() as u64) as u32;
 
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,

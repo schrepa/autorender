@@ -1,5 +1,6 @@
 use bevy_ecs::prelude::*;
-use engine_core::{GpuBits, gpu_bits, gpu_consts, gpu_struct};
+use engine_core::{GpuBits, GpuStruct, gpu_bits, gpu_consts, gpu_struct};
+use engine_places_world::ground::PaletteEntry;
 
 use crate::jobs::gpu::{BounceBin, BounceBlockWord, TILE_STRIDE};
 use crate::jobs::{bounce, lighting};
@@ -66,11 +67,6 @@ pub const HEIGHT_FORMAT: engine_render::wgpu::TextureFormat =
 
 pub const PALETTE_BYTES: usize =
     engine_places_world::ground::PALETTE_ENTRIES as usize * size_of::<PaletteEntry>();
-
-const _: () = assert!(
-    engine_places_world::ground::PALETTE_ENTRIES as usize * size_of::<PaletteEntry>() <= 16_384,
-    "palette_fits_a_uniform_binding"
-);
 
 const _: () = assert!(
     SUBDIVISION_MEASURE > SUBDIVISION_DRAW + 4
@@ -170,7 +166,8 @@ pub struct RiverMaps {
     pub beds: bool,
 }
 
-pub(crate) const BITS: &[&str] = &[
+pub(crate) const GENERATED: &[&str] = &[
+    <PaletteEntry as GpuStruct>::WGSL,
     <PatchTexel as GpuBits>::WGSL,
     <BounceBlockWord as GpuBits>::WGSL,
     <BounceBin as GpuBits>::WGSL,
@@ -213,17 +210,6 @@ gpu_struct! {
         pub level: [u32; 4],
         pub kept: [u32; 4],
         pub finer: [u32; 4],
-    }
-}
-
-gpu_struct! {
-    pub struct PaletteEntry {
-        pub color: [f32; 4],
-        pub params: [f32; 4],
-        pub maps: [f32; 4],
-        pub far: [f32; 4],
-        pub relief: [f32; 4],
-        pub heights: [f32; 4],
     }
 }
 

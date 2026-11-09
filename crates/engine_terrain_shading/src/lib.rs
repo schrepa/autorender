@@ -59,7 +59,7 @@ impl Brick for TerrainShadingBrick {
             .resource::<state::RecordsSettling>()
             .piece::<HorizonsPiece>()
             .generated(debug::GENERATED)
-            .generated(gpu::BITS)
+            .generated(gpu::GENERATED)
             .surface_kind(SurfaceKind { name: "ground" })
             .join::<TraceDepths>((), Some(trace_depth::MODULE))
             .join::<CookList>(Cook::new(shadings::cook), None)

@@ -2864,6 +2864,88 @@
       },
       "type": "object"
     },
+    "SceneDynamicResolution": {
+      "additionalProperties": false,
+      "properties": {
+        "aim": {
+          "default": 0.9,
+          "exclusiveMinimum": 0.0,
+          "format": "double",
+          "type": "number"
+        },
+        "budget_ms": {
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 1.0,
+          "type": [
+            "number",
+            "null"
+          ]
+        },
+        "enabled": {
+          "default": false,
+          "type": "boolean"
+        },
+        "interval_limit_ms": {
+          "default": 100.0,
+          "exclusiveMinimum": 0.0,
+          "format": "double",
+          "type": "number"
+        },
+        "lower_frames": {
+          "default": 3,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "max_scale": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.25,
+          "type": "number"
+        },
+        "min_scale": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.25,
+          "type": "number"
+        },
+        "over": {
+          "default": 1.05,
+          "exclusiveMinimum": 0.0,
+          "format": "double",
+          "type": "number"
+        },
+        "probe_frames": {
+          "default": 120,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "raise_frames": {
+          "default": 30,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "step": {
+          "default": 0.03125,
+          "exclusiveMinimum": 0.0,
+          "format": "double",
+          "maximum": 1.0,
+          "type": "number"
+        },
+        "under": {
+          "default": 0.85,
+          "exclusiveMinimum": 0.0,
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
     "SceneEmitter": {
       "additionalProperties": false,
       "properties": {
@@ -3199,6 +3281,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/DrawnSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "dynamic_resolution": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneDynamicResolution"
             },
             {
               "type": "null"

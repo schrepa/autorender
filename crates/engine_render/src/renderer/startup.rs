@@ -5,7 +5,7 @@ pub(super) fn device_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
     wgpu::Limits {
         max_buffer_size: adapter.max_buffer_size,
         max_storage_buffer_binding_size: adapter.max_storage_buffer_binding_size,
-        max_texture_dimension_2d: adapter.max_texture_dimension_2d.min(8_192),
+        max_texture_dimension_2d: adapter.max_texture_dimension_2d,
         max_storage_buffers_per_shader_stage: adapter
             .max_storage_buffers_per_shader_stage
             .max(required.storage_buffers),
@@ -16,7 +16,7 @@ pub(super) fn device_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
         max_storage_textures_per_shader_stage: required.storage_textures,
         max_dynamic_uniform_buffers_per_pipeline_layout: required.dynamic_uniform_buffers,
         max_dynamic_storage_buffers_per_pipeline_layout: required.dynamic_storage_buffers,
-        max_uniform_buffer_binding_size: crate::pipelines::UNIFORM_BINDING_BYTES,
+        max_uniform_buffer_binding_size: engine_place::UNIFORM_BINDING_BYTES,
         max_texture_array_layers: adapter.max_texture_array_layers,
         max_color_attachments: adapter.max_color_attachments,
         max_color_attachment_bytes_per_sample: adapter.max_color_attachment_bytes_per_sample,

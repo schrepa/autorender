@@ -1,17 +1,16 @@
-use bevy_ecs::prelude::*;
+use engine::bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::glam::{Quat, Vec3};
 use engine_core::{
     Camera, DrawKind, Drawn, Engine, GlobalTransforms, Listing, Material, MaterialHandle, Mesh,
-    MeshHandle, MeshVertex, Mover, MoverId, Pace, Parent, Schedule, Transform, make_fresh,
-    set_parent, set_parents,
+    MeshHandle, MeshVertex, Mover, MoverId, Pace, Parent, PureSession, Schedule, Transform,
+    make_fresh, set_parent, set_parents,
 };
 use engine_meshes::MeshesBrick;
 
 use serde_json::{Value, json};
 
-use crate::Report;
-use crate::random::Random;
+use super::random::Random;
 
 pub const SEED: u64 = 0x5eed_c0de;
 const ENTITIES: usize = 2000;
@@ -130,7 +129,7 @@ fn engine() -> Result<(Engine, Assets), String> {
             .places(engine_places_world::PLACES)
     })
     .map_err(|error| error.to_string())?;
-    engine.set_frame(crate::FRAME);
+    engine.set_frame(super::FRAME);
     engine.app.add_systems(
         Schedule::FixedSimulation.label(),
         drift.ambiguous_with_all(),
@@ -544,7 +543,7 @@ fn edits_of(random: &mut Random, engine: &mut Engine, count: usize) -> Vec<Edit>
     }
 }
 
-pub fn run(seed: u64, report: &mut Report) -> Result<(), String> {
+pub fn run(seed: u64, session: &mut dyn PureSession) -> Result<(), String> {
     let mut random = Random::new(seed);
     let (mut living, assets) = engine()?;
     {
@@ -606,7 +605,7 @@ pub fn run(seed: u64, report: &mut Report) -> Result<(), String> {
         if !found.is_empty() {
             mismatches += 1;
             let shown: Vec<_> = found.iter().take(SHOWN).cloned().collect();
-            report.broke(json!({
+            let broken = json!({
                 "check": "caches_match_fresh",
                 "seed": seed,
                 "tick": tick,
@@ -614,14 +613,15 @@ pub fn run(seed: u64, report: &mut Report) -> Result<(), String> {
                 "differences": shown,
                 "edits_since_tick": since,
                 "edits": log,
-            }));
+            });
+            session.check(false, &|| broken.to_string());
         }
         log.clear();
         since = tick;
     }
     let world = living.app.world_mut();
-    report.record("caches checks", checks);
-    report.record("caches mismatches", mismatches);
-    report.record("caches entities", entities(world).len());
+    session.record("caches checks", json!(checks));
+    session.record("caches mismatches", json!(mismatches));
+    session.record("caches entities", entities(world).len().into());
     Ok(())
 }

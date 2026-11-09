@@ -89,10 +89,9 @@ fn commands() -> Vec<Command> {
 
 fn authoring_commands() -> Vec<Command> {
     let verbs = engine_dev::Verb::names().collect::<Vec<_>>().join("|");
-    let corpora = pure::CORPORA
-        .iter()
-        .map(|corpus| corpus.name)
-        .collect::<Vec<_>>()
+    let corpora = process::repository_root()
+        .map(|root| pure::names(&root))
+        .unwrap_or_default()
         .join("|");
     vec![
         Command::new("build", [CommandOption::flag("--profiling")]),

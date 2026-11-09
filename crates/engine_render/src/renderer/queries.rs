@@ -49,7 +49,11 @@ impl Renderer {
         (!self.core.display.suspended()).then(|| self.core.display.region.render.pixels())
     }
 
-    pub fn take_frame_time(&self) -> Option<f64> {
+    pub fn times_frames(&self) -> bool {
+        self.core.display.times_frames()
+    }
+
+    pub fn take_frame_time(&self) -> Option<(f64, (u32, u32))> {
         self.core.display.take_frame_time()
     }
 

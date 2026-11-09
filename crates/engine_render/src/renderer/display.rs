@@ -174,7 +174,11 @@ impl Display {
         self.region
     }
 
-    pub(crate) fn take_frame_time(&self) -> Option<f64> {
+    pub(crate) fn times_frames(&self) -> bool {
+        self.timer.is_some()
+    }
+
+    pub(crate) fn take_frame_time(&self) -> Option<(f64, (u32, u32))> {
         self.timer.as_ref()?.read.take()
     }
 
@@ -189,8 +193,9 @@ impl Display {
         recording: (&wgpu::Device, &mut wgpu::CommandEncoder),
         (readbacks, written, slots): (&mut Readbacks, FrameId, usize),
     ) {
+        let size = self.region.render.pixels();
         if let Some(timer) = &mut self.timer {
-            timer.end(recording, (readbacks, written, slots));
+            timer.end(recording, (readbacks, written, slots), size);
         }
     }
 
@@ -291,9 +296,11 @@ pub(crate) struct FrameTimer {
     queries: wgpu::QuerySet,
     resolved: wgpu::Buffer,
     period: f64,
-    recorded: Vec<FrameId>,
-    read: Cell<Option<f64>>,
+    sizes: Vec<(FrameId, (u32, u32))>,
+    read: Cell<Option<ReadFrame>>,
 }
+
+type ReadFrame = (f64, (u32, u32));
 
 const FRAME_STAMP_BYTES: u64 = 16;
 
@@ -318,7 +325,7 @@ impl FrameTimer {
                 },
             ),
             period: f64::from(period),
-            recorded: Vec::new(),
+            sizes: Vec::new(),
             read: Cell::new(None),
         })
     }
@@ -338,6 +345,7 @@ impl FrameTimer {
         &mut self,
         (device, encoder): (&wgpu::Device, &mut wgpu::CommandEncoder),
         (readbacks, written, slots): (&mut Readbacks, FrameId, usize),
+        size: (u32, u32),
     ) {
         encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("engine/frame-timer"),
@@ -355,14 +363,18 @@ impl FrameTimer {
             Keep::Ring(slots),
         );
         if recorded {
-            self.recorded.push(written);
+            self.sizes.push((written, size));
         }
     }
 
     fn arrived(&mut self, written: FrameId, arrival: Arrival<'_>) {
-        let known = self.recorded.contains(&written);
-        self.recorded.retain(|recorded| *recorded > written);
-        let (true, Arrival::Read(bytes)) = (known, arrival) else {
+        let size = self
+            .sizes
+            .iter()
+            .position(|(known, _)| *known == written)
+            .map(|at| self.sizes.remove(at).1);
+        self.sizes.retain(|(known, _)| *known >= written);
+        let (Some(size), Arrival::Read(bytes)) = (size, arrival) else {
             return;
         };
         let stamp = |at: usize| {
@@ -374,7 +386,7 @@ impl FrameTimer {
         let (begin, end) = (stamp(0), stamp(8));
         if end > begin {
             self.read
-                .set(Some((end - begin) as f64 * self.period / 1.0e6));
+                .set(Some(((end - begin) as f64 * self.period / 1.0e6, size)));
         }
     }
 }

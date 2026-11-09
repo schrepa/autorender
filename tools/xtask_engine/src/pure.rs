@@ -1,27 +1,24 @@
-mod caches;
 mod gltf;
 mod import;
 mod requests;
 mod scenes;
 mod simplify;
-mod tables;
-mod terrain;
-mod textures;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
+use std::process::Command;
 use std::time::Instant;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
-use engine_core::{BrickList, JobKind, JobRef, RecordKey};
-use engine_registry::JobList;
 use serde_json::{Map, Value, json};
 
 use crate::Failure;
+use crate::process::Project;
+use crate::smoke::PLAYER;
 
 const GOLDENS: &str = "tools/xtask_engine/pure/goldens.json";
+
+pub(crate) const LISTED: &str = "crates/engine_player/generated/corpora.json";
 
 pub(crate) struct Corpus {
     pub name: &'static str,
@@ -29,10 +26,6 @@ pub(crate) struct Corpus {
 }
 
 pub(crate) const CORPORA: &[Corpus] = &[
-    Corpus {
-        name: "terrain",
-        run: terrain::run,
-    },
     Corpus {
         name: "scenes",
         run: scenes::run,
@@ -53,30 +46,29 @@ pub(crate) const CORPORA: &[Corpus] = &[
         name: "import",
         run: import::run,
     },
-    Corpus {
-        name: "caches",
-        run: caches::run,
-    },
-    Corpus {
-        name: "textures",
-        run: textures::run,
-    },
-    Corpus {
-        name: "tables",
-        run: tables::run,
-    },
 ];
 
-const REPLAYED: &[(&str, &str, &[&JobKind])] = &[
-    ("terrain", terrain::JOBS, terrain::KINDS),
-    ("tables", tables::JOBS, tables::KINDS),
-];
+pub(crate) fn listed(root: &Path) -> Result<Vec<Value>, String> {
+    let text = fs::read_to_string(root.join(LISTED))
+        .map_err(|error| format!("cannot read {LISTED}: {error}"))?;
+    let listed: Value =
+        serde_json::from_str(&text).map_err(|error| format!("{LISTED} is not JSON: {error}"))?;
+    listed
+        .as_array()
+        .cloned()
+        .ok_or_else(|| format!("{LISTED} is not a JSON array"))
+}
 
-pub(crate) fn replayed() -> BTreeSet<&'static str> {
-    REPLAYED
+pub(crate) fn names(root: &Path) -> Vec<String> {
+    let games = listed(root).unwrap_or_default();
+    CORPORA
         .iter()
-        .flat_map(|(_, _, kinds)| kinds.iter())
-        .map(|kind| kind.source().package())
+        .map(|corpus| corpus.name.to_owned())
+        .chain(
+            games
+                .iter()
+                .filter_map(|corpus| corpus["name"].as_str().map(str::to_owned)),
+        )
         .collect()
 }
 
@@ -102,125 +94,85 @@ impl Observations {
     }
 }
 
-pub(crate) struct JobLog {
-    list: Arc<JobList>,
-    worker: engine_worker::Worker,
-    next: u64,
-    log: Vec<Value>,
-}
-
-impl JobLog {
-    pub fn new() -> Result<Self, String> {
-        Self::of(engine_standard::everything::<BrickList>)
-    }
-
-    pub fn of(bricks: impl FnOnce(BrickList) -> BrickList) -> Result<Self, String> {
-        let list = Arc::new(engine_worker::job_list(bricks).map_err(|error| error.to_string())?);
-        let named: String = list.hash().iter().map(|byte| format!("{byte:02x}")).collect();
-        Ok(Self {
-            worker: engine_worker::Worker::new(Arc::clone(&list), engine_worker::now_ms),
-            list,
-            next: 0,
-            log: vec![json!({ "list": named })],
-        })
-    }
-
-    pub fn list(&self) -> &JobList {
-        &self.list
-    }
-
-    pub fn share(&mut self, bytes: &[u8]) -> RecordKey {
-        let key = RecordKey::shared(bytes);
-        self.log
-            .push(json!({"share": key.hex(), "bytes": STANDARD.encode(bytes)}));
-        self.worker.share(key, bytes.to_vec());
-        key
-    }
-
-    pub fn run(&mut self, kind: &'static JobKind, input: &[u8]) -> Result<Vec<u8>, String> {
-        let output = self
-            .worker
-            .run(&JobRef::from(kind), input)
-            .map_err(|error| error.to_string())?;
-        self.log.push(json!({
-            "job": kind.name(),
-            "source": RecordKey::from_hash(kind.source().hash()).hex(),
-            "input": STANDARD.encode(input),
-            "output": hash(&output),
-        }));
-        Ok(output)
-    }
-
-    pub fn sliced(
-        &mut self,
-        kind: &'static JobKind,
-        input: &[u8],
-        slice: u64,
-    ) -> Result<Vec<u8>, String> {
-        self.next += 1;
-        self.worker
-            .start(self.next, &JobRef::from(kind), input)
-            .map_err(|error| error.to_string())?;
-        loop {
-            let stepped = self
-                .worker
-                .step(self.next, slice)
-                .map_err(|error| error.to_string())?;
-            if let Some(output) = stepped {
-                self.log.push(json!({
-                    "job": kind.name(),
-                    "source": RecordKey::from_hash(kind.source().hash()).hex(),
-                    "input": STANDARD.encode(input),
-                    "slice": slice,
-                    "output": hash(&output),
-                }));
-                return Ok(output);
-            }
-        }
-    }
-
-    pub fn write(&self, root: &Path, jobs: &str) -> Result<(), String> {
-        let path = root.join(jobs);
-        if let Some(folder) = path.parent() {
-            fs::create_dir_all(folder)
-                .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
-        }
-        fs::write(&path, Value::Array(self.log.clone()).to_string())
-            .map_err(|error| format!("cannot write {jobs}: {error}"))
-    }
-}
-
 pub(crate) use crate::process::hash;
 
-#[expect(
-    clippy::too_many_lines,
-    reason = "longer than the line ceiling; it may only shrink"
-)]
+struct Observed {
+    corpus: String,
+    values: BTreeMap<String, Value>,
+    broken: Vec<String>,
+    jobs: Option<String>,
+    seconds: f64,
+}
+
+impl Observed {
+    fn reported(record: &Value) -> Option<Self> {
+        Some(Self {
+            corpus: record["corpus"].as_str()?.to_owned(),
+            values: record["values"].as_object()?.clone().into_iter().collect(),
+            broken: record["broken"]
+                .as_array()?
+                .iter()
+                .map(|broken| broken.as_str().map(str::to_owned))
+                .collect::<Option<_>>()?,
+            jobs: record["jobs"].as_str().map(str::to_owned),
+            seconds: record["seconds"].as_f64()?,
+        })
+    }
+}
+
 pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
+    let known = names(root);
     let usage = || {
         format!(
             "usage: pure [--bless] [--wasm] [CORPUS...], corpora: {}",
-            CORPORA
-                .iter()
-                .map(|corpus| corpus.name)
-                .collect::<Vec<_>>()
-                .join(", ")
+            known.join(", ")
         )
     };
     let (mut bless, mut wasm) = (false, false);
-    let mut chosen = Vec::new();
+    let (mut chosen, mut asked) = (Vec::new(), Vec::new());
     for option in options {
         match option.as_str() {
             "--bless" => bless = true,
             "--wasm" => wasm = true,
             name => match CORPORA.iter().find(|corpus| corpus.name == name) {
                 Some(corpus) => chosen.push(corpus),
+                None if known.iter().any(|listed| listed == name) => asked.push(name),
                 None => return Err(usage().into()),
             },
         }
     }
-    if chosen.is_empty() {
+    let every = chosen.is_empty() && asked.is_empty();
+    if every {
         chosen.extend(CORPORA);
+    }
+    let mut observed = Vec::new();
+    for corpus in chosen {
+        let start = Instant::now();
+        let mut observations = Observations::default();
+        (corpus.run)(root, &mut observations)
+            .map_err(|error| format!("pure {}: {error}", corpus.name))?;
+        observed.push(Observed {
+            corpus: corpus.name.to_owned(),
+            values: observations.values,
+            broken: observations.broken,
+            jobs: None,
+            seconds: start.elapsed().as_secs_f64(),
+        });
+    }
+    if every || !asked.is_empty() {
+        let names = if every {
+            engine::smokes::ALL.to_owned()
+        } else {
+            asked.join(",")
+        };
+        observed.extend(reported(root, &names)?);
+    }
+    if let Some(twice) = observed.iter().enumerate().find(|(at, one)| {
+        observed[..*at]
+            .iter()
+            .any(|other| other.corpus == one.corpus)
+    }) {
+        return Err(format!("two corpora are named {}", twice.1.corpus).into());
     }
     let path = root.join(GOLDENS);
     let mut goldens: Map<String, Value> = match fs::read_to_string(&path) {
@@ -229,82 +181,13 @@ pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Map::new(),
         Err(error) => return Err(format!("cannot read {GOLDENS}: {error}").into()),
     };
-    let mut problems = Vec::new();
     let mut summary = Vec::new();
-    for corpus in &chosen {
-        let start = Instant::now();
-        let mut observed = Observations::default();
-        (corpus.run)(root, &mut observed)
-            .map_err(|error| format!("pure {}: {error}", corpus.name))?;
-        let seconds = start.elapsed().as_secs_f64();
-        let mut differences = Vec::new();
-        let golden = goldens
-            .get(corpus.name)
-            .and_then(Value::as_object)
-            .cloned()
-            .unwrap_or_default();
-        for (name, value) in &observed.values {
-            match golden.get(name) {
-                Some(expected) if expected == value => {}
-                Some(expected) => differences.push(format!("{name}: {expected} -> {value}")),
-                None => differences.push(format!("{name}: new, {value}")),
+    let mut problems = judged(&observed, &mut goldens, bless, &mut summary);
+    if wasm {
+        for corpus in &observed {
+            if let Some(jobs) = &corpus.jobs {
+                replayed(root, &corpus.corpus, jobs, &mut summary, &mut problems)?;
             }
-        }
-        for name in golden.keys() {
-            if !observed.values.contains_key(name) {
-                differences.push(format!("{name}: no longer observed"));
-            }
-        }
-        let result = match (observed.broken.is_empty(), differences.is_empty()) {
-            (false, _) => "broken",
-            (true, true) => "equal",
-            (true, false) if bless => "blessed",
-            (true, false) => "differs",
-        };
-        summary.push(serde_json::json!({
-            "event": "corpus_result",
-            "corpus": corpus.name,
-            "result": result,
-            "observations": observed.values.len(),
-            "seconds": seconds,
-        }));
-        for broken in &observed.broken {
-            problems.push(format!("{}: {broken}", corpus.name));
-        }
-        if !observed.broken.is_empty() {
-            continue;
-        }
-        if bless {
-            goldens.insert(
-                corpus.name.to_owned(),
-                Value::Object(observed.values.into_iter().collect()),
-            );
-        } else {
-            for difference in differences {
-                problems.push(format!("{}: {difference}", corpus.name));
-            }
-        }
-    }
-    for &(name, jobs, _) in REPLAYED {
-        if !(wasm && chosen.iter().any(|corpus| corpus.name == name)) {
-            continue;
-        }
-        let start = Instant::now();
-        let replayed = replay_in_wasm(root, jobs)?;
-        let seconds = start.elapsed().as_secs_f64();
-        let mismatched = replayed["mismatched"].as_u64().unwrap_or(0);
-        summary.push(serde_json::json!({
-            "event": "wasm_replay_result",
-            "corpus": name,
-            "result": if mismatched == 0 { "equal" } else { "differs" },
-            "jobs": replayed["jobs"],
-            "seconds": seconds,
-        }));
-        if mismatched > 0 {
-            problems.push(format!(
-                "{name} in Wasm: {mismatched} job(s) give other bits than natively: {}",
-                replayed["mismatches"]
-            ));
         }
     }
     if bless {
@@ -327,6 +210,128 @@ pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
         problems.len(),
         problems.join("\n")
     )))
+}
+
+fn reported(root: &Path, names: &str) -> Result<Vec<Observed>, Failure> {
+    let project = Project::read(root, PLAYER)?;
+    let program = crate::pipeline::build_native(root, &project)?;
+    let record = json!({
+        "event": "running",
+        "program": program,
+        "arguments": ["--pure", names],
+    });
+    println!("{record}");
+    let output = Command::new(&program)
+        .args(["--pure", names])
+        .current_dir(root)
+        .output()
+        .map_err(|error| format!("{program}: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "{program} --pure {names} stopped ({}): {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+        .into());
+    }
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter(|record| record["event"] == "corpus_observed")
+        .map(|record| {
+            Observed::reported(&record)
+                .ok_or_else(|| format!("{program} --pure reported {record}").into())
+        })
+        .collect()
+}
+
+fn judged(
+    observed: &[Observed],
+    goldens: &mut Map<String, Value>,
+    bless: bool,
+    summary: &mut Vec<Value>,
+) -> Vec<String> {
+    let mut problems = Vec::new();
+    for corpus in observed {
+        let name = corpus.corpus.as_str();
+        let mut differences = Vec::new();
+        let golden = goldens
+            .get(name)
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        for (key, value) in &corpus.values {
+            match golden.get(key) {
+                Some(expected) if expected == value => {}
+                Some(expected) => differences.push(format!("{key}: {expected} -> {value}")),
+                None => differences.push(format!("{key}: new, {value}")),
+            }
+        }
+        for key in golden.keys() {
+            if !corpus.values.contains_key(key) {
+                differences.push(format!("{key}: no longer observed"));
+            }
+        }
+        let result = match (corpus.broken.is_empty(), differences.is_empty()) {
+            (false, _) => "broken",
+            (true, true) => "equal",
+            (true, false) if bless => "blessed",
+            (true, false) => "differs",
+        };
+        summary.push(json!({
+            "event": "corpus_result",
+            "corpus": name,
+            "result": result,
+            "observations": corpus.values.len(),
+            "seconds": corpus.seconds,
+        }));
+        for broken in &corpus.broken {
+            problems.push(format!("{name}: {broken}"));
+        }
+        if !corpus.broken.is_empty() {
+            continue;
+        }
+        if bless {
+            goldens.insert(
+                name.to_owned(),
+                Value::Object(corpus.values.clone().into_iter().collect()),
+            );
+        } else {
+            problems.extend(
+                differences
+                    .into_iter()
+                    .map(|difference| format!("{name}: {difference}")),
+            );
+        }
+    }
+    problems
+}
+
+fn replayed(
+    root: &Path,
+    name: &str,
+    jobs: &str,
+    summary: &mut Vec<Value>,
+    problems: &mut Vec<String>,
+) -> Result<(), Failure> {
+    let start = Instant::now();
+    let replayed = replay_in_wasm(root, jobs)?;
+    let seconds = start.elapsed().as_secs_f64();
+    let mismatched = replayed["mismatched"].as_u64().unwrap_or(0);
+    summary.push(json!({
+        "event": "wasm_replay_result",
+        "corpus": name,
+        "result": if mismatched == 0 { "equal" } else { "differs" },
+        "jobs": replayed["jobs"],
+        "seconds": seconds,
+    }));
+    if mismatched > 0 {
+        problems.push(format!(
+            "{name} in Wasm: {mismatched} job(s) give other bits than natively: {}",
+            replayed["mismatches"]
+        ));
+    }
+    Ok(())
 }
 
 fn replay_in_wasm(root: &Path, jobs: &str) -> Result<Value, Failure> {

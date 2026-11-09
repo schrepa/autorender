@@ -12,6 +12,7 @@ pub use engine_auto_exposure::AutoExposureBrick;
 pub use engine_bloom::BloomBrick;
 pub use engine_debug_view::DebugViewBrick;
 pub use engine_dither::DitherBrick;
+pub use engine_dynamic_resolution::DynamicResolutionBrick;
 pub use engine_impostors::ImpostorsBrick;
 pub use engine_lighting::LightingModelBrick;
 pub use engine_lights::LightsBrick;
@@ -56,6 +57,7 @@ pub fn rendering<L: Listing>(list: L) -> L {
         .with::<ReflectionProbesBrick>()
         .with::<ReflectionsBrick>()
         .with::<ParticlesBrick>()
+        .with::<DynamicResolutionBrick>()
         .places(engine_places::PLACES)
         .places(engine_places_rendering::PLACES)
 }

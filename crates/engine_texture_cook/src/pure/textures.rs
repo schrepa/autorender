@@ -1,13 +1,12 @@
-use std::path::Path;
-
-use engine_assets::Texture;
 use engine_core::math::sin;
-use engine_core::BrickList;
-use engine_texture_cook::TEXTURE_COOK;
-use engine_textures::{Family, Source, Usage};
+use engine_core::textures;
+use engine_core::{
+    PureSession, Texture, TextureFamily as Family, TextureFormat, TextureSource as Source,
+    TextureUsage as Usage,
+};
 use serde_json::{Map, json};
 
-use super::{JobLog, Observations};
+use crate::TEXTURE_COOK;
 
 const SIDE: u32 = 64;
 const SLICE: u64 = 4096;
@@ -128,15 +127,11 @@ fn reference(texture: &Texture, level: usize) -> Result<Vec<u8>, String> {
     let blocks = &texture.levels()[level];
     let mut image = vec![0_u32; width * height];
     match texture.format() {
-        engine_assets::TextureFormat::Bc7 => {
-            texture2ddecoder::decode_bc7(blocks, width, height, &mut image)
-        }
-        engine_assets::TextureFormat::Astc4x4 => {
+        TextureFormat::Bc7 => texture2ddecoder::decode_bc7(blocks, width, height, &mut image),
+        TextureFormat::Astc4x4 => {
             texture2ddecoder::decode_astc(blocks, width, height, 4, 4, &mut image)
         }
-        engine_assets::TextureFormat::Rgba8 | engine_assets::TextureFormat::Etc2Rgba8 => {
-            Err("not a cooked family")
-        }
+        TextureFormat::Rgba8 | TextureFormat::Etc2Rgba8 => Err("not a cooked family"),
     }
     .map_err(|error| format!("the reference decoder refused level {level}: {error}"))?;
     Ok(image
@@ -148,19 +143,18 @@ fn reference(texture: &Texture, level: usize) -> Result<Vec<u8>, String> {
         .collect())
 }
 
-pub fn run(_: &Path, observed: &mut Observations) -> Result<(), String> {
-    let mut worker = JobLog::of(engine_standard::everything::<BrickList>)?;
+pub fn run(session: &mut dyn PureSession) -> Result<(), String> {
     for image in images() {
-        let levels = engine_texture_cook::cook_levels(&image.source);
+        let levels = crate::cook_levels(&image.source);
         let mut observation = Map::new();
         for (family, floor) in Family::ALL.into_iter().zip(image.floors) {
-            let texture = engine_texture_cook::cook(&image.source, family)
+            let texture = crate::cook(&image.source, family)
                 .map_err(|error| format!("{} does not cook: {error}", image.name))?;
-            let record = engine_textures::record(&texture);
-            let back = engine_textures::decode(&record)?;
-            observed.check(
+            let record = textures::record(&texture);
+            let back = textures::decode(&record)?;
+            session.check(
                 back.levels() == texture.levels() && back.summary() == texture.summary(),
-                || {
+                &|| {
                     format!(
                         "{} {}: its record reads back otherwise",
                         image.name,
@@ -168,10 +162,10 @@ pub fn run(_: &Path, observed: &mut Observations) -> Result<(), String> {
                     )
                 },
             );
-            let input = engine_texture_cook::cook_input(&image.source, family);
-            let whole = worker.run(&TEXTURE_COOK, &input)?;
-            let sliced = worker.sliced(&TEXTURE_COOK, &input, SLICE)?;
-            observed.check(whole == record && sliced == record, || {
+            let input = crate::cook_input(&image.source, family);
+            let whole = session.run(&TEXTURE_COOK, &input)?;
+            let sliced = session.sliced(&TEXTURE_COOK, &input, SLICE)?;
+            session.check(whole == record && sliced == record, &|| {
                 format!(
                     "{} {}: its cooking job makes another record",
                     image.name,
@@ -184,7 +178,7 @@ pub fn run(_: &Path, observed: &mut Observations) -> Result<(), String> {
                 let ratio = psnr(expected, &decoded);
                 errors.push((ratio * 10.0).round() / 10.0);
                 if level == 0 {
-                    observed.check(ratio >= floor, || {
+                    session.check(ratio >= floor, &|| {
                         format!(
                             "{} {}: its base level keeps {ratio:.2} dB, under {floor} dB",
                             image.name,
@@ -194,11 +188,11 @@ pub fn run(_: &Path, observed: &mut Observations) -> Result<(), String> {
                 }
             }
             if family == Family::Bc7 {
-                let own = engine_textures::decompress(&texture)
+                let own = textures::decompress(&texture)
                     .map_err(|error| format!("{} does not decompress: {error}", image.name))?;
                 for level in 0..levels.len() {
                     let same = own.levels()[level][..] == reference(&texture, level)?[..];
-                    observed.check(same, || {
+                    session.check(same, &|| {
                         format!(
                             "{}: the engine's BC7 decoder reads level {level} otherwise",
                             image.name
@@ -208,10 +202,10 @@ pub fn run(_: &Path, observed: &mut Observations) -> Result<(), String> {
             }
             observation.insert(
                 family.name().into(),
-                json!({ "hash": super::hash(&record), "psnr by level": errors }),
+                json!({ "hash": session.digest(&record), "psnr by level": errors }),
             );
         }
-        observed.record(format!("textures {}", image.name), observation);
+        session.record(&format!("textures {}", image.name), observation.into());
     }
     Ok(())
 }

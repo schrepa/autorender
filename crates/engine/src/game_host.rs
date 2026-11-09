@@ -471,6 +471,10 @@ impl<G: Game> GameHost<G> {
         self.app.set_refresh_interval(milliseconds);
     }
 
+    pub fn set_display_paced(&mut self, paced: bool) {
+        self.app.set_display_paced(paced);
+    }
+
     pub fn set_job_clock(&mut self, clock: crate::host::JobClock) {
         self.app.set_job_clock(clock);
     }

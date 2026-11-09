@@ -1,18 +1,11 @@
-use std::path::Path;
+use engine_core::{JobKind, PureSession};
 
-use engine_core::JobKind;
-use engine_sky::Sky;
-use engine_sky::tables::{CLOUD_TABLES, SKY_TABLES, clouds, f16_value, sky};
+use crate::Sky;
+use crate::tables::{CLOUD_TABLES, SKY_TABLES, clouds, f16_value, sky};
 
-use super::{JobLog, Observations};
-
-pub const JOBS: &str = "target/pure/tables-jobs.json";
-pub const KINDS: &[&JobKind] = &[&SKY_TABLES, &CLOUD_TABLES];
 const SLICE: u64 = 4096;
 
-pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
-    let mut worker = JobLog::new()?;
-
+pub fn run(session: &mut dyn PureSession) -> Result<(), String> {
     let settings = Sky::default();
     let air = sky::Air {
         rayleigh: settings.rayleigh,
@@ -25,35 +18,35 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         bottom: settings.planet_radius,
         top: settings.planet_radius + settings.atmosphere_height,
     };
-    let tables = both(&mut worker, &SKY_TABLES, &air.identity(), observed)?;
-    observed.hash("sky tables", &tables);
+    let tables = both(session, &SKY_TABLES, &air.identity())?;
+    session.hash("sky tables", &tables);
     let passing = sky::decode(&tables)?
         .transmittance
         .iter()
         .all(|&bits| (0.0..=1.0).contains(&f16_value(bits)));
-    observed.check(passing, || {
+    session.check(passing, &|| {
         "the transmittance table holds shares beyond 0 to 1".into()
     });
 
     let mut noise = clouds::CloudNoise::empty();
     for part in clouds::parts().iter().filter(|part| part.first == 0) {
         let record = if part.volume == clouds::Volume::Shape {
-            both(&mut worker, &CLOUD_TABLES, &part.identity(), observed)?
+            both(session, &CLOUD_TABLES, &part.identity())?
         } else {
-            worker.run(&CLOUD_TABLES, &part.identity())?
+            session.run(&CLOUD_TABLES, &part.identity())?
         };
-        observed.hash(format!("cloud noise {:?} slab", part.volume), &record);
+        session.hash(&format!("cloud noise {:?} slab", part.volume), &record);
         noise.insert(&record)?;
     }
-    observed.hash(
+    session.hash(
         "cloud noise Shape slab texels",
         &noise.shape[..slab(clouds::Volume::Shape)],
     );
-    observed.hash(
+    session.hash(
         "cloud noise Detail slab texels",
         &noise.detail[..slab(clouds::Volume::Detail)],
     );
-    worker.write(root, JOBS)
+    Ok(())
 }
 
 fn slab(volume: clouds::Volume) -> usize {
@@ -62,14 +55,13 @@ fn slab(volume: clouds::Volume) -> usize {
 }
 
 fn both(
-    worker: &mut JobLog,
+    session: &mut dyn PureSession,
     kind: &'static JobKind,
     input: &[u8],
-    observed: &mut Observations,
 ) -> Result<Vec<u8>, String> {
-    let whole = worker.run(kind, input)?;
-    let sliced = worker.sliced(kind, input, SLICE)?;
-    observed.check(sliced == whole, || {
+    let whole = session.run(kind, input)?;
+    let sliced = session.sliced(kind, input, SLICE)?;
+    session.check(sliced == whole, &|| {
         format!(
             "{}: the job run a slice at a time differs from the job run in place",
             kind.name()

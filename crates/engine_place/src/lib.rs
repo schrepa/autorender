@@ -301,6 +301,8 @@ pub struct Smoke {
     pub run: fn(&mut dyn SmokeSession) -> Result<(), SmokeFailure>,
 }
 
+pub const UNIFORM_BINDING_BYTES: u64 = 16_384;
+
 pub trait GpuStruct: bytemuck::Pod + Send + Sync + 'static {
     const WGSL_NAME: &'static str;
     const WGSL: &'static str;

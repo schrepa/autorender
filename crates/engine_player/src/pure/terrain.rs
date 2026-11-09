@@ -1,9 +1,10 @@
 use std::collections::BTreeMap;
-use std::path::Path;
 use std::sync::Arc;
 
-use engine_codec as codec;
-use engine_core::{JobKind, JobRef, RecordKey};
+use engine::BrickList;
+use engine::scene::{SceneDocument, SceneKinds};
+use engine_core::codec;
+use engine_core::{JobKind, JobRef, PureSession, RecordKey};
 use engine_heightfield::layer::LayerKind;
 use engine_heightfield::path::lay_decks;
 use engine_heightfield::tile::{
@@ -18,7 +19,6 @@ use engine_navigation::{
 };
 use engine_places_simulation::ground::{GroundGrid, GroundObstacle};
 use engine_places_world::terrain::TerrainLayers;
-use engine_scene::{SceneDocument, SceneKinds};
 use engine_terrain::jobs::{self, BAKE, BakeJob, GROUND_GRID, GroundIdentity, TILE_BUILD};
 use engine_terrain::{Terrain, TerrainScene};
 use engine_terrain_shading::jobs::lighting::{self, Ground};
@@ -30,8 +30,6 @@ use engine_water::{SettleRegion, SettleStart, WaterPart};
 use glam::Vec2;
 use serde_json::json;
 
-use super::{JobLog, Observations};
-
 const FIXTURE: &str = "web/scripts/fixtures/terrain.scene.json";
 const ENTITY: &str = "ground";
 const SLICE: u64 = 4096;
@@ -41,7 +39,6 @@ const SKY_TEXELS: u32 = 256;
 const HORIZON_TEXELS: u32 = 128;
 const BOUNCE_PROBES: u32 = 64;
 const MACRO_TEXELS: u32 = 256;
-pub const JOBS: &str = "target/pure/terrain-jobs.json";
 pub const KINDS: &[&JobKind] = &[
     &BAKE,
     &TILE_BUILD,
@@ -57,35 +54,34 @@ pub const KINDS: &[&JobKind] = &[
     clippy::too_many_lines,
     reason = "longer than the line ceiling; it may only shrink"
 )]
-pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
-    let terrain = load(root)?;
+pub fn run(session: &mut dyn PureSession) -> Result<(), String> {
+    let terrain = load(session.root())?;
     let authored = &terrain.layers;
     let pyramid = terrain.pyramid;
-    let mut worker = JobLog::new()?;
     let kinds: Vec<&'static LayerKind> =
-        worker.list().members::<TerrainLayers>().copied().collect();
+        session.list().members::<TerrainLayers>().copied().collect();
 
     let baked = jobs::bake::bake_all(authored, &pyramid);
     let bytes = jobs::share_stack(&baked).to_vec();
-    observed.hash("bakes", &bytes);
+    session.hash("bakes", &bytes);
     let mut records = vec![(BAKE.name(), bytes.clone())];
-    observed.check(
-        worker.run(
-            &BAKE,
-            &BakeJob {
-                layers: Layers::clone(authored),
-                pyramid,
-            }
-            .input(),
-        )? == bytes,
-        || "the bake job differs from the bakes in place".into(),
-    );
-    record_bakes(&baked, observed);
+    let same = session.run(
+        &BAKE,
+        &BakeJob {
+            layers: Layers::clone(authored),
+            pyramid,
+        }
+        .input(),
+    )? == bytes;
+    session.check(same, &|| {
+        "the bake job differs from the bakes in place".into()
+    });
+    record_bakes(&baked, session);
 
     let baked = Arc::new(baked);
     let rules = terrain.surface.rules.clone();
-    let stack = worker.share(&jobs::share_stack(&baked));
-    let shared = worker.share(&jobs::share_recipe(&TerrainRecipe {
+    let stack = session.share(&jobs::share_stack(&baked));
+    let shared = session.share(&jobs::share_recipe(&TerrainRecipe {
         stack: stack.hash(),
         view: None,
         pyramid,
@@ -104,20 +100,20 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let mut tiles = BTreeMap::new();
     for level in (0..pyramid.levels()).rev() {
         for key in pyramid.level_tiles(level) {
-            let (tile, bytes) = recipe.tile(&mut worker, key, (&[], &kinds), observed)?;
-            observed.hash(format!("tile {}", name(key)), &bytes);
+            let (tile, bytes) = recipe.tile(session, key, (&[], &kinds))?;
+            session.hash(&format!("tile {}", name(key)), &bytes);
             records.push((TILE_BUILD.name(), bytes));
             tiles.insert(key, tile);
         }
     }
     let objects: usize = tiles.values().map(|tile| tile.placed().len()).sum();
-    observed.record("tiles", tiles.len());
-    observed.record("tile objects", objects);
-    observed.check(objects > 0, || "no tile holds objects".into());
+    session.record("tiles", tiles.len().into());
+    session.record("tile objects", objects.into());
+    session.check(objects > 0, &|| "no tile holds objects".into());
 
     let job = lighting_job(&pyramid, shared);
     let input = codec::encode(&job);
-    let bytes = worker.run(&LIGHTING, &input)?;
+    let bytes = session.run(&LIGHTING, &input)?;
     let (samples, spacing, heights) = level_heights(&pyramid, &tiles);
     let ground = Ground {
         samples,
@@ -126,20 +122,21 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     };
     let extent = pyramid.extent().to_array();
     let made = lighting::light(&ground, extent, job.sky, job.horizons);
-    observed.check(codec::encode(&made) == bytes, || {
+    session.check(codec::encode(&made) == bytes, &|| {
         "the lighting job differs from the lighting made in place".into()
     });
-    observed.check(worker.sliced(&LIGHTING, &input, SLICE)? == bytes, || {
+    let same = session.sliced(&LIGHTING, &input, SLICE)? == bytes;
+    session.check(same, &|| {
         "the lighting job run a slice at a time differs from the job run whole".into()
     });
-    observed.hash("lighting", &bytes);
+    session.hash("lighting", &bytes);
     let sky = made.sky_layers();
     let area = (SKY_TEXELS * SKY_TEXELS) as usize;
     let seen: u64 = sky[..area * 4]
         .chunks(4)
         .map(|texel| u64::from(texel[0]))
         .sum();
-    observed.record(
+    session.record(
         "lighting maps",
         json!({
             "sky texels": area,
@@ -151,14 +148,14 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     records.push((LIGHTING.name(), bytes));
 
     let surface = (baked.as_ref(), rules.as_ref());
-    let transfer = bounce_transfer(&mut worker, (&job, &ground, extent), surface, observed)?;
+    let transfer = bounce_transfer(session, (&job, &ground, extent), surface)?;
     records.push((BOUNCE.name(), transfer));
     let colors = MacroJob {
         recipe: shared.hash(),
         level: pyramid.levels().saturating_sub(PINNED),
         size: MACRO_TEXELS,
     };
-    let bytes = worker.run(&MACRO_COLORS, &codec::encode(&colors))?;
+    let bytes = session.run(&MACRO_COLORS, &codec::encode(&colors))?;
     let made = macro_colors::macro_colors(
         &baked,
         &pyramid,
@@ -167,21 +164,21 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         &rules.authored().macro_colors,
     )
     .ok_or("the macro colors' heights are invalid")?;
-    observed.check(made == bytes, || {
+    session.check(made == bytes, &|| {
         "the macro colors job differs from the colors made in place".into()
     });
-    observed.check(
-        worker.sliced(&MACRO_COLORS, &codec::encode(&colors), SLICE)? == bytes,
-        || "the macro colors job run a slice at a time differs from the job run whole".into(),
-    );
-    observed.hash("macro colors", &bytes);
+    let same = session.sliced(&MACRO_COLORS, &codec::encode(&colors), SLICE)? == bytes;
+    session.check(same, &|| {
+        "the macro colors job run a slice at a time differs from the job run whole".into()
+    });
+    session.hash("macro colors", &bytes);
     let texels = bytes.len() / 4;
     let mean = |channel: usize| {
         let sum: u64 = bytes.chunks(4).map(|texel| u64::from(texel[channel])).sum();
         sum as f64 / texels.max(1) as f64 / 255.0
     };
     let tint = |channel: usize| mean(channel) * 255.0 / 128.0;
-    observed.record(
+    session.record(
         "macro colors",
         json!({
             "texels": texels,
@@ -205,9 +202,9 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         },
     ];
     let edited = TileKey::new(0, 2, 2);
-    let (tile, bytes) = recipe.tile(&mut worker, edited, (&edits, &kinds), observed)?;
-    observed.hash(format!("edited tile {}", name(edited)), &bytes);
-    observed.check(tile.heights() != tiles[&edited].heights(), || {
+    let (tile, bytes) = recipe.tile(session, edited, (&edits, &kinds))?;
+    session.hash(&format!("edited tile {}", name(edited)), &bytes);
+    session.check(tile.heights() != tiles[&edited].heights(), &|| {
         format!("the edits leave tile {} as it was", name(edited))
     });
     records.push((TILE_BUILD.name(), bytes));
@@ -225,7 +222,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         blend: surroundings.blend,
     };
     let around_rules = Arc::new(rules.without_placements());
-    let around_shared = worker.share(&jobs::share_recipe(&TerrainRecipe {
+    let around_shared = session.share(&jobs::share_recipe(&TerrainRecipe {
         stack: stack.hash(),
         view: Some(view),
         pyramid: around,
@@ -240,11 +237,11 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         rules: around_rules,
         around: true,
     };
-    observed.record("surroundings tiles", around.tiles(0)[0]);
+    session.record("surroundings tiles", around.tiles(0)[0].into());
     for level in (around.levels().saturating_sub(2)..around.levels()).rev() {
         for key in around.level_tiles(level) {
-            let (_, bytes) = around_recipe.tile(&mut worker, key, (&[], &kinds), observed)?;
-            observed.hash(format!("surroundings {}", name(key)), &bytes);
+            let (_, bytes) = around_recipe.tile(session, key, (&[], &kinds))?;
+            session.hash(&format!("surroundings {}", name(key)), &bytes);
             records.push((TILE_BUILD.name(), bytes));
         }
     }
@@ -254,12 +251,12 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let mut bytes_held = 0;
     for key in pyramid.level_tiles(gait.level) {
         let (ground, bytes) = portals(
-            &mut worker,
+            session,
             (&tiles[&key], &baked, stack),
             (&pyramid, &gait),
-            (&[], observed),
+            &[],
         )?;
-        observed.hash(format!("portals {}", name(key)), &bytes);
+        session.hash(&format!("portals {}", name(key)), &bytes);
         let held: TilePortals = codec::decode(&bytes).map_err(|error| error.to_string())?;
         graph.portals.insert(key, Arc::new(held));
         graph.grounds.insert(key, Arc::new(ground));
@@ -272,22 +269,22 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
             .map_err(|error| error.to_string())?,
     );
     let (_, bytes) = portals(
-        &mut worker,
+        session,
         (&tile, &edited_layers, stack),
         (&pyramid, &gait),
-        (&edits, observed),
+        &edits,
     )?;
-    observed.hash(format!("edited portals {}", name(edited)), &bytes);
+    session.hash(&format!("edited portals {}", name(edited)), &bytes);
     let count: usize = graph
         .portals
         .values()
         .map(|held| held.portals().len())
         .sum();
-    observed.record(
+    session.record(
         "walk graph",
         json!({"tiles": graph.portals.len(), "portals": count, "bytes": bytes_held}),
     );
-    observed.check(count > 0, || "no tile has portals".into());
+    session.check(count > 0, &|| "no tile has portals".into());
 
     let route = (Vec2::new(212.0, 262.0), Vec2::new(412.0, 262.0));
     let (boulder, boulder_radius) = (Vec2::new(312.0, 262.0), 12.0);
@@ -297,22 +294,22 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     }];
     let walked = |slice: u64| graph.walk(&pyramid, route, &obstacles, slice);
     let whole = codec::encode(&walked(u64::MAX)?);
-    observed.check(whole == codec::encode(&walked(SLICE)?), || {
+    session.check(whole == codec::encode(&walked(SLICE)?), &|| {
         "the walk a slice at a time differs from the walk whole".into()
     });
-    observed.hash("walk", &whole);
+    session.hash("walk", &whole);
     let found = walked(u64::MAX)?.ok_or("no walk reaches over the hills")?;
-    observed.check(found.length > route.1.distance(route.0), || {
+    session.check(found.length > route.1.distance(route.0), &|| {
         "the walk is no longer than the straight line it leaves around the boulder".into()
     });
-    observed.check(
+    session.check(
         found.points.iter().all(|point| {
             Vec2::new(point[0], point[2]).distance(boulder)
                 >= boulder_radius + NavOptions::default().radius - 1.0
         }),
-        || "the walk crosses the boulder".into(),
+        &|| "the walk crosses the boulder".into(),
     );
-    observed.record(
+    session.record(
         "walk",
         json!({"points": found.points.len(), "length": found.length, "level": found.level}),
     );
@@ -332,20 +329,21 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
             cell: WATER_CELL,
         }
         .input();
-        let bytes = worker.run(&PARTS, &input)?;
-        observed.check(worker.sliced(&PARTS, &input, SLICE)? == bytes, || {
+        let bytes = session.run(&PARTS, &input)?;
+        let same = session.sliced(&PARTS, &input, SLICE)? == bytes;
+        session.check(same, &|| {
             format!(
                 "the water's part of {} run a slice at a time differs",
                 name(tile)
             )
         });
-        observed.hash(format!("water part {}", name(tile)), &bytes);
+        session.hash(&format!("water part {}", name(tile)), &bytes);
         parts.push(engine_water::jobs::water_output(&bytes).map_err(|error| error.to_string())?);
     }
     let parts: Vec<&WaterPart> = parts.iter().collect();
     let start = SettleStart::assemble(&baked, &pyramid, &region, &parts, None)
         .map_err(|error| error.to_string())?;
-    observed.record(
+    session.record(
         "water start",
         json!({
             "watered tiles": watered.len(),
@@ -359,17 +357,17 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         }),
     );
 
-    let pack = pack(&records, observed)?;
-    observed.hash("pack", &pack);
-
-    worker.write(root, JOBS)
+    let pack = pack(&records, session)?;
+    session.hash("pack", &pack);
+    Ok(())
 }
 
-fn load(root: &Path) -> Result<Terrain, String> {
+fn load(root: &std::path::Path) -> Result<Terrain, String> {
     let path = root.join(FIXTURE);
     let source = std::fs::read_to_string(&path)
         .map_err(|error| format!("cannot read {FIXTURE}: {error}"))?;
-    let mut engine = crate::bricks::standard_engine().map_err(|error| error.to_string())?;
+    let mut engine = engine::engine(engine_standard::everything::<BrickList>)
+        .map_err(|error| error.to_string())?;
     let kinds = SceneKinds::of(engine.app.world());
     let document = SceneDocument::from_json(&source).map_err(|error| error.to_string())?;
     document
@@ -428,10 +426,9 @@ fn level_heights(pyramid: &Pyramid, tiles: &BTreeMap<TileKey, Tile>) -> ([u32; 2
 }
 
 fn bounce_transfer(
-    worker: &mut JobLog,
+    session: &mut dyn PureSession,
     (job, ground, extent): (&LightingJob, &Ground<'_>, [f32; 2]),
     (baked, rules): (&Layers, &BiomeRules),
-    observed: &mut Observations,
 ) -> Result<Vec<u8>, String> {
     let transfer = BounceJob {
         recipe: job.recipe,
@@ -440,17 +437,18 @@ fn bounce_transfer(
         probes: BOUNCE_PROBES,
     };
     let input = codec::encode(&transfer);
-    let bytes = worker.run(&BOUNCE, &input)?;
+    let bytes = session.run(&BOUNCE, &input)?;
     let made = bounce::bounce(ground, extent, (baked, rules), BOUNCE_PROBES);
-    observed.check(codec::encode(&made) == bytes, || {
+    session.check(codec::encode(&made) == bytes, &|| {
         "the bounce job differs from the transfer made in place".into()
     });
-    observed.check(worker.sliced(&BOUNCE, &input, SLICE)? == bytes, || {
+    let same = session.sliced(&BOUNCE, &input, SLICE)? == bytes;
+    session.check(same, &|| {
         "the bounce job run a slice at a time differs from the job run whole".into()
     });
-    observed.hash("bounce", &bytes);
+    session.hash("bounce", &bytes);
     let blocks = (BOUNCE_PROBES / 2) as usize * (BOUNCE_PROBES / 2) as usize;
-    observed.record(
+    session.record(
         "bounce",
         json!({
             "blocks": blocks,
@@ -458,7 +456,7 @@ fn bounce_transfer(
             "probes": made.probe_count(),
         }),
     );
-    observed.check(made.probe_count() >= blocks, || {
+    session.check(made.probe_count() >= blocks, &|| {
         "the bounce transfer holds fewer probes than blocks".into()
     });
     Ok(bytes)
@@ -468,7 +466,7 @@ fn name(key: TileKey) -> String {
     format!("{}/{}/{}", key.level, key.x, key.z)
 }
 
-fn pack(records: &[(&str, Vec<u8>)], observed: &mut Observations) -> Result<Vec<u8>, String> {
+fn pack(records: &[(&str, Vec<u8>)], session: &mut dyn PureSession) -> Result<Vec<u8>, String> {
     let keyed: Vec<([u8; 32], &[u8], Vec<u8>)> = records
         .iter()
         .map(|(kind, bytes)| {
@@ -494,13 +492,13 @@ fn pack(records: &[(&str, Vec<u8>)], observed: &mut Observations) -> Result<Vec<
     };
     let index = engine_worker::PackIndex::open(header, range(offset, stored)?)
         .map_err(|error| error.to_string())?;
-    observed.record("pack records", index.len());
+    session.record("pack records", index.len().into());
     for (key, bytes, _) in &keyed {
         let hex: String = key.iter().map(|byte| format!("{byte:02x}")).collect();
         let entry = index.find(&hex).ok_or("a record missing from the pack")?;
         let read = engine_worker::unpack(&entry, range(entry.offset, u64::from(entry.stored))?)
             .map_err(|error| error.to_string())?;
-        observed.check(read == *bytes, || {
+        session.check(read == *bytes, &|| {
             format!("record {hex} reads back from the pack as other bytes")
         });
     }
@@ -515,10 +513,10 @@ fn codec_identity(bytes: &[u8]) -> Vec<u8> {
 }
 
 fn portals(
-    worker: &mut JobLog,
+    session: &mut dyn PureSession,
     (tile, layers, stack): (&Tile, &Arc<Layers>, RecordKey),
     (pyramid, gait): (&Pyramid, &Gait),
-    (stamps, observed): (&[Stamp], &mut Observations),
+    stamps: &[Stamp],
 ) -> Result<(WalkGround, Vec<u8>), String> {
     let key = tile.key();
     let job = PortalsJob {
@@ -532,11 +530,11 @@ fn portals(
         key,
         gait: *gait,
     };
-    let bytes = worker.run(&PORTALS, &job.input())?;
+    let bytes = session.run(&PORTALS, &job.input())?;
     let ground = WalkGround::new(&walk_grid(tile, layers, pyramid), walk_water(tile), pyramid);
-    observed.check(
+    session.check(
         codec::encode(&TilePortals::new(&ground, pyramid, gait)) == bytes,
-        || {
+        &|| {
             format!(
                 "tile {} under {} edits: its portals' job differs from its record's portals",
                 name(key),
@@ -645,7 +643,7 @@ impl Graph {
     }
 }
 
-fn record_bakes(layers: &Layers, observed: &mut Observations) {
+fn record_bakes(layers: &Layers, session: &mut dyn PureSession) {
     for (index, layer) in layers.layers().iter().enumerate() {
         let stats = match layer.water() {
             Some(found) => {
@@ -679,7 +677,7 @@ fn record_bakes(layers: &Layers, observed: &mut Observations) {
             }),
         };
         if let Some(stats) = stats {
-            observed.record(format!("bake {index}"), stats);
+            session.record(&format!("bake {index}"), stats);
         }
     }
 }
@@ -696,10 +694,9 @@ struct Recipe {
 impl Recipe {
     fn tile(
         &self,
-        worker: &mut JobLog,
+        session: &mut dyn PureSession,
         key: TileKey,
         (stamps, kinds): (&[Stamp], &[&'static LayerKind]),
-        observed: &mut Observations,
     ) -> Result<(Tile, Vec<u8>), String> {
         let job = TileJob {
             recipe: self.key.hash(),
@@ -707,7 +704,7 @@ impl Recipe {
             stamps: stamps.to_vec(),
         };
         let input = job.identity();
-        let whole = worker.run(&TILE_BUILD, &input)?;
+        let whole = session.run(&TILE_BUILD, &input)?;
         let what = format!(
             "{} tile {} under {} edits",
             self.name,
@@ -731,10 +728,11 @@ impl Recipe {
         let in_place = generator
             .advance(&mut unlimited)
             .ok_or_else(|| format!("{what} fails in place"))?;
-        observed.check(codec::encode(&in_place) == whole, || {
+        session.check(codec::encode(&in_place) == whole, &|| {
             format!("{what}: the job differs from the tile generated in place")
         });
-        observed.check(worker.sliced(&TILE_BUILD, &input, SLICE)? == whole, || {
+        let same = session.sliced(&TILE_BUILD, &input, SLICE)? == whole;
+        session.check(same, &|| {
             format!("{what}: the job run a slice at a time differs from the job run whole")
         });
         let tile: Tile = codec::decode(&whole).map_err(|error| error.to_string())?;

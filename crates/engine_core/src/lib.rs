@@ -14,6 +14,7 @@ mod cull;
 mod cursor;
 mod drawn;
 mod entity_indices;
+mod frame_timing;
 mod hierarchy;
 mod input;
 mod jobs;
@@ -95,6 +96,7 @@ pub use engine_settings::{
     Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, fields,
     is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
 };
+pub use frame_timing::{FrameTiming, GpuFrameTime, RenderScale};
 pub use glam;
 pub use hierarchy::*;
 pub use input::*;
@@ -130,7 +132,7 @@ pub mod codec {
 #[doc(hidden)]
 pub mod textures {
     pub use engine_assets::srgb_decoded;
-    pub use engine_textures::{bc7, plain, record};
+    pub use engine_textures::{bc7, decode, decompress, plain, record};
 }
 
 #[doc(hidden)]
@@ -189,6 +191,7 @@ static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::ask::<ViewCut>(),
     PlaceDecl::component::<View>("view"),
     PlaceDecl::slot::<Jitter>(),
+    PlaceDecl::slot::<RenderScale>(),
     PlaceDecl::component::<Camera>("camera"),
 ];
 
@@ -383,6 +386,7 @@ impl Engine {
                 tick: 0,
             })
             .init_resource::<FrameTime>()
+            .init_resource::<FrameTiming>()
             .init_resource::<Pause>()
             .init_resource::<TimeScale>()
             .init_resource::<FrameLimits>()

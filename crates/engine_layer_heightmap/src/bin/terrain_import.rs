@@ -3,9 +3,9 @@ use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
 use engine_command_line::{self as command_line, CommandOption};
+use engine_core::{Allowed, Expected, InvalidSetting};
 use engine_heightfield::GivenRiver;
 use engine_heightfield::given::{MAX_CREDIT, MAX_GIVEN_RIVERS, MAX_PRECISION};
-use engine_layer_hydrology::RiversLayer;
 use serde_json::{Value, json};
 use tiff::decoder::{Decoder, DecodingResult, Limits};
 use tiff::tags::Tag;
@@ -815,20 +815,33 @@ fn run() -> Result<(), String> {
                     });
                     eprintln!("{record}");
                 }
+                for (index, line) in lines.iter().enumerate() {
+                    line.validate().map_err(|invalid| {
+                        let invalid = invalid.within(&format!("$.lines[{index}]"));
+                        format!("{}: {invalid}", path.display())
+                    })?;
+                }
+                if options
+                    .river_attribution
+                    .as_ref()
+                    .is_some_and(|text| text.chars().count() > MAX_CREDIT)
+                {
+                    let invalid = InvalidSetting::new("attribution", Expected::String).allowed(
+                        Allowed::AtMost {
+                            max: MAX_CREDIT as u64,
+                        },
+                    );
+                    return Err(format!("{}: {invalid}", path.display()));
+                }
                 let named = path.display().to_string();
-                let layer = RiversLayer {
-                    source: Some(named.chars().take(MAX_CREDIT).collect()),
+                Some(Rivers {
                     lines,
                     precision: options
                         .river_precision
                         .unwrap_or(spacing)
                         .min(f64::from(MAX_PRECISION)) as f32,
-                    attribution: options.river_attribution.clone(),
-                };
-                layer
-                    .validate()
-                    .map_err(|invalid| format!("{}: {invalid}", path.display()))?;
-                Some(layer)
+                    source: named.chars().take(MAX_CREDIT).collect(),
+                })
             }
         }
         None => None,
@@ -890,7 +903,7 @@ fn run() -> Result<(), String> {
         "rivers": river_lines,
         "river_points": river_points,
         "river_precision": rivers.as_ref().map(|layer| layer.precision),
-        "river_source": rivers.as_ref().and_then(|layer| layer.source.clone()),
+        "river_source": rivers.as_ref().map(|layer| layer.source.clone()),
         "river_attribution": options.river_attribution,
         "heightmap": format!("{}/height.r16", options.id),
         "scene": format!("{}.scene.json", options.id),
@@ -988,6 +1001,12 @@ fn seabed(heights: &mut [f64], samples: usize, spacing: f64, level: f64) -> usiz
         }
     }
     count
+}
+
+struct Rivers {
+    lines: Vec<GivenRiver>,
+    precision: f32,
+    source: String,
 }
 
 struct Look {
@@ -1115,7 +1134,7 @@ fn scene(
     heights: &[f64],
     source: &str,
     maps: bool,
-    rivers: Option<&RiversLayer>,
+    rivers: Option<&Rivers>,
 ) -> Value {
     let size = options.size;
     let id = &options.id;
@@ -1241,7 +1260,14 @@ fn scene(
         layers.push(json!({"type": "noise", "seed": 7, "height": options.detail, "offset": -0.5 * options.detail, "wavelength": 260.0, "ridges": 0.35, "warp": 0.25, "erosion": 0.6, "smoothing": 0.7, "valleys": 0.0, "roughness": 0.55, "blend": "add"}));
     }
     if let Some(rivers) = rivers {
-        let mut given = json!(rivers);
+        let mut given = json!({
+            "lines": rivers.lines,
+            "precision": rivers.precision,
+            "source": rivers.source,
+        });
+        if let Some(attribution) = &options.river_attribution {
+            given["attribution"] = json!(attribution);
+        }
         given["type"] = json!("rivers");
         layers.push(given);
     }

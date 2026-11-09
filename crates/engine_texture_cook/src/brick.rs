@@ -1,3 +1,5 @@
+#[cfg(not(target_arch = "wasm32"))]
+use engine_core::Corpus;
 use engine_core::{
     Brick, Bricks, Cook, CookAsks, CookList, Error, Job, JobCx, JobKind, RecordExchange, Source,
     TextureFamily, TextureJobs,
@@ -23,6 +25,12 @@ pub struct TextureCook;
 impl Brick for TextureCook {
     const SOURCE: &'static Source = &crate::SOURCE;
     const JOBS: &'static [&'static JobKind] = &[&TEXTURE_COOK];
+    #[cfg(not(target_arch = "wasm32"))]
+    const CORPORA: &'static [Corpus] = &[Corpus {
+        name: "textures",
+        replays: &[],
+        run: crate::pure::textures::run,
+    }];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

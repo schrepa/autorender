@@ -42,7 +42,18 @@ serde.workspace = true
 serde_json.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+engine_heightfield.workspace = true
+engine_meshes.workspace = true
 engine_native.workspace = true
+engine_navigation.workspace = true
+engine_places.workspace = true
+engine_places_rendering.workspace = true
+engine_places_world.workspace = true
+engine_terrain.workspace = true
+engine_terrain_shading.workspace = true
+engine_water.workspace = true
+sha2.workspace = true
+zstd.workspace = true
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen.workspace = true

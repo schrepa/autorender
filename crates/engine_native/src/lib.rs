@@ -15,6 +15,8 @@ mod live;
 mod offscreen;
 mod options;
 #[cfg(feature = "dev")]
+mod pure;
+#[cfg(feature = "dev")]
 pub mod smoke;
 mod window;
 

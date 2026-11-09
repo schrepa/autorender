@@ -143,6 +143,7 @@ impl<'a, G: Game> App<'a, G> {
         )))?);
         host.set_pixel_ratio(window.scale_factor());
         host.set_refresh_interval(refresh_interval(&window));
+        host.set_display_paced(self.options.measure.is_none());
         self.options.settings.apply(&mut host)?;
         let mut jobs = self.options.jobs.pool(false);
         jobs.attach(&mut host);
