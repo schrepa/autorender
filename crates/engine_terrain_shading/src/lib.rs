@@ -5,14 +5,10 @@
 
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
-pub mod bounce;
 mod debug;
 mod gpu;
 pub mod jobs;
-pub mod lighting;
-pub mod macro_colors;
 mod settings;
-mod shading;
 mod shadings;
 mod state;
 mod terrain;
@@ -33,8 +29,8 @@ use engine_places_world::ground::{Bounce, GroundBaking, GroundTiles, Heightfield
 use engine_render::{DebugModes, RenderBricks, SurfaceKind};
 
 pub use gpu::HorizonsPiece;
+pub use jobs::shading::TileShading;
 pub use settings::{MAX_BOUNCE_LEVELS, TerrainShading, TerrainShadingStats};
-pub use shading::TileShading;
 
 use terrain::TerrainGpu;
 

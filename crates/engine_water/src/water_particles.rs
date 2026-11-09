@@ -16,7 +16,7 @@ use crate::gpu::{
     PARTICLE_ARGS, PARTICLE_DRAW, PARTICLE_FOAM_BEFORE, PARTICLE_GROUP, PARTICLE_ITEMS,
     PARTICLE_LATTICE, PARTICLE_MARGIN, PARTICLE_SIDE, ParticleFrame,
 };
-use crate::shallow_water::step_seconds;
+use crate::jobs::shallow_water::step_seconds;
 use crate::state::WaterState;
 use crate::water::WaterGpu;
 use crate::water_settle::TALLIES;

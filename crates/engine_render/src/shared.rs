@@ -315,5 +315,5 @@ pub(crate) fn core_source() -> &'static Source {
 }
 
 pub(crate) const fn generated(path: &'static str) -> ShaderText {
-    ShaderText::generated(path, "")
+    ShaderText::generated(path, "", "")
 }

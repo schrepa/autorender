@@ -138,6 +138,7 @@ pub(crate) struct Linker {
     numbers: BTreeMap<(String, String), u32>,
     composed: BTreeMap<(String, String, String), Arc<Composed>>,
     numbered: bool,
+    edited: BTreeMap<String, String>,
 }
 
 pub(crate) fn path_of(var_or_entry: (engine_core::Module, &str)) -> (&'static str, String) {
@@ -156,9 +157,31 @@ fn prefix(path: &str) -> &str {
 
 impl Linker {
     pub(crate) fn new(core: &'static Source) -> Self {
-        let mut linker = Self::default();
+        Self::edited(core, BTreeMap::new())
+    }
+
+    pub(crate) fn edited(core: &'static Source, edited: BTreeMap<String, String>) -> Self {
+        let mut linker = Self {
+            edited,
+            ..Self::default()
+        };
         linker.add_source(core);
         linker
+    }
+
+    fn source_text(&self, module: &'static engine_core::ShaderText) -> Cow<'static, str> {
+        self.edited
+            .get(module.path())
+            .map_or(Cow::Borrowed(module.text()), |text| Cow::Owned(text.clone()))
+    }
+
+    #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+    pub(crate) fn files(&self) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
+        self.sources
+            .iter()
+            .flat_map(|source| source.modules())
+            .filter(|module| !module.file().is_empty())
+            .map(|module| (module.path(), module.file()))
     }
 
     pub(crate) fn add_source(&mut self, source: &'static Source) {
@@ -172,12 +195,8 @@ impl Linker {
         self.sources.push(source);
         for module in source.modules() {
             let generated = module.path().starts_with(GENERATED_ROOT);
-            self.add(
-                module.path().to_owned(),
-                source.package(),
-                Cow::Borrowed(module.text()),
-                generated,
-            );
+            let text = self.source_text(module);
+            self.add(module.path().to_owned(), source.package(), text, generated);
             self.place_handed(module.path());
         }
         self.numbered = false;
@@ -201,8 +220,8 @@ impl Linker {
             .iter()
             .flat_map(|source| source.modules())
             .find(|module| module.path() == path)
-            .map(|module| module.text());
-        let text = handed_text(base, parts);
+            .map(|module| self.source_text(module));
+        let text = handed_text(base.as_deref(), parts);
         let once = self
             .modules
             .iter()

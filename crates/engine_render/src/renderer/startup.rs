@@ -43,6 +43,8 @@ fn features_of(adapter: &wgpu::Adapter) -> wgpu::Features {
             & (wgpu::Features::INDIRECT_FIRST_INSTANCE
                 | wgpu::Features::RG11B10UFLOAT_RENDERABLE
                 | wgpu::Features::TIMESTAMP_QUERY));
+    #[cfg(not(target_arch = "wasm32"))]
+    let features = features | (adapter.features() & wgpu::Features::PIPELINE_CACHE);
     #[cfg(not(feature = "profiling"))]
     let required = features;
     #[cfg(feature = "profiling")]
@@ -141,6 +143,10 @@ impl Renderer {
             self.core.limits.cores,
         );
         self.core.adapter = crate::AdapterInfo::of(&adapter.get_info());
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.core.pipeline_cache = super::cache::open(&device, &adapter.get_info());
+        }
         self.assets = Some(new_assets(&device, &queue));
         self.core.device = device;
         self.core.queue = queue;
@@ -190,6 +196,8 @@ impl Renderer {
         let validation = Box::pin(scope.pop());
         let profiler = GpuProfiler::new(required_features, f64::from(queue.get_timestamp_period()));
         let ledger = crate::pipelines::Ledger::default();
+        #[cfg(not(target_arch = "wasm32"))]
+        let pipeline_cache = super::cache::open(&device, &adapter.get_info());
         let core = Core {
             device,
             queue,
@@ -201,6 +209,8 @@ impl Renderer {
             profiler,
             ledger,
             limits,
+            #[cfg(not(target_arch = "wasm32"))]
+            pipeline_cache,
         };
         let renderer = Self {
             surface: None,
@@ -218,6 +228,8 @@ impl Renderer {
             linked: engine_core::LinkedStats::default(),
             recovering: None,
             lost_bricks: Vec::new(),
+            #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+            watched: super::reload::Watched::default(),
         };
         crate::platform::yield_now().await;
         Ok(StartingRenderer {

@@ -18,11 +18,8 @@ pub mod jobs;
 mod rewater;
 mod settings;
 mod settled;
-pub mod shallow_water;
 mod sights;
 mod state;
-mod steady_water;
-mod tile_water;
 mod views;
 mod water;
 mod water_blocks;
@@ -47,14 +44,13 @@ use engine_places_world::ground::Heightfield;
 use engine_places_world::water::Waterline;
 use engine_render::{DebugModes, DebugShown, RenderBricks, SlotModule, SurfaceKind};
 
-pub(crate) use engine_codec as codec;
+pub(crate) use engine_heightfield::TileKey;
 pub(crate) use engine_heightfield::tile::Footprint;
-pub(crate) use engine_heightfield::{NARROWEST, TileKey};
 
 pub use flow::{Block, FlowState, Pool, RiverFlow, WEIR};
+pub use jobs::steady_water::*;
+pub use jobs::tile_water::*;
 pub use settings::Water;
-pub use steady_water::*;
-pub use tile_water::*;
 pub use views::PoolView;
 pub use water_settle::SettleFeedback;
 pub use windows::{

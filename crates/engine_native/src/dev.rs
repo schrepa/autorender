@@ -2,10 +2,10 @@ use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use engine::dev::{Artifact, Effect, HostContext, Outcome, Step};
-use engine::scene::{SceneFiles, SceneKinds};
+use engine::scene::{SceneDocument, SceneFiles, SceneInstance, SceneKinds};
 use engine::{Error, ErrorCode, Expected, Game, GameHost};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
@@ -34,6 +34,7 @@ pub struct DevSession<G: Game> {
     controls: BTreeMap<String, GameControl<G>>,
     parameters: BTreeMap<String, String>,
     source: Option<Source>,
+    watched: Vec<(PathBuf, Option<SystemTime>)>,
     artifacts: PathBuf,
     pix: Option<Pix>,
     captures: u32,
@@ -61,6 +62,7 @@ impl<G: Game> DevSession<G> {
             controls: BTreeMap::new(),
             parameters: BTreeMap::new(),
             source: None,
+            watched: Vec::new(),
             artifacts,
             pix: None,
             captures: 0,
@@ -110,6 +112,7 @@ impl<G: Game> DevSession<G> {
     #[must_use]
     pub fn source(mut self, path: &Path) -> Self {
         self.source = Some(Source::File(path.to_owned()));
+        self.watch();
         self
     }
 
@@ -157,7 +160,56 @@ impl<G: Game> DevSession<G> {
                 }
             }
             self.game.exchange_jobs();
+            self.follow_source();
         }
+    }
+
+    fn follow_source(&mut self) {
+        if self
+            .watched
+            .iter()
+            .all(|(file, stamp)| modified(file) == *stamp)
+        {
+            return;
+        }
+        let revision = self.watch();
+        let Some(loaded) = self.game.host().game().scene().map(SceneInstance::revision) else {
+            return;
+        };
+        let command = json!({
+            "verb": "control",
+            "name": "reload",
+            "args": {
+                "expected_revision": loaded.to_string(),
+                "revision": revision.unwrap_or(loaded).to_string(),
+            },
+        });
+        let mut reply = self.request(&command.to_string(), &|| None);
+        reply["event"] = json!("source_changed");
+        self.reply(&reply);
+    }
+
+    fn watch(&mut self) -> Option<u64> {
+        let Some(Source::File(path)) = &self.source else {
+            self.watched.clear();
+            return None;
+        };
+        let path = path.clone();
+        let stamp = modified(&path);
+        let document = std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|source| SceneDocument::from_json(&source).ok());
+        let folder = path.parent().unwrap_or(Path::new(".")).to_owned();
+        let mut watched = vec![(path, stamp)];
+        if let Some(document) = &document {
+            for file in document.files(&self.kinds()) {
+                let file = folder.join(file.uri);
+                let stamp = modified(&file);
+                watched.push((file, stamp));
+            }
+        }
+        self.watched = watched;
+        document.map(|document| document.revision)
     }
 
     fn now(&self) -> f64 {
@@ -296,7 +348,8 @@ impl<G: Game> DevSession<G> {
         SceneKinds::of(self.game.host().engine().app.world())
     }
 
-    fn read_source(&self) -> Result<Option<(String, SceneFiles)>, Error> {
+    fn read_source(&mut self) -> Result<Option<(String, SceneFiles)>, Error> {
+        self.watch();
         let path = match &self.source {
             None => return Ok(None),
             Some(Source::Document(document)) => {
@@ -511,6 +564,12 @@ impl<G: Game> engine::smokes::GpuSession for DevSession<G> {
 
 fn adapter<G: Game>(host: &GameHost<G>) -> Value {
     json!(engine::host::AdapterStatus::of(host.adapter()))
+}
+
+fn modified(path: &Path) -> Option<SystemTime> {
+    std::fs::metadata(path)
+        .and_then(|metadata| metadata.modified())
+        .ok()
 }
 
 fn request_id(line: &str) -> (Option<Value>, String) {

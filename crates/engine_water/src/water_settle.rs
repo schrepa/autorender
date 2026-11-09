@@ -10,11 +10,10 @@ use engine_render::{
     AfterRead, Allocation, ComputePipeline, Count, Encode, Install, Pass, Prepare,
 };
 
-use crate::gpu::{
-    BlockPlace, SIM_BLOCK_LOOKS, SIM_CELL_SUMS, SIM_SLOTS, SimFlags, SimSetup, SimSlot,
-};
+use crate::gpu::{SIM_BLOCK_LOOKS, SIM_CELL_SUMS, SIM_SLOTS, SimFlags, SimSetup, SimSlot};
 use crate::jobs::SETTLED;
-use crate::shallow_water::{CELL_MEANS, DRY, step_seconds};
+use crate::jobs::gpu::BlockPlace;
+use crate::jobs::shallow_water::{CELL_MEANS, DRY, step_seconds};
 use crate::state::WaterState;
 use crate::water::WaterGpu;
 use crate::water_kernels::{

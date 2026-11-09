@@ -16,6 +16,7 @@ pub struct JobOptions {
     pub workers: usize,
     pub cache: CacheOptions,
     pub packs: Option<PathBuf>,
+    pub sample: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -34,6 +35,7 @@ impl Default for JobOptions {
                 budget: DEFAULT_BUDGET,
             },
             packs: None,
+            sample: None,
         }
     }
 }
@@ -42,10 +44,10 @@ impl JobOptions {
     pub fn pool(&self, cook: bool) -> JobPool {
         let packs = self.packs.as_deref();
         let store = match self.cache {
-            CacheOptions::Off if cook => JobStore::open(DEFAULT_BUDGET, false, packs),
+            CacheOptions::Off if cook => JobStore::open(DEFAULT_BUDGET, false, packs, None),
             CacheOptions::Off => None,
-            CacheOptions::Keep { budget } => JobStore::open(budget, false, packs),
-            CacheOptions::Verify => JobStore::open(DEFAULT_BUDGET, true, packs),
+            CacheOptions::Keep { budget } => JobStore::open(budget, false, packs, None),
+            CacheOptions::Verify => JobStore::open(DEFAULT_BUDGET, true, packs, self.sample),
         };
         let mut pool = JobPool::new(self.workers, store);
         if cook {
@@ -109,6 +111,7 @@ pub struct JobPool {
     reported: Option<(u64, u64, u64, u64)>,
     cook: Option<PackWriter>,
     mismatched: Vec<(Option<JobRef>, String)>,
+    sampled: Vec<(Option<JobRef>, String)>,
 }
 
 impl JobPool {
@@ -123,6 +126,7 @@ impl JobPool {
             reported: None,
             cook: None,
             mismatched: Vec::new(),
+            sampled: Vec::new(),
         }
     }
 
@@ -171,6 +175,9 @@ impl JobPool {
         host.set_job_workers(self.size() as u32);
         let cache = self.store.as_ref().map(JobStore::verify);
         host.set_job_cache(cache.is_some(), cache == Some(true));
+        if let Some(sample) = self.store.as_ref().and_then(JobStore::sample) {
+            host.set_job_sample(sample.clone());
+        }
     }
 
     pub fn exchange<G: Game>(&mut self, host: &mut GameHost<G>) {
@@ -283,6 +290,9 @@ impl JobPool {
             .store
             .as_mut()
             .and_then(|store| store.answered(&key, sources, read));
+        if kept.is_some() && self.store.as_ref().is_some_and(|store| store.sampled(&key)) {
+            self.sampled.push((kind.clone(), key.clone()));
+        }
         if let (Some(cook), Some(record)) = (&mut self.cook, &kept) {
             cook.take(&key, kind.as_ref(), record);
         }
@@ -295,6 +305,10 @@ impl JobPool {
 
     pub fn mismatched(&self) -> &[(Option<JobRef>, String)] {
         &self.mismatched
+    }
+
+    pub fn sampled(&self) -> &[(Option<JobRef>, String)] {
+        &self.sampled
     }
 
     pub fn write_pack(&mut self, path: &Path) -> Result<Written, engine::Error> {

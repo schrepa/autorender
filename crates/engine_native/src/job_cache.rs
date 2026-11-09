@@ -1,10 +1,13 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use engine::{Error, ErrorCode};
-use engine_worker::{JobCache, PACK_HEADER, PackEntry, PackIndex, pack_directory, unpack};
+use engine_worker::{
+    JobCache, PACK_HEADER, PackEntry, PackIndex, listing_key, pack_directory, read_listing, unpack,
+};
 use serde_json::json;
 
 use crate::file_error;
@@ -28,10 +31,25 @@ pub struct JobStore {
     index: JobCache,
     packs: Vec<Pack>,
     pack_hits: u64,
+    sample: Option<BTreeSet<String>>,
+}
+
+pub(crate) fn keep_pipeline_cache() {
+    let folder = std::env::current_exe()
+        .ok()
+        .and_then(|program| Some(program.parent()?.join("engine-pipeline-cache")));
+    if let Some(folder) = folder {
+        engine::keep_pipeline_cache_in(folder);
+    }
 }
 
 impl JobStore {
-    pub fn open(budget: u64, verify: bool, packs: Option<&Path>) -> Option<Self> {
+    pub fn open(
+        budget: u64,
+        verify: bool,
+        packs: Option<&Path>,
+        sample: Option<u32>,
+    ) -> Option<Self> {
         let opened = (|| {
             let program = std::env::current_exe()?;
             let folder = program
@@ -41,11 +59,16 @@ impl JobStore {
             std::fs::create_dir_all(&folder)?;
             let saved = std::fs::read_to_string(folder.join(INDEX)).ok();
             let index = JobCache::open(budget, None, verify, saved.as_deref());
+            let packs = packs.map(open_packs).unwrap_or_default();
+            let sample = sample
+                .filter(|_| verify)
+                .map(|count| sampled(&packs, count));
             let mut store = Self {
                 folder,
                 index,
-                packs: packs.map(open_packs).unwrap_or_default(),
+                packs,
                 pack_hits: 0,
+                sample,
             };
             for file in std::fs::read_dir(&store.folder)?.flatten() {
                 let name = file.file_name().to_string_lossy().into_owned();
@@ -68,6 +91,16 @@ impl JobStore {
 
     pub fn verify(&self) -> bool {
         self.index.verify()
+    }
+
+    pub fn sample(&self) -> Option<&BTreeSet<String>> {
+        self.sample.as_ref()
+    }
+
+    pub fn sampled(&self, key: &str) -> bool {
+        self.sample
+            .as_ref()
+            .is_some_and(|sample| sample.contains(key))
     }
 
     pub fn counters(&self) -> (u64, u64, u64, u64) {
@@ -204,6 +237,36 @@ pub fn read(sources: &[Source]) -> Option<(usize, Arc<[u8]>)> {
         };
         read.map(|bytes: Vec<u8>| (at, Arc::from(bytes)))
     })
+}
+
+fn sampled(packs: &[Pack], count: u32) -> BTreeSet<String> {
+    let listing = listing_key();
+    let mut kinds: BTreeMap<String, BTreeSet<[u8; 32]>> = BTreeMap::new();
+    for pack in packs {
+        let Some(entry) = pack.index.find(&hex(&listing)) else {
+            continue;
+        };
+        let source = Source::Packed {
+            path: pack.path.clone(),
+            entry,
+        };
+        let Some(listed) = read(&[source]).and_then(|(_, bytes)| read_listing(&bytes).ok()) else {
+            continue;
+        };
+        for (key, kind) in listed {
+            kinds.entry(kind).or_default().insert(key);
+        }
+    }
+    let count = usize::try_from(count).unwrap_or(usize::MAX);
+    kinds
+        .values()
+        .flat_map(|keys| keys.iter().take(count))
+        .map(hex)
+        .collect()
+}
+
+fn hex(key: &[u8; 32]) -> String {
+    key.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 fn open_packs(folder: &Path) -> Vec<Pack> {

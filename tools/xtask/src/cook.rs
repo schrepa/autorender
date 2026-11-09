@@ -16,8 +16,8 @@ const PLAYER: &str = "crates/engine_player";
 
 const CHECK_FRAMES: &str = "600";
 
-const USAGE: &str =
-    "usage: cargo xtask cook [--project DIR] [PATH.scene.json...] --limit-ms MS | --check";
+const USAGE: &str = "usage: cargo xtask cook [--project DIR] [PATH.scene.json...] \
+                     --limit-ms MS | --check [--sample N]";
 
 struct Pack {
     name: String,
@@ -44,6 +44,7 @@ pub fn cook(root: &Path, options: &[String]) -> Result<(), Failure> {
     let (project, rest) = project_option(options)?;
     let mut check = false;
     let mut limit = None;
+    let mut sample = None;
     let mut scenes = Vec::new();
     let mut given = rest.into_iter();
     while let Some(option) = given.next() {
@@ -57,13 +58,21 @@ pub fn cook(root: &Path, options: &[String]) -> Result<(), Failure> {
                         .ok_or(USAGE)?,
                 );
             }
+            "--sample" => {
+                sample = Some(
+                    given
+                        .next()
+                        .filter(|count| count.parse::<u32>().is_ok_and(|count| count > 0))
+                        .ok_or(USAGE)?,
+                );
+            }
             flag if flag.starts_with("--") => {
                 return Err(format!("unknown option {flag}\n{USAGE}").into());
             }
             _ => scenes.push(option.replace('\\', "/")),
         }
     }
-    if check == limit.is_some() {
+    if check == limit.is_some() || (sample.is_some() && !check) {
         return Err(USAGE.into());
     }
     let mut packs = Vec::new();
@@ -110,7 +119,7 @@ pub fn cook(root: &Path, options: &[String]) -> Result<(), Failure> {
     fs::create_dir_all(&folder)
         .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
     match limit {
-        None => check_packs(root, &packs)?,
+        None => check_packs(root, &packs, sample.as_deref())?,
         Some(limit) => {
             for pack in &packs {
                 let file = pack.file();
@@ -123,7 +132,7 @@ pub fn cook(root: &Path, options: &[String]) -> Result<(), Failure> {
     Ok(write_index(&folder)?)
 }
 
-pub(crate) fn project_packs(
+pub fn project_packs(
     root: &Path,
     folder: &str,
     project: &Project,
@@ -140,30 +149,14 @@ pub(crate) fn project_packs(
 }
 
 fn build(root: &Path, project: &Project) -> Result<String, String> {
-    run(
-        root,
-        "cargo",
-        &[
-            "build",
-            "-p",
-            &project.package,
-            "--bin",
-            &project.native,
-            "--profile",
-            QUICK,
-            "--locked",
-        ],
-    )?;
-    let program = root.join("target").join(QUICK).join(project.program());
-    Ok(program.to_string_lossy().into_owned())
+    crate::pipeline::build_native(root, project, QUICK)
 }
 
 fn scene_id(root: &Path, scene: &str) -> Result<String, String> {
     let text = fs::read_to_string(root.join(scene))
         .map_err(|error| format!("cannot read the scene {scene}: {error}"))?;
-    let kinds = crate::bricks::standard_kinds().map_err(|error| error.to_string())?;
     engine_scene::SceneDocument::from_json(&text)
-        .and_then(|document| document.validate(&kinds).map(|()| document.id))
+        .map(|document| document.id)
         .map_err(|error| json!({ "file": scene, "error": error }).to_string())
 }
 
@@ -171,22 +164,26 @@ fn cooked_by(pack: &Pack) -> String {
     pack.scene.clone().unwrap_or_else(|| pack.name.clone())
 }
 
-fn check_packs(root: &Path, packs: &[Pack]) -> Result<(), Failure> {
-    crate::pipeline::build_wasm(root, true, QUICK)?;
+fn check_packs(root: &Path, packs: &[Pack], sample: Option<&str>) -> Result<(), Failure> {
+    if sample.is_none() {
+        crate::pipeline::build_wasm(root, true, QUICK)?;
+    }
     let mut problems = Vec::new();
     for pack in packs {
         let read = read_back(root, pack, &mut problems)?;
-        let listed = root
-            .join(READ_BACK)
-            .join(format!("{}.records.json", pack.name));
-        if let Some(folder) = listed.parent() {
-            fs::create_dir_all(folder)
-                .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
+        if sample.is_none() {
+            let listed = root
+                .join(READ_BACK)
+                .join(format!("{}.records.json", pack.name));
+            if let Some(folder) = listed.parent() {
+                fs::create_dir_all(folder)
+                    .map_err(|error| format!("cannot create {}: {error}", folder.display()))?;
+            }
+            fs::write(&listed, Value::Array(read).to_string())
+                .map_err(|error| format!("cannot write {}: {error}", listed.display()))?;
+            read_in_wasm(root, pack, &listed, &mut problems)?;
         }
-        fs::write(&listed, Value::Array(read).to_string())
-            .map_err(|error| format!("cannot write {}: {error}", listed.display()))?;
-        read_in_wasm(root, pack, &listed, &mut problems)?;
-        run_on_pack(root, pack, &mut problems)?;
+        run_on_pack(root, pack, sample, &mut problems)?;
     }
     if problems.is_empty() {
         return Ok(());
@@ -254,7 +251,7 @@ fn read_back(root: &Path, pack: &Pack, problems: &mut Vec<Value>) -> Result<Vec<
             Ok(record) => read.push(json!({
                 "kind": kind,
                 "key": key,
-                "hash": crate::pure::hash(&record),
+                "hash": crate::process::hash(&record),
             })),
             Err(error) => problems.push(json!({
                 "pack": file,
@@ -335,9 +332,14 @@ fn read_in_wasm(
     Ok(())
 }
 
-fn run_on_pack(root: &Path, pack: &Pack, problems: &mut Vec<Value>) -> Result<(), String> {
+fn run_on_pack(
+    root: &Path,
+    pack: &Pack,
+    sample: Option<&str>,
+    problems: &mut Vec<Value>,
+) -> Result<(), String> {
     let file = pack.file();
-    let arguments = pack.arguments(&[
+    let mut rest = vec![
         "--packs",
         COOKED,
         "--offscreen",
@@ -346,7 +348,11 @@ fn run_on_pack(root: &Path, pack: &Pack, problems: &mut Vec<Value>) -> Result<()
         "640x360",
         "--jobcache",
         "verify",
-    ]);
+    ];
+    if let Some(count) = sample {
+        rest.extend(["--verify-sample", count]);
+    }
+    let arguments = pack.arguments(&rest);
     let record = json!({
         "event": "running",
         "program": pack.program,
@@ -400,6 +406,9 @@ fn run_on_pack(root: &Path, pack: &Pack, problems: &mut Vec<Value>) -> Result<()
             "message": "the record differs from a fresh run of what makes it",
         }));
     }
+    if sample.is_some() {
+        sampled(pack, &report, problems);
+    }
     let mut fault = |check: &str, message: String| {
         problems.push(json!({ "pack": file, "check": check, "message": message }));
     };
@@ -425,6 +434,24 @@ fn run_on_pack(root: &Path, pack: &Pack, problems: &mut Vec<Value>) -> Result<()
         );
     }
     Ok(())
+}
+
+fn sampled(pack: &Pack, report: &Value, problems: &mut Vec<Value>) {
+    let mut kinds: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
+    for record in report["sampled"].as_array().into_iter().flatten() {
+        *kinds
+            .entry(record["kind"].as_str().unwrap_or("records"))
+            .or_default() += 1;
+    }
+    let record = json!({ "event": "pack_sampled", "pack": pack.name, "kinds": kinds });
+    println!("{record}");
+    if kinds.is_empty() {
+        problems.push(json!({
+            "pack": pack.file(),
+            "check": "sampled",
+            "message": "the run read no sampled record, so none was made again",
+        }));
+    }
 }
 
 fn write_index(folder: &Path) -> Result<(), String> {

@@ -4,7 +4,7 @@ use engine_core::Error;
 use engine_places_world::ground::TerrainTiles;
 use engine_render::{Allocation, Install, Lifetime, Prepare, Texture, wgpu};
 
-use crate::lighting::{SKY_LAYERS, TerrainLighting};
+use crate::jobs::lighting::{SKY_LAYERS, TerrainLighting};
 use crate::settings::TerrainShading;
 use crate::state::Bakes;
 use crate::terrain::TerrainGpu;

@@ -22,6 +22,7 @@ use crate::{AfterRead, Allocation, CameraUniform, DepthUse, SceneDraw, VertexLay
 mod compile;
 mod copies;
 mod draw;
+mod making;
 mod passes;
 mod recording;
 mod resources;
@@ -30,7 +31,7 @@ mod views;
 
 pub(crate) use compile::Compiler;
 pub(crate) use recording::{Ended, Recording, Step};
-pub(crate) use run::{Bindings, Run};
+pub(crate) use run::{Bindings, Pipelines, Run};
 pub(crate) use views::Tables;
 
 pub(crate) type FrameCore = Run;
@@ -602,16 +603,19 @@ fn uniform_buffer(device: &wgpu::Device, label: &'static str, size: u64) -> wgpu
 
 impl Run {
     pub(crate) fn listing(&self) -> Vec<u8> {
+        let mut compiled = self.pipelines.compiled.clone();
+        compiled.sort_by_cached_key(|entry| serde_json::to_string(entry).unwrap_or_default());
+        compiled.dedup();
         let listing = Listing {
             canvas: self.canvas.surface,
-            compiled: self.pipelines.compiled.clone(),
+            compiled,
         };
         serde_json::to_vec(&listing).unwrap_or_default()
     }
 
-    pub(crate) fn create_listed(&mut self, record: &[u8]) -> Result<u32, Error> {
+    pub(crate) fn create_listed(&mut self, record: &[u8]) -> Result<(), Error> {
         if record.is_empty() {
-            return Ok(0);
+            return Ok(());
         }
         let listing: Listing = serde_json::from_slice(record).map_err(|_| {
             crate::platform::failed("$.pipelines").expected(engine_core::Expected::Json)
@@ -627,11 +631,10 @@ impl Run {
         }
         self.pipelines.listed = Some(keys);
         self.pipelines.unlisted = 0;
-        let before = self.pipelines.up_front;
         if self.reached.generation.is_some() {
             self.at_reached_switches(Self::compile_listed);
         }
-        Ok(self.pipelines.up_front - before)
+        Ok(())
     }
 
     pub(crate) fn set(&self) -> &views::ViewSet {

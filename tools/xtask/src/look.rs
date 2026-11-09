@@ -7,9 +7,8 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use crate::Failure;
-use crate::measure::read_json;
-use crate::pipeline::QUICK;
-use crate::process::Project;
+use crate::pipeline::{QUICK, build_native};
+use crate::process::{Project, read_json};
 use crate::serve::Server;
 
 const USAGE: &str = "usage: cargo xtask look PROJECT --limit-ms MS [--browser] [--out DIR]";
@@ -103,7 +102,7 @@ pub fn look(root: &Path, arguments: &[String]) -> Result<(), Failure> {
         command.args(["--url", &format!("{}/{page}{query}", server.url)]);
         Some(server)
     } else {
-        let program = crate::smoke::build(root, &project, QUICK)?;
+        let program = build_native(root, &project, QUICK)?;
         command.args(["--native", &program]);
         if let Some(source) = &source {
             command.args(["--source", source]);

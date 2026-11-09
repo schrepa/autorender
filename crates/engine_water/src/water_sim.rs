@@ -12,11 +12,12 @@ use engine_render::{Allocation, ComputePipeline, Count, Encode, Install, Pass, P
 use glam::{Mat3, Vec2, Vec3};
 
 use crate::gpu::{
-    BlockPlace, LIVE_CELL, LIVE_HEAD, LIVE_NONE, SETUP_RISEN, SETUP_SOLID_ENTRIES, SETUP_STANDS,
-    SETUP_WHOLE, SIM_STANDING, SIM_TOUCHES, SimFlags, SimSetup, SimSlot, SimTouch, SimTouches,
+    LIVE_CELL, LIVE_HEAD, LIVE_NONE, SETUP_RISEN, SETUP_SOLID_ENTRIES, SETUP_STANDS, SETUP_WHOLE,
+    SIM_STANDING, SIM_TOUCHES, SimFlags, SimSetup, SimSlot, SimTouch, SimTouches,
     WATER_SETUP_RING_GROUP,
 };
-use crate::shallow_water::step_seconds;
+use crate::jobs::gpu::BlockPlace;
+use crate::jobs::shallow_water::step_seconds;
 use crate::state::WaterState;
 use crate::water::WaterGpu;
 use crate::water_kernels::{Capacity, Kernels, Layout, SetupHandles, SlotHandles, grid};

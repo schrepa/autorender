@@ -5,12 +5,13 @@ use engine_core::RecordExchange;
 
 pub(crate) fn textures(
     (records, assets): (&mut RecordExchange, &mut AssetLibrary),
+    source: [u8; 32],
     name: String,
     textures: &[(&str, TextureUsage)],
     make: impl Fn() -> Result<Vec<TextureSource>, String> + Send + Sync + 'static,
 ) -> engine::Result<Vec<TextureHandle>> {
     let set = TextureSet {
-        source: crate::SOURCE.hash(),
+        source,
         name,
         textures: textures
             .iter()

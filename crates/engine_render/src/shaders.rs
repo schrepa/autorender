@@ -5,7 +5,11 @@ use engine_core::{Module, ShaderText, Source};
 macro_rules! shader_modules {
     ($($path:literal = $file:literal;)*) => {
         const TEXTS: &[ShaderText] = &[
-            $(ShaderText::generated($path, include_str!($file)),)*
+            $(ShaderText::generated(
+                $path,
+                include_str!($file),
+                concat!(env!("CARGO_MANIFEST_DIR"), "/src/", $file),
+            ),)*
             crate::shared::generated(crate::drawn::DRAWN_MODULE),
             crate::shared::generated(crate::drawn::DRAWN_CULL_MODULE),
             crate::shared::generated(crate::drawn::DRAWN_FADES_MODULE),

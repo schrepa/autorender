@@ -1,6 +1,7 @@
 #[cfg(target_arch = "wasm32")]
 mod browser;
 mod game;
+mod jobs;
 mod land;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod native;

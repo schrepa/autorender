@@ -8,7 +8,7 @@ use engine_places_rendering::particles::{
 use glam::Vec3;
 
 use crate::WaterBrick;
-use crate::shallow_water::DENSITY;
+use crate::jobs::shallow_water::DENSITY;
 
 const SPLASH_WATTS: f32 = 2.0e3;
 const SPLASH_RATE: [f32; 2] = [20.0, 600.0];

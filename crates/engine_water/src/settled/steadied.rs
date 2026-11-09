@@ -7,7 +7,8 @@ use glam::Vec2;
 
 use super::{Follow, Found, Settled};
 use crate::TileKey;
-use crate::drawn::{draw_input, is_dry};
+use crate::drawn::draw_input;
+use crate::jobs::drawn::is_dry;
 use crate::jobs::{DRAWN, STEADIED, SteadiedJob};
 use crate::state::{Base, Drawing, WaterTerrain};
 

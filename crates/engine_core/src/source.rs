@@ -48,12 +48,13 @@ impl Source {
 pub struct ShaderText {
     path: &'static str,
     text: &'static str,
+    file: &'static str,
 }
 
 impl ShaderText {
     #[doc(hidden)]
-    pub const fn generated(path: &'static str, text: &'static str) -> Self {
-        Self { path, text }
+    pub const fn generated(path: &'static str, text: &'static str, file: &'static str) -> Self {
+        Self { path, text, file }
     }
 
     #[doc(hidden)]
@@ -64,6 +65,11 @@ impl ShaderText {
     #[doc(hidden)]
     pub fn text(&self) -> &'static str {
         self.text
+    }
+
+    #[doc(hidden)]
+    pub fn file(&self) -> &'static str {
+        self.file
     }
 }
 

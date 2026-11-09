@@ -6,7 +6,7 @@ use crate::host::{
 };
 use engine_core::{
     BrickList, CursorMode, CursorRequests, Engine, ErrorCode, Gathered, Input, Level, MouseButton,
-    Pause, Progress, TouchPhase,
+    Pause, PauseReason, Progress, TouchPhase,
 };
 use engine_render::RenderTarget;
 use engine_scene::SceneFiles;
@@ -248,6 +248,18 @@ impl<G: Game> GameHost<G> {
 
     pub fn set_preparation(&mut self, enabled: bool) {
         self.frames.set_preparation(enabled);
+        if !enabled {
+            self.hold_preparation(false);
+        }
+    }
+
+    pub(crate) fn hold_preparation(&mut self, held: bool) {
+        let engine = self.app.engine_mut();
+        if held {
+            engine.pause(PauseReason::Preparing);
+        } else {
+            engine.resume(PauseReason::Preparing);
+        }
     }
 
     pub fn preparing(&self) -> bool {
@@ -338,6 +350,10 @@ impl<G: Game> GameHost<G> {
     pub fn set_job_cache(&mut self, caching: bool, verify: bool) {
         self.jobs.set_cache(caching, verify);
         self.app.set_job_verifying(caching && verify);
+    }
+
+    pub fn set_job_sample(&mut self, sample: std::collections::BTreeSet<String>) {
+        self.jobs.set_sample(sample);
     }
 
     pub fn take_jobs(&mut self) -> Vec<JobOrder> {
@@ -515,6 +531,10 @@ impl<G: Game> GameHost<G> {
 impl<G: Game> GameHost<G> {
     pub(crate) fn job_workers(&self) -> u32 {
         self.jobs.working()
+    }
+
+    pub(crate) fn collect_pipelines(&mut self) {
+        self.app.collect_pipelines();
     }
 
     #[cfg(not(target_arch = "wasm32"))]

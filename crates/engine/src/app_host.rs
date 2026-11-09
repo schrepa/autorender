@@ -608,11 +608,8 @@ impl AppHost {
             bricks_cost: None,
             bricks: std::collections::BTreeMap::new(),
         };
-        self.pipeline_list.after_frame(
-            &mut self.engine,
-            &self.renderer,
-            self.stats.render.pipelines_created,
-        );
+        self.pipeline_list
+            .after_frame(&mut self.engine, &self.renderer);
         Ok(())
     }
 
@@ -644,16 +641,39 @@ impl AppHost {
             pixel_ratio: self.pixel_ratio as f32,
         };
         self.engine.set_frame(facts);
-        let compiling = self.renderer.pipelines_compiling();
-        self.engine.set_compiling(compiling);
+        self.collect_pipelines();
         let frame = self.engine.extract_frame()?;
         let after_extraction = now_ms();
         let rendered = self.renderer.render_frame(frame)?;
+        self.collect_pipelines();
+        self.report_shader_errors();
         Ok((
             after_extraction - before_extraction,
             now_ms() - after_extraction,
             rendered,
         ))
+    }
+
+    pub(crate) fn collect_pipelines(&mut self) {
+        let compiling = self.renderer.pipelines_compiling();
+        self.engine.set_compiling(compiling);
+    }
+
+    fn report_shader_errors(&mut self) {
+        let errors = self.renderer.shader_errors();
+        if errors.is_empty() {
+            return;
+        }
+        let mut readiness = self
+            .engine
+            .app
+            .world_mut()
+            .resource_mut::<engine_core::Readiness>();
+        for error in errors {
+            if !readiness.failed.iter().any(|(_, known)| known == error) {
+                readiness.fail(&error.path, error.clone());
+            }
+        }
     }
 
     pub fn job_list(&self) -> std::sync::Arc<engine_registry::JobList> {
@@ -670,6 +690,7 @@ impl AppHost {
         FrameStats {
             pipelines_listed,
             pipelines_unlisted,
+            readiness: self.engine.readiness().clone(),
             jobs: world
                 .get_resource::<JobExchange>()
                 .map(JobExchange::stats)

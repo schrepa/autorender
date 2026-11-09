@@ -1,7 +1,10 @@
 use std::{
+    fs,
     path::{Path, PathBuf},
     process::Command,
 };
+
+use sha2::{Digest, Sha256};
 
 pub const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
@@ -107,12 +110,6 @@ pub fn read_clients() -> Result<Vec<Client>, String> {
     Ok(clients)
 }
 
-pub fn client_packages() -> impl Iterator<Item = &'static str> {
-    clients()
-        .iter()
-        .flat_map(|client| ["-p", client.package.as_str()])
-}
-
 pub fn client_crates() -> Vec<&'static str> {
     clients()
         .iter()
@@ -135,6 +132,20 @@ pub fn clients_json() -> serde_json::Value {
                 "native": client.native,
             })
         })
+        .collect()
+}
+
+pub fn read_json(path: &Path) -> Result<serde_json::Value, String> {
+    let text = fs::read_to_string(path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))
+}
+
+pub fn hash(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .take(8)
+        .map(|byte| format!("{byte:02x}"))
         .collect()
 }
 

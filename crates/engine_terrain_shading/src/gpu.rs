@@ -1,6 +1,9 @@
 use bevy_ecs::prelude::*;
 use engine_core::{GpuBits, gpu_bits, gpu_consts, gpu_struct};
 
+use crate::jobs::gpu::{BounceBin, BounceBlockWord, TILE_STRIDE};
+use crate::jobs::{bounce, lighting};
+
 gpu_consts! {
     pub const NOT_RESIDENT: u32 = 0xffffffff;
     pub const PATCH_GRID: u32 = 17;
@@ -26,12 +29,7 @@ gpu_consts! {
     pub const BOUNCE_BINS: u32 = 26;
     pub const BOUNCE_PROBE_LAYERS: u32 = 2;
     pub const BOUNCE_RECORD_WORDS: u32 = 26;
-    pub const BOUNCE_LOW: f32 = 1.5;
-    pub const BOUNCE_HIGH: f32 = 24.0;
     pub const BOUNCE_WINDOW_ROW: u32 = 4096;
-    pub const BOUNCE_NEAREST: f32 = 0.5;
-    pub const BOUNCE_STEPS: f32 = 16.0;
-    pub const TILE_STRIDE: u32 = 259;
     pub const CONTROL_GROUP: u32 = 8;
     pub const BOUNCE_GROUP: u32 = 8;
     pub const NORMALS_GROUP: u32 = 16;
@@ -83,12 +81,12 @@ const _: () = assert!(
 );
 
 const _: () = assert!(
-    HORIZON_DIRECTIONS as usize == crate::lighting::DIRECTIONS
-        && HORIZON_LAYERS as usize == crate::lighting::HORIZON_LAYERS
-        && BOUNCE_BINS as usize == crate::bounce::BINS
-        && BOUNCE_PROBE_LAYERS as usize == crate::bounce::LAYERS
-        && BOUNCE_RECORD_WORDS as usize == crate::bounce::PROBE_BYTES / 4
-        && BOUNCE_WINDOW_ROW == crate::bounce::MAX_PROBES,
+    HORIZON_DIRECTIONS as usize == lighting::DIRECTIONS
+        && HORIZON_LAYERS as usize == lighting::HORIZON_LAYERS
+        && BOUNCE_BINS as usize == bounce::BINS
+        && BOUNCE_PROBE_LAYERS as usize == bounce::LAYERS
+        && BOUNCE_RECORD_WORDS as usize == bounce::PROBE_BYTES / 4
+        && BOUNCE_WINDOW_ROW == bounce::MAX_PROBES,
     "bake_shapes_match_their_shaders"
 );
 
@@ -135,23 +133,6 @@ pub struct PatchTexel {
     pub x: u32,
     #[bits(16)]
     pub z: u32,
-}
-
-#[gpu_bits]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct BounceBlockWord {
-    pub detailed: bool,
-    #[bits(31)]
-    pub first: u32,
-}
-
-#[gpu_bits]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct BounceBin {
-    #[bits(8)]
-    pub filled: u8,
-    #[bits(8)]
-    pub distance: u8,
 }
 
 #[gpu_bits]

@@ -19,12 +19,12 @@ use engine_places_world::ground::{
 use engine_render::DebugShown;
 use glam::{Vec2, Vec3};
 
-use crate::bounce::TerrainBounce;
 use crate::gpu::{HORIZON_RECORDS, HorizonsPiece};
+use crate::jobs::bounce::TerrainBounce;
+use crate::jobs::lighting::TerrainLighting;
+use crate::jobs::shading::TileShading;
 use crate::jobs::{BOUNCE, BounceJob, LIGHTING, LightingJob, MACRO_COLORS, MacroJob};
-use crate::lighting::TerrainLighting;
 use crate::settings::{TerrainShading, TerrainShadingStats};
-use crate::shading::TileShading;
 use crate::shadings::Shadings;
 use crate::world_trace::traced;
 use crate::{terrain_bounce, terrain_horizons};
@@ -937,18 +937,18 @@ pub(crate) fn bake(
 }
 
 fn macro_texels(settings: &TerrainShading) -> u32 {
-    let block = crate::macro_colors::MACRO_BLOCK;
+    let block = crate::jobs::macro_colors::MACRO_BLOCK;
     settings
         .macro_resolution
         .next_multiple_of(block)
-        .min(crate::macro_colors::MAX_MACRO_TEXELS)
+        .min(crate::jobs::macro_colors::MAX_MACRO_TEXELS)
 }
 
 fn colors_set(job: &MacroJob, pixels: Arc<[u8]>) -> TextureSet {
     let identity = codec::encode(job);
     let size = job.size;
     TextureSet {
-        source: crate::SOURCE.hash(),
+        source: crate::jobs::SOURCE.hash(),
         name: format!("terrain/macro/{:032x}", content_hash(&identity)),
         textures: vec![("colors".to_owned(), TextureUsage::Data)],
         make: Arc::new(move || {

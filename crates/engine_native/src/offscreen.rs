@@ -251,12 +251,17 @@ impl<G: Game> Offscreen<G> {
 
     pub fn prepare(&mut self, timestamp: f64) -> engine::Result<()> {
         let (width, height) = self.size;
+        let started = Instant::now();
         self.host.set_preparation(true);
-        while self.host.animation_frame(timestamp, width, height)? != FramePhase::Started {
+        loop {
+            let at = timestamp + started.elapsed().as_secs_f64() * 1000.0;
+            let phase = self.host.animation_frame(at, width, height)?;
             self.exchange_jobs();
+            self.host.wait_for_gpu()?;
+            if phase == FramePhase::Started {
+                return Ok(());
+            }
         }
-        self.exchange_jobs();
-        Ok(())
     }
 
     pub fn frame(&mut self, timestamp: f64) -> engine::Result<()> {

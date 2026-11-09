@@ -62,6 +62,7 @@ pub fn options() -> Vec<CommandOption> {
         CommandOption::taking("--vendor-dir", "DIR"),
         CommandOption::taking("--vendor-counters", "LIST"),
         CommandOption::taking("--packs", "DIR"),
+        CommandOption::taking("--verify-sample", "N"),
         CommandOption::taking("--cook", "FILE"),
         CommandOption::taking("--measure", "FILE"),
         CommandOption::taking("--flight", "SECONDS:LOOK:TURN"),
@@ -387,6 +388,7 @@ impl HostOptions {
                     .map_err(|error| error.within(switch))?;
             }
             "--packs" => self.jobs.packs = Some(arguments.value(argument)?.into()),
+            "--verify-sample" => self.jobs.sample = Some(arguments.count(argument)?),
             "--cook" => self.cook = Some(arguments.value(argument)?.into()),
             "--frames" => self.frames = Some(arguments.count(argument)?),
             "--settle-ms" => {
@@ -664,6 +666,7 @@ impl HostOptions {
     }
 
     fn start_tools(&self) -> engine::Result<()> {
+        crate::job_cache::keep_pipeline_cache();
         #[cfg(feature = "profiling")]
         if let Some(counters) = &self.counters {
             use engine_profiler::counters::Selection;
@@ -800,12 +803,8 @@ impl HostOptions {
         }
         let stats: serde_json::Value =
             serde_json::from_str(&game.host().stats()).expect("stats_json");
-        let mismatched: Vec<serde_json::Value> = game
-            .jobs_mut()
-            .mismatched()
-            .iter()
-            .map(|(kind, key)| json!({ "kind": kind.as_ref().map(JobRef::name), "key": key }))
-            .collect();
+        let jobs = game.jobs_mut();
+        let (mismatched, sampled) = (named(jobs.mismatched()), named(jobs.sampled()));
         let adapter = game.host().adapter();
         let report = json!({
             "size": [size.0, size.1],
@@ -827,6 +826,7 @@ impl HostOptions {
             })),
             "main_stack_peak_bytes": engine_profiler::stack::peak(),
             "mismatched": mismatched,
+            "sampled": sampled,
             "rows_frames": recorded.frames - recorded.frames / 2,
             "rows": rows(engine::profiling::take_rows()),
             "waits": rows(engine::profiling::take_waits()),
@@ -885,6 +885,13 @@ pub(crate) fn program() -> String {
                 .map(|stem| stem.to_string_lossy().into_owned())
         })
         .unwrap_or_default()
+}
+
+fn named(records: &[(Option<JobRef>, String)]) -> Vec<serde_json::Value> {
+    records
+        .iter()
+        .map(|(kind, key)| json!({ "kind": kind.as_ref().map(JobRef::name), "key": key }))
+        .collect()
 }
 
 fn distribution(values: &[f64]) -> serde_json::Value {

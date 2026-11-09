@@ -1,17 +1,13 @@
 use std::{fs, path::Path};
 
-use crate::{
-    authoring,
-    process::{
-        Client, DEV_FEATURES, NPM, WASM_TARGET, clients, game_names, run, run_with,
-        verify_wasm_bindgen,
-    },
+use crate::process::{
+    Client, DEV_FEATURES, NPM, Project, WASM_TARGET, clients, game_names, run, run_with,
+    verify_wasm_bindgen,
 };
 
-pub(crate) const QUICK: &str = "quick";
+pub const QUICK: &str = "quick";
 
 pub fn build(root: &Path) -> Result<(), String> {
-    authoring::validate_sources(root)?;
     build_wasm(root, false, "release")?;
     install_web_dependencies(root)?;
     run(root, NPM, &["run", "build", "--prefix", "web"])
@@ -22,12 +18,36 @@ pub fn prepare_dev(root: &Path) -> Result<(), String> {
 }
 
 fn prepare_clients(root: &Path, selected: &[&Client]) -> Result<(), String> {
-    authoring::validate_sources(root)?;
     build_clients(root, selected, true, QUICK)?;
     install_web_dependencies(root)
 }
 
-fn of_game(game: &str) -> Result<Vec<&'static Client>, String> {
+pub fn build_native(root: &Path, project: &Project, profile: &str) -> Result<String, String> {
+    run(
+        root,
+        "cargo",
+        &[
+            "build",
+            "-p",
+            &project.package,
+            "--bin",
+            &project.native,
+            "--profile",
+            profile,
+            "--features",
+            "dev",
+            "--locked",
+        ],
+    )?;
+    let folder = match profile {
+        "dev" => "debug",
+        other => other,
+    };
+    let program = root.join("target").join(folder).join(project.program());
+    Ok(program.to_string_lossy().into_owned())
+}
+
+pub(crate) fn of_game(game: &str) -> Result<Vec<&'static Client>, String> {
     if !clients()
         .iter()
         .any(|client| client.game.as_deref() == Some(game))
@@ -76,7 +96,7 @@ pub fn dev(root: &Path, port: u16, game: Option<&str>) -> Result<(), String> {
     )
 }
 
-pub(crate) fn build_wasm(
+pub fn build_wasm(
     root: &Path,
     development: bool,
     profile: &'static str,
@@ -136,7 +156,7 @@ fn build_clients(
     .map_err(|error| format!("cannot write {out_dir}/build.json: {error}"))
 }
 
-pub(crate) fn install_web_dependencies(root: &Path) -> Result<(), String> {
+pub fn install_web_dependencies(root: &Path) -> Result<(), String> {
     let web = root.join("web");
     let mut fingerprint = fs::read(web.join("package.json"))
         .map_err(|error| format!("cannot read web/package.json: {error}"))?;

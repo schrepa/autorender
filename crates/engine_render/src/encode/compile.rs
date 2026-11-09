@@ -1,3 +1,5 @@
+use super::making::{Created, Finished};
+use super::run::Pipelines;
 use super::*;
 use crate::install::RenderDecl;
 use crate::machine::{BuiltPipeline, Stage, cover_location};
@@ -52,18 +54,6 @@ fn stage_constants(
                     .map(|(name, value)| (name.to_owned(), value)),
             );
             values
-        })
-        .collect()
-}
-
-fn named_constants(constants: &[Vec<(String, f64)>]) -> Vec<Vec<(&str, f64)>> {
-    constants
-        .iter()
-        .map(|values| {
-            values
-                .iter()
-                .map(|(name, value)| (name.as_str(), *value))
-                .collect()
         })
         .collect()
 }
@@ -245,16 +235,183 @@ impl Machine {
                 .map_or("", |declared| declared.group.unwrap_or(declared.name)),
         }
     }
+
+    fn makes_records(&self, pipeline: u32) -> bool {
+        let Some(built) = self.pipelines.get(pipeline as usize) else {
+            return false;
+        };
+        match built.decl.scope {
+            Scoped::Scene(_) | Scoped::Outside(_) => false,
+            Scoped::Pass(pass) => self
+                .declared
+                .passes
+                .get(pass as usize)
+                .is_some_and(|declared| declared.makes_records),
+        }
+    }
 }
 
 pub(crate) struct Compiler<'r> {
     device: &'r wgpu::Device,
     machine: &'r mut Machine,
     parts: &'r [Option<Box<dyn Installed>>],
-    switches: &'r [(u32, bool)],
-    compiled: &'r mut Vec<Compiled>,
-    listed: Option<&'r [Compiled]>,
-    unlisted: &'r mut u32,
+    pipelines: &'r mut Pipelines,
+}
+
+struct Shape<'f> {
+    formats: &'f [Option<wgpu::TextureFormat>],
+    depth: Option<(wgpu::TextureFormat, bool)>,
+    main: bool,
+    switches: Vec<(u32, bool)>,
+    material: Vec<(&'static str, f64)>,
+    styling: Option<crate::surface::MaterialVariant>,
+    raster: engine_core::PassRaster,
+}
+
+type StageJob = (wgpu::ShaderModule, &'static str, Vec<(String, f64)>);
+
+struct RenderJob {
+    device: wgpu::Device,
+    label: String,
+    layout: wgpu::PipelineLayout,
+    vertex: StageJob,
+    buffers: Vec<Option<wgpu::VertexBufferLayout<'static>>>,
+    primitive: wgpu::PrimitiveState,
+    depth_stencil: Option<wgpu::DepthStencilState>,
+    samples: u32,
+    fragment: Option<StageJob>,
+    targets: Vec<Option<wgpu::ColorTargetState>>,
+    cache: Option<wgpu::PipelineCache>,
+}
+
+struct ComputeJob {
+    device: wgpu::Device,
+    label: String,
+    layout: wgpu::PipelineLayout,
+    module: wgpu::ShaderModule,
+    entry: &'static str,
+    constants: Vec<(String, f64)>,
+    cache: Option<wgpu::PipelineCache>,
+}
+
+fn named(constants: &[(String, f64)]) -> Vec<(&str, f64)> {
+    constants
+        .iter()
+        .map(|(name, value)| (name.as_str(), *value))
+        .collect()
+}
+
+fn options<'a>(constants: &'a [(&'a str, f64)]) -> wgpu::PipelineCompilationOptions<'a> {
+    wgpu::PipelineCompilationOptions {
+        constants,
+        zero_initialize_workgroup_memory: true,
+    }
+}
+
+impl RenderJob {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the machine keys every pipeline, which the pipeline list records"
+    )]
+    fn make(self) -> Result<wgpu::RenderPipeline, wgpu::Error> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let scope = crate::gpu_calls::validation_scope(&self.device);
+        let vertex_constants = named(&self.vertex.2);
+        let fragment_constants = self
+            .fragment
+            .as_ref()
+            .map(|(_, _, constants)| named(constants));
+        let made = self
+            .device
+            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(&self.label),
+                layout: Some(&self.layout),
+                vertex: wgpu::VertexState {
+                    module: &self.vertex.0,
+                    entry_point: Some(self.vertex.1),
+                    compilation_options: options(&vertex_constants),
+                    buffers: &self.buffers,
+                },
+                primitive: self.primitive,
+                depth_stencil: self.depth_stencil.clone(),
+                multisample: wgpu::MultisampleState {
+                    count: self.samples,
+                    ..Default::default()
+                },
+                fragment: self.fragment.as_ref().zip(fragment_constants.as_ref()).map(
+                    |((module, entry, _), constants)| wgpu::FragmentState {
+                        module,
+                        entry_point: Some(*entry),
+                        compilation_options: options(constants),
+                        targets: &self.targets,
+                    },
+                ),
+                multiview_mask: None,
+                cache: self.cache.as_ref(),
+            });
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(Some(error)) = crate::platform::ready(scope.pop()) {
+            return Err(error);
+        }
+        Ok(made)
+    }
+}
+
+impl ComputeJob {
+    #[expect(
+        clippy::disallowed_methods,
+        reason = "the machine keys every pipeline, which the pipeline list records"
+    )]
+    fn make(self) -> Result<wgpu::ComputePipeline, wgpu::Error> {
+        #[cfg(not(target_arch = "wasm32"))]
+        let scope = crate::gpu_calls::validation_scope(&self.device);
+        let constants = named(&self.constants);
+        let made = self
+            .device
+            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(&self.label),
+                layout: Some(&self.layout),
+                module: &self.module,
+                entry_point: Some(self.entry),
+                compilation_options: options(&constants),
+                cache: self.cache.as_ref(),
+            });
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(Some(error)) = crate::platform::ready(scope.pop()) {
+            return Err(error);
+        }
+        Ok(made)
+    }
+}
+
+fn computed_by_program(
+    pipelines: &[BuiltPipeline],
+    program_key: u64,
+    key: u64,
+) -> Option<wgpu::ComputePipeline> {
+    pipelines
+        .iter()
+        .filter(|other| other.program_key == program_key)
+        .find_map(|other| {
+            other
+                .computed
+                .iter()
+                .find(|(known, _)| *known == key)
+                .map(|(_, made)| made.clone())
+        })
+}
+
+fn note(pipelines: &mut Pipelines, compiled: Compiled, from_list: bool) {
+    if from_list {
+        pipelines.up_front += 1;
+    } else if pipelines
+        .listed
+        .as_ref()
+        .is_some_and(|listed| !listed.contains(&compiled))
+    {
+        pipelines.unlisted += 1;
+    }
+    pipelines.compiled.push(compiled);
 }
 
 impl Run {
@@ -264,13 +421,57 @@ impl Run {
                 device: &self.device,
                 machine: &mut self.machine,
                 parts: &self.parts,
-                switches: &self.pipelines.switches,
-                compiled: &mut self.pipelines.compiled,
-                listed: self.pipelines.listed.as_deref(),
-                unlisted: &mut self.pipelines.unlisted,
+                pipelines: &mut self.pipelines,
             },
             &mut self.assets,
         )
+    }
+
+    pub(crate) fn take_made(&mut self) -> u32 {
+        self.split().0.collect(None);
+        self.pipelines.making.pending()
+    }
+
+    pub(crate) fn wait_made(&mut self) {
+        while let Some(first) = self.pipelines.making.first() {
+            self.split().0.collect(Some(first));
+            if self.pipelines.making.first() == Some(first) {
+                return;
+            }
+        }
+    }
+
+    pub(crate) fn adopt_made(
+        &mut self,
+        shaders: std::collections::BTreeMap<u64, wgpu::ShaderModule>,
+        made: Vec<BuiltPipeline>,
+        mut pipelines: Pipelines,
+    ) {
+        for (key, module) in shaders {
+            self.machine.shaders.entry(key).or_insert(module);
+        }
+        for old in made {
+            if let Some(built) = self
+                .machine
+                .pipelines
+                .iter_mut()
+                .find(|built| built.program_key == old.program_key)
+            {
+                built.made.extend(old.made);
+                built.computed.extend(old.computed);
+            }
+        }
+        let programs: Vec<u64> = self
+            .machine
+            .pipelines
+            .iter()
+            .map(|built| built.program_key)
+            .collect();
+        pipelines
+            .compiled
+            .retain(|compiled| programs.contains(&compiled.program));
+        pipelines.making.forget_refused();
+        self.pipelines = pipelines;
     }
 
     pub(crate) fn compile(
@@ -341,11 +542,12 @@ impl Run {
         }
     }
 
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the machine keys every pipeline, which the pipeline list records"
-    )]
-    pub(super) fn compute_pipeline(&mut self, pipeline: u32) -> Option<wgpu::ComputePipeline> {
+    pub(super) fn compute_pipeline(
+        &mut self,
+        pipeline: u32,
+        wait: bool,
+    ) -> Option<wgpu::ComputePipeline> {
+        self.split().0.collect(None);
         let built = self.machine.pipelines.get(pipeline as usize)?;
         let (Program::Compute(_), Some(stage), false) =
             (&built.decl.program, built.stages.first(), built.skipped)
@@ -353,7 +555,8 @@ impl Run {
             return None;
         };
         let switches: Vec<(u32, bool)> = self
-            .pipelines.switches
+            .pipelines
+            .switches
             .iter()
             .filter(|(id, _)| stage.composed.switches.contains(id))
             .copied()
@@ -361,56 +564,41 @@ impl Run {
         let mut hasher = DefaultHasher::new();
         switches.hash(&mut hasher);
         let key = hasher.finish();
-        if let Some((_, made)) = built.computed.iter().find(|(known, _)| *known == key) {
-            return Some(made.clone());
-        }
-        let program_key = built.program_key;
-        let shared = self
-            .machine
-            .pipelines
-            .iter()
-            .filter(|other| other.program_key == program_key)
-            .find_map(|other| {
-                other
-                    .computed
+        let program = built.program_key;
+        let made = (program, key);
+        if computed_by_program(&self.machine.pipelines, program, key).is_none()
+            && !self.pipelines.making.refused(made)
+            && !self.pipelines.making.waits(made)
+        {
+            let job = ComputeJob {
+                device: self.device.clone(),
+                label: self.machine.part_label(built.decl.part, stage.entry.name()),
+                layout: built.layout.clone(),
+                module: stage.shader(&self.device, &mut self.machine.shaders),
+                entry: stage.entry.name(),
+                constants: switches
                     .iter()
-                    .find(|(known, _)| *known == key)
-                    .map(|(_, made)| made.clone())
+                    .map(|(id, on)| (id.to_string(), f64::from(u8::from(*on))))
+                    .collect(),
+                cache: self.pipelines.cache.clone(),
+            };
+            let pass = self.machine.pass_name(pipeline);
+            self.pipelines.making.submit(made, move || Finished {
+                program,
+                key,
+                pass,
+                noted: None,
+                made: job.make().map(Created::Compute),
             });
-        if let Some(made) = shared {
-            if let Some(built) = self.machine.pipelines.get_mut(pipeline as usize) {
-                built.computed.push((key, made.clone()));
-            }
-            return Some(made);
         }
-        let constants: Vec<(String, f64)> = switches
-            .iter()
-            .map(|(id, on)| (id.to_string(), f64::from(u8::from(*on))))
-            .collect();
-        let named: Vec<(&str, f64)> = constants
-            .iter()
-            .map(|(name, value)| (name.as_str(), *value))
-            .collect();
-        let module = stage.shader(&self.device, &mut self.machine.shaders);
-        let label = self.machine.part_label(built.decl.part, stage.entry.name());
-        let made = self
-            .device
-            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(&label),
-                layout: Some(&built.layout),
-                module: &module,
-                entry_point: Some(stage.entry.name()),
-                compilation_options: wgpu::PipelineCompilationOptions {
-                    constants: &named,
-                    zero_initialize_workgroup_memory: true,
-                },
-                cache: None,
-            });
-        crate::pipelines::count(self.machine.pass_name(pipeline), 1);
-        if let Some(built) = self.machine.pipelines.get_mut(pipeline as usize) {
-            built.computed.push((key, made.clone()));
+        self.split().0.collect(wait.then_some(made));
+        let found = computed_by_program(&self.machine.pipelines, program, key)?;
+        if let Some(built) = self.machine.pipelines.get_mut(pipeline as usize)
+            && !built.computed.iter().any(|(known, _)| *known == key)
+        {
+            built.computed.push((key, found.clone()));
         }
-        Some(made)
+        Some(found)
     }
 }
 
@@ -432,21 +620,74 @@ impl Compiler<'_> {
             .map(|group| group.layout.clone())
     }
 
-    fn note_compiled(&mut self, compiled: Compiled) {
-        if self
-            .listed
-            .is_some_and(|listed| !listed.contains(&compiled))
-        {
-            *self.unlisted += 1;
+    pub(crate) fn collect(&mut self, waited: Option<(u64, u64)>) {
+        for finished in self.pipelines.making.take(waited) {
+            let made = match finished.made {
+                Ok(made) => made,
+                Err(error) => {
+                    self.pipelines
+                        .making
+                        .refuse((finished.program, finished.key));
+                    self.pipelines.refused.push(error.to_string());
+                    continue;
+                }
+            };
+            let Some(built) = self
+                .machine
+                .pipelines
+                .iter_mut()
+                .find(|built| built.program_key == finished.program)
+            else {
+                continue;
+            };
+            match made {
+                Created::Render(made) => built.made.push((finished.key, made)),
+                Created::Compute(made) => built.computed.push((finished.key, made)),
+            }
+            crate::pipelines::count(finished.pass, 1);
+            if let Some((compiled, from_list)) = finished.noted {
+                note(self.pipelines, compiled, from_list);
+            }
         }
-        self.compiled.push(compiled);
     }
 
-    #[expect(
-        clippy::disallowed_methods,
-        reason = "the machine keys every pipeline, which the pipeline list records"
-    )]
+    fn made(&mut self, pipeline: u32, (program, key): (u64, u64)) -> Option<wgpu::RenderPipeline> {
+        let found = made_by_program(&self.machine.pipelines, program, key)?;
+        if let Some(built) = self.machine.pipelines.get_mut(pipeline as usize)
+            && !built.made.iter().any(|(known, _)| *known == key)
+        {
+            built.made.push((key, found.clone()));
+        }
+        Some(found)
+    }
+
     pub(crate) fn compile(
+        &mut self,
+        pipeline: u32,
+        targets: (
+            &[Option<wgpu::TextureFormat>],
+            Option<(wgpu::TextureFormat, bool)>,
+        ),
+        shown: (bool, bool),
+        variant: Option<crate::surface::MaterialVariant>,
+    ) -> Option<(u64, wgpu::RenderPipeline)> {
+        self.compile_with(pipeline, targets, shown, variant, false)
+    }
+
+    pub(crate) fn compile_now(
+        &mut self,
+        pipeline: u32,
+        targets: (
+            &[Option<wgpu::TextureFormat>],
+            Option<(wgpu::TextureFormat, bool)>,
+        ),
+        shown: (bool, bool),
+        variant: Option<crate::surface::MaterialVariant>,
+    ) -> Option<(u64, wgpu::RenderPipeline)> {
+        self.compile_with(pipeline, targets, shown, variant, true)
+    }
+
+    fn compile_with(
         &mut self,
         pipeline: u32,
         (formats, depth): (
@@ -455,7 +696,9 @@ impl Compiler<'_> {
         ),
         (plain, main): (bool, bool),
         variant: Option<crate::surface::MaterialVariant>,
+        wait: bool,
     ) -> Option<(u64, wgpu::RenderPipeline)> {
+        self.collect(None);
         let built = self.machine.pipelines.get(pipeline as usize)?;
         let Program::Render(desc) = &built.decl.program else {
             return None;
@@ -463,7 +706,7 @@ impl Compiler<'_> {
         if built.skipped || (desc.fragment.is_none() && formats.iter().any(Option::is_some)) {
             return None;
         }
-        let switches = stage_switches(self.switches, &built.stages);
+        let switches = stage_switches(&self.pipelines.switches, &built.stages);
         let used = variant.map_or([false; 5], |variant| {
             variant.constants().map(|offered| {
                 built
@@ -476,37 +719,68 @@ impl Compiler<'_> {
         let styled = !plain && !desc.writes.is_empty();
         let bits = variant.and_then(|variant| variant.keyed(used, styled));
         let raster = raster_of(self.machine, pipeline);
-        let material = material_constants(bits.filter(|_| specialized), raster.clamp_near);
         let mut hasher = DefaultHasher::new();
         (formats, depth, plain, main, &switches, bits).hash(&mut hasher);
         (raster.bias, raster.slope.to_bits(), raster.clamp_near, raster.cull).hash(&mut hasher);
         let key = hasher.finish();
-        if let Some((_, made)) = built.made.iter().find(|(known, _)| *known == key) {
-            return Some((key, made.clone()));
+        let program = built.program_key;
+        let made = (program, key);
+        if self.made(pipeline, made).is_none()
+            && !self.pipelines.making.refused(made)
+            && !self.pipelines.making.waits(made)
+        {
+            let shape = Shape {
+                formats,
+                depth,
+                main,
+                switches,
+                material: material_constants(bits.filter(|_| specialized), raster.clamp_near),
+                styling: bits.filter(|_| styled),
+                raster,
+            };
+            let job = self.render_job(pipeline, shape)?;
+            let noted = (!self.machine.makes_records(pipeline)).then(|| {
+                (
+                    Compiled {
+                        program,
+                        formats: formats.to_vec(),
+                        depth,
+                        plain,
+                        main,
+                        variant: bits,
+                    },
+                    self.pipelines.listing,
+                )
+            });
+            let pass = self.machine.pass_name(pipeline);
+            self.pipelines.making.submit(made, move || Finished {
+                program,
+                key,
+                pass,
+                noted,
+                made: job.make().map(Created::Render),
+            });
+            self.collect(wait.then_some(made));
+        } else if wait {
+            self.collect(Some(made));
         }
-        let shared = made_by_program(&self.machine.pipelines, built.program_key, key);
-        if let Some(made) = shared {
-            if let Some(built) = self.machine.pipelines.get_mut(pipeline as usize) {
-                built.made.push((key, made.clone()));
-            }
-            return Some((key, made));
-        }
-        let constants = stage_constants(&built.stages, &switches, &material);
-        let named = named_constants(&constants);
-        let options = |stage: usize| wgpu::PipelineCompilationOptions {
-            constants: named.get(stage).map_or(&[][..], Vec::as_slice),
-            zero_initialize_workgroup_memory: true,
+        self.made(pipeline, made).map(|found| (key, found))
+    }
+
+    fn render_job(&mut self, pipeline: u32, shape: Shape<'_>) -> Option<RenderJob> {
+        let machine = &mut *self.machine;
+        let built = machine.pipelines.get(pipeline as usize)?;
+        let Program::Render(desc) = &built.decl.program else {
+            return None;
         };
-        let fragment_at = 1;
-        let fragment_entry = desc.fragment;
-        let layouts = vertex_layouts(&desc.vertices);
-        let styling = bits.filter(|_| styled);
-        let depth_stencil = depth_state(depth, desc.depth, styling, raster);
-        let fragment_stage = fragment_entry.and_then(|_| built.stages.get(fragment_at));
+        let mut constants =
+            stage_constants(&built.stages, &shape.switches, &shape.material).into_iter();
+        let fragment_stage = desc.fragment.and_then(|_| built.stages.get(1));
         let written = fragment_stage
-            .zip(fragment_entry)
+            .zip(desc.fragment)
             .and_then(|(stage, entry)| fragment_locations(&stage.composed.text, entry.name()));
-        let blended = styling
+        let blended = shape
+            .styling
             .map(|styling| styling.draw().alpha)
             .filter(|alpha| {
                 matches!(
@@ -515,62 +789,35 @@ impl Compiler<'_> {
                 )
             })
             .map(|alpha| {
-                let home = self.machine.declared.passes.get(built.home as usize);
-                (alpha, home.and_then(|pass| cover_location(&self.machine.outputs, pass)))
+                let home = machine.declared.passes.get(built.home as usize);
+                (alpha, home.and_then(|pass| cover_location(&machine.outputs, pass)))
             });
-        let mut targets = color_targets(desc, formats, written.as_deref(), main);
+        let mut targets = color_targets(desc, shape.formats, written.as_deref(), shape.main);
         if let Some((alpha, cover)) = blended {
-            blend_targets(&mut targets, alpha, cover.filter(|_| main));
+            blend_targets(&mut targets, alpha, cover.filter(|_| shape.main));
         }
-        let vertex_module = built
+        let vertex = built
             .stages
             .first()?
-            .shader(self.device, &mut self.machine.shaders);
-        let fragment_module =
-            fragment_stage.map(|stage| stage.shader(self.device, &mut self.machine.shaders));
-        let label = self.machine.part_label(built.decl.part, desc.vertex.name());
-        let made =
-            self.device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(&label),
-                    layout: Some(&built.layout),
-                    vertex: wgpu::VertexState {
-                        module: &vertex_module,
-                        entry_point: Some(desc.vertex.name()),
-                        compilation_options: options(0),
-                        buffers: &layouts,
-                    },
-                    primitive: culled(desc.primitive, raster.cull),
-                    depth_stencil,
-                    multisample: wgpu::MultisampleState {
-                        count: desc.samples,
-                        ..Default::default()
-                    },
-                    fragment: fragment_module.as_ref().zip(fragment_entry).map(
-                        |(module, entry)| wgpu::FragmentState {
-                            module,
-                            entry_point: Some(entry.name()),
-                            compilation_options: options(fragment_at),
-                            targets: &targets,
-                        },
-                    ),
-                    multiview_mask: None,
-                    cache: None,
-                });
-        let program = built.program_key;
-        if let Some(built) = self.machine.pipelines.get_mut(pipeline as usize) {
-            built.made.push((key, made.clone()));
-        }
-        crate::pipelines::count(self.machine.pass_name(pipeline), 1);
-        self.note_compiled(Compiled {
-            program,
-            formats: formats.to_vec(),
-            depth,
-            plain,
-            main,
-            variant: bits,
-        });
-        Some((key, made))
+            .shader(self.device, &mut machine.shaders);
+        let fragment = fragment_stage
+            .zip(desc.fragment)
+            .map(|(stage, entry)| (stage.shader(self.device, &mut machine.shaders), entry.name()));
+        let vertex_constants = constants.next().unwrap_or_default();
+        let fragment_constants = constants.next().unwrap_or_default();
+        Some(RenderJob {
+            device: self.device.clone(),
+            label: machine.part_label(built.decl.part, desc.vertex.name()),
+            layout: built.layout.clone(),
+            vertex: (vertex, desc.vertex.name(), vertex_constants),
+            buffers: vertex_layouts(&desc.vertices),
+            primitive: culled(desc.primitive, shape.raster.cull),
+            depth_stencil: depth_state(shape.depth, desc.depth, shape.styling, shape.raster),
+            samples: desc.samples,
+            fragment: fragment.map(|(module, entry)| (module, entry, fragment_constants)),
+            targets,
+            cache: self.pipelines.cache.clone(),
+        })
     }
 }
 
@@ -640,7 +887,7 @@ impl Run {
             .installs.gates
             .iter()
             .zip(&self.machine.declared.parts)
-            .filter(|(_, part)| part.turns_on_in_play)
+            .filter(|(_, part)| !crate::DEV && part.turns_on_in_play)
             .filter_map(|(gate, _)| *gate)
             .collect();
         let side = |forced: bool| -> Vec<(u32, bool)> {
@@ -667,8 +914,8 @@ impl Run {
             sides: [side(true), side(false)],
         };
         self.at_reached_switches(|run| {
-            run.warm();
             run.compile_listed();
+            run.warm();
         });
     }
 
@@ -688,7 +935,7 @@ impl Run {
         let Some(keys) = self.pipelines.listed.take() else {
             return;
         };
-        let before = self.pipelines.compiled.len();
+        self.pipelines.listing = true;
         for key in &keys {
             let found = self
                 .machine
@@ -705,7 +952,7 @@ impl Run {
                 );
             }
         }
-        self.pipelines.up_front += (self.pipelines.compiled.len() - before) as u32;
+        self.pipelines.listing = false;
         self.pipelines.listed = Some(keys);
     }
 
@@ -727,7 +974,7 @@ impl Run {
                 self.machine.pipelines[pipeline].decl.program,
                 Program::Compute(_)
             ) {
-                let _ = self.compute_pipeline(pipeline as u32);
+                let _ = self.compute_pipeline(pipeline as u32, false);
                 continue;
             }
             for pass in self.scope_passes(pipeline) {

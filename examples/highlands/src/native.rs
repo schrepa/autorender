@@ -12,6 +12,8 @@ use crate::{Highlands, Options, RockMaps, parameters};
 struct Native {
     options: Options,
     assets: PathBuf,
+    #[cfg(feature = "dev")]
+    source: PathBuf,
     host: HostOptions,
 }
 
@@ -45,6 +47,11 @@ fn default_assets() -> PathBuf {
         .unwrap_or_else(|| Path::new(env!("CARGO_MANIFEST_DIR")).join("../../web/public"))
 }
 
+#[cfg(feature = "dev")]
+fn default_source() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("highlands.scene.json")
+}
+
 fn command_options() -> Vec<CommandOption> {
     let defaults = Options::default();
     let mut options: Vec<CommandOption> = options()
@@ -61,6 +68,8 @@ fn command_options() -> Vec<CommandOption> {
             }
         })
         .collect();
+    #[cfg(feature = "dev")]
+    options.push(CommandOption::taking("--source", "PATH").defaults_to(default_source().display()));
     options.extend(engine_native::options());
     options
 }
@@ -70,6 +79,8 @@ impl Native {
         let mut native = Self {
             options: Options::default(),
             assets: default_assets(),
+            #[cfg(feature = "dev")]
+            source: default_source(),
             host: HostOptions::default(),
         };
         let mut arguments = Arguments::new(arguments);
@@ -78,6 +89,11 @@ impl Native {
                 continue;
             }
             let name = argument.name.strip_prefix("--").unwrap_or_default();
+            #[cfg(feature = "dev")]
+            if name == "source" {
+                native.source = arguments.value(&argument)?.into();
+                continue;
+            }
             if name == "assets" {
                 native.assets = arguments.value(&argument)?.into();
             } else if name == WATCH_BODIES {
@@ -126,32 +142,33 @@ impl Native {
     }
 
     fn run(&self) -> engine::Result<()> {
-        let build = |engine: &mut Engine| self.build(engine);
         #[cfg(feature = "dev")]
         if self.host.dev {
-            return self.run_dev(build);
+            return self.run_dev();
         }
-        self.host.run("Highlands", crate::bricks, build)
+        self.host.run("Highlands", crate::bricks, |engine: &mut Engine| {
+            self.build(engine, crate::scene::SCENE)
+        })
     }
 
-    fn build(&self, engine: &mut Engine) -> engine::Result<Highlands> {
+    fn build(&self, engine: &mut Engine, source: &str) -> engine::Result<Highlands> {
         let rocks = if self.options.rocks {
             rocks(&self.assets.join("highlands/rocks"))
         } else {
             RockMaps::default()
         };
-        Highlands::build(engine, self.options.clone(), &rocks)
+        Highlands::build(engine, self.options.clone(), &rocks, source)
     }
 
     #[cfg(feature = "dev")]
-    fn run_dev(
-        &self,
-        build: impl FnOnce(&mut Engine) -> engine::Result<Highlands>,
-    ) -> engine::Result<()> {
+    fn run_dev(&self) -> engine::Result<()> {
+        let source = std::fs::read_to_string(&self.source)
+            .map_err(|error| engine_native::file_error("--source", &self.source, &error))?;
         let session = self
             .host
-            .dev_session(crate::bricks, build)?
-            .parameters(options());
+            .dev_session(crate::bricks, |engine: &mut Engine| self.build(engine, &source))?
+            .parameters(options())
+            .source(&self.source);
         controlled(session).run()
     }
 }

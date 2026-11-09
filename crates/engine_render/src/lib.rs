@@ -72,7 +72,9 @@ pub use memory::GpuMemory;
 pub use platform::{AdapterInfo, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
-pub use platform::{GpuPreference, NativeWindow, start_native_instances_with};
+pub use platform::{
+    GpuPreference, NativeWindow, keep_pipeline_cache_in, start_native_instances_with,
+};
 pub use pyramid::{PYRAMID_GROUP, PyramidExtent};
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
@@ -805,6 +807,14 @@ impl<P: GpuPart> PassBuilder<'_, P> {
     pub fn label(self, label: &'static str) -> Self {
         if let Some(declared) = self.core.pass_mut(self.pass) {
             declared.label = Some(label);
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn makes_records(self) -> Self {
+        if let Some(declared) = self.core.pass_mut(self.pass) {
+            declared.makes_records = true;
         }
         self
     }

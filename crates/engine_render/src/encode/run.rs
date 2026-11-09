@@ -103,6 +103,10 @@ pub(crate) struct Pipelines {
     pub(crate) up_front: u32,
     pub(crate) unlisted: u32,
     pub(crate) switches: Vec<(u32, bool)>,
+    pub(crate) listing: bool,
+    pub(crate) making: super::making::Making,
+    pub(crate) refused: Vec<String>,
+    pub(crate) cache: Option<wgpu::PipelineCache>,
 }
 
 pub(crate) struct Planning {

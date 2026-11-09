@@ -22,14 +22,21 @@ export function nativeProgram(name, { profiling = false } = {}) {
   if (!client) return resolve(name);
   const [chosen, features] = profiling ? ["profiling", "dev,profiling"] : ["quick", "dev"];
   const profile = process.env.ENGINE_NATIVE_PROFILE || chosen;
-  const target = resolve(workspace, "target", "agent");
+  const target = resolve(workspace, "target");
   /** @type {NodeJS.ProcessEnv} */
-  const env = { ...process.env, CARGO_TARGET_DIR: target };
+  const env = { ...process.env, ...(profile === "dev" ? {} : { ENGINE_COMMIT: engineCommit() }) };
   if (profiling && process.platform === "linux") env.RUSTFLAGS = `${process.env.RUSTFLAGS ?? ""} -Cforce-frame-pointers=yes`.trim();
   execFileSync("cargo", ["build", "-q", "-p", client.package, "--bin", client.native, "--profile", profile, "--features", features],
     { cwd: workspace, env, stdio: ["ignore", "ignore", "inherit"] });
   const folder = profile === "dev" ? "debug" : profile;
   return resolve(target, folder, process.platform === "win32" ? `${client.native}.exe` : client.native);
+}
+
+function engineCommit() {
+  const git = args => execFileSync("git", args, { cwd: workspace, encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  let head;
+  try { head = git(["rev-parse", "--short=12", "HEAD"]).trim(); } catch { return "unknown"; }
+  try { git(["diff", "--quiet", "HEAD"]); return head; } catch { return `${head}-dirty`; }
 }
 
 async function pruneSessions(root) {

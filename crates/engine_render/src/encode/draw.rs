@@ -425,7 +425,7 @@ impl Run {
             return 0;
         }
         if built.compute_ready.is_none() {
-            let Some(made) = self.compute_pipeline(handle) else {
+            let Some(made) = self.compute_pipeline(handle, true) else {
                 return 0;
             };
             self.machine.pipelines[handle as usize].compute_ready = Some(made);

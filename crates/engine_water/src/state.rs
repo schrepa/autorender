@@ -16,9 +16,10 @@ use engine_places_world::ground::{TerrainEntry, TerrainTiles, TileFace};
 use engine_places_world::water::{WaterTileErrors, Waterline};
 use glam::{Vec2, Vec3};
 
-use crate::drawn::{DrawnWater, draw_input, is_dry};
+use crate::drawn::draw_input;
 use crate::emitters::Emitters;
 use crate::flow::Running;
+use crate::jobs::drawn::{DrawnWater, is_dry};
 use crate::jobs::{DRAWN, TILE_WATER};
 use crate::settled::{Settled, Shares};
 use crate::water_blocks::Blocks;

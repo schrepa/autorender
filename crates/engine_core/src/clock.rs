@@ -69,6 +69,7 @@ pub enum PauseReason {
     Focus,
     Hidden,
     Suspended,
+    Preparing,
     #[serde(untagged)]
     Brick(&'static str),
 }
@@ -77,7 +78,7 @@ impl PauseReason {
     pub fn stops_frames(self) -> bool {
         match self {
             Self::Hidden | Self::Suspended => true,
-            Self::Agent | Self::Game | Self::Focus | Self::Brick(_) => false,
+            Self::Agent | Self::Game | Self::Focus | Self::Preparing | Self::Brick(_) => false,
         }
     }
 }

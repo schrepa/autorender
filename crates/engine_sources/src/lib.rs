@@ -79,8 +79,20 @@ pub fn emit() {
     let root = workspace_root(&manifest);
     let src = manifest.join("src");
     let bricks = src.join("bricks");
-    let hash = digest(&package, &manifest, &root, false);
+    let hash = digest(&package, &manifest, &root, false, None);
     let game = read(&manifest.join("Cargo.toml")).is_some_and(|item| kind(&item) == Some("game"));
+    let jobs = src.join("jobs");
+    if jobs.is_dir() {
+        let hash = digest(&package, &manifest, &root, false, Some(&jobs));
+        fs::write(
+            out.join("jobs.rs"),
+            format!(
+                "pub(crate) static SOURCE: ::engine_core::Source = \
+                 ::engine_core::Source::generated({package:?}, {game}, {hash:?}, &[]);\n"
+            ),
+        )
+        .expect("OUT_DIR is writable");
+    }
 
     let mut code = String::new();
     code.push_str("extern crate engine_ecs as bevy_ecs;\n");
@@ -117,7 +129,7 @@ pub fn emit() {
     for module in modules {
         let inside = bricks.join(&module);
         let named = format!("{crate_name}_{module}");
-        let hash = digest(&named, &manifest, &root, false);
+        let hash = digest(&named, &manifest, &root, false, None);
         let code = source_code(
             &named,
             game,
@@ -215,9 +227,9 @@ fn source_code(
             .collect();
         let path = segments.join("::");
         let text = fs::read_to_string(file).expect("a WGSL file");
+        let shown = file.display().to_string();
         texts.push_str(&format!(
-            "    ::engine_core::ShaderText::generated({path:?}, include_str!({:?})),\n",
-            file.display().to_string()
+            "    ::engine_core::ShaderText::generated({path:?}, include_str!({shown:?}), {shown:?}),\n"
         ));
         let node = tree.at(&segments);
         node.module = Some(index as u32);
@@ -228,7 +240,7 @@ fn source_code(
         let generated = generated_wgsl(folder, skipped);
         if !generated.is_empty() {
             texts.push_str(&format!(
-                "    ::engine_core::ShaderText::generated({:?}, {generated:?}),\n",
+                "    ::engine_core::ShaderText::generated({:?}, {generated:?}, \"\"),\n",
                 format!("generated::{prefix}")
             ));
         }
@@ -263,7 +275,7 @@ pub fn emit_of(named: &[(&str, &str)]) {
             .and_then(Item::as_str)
             .unwrap_or_else(|| panic!("the workspace names no path for {package}"));
         let folder = normal(&root.join(path));
-        let hash = digest(package, &folder, &root, true);
+        let hash = digest(package, &folder, &root, true, None);
         code.push_str(&format!(
             "pub(crate) const {constant}: [u8; 32] = {hash:?};\n"
         ));
@@ -271,9 +283,16 @@ pub fn emit_of(named: &[(&str, &str)]) {
     fs::write(out.join("sources.rs"), code).expect("OUT_DIR is writable");
 }
 
-fn digest(package: &str, manifest: &Path, root: &Path, every: bool) -> [u8; 32] {
+fn digest(
+    package: &str,
+    manifest: &Path,
+    root: &Path,
+    every: bool,
+    folder: Option<&Path>,
+) -> [u8; 32] {
+    let own = normal(manifest);
     let mut crates = BTreeSet::new();
-    crates.insert(normal(manifest));
+    crates.insert(own.clone());
     reach(manifest, root, &mut crates, every);
 
     let mut hash = Sha256::new();
@@ -282,9 +301,20 @@ fn digest(package: &str, manifest: &Path, root: &Path, every: bool) -> [u8; 32] 
     for dir in &crates {
         let src = dir.join("src");
         let mut files = Vec::new();
-        list(&src, &mut files);
+        match folder.filter(|_| *dir == own) {
+            Some(folder) => {
+                list(&normal(folder), &mut files);
+                let included = included(&files);
+                for file in &included {
+                    println!("cargo:rerun-if-changed={}", file.display());
+                }
+                files.extend(included);
+            }
+            None => list(&src, &mut files),
+        }
         files.push(dir.join("Cargo.toml"));
         files.sort();
+        files.dedup();
         println!("cargo:rerun-if-changed={}", src.display());
         println!(
             "cargo:rerun-if-changed={}",
@@ -293,7 +323,7 @@ fn digest(package: &str, manifest: &Path, root: &Path, every: bool) -> [u8; 32] 
         for file in &files {
             hash.update(relative(root, file).as_bytes());
             hash.update([0]);
-            hash.update(text_bytes(file));
+            hash.update(hashed(file));
             hash.update([0]);
         }
     }
@@ -509,6 +539,64 @@ fn text_bytes(file: &Path) -> Vec<u8> {
         out.push(*byte);
     }
     out
+}
+
+fn hashed(file: &Path) -> Vec<u8> {
+    let bytes = text_bytes(file);
+    if file.extension().is_none_or(|extension| extension != "rs") {
+        return bytes;
+    }
+    let text = String::from_utf8_lossy(&bytes);
+    let mut kept: Vec<&str> = Vec::new();
+    for line in text.split_inclusive('\n') {
+        if test_module(line) {
+            while kept
+                .last()
+                .is_some_and(|above| above.trim_start().starts_with("#["))
+            {
+                kept.pop();
+            }
+        } else {
+            kept.push(line);
+        }
+    }
+    kept.concat().into_bytes()
+}
+
+fn test_module(line: &str) -> bool {
+    without_visibility(line.trim())
+        .strip_prefix("mod ")
+        .and_then(|rest| rest.strip_suffix(';'))
+        .is_some_and(|name| test_code(name.trim()))
+}
+
+fn included(files: &[PathBuf]) -> Vec<PathBuf> {
+    let mut found = Vec::new();
+    for file in files {
+        if file.extension().is_none_or(|extension| extension != "rs") {
+            continue;
+        }
+        let Some(folder) = file.parent() else {
+            continue;
+        };
+        let text = String::from_utf8_lossy(&text_bytes(file)).into_owned();
+        for name in ["include_str", "include_bytes"] {
+            for at in words(&text, name) {
+                let named = text[at + name.len()..]
+                    .strip_prefix('!')
+                    .map(str::trim_start)
+                    .and_then(|rest| rest.strip_prefix('('))
+                    .map(str::trim_start)
+                    .and_then(|rest| rest.strip_prefix('"'))
+                    .and_then(|rest| rest.split_once('"'))
+                    .map(|(named, _)| named);
+                if let Some(named) = named {
+                    found.push(normal(&folder.join(named)));
+                }
+            }
+        }
+    }
+    found
 }
 
 fn scratch(name: &str) -> bool {

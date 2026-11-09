@@ -12,7 +12,7 @@ const MAX_ENTRIES = 40_000;
 const MAX_DEPTH = 64;
 const CHUNK_BYTES = 64 * 1024;
 const clients = JSON.parse(readFileSync(new URL("../src/generated/clients.json", import.meta.url), "utf8"));
-const TREES = ["crates", ...clients.map(client => client.folder).filter(folder => folder && !folder.startsWith("crates/")), ".cargo", "vendor/glam"];
+const TREES = ["crates", "tools", ...clients.map(client => client.folder).filter(folder => folder && !folder.startsWith("crates/")), ".cargo", "vendor/glam"];
 const FILES = ["Cargo.toml", "Cargo.lock", "rust-toolchain.toml"];
 const IGNORED = new Set(["target", "pkg", "pkg-dev", "dist", ".git", "node_modules", ".tools"]);
 

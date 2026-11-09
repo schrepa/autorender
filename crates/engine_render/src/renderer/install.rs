@@ -586,9 +586,10 @@ pub(crate) fn install(
     device: &wgpu::Device,
     limits: engine_core::DeviceLimits,
     world: &mut World,
+    edited: std::collections::BTreeMap<String, String>,
 ) -> Result<Built, Vec<Error>> {
     let built = world.resource_scope::<Registry, _>(|world, registry| {
-        install_with((device, limits), world, &registry)
+        install_with((device, limits), world, &registry, edited)
     })?;
     if let Some(mut registry) = world.get_resource_mut::<Registry>() {
         for problem in &built.machine.over_limit {
@@ -606,11 +607,12 @@ fn install_with(
     (device, limits): (&wgpu::Device, engine_core::DeviceLimits),
     world: &mut World,
     registry: &Registry,
+    edited: std::collections::BTreeMap<String, String>,
 ) -> Result<Built, Vec<Error>> {
     let mut problems = Vec::new();
     names_twice(registry, world, &mut problems);
     let mut roots = Vec::new();
-    let mut linker = Linker::new(crate::shared::core_source());
+    let mut linker = Linker::edited(crate::shared::core_source(), edited);
     for (path, text) in crate::shaders::generated_core() {
         linker.add_generated(path.to_owned(), CORE_PACKAGE, text);
     }
@@ -855,7 +857,22 @@ impl Renderer {
     }
 
     pub fn install(&mut self, world: &mut World) -> Result<(), Vec<Error>> {
-        let installed = install(&self.core.device, self.core.limits, world)?;
+        let installed = install(&self.core.device, self.core.limits, world, self.edited())?;
+        self.adopt_installed(installed, world);
+        Ok(())
+    }
+
+    #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+    fn edited(&self) -> std::collections::BTreeMap<String, String> {
+        self.watched.edited()
+    }
+
+    #[cfg(not(all(feature = "dev", not(target_arch = "wasm32"))))]
+    fn edited(&self) -> std::collections::BTreeMap<String, String> {
+        std::collections::BTreeMap::new()
+    }
+
+    pub(super) fn adopt_installed(&mut self, installed: Built, world: &mut World) {
         let (mut assets, kept) = match (self.run.take(), self.assets.take()) {
             (Some(run), _) => {
                 let (assets, kept) = kept_of(run);
@@ -924,8 +941,15 @@ impl Renderer {
             .collect();
         self.part_names = Box::leak(names.into_boxed_slice());
         self.plans.clear();
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            run.pipelines.cache = self
+                .core
+                .pipeline_cache
+                .as_ref()
+                .map(|kept| kept.cache.clone());
+        }
         self.run = Some(run);
-        Ok(())
     }
 
     pub fn check(world: &mut World) -> Result<(), Vec<Error>> {
@@ -937,7 +961,7 @@ impl Renderer {
 pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
     let (device, queue) = noop_device().map_err(|error| vec![error])?;
     let limits = device_limits(&device.limits(), device.features(), 0);
-    let mut installed = install(&device, limits, world)?;
+    let mut installed = install(&device, limits, world, std::collections::BTreeMap::new())?;
     let listed = listing(&mut installed);
     let queue = crate::gpu_calls::Queue::new(queue);
     let mut assets = new_assets(&device, &queue);
@@ -952,10 +976,16 @@ pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
     run.installs.gates = installed.gates;
     run.pipelines.switches = switches_of(&run.machine, world);
     run.warm();
+    run.wait_made();
     run.make_all_shaders();
+    let refused: Vec<Error> = std::mem::take(&mut run.pipelines.refused)
+        .into_iter()
+        .map(|message| failed_with("$.pipelines", message))
+        .collect();
     match crate::platform::ready(scope.pop()) {
         Some(Some(error)) => Err(vec![failed_with("$.pipelines", error)]),
-        Some(None) | None => Ok(listed),
+        Some(None) | None if refused.is_empty() => Ok(listed),
+        Some(None) | None => Err(refused),
     }
 }
 
@@ -968,6 +998,9 @@ struct Kept {
     frames: (u64, u64),
     installed: Vec<engine_core::FrameId>,
     readbacks: crate::readback::Readbacks,
+    shaders: std::collections::BTreeMap<u64, wgpu::ShaderModule>,
+    made: Vec<crate::machine::BuiltPipeline>,
+    pipelines: crate::encode::Pipelines,
 }
 
 fn kept_of(run: Run) -> (Assets, Kept) {
@@ -981,6 +1014,7 @@ fn kept_of(run: Run) -> (Assets, Kept) {
         frames,
         installs,
         reading,
+        pipelines,
         ..
     } = run;
     let at = sets.at;
@@ -999,6 +1033,9 @@ fn kept_of(run: Run) -> (Assets, Kept) {
         frames: (frames.current, frames.asked),
         installed: installs.installed,
         readbacks: reading.list,
+        shaders: machine.shaders,
+        made: machine.pipelines,
+        pipelines,
     };
     (assets, kept)
 }
@@ -1065,6 +1102,7 @@ fn same_shape(old: &crate::install::Declared, new: &crate::install::Declared) ->
 fn adopt(run: &mut Run, kept: Kept, world: &mut World) {
     (run.frames.current, run.frames.asked) = kept.frames;
     run.reading.list = kept.readbacks;
+    run.adopt_made(kept.shaders, kept.made, kept.pipelines);
     let next = run.written().next();
     run.installs.installed.fill(next);
     if !same_shape(&kept.declared, &run.machine.declared) {

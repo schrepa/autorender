@@ -1,28 +1,17 @@
 use bytemuck::{Pod, Zeroable};
 use engine_core::{gpu_bits, gpu_consts, gpu_struct};
-use engine_heightfield::tile::{PATCH_QUADS, PATCHES_PER_TILE};
+use engine_heightfield::tile::PATCHES_PER_TILE;
+
+use crate::jobs::gpu::{BlockPlace, WaterInfoWord, WaterStateWord};
 
 gpu_consts! {
-    pub const NO_WATER_SURFACE: f32 = -1.0e30;
     pub const NO_WATER_BLOCK: u32 = 0xffffffff;
     pub const WATER_WAITING: u32 = 0xfffffffe;
-    pub const WATER_FLOW_RANGE: f32 = 8.0;
-    pub const WATER_SHEAR_RANGE: f32 = 8.0;
     pub const WATER_GRADIENT_RANGE: f32 = 4.0;
-    pub const WATER_SPAN_LEAST: f32 = 0.25;
-    pub const WATER_SPAN_MOST: f32 = 4096.0;
-    pub const WATER_SPAN_STEPS: f32 = 126.0;
-    pub const BLOCK_SIDE: u32 = 8;
-    pub const BLOCK_GROUND: u32 = (BLOCK_SIDE + 1) * (BLOCK_SIDE + 1) + 4 * BLOCK_SIDE * BLOCK_SIDE;
-    pub const NO_BLOCK: u32 = 0xffffffff;
-    pub const COVER_POINTS: u32 = 4;
-    pub const WATER_SIM_GROUP: u32 = BLOCK_SIDE;
-    pub const WATER_LIVE_BLOCK: u32 = BLOCK_SIDE;
     pub const SIM_SLOTS: u32 = 64;
     pub const SIM_CELL_SUMS: u32 = 4;
     pub const SIM_BLOCK_LOOKS: u32 = 3;
     pub const SIM_LIVE_LOOKS: u32 = 2;
-    pub const SIM_RIM: u32 = BLOCK_SIDE;
     pub const SIM_TOUCHES: u32 = 32;
     pub const WATER_SIM_SOURCE_GROUP: u32 = 64;
     pub const WATER_SETUP_RING_GROUP: u32 = 64;
@@ -34,7 +23,6 @@ gpu_consts! {
     pub const LIVE_NONE: u32 = 0xffffffff;
     pub const LIVE_HEAD: u32 = 4;
     pub const LIVE_CELL: u32 = 3;
-    pub const LIVE_HELD: f32 = 1.0e30;
     pub const PARTICLE_GROUP: u32 = 256;
     pub const PARTICLE_SIDE: u32 = 8;
     pub const PARTICLE_LATTICE: u32 = 8;
@@ -53,20 +41,7 @@ gpu_consts! {
     pub const SURFACE_BEND: f32 = 7.0;
     pub const SURFACE_BEND_MOST: f32 = 1.0;
     pub const SURFACE_WIND_DRIFT: f32 = 0.03;
-    pub const THETA: f32 = 1.3;
-    pub const THIN: f32 = 0.01;
-    pub const DRY: f32 = 1.0e-4;
-    pub const WET_MOST: f32 = 0.5;
     pub const FASTEST: f32 = 20.0;
-    pub const UNHELD: f32 = -1.0e30;
-    pub const DENSITY: f32 = 1000.0;
-    pub const FERGUSON_A1: f32 = 6.5;
-    pub const FERGUSON_A2: f32 = 2.5;
-    pub const SHALLOWEST: f32 = 0.1;
-    pub const DEEPEST: f32 = 30.0;
-    pub const STRICKLER: f32 = 20.4;
-    pub const GROUND_D84: f32 = 0.05;
-    pub const COURANT: f32 = 0.24;
     pub const LOCAL_SHARE: f32 = 0.9;
     pub const SLOWEST: f32 = 1.0;
     pub const FOAM_LIFE: f32 = 20.0;
@@ -74,13 +49,6 @@ gpu_consts! {
     pub const FOAM_LOSS: f32 = 0.02;
     pub const FOAM_POWER: f32 = 500.0;
     pub const SOURCE_SPEED: f32 = 1.5;
-    pub const CELL_MEANS: u32 = 3;
-    pub const TURBULENT_SPEED: f32 = 0.5;
-    pub const TURBULENT_SWIRL: f32 = 4.0;
-    pub const BREAK_ONSET: f32 = 0.6;
-    pub const BREAK_FULL: f32 = 1.2;
-    pub const BREAK_THINNEST: f32 = 0.02;
-    pub const WATER_BLOCK: u32 = 19;
     pub const WATER_BLOCKS_SIDE: u32 = 16;
     pub const WATER_TILE_PATCHES: u32 = 16;
     pub const WATER_TILE_WORDS: u32 = WATER_TILE_PATCHES * WATER_TILE_PATCHES;
@@ -88,10 +56,6 @@ gpu_consts! {
     pub const DEBUG_SPAN_STEPS: f32 = 254.0;
 }
 
-const _: () = assert!(
-    WATER_BLOCK == PATCH_QUADS + 3,
-    "WATER_BLOCK is not PATCH_QUADS + 3"
-);
 const _: () = assert!(
     WATER_TILE_PATCHES == PATCHES_PER_TILE,
     "WATER_TILE_PATCHES differs from PATCHES_PER_TILE"
@@ -137,41 +101,6 @@ pub(crate) struct WaterProbeDetail {
     #[bits(8)]
     pub roughness: u8,
     pub falls: bool,
-}
-
-#[gpu_bits]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct WaterInfoWord {
-    #[bits(8)]
-    pub flow_x: u8,
-    #[bits(8)]
-    pub flow_z: u8,
-    #[bits(8)]
-    pub sheet: u8,
-    #[bits(8)]
-    pub kind: u8,
-}
-
-#[gpu_bits]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct WaterStateWord {
-    #[bits(8)]
-    pub turbulence: u8,
-    #[bits(8)]
-    pub breaking: u8,
-    #[bits(8)]
-    pub shear: u8,
-    #[bits(8)]
-    pub reach: u8,
-}
-
-#[gpu_bits]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct BlockPlace {
-    #[bits(16)]
-    pub x: u32,
-    #[bits(16)]
-    pub z: u32,
 }
 
 #[gpu_bits]
@@ -281,6 +210,7 @@ pub(crate) struct FallVertex {
 
 pub(crate) const GENERATED: &[&str] = &[
     WGSL,
+    crate::jobs::gpu::WGSL,
     <SimFlags as engine_core::GpuBits>::WGSL,
     <Shown as engine_core::BitValue>::WGSL,
     <WaterProbeDetail as engine_core::GpuBits>::WGSL,

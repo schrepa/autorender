@@ -5,14 +5,14 @@ use engine_places_world::ground::{TerrainEntry, TerrainTiles};
 use engine_render::{Allocation, Install, Lifetime, Prepare, Texture, wgpu};
 
 use crate::gpu::{HORIZON_RECORD_VECTORS, HORIZON_RECORDS};
-use crate::lighting::{HORIZON_LAYERS, TerrainLighting};
+use crate::jobs::lighting::{HORIZON_LAYERS, TerrainLighting};
 use crate::settings::TerrainShading;
 use crate::state::Bakes;
 use crate::terrain::TerrainGpu;
 use crate::terrain_bounce::{BOUNCE_LAYERS, BounceLevels, MOST_LEVELS};
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-const WINDOW_ROW: u32 = crate::bounce::MAX_PROBES;
+const WINDOW_ROW: u32 = crate::jobs::bounce::MAX_PROBES;
 
 const _: () = assert!(
     MOST_LEVELS <= 4 * (HORIZON_RECORD_VECTORS as usize - 4),

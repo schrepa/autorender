@@ -141,24 +141,26 @@ impl FrameLoop {
                 self.spare(host);
                 return Ok((Stage::Playing, FramePhase::Playing));
             }
-            Stage::Unprepared => now_ms(),
+            Stage::Unprepared => {
+                host.suspend();
+                host.hold_preparation(true);
+                now_ms()
+            }
             Stage::Preparing { since } => since,
         };
         let preparing = Stage::Preparing { since };
         let late = now_ms() - since > PREPARE_LIMIT_MS as f64;
-        if host.prepare_pipelines() && !late {
-            return Ok((preparing, FramePhase::Preparing));
-        }
-        if host.frame_stats().readiness.compiling > 0 && !late {
-            return Ok((preparing, FramePhase::Compiling));
-        }
-        host.suspend();
         host.frame(timestamp, width, height)?;
         self.spare(host);
         let after = host.frame_stats();
-        if (after.render.pipelines_created > 0 || !after.readiness.settled()) && !late {
+        if after.readiness.compiling > 0 && !late {
+            return Ok((preparing, FramePhase::Compiling));
+        }
+        let listing = host.prepare_pipelines();
+        if (listing || after.render.pipelines_created > 0 || !after.readiness.settled()) && !late {
             return Ok((preparing, FramePhase::Preparing));
         }
+        host.hold_preparation(false);
         host.suspend();
         Ok((Stage::Playing, FramePhase::Started))
     }

@@ -8,8 +8,8 @@ use engine_render::{
 };
 use glam::{Vec2, Vec3};
 
-use crate::bounce::{PROBE_BYTES, TerrainBounce, bin_moments};
 use crate::gpu::{BOUNCE_GROUP, BounceFrame, BounceTerrain};
+use crate::jobs::bounce::{LAYERS, MAX_PROBES, PROBE_BYTES, TerrainBounce, bin_moments};
 use crate::settings::{MAX_BOUNCE_LEVELS, TerrainShading};
 use crate::state::Bakes;
 use crate::terrain::{TerrainGpu, reached};
@@ -17,7 +17,7 @@ use crate::terrain_horizons::Horizons;
 use crate::terrain_macro::MacroMaps;
 use crate::terrain_sky::SkyMaps;
 
-pub(crate) const BOUNCE_LAYERS: usize = 4 * crate::bounce::LAYERS;
+pub(crate) const BOUNCE_LAYERS: usize = 4 * LAYERS;
 
 pub(crate) const MOST_LEVELS: usize = MAX_BOUNCE_LEVELS as usize;
 
@@ -28,7 +28,7 @@ const SCRATCH_PROBE_BYTES: u64 = (BOUNCE_LAYERS * 16) as u64;
 const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const GROUND_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Uint;
 const GROUND_LAYERS: u32 = 2;
-const LIGHT_LEVELS: usize = (u32::BITS - (crate::bounce::MAX_PROBES / 2).leading_zeros()) as usize;
+const LIGHT_LEVELS: usize = (u32::BITS - (MAX_PROBES / 2).leading_zeros()) as usize;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct BounceLevels {
@@ -277,7 +277,7 @@ impl Bounce {
         }
         let mut scratch = 0_u32;
         let (casting, _) = crate::terrain_horizons::room(limits.0, tiles.terrains.len());
-        let horizon_layers = (crate::lighting::HORIZON_LAYERS * casting) as u32;
+        let horizon_layers = (crate::jobs::lighting::HORIZON_LAYERS * casting) as u32;
         let listed = tiles.terrains.iter().zip(&self.windows).enumerate();
         for (index, (terrain, window)) in listed {
             let Some(window) = window else {

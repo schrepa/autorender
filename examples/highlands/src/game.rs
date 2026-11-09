@@ -5,7 +5,7 @@ use serde_json::{Value, json};
 
 use crate::land;
 use crate::options::{CONTROLS, WATCH_BODIES};
-use crate::scene::{self, Furnished, set};
+use crate::scene::{self, set};
 use crate::{Options, RockMaps};
 
 const APPLIED: [&str; 4] = ["lod", "effects", "stand", WATCH_BODIES];
@@ -15,14 +15,22 @@ pub struct Highlands {
     scene: Option<SceneInstance>,
     start: Option<(Transform, Camera)>,
     reflections: Option<Value>,
+    land: bool,
 }
 
 impl Highlands {
-    pub fn build(engine: &mut Engine, options: Options, rocks: &RockMaps) -> engine::Result<Self> {
+    pub fn build(
+        engine: &mut Engine,
+        options: Options,
+        rocks: &RockMaps,
+        source: &str,
+    ) -> engine::Result<Self> {
+        let document: SceneDocument = engine::scene::parse_json(source)?;
         let world = engine.app.world_mut();
-        let furnished = scene::furnish(world, &options, rocks, true)?;
-        let mut highlands = Self::new(options.clone());
-        highlands.furnished(world, furnished, &options)?;
+        land::provide(world, rocks)?;
+        let mut highlands = Self::new(options);
+        highlands.land = true;
+        highlands.furnish(world, &document, true)?;
         Ok(highlands)
     }
 
@@ -32,25 +40,28 @@ impl Highlands {
             scene: None,
             start: None,
             reflections: None,
+            land: false,
         }
     }
 
-    fn furnished(
+    fn furnish(
         &mut self,
         world: &mut World,
-        furnished: Furnished,
-        options: &Options,
+        document: &SceneDocument,
+        flying: bool,
     ) -> engine::Result<()> {
-        let Furnished {
-            instance,
-            start,
-            reflections,
-        } = furnished;
-        self.scene = Some(instance);
-        self.start = start;
+        let options = self.options.clone();
+        let (instance, reflections) =
+            document.instantiate_then(world, &SceneFiles::default(), |world, _| {
+                scene::furnish(world, document, &options, flying)
+            })?;
+        if let Some(previous) = self.scene.replace(instance) {
+            previous.despawn(world);
+        }
+        self.start = scene::start(world);
         self.reflections = reflections;
         for name in APPLIED {
-            self.apply(world, options, name)?;
+            self.apply(world, &options, name)?;
         }
         Ok(())
     }
@@ -87,25 +98,25 @@ impl Highlands {
     }
 
     fn load(&mut self, world: &mut World, source: &str) -> engine::Result<()> {
-        if let Some(instance) = self.scene.take() {
-            instance.despawn(world);
+        let document = SceneDocument::from_json(source)?;
+        if document.id == engine::scene::parse_json::<SceneDocument>(scene::SCENE)?.id {
+            if !self.land {
+                land::provide(world, &RockMaps::default())?;
+                self.land = true;
+            }
+            return self.furnish(world, &document, false);
         }
-        if source != scene::SCENE {
-            self.scene = Some(SceneDocument::from_json(source)?.instantiate(world)?);
-            return set(world, "fly_camera.enabled", json!(false));
+        let instance = document.instantiate(world)?;
+        if let Some(previous) = self.scene.replace(instance) {
+            previous.despawn(world);
         }
-        let options = Options {
-            rocks: false,
-            ..Options::default()
-        };
-        let furnished = scene::furnish(world, &options, &RockMaps::default(), false)?;
-        self.furnished(world, furnished, &options)
+        set(world, "fly_camera.enabled", json!(false))
     }
 }
 
 engine::__if_dev! {
     impl Highlands {
-        #[cfg(feature = "dev")]
+        #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
         pub(crate) fn played(
             options: Options,
             source: Option<&str>,

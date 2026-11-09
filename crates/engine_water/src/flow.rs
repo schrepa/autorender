@@ -1,12 +1,13 @@
 use std::sync::Arc;
 
-use engine_codec::record;
 use engine_core::RecordKey;
 use engine_math::{max, min};
 use glam::{Mat3, Vec2, Vec3};
 
 use engine_heightfield::hydraulics::{SHALLOWEST, TRICKLE, friction_slope};
 use engine_heightfield::rivers::{RIVER_STEP, River, Rivers};
+
+use crate::jobs::drawn::Levels;
 
 pub const WEIR: f32 = 1.7;
 const RESTING: f32 = 0.35;
@@ -34,23 +35,6 @@ pub struct Pool {
     pub inflow: f32,
     pub outflow: f32,
 }
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Levels {
-    pub discharge: Vec<f32>,
-    pub half: Vec<f32>,
-    pub depth: Vec<f32>,
-    pub surface: Vec<f32>,
-    pub speed: Vec<f32>,
-}
-
-record!(Levels {
-    discharge,
-    half,
-    depth,
-    surface,
-    speed,
-});
 
 #[derive(Debug)]
 pub struct Running {
@@ -149,20 +133,6 @@ impl Running {
         }
         regions
     }
-}
-
-pub(crate) fn rivers_over(base: &Rivers, running: Vec<(u32, Levels)>) -> Rivers {
-    let mut whole = base.rivers().to_vec();
-    for (river, levels) in running {
-        if let Some(line) = whole.get_mut(river as usize) {
-            line.discharge = levels.discharge;
-            line.half = levels.half;
-            line.depth = levels.depth;
-            line.surface = levels.surface;
-            line.speed = levels.speed;
-        }
-    }
-    base.with_rivers(whole)
 }
 
 fn spread(line: &River, point: usize, level: f32) -> f32 {

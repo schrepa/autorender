@@ -8,7 +8,7 @@ use crate::gpu::{
     SIM_BLOCK_LOOKS, SIM_CELL_SUMS, SIM_LIVE_LOOKS, SIM_SLOTS, SimFrame, SimSlot, SimSlots,
     SimTouches, WATER_SIM_SOURCE_GROUP,
 };
-use crate::shallow_water::CELL_MEANS;
+use crate::jobs::shallow_water::CELL_MEANS;
 use crate::water::WaterGpu;
 use crate::{BLOCK_CELLS, BLOCK_GROUND, StoredBlocks};
 

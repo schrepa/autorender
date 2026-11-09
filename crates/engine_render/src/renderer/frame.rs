@@ -128,6 +128,8 @@ impl Renderer {
     pub fn deliver(&mut self, world: &mut World) {
         self.fault_bricks(world);
         self.recover(world);
+        #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+        self.reload_shaders(world);
         self.collect();
         let Some(run) = self.run.as_mut() else {
             return;

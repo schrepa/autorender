@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use engine_core::collections::HashMap;
@@ -63,6 +63,7 @@ pub struct JobScheduler {
     workers: Vec<Load>,
     caching: bool,
     verify: bool,
+    sample: Option<BTreeSet<String>>,
     jobs: BTreeMap<u64, Job>,
     fetched: HashMap<String, Arc<[u8]>>,
     orders: Vec<JobOrder>,
@@ -87,6 +88,18 @@ impl JobScheduler {
     pub(crate) fn set_cache(&mut self, caching: bool, verify: bool) {
         self.caching = caching;
         self.verify = caching && verify;
+    }
+
+    pub(crate) fn set_sample(&mut self, sample: BTreeSet<String>) {
+        self.sample = Some(sample);
+    }
+
+    fn verifies(&self, key: &str) -> bool {
+        self.verify
+            && self
+                .sample
+                .as_ref()
+                .is_none_or(|sample| sample.contains(key))
     }
 
     pub(crate) fn take(
@@ -155,7 +168,7 @@ impl JobScheduler {
     ) {
         let request = match self.jobs.remove(&id.0) {
             Some(Job::Fetching) => {
-                if let (true, Some(output)) = (self.verify, &output) {
+                if let (true, Some(output)) = (self.verifies(&key), &output) {
                     self.fetched.insert(key, output.clone());
                 }
                 finished.push((id, output.ok_or_else(|| MISSING_RECORD.to_owned())));
@@ -169,10 +182,10 @@ impl JobScheduler {
             None => return,
         };
         let made = match output {
-            Some(output) if self.verify => {
+            Some(output) if self.verifies(&key) => {
                 finished.push((id, Ok(output.clone())));
                 Made {
-                    keep: None,
+                    keep: request.record.map(|record| (record, request.kind.clone())),
                     verifying: Some(output),
                 }
             }

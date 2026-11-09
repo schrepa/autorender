@@ -109,6 +109,7 @@ pub(crate) struct PassDecl {
     pub(crate) clears: Vec<(u32, Clear)>,
     pub(crate) scene: Option<SceneOf>,
     pub(crate) members: Vec<u32>,
+    pub(crate) makes_records: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -428,6 +429,7 @@ impl InstallCore {
             targets: Vec::new(),
             scene: None,
             members: Vec::new(),
+            makes_records: false,
         });
         let pass = (self.declared.passes.len() - 1) as u32;
         match work {

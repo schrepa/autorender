@@ -160,6 +160,9 @@ impl Renderer {
             Some(Poll::Pending) | None => {}
         }
         if let Ok(mut reports) = self.core.health.lock() {
+            if let Some(run) = self.run.as_mut() {
+                reports.messages.append(&mut run.pipelines.refused);
+            }
             for message in std::mem::take(&mut reports.messages) {
                 let named = self
                     .run

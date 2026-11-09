@@ -12,6 +12,7 @@ const KIND: &str = "pipeline_list";
 pub(crate) struct PipelineList {
     state: State,
     cooks: bool,
+    cached: u32,
 }
 
 #[derive(Debug, Default)]
@@ -67,21 +68,11 @@ impl PipelineList {
             self.state = State::Done;
             return;
         };
-        let world = engine.app.world();
-        if let Some(registry) = world.get_resource::<Registry>() {
-            for brick in registry.bricks() {
+        if let Some(registry) = engine.app.world().get_resource::<Registry>() {
+            for brick in registry.bricks().iter().filter(|brick| !brick.render.is_empty()) {
                 identity.extend(brick.package.bytes());
                 identity.push(0);
                 identity.extend(brick.source());
-            }
-            let context = world.get_resource::<engine_core::SceneContext>();
-            for section in registry.sections() {
-                identity.extend(section.key.bytes());
-                let current = match context {
-                    Some(context) => context.scope(|| section.current(world)),
-                    None => section.current(world),
-                };
-                identity.extend(current.to_string().bytes());
             }
         }
         let key = key_of(&identity);
@@ -110,7 +101,7 @@ impl PipelineList {
         };
         self.state = match records.request(fetch) {
             Some(Request::Ready(record)) => match renderer.create_listed_pipelines(record) {
-                Ok(_) => State::Making {
+                Ok(()) => State::Making {
                     key,
                     kept: compiled(renderer),
                 },
@@ -122,15 +113,24 @@ impl PipelineList {
         };
     }
 
-    pub(crate) fn after_frame(&mut self, engine: &mut Engine, renderer: &Renderer, created: u32) {
+    pub(crate) fn after_frame(&mut self, engine: &mut Engine, renderer: &Renderer) {
+        if engine.readiness().compiling > 0 {
+            return;
+        }
+        let total = compiled(renderer);
+        if total > self.cached {
+            renderer.keep_pipeline_cache();
+            self.cached = total;
+        }
         let State::Making { key, kept } = self.state else {
             return;
         };
-        let total = compiled(renderer);
-        if created > 0 || total <= kept || !engine.readiness().settled() {
+        if total <= kept || !engine.readiness().settled() {
             return;
         }
-        if let Some(mut jobs) = engine.app.world_mut().get_resource_mut::<JobExchange>() {
+        if let Some(mut jobs) = engine.app.world_mut().get_resource_mut::<JobExchange>()
+            && !jobs.verifying()
+        {
             jobs.keep(key, None, renderer.pipeline_list());
         }
         self.state = State::Making { key, kept: total };

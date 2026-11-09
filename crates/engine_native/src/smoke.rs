@@ -27,6 +27,7 @@ pub fn run<G: Game>(
         }
         return ExitCode::SUCCESS;
     }
+    crate::job_cache::keep_pipeline_cache();
     let Some(limit_ms) = options.limit_ms else {
         return crate::exit(Err(engine::Error::new(
             engine::ErrorCode::InvalidArguments,

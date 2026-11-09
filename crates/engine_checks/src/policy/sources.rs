@@ -98,6 +98,43 @@ pub fn check(
             }
         }
     }
+    jobs_boundary(path, &split, problems);
+}
+
+fn jobs_boundary(path: &str, split: &rust::Split, problems: &mut Problems) {
+    let Some((_, inside)) = path.split_once("/src/jobs/") else {
+        return;
+    };
+    let depth = inside.matches('/').count() + usize::from(!inside.ends_with("mod.rs"));
+    for (index, code) in split.code.iter().enumerate() {
+        let crate_paths = rust::words(code, "crate").filter_map(|end| {
+            let rest = code[end..].trim_start().strip_prefix("::")?;
+            let named: String = rest
+                .trim_start()
+                .chars()
+                .take_while(|c| c.is_alphanumeric() || *c == '_')
+                .collect();
+            (named != "jobs").then(|| format!("crate::{named}"))
+        });
+        let super_paths = rust::words(code, "super").filter_map(|end| {
+            let start = end - "super".len();
+            if code[..start].trim_end().ends_with("::") {
+                return None;
+            }
+            let mut rest = &code[start..];
+            let mut count = 0;
+            while let Some(after) = rest.strip_prefix("super")
+                && let Some(after) = after.trim_start().strip_prefix("::")
+            {
+                count += 1;
+                rest = after.trim_start();
+            }
+            (count > depth).then(|| "super::".repeat(count))
+        });
+        for reached in crate_paths.chain(super_paths) {
+            problems.push(Error::new(ErrorCode::ImportForeign, at(path, index + 1)).got(reached));
+        }
+    }
 }
 
 pub fn error_types(path: &str, source: &str, errors: &Errors, problems: &mut Problems) {

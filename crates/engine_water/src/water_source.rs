@@ -63,7 +63,7 @@ fn water_point(terrain: &SurfaceTerrain, local: Vec2) -> GroundRead<Option<Water
             let key = pyramid.tile_at(level, local)?;
             let (face, water) = terrain.held.get(&key)?;
             let local = local - pyramid.tile_origin(key);
-            crate::tile_water::point(face, water.as_deref(), local)
+            crate::jobs::tile_water::point(face, water.as_deref(), local)
         })
         .map_or(GroundRead::NotLoaded, GroundRead::Ready)
 }

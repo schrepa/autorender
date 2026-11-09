@@ -5,8 +5,6 @@
 
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
-pub mod bake;
-pub mod expr_layer;
 pub mod gpu;
 pub mod jobs;
 pub mod path;
@@ -19,9 +17,9 @@ use engine_heightfield::given::MAX_GIVEN_RIVERS;
 use engine_heightfield::layer;
 use engine_heightfield::layer::TerrainLayer;
 use engine_heightfield::path::PATH_FAR;
-use engine_heightfield::tile::{Generator, Tile};
+use engine_heightfield::tile::Generator;
 use engine_heightfield::{
-    Blend, Bridge, GivenRiver, HydrologyBake, HydrologySample, HydrologyStats, Layers, PathSample,
+    Bridge, GivenRiver, HydrologyBake, HydrologySample, HydrologyStats, Layers,
 };
 
 pub use engine_heightfield::grid::{

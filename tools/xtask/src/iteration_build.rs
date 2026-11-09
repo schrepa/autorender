@@ -10,9 +10,7 @@ use std::{
 
 use serde_json::{Value, json};
 
-use crate::process::{
-    DEV_FEATURES, WASM_TARGET, check_wasm_bindgen, client_crates, client_packages, clients,
-};
+use crate::process::{Client, DEV_FEATURES, WASM_TARGET, check_wasm_bindgen, client_crates};
 
 const MAX_LINE_BYTES: usize = 256 * 1024;
 const MAX_TEXT_BYTES: usize = 16 * 1024;
@@ -21,11 +19,12 @@ const MAX_DIAGNOSTIC_BYTES: usize = 256 * 1024;
 const MAX_SPANS: usize = 8;
 const MAX_CHILDREN: usize = 8;
 
-pub fn build(root: &Path, output: &Path) -> Value {
+pub fn build(root: &Path, output: &Path, game: &str) -> Value {
     let started = Instant::now();
     let mut report = json!({
         "ok": false,
         "build": {
+            "game": game,
             "target": WASM_TARGET,
             "profile": crate::pipeline::QUICK,
             "development": true,
@@ -39,7 +38,7 @@ pub fn build(root: &Path, output: &Path) -> Value {
         "oversized_messages": 0,
         "output_bytes_truncated": 0
     });
-    if let Err((code, path, message)) = execute(root, output, &mut report) {
+    if let Err((code, path, message)) = execute(root, output, game, &mut report) {
         report["error"] = json!({"code": code, "path": path, "message": message});
     } else {
         report["ok"] = json!(true);
@@ -51,7 +50,9 @@ pub fn build(root: &Path, output: &Path) -> Value {
 
 type BuildError = (&'static str, String, String);
 
-fn execute(root: &Path, output: &Path, report: &mut Value) -> Result<(), BuildError> {
+fn execute(root: &Path, output: &Path, game: &str, report: &mut Value) -> Result<(), BuildError> {
+    let selected: Vec<&Client> = crate::pipeline::of_game(game)
+        .map_err(|message| ("invalid_name", "game".into(), message))?;
     let (root, output) = prepare_output(root, output)
         .map_err(|message| ("invalid_output_path", "output".into(), message))?;
     report["build"]["output"] = json!(output);
@@ -66,7 +67,11 @@ fn execute(root: &Path, output: &Path, report: &mut Value) -> Result<(), BuildEr
             .current_dir(&root)
             .envs([crate::process::engine_commit()])
             .arg("build")
-            .args(client_packages())
+            .args(
+                selected
+                    .iter()
+                    .flat_map(|client| ["-p", client.package.as_str()]),
+            )
             .args([
                 "--features",
                 DEV_FEATURES,
@@ -84,9 +89,9 @@ fn execute(root: &Path, output: &Path, report: &mut Value) -> Result<(), BuildEr
     .map_err(|message| ("cargo_unavailable", "cargo".into(), message))?;
     admit_compilation(report, &compiled)?;
 
-    let mut artifacts = Vec::with_capacity(clients().len());
+    let mut artifacts = Vec::with_capacity(selected.len());
     let artifact_root = target_dir.join(WASM_TARGET).join(crate::pipeline::QUICK);
-    for package in client_crates() {
+    for package in selected.iter().map(|client| client.wasm.as_str()) {
         let expected = artifact_root.join(format!("{package}.wasm"));
         let artifact = compiled.stdout.artifacts.get(package).ok_or_else(|| {
             (
@@ -120,7 +125,7 @@ fn execute(root: &Path, output: &Path, report: &mut Value) -> Result<(), BuildEr
         )
     })?;
     report["build"]["stage"] = json!("bindings");
-    let mut packages = Vec::with_capacity(clients().len());
+    let mut packages = Vec::with_capacity(selected.len());
     for (package, artifact) in artifacts {
         let generated = capture(
             Command::new("wasm-bindgen")

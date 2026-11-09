@@ -5975,6 +5975,18 @@ checksum = "b9cc00251562a284751c9973bace760d86c0276c471b4be569fe6b068ee97a56"
 name = "xtask"
 version = "0.1.0"
 dependencies = [
+ "engine_scene",
+ "engine_worker",
+ "png",
+ "serde_json",
+ "sha2",
+ "toml_edit",
+]
+
+[[package]]
+name = "xtask_engine"
+version = "0.1.0"
+dependencies = [
  "base64",
  "bevy_ecs",
  "engine",
@@ -6012,6 +6024,7 @@ dependencies = [
  "texture2ddecoder",
  "tiff",
  "toml_edit",
+ "xtask",
  "zip",
  "zstd",
 ]

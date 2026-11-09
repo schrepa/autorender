@@ -9,9 +9,8 @@ use engine_places_world::ground::TerrainTiles;
 use glam::{Quat, Vec2, Vec3};
 
 use crate::bricks::game::HighlandsBrick;
-use crate::bricks::game::content::{CAVE, CAVE_POINTS, Content, cave_input};
-
-pub(crate) const CAVE_RADIUS: [f32; 2] = [6.0, 4.5];
+use crate::bricks::game::content::{Content, cave_input};
+use crate::jobs::{CAVE, CAVE_POINTS, CAVE_RADIUS};
 
 const CAVE_MARGIN: f32 = 1.5;
 

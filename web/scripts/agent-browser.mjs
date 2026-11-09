@@ -70,11 +70,55 @@ function captures(command) {
   return command.verb === "capture" || (command.verb === "control" && command.name === "frames" && command.args?.capture === true);
 }
 
-/** @param {{ url: string | URL, browserPath?: string, session?: string, expectedBuild?: string | null, signal?: AbortSignal }} options */
-export async function launchBrowserSession({ url: value, browserPath, session = randomUUID(), expectedBuild, signal }) {
+const CANVAS_ONLY = "body *{visibility:hidden!important}canvas{visibility:visible!important}";
+
+/** @param {{ browserPath?: string }} [options] */
+export async function openBrowser({ browserPath } = {}) {
+  const launched = await launchContext({ executablePath: browserPath, viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
+  /** @type {typeof launched & { watching?: (record: any) => void }} */
+  const browser = { ...launched, watching: undefined };
+  const { page } = launched;
+  try {
+    await page.addInitScript(() => {
+      const device = /** @type {any} */ (globalThis).GPUDevice;
+      if (device === undefined) return;
+      const create = device.prototype.createShaderModule;
+      device.prototype.createShaderModule = /** @this {any} @param {any} descriptor */ function (descriptor) {
+        const module = create.call(this, descriptor);
+        void module.getCompilationInfo().then(info => {
+          for (const message of info.messages) {
+            if (message.type === "error") console.error(`createShaderModule ${descriptor.label ?? ""}:${message.lineNum}:${message.linePos} ${message.message}`);
+          }
+        });
+        return module;
+      };
+      const pop = device.prototype.popErrorScope;
+      device.prototype.popErrorScope = /** @this {any} */ function () {
+        return pop.call(this).then(/** @param {any} error */ error => {
+          if (error) console.error(`popErrorScope ${error.constructor?.name ?? "GPUError"}: ${error.message}`);
+          return error;
+        });
+      };
+    });
+    await page.exposeBinding("__engineWatch", (_source, records) => {
+      for (const record of Array.isArray(records) ? records : []) browser.watching?.(record);
+    });
+    await page.route("**/*", async route => {
+      const request = route.request();
+      if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
+        try { loopbackUrl(request.url()); } catch { await route.abort("blockedbyclient"); return; }
+      }
+      await route.continue();
+    });
+  } catch (error) { await launched.close(); throw error; }
+  return browser;
+}
+
+/** @param {{ url: string | URL, browserPath?: string, browser?: Awaited<ReturnType<typeof openBrowser>>, session?: string, expectedBuild?: string | null, signal?: AbortSignal }} options */
+export async function launchBrowserSession({ url: value, browserPath, browser: shared, session = randomUUID(), expectedBuild, signal }) {
   const url = loopbackUrl(String(value));
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,95}$/.test(session)) throw new AgentError("invalid_session", "session", { expected: "id", got: session });
-  const browser = await launchContext({ executablePath: browserPath, viewport: { width: 1280, height: 800 }, deviceScaleFactor: 1 });
+  const browser = shared ?? await openBrowser({ browserPath });
   let page;
   let instance;
   let build;
@@ -83,7 +127,6 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
   let invalidationCallback;
   let initialNavigation = true;
   let captureNumber = 0;
-  let watching;
   let refuseLoad;
   const loadRefused = new Promise((_, reject) => { refuseLoad = reject; });
   loadRefused.catch(() => {});
@@ -101,7 +144,7 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
   function close() {
     if (!closing) {
       for (const remove of listeners.splice(0)) remove();
-      closing = browser.close();
+      closing = shared ? Promise.resolve() : browser.close();
     }
     return closing;
   }
@@ -183,37 +226,6 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
     listen(page, "framenavigated", frame => { if (!initialNavigation && frame === page.mainFrame()) invalidate(); });
     listen(page, "close", invalidate);
     listen(page, "crash", invalidate);
-    await page.addInitScript(() => {
-      const device = /** @type {any} */ (globalThis).GPUDevice;
-      if (device === undefined) return;
-      const create = device.prototype.createShaderModule;
-      device.prototype.createShaderModule = /** @this {any} @param {any} descriptor */ function (descriptor) {
-        const module = create.call(this, descriptor);
-        void module.getCompilationInfo().then(info => {
-          for (const message of info.messages) {
-            if (message.type === "error") console.error(`createShaderModule ${descriptor.label ?? ""}:${message.lineNum}:${message.linePos} ${message.message}`);
-          }
-        });
-        return module;
-      };
-      const pop = device.prototype.popErrorScope;
-      device.prototype.popErrorScope = /** @this {any} */ function () {
-        return pop.call(this).then(/** @param {any} error */ error => {
-          if (error) console.error(`popErrorScope ${error.constructor?.name ?? "GPUError"}: ${error.message}`);
-          return error;
-        });
-      };
-    });
-    await page.exposeBinding("__engineWatch", (_source, records) => {
-      for (const record of Array.isArray(records) ? records : []) watching?.(record);
-    });
-    await page.route("**/*", async route => {
-      const request = route.request();
-      if (request.isNavigationRequest() && request.frame() === page.mainFrame()) {
-        try { loopbackUrl(request.url()); } catch { await route.abort("blockedbyclient"); return; }
-      }
-      await route.continue();
-    });
     await page.goto(url.href, { waitUntil: "domcontentloaded", timeout: 30_000 });
     try {
       await Promise.race([
@@ -283,10 +295,10 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
           if (response.ok) response.result = { observation: response.observation ?? response.result?.observation, entries: [...diagnostics] };
           return response;
         }
-        watching = command.verb === "watch" ? onRecord : undefined;
+        browser.watching = command.verb === "watch" ? onRecord : undefined;
         let response;
         try { response = await requestBrowser(command); }
-        finally { watching = undefined; }
+        finally { browser.watching = undefined; }
         if (command.verb === "describe" && command.name === undefined && response.ok && Array.isArray(response.result?.types)) {
           response.result.types.push({ name: "ProfileCapture", kind: "tooling" });
           const { controls, parameters } = await page.evaluate(() => ({ controls: window.__engineDev?.controls ?? {}, parameters: window.__engineDev?.parameters ?? {} }));
@@ -298,7 +310,7 @@ export async function launchBrowserSession({ url: value, browserPath, session = 
           try {
             await mkdir(artifacts, { recursive: true });
             const artifact = resolve(artifacts, `capture-${++captureNumber}.png`);
-            await page.locator("canvas").first().screenshot({ path: artifact, timeout: 10_000, animations: "disabled" });
+            await page.locator("canvas").first().screenshot({ path: artifact, timeout: 10_000, animations: "disabled", style: CANVAS_ONLY });
             const bytes = await readFile(artifact);
             const observation = response.observation ?? response.result.observation;
             response.result.artifact = {

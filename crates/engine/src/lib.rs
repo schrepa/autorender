@@ -85,7 +85,9 @@ mod game_host;
 mod resolution;
 pub use engine_render::{AdapterInfo, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
-pub use engine_render::{GpuMark, GpuPreference, NativeWindow, start_native_instances_with};
+pub use engine_render::{
+    GpuMark, GpuPreference, NativeWindow, keep_pipeline_cache_in, start_native_instances_with,
+};
 pub use game_host::GameHost;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

@@ -4,9 +4,8 @@ use engine_render::DebugMode;
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::gpu::{
-    DEBUG_SPAN_STEPS, Shown, WATER_SPAN_LEAST, WATER_SPAN_MOST, WaterProbeDetail, WaterProbeState,
-};
+use crate::gpu::{DEBUG_SPAN_STEPS, Shown, WaterProbeDetail, WaterProbeState};
+use crate::jobs::gpu::{WATER_SPAN_LEAST, WATER_SPAN_MOST};
 
 pub(crate) fn modes() -> impl Iterator<Item = DebugMode> {
     <Shown as BitValue>::VALUES.iter().map(|&(_, name)| DebugMode {

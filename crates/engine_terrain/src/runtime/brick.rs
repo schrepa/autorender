@@ -2,8 +2,8 @@ use super::programs::{SurfaceEntry, SurfaceProgramGpu};
 use super::publish::publish_terrains;
 use super::solids::sync_solids;
 use super::*;
-use crate::expr_layer::EXPRESSION;
 use crate::jobs::GROUND_GRID;
+use crate::jobs::expr_layer::EXPRESSION;
 use crate::scene::{INVALID_STREAMED, TERRAIN, prefetch_kind, terrain_kind, terrain_paths};
 use engine_core::{
     Brick, Bricks, Cook, CookList, Explain, ExplainAsk, ExplainRecord, GlobalTransforms, GpuBits,

@@ -1,10 +1,10 @@
 // @ts-check
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, readFileSync } from "node:fs";
 import { access, mkdir, lstat, readFile, realpath, rm, stat, open } from "node:fs/promises";
-import { resolve, dirname, relative } from "node:path";
+import { resolve, dirname, relative, sep } from "node:path";
 import { AgentError, createBridge, failure, range, variants } from "./agent-protocol.mjs";
-import { launchBrowserSession } from "./agent-browser.mjs";
+import { launchBrowserSession, openBrowser } from "./agent-browser.mjs";
 import { running } from "./browser-launch.mjs";
 import { fingerprintSources, watchSources } from "./iteration-watch.mjs";
 import { IterationController } from "./iteration-controller.mjs";
@@ -16,6 +16,8 @@ const clients = JSON.parse(readFileSync(new URL("../src/generated/clients.json",
 const gamePages = Object.fromEntries(clients.filter(client => client.game).map(client => [client.game, client.page]));
 const wasmNames = clients.map(client => client.wasm);
 const builtArtifact = new RegExp(`^/_engine/builds/([A-Za-z0-9_-]{1,100})/(${wasmNames.join("|")})(\\.js|_bg\\.wasm)$`);
+const hashedWasm = new RegExp(`^/_engine/wasm/([a-f0-9]{64})/(${wasmNames.join("|")})_bg\\.wasm$`);
+const IMMUTABLE = "public, max-age=31536000, immutable";
 const GENERATION = /^[A-Za-z0-9_-]{1,100}$/;
 const OPTIONS = ["web-port", "port", "game", "browser"];
 function port(value, fallback, name) {
@@ -57,8 +59,11 @@ export async function startIteration(values) {
   const available = new Set();
   const retained = [];
   const browserStates = new WeakMap();
+  const digests = new Map();
+  const hashed = new Map();
   const baseUrl = `http://127.0.0.1:${webPort}/${gamePages[game]}`;
   let active;
+  let browser;
   let controller;
   let bridge;
   let vite;
@@ -69,9 +74,23 @@ export async function startIteration(values) {
   const startupFinished = new Promise(resolveStartup => { finishStartup = resolveStartup; });
   const emit = event => { process.stdout.write(`${JSON.stringify({ version: 1, watch, ...event })}\n`); };
 
+  function digest(path) {
+    let pending = digests.get(path);
+    if (!pending) {
+      pending = new Promise((resolveDigest, reject) => {
+        const hash = createHash("sha256");
+        createReadStream(path).on("error", reject).on("data", chunk => hash.update(chunk)).on("end", () => resolveDigest(hash.digest("hex")));
+      });
+      pending.catch(() => digests.delete(path));
+      digests.set(path, pending);
+    }
+    return pending.then(sha => { hashed.set(sha, path); return sha; });
+  }
   async function removeGeneration(id) {
     if (!GENERATION.test(id) || !owned.has(id)) return;
     const path = resolve(outputRoot, id);
+    for (const [file] of digests) if (file.startsWith(path + sep)) digests.delete(file);
+    for (const [sha, file] of hashed) if (file.startsWith(path + sep)) hashed.delete(sha);
     try {
       if ((await lstat(path)).isSymbolicLink() || dirname(await realpath(path)) !== outputRoot) throw new AgentError("unsafe_output_path", path, { expected: "path" });
       await rm(path, { recursive: true, force: true });
@@ -90,6 +109,7 @@ export async function startIteration(values) {
       const clean = async operation => { try { await operation(); } catch (error) { cleanupErrors.push(error); } };
       await clean(() => controller?.stop());
       await clean(() => active?.close());
+      await clean(() => browser?.close());
       await clean(() => vite?.close());
       await clean(async () => {
         if (bridge?.server.listening) {
@@ -117,14 +137,19 @@ export async function startIteration(values) {
       fingerprint: () => fingerprintSources(workspace),
       build: async (attempt) => {
         owned.add(attempt.id);
-        const result = await runBuild({ executable, root: workspace, output: resolve(outputRoot, attempt.id), signal: cancellation.signal });
+        const result = await runBuild({ executable, root: workspace, output: resolve(outputRoot, attempt.id), game, signal: cancellation.signal });
         if (result.ok) available.add(attempt.id);
         return result;
       },
       prepare: async attempt => {
         const url = new URL(baseUrl);
         url.searchParams.set("engine_build", attempt.id);
-        const candidate = await launchBrowserSession({ url, browserPath: values.browser, expectedBuild: attempt.id, signal: cancellation.signal });
+        if (!browser) {
+          const opened = await openBrowser({ browserPath: values.browser });
+          opened.context.once("close", () => { if (browser === opened) browser = undefined; });
+          browser = opened;
+        }
+        const candidate = await launchBrowserSession({ url, browser, expectedBuild: attempt.id, signal: cancellation.signal });
         const state = { available: true };
         browserStates.set(candidate, state);
         candidate.setInvalidated(() => { state.available = false; if (active === candidate) bridge.markUnavailable(); });
@@ -178,15 +203,20 @@ export async function startIteration(values) {
           server.middlewares.use(async (request, response, next) => {
             const url = new URL(request.url ?? "/", baseUrl);
             const match = builtArtifact.exec(url.pathname);
-            if (match) {
+            const wasm = hashedWasm.exec(url.pathname);
+            if (match || wasm) {
               if (request.method !== "GET" && request.method !== "HEAD") { response.statusCode = 405; response.end(); return; }
-              if (!available.has(match[1])) { response.statusCode = 404; response.end("Build unavailable; open the game's base URL for the active build."); return; }
+              if (match && !available.has(match[1])) { response.statusCode = 404; response.end("Build unavailable; open the game's base URL for the active build."); return; }
               try {
-                const path = resolve(outputRoot, match[1], `${match[2]}${match[3]}`);
+                const path = match ? resolve(outputRoot, match[1], `${match[2]}${match[3]}`) : hashed.get(wasm?.[1]);
+                if (!path || (wasm && !path.endsWith(`${wasm[2]}_bg.wasm`))) throw new Error("unhashed");
+                if (match?.[3] === "_bg.wasm") {
+                  response.writeHead(302, { Location: `/_engine/wasm/${await digest(path)}/${match[2]}_bg.wasm`, "Cache-Control": "no-store" }); response.end(); return;
+                }
                 const metadata = await stat(path);
-                response.setHeader("Content-Type", match[3] === ".js" ? "text/javascript; charset=utf-8" : "application/wasm");
+                response.setHeader("Content-Type", match ? "text/javascript; charset=utf-8" : "application/wasm");
                 response.setHeader("Content-Length", metadata.size);
-                response.setHeader("Cache-Control", "no-store");
+                response.setHeader("Cache-Control", IMMUTABLE);
                 if (request.method === "HEAD") { response.end(); return; }
                 const stream = createReadStream(path);
                 stream.on("error", () => response.destroy());

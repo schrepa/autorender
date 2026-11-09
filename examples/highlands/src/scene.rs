@@ -2,7 +2,7 @@ use engine::prelude::*;
 use engine::{Error, ErrorCode, Expected};
 use serde_json::{Value, json};
 
-use crate::land::{self, RockMaps};
+use crate::land;
 use crate::options::Options;
 
 pub(crate) const SCENE: &str = include_str!("../highlands.scene.json");
@@ -19,26 +19,17 @@ const EFFECTS: [&str; 7] = [
     "probes",
 ];
 
-pub(crate) struct Furnished {
-    pub(crate) instance: SceneInstance,
-    pub(crate) start: Option<(Transform, Camera)>,
-    pub(crate) reflections: Option<Value>,
-}
-
 pub(crate) fn set(world: &mut World, key: &str, value: Value) -> engine::Result<()> {
     engine::host::apply_setting(world, key, &value)
 }
 
 pub(crate) fn furnish(
     world: &mut World,
+    document: &SceneDocument,
     options: &Options,
-    rocks: &RockMaps,
     flying: bool,
-) -> engine::Result<Furnished> {
-    let document: SceneDocument = engine::scene::parse_json(SCENE)?;
-    land::provide(world, rocks)?;
-    let instance = document.instantiate(world)?;
-    land::populate(world, &document, options.bodies)?;
+) -> engine::Result<Option<Value>> {
+    land::populate(world, document, options.bodies)?;
     let reflections = document
         .environment
         .as_ref()
@@ -50,18 +41,17 @@ pub(crate) fn furnish(
         set(world, "collision.enabled", json!(false))?;
         set(world, "physics.enabled", json!(false))?;
     }
-    let start = main_camera(world).and_then(|camera| {
-        Some((*world.get::<Transform>(camera)?, *world.get::<Camera>(camera)?))
-    });
     if flying {
         set(world, "fly_camera.speed", json!(SPEED))?;
     } else {
         set(world, "fly_camera.enabled", json!(false))?;
     }
-    Ok(Furnished {
-        instance,
-        start,
-        reflections,
+    Ok(reflections)
+}
+
+pub(crate) fn start(world: &World) -> Option<(Transform, Camera)> {
+    main_camera(world).and_then(|camera| {
+        Some((*world.get::<Transform>(camera)?, *world.get::<Camera>(camera)?))
     })
 }
 

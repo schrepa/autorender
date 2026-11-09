@@ -392,11 +392,13 @@ impl GpuPart for ImpostorGpu {
         let shading = cx
             .pass("impostor_shade")
             .label("engine/impostor-shade")
+            .makes_records()
             .depth_cleared(shade, 0.0)
             .id();
         let mut baking = cx
             .pass("impostor_bake")
             .label("engine/impostor-bake")
+            .makes_records()
             .after(shading);
         for color in colors {
             baking = baking.color_cleared(color, wgpu::Color::TRANSPARENT);

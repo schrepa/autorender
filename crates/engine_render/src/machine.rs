@@ -712,7 +712,7 @@ impl Machine {
                 return None;
             }
         };
-        let variants: Vec<FrameVariant> = plan
+        let (variants, frame_keys): (Vec<FrameVariant>, Vec<String>) = plan
             .variants
             .iter()
             .map(|variant| {
@@ -744,7 +744,7 @@ impl Machine {
                             wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering);
                     }
                 }
-                FrameVariant {
+                let variant = FrameVariant {
                     layout: device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                         label: Some("engine/frame-group"),
                         entries: &layout,
@@ -754,9 +754,11 @@ impl Machine {
                         .map(|&(binding, _, stages)| (binding, stages))
                         .collect(),
                     camera: entries.iter().any(|&(binding, _, _)| binding == 0),
-                }
+                };
+                (variant, format!("{layout:?}"))
             })
-            .collect();
+            .unzip();
+        let material_key = format!("{material_table:?}");
         let mut pipelines = Vec::with_capacity(staged.len());
         for (index, (decl, stages, reached)) in staged.into_iter().enumerate() {
             let skipped = plan.skipped.get(index).copied().unwrap_or(false);
@@ -839,7 +841,9 @@ impl Machine {
                 });
             }
             let variant = plan.of_pipeline.get(index).copied().unwrap_or(0);
-            layout_key.push_str(&format!("frame {variant} material {material}"));
+            let frame_key = frame_keys.get(variant as usize).map_or("", String::as_str);
+            let material_shown = if material { material_key.as_str() } else { "" };
+            layout_key.push_str(&format!("frame {variant} {frame_key} material {material_shown}"));
             let top = groups
                 .last()
                 .map_or(0, |group| group.index)

@@ -9,11 +9,11 @@ use engine_places_world::ground::{GroundTiles, HeldTile};
 use engine_render::{Allocation, Buffer, Prepare, Texture, wgpu};
 
 use crate::TileWater;
-use crate::drawn::{DrawnWater, INFO_BYTES, PATCH_BYTES, SURFACE_BYTES};
 use crate::gpu::{
-    NO_WATER_BLOCK, WATER_BLOCK as BLOCK, WATER_BLOCKS_SIDE as SIDE,
-    WATER_TILE_WORDS as TILE_WORDS, WATER_WAITING,
+    NO_WATER_BLOCK, WATER_BLOCKS_SIDE as SIDE, WATER_TILE_WORDS as TILE_WORDS, WATER_WAITING,
 };
+use crate::jobs::drawn::{DrawnWater, INFO_BYTES, PATCH_BYTES, SURFACE_BYTES};
+use crate::jobs::gpu::WATER_BLOCK as BLOCK;
 use crate::state::{Base, HeldWater, WaterState, WaterTerrain};
 use crate::water::WaterGpu;
 

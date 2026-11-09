@@ -83,9 +83,27 @@ impl Renderer {
             .is_some_and(|assets| assets.materials.is_texture_resident(handle))
     }
 
-    pub fn pipelines_compiling(&self) -> u32 {
+    pub fn pipelines_compiling(&mut self) -> u32 {
         crate::platform::poll(&self.core.device);
-        self.core.ledger.compiling()
+        let pending = self.run.as_mut().map_or(0, Run::take_made);
+        self.core.ledger.compiling().saturating_add(pending)
+    }
+
+    pub fn keep_pipeline_cache(&self) {
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(kept) = &self.core.pipeline_cache {
+            super::cache::save(kept);
+        }
+    }
+
+    #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+    pub fn shader_errors(&self) -> &[Error] {
+        self.watched.errors()
+    }
+
+    #[cfg(not(all(feature = "dev", not(target_arch = "wasm32"))))]
+    pub fn shader_errors(&self) -> &[Error] {
+        &[]
     }
 
     pub fn compiled_per_pass(&self) -> Vec<(&'static str, u32)> {
@@ -96,10 +114,10 @@ impl Renderer {
         self.run.as_ref().map(Run::listing).unwrap_or_default()
     }
 
-    pub fn create_listed_pipelines(&mut self, record: &[u8]) -> Result<u32, Error> {
+    pub fn create_listed_pipelines(&mut self, record: &[u8]) -> Result<(), Error> {
         self.run
             .as_mut()
-            .map_or(Ok(0), |run| run.create_listed(record))
+            .map_or(Ok(()), |run| run.create_listed(record))
     }
 
     pub fn pipelines_listed(&self) -> (u32, u32) {

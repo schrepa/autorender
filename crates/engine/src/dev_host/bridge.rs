@@ -278,6 +278,7 @@ impl BenchmarkRun {
 impl<G: Game> GameHost<G> {
     pub fn dev_request(&mut self, line: &str, context: &HostContext) -> Step {
         self.dev_pending = None;
+        self.collect_pipelines();
         if line.len() > engine_dev::MAX_REQUEST_BYTES {
             return self.dev_refused(
                 Error::new(ErrorCode::RequestTooLarge, "$.command")

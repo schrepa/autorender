@@ -10,7 +10,7 @@ use engine_places_world::ground::TerrainTiles;
 use glam::{Vec2, Vec3};
 
 use crate::gpu::{SETUP_SOLID_ENTRIES, SIM_TOUCHES};
-use crate::shallow_water::{live_split, step_seconds};
+use crate::jobs::shallow_water::{live_split, step_seconds};
 use crate::state::{HeldWater, WaterState, WaterTerrain};
 use crate::water_kernels::{Capacity, live_largest_bytes};
 use crate::{BLOCK_SIDE, Footprint, SteadyWater, Water};

@@ -11,6 +11,8 @@ use crate::platform::{RenderTarget, failed, failed_with};
 use crate::profiling::GpuProfiler;
 
 mod attribution;
+#[cfg(not(target_arch = "wasm32"))]
+mod cache;
 mod display;
 mod frame;
 mod health;
@@ -18,6 +20,8 @@ mod install;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 mod queries;
+#[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+mod reload;
 mod startup;
 
 pub use attribution::GpuPassTimes;
@@ -58,6 +62,8 @@ pub(crate) struct Core {
     pub(crate) profiler: GpuProfiler,
     pub(crate) ledger: crate::pipelines::Ledger,
     pub(crate) limits: engine_core::DeviceLimits,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub(crate) pipeline_cache: Option<cache::KeptCache>,
 }
 
 pub struct Renderer {
@@ -76,6 +82,8 @@ pub struct Renderer {
     linked: engine_core::LinkedStats,
     recovering: Option<startup::Opening>,
     lost_bricks: Vec<engine_registry::BrickId>,
+    #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+    watched: reload::Watched,
 }
 
 impl Renderer {

@@ -14,14 +14,14 @@ use engine_places_simulation::ground::TileKey;
 use engine_places_world::ground::{TerrainEntry, TerrainTiles, TileFace};
 use glam::Vec2;
 
+use crate::jobs::gpu::TILE_STRIDE;
+use crate::jobs::shading::TileShading;
 use crate::jobs::{SHADING, ShadingJob, shading_output};
-use crate::shading::TileShading;
 use crate::state::{Bakes, TerrainBakes, listed_tile};
 
 const BUDGET: &str = "terrain_shading";
 
-const TILE_ARRAY_BYTES: u64 =
-    (crate::gpu::TILE_STRIDE as u64) * (crate::gpu::TILE_STRIDE as u64) * 4;
+const TILE_ARRAY_BYTES: u64 = (TILE_STRIDE as u64) * (TILE_STRIDE as u64) * 4;
 
 enum Shading {
     Looking {

@@ -16,7 +16,7 @@ use glam::{Quat, Vec2, Vec3};
 
 use crate::bricks::game::HighlandsBrick;
 use crate::bricks::game::content::SEED;
-use crate::bricks::game::random::Rng;
+use crate::jobs::random::Rng;
 
 const FARTHEST: f32 = 2500.0;
 const NEAR: f32 = 800.0;

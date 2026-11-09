@@ -7,12 +7,8 @@ include!(concat!(env!("OUT_DIR"), "/bricks/game.rs"));
 
 mod bodies;
 mod cave;
-mod caves;
 mod content;
 mod control;
-mod random;
-mod rocks;
-mod trees;
 mod views;
 
 use engine_core::{Brick, Bricks, JobKind, Schedule, Source, stats};
@@ -30,10 +26,10 @@ pub struct HighlandsBrick;
 impl Brick for HighlandsBrick {
     const SOURCE: &'static Source = &SOURCE;
     const JOBS: &'static [&'static JobKind] = &[
-        &content::BOULDER,
-        &content::CONIFER,
-        &content::CONIFER_SHADOW,
-        &content::CAVE,
+        &crate::jobs::BOULDER,
+        &crate::jobs::CONIFER,
+        &crate::jobs::CONIFER_SHADOW,
+        &crate::jobs::CAVE,
     ];
 
     fn register(bricks: &mut Bricks<'_>) {

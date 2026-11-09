@@ -1,0 +1,371 @@
+mod authoring;
+mod bench;
+mod bricks;
+mod checkouts;
+mod checks;
+mod development;
+mod equivalence;
+mod gate;
+mod importing;
+mod ladder;
+mod lint;
+mod measure;
+mod profiling;
+mod pure;
+mod rules;
+mod scaffold;
+mod selfcheck;
+mod shader_report;
+mod ship;
+mod smoke;
+mod verify;
+
+use std::{env, process::ExitCode};
+
+use engine_command_line::{self as command_line, Command, CommandOption};
+use xtask::{Failure, cook, look, pipeline, process, serve};
+
+fn main() -> ExitCode {
+    match execute() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(failure) => {
+            eprintln!("xtask: {}", failure.message);
+            ExitCode::from(failure.code)
+        }
+    }
+}
+
+fn execute() -> Result<(), Failure> {
+    let mut arguments = env::args().skip(1);
+    let task = arguments.next().unwrap_or_else(|| "help".to_owned());
+    let options: Vec<_> = arguments.collect();
+    if matches!(task.as_str(), "help" | "--help" | "-h")
+        || options.iter().any(|option| option == "--help")
+    {
+        return Ok(help(&options)?);
+    }
+    let root = process::repository_root()?;
+    if task == "dev" {
+        let (port, game) = dev_options(&options)?;
+        authoring::validate_sources(&root)?;
+        return Ok(pipeline::dev(&root, port, game)?);
+    }
+    if task == "agent" {
+        return development::agent(&root, &options);
+    }
+    if task == "scene" {
+        return Ok(development::scene(&options)?);
+    }
+    if task == "asset" {
+        return Ok(importing::asset(&options)?);
+    }
+    if task == "profile" {
+        return Ok(match options.as_slice() {
+            [] => profiling::build(&root, false),
+            [option] if option == "--attribution" => profiling::build(&root, true),
+            _ => Err("usage: profile [--attribution]".into()),
+        }?);
+    }
+    if task == "smoke" {
+        return smoke::smoke(&root, &options);
+    }
+    if task == "pure" {
+        return pure::pure(&root, &options);
+    }
+    if task == "core-smoke" {
+        let mut corpus = vec!["caches".to_owned()];
+        corpus.extend(options);
+        return pure::pure(&root, &corpus);
+    }
+    if task == "gate" {
+        return Ok(gate::gate(&root, &options)?);
+    }
+    if task == "bench" {
+        return Ok(bench::bench(&root, &options)?);
+    }
+    if task == "measure" {
+        return Ok(measure::measure(&root, &options)?);
+    }
+    if task == "ladder" {
+        return Ok(ladder::ladder(&root, &options)?);
+    }
+    if task == "ship" {
+        return ship::ship(&root, &options);
+    }
+    if task == "equivalence" {
+        return equivalence::equivalence(&root, &options);
+    }
+    if task == "selfcheck" {
+        return selfcheck::selfcheck(&root, &options);
+    }
+    if task == "verify" {
+        return verify::verify(&root, &options);
+    }
+    if task == "checks" {
+        return Ok(checks::check_task(&root, &options)?);
+    }
+    if task == "new" {
+        return Ok(scaffold::new(&root, &options)?);
+    }
+    if task == "gpu" {
+        return Ok(shader_report::run(&root, &options)?);
+    }
+    if let Some(argument) = options.first() {
+        return Err(
+            format!("unexpected argument {argument:?}; run `cargo xtask help` for usage").into(),
+        );
+    }
+    Ok(match task.as_str() {
+        "build" => authoring::validate_sources(&root).and_then(|()| pipeline::build(&root)),
+        "lint" => engine_checks::stages::run(root.as_path(), lint::LINT),
+        "assets" => authoring::validate_sources(&root),
+        "schema" => authoring::write_generated(&root),
+        _ => Err(format!(
+            "unknown command {task:?}; run `cargo xtask help` for usage"
+        )),
+    }?)
+}
+
+const DEV_PORT: u16 = 5173;
+
+fn dev_options(arguments: &[String]) -> Result<(u16, Option<&str>), String> {
+    let (mut port, mut game) = (DEV_PORT, None);
+    for pair in arguments.chunks(2) {
+        match pair {
+            [option, value] if option == "--port" => {
+                port = value
+                    .parse::<u16>()
+                    .ok()
+                    .filter(|port| *port != 0)
+                    .ok_or("dev --port requires an integer from 1 to 65535")?;
+            }
+            [option, value] if option == "--game" => game = Some(value.as_str()),
+            _ => return Err("usage: cargo xtask dev [--port N] [--game NAME]".to_owned()),
+        }
+    }
+    Ok((port, game))
+}
+
+fn commands() -> Vec<Command> {
+    let mut commands = authoring_commands();
+    commands.extend(checking_commands());
+    commands
+}
+
+fn authoring_commands() -> Vec<Command> {
+    let verbs = engine_dev::Verb::names().collect::<Vec<_>>().join("|");
+    let corpora = pure::CORPORA
+        .iter()
+        .map(|corpus| corpus.name)
+        .collect::<Vec<_>>()
+        .join("|");
+    vec![
+        Command::new("build", []),
+        Command::new("profile", [CommandOption::flag("--attribution")]),
+        Command::new(
+            "dev",
+            [
+                CommandOption::taking("--port", "N").defaults_to(DEV_PORT),
+                CommandOption::taking("--game", process::game_names()),
+            ],
+        ),
+        Command::new(
+            "agent iterate",
+            [
+                CommandOption::taking("--game", process::game_names()).required(),
+                CommandOption::taking("--web-port", "N"),
+                CommandOption::taking("--port", "N"),
+            ],
+        ),
+        Command::new(
+            "agent help",
+            [
+                CommandOption::taking("VERB", verbs.clone()),
+                CommandOption::flag("--schema"),
+            ],
+        ),
+        Command::new(
+            "agent",
+            [
+                CommandOption::taking("VERB", verbs).required(),
+                CommandOption::taking("--session", "S"),
+                CommandOption::taking("--json", "JSON"),
+                CommandOption::taking("--file", "PATH"),
+                CommandOption::taking("--timeout-ms", "MS").in_unit("ms"),
+                CommandOption::taking("--rendering", "off"),
+            ],
+        ),
+        Command::new(
+            "scene validate",
+            [CommandOption::taking("--file", "PATH").required()],
+        ),
+        Command::new(
+            "scene format",
+            [CommandOption::taking("--file", "PATH").required()],
+        ),
+        Command::new(
+            "scene save",
+            [
+                CommandOption::taking("--file", "PATH").required(),
+                CommandOption::taking("--candidate", "PATH").required(),
+                CommandOption::taking("--expected-revision", "N").required(),
+            ],
+        ),
+        Command::new("scene schema", []),
+        Command::new(
+            "asset import",
+            [
+                CommandOption::taking("--file", "PATH").required(),
+                CommandOption::taking("--id", "ID").required(),
+                CommandOption::taking("--output", "PATH"),
+                CommandOption::taking("--into", "PATH"),
+                CommandOption::taking("--expected-revision", "N"),
+                CommandOption::flag("--replace"),
+                CommandOption::flag("--as-prefab"),
+            ],
+        ),
+        Command::new("assets", []),
+        Command::new("schema", []),
+        Command::new(
+            "new app",
+            [CommandOption::taking("--project", "DIR").required()],
+        ),
+        Command::new(
+            "new brick",
+            [
+                CommandOption::taking("NAME", "NAME").required(),
+                CommandOption::taking("--project", "DIR").required(),
+                CommandOption::taking("--place", "PLACE"),
+            ],
+        ),
+        Command::new(
+            "smoke",
+            [
+                CommandOption::taking("NAME", "NAME...|all"),
+                CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
+                CommandOption::taking("--project", "DIR"),
+            ],
+        ),
+        Command::new(
+            "pure",
+            [
+                CommandOption::flag("--bless"),
+                CommandOption::flag("--wasm"),
+                CommandOption::taking("CORPUS", format!("{corpora}...")),
+            ],
+        ),
+        Command::new("core-smoke", [CommandOption::flag("--bless")]),
+        Command::new(
+            "gpu",
+            [
+                CommandOption::taking("--report", "DIR").required(),
+                CommandOption::flag("--no-rga"),
+            ],
+        ),
+        Command::new("bench check", []),
+        Command::new("gate flight", []),
+        Command::new("gate still", [CommandOption::flag("--write")]),
+    ]
+}
+
+fn checking_commands() -> Vec<Command> {
+    vec![
+        Command::new(
+            "cook",
+            [
+                CommandOption::taking("--project", "DIR"),
+                CommandOption::taking("SCENE", "PATH.scene.json..."),
+                CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
+                CommandOption::flag("--check"),
+            ],
+        ),
+        Command::new(
+            "ship",
+            [CommandOption::taking("--project", "DIR").required()],
+        ),
+        Command::new(
+            "measure",
+            [
+                CommandOption::taking("--task", "FILE").required(),
+                CommandOption::taking("--profile", "FILE").required(),
+                CommandOption::taking("--out", "FILE").required(),
+                CommandOption::taking("--extend", "FILE"),
+                CommandOption::taking("--formats", "FILE"),
+            ],
+        ),
+        Command::new(
+            "ladder",
+            [
+                CommandOption::taking("LADDER", "FILE").required(),
+                CommandOption::taking("--out", "DIR").required(),
+                CommandOption::taking("--program", "PATH"),
+                CommandOption::taking("--", "ARGUMENTS..."),
+            ],
+        ),
+        Command::new(
+            "equivalence",
+            [
+                CommandOption::taking("--base", "REV").defaults_to("origin/main"),
+                CommandOption::taking("--candidate", "REV"),
+                CommandOption::taking("--tier", "smoke|full").defaults_to("smoke"),
+                CommandOption::taking("--cells", "NAME,..."),
+                CommandOption::flag("--aa"),
+                CommandOption::taking("--repeat", "N"),
+                CommandOption::taking("--keep", "N").defaults_to(equivalence::KEEP),
+                CommandOption::taking("--gpu", "discrete|integrated").defaults_to("discrete"),
+                CommandOption::flag("--browser"),
+                CommandOption::flag("--both"),
+                CommandOption::flag("--hosts"),
+            ],
+        ),
+        Command::new(
+            "checks",
+            [
+                CommandOption::taking("--task", "FILE").required(),
+                CommandOption::taking("--profile", "FILE").required(),
+                CommandOption::taking("--out", "FILE").required(),
+                CommandOption::taking("--formats", "FILE"),
+            ],
+        ),
+        Command::new(
+            "selfcheck",
+            [CommandOption::taking(
+                "KIND",
+                format!("{}...", selfcheck::KINDS.join("|")),
+            )],
+        ),
+        Command::new(
+            "verify",
+            [
+                CommandOption::taking("--level", "quick|pr|merge").defaults_to("pr"),
+                CommandOption::taking("--base", "REV").defaults_to("origin/main"),
+                CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
+                CommandOption::flag("--plan"),
+                CommandOption::flag("--json"),
+            ],
+        ),
+        Command::new(
+            "look",
+            [
+                CommandOption::taking("PROJECT", "DIR").required(),
+                CommandOption::taking("--limit-ms", "MS").in_unit("ms").required(),
+                CommandOption::flag("--browser"),
+                CommandOption::taking("--out", "DIR"),
+            ],
+        ),
+        Command::new("lint", []),
+        Command::new("help", [CommandOption::flag("--json")]),
+    ]
+}
+
+fn help(options: &[String]) -> Result<(), String> {
+    let json = options.iter().any(|option| option == "--json");
+    if json {
+        let mut help = command_line::commands_json(&commands());
+        help["agent"] = serde_json::json!({ "verbs": development::verbs()? });
+        println!("{help}");
+    } else {
+        println!("{}", command_line::commands_text(&commands()));
+    }
+    Ok(())
+}

@@ -1,5 +1,3 @@
-mod ground;
-
 use engine::collections::HashMap;
 use engine::host::Image;
 
@@ -11,6 +9,7 @@ use engine_core::{
 };
 use serde_json::{Value, json};
 
+use crate::jobs::ground;
 use crate::records;
 
 pub type RockMaps = HashMap<String, Image>;
@@ -222,6 +221,7 @@ fn ground_textures(
 ) -> engine::Result<Vec<TextureHandle>> {
     records::textures(
         (records, assets),
+        crate::jobs::SOURCE.hash(),
         format!("highlands/{name}"),
         &GROUND_MAPS,
         move || ground::sources(name).map_err(|error| error.to_string()),

@@ -48,7 +48,7 @@ impl HighlandsGame {
             RockMaps::default()
         };
         Self::launch(canvas, crate::bricks, move |engine| {
-            Highlands::build(engine, options, &rocks)
+            Highlands::build(engine, options, &rocks, crate::scene::SCENE)
         })
         .await
     }
