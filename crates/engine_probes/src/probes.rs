@@ -1,17 +1,19 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Camera, Clear, Cursor, Cut, DeviceLimits, Events, FrameBudget, GlobalTransforms, Mobility,
-    Mover, Moves, Node, OwnedView, OwnedViews, Pace, PassName, Readable, Readback,
+    Camera, Clear, Cursor, Cut, Detail, DeviceLimits, Events, FrameBudget, GlobalTransforms,
+    Mobility, Mover, Moves, Node, OwnedView, OwnedViews, Pace, PassName, Readable, Readback,
     Settling, Spawner, StoreId, Transform, ViewLayer, mover_of,
 };
 use engine_math as math;
 use engine_places_rendering::probes::{ProbeCaptures, ProbeFace};
 use engine_places_rendering::sky::SkyLight;
+use engine_places_rendering::sun::Sun;
 use glam::{Mat4, Vec3, Vec4};
 
+use crate::captures::{lit_texel_bytes, stored_texel_bytes};
 use crate::gather::{ProbeList, RenderReflectionProbe};
 use crate::{
-    PROBE_ENTRY_WORDS, ProbePass, ReflectionProbeSettings, ReflectionProbeStats,
+    PROBE_ENTRY_WORDS, ProbeLightPass, ProbePass, ReflectionProbeSettings, ReflectionProbeStats,
     ReflectionProbesBrick,
 };
 
@@ -19,29 +21,67 @@ pub(crate) const FACES: usize = 6;
 pub(crate) const SETS: u32 = 2;
 pub(crate) const CAPTURED_ACK: u32 = 0;
 pub(crate) const LOST_ACK: u32 = 1;
-const FACE_TEXEL_BYTES: u64 = 12;
 const SLOT_ACK_BYTES: usize = 12;
 const CAPTURE_NEAR: f32 = 0.05;
 const CAPTURE_FAR: f32 = 4_000.0;
 const GRID_CELLS: f32 = 64.0;
 const BUDGET: &str = "reflection_probes";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 enum Capture {
-    Waiting,
+    #[default]
     Ready,
-    Stale,
+    Relight,
+    Recapture,
+    Waiting,
+}
+
+impl Capture {
+    fn draws(self) -> bool {
+        matches!(self, Self::Recapture | Self::Waiting)
+    }
 }
 
 struct Slot {
     probe: RenderReflectionProbe,
     capture: Capture,
+    sun: Vec3,
 }
 
 impl Slot {
     fn shown(&self) -> bool {
         self.capture != Capture::Waiting
     }
+}
+
+#[derive(Clone, Copy)]
+struct Sequence {
+    slot: usize,
+    face: usize,
+    draws: bool,
+}
+
+#[derive(Clone, Copy)]
+struct Due {
+    cube: u32,
+    face: usize,
+    draws: bool,
+    probe: RenderReflectionProbe,
+}
+
+struct Marks {
+    lost: bool,
+    stale: Capture,
+    sun: Vec3,
+    least: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct FaceJob {
+    pub(crate) known: ProbeFace,
+    pub(crate) stored: u32,
+    pub(crate) lit: u32,
+    pub(crate) draws: bool,
 }
 
 enum ProbeAck {
@@ -91,23 +131,22 @@ impl Readable for ProbeAcks {
     }
 }
 
+fn turned(from: Vec3, to: Vec3, least: f32) -> bool {
+    let (from, to) = (from.normalize_or_zero(), to.normalize_or_zero());
+    from != to && from != Vec3::ZERO && to != Vec3::ZERO && from.dot(to) < least
+}
+
 #[derive(Default)]
 struct ProbeSlots {
     slots: Vec<Option<Slot>>,
-    capturing: Option<(usize, usize)>,
+    capturing: Option<Sequence>,
     changed: bool,
-    changed_during: bool,
+    during: Capture,
 }
 
 impl ProbeSlots {
-    fn plan(
-        &mut self,
-        probes: &[RenderReflectionProbe],
-        capacity: usize,
-        lost: bool,
-        stale: bool,
-    ) {
-        if lost {
+    fn plan(&mut self, probes: &[RenderReflectionProbe], capacity: usize, marks: &Marks) {
+        if marks.lost {
             self.slots.clear();
             self.capturing = None;
             self.changed = true;
@@ -116,7 +155,7 @@ impl ProbeSlots {
             self.slots.resize_with(capacity, || None);
             if self
                 .capturing
-                .is_some_and(|(capturing, _)| capturing >= capacity)
+                .is_some_and(|sequence| sequence.slot >= capacity)
             {
                 self.capturing = None;
             }
@@ -131,19 +170,25 @@ impl ProbeSlots {
                         && probe.extent == slot.probe.extent
                 })
             });
+            let capturing = self
+                .capturing
+                .is_some_and(|sequence| sequence.slot == index);
             if !keep && slot.is_some() {
                 *slot = None;
                 self.changed = true;
-                if self
-                    .capturing
-                    .is_some_and(|(capturing, _)| capturing == index)
-                {
+                if capturing {
                     self.capturing = None;
                 }
             }
             if let Some(slot) = slot {
-                if stale && slot.capture == Capture::Ready {
-                    slot.capture = Capture::Stale;
+                let mark = if slot.shown() && turned(slot.sun, marks.sun, marks.least) {
+                    marks.stale.max(Capture::Recapture)
+                } else {
+                    marks.stale
+                };
+                slot.capture = slot.capture.max(mark);
+                if capturing {
+                    self.during = self.during.max(mark);
                 }
                 if let Some(probe) = wanted.iter().find(|probe| probe.key == slot.probe.key)
                     && (probe.blend != slot.probe.blend || probe.interior != slot.probe.interior)
@@ -167,19 +212,14 @@ impl ProbeSlots {
                 *free = Some(Slot {
                     probe: *probe,
                     capture: Capture::Waiting,
+                    sun: Vec3::ZERO,
                 });
                 self.changed |= probe.interior.is_some();
             }
         }
-        if stale && self.capturing.is_some() {
-            self.changed_during = true;
-        }
     }
 
-    fn next_face(
-        &mut self,
-        probes: &[RenderReflectionProbe],
-    ) -> Option<(u32, usize, RenderReflectionProbe)> {
+    fn next_face(&mut self, probes: &[RenderReflectionProbe], sun: Vec3) -> Option<Due> {
         if self.capturing.is_none() {
             let waiting = probes.iter().find_map(|probe| {
                 self.slots.iter().position(|slot| {
@@ -188,29 +228,43 @@ impl ProbeSlots {
                     })
                 })
             })?;
-            self.capturing = Some((waiting, 0));
+            let held = self.slots[waiting].as_mut()?;
+            let draws = held.capture.draws();
+            if draws {
+                held.sun = sun;
+            }
+            self.capturing = Some(Sequence {
+                slot: waiting,
+                face: 0,
+                draws,
+            });
+            self.during = Capture::Ready;
         }
-        let (slot, face) = self.capturing?;
-        let held = self.slots[slot].as_ref()?;
-        Some((slot as u32 + 1, face, held.probe))
+        let sequence = self.capturing?;
+        let held = self.slots[sequence.slot].as_ref()?;
+        Some(Due {
+            cube: sequence.slot as u32 + 1,
+            face: sequence.face,
+            draws: sequence.draws,
+            probe: held.probe,
+        })
     }
 
     fn face_drawn(&mut self) -> bool {
-        let Some((slot, face)) = self.capturing else {
+        let Some(sequence) = self.capturing else {
             return false;
         };
-        if face + 1 < FACES {
-            self.capturing = Some((slot, face + 1));
+        if sequence.face + 1 < FACES {
+            self.capturing = Some(Sequence {
+                face: sequence.face + 1,
+                ..sequence
+            });
             return false;
         }
         self.capturing = None;
-        let stale = std::mem::take(&mut self.changed_during);
-        if let Some(slot) = self.slots[slot].as_mut() {
-            slot.capture = if stale {
-                Capture::Stale
-            } else {
-                Capture::Ready
-            };
+        let during = std::mem::take(&mut self.during);
+        if let Some(slot) = self.slots[sequence.slot].as_mut() {
+            slot.capture = during;
             self.changed = true;
         }
         true
@@ -223,18 +277,15 @@ impl ProbeSlots {
         if held.probe.key != key {
             return;
         }
-        if self.capturing.is_some_and(|(capturing, _)| capturing == slot) {
+        if self.capturing.is_some_and(|sequence| sequence.slot == slot) {
             self.capturing = None;
         }
-        held.capture = match held.capture {
-            Capture::Waiting => Capture::Waiting,
-            Capture::Ready | Capture::Stale => Capture::Stale,
-        };
+        held.capture = held.capture.max(Capture::Recapture);
     }
 
     fn capturing(&self) -> Option<(usize, u64)> {
-        let (slot, _) = self.capturing?;
-        Some((slot, self.slots[slot].as_ref()?.probe.key))
+        let sequence = self.capturing?;
+        Some((sequence.slot, self.slots[sequence.slot].as_ref()?.probe.key))
     }
 
     fn ready(&self) -> u32 {
@@ -282,11 +333,10 @@ pub(crate) struct ProbeState {
     set: u32,
     maps_lost: bool,
     pub(crate) listed: bool,
-    pub(crate) captures: bool,
     views: bool,
     pub(crate) timed: bool,
-    pub(crate) faces: Vec<ProbeFace>,
-    pub(crate) drawn: Vec<u32>,
+    pub(crate) jobs: Vec<FaceJob>,
+    faces: Vec<ProbeFace>,
     pub(crate) finished: Option<(u32, u32)>,
     pub(crate) taken: Vec<(usize, u64)>,
     words: Vec<[u32; 4]>,
@@ -311,11 +361,10 @@ impl Default for ProbeState {
             set: 0,
             maps_lost: false,
             listed: false,
-            captures: false,
             views: false,
             timed: false,
+            jobs: Vec::new(),
             faces: Vec::new(),
-            drawn: Vec::new(),
             finished: None,
             taken: Vec::new(),
             words: Vec::new(),
@@ -369,44 +418,53 @@ impl ProbeState {
         }
     }
 
-    fn capture(&mut self, probes: &[RenderReflectionProbe], budget: &mut FrameBudget) -> u32 {
-        let face_bytes = u64::from(self.size) * u64::from(self.size) * FACE_TEXEL_BYTES;
+    fn capture(&mut self, probes: &[RenderReflectionProbe], sun: Vec3, budget: &mut FrameBudget) {
+        let texels = u64::from(self.size) * u64::from(self.size);
         let mut used = [false; FACES];
-        let mut drawn = 0;
-        while let Some((cube, face, probe)) = self.slots.next_face(probes) {
-            if used[face] {
+        while let Some(due) = self.slots.next_face(probes, sun) {
+            if used[due.face] {
                 break;
             }
             self.timed = true;
-            if !budget.spend(BUDGET, face_bytes) {
+            let texel_bytes = if due.draws {
+                stored_texel_bytes() + lit_texel_bytes()
+            } else {
+                lit_texel_bytes()
+            };
+            if !budget.spend(BUDGET, texels * texel_bytes) {
                 break;
             }
-            used[face] = true;
-            self.faces.push(ProbeFace {
-                face: face as u32,
-                center: probe.center,
-                view: face_view_projection(probe.center, face),
+            used[due.face] = true;
+            let face = due.face as u32;
+            let known = ProbeFace {
+                face,
+                center: due.probe.center,
+                view: face_view_projection(due.probe.center, due.face),
+            };
+            self.jobs.push(FaceJob {
+                known,
+                stored: (due.cube - 1) * FACES as u32 + face,
+                lit: self.set * FACES as u32 + face,
+                draws: due.draws,
             });
-            self.drawn.push(self.set * FACES as u32 + face as u32);
-            drawn += 1;
+            self.faces.push(known);
             if let Some(held) = self.slots.capturing()
                 && !self.taken.contains(&held)
             {
                 self.taken.push(held);
             }
             if self.slots.face_drawn() {
-                self.finished = Some((cube, self.set));
+                self.finished = Some((due.cube, self.set));
                 self.set = (self.set + 1) % SETS;
             }
         }
-        drawn
     }
 }
 
 pub(crate) fn plan_captures(
     settings: Res<ReflectionProbeSettings>,
     limits: Res<DeviceLimits>,
-    sky: Res<SkyLight>,
+    (sky, sun): (Res<SkyLight>, Res<Sun>),
     (globals, mut budget): (Res<GlobalTransforms>, ResMut<FrameBudget>),
     gathered: Res<ProbeList>,
     mut acks: ResMut<ProbeAcks>,
@@ -428,16 +486,27 @@ pub(crate) fn plan_captures(
     } else {
         (1, 1, false, false)
     };
-    let lost = placed || std::mem::take(&mut state.maps_lost);
-    state
-        .slots
-        .plan(probes, (cubes - 1) as usize, lost, sky_changed || moved);
+    let sun = Vec4::from_array(sun.direction).truncate();
+    let stale = if moved {
+        Capture::Recapture
+    } else if sky_changed {
+        Capture::Relight
+    } else {
+        Capture::Ready
+    };
+    let marks = Marks {
+        lost: placed || std::mem::take(&mut state.maps_lost),
+        stale,
+        sun,
+        least: math::sin_cos(settings.sun_turn.to_radians()).1,
+    };
+    state.slots.plan(probes, (cubes - 1) as usize, &marks);
     if let Some(ready) = state.slots.changed_ready() {
         grid_words(&ready, &mut state.words);
         state.words_changed = true;
     }
+    state.jobs.clear();
     state.faces.clear();
-    state.drawn.clear();
     state.taken.clear();
     state.finished = None;
     state.timed = false;
@@ -446,12 +515,10 @@ pub(crate) fn plan_captures(
     let asked = gathered.cut as u64 + count;
     let counted = |count: u64| count.min(u64::from(u32::MAX)) as u32;
     let probe_cut = Cut::of(counted(asked), counted(kept));
-    let mut drawn = 0;
-    state.captures = state.listed;
-    if state.captures && state.views {
-        drawn = state.capture(probes, &mut budget);
+    if state.views {
+        state.capture(probes, sun, &mut budget);
     }
-    let waiting = if state.captures && state.views {
+    let waiting = if state.views {
         state.slots.unready()
     } else {
         0
@@ -459,45 +526,45 @@ pub(crate) fn plan_captures(
     state.settling.left(waiting);
     state.stats = ReflectionProbeStats {
         ready: state.slots.ready(),
-        faces: drawn,
+        faces: state.jobs.iter().filter(|job| job.draws).count() as u32,
+        relit: state.jobs.len() as u32,
         probe_cut,
     };
 }
 
 #[derive(Component)]
-pub(crate) struct CaptureViews;
+pub(crate) struct ProbeViews;
 
 #[derive(Component)]
 pub(crate) struct ProbeCamera;
 
 type Lenses<'w, 's> = Query<'w, 's, &'static mut Camera, With<ProbeCamera>>;
+type Published<'w, 's> = Query<'w, 's, &'static mut OwnedViews, With<ProbeViews>>;
 
-fn capture_views(state: &ProbeState, cameras: &[Entity]) -> OwnedViews {
+fn face_views(
+    (pass, (size, detail)): (&'static str, (u32, f32)),
+    cameras: &[Entity],
+    job: impl Fn(u32) -> Option<(Vec3, u32)>,
+) -> OwnedViews {
     OwnedViews {
-        pass: ProbePass::NAME,
+        pass,
         views: (0_u32..)
             .zip(cameras)
             .map(|(face, &camera)| {
-                let captured = state.faces.iter().position(|known| known.face == face);
-                let center = captured
-                    .and_then(|at| state.faces.get(at))
-                    .map_or(Vec3::ZERO, |known| known.center);
+                let found = job(face);
                 OwnedView {
                     camera,
                     target: ViewLayer {
-                        layer: captured
-                            .and_then(|at| state.drawn.get(at))
-                            .copied()
-                            .unwrap_or(0),
-                        rect: [0, 0, state.size, state.size],
+                        layer: found.map_or(0, |(_, layer)| layer),
+                        rect: [0, 0, size, size],
                     },
                     clear: Clear::All,
                     capture: true,
                     passes: None,
-                    draws: captured.is_some(),
+                    draws: found.is_some(),
                     planes: None,
-                    eye: center.to_array(),
-                    detail: 0.0,
+                    eye: found.map_or(Vec3::ZERO, |(center, _)| center).to_array(),
+                    detail,
                     takes: Some(Mobility::Static),
                 }
             })
@@ -505,8 +572,23 @@ fn capture_views(state: &ProbeState, cameras: &[Entity]) -> OwnedViews {
     }
 }
 
+fn publish_views(
+    views: OwnedViews,
+    published: &mut Published<'_, '_>,
+    spawner: &mut Spawner<'_, '_, ReflectionProbesBrick>,
+) {
+    match published.iter_mut().find(|held| held.pass == views.pass) {
+        Some(mut held) => {
+            held.set_if_neq(views);
+        }
+        None => {
+            spawner.spawn((ProbeViews, views));
+        }
+    }
+}
+
 fn place_cameras(
-    faces: &[ProbeFace],
+    jobs: &[FaceJob],
     pool: &mut Vec<Entity>,
     (spawner, moves, lenses): (
         &mut Spawner<'_, '_, ReflectionProbesBrick>,
@@ -515,7 +597,10 @@ fn place_cameras(
     ),
 ) {
     for face in 0..FACES {
-        let captured = faces.iter().find(|known| known.face as usize == face);
+        let captured = jobs
+            .iter()
+            .find(|job| job.known.face as usize == face)
+            .map(|job| job.known);
         let (center, clip) = captured.map_or_else(
             || (Vec3::ZERO, face_view_projection(Vec3::ZERO, face)),
             |known| (known.center, known.view),
@@ -549,11 +634,11 @@ fn place_cameras(
 }
 
 pub(crate) fn publish_captures(
-    mut state: ResMut<ProbeState>,
+    (detail, mut state): (Res<Detail>, ResMut<ProbeState>),
     mut words: ResMut<ProbeWords>,
     mut captures: ResMut<ProbeCaptures>,
     mut stats: ResMut<ReflectionProbeStats>,
-    mut published: Query<&mut OwnedViews, With<CaptureViews>>,
+    mut published: Published,
     mut spawner: Spawner<ReflectionProbesBrick>,
     (mut moves, mut lenses): (Moves<ReflectionProbesBrick>, Lenses),
 ) {
@@ -567,19 +652,31 @@ pub(crate) fn publish_captures(
         captures.size = state.size;
     }
     place_cameras(
-        &state.faces,
+        &state.jobs,
         &mut state.cameras,
         (&mut spawner, &mut moves, &mut lenses),
     );
-    let views = capture_views(state, &state.cameras);
-    match published.single_mut() {
-        Ok(mut held) => {
-            held.set_if_neq(views);
-        }
-        Err(_) => {
-            spawner.spawn((CaptureViews, views));
-        }
-    }
+    let shape = (
+        state.size,
+        if detail.enabled {
+            detail.pixel_error
+        } else {
+            0.0
+        },
+    );
+    let jobs = &state.jobs;
+    let drawn = face_views((ProbePass::NAME, shape), &state.cameras, |face| {
+        jobs.iter()
+            .find(|job| job.draws && job.known.face == face)
+            .map(|job| (job.known.center, job.stored))
+    });
+    let lit = face_views((ProbeLightPass::NAME, shape), &state.cameras, |face| {
+        jobs.iter()
+            .find(|job| job.known.face == face)
+            .map(|job| (job.known.center, job.lit))
+    });
+    publish_views(drawn, &mut published, &mut spawner);
+    publish_views(lit, &mut published, &mut spawner);
     stats.set_if_neq(state.stats.clone());
 }
 

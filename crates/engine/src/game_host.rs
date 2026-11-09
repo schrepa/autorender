@@ -26,6 +26,8 @@ pub struct GameHost<G: Game> {
     source: Option<std::path::PathBuf>,
     #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
     watched: Vec<(std::path::PathBuf, Option<std::time::SystemTime>)>,
+    #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+    checked: Option<std::time::Instant>,
 }
 
 impl<G: Game> GameHost<G> {
@@ -63,6 +65,8 @@ impl<G: Game> GameHost<G> {
             source: None,
             #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
             watched: Vec::new(),
+            #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+            checked: None,
         })
     }
 
@@ -533,6 +537,15 @@ impl<G: Game> GameHost<G> {
     }
 
     pub fn follow_source(&mut self) -> Option<crate::Result<()>> {
+        let now = std::time::Instant::now();
+        if self
+            .checked
+            .is_some_and(|checked| now.duration_since(checked) < CHECK_EVERY)
+        {
+            return None;
+        }
+        self.checked = Some(now);
+        self.app.reload_shaders();
         if self
             .watched
             .iter()
@@ -581,6 +594,9 @@ impl<G: Game> GameHost<G> {
         self.watched = watched;
     }
 }
+
+#[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+const CHECK_EVERY: std::time::Duration = std::time::Duration::from_millis(250);
 
 #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
 fn modified(path: &std::path::Path) -> Option<std::time::SystemTime> {

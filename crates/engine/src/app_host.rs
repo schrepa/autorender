@@ -233,6 +233,11 @@ impl AppHost {
         engine_core::cook(self.engine.app.world_mut());
     }
 
+    #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+    pub(crate) fn reload_shaders(&mut self) {
+        self.renderer.reload_shaders(self.engine.app.world_mut());
+    }
+
     pub(crate) fn reloaded(&mut self) {
         self.pipeline_list.restart();
         self.restart_attribution();

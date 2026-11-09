@@ -13,6 +13,7 @@ struct LightInputs {
     shadow_lifts: vec4<f32>,
     thickness: f32,
     sun_blocked: f32,
+    sun_known: bool,
 }
 
 struct Reflecting {

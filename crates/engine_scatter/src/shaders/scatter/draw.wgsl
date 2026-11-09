@@ -181,17 +181,6 @@ fn fs_object_extended(input: PlacedExtendedVertex, @builtin(front_facing) front:
 }
 
 @fragment
-fn fs_view(input: PlacedVertex, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return vec4<f32>(placed_shade(extended_of(input), front).shaded.linear, 1.0);
-}
-
-@fragment
-fn fs_view_extended(input: PlacedExtendedVertex, @builtin(front_facing) front: bool)
-        -> @location(0) vec4<f32> {
-    return vec4<f32>(placed_shade(input, front).shaded.linear, 1.0);
-}
-
-@fragment
 fn fs_masked_depth(input: PlacedVertex) {
     masked_depth(extended_of(input));
 }

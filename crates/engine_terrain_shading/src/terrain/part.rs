@@ -448,7 +448,12 @@ impl GpuPart for TerrainGpu {
         let mut joined = Vec::with_capacity(listed.len());
         for listed in listed {
             let scene = Scene::named(listed.name);
-            let lit = listed.pass.writes.contains(TargetName::COLOR);
+            let lit = listed
+                .pass
+                .writes
+                .targets()
+                .iter()
+                .any(|target| *target != TargetName::DEPTH);
             let shows = listed.pass.writes.contains(DEBUG_TARGETS[0]);
             let owned = listed.pass.views == PassViews::Owned;
             let made = if !owned && shows {

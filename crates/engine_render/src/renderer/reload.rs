@@ -29,7 +29,7 @@ fn modified(file: &str) -> Option<SystemTime> {
 }
 
 impl Renderer {
-    pub(super) fn reload_shaders(&mut self, world: &mut World) {
+    pub fn reload_shaders(&mut self, world: &mut World) {
         let Some(run) = self.run.as_ref() else {
             return;
         };

@@ -137,6 +137,8 @@ pub(super) struct TerrainState {
     pub(super) bridges: Arc<[Bridge]>,
     pub(super) current: Arc<Layers>,
     pub(super) changed: bool,
+    pub(super) ground_changed: bool,
+    pub(super) hydrology_changed: bool,
     pub(super) reshaped: Option<Vec<(Vec2, Vec2)>>,
     pub(super) around: Option<Around>,
     pub(super) missing: Vec<(TileKey, u32)>,
@@ -199,6 +201,8 @@ impl TerrainState {
             hydrology: HydrologyState::default(),
             bridges: Arc::from(Vec::new()),
             changed: true,
+            ground_changed: true,
+            hydrology_changed: true,
             reshaped: None,
             around: None,
             missing: Vec::new(),
@@ -323,7 +327,7 @@ impl TerrainState {
             .collect();
         self.terrain.edits = edits;
         self.refresh_layers(kinds);
-        self.changed = true;
+        self.ground_changed = true;
         if changed.is_empty() {
             return;
         }
@@ -372,7 +376,7 @@ impl TerrainState {
         };
         let generation = self.generation();
         self.store.invalidate(generation, under);
-        self.changed = true;
+        self.ground_changed = true;
     }
 
     fn reaching_stamps(&self, key: TileKey) -> impl Iterator<Item = Stamp> + '_ {

@@ -849,6 +849,39 @@ impl<P: GpuPart> PassBuilder<'_, P> {
     }
 
     #[must_use]
+    pub fn writes(self, name: TargetName, target: Texture<P>, clear: wgpu::Color) -> Self {
+        let format = self
+            .core
+            .declared
+            .textures
+            .get(target.0 as usize)
+            .map(|texture| texture.format);
+        let output = self
+            .core
+            .outputs
+            .iter()
+            .position(|output| output.name == name.name() && Some(output.format) == format);
+        match (output, self.core.pass_mut(self.pass)) {
+            (Some(output), Some(pass)) => {
+                pass.colors.push((target.0, Access::Clear));
+                pass.written.push(output as u32);
+                pass.clears.push((
+                    target.0,
+                    graph::Clear::Color([clear.r, clear.g, clear.b, clear.a]),
+                ));
+            }
+            (_, pass) => {
+                let pass = pass.map_or("", |pass| pass.name);
+                let path = format!("$.passes.{pass}.writes.{}", name.name());
+                self.core
+                    .problems
+                    .push(Error::new(engine_core::ErrorCode::PassMismatch, path));
+            }
+        }
+        self
+    }
+
+    #[must_use]
     pub fn depth(self, target: Texture<P>, access: Access) -> Self {
         if let Some(pass) = self.core.pass_mut(self.pass) {
             pass.depths.push((target.0, access));

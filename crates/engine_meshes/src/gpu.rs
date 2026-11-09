@@ -721,9 +721,9 @@ fn view_looks(
         let look = look_of(index);
         let (vertex, streams) = view_vertex_of(look);
         let (shown, depth) = if look.extended {
-            (forward::FS_VIEW_EXTENDED, forward::FS_MASKED_DEPTH_EXTENDED)
+            (forward::FS_MESH_EXTENDED, forward::FS_MASKED_DEPTH_EXTENDED)
         } else {
-            (forward::FS_VIEW, forward::FS_MASKED_DEPTH)
+            (forward::FS_MESH, forward::FS_MASKED_DEPTH)
         };
         let writes = if lit {
             wgpu::ColorWrites::ALL
@@ -776,7 +776,12 @@ fn install_scenes(
     let mut scenes = Vec::with_capacity(listed.len());
     for listed in listed {
         let scene = Scene::named(listed.name);
-        let lit = listed.pass.writes.contains(TargetName::COLOR);
+        let lit = listed
+            .pass
+            .writes
+            .targets()
+            .iter()
+            .any(|target| *target != TargetName::DEPTH);
         let shown = listed.pass.writes.contains(DEBUG_TARGETS[0]);
         let drawing = if listed.pass.at == AttachPoint::Transparent {
             Drawing::Blended {

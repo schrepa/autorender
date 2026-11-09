@@ -15,7 +15,7 @@ use glam::{Mat4, UVec2, Vec3};
 use crate::clouds::{
     CloudFrame, CloudPass, CloudPlan, CloudSteps, cloud_regions, shadow_lighting,
 };
-use crate::environment::{Environment, EnvironmentFresh, EnvironmentLight, EnvironmentPlan};
+use crate::environment::{Environment, EnvironmentInputs, EnvironmentPlan, EnvironmentSteps};
 use crate::gpu_layouts::{SKY_TABLE_GROUP, SKY_VIEW_HEIGHT, SKY_VIEW_WIDTH, SkyAir, SkyPiece};
 use crate::haze::{Haze, HazeFrame, HazePlan, HazeSteps};
 use crate::settings::{Clouds, Haze as HazeSettings, NightSky, Sky};
@@ -26,7 +26,6 @@ use crate::views::SkyLightLevel;
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const VIEW_SIZE: (u32, u32) = (SKY_VIEW_WIDTH, SKY_VIEW_HEIGHT);
 const NO_VIEW_SIZE: (u32, u32) = (1, 1);
-const ENVIRONMENT_HEIGHT_STEP: f32 = 200.0;
 const DERIVED_BYTES: u64 = 6 * 16;
 const DERIVED_LIGHT: u64 = DERIVED_HORIZON * 16 + 12;
 
@@ -83,9 +82,6 @@ enum Air {
 #[derive(Default)]
 pub(crate) struct AirPlan {
     air: Air,
-    sun: Option<[u32; 3]>,
-    generation: u64,
-    environment_height: i32,
 }
 
 impl AirPlan {
@@ -100,45 +96,21 @@ impl AirPlan {
         self.shown().is_some()
     }
 
-    fn environment_key(&self) -> [f32; 4] {
-        if self.shows() {
-            [
-                1.0,
-                self.generation as f32,
-                self.environment_height as f32,
-                0.0,
-            ]
-        } else {
-            [0.0; 4]
-        }
-    }
-
     fn prepare(
         &mut self,
         (settings, tables): (&Sky, Option<&StaticTable<SkyTables>>),
         (sun, eye, moon): (Vec3, Vec3, [f32; 4]),
         air: &mut SkyAir,
     ) {
-        let next = match (settings.enabled, tables) {
+        self.air = match (settings.enabled, tables) {
             (false, _) => Air::Off,
             (true, Some(tables)) => Air::Shown(tables.id),
             (true, None) => Air::Waiting,
         };
-        let uploaded = next != self.air;
-        self.air = next;
-        if !self.shows() {
-            self.sun = None;
-            return;
+        if self.shows() {
+            let height = max(eye.y + settings.altitude, 0.5);
+            write_air(air, settings, (sun, height, moon));
         }
-        let height = max(eye.y + settings.altitude, 0.5);
-        write_air(air, settings, (sun, height, moon));
-        let sun_bits = sun.to_array().map(f32::to_bits);
-        let environment_height = (height / ENVIRONMENT_HEIGHT_STEP).floor() as i32;
-        if uploaded || self.sun != Some(sun_bits) || environment_height != self.environment_height {
-            self.generation += 1;
-        }
-        self.environment_height = environment_height;
-        self.sun = Some(sun_bits);
     }
 }
 
@@ -328,7 +300,7 @@ type SkyFrame<'w> = (
 type SkySteps<'w> = (
     ResMut<'w, CloudSteps>,
     ResMut<'w, HazeSteps>,
-    ResMut<'w, EnvironmentFresh>,
+    ResMut<'w, EnvironmentSteps>,
     ResMut<'w, FrameBudget>,
 );
 
@@ -336,7 +308,7 @@ pub(crate) fn plan_sky(
     (sky, clouds, haze, night): SkySections<'_>,
     (sun, path, wind): SkyLights<'_>,
     (tables, medium, views, time): SkyFrame<'_>,
-    (mut cloud_steps, mut haze_steps, mut fresh, mut budget): SkySteps<'_>,
+    (mut cloud_steps, mut haze_steps, mut environment_steps, mut budget): SkySteps<'_>,
     mut plan: ResMut<SkyPlan>,
 ) {
     let plan = &mut *plan;
@@ -389,15 +361,19 @@ pub(crate) fn plan_sky(
     ] = plan.clouds.dome_piece();
     plan.piece.domes_layers = plan.clouds.dome_layers();
     plan.piece.domes_size = plan.clouds.dome_size();
-    let light: EnvironmentLight = [
-        sun.direction,
-        plan.piece.sun_light,
-        plan.piece.zenith,
-        plan.piece.horizon,
-        plan.piece.ground,
-    ];
-    let keys = (plan.clouds.environment_key(), plan.tables.environment_key());
-    plan.environment.prepare(&light, keys, fresh.take());
+    let inputs = EnvironmentInputs {
+        light: [
+            sun.direction,
+            plan.piece.sun_light,
+            plan.piece.zenith,
+            plan.piece.horizon,
+            plan.piece.ground,
+        ],
+        clouds: plan.clouds.environment_key(),
+        tables: plan.tables.shown(),
+        air: plan.air,
+    };
+    plan.environment.prepare(inputs, &mut environment_steps);
     let haze_frame = HazeFrame {
         display,
         render,

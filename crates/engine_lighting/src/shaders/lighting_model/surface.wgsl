@@ -136,7 +136,8 @@ fn shade_surface(point: SurfacePoint, pixel: vec2<f32>, local: vec3<f32>) -> Sha
     let sunlit = (point.diffuse_color * wrapped + highlight * specular + transmitted(point))
         * sun_color();
     var visible = 1.0;
-    if any(sunlit != vec3<f32>(0.0)) && point.inputs.sun_blocked != 1.0 && inside.y != 0.0 {
+    if any(sunlit != vec3<f32>(0.0)) && point.inputs.sun_blocked != 1.0 && !point.inputs.sun_known
+        && inside.y != 0.0 {
         visible = sun_visibility(surface_sun(point));
     }
     let sun_light = sunlit * visible * (1.0 - point.inputs.sun_blocked) * inside.y;

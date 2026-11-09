@@ -255,13 +255,22 @@ fn output_type(format: wgpu::TextureFormat) -> String {
     }
 }
 
-pub(crate) fn pass_module(written: &[&OutputDecl]) -> (String, String) {
-    let mut key = String::from(engine_core::TargetName::COLOR.name());
+pub(crate) fn pass_module(colored: bool, written: &[&OutputDecl]) -> (String, String) {
+    let mut key = String::new();
     let mut imports =
         String::from("import package::engine::shading::{Shaded, SurfacePoint, ViewPixel};\n");
-    let mut fields = String::from("    @location(0) color: vec4<f32>,\n");
-    let (mut filled, mut copied) = (String::new(), String::new());
-    for (location, output) in (1..).zip(written) {
+    let (mut fields, mut filled) = (String::new(), String::new());
+    let (mut copied, mut blended) = (String::new(), String::new());
+    if colored {
+        key.push_str(engine_core::TargetName::COLOR.name());
+        fields.push_str("    @location(0) color: vec4<f32>,\n");
+        filled.push_str("    written.color = vec4<f32>(shaded.linear, 1.0);\n");
+        copied.push_str("    out.color = written.color;\n");
+        blended.push_str(
+            "    written.color = vec4<f32>(shaded.linear * shaded.opacity, shaded.opacity);\n",
+        );
+    }
+    for (location, output) in (u32::from(colored)..).zip(written) {
         let name = output.name;
         key.push('+');
         key.push_str(name);
@@ -277,7 +286,7 @@ pub(crate) fn pass_module(written: &[&OutputDecl]) -> (String, String) {
         }
     }
     let text = format!(
-        "{imports}\nstruct Outputs {{\n{fields}}}\n\nstruct DepthOutputs {{\n{fields}    @builtin(frag_depth) depth: f32,\n}}\n\nfn outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written: Outputs;\n    written.color = vec4<f32>(shaded.linear, 1.0);\n{filled}    return written;\n}}\n\nfn blended_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written = outputs(point, shaded, at);\n    written.color = vec4<f32>(shaded.linear * shaded.opacity, shaded.opacity);\n    return written;\n}}\n\nfn depth_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel, depth: f32) -> DepthOutputs {{\n    let written = outputs(point, shaded, at);\n    var out: DepthOutputs;\n    out.color = written.color;\n{copied}    out.depth = depth;\n    return out;\n}}\n"
+        "{imports}\nstruct Outputs {{\n{fields}}}\n\nstruct DepthOutputs {{\n{fields}    @builtin(frag_depth) depth: f32,\n}}\n\nfn outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written: Outputs;\n{filled}    return written;\n}}\n\nfn blended_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written = outputs(point, shaded, at);\n{blended}    return written;\n}}\n\nfn depth_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel, depth: f32) -> DepthOutputs {{\n    let written = outputs(point, shaded, at);\n    var out: DepthOutputs;\n{copied}    out.depth = depth;\n    return out;\n}}\n"
     );
     (key, text)
 }

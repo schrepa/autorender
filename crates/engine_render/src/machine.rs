@@ -249,34 +249,41 @@ fn written_module(
     outputs: &[OutputDecl],
     (path, problems): (&str, &mut Vec<Error>),
 ) -> Option<Option<(String, String)>> {
-    let mut found: Option<Vec<u32>> = None;
+    let mut found: Option<(bool, Vec<u32>)> = None;
     for (index, pass) in declared.passes.iter().enumerate() {
         if !decl_in_pass(decl, index as u32, pass) {
             continue;
         }
         let set = pass_set(outputs, pass);
-        if !lit_set(&set) {
+        let written = if lit_set(&set) {
+            let written: Vec<u32> = set
+                .iter()
+                .filter_map(|(target, ..)| match target {
+                    Target::Output(output) => Some(*output),
+                    Target::Scene | Target::Depth | Target::Canvas | Target::Copy(..) => None,
+                })
+                .collect();
+            (true, written)
+        } else if pass.written.is_empty() {
             continue;
-        }
-        let written: Vec<u32> = set
-            .iter()
-            .filter_map(|(target, ..)| match target {
-                Target::Output(output) => Some(*output),
-                Target::Scene | Target::Depth | Target::Canvas | Target::Copy(..) => None,
-            })
-            .collect();
+        } else if pass.written.len() == pass.colors.len() && pass.targets.is_empty() {
+            (false, pass.written.clone())
+        } else {
+            problems.push(Error::new(ErrorCode::PassMismatch, path.to_owned()).got(pass.name));
+            return None;
+        };
         if found.as_ref().is_some_and(|known| *known != written) {
             problems.push(Error::new(ErrorCode::PassMismatch, path.to_owned()).got(pass.name));
             return None;
         }
         found = Some(written);
     }
-    Some(found.map(|written| {
+    Some(found.map(|(colored, written)| {
         let listed: Vec<&OutputDecl> = written
             .iter()
             .filter_map(|at| outputs.get(*at as usize))
             .collect();
-        crate::shared::pass_module(&listed)
+        crate::shared::pass_module(colored, &listed)
     }))
 }
 

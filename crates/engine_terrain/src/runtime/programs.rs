@@ -13,10 +13,11 @@ gpu_struct! {
     }
 }
 
-#[derive(Resource, Default, PartialEq)]
+#[derive(Resource, Default)]
 pub struct SurfacePrograms {
     program: Vec<u32>,
     entries: Vec<SurfaceEntry>,
+    sources: Vec<Option<Arc<SurfaceData>>>,
 }
 
 impl SurfacePrograms {
@@ -36,9 +37,19 @@ impl SurfacePrograms {
         (std::mem::size_of::<SurfaceEntry>() * self.entries.len().max(1)) as u64
     }
 
+    pub(super) fn made_from(&self, terrains: &Terrains) -> bool {
+        drawn_surfaces(terrains)
+            .map(|data| data.map(Arc::as_ptr))
+            .eq(self
+                .sources
+                .iter()
+                .map(|data| data.as_ref().map(Arc::as_ptr)))
+    }
+
     pub(super) fn of(terrains: &Terrains) -> Self {
         let mut programs = Self::default();
         for data in drawn_surfaces(terrains) {
+            programs.sources.push(data.cloned());
             let entry = match data {
                 Some(data) => {
                     let base = programs.program.len() as u32;

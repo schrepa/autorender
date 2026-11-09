@@ -210,6 +210,7 @@ impl Run {
         let lone = crate::shared::draws_canvas(&pass) && !composites && self.canvas.rect.is_some();
         match attach {
             AttachRaw::Declared => {
+                let at = view.map_or(0, |view| view.layer);
                 if layer.is_some() && !lone {
                     let set = self.pass_set(self.pass);
                     main = lit_set(&set);
@@ -291,8 +292,9 @@ impl Run {
                         )
                     });
                     let format = self.machine.declared.textures[texture as usize].format;
-                    let view = self.attachment_view(texture, 0, 0);
-                    colors.push((u64::from(texture) + 1_000, view, format, ops));
+                    let view = self.attachment_view(texture, 0, at);
+                    let attached = (u64::from(texture) * 4_096 + u64::from(at)) * 64 + 1_000;
+                    colors.push((attached, view, format, ops));
                 }
                 if depth.is_none()
                     && let Some(&(texture, access)) = pass.depths.first()
@@ -306,9 +308,10 @@ impl Run {
                         ))
                     });
                     let format = self.machine.declared.textures[texture as usize].format;
-                    if let Some(view) = self.attachment_view(texture, 0, 0) {
+                    if let Some(view) = self.attachment_view(texture, 0, at) {
                         let tested = pass.view_depth(texture, access);
-                        depth = Some((u64::from(texture) + 2_000, view, format, ops, tested));
+                        let attached = (u64::from(texture) * 4_096 + u64::from(at)) * 64 + 2_000;
+                        depth = Some((attached, view, format, ops, tested));
                     }
                 }
             }
@@ -369,7 +372,7 @@ impl Run {
                     format,
                     ops,
                 ));
-                if !self.depth_attachment(&pass, texture, 0, &mut depth) {
+                if !self.depth_attachment(&pass, texture, at, &mut depth) {
                     return self.mismatch(pass.name);
                 }
             }

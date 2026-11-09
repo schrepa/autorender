@@ -5013,6 +5013,13 @@
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "sun_turn": {
+          "default": 5.0,
+          "format": "float",
+          "maximum": 180.0,
+          "minimum": 0.0,
+          "type": "number"
         }
       },
       "type": "object"

@@ -1,10 +1,11 @@
 use bevy_ecs::prelude::Resource;
-use engine_core::{Error, Readable, Readback, StoreId};
+use engine_core::{Error, Readable, Readback, Settling, StoreId};
 use engine_render::{
-    Allocation, Attach, Bind, DepthUse, Encode, Install, Lifetime, Own, Pass, Pipeline, Prepare,
-    RenderPipeline, Shape, Texture, mip_levels, wgpu,
+    Allocation, Attach, Bind, Copied, CopyRegion, DepthUse, Encode, Install, Lifetime, Own, Pass,
+    Pipeline, Prepare, RenderPipeline, Shape, Texture, mip_levels, wgpu,
 };
 
+use crate::gpu_layouts::SkyAir;
 use crate::sky::SkyGpu;
 
 const ENVIRONMENT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -13,59 +14,78 @@ const MOST_LEVELS: u32 = 11;
 
 const FACES: u32 = 6;
 const FACES_PER_PASS: u32 = 3;
+const LAST_STEP: u32 = FACES / FACES_PER_PASS;
 
-pub(crate) type EnvironmentLight = [[f32; 4]; 5];
+const LOST: u32 = 0;
+const DRAWN: u32 = 1;
 
-#[derive(Resource, Default)]
-pub(crate) struct EnvironmentFresh {
-    fresh: bool,
+#[derive(Clone, Copy)]
+pub(crate) struct EnvironmentInputs {
+    pub(crate) light: [[f32; 4]; 5],
+    pub(crate) clouds: [f32; 4],
+    pub(crate) tables: Option<u64>,
+    pub(crate) air: SkyAir,
 }
 
-impl EnvironmentFresh {
-    pub(crate) fn take(&mut self) -> bool {
-        std::mem::take(&mut self.fresh)
+impl EnvironmentInputs {
+    fn same_beyond_clouds(&self, other: &Self) -> bool {
+        self.tables == other.tables
+            && bytemuck::bytes_of(&self.light) == bytemuck::bytes_of(&other.light)
+            && bytemuck::bytes_of(&self.air) == bytemuck::bytes_of(&other.air)
+    }
+
+    fn same(&self, other: &Self) -> bool {
+        self.same_beyond_clouds(other)
+            && bytemuck::bytes_of(&self.clouds) == bytemuck::bytes_of(&other.clouds)
     }
 }
 
-impl Readable for EnvironmentFresh {
-    fn arrived(&mut self, _: u32, _: Readback<&[u8]>) {
-        self.fresh = true;
+#[derive(Resource, Default)]
+pub(crate) struct EnvironmentSteps {
+    lost: bool,
+    drawn: Option<u64>,
+}
+
+impl Readable for EnvironmentSteps {
+    fn arrived(&mut self, tag: u32, read: Readback<&[u8]>) {
+        if tag == LOST {
+            self.lost = true;
+        } else if let Ok(image) = <[u8; 8]>::try_from(read.value) {
+            self.drawn = Some(u64::from_le_bytes(image));
+        }
     }
 }
 
 #[derive(Default)]
 pub(crate) struct EnvironmentPlan {
-    drawn: Option<[[f32; 4]; 7]>,
-    changes: u64,
+    shown: Option<EnvironmentInputs>,
+    drawing: Option<EnvironmentInputs>,
+    image: u64,
     beyond: Option<StoreId>,
+    settling: Settling,
 }
 
 impl EnvironmentPlan {
-    pub(crate) fn prepare(
-        &mut self,
-        light: &EnvironmentLight,
-        (clouds, air): ([f32; 4], [f32; 4]),
-        fresh: bool,
-    ) {
-        if fresh {
-            self.beyond = Some(StoreId::next());
+    pub(crate) fn prepare(&mut self, inputs: EnvironmentInputs, steps: &mut EnvironmentSteps) {
+        if steps.drawn.take() == Some(self.image)
+            && let Some(drawn) = self.drawing.take()
+        {
+            if self
+                .shown
+                .is_none_or(|shown| !shown.same_beyond_clouds(&drawn))
+            {
+                self.beyond = Some(StoreId::next());
+            }
+            self.shown = Some(drawn);
         }
-        let sky = sky(light, clouds, air);
-        if self.drawn == Some(sky) {
-            return;
+        if std::mem::take(&mut steps.lost) {
+            self.shown = None;
         }
-        let beyond_clouds = self.drawn.is_none_or(|drawn| {
-            drawn
-                .iter()
-                .zip(&sky)
-                .enumerate()
-                .any(|(index, (old, new))| index != 5 && old != new)
-        });
-        self.drawn = Some(sky);
-        self.changes += 1;
-        if beyond_clouds {
-            self.beyond = Some(StoreId::next());
+        if self.drawing.is_none() && self.shown.is_none_or(|shown| !shown.same(&inputs)) {
+            self.drawing = Some(inputs);
+            self.image += 1;
         }
+        self.settling.left(u32::from(self.drawing.is_some()));
     }
 
     pub(crate) fn beyond(&self) -> Option<StoreId> {
@@ -75,20 +95,24 @@ impl EnvironmentPlan {
 
 pub(crate) struct Environment {
     radiance: Texture<SkyGpu>,
+    next: Texture<SkyGpu>,
     maps: Texture<SkyGpu>,
     pass: Pass<SkyGpu>,
     sky: Pipeline<SkyGpu, Own>,
     down: Vec<Pipeline<SkyGpu, Own>>,
     prefilter: Pipeline<SkyGpu, Own>,
     levels: u32,
-    drawn: Option<u64>,
-    runs: bool,
+    copies: Vec<CopyRegion>,
+    image: u64,
+    step: Option<u32>,
+    asked: Option<u32>,
 }
 
 impl Environment {
     pub(crate) fn install(cx: &mut Install<'_, SkyGpu>) -> Result<Self, Error> {
         use crate::shaders::sky::{environment, environment_maps as maps_shaders};
         let radiance = cx.texture("sky_radiance", ENVIRONMENT_FORMAT, Lifetime::Kept);
+        let next = cx.texture("sky_environment_next", ENVIRONMENT_FORMAT, Lifetime::Kept);
         let maps = cx.texture("sky_environment", ENVIRONMENT_FORMAT, Lifetime::Kept);
         let sampler = cx.sampler(engine_core::Sampler::LINEAR_CLAMP);
         cx.frame(environment::ENVIRONMENT_MAPS, Bind::Texture(maps))?;
@@ -97,7 +121,7 @@ impl Environment {
             .pass("sky_environment")
             .label("engine/environment")
             .color_cleared(radiance, wgpu::Color::BLACK)
-            .color_cleared(maps, wgpu::Color::BLACK)
+            .color_cleared(next, wgpu::Color::BLACK)
             .id();
         let faces = |fragment| RenderPipeline {
             vertex: maps_shaders::VS_ENVIRONMENT,
@@ -143,16 +167,34 @@ impl Environment {
                 (maps_shaders::CUBE_SAMPLER, Bind::Sampler(sampler)),
             ],
         )?;
+        let levels = mip_levels(ENVIRONMENT_SIZE, ENVIRONMENT_SIZE);
+        let copies = (0..levels)
+            .map(|level| {
+                let size = (ENVIRONMENT_SIZE >> level).max(1);
+                CopyRegion::Levels {
+                    from: (level, wgpu::Origin3d::ZERO),
+                    to: (level, wgpu::Origin3d::ZERO),
+                    size: wgpu::Extent3d {
+                        width: size,
+                        height: size,
+                        depth_or_array_layers: FACES,
+                    },
+                }
+            })
+            .collect();
         Ok(Self {
             radiance,
+            next,
             maps,
             pass,
             sky,
             down,
             prefilter,
-            levels: mip_levels(ENVIRONMENT_SIZE, ENVIRONMENT_SIZE),
-            drawn: None,
-            runs: false,
+            levels,
+            copies,
+            image: 0,
+            step: None,
+            asked: None,
         })
     }
 
@@ -166,36 +208,62 @@ impl Environment {
             height: ENVIRONMENT_SIZE,
             depth_or_array_layers: FACES,
         };
-        let (Allocation::Fresh | Allocation::Kept) =
-            cx.allocate(self.radiance, extent, self.levels);
+        let radiance = cx.allocate(self.radiance, extent, self.levels);
+        let next = cx.allocate(self.next, extent, self.levels);
         if cx.allocate(self.maps, extent, self.levels) == Allocation::Fresh {
-            self.drawn = None;
-            cx.deliver::<EnvironmentFresh>(0, vec![1]);
+            cx.deliver::<EnvironmentSteps>(LOST, Vec::new());
         }
-        self.runs = self.drawn != Some(plan.changes);
-        if self.runs {
-            self.drawn = Some(plan.changes);
-            cx.run(self.pass);
+        if let Some(asked) = self.asked.take() {
+            self.step = match (cx.ran(self.pass), asked == LAST_STEP) {
+                (false, _) => Some(asked),
+                (true, false) => Some(asked + 1),
+                (true, true) => {
+                    cx.deliver::<EnvironmentSteps>(DRAWN, self.image.to_le_bytes().to_vec());
+                    None
+                }
+            };
         }
+        if radiance == Allocation::Fresh || next == Allocation::Fresh {
+            self.step = self.step.map(|_| 0);
+        }
+        if plan.image != self.image {
+            self.image = plan.image;
+            self.step = Some(0);
+        }
+        let Some(step) = self.step else {
+            return;
+        };
+        cx.run(self.pass);
+        if step == LAST_STEP {
+            cx.copy_at_end(
+                Copied::Texture(self.next),
+                Copied::Texture(self.maps),
+                &self.copies,
+            );
+        }
+        self.asked = Some(step);
     }
 
     pub(crate) fn encode(&self, cx: &mut Encode<'_, SkyGpu>) -> u32 {
-        if !self.runs {
-            return 0;
-        }
-        for first in (0..FACES).step_by(FACES_PER_PASS as usize) {
-            faces_pass(cx, (self.radiance, 0, first), &self.sky, first);
-        }
-        for level in 1..self.levels {
-            for first in (0..FACES).step_by(FACES_PER_PASS as usize) {
-                let down = &self.down[(level - 1) as usize];
-                faces_pass(cx, (self.radiance, level, first), down, first);
+        match self.asked {
+            None => {}
+            Some(0) => {
+                for first in (0..FACES).step_by(FACES_PER_PASS as usize) {
+                    faces_pass(cx, (self.radiance, 0, first), &self.sky, first);
+                }
+                for level in 1..self.levels {
+                    let down = &self.down[(level - 1) as usize];
+                    for first in (0..FACES).step_by(FACES_PER_PASS as usize) {
+                        faces_pass(cx, (self.radiance, level, first), down, first);
+                    }
+                }
             }
-        }
-        for level in 0..self.levels {
-            for first in (0..FACES).step_by(FACES_PER_PASS as usize) {
-                let start = level * FACES + first;
-                faces_pass(cx, (self.maps, level, first), &self.prefilter, start);
+            Some(step) => {
+                let first = (step - 1) * FACES_PER_PASS;
+                for level in 0..self.levels {
+                    let item = level * FACES + first;
+                    faces_pass(cx, (self.next, level, first), &self.prefilter, item);
+                }
             }
         }
         0
@@ -220,9 +288,4 @@ fn faces_pass(
             instances: item..item + 1,
         },
     );
-}
-
-fn sky(light: &EnvironmentLight, clouds: [f32; 4], air: [f32; 4]) -> [[f32; 4]; 7] {
-    let [sun, sun_light, zenith, horizon, ground] = *light;
-    [sun, sun_light, zenith, horizon, ground, clouds, air]
 }

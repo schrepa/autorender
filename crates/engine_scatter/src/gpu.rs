@@ -442,17 +442,15 @@ impl ScatterGpu {
             } else {
                 (PLAIN_STREAMS, draw::VS_OBJECT, draw::VS_OBJECT_FADING)
             };
-            let (shaded, viewed, shown, cut) = if extended {
+            let (shaded, shown, cut) = if extended {
                 (
                     draw::FS_OBJECT_EXTENDED,
-                    draw::FS_VIEW_EXTENDED,
                     draw::FS_DEBUG_OBJECT_EXTENDED,
                     draw::FS_MASKED_DEPTH_EXTENDED,
                 )
             } else {
                 (
                     draw::FS_OBJECT,
-                    draw::FS_VIEW,
                     draw::FS_DEBUG_OBJECT,
                     draw::FS_MASKED_DEPTH,
                 )
@@ -487,8 +485,8 @@ impl ScatterGpu {
                     desc(fading, Some(cut), false),
                 ],
                 (true, true, _) => [
-                    desc(vertex, Some(viewed), false),
-                    desc(vertex, Some(viewed), true),
+                    desc(vertex, Some(shaded), false),
+                    desc(vertex, Some(shaded), true),
                 ],
                 (true, false, _) => [
                     desc(vertex, masked.then_some(cut), false),
@@ -586,7 +584,12 @@ impl ScatterGpu {
             let scene = Scene::named(listed.name);
             let (owned, lit) = (
                 listed.pass.views == PassViews::Owned,
-                listed.pass.writes.contains(TargetName::COLOR),
+                listed
+                    .pass
+                    .writes
+                    .targets()
+                    .iter()
+                    .any(|target| *target != TargetName::DEPTH),
             );
             let shows = listed.pass.writes.contains(DEBUG_TARGETS[0]);
             let looks = Self::look_pipelines(cx, scene, (poses, colors), (lit, owned, shows))?;

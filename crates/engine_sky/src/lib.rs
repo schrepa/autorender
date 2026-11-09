@@ -77,7 +77,7 @@ impl Brick for SkyBrick {
             .resource::<sky::SkyPlan>()
             .resource::<clouds::CloudSteps>()
             .resource::<haze::HazeSteps>()
-            .resource::<environment::EnvironmentFresh>()
+            .resource::<environment::EnvironmentSteps>()
             .fill::<SkyLight>(Some(shaders::sky::faces::sky::MODULE))
             .join::<SunBlockers>((), Some(shaders::sky::blockers::MODULE))
             .join::<Ambient>((), Some(shaders::sky::ambient::MODULE))

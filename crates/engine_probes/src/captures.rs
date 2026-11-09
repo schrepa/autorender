@@ -5,11 +5,10 @@ use engine_render::{
     Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, Texture, wgpu,
 };
 
-use crate::ProbePass;
 use crate::probes::{
-    CAPTURED_ACK, FACES, LOST_ACK, ProbeAcks, ProbeState, ProbeWords, SETS, captured_bytes,
+    CAPTURED_ACK, FACES, FaceJob, LOST_ACK, ProbeAcks, ProbeState, ProbeWords, SETS, captured_bytes,
 };
-use crate::shaders;
+use crate::{ProbeLightPass, ProbePass, SURFACES, shaders};
 
 const PROBE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const MOST_LEVELS: u32 = 11;
@@ -17,24 +16,48 @@ const GRID_BYTES: u64 = 32;
 const SIDES: u32 = FACES as u32;
 const FACES_PER_PASS: u32 = 3;
 
+struct Taken {
+    drew: bool,
+    finished: bool,
+    slots: Vec<(usize, u64)>,
+}
+
 pub(crate) struct ProbesGpu {
     captures: Pass<Self>,
+    light: Pass<Self>,
     filter: Pass<Self>,
     prefiltering: Pass<Self>,
     radiance: Texture<Self>,
     maps: Texture<Self>,
-    depth: Texture<Self>,
+    surfaces: [Texture<Self>; SURFACES.len()],
+    depths: Texture<Self>,
     words: Buffer<Self>,
-    backdrop: Pipeline<Self, Own>,
+    relight: Pipeline<Self, Own>,
     down: Vec<Pipeline<Self, Own>>,
     prefilter: Vec<Pipeline<Self, Own>>,
-    drawn: Vec<u32>,
+    jobs: Vec<FaceJob>,
     finished: Option<(u32, u32)>,
-    taken: Option<(bool, Vec<(usize, u64)>)>,
+    taken: Option<Taken>,
     layout: Option<StoreId>,
     timed: bool,
     levels: u32,
     grid: u64,
+}
+
+fn texel_bytes(format: wgpu::TextureFormat) -> u64 {
+    u64::from(format.block_copy_size(None).unwrap_or(0))
+}
+
+pub(crate) fn stored_texel_bytes() -> u64 {
+    SURFACES
+        .iter()
+        .map(|target| texel_bytes(target.format))
+        .sum::<u64>()
+        + texel_bytes(DEPTH_FORMAT)
+}
+
+pub(crate) fn lit_texel_bytes() -> u64 {
+    texel_bytes(PROBE_FORMAT)
 }
 
 fn faces(fragment: engine_core::Entry) -> RenderPipeline<'static> {
@@ -49,23 +72,6 @@ fn faces(fragment: engine_core::Entry) -> RenderPipeline<'static> {
     }
 }
 
-fn backdrop() -> RenderPipeline<'static> {
-    use shaders::probes::backdrop;
-    RenderPipeline {
-        vertex: backdrop::VS_BACKDROP,
-        fragment: Some(backdrop::FS_BACKDROP),
-        vertices: &[],
-        primitive: wgpu::PrimitiveState::default(),
-        depth: DepthUse::Compare {
-            compare: wgpu::CompareFunction::GreaterEqual,
-            write: false,
-            bias: wgpu::DepthBiasState::default(),
-        },
-        blend: None,
-        writes: wgpu::ColorWrites::ALL,
-    }
-}
-
 impl GpuPart for ProbesGpu {
     type Reads = (
         Res<'static, ProbeState>,
@@ -74,25 +80,32 @@ impl GpuPart for ProbesGpu {
     );
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        use shaders::probes::{filter, sample};
+        use shaders::probes::{filter, relight, sample};
         let radiance = cx.texture("radiance", PROBE_FORMAT, Lifetime::Kept);
         let maps = cx.texture("probe_maps", PROBE_FORMAT, Lifetime::Kept);
-        let depth = cx.texture("depth", DEPTH_FORMAT, Lifetime::Kept);
+        let surfaces =
+            SURFACES.map(|target| cx.texture(target.name.name(), target.format, Lifetime::Kept));
+        let depths = cx.texture("probe_depths", DEPTH_FORMAT, Lifetime::Kept);
         let words = cx.buffer("words", Lifetime::Kept);
         let sampler = cx.sampler(engine_core::Sampler::LINEAR_CLAMP);
         cx.frame(sample::PROBE_WORDS, Bind::Buffer(words))?;
         cx.frame(sample::PROBE_MAPS, Bind::Texture(maps))?;
         cx.frame(sample::PROBE_SAMPLER, Bind::Sampler(sampler))?;
-        let captures = cx
-            .scene::<ProbePass>()
-            .label("engine/probe-face")
+        let mut capturing = cx.scene::<ProbePass>().label("engine/probe-face");
+        for (target, texture) in SURFACES.iter().zip(surfaces) {
+            capturing = capturing.writes(target.name, texture, wgpu::Color::TRANSPARENT);
+        }
+        let captures = capturing.depth(depths, Access::Clear).id();
+        let light = cx
+            .scene::<ProbeLightPass>()
+            .label("engine/probe-light")
+            .after(captures)
             .color_cleared(radiance, wgpu::Color::BLACK)
-            .depth(depth, Access::Clear)
             .id();
         let filter_pass = cx
             .pass("probe_filter")
             .label("engine/environment")
-            .after(captures)
+            .after(light)
             .color_cleared(radiance, wgpu::Color::BLACK)
             .id();
         let prefiltering = cx
@@ -102,9 +115,22 @@ impl GpuPart for ProbesGpu {
             .color_cleared(maps, wgpu::Color::BLACK)
             .id();
         cx.group(captures, "probe_captures");
+        cx.group(light, "probe_captures");
         cx.group(filter_pass, "probe_captures");
         cx.group(prefiltering, "probe_captures");
-        let backdrop = cx.render_pipeline(captures, &backdrop(), &[])?;
+        let [base, surface, normal, emissive, bounce] = surfaces;
+        let relight = cx.render_pipeline(
+            light,
+            &faces(relight::FS_RELIGHT),
+            &[
+                (relight::STORED_BASE, Bind::Texture(base)),
+                (relight::STORED_SURFACE, Bind::Texture(surface)),
+                (relight::STORED_NORMAL, Bind::Texture(normal)),
+                (relight::STORED_EMISSIVE, Bind::Texture(emissive)),
+                (relight::STORED_BOUNCE, Bind::Texture(bounce)),
+                (relight::STORED_DEPTH, Bind::Texture(depths)),
+            ],
+        )?;
         let mut down = Vec::new();
         let mut prefilter = Vec::new();
         for set in 0..SETS {
@@ -144,16 +170,18 @@ impl GpuPart for ProbesGpu {
         }
         Ok(Self {
             captures,
+            light,
             filter: filter_pass,
             prefiltering,
             radiance,
             maps,
-            depth,
+            surfaces,
+            depths,
             words,
-            backdrop,
+            relight,
             down,
             prefilter,
-            drawn: Vec::new(),
+            jobs: Vec::new(),
             finished: None,
             taken: None,
             layout: None,
@@ -168,10 +196,12 @@ impl GpuPart for ProbesGpu {
         (state, words, limits): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        if let Some((finished, slots)) = self.taken.take() {
+        if let Some(taken) = self.taken.take() {
             let filtered = cx.ran(self.filter) && cx.ran(self.prefiltering);
-            let ran = cx.ran(self.captures) && (!finished || filtered);
-            cx.deliver::<ProbeAcks>(CAPTURED_ACK, captured_bytes(ran, &slots));
+            let ran = (!taken.drew || cx.ran(self.captures))
+                && cx.ran(self.light)
+                && (!taken.finished || filtered);
+            cx.deliver::<ProbeAcks>(CAPTURED_ACK, captured_bytes(ran, &taken.slots));
         }
         self.allocate(&state, cx);
         if words.is_changed() {
@@ -187,28 +217,28 @@ impl GpuPart for ProbesGpu {
             let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.words, self.grid);
             cx.write(self.words, 0, &words.words);
         }
-        self.drawn.clone_from(&state.drawn);
+        self.jobs.clone_from(&state.jobs);
         self.finished = state
             .finished
             .filter(|&(cube, _)| cube >= 1 && cube < state.cubes);
         self.timed = state.timed;
-        if !state.listed {
-            cx.release(self.depth);
-        }
-        if !self.drawn.is_empty() {
-            let (Allocation::Fresh | Allocation::Kept) =
-                cx.allocate(self.depth, extent(state.size, 1), 1);
-        }
-        if state.captures {
+        let drew = self.jobs.iter().any(|job| job.draws);
+        if drew {
             cx.run(self.captures);
         }
+        if self.jobs.is_empty() {
+            return;
+        }
+        cx.run(self.light);
         if self.finished.is_some() {
             cx.run(self.filter);
             cx.run(self.prefiltering);
         }
-        if state.captures && !self.drawn.is_empty() {
-            self.taken = Some((self.finished.is_some(), state.taken.clone()));
-        }
+        self.taken = Some(Taken {
+            drew,
+            finished: self.finished.is_some(),
+            slots: state.taken.clone(),
+        });
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
@@ -227,19 +257,27 @@ impl GpuPart for ProbesGpu {
         if self.timed {
             cx.span("probe_captures");
         }
+        if pass == self.light {
+            for job in &self.jobs {
+                let target = Attach::Color(self.radiance, Some(job.lit));
+                let Some(mut draw) = cx.view(&target, job.known.face) else {
+                    continue;
+                };
+                draw.draw(
+                    &self.relight,
+                    Shape::Pulled {
+                        vertices: 0..3,
+                        instances: job.stored..job.stored + 1,
+                    },
+                );
+            }
+            return 0;
+        }
         let mut drawn = 0;
-        let target = Attach::ColorDepth(self.radiance, None, self.depth);
-        for face in 0..FACES as u32 {
-            let Some(mut draw) = cx.view(&target, face) else {
+        for job in self.jobs.iter().filter(|job| job.draws) {
+            let Some(mut draw) = cx.view(&Attach::Declared, job.known.face) else {
                 continue;
             };
-            draw.draw(
-                &self.backdrop,
-                Shape::Pulled {
-                    vertices: 0..3,
-                    instances: 0..1,
-                },
-            );
             drawn += draw.scene(self);
         }
         drawn
@@ -254,19 +292,46 @@ fn extent(size: u32, layers: u32) -> wgpu::Extent3d {
     }
 }
 
+fn held(
+    cx: &mut Prepare<'_, ProbesGpu>,
+    (texture, levels): (Texture<ProbesGpu>, u32),
+    size: wgpu::Extent3d,
+    kept: bool,
+) -> Allocation {
+    if kept {
+        cx.grow(texture, size, levels)
+    } else {
+        cx.allocate(texture, size, levels)
+    }
+}
+
 impl ProbesGpu {
     fn allocate(&mut self, state: &ProbeState, cx: &mut Prepare<'_, Self>) {
         let size = state.size;
         self.levels = mip_levels(size);
         let radiance = cx.allocate(self.radiance, extent(size, SETS * SIDES), self.levels);
-        let layers = state.cubes.saturating_sub(1).max(1) * SIDES;
+        let layers = extent(size, state.cubes.saturating_sub(1).max(1) * SIDES);
         let kept = self.layout.replace(state.layout) == Some(state.layout);
-        let maps = if kept {
-            cx.grow(self.maps, extent(size, layers), self.levels)
-        } else {
-            cx.allocate(self.maps, extent(size, layers), self.levels)
-        };
-        if maps == Allocation::Fresh || radiance == Allocation::Fresh {
+        let maps = held(cx, (self.maps, self.levels), layers, kept);
+        let stored: Vec<Allocation> = self
+            .surfaces
+            .iter()
+            .copied()
+            .chain([self.depths])
+            .map(|texture| {
+                if state.listed {
+                    held(cx, (texture, 1), layers, kept)
+                } else {
+                    cx.release(texture);
+                    Allocation::Kept
+                }
+            })
+            .collect();
+        if [radiance, maps]
+            .iter()
+            .chain(&stored)
+            .any(|allocation| *allocation == Allocation::Fresh)
+        {
             cx.deliver::<ProbeAcks>(LOST_ACK, Vec::new());
         }
     }

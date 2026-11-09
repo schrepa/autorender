@@ -404,7 +404,7 @@ impl Terrains {
                         {
                             state.terrain.surface.assets = terrain.surface.assets;
                             state.terrain.surface.bridge = terrain.surface.bridge;
-                            state.changed = true;
+                            state.ground_changed = true;
                         }
                     }
                 }

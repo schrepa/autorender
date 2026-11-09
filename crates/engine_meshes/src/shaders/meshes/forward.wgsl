@@ -52,15 +52,3 @@ fn fs_mesh_extended_blended(input: ExtendedMotionOutput,
     return blended_outputs(shaded.point, shaded.shaded,
         drawn_pixel(input.clip_position, input.previous));
 }
-
-@fragment
-fn fs_view(input: MotionOutput, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
-    return vec4<f32>(shade(fragment(motion_output(input)), front).shaded.linear, 1.0);
-}
-
-@fragment
-fn fs_view_extended(input: ExtendedMotionOutput, @builtin(front_facing) front: bool)
-        -> @location(0) vec4<f32> {
-    let shaded = shade(extended_fragment(extended_motion_output(input)), front);
-    return vec4<f32>(shaded.shaded.linear, 1.0);
-}

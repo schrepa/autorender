@@ -52,6 +52,7 @@ pub(super) fn bake(
     state.bake = TerrainBake::Made;
     if let Some(water) = baked.hydrology() {
         state.hydrology = HydrologyState::baked(water);
+        state.hydrology_changed = true;
     }
     let before = state.baked.clone();
     state.finish_bake(Arc::new(baked), kinds);

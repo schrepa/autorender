@@ -11,10 +11,10 @@ import package::face::sun::sun_direction;
 import package::engine::math::PI;
 import package::engine::view::{camera, detail_across, detail_distance, detail_level, eye_world,
     fade_noise, material_detail, stable_normalize, view_pixel};
-import package::engine::shading::{Shaded, SurfacePoint};
+import package::engine::shading::{SurfacePoint, ViewPixel};
 import package::engine::surfaces::SURFACE_GROUND;
 import package::face::water::{WATER_HELD, WaterCell, water_cell, water_level};
-import package::generated::writes::{DepthOutputs, depth_outputs};
+import package::generated::writes::{DepthOutputs, Outputs, depth_outputs, outputs};
 import package::terrain_shading::draw_shared::{terrain_hash2, terrain_value, terrain_value2};
 import package::terrain_shading::faces::ground_tiles::{DETAIL_EDGE_ON, detail_resolved,
     detail_span};
@@ -1464,19 +1464,21 @@ fn fs_terrain_resolve_temporal(input: TerrainResolveInput) -> DepthOutputs {
     return terrain_resolve_targets(input, fade_noise(input.position.xy));
 }
 
-fn shade_terrain(input: TerrainOutput, holes: bool) -> Shaded {
+fn terrain_probe_targets(input: TerrainOutput, holes: bool) -> Outputs {
     use_terrain(input.terrain);
     let point = terrain_point(input.relative.xyz);
     terrain_holes_test(input.cell, holes);
-    return finish(point, input.clip_position.xy, vec3<f32>(0.0));
+    let shaded = finish(point, input.clip_position.xy, vec3<f32>(0.0));
+    let still = view_pixel(input.clip_position, vec4<f32>(0.0)).clip;
+    return outputs(point, shaded, ViewPixel(still, still));
 }
 
 @fragment
-fn fs_terrain_probe(input: TerrainOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(shade_terrain(input, false).linear, 1.0);
+fn fs_terrain_probe(input: TerrainOutput) -> Outputs {
+    return terrain_probe_targets(input, false);
 }
 
 @fragment
-fn fs_terrain_probe_holes(input: TerrainOutput) -> @location(0) vec4<f32> {
-    return vec4<f32>(shade_terrain(input, true).linear, 1.0);
+fn fs_terrain_probe_holes(input: TerrainOutput) -> Outputs {
+    return terrain_probe_targets(input, true);
 }

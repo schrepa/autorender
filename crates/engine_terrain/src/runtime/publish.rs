@@ -1,10 +1,10 @@
 use super::ground_face::TerrainGround;
 use super::*;
+use engine_core::{BASE_COLOR_MAP, METALLIC_ROUGHNESS_MAP, NORMAL_MAP, Spawner};
 use engine_places_simulation::ground::Ground;
 use engine_places_world::ground::{
     PlacedAsset, PlacedLayer, SurfaceMaps, TerrainEntry, TerrainTiles,
 };
-use engine_core::{BASE_COLOR_MAP, METALLIC_ROUGHNESS_MAP, NORMAL_MAP, Spawner};
 use engine_places_world::water::Hydrology;
 
 #[derive(Component)]
@@ -216,29 +216,36 @@ pub(crate) fn publish_terrains(
     for entity in std::mem::take(&mut terrains.retired.entities) {
         spawner.despawn(entity);
     }
-    let mut changed = std::mem::take(&mut terrains.changed);
+    let listed = std::mem::take(&mut terrains.changed);
+    let (mut described, mut grounded, mut watered) = (listed, listed, listed);
     let mut reshaped = false;
     for state in &mut terrains.entries {
         if let Some(around) = state.around.as_mut()
             && around.entity.is_none()
         {
             around.entity = Some(spawner.spawn(SurroundingsGround));
-            state.changed = true;
+            described = true;
         }
+        let moved = state.store.settle_tiles(settings.tile_feed as usize);
+        let kept = state.store.settle_kept();
+        let shaped = std::mem::take(&mut state.ground_changed);
         reshaped |= state.store.take_reshaped();
-        changed |= std::mem::take(&mut state.changed);
-        changed |= state.store.settle_tiles(settings.tile_feed as usize);
-        changed |= state.store.settle_kept();
+        grounded |= moved || shaped;
+        watered |= std::mem::take(&mut state.hydrology_changed);
+        described |= std::mem::take(&mut state.changed) || shaped || moved || kept;
     }
-    if changed {
+    grounded |= reshaped;
+    if grounded {
         terrains.grounds += 1;
     }
     if reshaped {
         terrains.edits += 1;
     }
     let terrains = &*terrains;
-    if changed {
+    if grounded {
         *ground = Ground(Arc::new(TerrainGround::of(terrains)));
+    }
+    if watered {
         let bakes: Vec<(Entity, Arc<crate::HydrologyBake>)> = terrains
             .entries
             .iter()
@@ -248,12 +255,11 @@ pub(crate) fn publish_terrains(
         if !same_bakes(&hydrology.bakes, &bakes) {
             hydrology.bakes = bakes;
         }
-        let next = SurfacePrograms::of(terrains);
-        if *programs != next {
-            *programs = next;
-        }
     }
-    if changed
+    if described && !programs.made_from(terrains) {
+        *programs = SurfacePrograms::of(terrains);
+    }
+    if described
         || settings.is_changed()
         || (assets.is_changed() && assets_moved(terrains, &tiles, &assets))
     {

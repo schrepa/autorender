@@ -147,6 +147,6 @@ pub fn generated_core() -> [(&'static str, String); 12] {
         (crate::drawn::DRAWN_MODULE, crate::drawn::source()),
         (crate::drawn::DRAWN_CULL_MODULE, crate::drawn::cull_source()),
         (crate::drawn::DRAWN_FADES_MODULE, crate::drawn::fades_source()),
-        (crate::shared::WRITES_MODULE, crate::shared::pass_module(&[]).1),
+        (crate::shared::WRITES_MODULE, crate::shared::pass_module(true, &[]).1),
     ]
 }
