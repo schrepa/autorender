@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{AssetLibrary, Cull, Error, Material, MaterialHandle, SurfaceSlot};
-use engine_places_rendering::lighting::{OCCLUSION, ROUGHNESS, TRANSMISSION};
+use engine_places::surface::{OCCLUSION, ROUGHNESS, TRANSMISSION};
 use engine_render::SlotModule;
 
 use crate::shaders::cover::surface;

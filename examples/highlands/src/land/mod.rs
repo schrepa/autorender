@@ -5,7 +5,7 @@ use engine::bricks::parse_value_at;
 use engine::prelude::*;
 use engine::{Error, ErrorCode, Expected};
 use engine_core::{BASE_COLOR_MAP, NORMAL_MAP, RecordExchange};
-use engine_places_rendering::lighting::{
+use engine_places::surface::{
     METALLIC_ROUGHNESS_MAP, METALNESS, OCCLUSION, OCCLUSION_MAP, ROUGHNESS,
 };
 use serde_json::Value;

@@ -10,10 +10,8 @@ mod light;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, MAPPED, Module, Rule, Schedule, Source, gpu_struct};
-use engine_places_rendering::lighting::{
-    Lighting, METALLIC_ROUGHNESS_MAP, METALNESS, OCCLUSION, OCCLUSION_MAP, OCCLUSION_STRENGTH,
-    ROUGHNESS, SurfaceValues, TRANSMISSION,
-};
+use engine_places_rendering::lighting::{Lighting};
+use engine_places::surface::{METALLIC_ROUGHNESS_MAP, METALNESS, OCCLUSION, OCCLUSION_MAP, OCCLUSION_STRENGTH, ROUGHNESS, SurfaceValues, TRANSMISSION};
 use engine_render::{
     Lit, MaterialValue, OpenSlot, RenderBricks, SlotModule, SurfaceKind, SurfaceTerms,
 };

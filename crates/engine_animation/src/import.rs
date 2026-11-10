@@ -8,7 +8,7 @@ use engine_core::{
     TextureHandle, TextureRef, UvTransform, VertexSkin, Wrap, decode_image,
 };
 use engine_places_rendering::animation::{Bound, Clip, Joint, JointKeys, Keys, Rig, RigPart};
-use engine_places_rendering::lighting::{METALNESS, ROUGHNESS};
+use engine_places::surface::{METALNESS, ROUGHNESS};
 use glam::{Mat3, Mat4, Quat, Vec3};
 use gltf::animation::util::ReadOutputs;
 use gltf::animation::{Interpolation, Property};

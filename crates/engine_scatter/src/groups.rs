@@ -8,7 +8,7 @@ use engine_core::{
 use engine_math::collections::HashMap;
 use engine_heightfield::tile::Placed;
 use engine_places_rendering::impostors::{ImpostorAsk, ImpostorRecord};
-use engine_places_rendering::lighting::SurfaceValues;
+use engine_places::surface::SurfaceValues;
 use engine_open_world_kit::ground::PlacedAsset;
 use engine_render::{pack_color, pack_surface};
 use glam::Vec3;
@@ -25,7 +25,7 @@ pub(crate) const GROUNDING_HEIGHT: &str = "grounding_height";
 fn slot_color(material: &Material) -> SlotColor {
     SlotColor {
         color: pack_color(material.color()),
-        surface: pack_surface(SurfaceValues::of(Some(material)).units(), material.emission()),
+        surface: pack_surface(SurfaceValues::read(|name| material.surface_value(name), |name| material.value(name)).units(), material.emission()),
         pad: 0,
     }
 }

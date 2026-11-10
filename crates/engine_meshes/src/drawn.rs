@@ -3,7 +3,7 @@ use engine_core::{
     AssetLibrary, DrawnPoses, DrawnTable, Error, ErrorCode, Expected, FrameTime, GlobalTransforms,
     GpuBits, Material, Operation, PoseRows, SceneIds, pose_rows,
 };
-use engine_places_rendering::lighting::SurfaceValues;
+use engine_places::surface::SurfaceValues;
 
 use crate::MESH;
 use crate::layouts::{LodFade, LodHistory};
@@ -166,7 +166,7 @@ impl Operation for MeshesListing {
             .filter(|(_, drawn)| drawn.kind == MESH)
             .map(|(entity, drawn)| {
                 let material = drawn.material.and_then(|handle| assets.material(handle));
-                let surface = SurfaceValues::of(material);
+                let surface = SurfaceValues::read(|name| material.and_then(|material| material.surface_value(name)), |name| material.and_then(|material| material.value(name)));
                 let model = globals
                     .get(entity)
                     .and_then(|global| global.matrix())

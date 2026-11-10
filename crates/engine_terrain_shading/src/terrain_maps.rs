@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use engine_core::{AssetLibrary, ColorSpace, Error, Texture, TextureFormat, TextureHandle};
-use engine_places_rendering::lighting::{METALLIC_ROUGHNESS_MAP, OCCLUSION_MAP, SurfaceValues};
+use engine_places::surface::{METALLIC_ROUGHNESS_MAP, OCCLUSION_MAP, SurfaceValues};
 use engine_open_world_kit::ground::{SurfaceMaps, TerrainTiles};
 use engine_render::{Allocation, Install, Lifetime, Prepare, Sampler, wgpu};
 
@@ -113,7 +113,7 @@ impl TerrainMaps {
     pub(crate) fn material(maps: &SurfaceMaps, assets: &AssetLibrary) -> Option<MapMaterial> {
         let material = assets.material(maps.material)?;
         let color = material.color();
-        let surface = SurfaceValues::of(Some(material));
+        let surface = SurfaceValues::read(|name| material.surface_value(name), |name| material.value(name));
         let packed = material.map(OCCLUSION_MAP).map(|map| map.texture)
             == material.map(METALLIC_ROUGHNESS_MAP).map(|map| map.texture);
         Some(MapMaterial {

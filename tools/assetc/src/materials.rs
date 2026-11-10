@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use engine_places_rendering::lighting::{
+use engine_places::surface::{
     METALLIC_ROUGHNESS_MAP, METALNESS, OCCLUSION, OCCLUSION_MAP, OCCLUSION_STRENGTH, ROUGHNESS,
 };
 use engine_scene::{

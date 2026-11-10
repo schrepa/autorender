@@ -6,7 +6,7 @@ use engine_core::{
     AssetLibrary, Drawn, Material, MaterialHandle, Mesh, GeometryHandle, MeshVertex, Spawner,
     Transform,
 };
-use engine_places_rendering::lighting::ROUGHNESS;
+use engine_places::surface::ROUGHNESS;
 use engine_places::meshes::MESH;
 use engine_places_world::splines::SplineMesh;
 use glam::Vec3;

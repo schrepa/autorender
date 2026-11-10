@@ -4712,15 +4712,6 @@
             "null"
           ]
         },
-        "occlusion_strength": {
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.0,
-          "type": [
-            "number",
-            "null"
-          ]
-        },
         "opacity": {
           "exclusiveMinimum": 0.0,
           "format": "float",
@@ -4749,21 +4740,12 @@
           ]
         },
         "surface": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneSurface"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "transmission": {
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.0,
+          "additionalProperties": {
+            "format": "float",
+            "type": "number"
+          },
           "type": [
-            "number",
+            "object",
             "null"
           ]
         },
@@ -6156,33 +6138,6 @@
             "array",
             "null"
           ]
-        }
-      },
-      "type": "object"
-    },
-    "SceneSurface": {
-      "additionalProperties": false,
-      "properties": {
-        "emission": {
-          "default": 0.0,
-          "format": "float",
-          "maximum": 16.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "metalness": {
-          "default": 0.0,
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "roughness": {
-          "default": 0.800000011920929,
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.0,
-          "type": "number"
         }
       },
       "type": "object"

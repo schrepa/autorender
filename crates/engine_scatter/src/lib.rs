@@ -18,9 +18,8 @@ use engine_core::{
     Attributes, BASE_COLOR_MAP, Brick, Bricks, KindDecl, Module, NORMAL_MAP, Schedule, Source,
     SurfaceSlot,
 };
-use engine_places_rendering::lighting::{
-    Ambient, METALLIC_ROUGHNESS_MAP, METALNESS, OCCLUSION, OCCLUSION_MAP, ROUGHNESS, TRANSMISSION,
-};
+use engine_places_rendering::lighting::{Ambient};
+use engine_places::surface::{METALLIC_ROUGHNESS_MAP, METALNESS, OCCLUSION, OCCLUSION_MAP, ROUGHNESS, TRANSMISSION};
 use engine_places_rendering::occlusion::OcclusionSource;
 use engine_open_world_kit::ground::{FarCover, Foliage, PlacedTiles};
 use engine_render::{RenderBricks, SlotModule};
