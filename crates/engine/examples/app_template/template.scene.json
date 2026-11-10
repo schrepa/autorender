@@ -14,6 +14,17 @@
     {
       "id": "block",
       "color": [0.9, 0.5, 0.2, 1.0]
+    },
+    {
+      "id": "disc",
+      "color": [1.0, 1.0, 1.0, 1.0],
+      "slots": {
+        "opacity": "glimmer"
+      },
+      "alpha_mode": "mask",
+      "alpha_cutoff": 0.5,
+      "cull": "none",
+      "lighting": "unlit"
     }
   ],
   "meshes": [
@@ -46,6 +57,19 @@
       "transform": {
         "translation": [0.0, 1.0, 0.0],
         "scale": [2.0, 2.0, 2.0]
+      }
+    },
+    {
+      "id": "spark",
+      "drawn": {
+        "kind": "glimmer",
+        "material": "disc",
+        "values": {
+          "floats": [0.5]
+        }
+      },
+      "transform": {
+        "translation": [0.0, 3.5, 0.0]
       }
     },
     {

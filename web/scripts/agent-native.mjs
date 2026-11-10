@@ -7,7 +7,7 @@ import { createInterface } from "node:readline";
 import { inflateSync } from "node:zlib";
 import { setTimeout as delay } from "node:timers/promises";
 import { PANIC_PREFIX } from "../src/generated/host.ts";
-import { AgentError, atMost, detailOf, range, variants } from "./agent-protocol.mjs";
+import { AgentError, atMost, detailOf, isNotice, range, variants } from "./agent-protocol.mjs";
 import { workspace } from "./workspace.mjs";
 
 const SESSIONS_KEPT = 10;
@@ -115,7 +115,7 @@ export async function launchNativeSession({ program, args = [] }) {
     if (line.startsWith(PANIC_PREFIX)) {
       try { panic = JSON.parse(line.slice(PANIC_PREFIX.length)); } catch {}
     }
-    diagnostic("stderr", line);
+    diagnostic(isNotice(line) ? "notice" : "stderr", line);
   });
   createInterface({ input: child.stdout }).on("line", line => {
     let value;

@@ -102,6 +102,7 @@ impl<G: Game> PageHost<G> {
         let bricks =
             crate::game::without((game.bricks)(BrickList::default()), &without, "?without")
                 .map_err(js)?;
+        crate::game::report_missing::<G>(&files);
         let target = engine_render::RenderTarget::Canvas(canvas);
         let mut host = GameHost::launch(
             target,

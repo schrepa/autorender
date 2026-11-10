@@ -139,6 +139,23 @@ impl GameFiles {
     }
 }
 
+pub fn report_missing<G: Game>(files: &SceneFiles) {
+    for file in G::FILES {
+        if files.buffer(file, "$").is_ok() {
+            continue;
+        }
+        let record = serde_json::json!({
+            "event": "optional_file_missing",
+            "file": file,
+            "level": "notice",
+        });
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::info_1(&wasm_bindgen::JsValue::from_str(&record.to_string()));
+        #[cfg(not(target_arch = "wasm32"))]
+        eprintln!("{record}");
+    }
+}
+
 pub fn default_build<G: Default>(_: &mut Engine) -> crate::Result<G> {
     Ok(G::default())
 }

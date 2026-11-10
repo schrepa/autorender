@@ -25,13 +25,45 @@ const TEMPLATE_SCENE: &str = "template.scene.json";
 
 const TEMPLATE_SMOKES: &str = "src/smokes.rs";
 
-const TEMPLATE_ONLY: [(&str, &str); 4] = [
+const TEMPLATE_ONLY: [(&str, &str); 6] = [
     ("mod smokes;\n\n", ""),
     ("use crate::bricks::glimmer::GlimmerBrick;\n", ""),
     ("        .with::<GlimmerBrick>()\n", ""),
     (
         "impl Game for Template {\n    const SMOKES: &'static [Smoke] = &smokes::SMOKES;\n}\n",
         "impl Game for Template {}\n",
+    ),
+    (
+        r#",
+    {
+      "id": "disc",
+      "color": [1.0, 1.0, 1.0, 1.0],
+      "slots": {
+        "opacity": "glimmer"
+      },
+      "alpha_mode": "mask",
+      "alpha_cutoff": 0.5,
+      "cull": "none",
+      "lighting": "unlit"
+    }"#,
+        "",
+    ),
+    (
+        r#"    {
+      "id": "spark",
+      "drawn": {
+        "kind": "glimmer",
+        "material": "disc",
+        "values": {
+          "floats": [0.5]
+        }
+      },
+      "transform": {
+        "translation": [0.0, 3.5, 0.0]
+      }
+    },
+"#,
+        "",
     ),
 ];
 
@@ -212,6 +244,13 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
                 .replace(TEMPLATE_CRATE, &wasm)
                 .replace("Template", &pascal)
         };
+        if text.contains(drawn.template()) {
+            return Err(format!(
+                "{APP_TEMPLATE}/{} still names {} once its template-only parts are removed",
+                inside.display(),
+                drawn.template()
+            ));
+        }
         files.push((crate_dir.join(inside), text));
     }
     let tool = format!("{name}-xtask");
