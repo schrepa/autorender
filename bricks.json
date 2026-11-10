@@ -2159,7 +2159,7 @@
         }
       ],
       "type": "engine_collision::CollisionBrick",
-      "version": "42d7031edea96dc5d7e926ad129c9f8580e3d9d43e2523a05f356f841ccbc5f1"
+      "version": "d01e16c665841301e5ecd4bb42c54a468de38b646fcc28ef47fa8934eff4d875"
     },
     {
       "dependencies": [
