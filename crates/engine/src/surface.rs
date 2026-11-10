@@ -33,6 +33,7 @@ macro_rules! __game_surface {
                 fn resume(reason: u32);
                 fn reset_camera();
                 fn reload_scene(source: &str, files: SceneFileSet) -> Result<(), $crate::__private::JsValue>;
+                fn set_file_root(root: &str);
                 fn take_level_request() -> Option<String>;
                 fn report_level(done: u32, total: u32);
                 fn fail_level(message: &str);

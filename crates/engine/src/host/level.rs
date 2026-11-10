@@ -63,6 +63,7 @@ pub(crate) enum LevelStep {
     Progress(Progress),
     #[cfg(not(target_arch = "wasm32"))]
     Ready {
+        folder: std::path::PathBuf,
         source: String,
         files: SceneFiles,
     },
@@ -89,8 +90,14 @@ impl LevelLoad {
                 let Self::Reading(finished) = std::mem::take(self) else {
                     return Ok(LevelStep::Progress(Progress::default()));
                 };
-                let LevelRead { source, load, .. } = *finished;
+                let LevelRead {
+                    folder,
+                    source,
+                    load,
+                    ..
+                } = *finished;
                 Ok(LevelStep::Ready {
+                    folder,
                     source,
                     files: load.finish()?,
                 })

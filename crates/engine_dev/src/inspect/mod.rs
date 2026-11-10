@@ -25,8 +25,8 @@ use crate::results::{
     TextureAsset, TextureState, TypeKind, result,
 };
 use crate::{
-    BrowserControl, MAX_INSPECTOR_BYTES, MAX_PAGE_SIZE, MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES,
-    MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
+    BrowserControl, MAX_INSPECTOR_BYTES, MAX_PAGE_SIZE, MAX_RESPONSE_BYTES, MAX_SCAN_ENTITIES,
+    PROTOCOL_VERSION,
     views::{
         DrawnMeshView, GlobalTransformView, HierarchyView, LodLevelView, MeshBoundsView,
         MeshRenderView, MeshView, TextureView, TransformView,
@@ -494,7 +494,6 @@ impl DevTools {
                 .get_resource::<FixedTime>()
                 .map(|time| time.delta_seconds),
             limits: StatusLimits {
-                request_bytes: MAX_REQUEST_BYTES,
                 response_bytes: MAX_RESPONSE_BYTES,
                 page_size: MAX_PAGE_SIZE,
                 scan_entities: MAX_SCAN_ENTITIES,

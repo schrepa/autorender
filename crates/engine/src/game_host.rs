@@ -152,11 +152,14 @@ impl<G: Game> GameHost<G> {
         match self.level.step() {
             Ok(LevelStep::Progress(progress)) => self.level_mut().progress(progress),
             #[cfg(not(target_arch = "wasm32"))]
-            Ok(LevelStep::Ready { source, files }) => {
-                if let Err(error) = self.reload_scene(&source, &files) {
-                    self.level_failed(error);
-                }
-            }
+            Ok(LevelStep::Ready {
+                folder,
+                source,
+                files,
+            }) => match self.reload_scene(&source, &files) {
+                Ok(()) => self.set_file_root(&folder.to_string_lossy()),
+                Err(error) => self.level_failed(error),
+            },
             Err(error) => self.level_failed(error),
         }
     }
@@ -454,6 +457,13 @@ impl<G: Game> GameHost<G> {
     pub fn reset_camera(&mut self) {
         G::reset_camera(self.app.engine_mut(), &self.scene);
         self.suspend();
+    }
+
+    pub fn set_file_root(&mut self, root: &str) {
+        let world = self.app.engine_mut().app.world_mut();
+        if let Some(mut files) = world.get_resource_mut::<engine_core::Files>() {
+            files.set_root(root);
+        }
     }
 
     pub fn open_scene(&mut self, source: &str, files: &SceneFiles) -> crate::Result<()> {

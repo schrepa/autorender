@@ -60,7 +60,6 @@ pub struct StatusResult {
 
 #[derive(Serialize, schemars::JsonSchema)]
 pub struct StatusLimits {
-    pub request_bytes: usize,
     pub response_bytes: usize,
     pub page_size: usize,
     pub scan_entities: usize,

@@ -84,22 +84,6 @@ impl Default for SoundSource {
     schemars::JsonSchema,
 )]
 #[serde(transparent)]
-pub struct SoundHandle(u32);
-
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Serialize,
-    Deserialize,
-    schemars::JsonSchema,
-)]
-#[serde(transparent)]
 pub struct VoiceHandle(u32);
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -127,13 +111,9 @@ impl Default for OneShot {
 
 #[doc(hidden)]
 pub enum SoundOrder {
-    Load {
-        sound: SoundHandle,
-        bytes: Arc<[u8]>,
-    },
     Play {
         voice: VoiceHandle,
-        sound: SoundHandle,
+        entity: String,
         shot: OneShot,
     },
     PlayBytes {
@@ -147,7 +127,6 @@ pub enum SoundOrder {
 
 #[derive(Default)]
 struct Queue {
-    next_sound: u32,
     next_voice: u32,
     orders: Vec<SoundOrder>,
     cut: u32,
@@ -170,7 +149,7 @@ impl Slot for Sounds {
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct PlaySound {
-    pub sound: SoundHandle,
+    pub entity: String,
     #[serde(default)]
     pub shot: OneShot,
 }
@@ -189,7 +168,7 @@ impl Operation for PlaySound {
 
     fn run(sounds: SystemParamItem<'_, '_, Self::Params>, request: Self) -> Result<Voiced, Error> {
         Ok(Voiced {
-            voice: sounds.play(request.sound, request.shot),
+            voice: sounds.play(request.entity, request.shot),
         })
     }
 }
@@ -241,25 +220,15 @@ impl Operation for VoiceVolume {
 }
 
 impl Sounds {
-    pub fn load(&self, bytes: impl Into<Arc<[u8]>>) -> Option<SoundHandle> {
-        let mut queue = self.lock();
-        let sound = SoundHandle(queue.next_sound + 1);
-        queue
-            .order(SoundOrder::Load {
-                sound,
-                bytes: bytes.into(),
-            })
-            .then(|| {
-                queue.next_sound += 1;
-                sound
-            })
-    }
-
-    pub fn play(&self, sound: SoundHandle, shot: OneShot) -> Option<VoiceHandle> {
+    pub fn play(&self, entity: impl Into<String>, shot: OneShot) -> Option<VoiceHandle> {
         let mut queue = self.lock();
         let voice = VoiceHandle(queue.next_voice + 1);
         queue
-            .order(SoundOrder::Play { voice, sound, shot })
+            .order(SoundOrder::Play {
+                voice,
+                entity: entity.into(),
+                shot,
+            })
             .then(|| queue.took(voice))
     }
 

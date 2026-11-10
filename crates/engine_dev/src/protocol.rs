@@ -31,7 +31,6 @@ pub mod bounds {
 }
 
 pub const PROTOCOL_VERSION: u32 = 1;
-pub const MAX_REQUEST_BYTES: usize = 16 * 1024;
 pub const MAX_RESPONSE_BYTES: usize = 64 * 1024;
 
 pub const CONTROL_STATE: &[(&str, &str)] = &[
@@ -113,11 +112,6 @@ pub struct Envelope {
 
 impl Envelope {
     pub fn parse(source: &str) -> Result<Self, Error> {
-        if source.len() > MAX_REQUEST_BYTES {
-            return Err(Error::new(ErrorCode::RequestTooLarge, "$")
-                .at_most(MAX_REQUEST_BYTES as u64)
-                .got(source.len()));
-        }
         let request: Value = engine_settings::parse_json(source)?;
         let Value::Object(mut fields) = request else {
             return Err(Error::new(ErrorCode::InvalidType, "$").expected(Expected::Object));

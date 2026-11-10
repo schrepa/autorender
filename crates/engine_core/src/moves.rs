@@ -502,7 +502,7 @@ pub(crate) struct TeleportControl {
 #[derive(Serialize, schemars::JsonSchema)]
 pub(crate) struct Teleported {
     entity: String,
-    at: ApplyAt,
+    lands: Lands,
 }
 
 fn finite<const N: usize>(values: Option<[f32; N]>, path: &str) -> Result<Option<[f32; N]>, Error> {
@@ -564,14 +564,14 @@ impl Operation for TeleportControl {
             })?;
             let to = written(held, &write)?;
             asks.send(Teleport { node, to });
-            let at = if tick_paced(mover) {
-                ApplyAt::TickEnd
+            let lands = if tick_paced(mover) {
+                Lands::NextStep
             } else {
-                ApplyAt::FrameStart
+                Lands::NextFrame
             };
             Ok(Teleported {
                 entity: write.entity,
-                at,
+                lands,
             })
         }))
     }

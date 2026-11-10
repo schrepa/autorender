@@ -127,10 +127,16 @@ pub fn spawn(world: &mut World, object: &SceneObject) -> Result<Entity, Error> {
 pub fn remove(world: &mut World, id: &str) -> Result<Entity, Error> {
     let mut scene = scene_of(world)?;
     let entity = scene
-        .installed
-        .remove(id)
+        .entity(id)
         .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$").got(id))?;
-    world.insert_resource(scene);
+    if world.get_entity(entity).is_err() {
+        return Err(Error::new(ErrorCode::EntityRemoved, "$")
+            .expected(Expected::Live)
+            .got(id));
+    }
+    if scene.installed.remove(id).is_some() {
+        world.insert_resource(scene);
+    }
     let _ = world.try_despawn(entity);
     Ok(entity)
 }

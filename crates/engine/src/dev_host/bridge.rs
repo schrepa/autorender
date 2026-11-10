@@ -246,13 +246,6 @@ impl<G: Game> GameHost<G> {
     pub fn dev_request(&mut self, line: &str, context: &HostContext) -> Step {
         self.dev_pending = None;
         self.collect_pipelines();
-        if line.len() > engine_dev::MAX_REQUEST_BYTES {
-            return self.dev_refused(
-                Error::new(ErrorCode::RequestTooLarge, "$.command")
-                    .at_most(engine_dev::MAX_REQUEST_BYTES as u64)
-                    .got(line.len()),
-            );
-        }
         let mut command = match serde_json::from_str::<Value>(line) {
             Ok(command @ Value::Object(_)) if command["verb"].is_string() => command,
             _ => {
