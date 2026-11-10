@@ -4,6 +4,8 @@ import { type Runtime, startGame } from "./host";
 import type { JobWorkerClass } from "./jobs";
 import { fetchBytes, loadSceneFiles, loadSceneSource } from "./source";
 
+declare const __GAME_FILES__: string[];
+
 const SCENE_SUFFIX = ".scene.json";
 
 interface SceneLoader {
@@ -46,10 +48,8 @@ function checkedScene(path: string, base: string): string {
 }
 
 async function gameFiles(set: FileSet, paths: string[], signal: AbortSignal): Promise<FileSet> {
-  await Promise.all(paths.map(async path => {
-    try {
-      set.add_buffer(path, await fetchBytes(new URL(`${import.meta.env.BASE_URL}${path}`, location.href).href, signal));
-    } catch {}
+  await Promise.all(paths.filter(path => __GAME_FILES__.includes(path)).map(async path => {
+    set.add_buffer(path, await fetchBytes(new URL(`${import.meta.env.BASE_URL}${path}`, location.href).href, signal));
   }));
   return set;
 }

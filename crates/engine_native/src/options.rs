@@ -544,6 +544,7 @@ impl HostOptions {
         }
         let scene = options.start_scene(&game);
         let files = options.game_files::<G>();
+        engine::game::report_missing::<G>(&files);
         let build = |engine: &mut Engine| engine::game::built(&game, engine, files);
         options.start_tools()?;
         #[cfg(feature = "profiling")]

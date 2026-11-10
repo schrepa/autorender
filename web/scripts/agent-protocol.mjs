@@ -52,6 +52,11 @@ export function checkOptions(values, names) {
   for (const key of Object.keys(values)) if (!names.includes(key)) throw new AgentError("invalid_arguments", `--${key}`, { allowed: variants(names.map(name => `--${name}`)), got: `--${key}` });
 }
 
+/** @param {string} text */
+export function isNotice(text) {
+  try { return JSON.parse(text)?.level === "notice"; } catch { return false; }
+}
+
 export function detailOf(error) {
   if (error instanceof AgentError) return error.detail;
   if (typeof error?.code === "string" && typeof error?.path === "string") {

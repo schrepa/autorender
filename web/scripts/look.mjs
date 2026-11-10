@@ -7,6 +7,7 @@ import { launchNativeSession } from "./agent-native.mjs";
 import { workspace } from "./workspace.mjs";
 
 const OFF = "off";
+const NOTICE = "notice";
 const COUNTED = ["stderr", "spawn", "error", "pageerror", "http"];
 const SHADER_WARNING = /shadermodule|wgsl|\[invalid |validation/i;
 
@@ -31,11 +32,12 @@ function poses(plan) {
   });
 }
 
-async function listedViews(ask) {
+async function debugViews(ask) {
   const described = await ask({ verb: "describe", name: "debug_view" });
+  if (!described.ok && described.error?.code === "unknown_inspector") return undefined;
   const views = described.result?.descriptor?.schema?.properties?.view?.enum;
   if (!described.ok || !Array.isArray(views)) throw new AgentError(described.error?.code ?? "missing_field", described.error?.path ?? "$.descriptor.schema.properties.view.enum", { got: described.error ?? null });
-  return { poses: [{ name: "start", views: views.filter(view => view !== OFF) }] };
+  return views.filter(view => view !== OFF);
 }
 
 /** @param {{ execute: (command: object) => Promise<any> }} owned @param {Record<string, string>} values */
@@ -66,7 +68,8 @@ async function look(owned, values) {
       const key = `${entry.at} ${entry.kind} ${entry.message}`;
       if (seen.has(key)) continue;
       seen.add(key);
-      if (COUNTED.includes(entry.kind) || (entry.kind === "warning" && SHADER_WARNING.test(entry.message))) failed(view, { diagnostic: entry.kind, message: entry.message });
+      if (entry.kind === NOTICE) line({ event: NOTICE, view, message: entry.message });
+      else if (COUNTED.includes(entry.kind) || (entry.kind === "warning" && SHADER_WARNING.test(entry.message))) failed(view, { diagnostic: entry.kind, message: entry.message });
     }
   }
   function judged(view, rendering) {
@@ -79,7 +82,8 @@ async function look(owned, values) {
     }
   }
   const plan = values.plan ? JSON.parse(await readFile(values.plan, "utf8")) : {};
-  const planned = poses(plan.poses === undefined ? await listedViews(ask) : plan);
+  const listed = await debugViews(ask);
+  const planned = poses(plan.poses === undefined ? { poses: [{ name: "start", views: listed ?? [] }] } : plan);
   await diagnosed(null);
   let shot = 0, ticked = 0;
   for (const pose of planned) {
@@ -94,8 +98,10 @@ async function look(owned, values) {
     }
     for (const view of [OFF, ...pose.views]) {
       const name = view === OFF ? pose.name : `${pose.name}/${view}`;
-      const shown = await ask({ verb: "control", name: "environment", args: { debug_view: { view } } });
-      if (!shown.ok) { failed(name, { request: "environment", error: shown.error }); continue; }
+      if (listed !== undefined || view !== OFF) {
+        const shown = await ask({ verb: "control", name: "environment", args: { debug_view: { view } } });
+        if (!shown.ok) { failed(name, { request: "environment", error: shown.error }); continue; }
+      }
       const started = Date.now();
       let rendering = {}, settled = false, rendered = true;
       while (true) {

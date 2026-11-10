@@ -105,7 +105,7 @@ pub fn look(root: &Path, arguments: &[String]) -> Result<(), Failure> {
         let program = build_native(root, &project)?;
         command.args(["--native", &program]);
         if let Some(source) = &source {
-            command.args(["--scene", source]);
+            command.args(["--source", source]);
         }
         None
     };
@@ -124,6 +124,7 @@ pub fn look(root: &Path, arguments: &[String]) -> Result<(), Failure> {
                     problems += usize::from(!record["unsettled_after_s"].is_null());
                     views.push(record);
                 }
+                Some("notice") => {}
                 Some(_) | None => problems += 1,
             }
         }

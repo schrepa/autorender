@@ -1,6 +1,6 @@
 import { defineConfig } from "vite";
-import { resolve, sep } from "node:path";
-import { createReadStream, existsSync } from "node:fs";
+import { relative, resolve, sep } from "node:path";
+import { createReadStream, existsSync, readdirSync } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
 import { json } from "node:stream/consumers";
 import { pathToFileURL } from "node:url";
@@ -15,9 +15,13 @@ const packIndex = resolve(publicFolder, "cooked/index.json");
 const workspace = resolve(import.meta.dirname, "..");
 const gameFolders = clients.map(client => resolve(workspace, client.folder) + sep);
 const pagePlugins = clients.map(({ game }) => resolve(import.meta.dirname, "src", game, "vite.mjs")).filter(existsSync);
+const ownFolders = games.map(({ game }) => resolve(publicFolder, game));
+const ownFiles = ownFolders.filter(existsSync).flatMap(folder => readdirSync(folder, { recursive: true, withFileTypes: true })
+  .filter(entry => entry.isFile())
+  .map(entry => relative(publicFolder, resolve(entry.parentPath, entry.name)).split(sep).join("/")));
 
 export default defineConfig(async ({ command, mode }) => ({
-  define: { __PUBLIC_PACKS__: JSON.stringify(existsSync(packIndex)) },
+  define: { __PUBLIC_PACKS__: JSON.stringify(existsSync(packIndex)), __GAME_FILES__: JSON.stringify(ownFiles) },
   server: { watch: { ignored: ["**/public/scenes/**"] } },
   plugins: [...(await Promise.all(pagePlugins.map(async file => (await import(pathToFileURL(file).href)).default))).flat(), {
     name: "explicit-scene-reload",
@@ -64,10 +68,12 @@ export default defineConfig(async ({ command, mode }) => ({
       });
     },
   }, {
-    name: "pack-index-restart",
+    name: "public-lists-restart",
     configureServer(server) {
       server.watcher.on("all", (event, path) => {
-        if ((event === "add" || event === "unlink") && resolve(path) === packIndex) void server.restart();
+        const file = resolve(path);
+        const listed = file === packIndex || ownFolders.some(folder => file.startsWith(folder + sep));
+        if ((event === "add" || event === "unlink") && listed) void server.restart();
       });
     },
   }, {

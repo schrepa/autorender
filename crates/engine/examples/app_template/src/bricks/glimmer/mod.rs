@@ -7,10 +7,10 @@ use bevy_ecs::prelude::*;
 use engine_core::glam::Vec3;
 use engine_core::{
     AssetResidency, AttachPoint, Attributes, BlendedPass, Brick, Bricks, Camera, Clear, Cursor,
-    DrawKind, Drawn, DrawnPoses, DrawnTable, EMISSIVE_MAP, Error, Events, Feed, FrameTime,
-    GlobalTransforms, GpuStruct, Interest, KindDecl, KindSkip, MaterialHandle, Node, Pass,
-    PassName, PassPurpose, PassViews, Rect, Requests, Schedule, SlotSet, Source, Spawner,
-    SurfaceSlot, Ticket, Transform, View, Writes, gpu_struct, settings, stats,
+    DrawKind, Drawn, DrawnPoses, DrawnTable, EMISSIVE_MAP, Error, ErrorCode, Events, Expected,
+    Feed, FrameTime, GlobalTransforms, GpuStruct, Interest, KindDecl, KindSkip, MaterialHandle,
+    Node, Pass, PassName, PassPurpose, PassViews, Rect, Refusals, Requests, Schedule, SlotSet,
+    Source, Spawner, SurfaceSlot, Ticket, Transform, View, Writes, gpu_struct, settings, stats,
 };
 use engine_render::{
     Allocation, Bind, Buffer, Draw, FaceCull, Form, FormDepth, FormSide, GpuPart, Install,
@@ -23,6 +23,8 @@ pub const GLIMMER: DrawKind = DrawKind("glimmer");
 const GENERATED: &[&str] = &[<GlimmerInstance as GpuStruct>::WGSL];
 
 pub const LOOK: &str = "glimmer";
+
+pub const GLIMMER_PART: &str = "glimmer";
 
 const FORM: KindForm = KindForm {
     kind: GLIMMER,
@@ -151,7 +153,7 @@ impl Brick for GlimmerBrick {
             })
             .generated(GENERATED)
             .draws::<GlimmerGpu>(GLIMMER, GlimmerGpu::draw)
-            .systems(Schedule::FrameStart, open_view)
+            .systems(Schedule::FrameStart, (open_view, judge))
             .systems(Schedule::Presentation, (ask, answer));
     }
 }
@@ -187,6 +189,28 @@ fn open_view(
             ..View::new(camera)
         },
     ));
+}
+
+fn judge(drawn: Query<(Entity, &Drawn)>, mut refusals: ResMut<Refusals>) {
+    refusals.keep_part(GLIMMER_PART, |entity| {
+        drawn
+            .get(entity)
+            .is_ok_and(|(_, thing)| thing.kind == GLIMMER)
+    });
+    for (entity, thing) in &drawn {
+        if thing.kind == GLIMMER {
+            refusals.judge(entity, GLIMMER_PART, glimmer_verdict(thing));
+        }
+    }
+}
+
+fn glimmer_verdict(thing: &Drawn) -> Result<(), Error> {
+    match thing.material {
+        Some(_) => Ok(()),
+        None => Err(Error::new(ErrorCode::MissingField, "$.drawn.material")
+            .expected(Expected::Present)
+            .got(GLIMMER.name())),
+    }
 }
 
 fn ask(drawn: Query<(Entity, &Drawn)>, mut book: ResMut<GlimmerBook>) {

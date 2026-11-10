@@ -3,7 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { resolve, relative, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { AgentError, atMost, detailOf, loopbackUrl, range, refusal, variants } from "./agent-protocol.mjs";
+import { AgentError, atMost, detailOf, isNotice, loopbackUrl, range, refusal, variants } from "./agent-protocol.mjs";
 import { launchContext } from "./browser-launch.mjs";
 import { workspace } from "./workspace.mjs";
 
@@ -253,7 +253,10 @@ export async function launchBrowserSession({ url: value, browserPath }) {
     listen(browser.context, "close", invalidate);
     page = browser.page;
     listen(page, "pageerror", error => diagnostic("pageerror", String(error)));
-    listen(page, "console", message => { if (["error", "warning"].includes(message.type())) diagnostic(message.type(), message.text()); });
+    listen(page, "console", message => {
+      if (["error", "warning"].includes(message.type())) diagnostic(message.type(), message.text());
+      else if (message.type() === "info" && isNotice(message.text())) diagnostic("notice", message.text());
+    });
     listen(page, "response", response => {
       if (response.status() < 400) return;
       const failed = `${response.status()} ${response.url()}`;
