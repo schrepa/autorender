@@ -5,17 +5,18 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 use engine_registry::{CORE_ROW, MembersOf, OperationScene, SceneEntity};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::{
-    Camera, Clear, ComponentKind, DrawKind, Drawn, DrawnProjection, DrawnTable, Error, ErrorCode,
+    Call, Camera, Clear, ComponentKind, DrawKind, Drawn, DrawnProjection, DrawnTable, Error, ErrorCode,
     Expected, GlobalTransforms, InstanceValues, Layers, List, MaterialHandle, MeshHandle, Mover,
     Node, Parent, PassMask, Placed, Placement, Rect, Rule, SceneComponents, SceneContext, SceneCx,
     SceneForm, ScenePasses, Setting, Target, TextureHandle, View, scene_component,
     scene_components,
 };
 
-pub(crate) const COMPONENT: &str = "component";
+pub(crate) const COMPONENT_CALL: Call =
+    Call::exclusive::<ComponentControl, ComponentReply>("component", true, run_component);
 
 static CORE: LazyLock<[ComponentKind; 5]> = LazyLock::new(|| {
     let node = ComponentKind::of::<Node>("node");
@@ -296,7 +297,7 @@ pub(crate) fn keys_taken(world: &World) -> Vec<Error> {
         .collect()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct ComponentControl {
     entity: String,
@@ -305,7 +306,14 @@ struct ComponentControl {
     value: Value,
 }
 
-pub(crate) fn run_component(world: &mut World, request: Value) -> Result<Value, Error> {
+#[derive(Serialize, schemars::JsonSchema)]
+struct ComponentReply {
+    entity: String,
+    key: String,
+    value: Value,
+}
+
+fn run_component(world: &mut World, request: Value) -> Result<Value, Error> {
     let ComponentControl { entity, key, value } = engine_settings::parse_value(request)?;
     let node = world
         .get_resource::<OperationScene>()
@@ -322,7 +330,7 @@ pub(crate) fn run_component(world: &mut World, request: Value) -> Result<Value, 
         None => author(world, &kind, node, &value),
     }?;
     let value = kind.value(world, node).unwrap_or(Value::Null);
-    Ok(json!({ "entity": entity, "key": key, "value": value }))
+    Ok(serde_json::to_value(ComponentReply { entity, key, value }).unwrap_or(Value::Null))
 }
 
 fn author(

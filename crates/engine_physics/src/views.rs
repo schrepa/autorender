@@ -1,18 +1,17 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Ask, Asked, Error, ErrorCode, Expected, FixedTime, FrameTime, Moment, Mover, Operation,
-    SceneIds,
+    ApplyAt, Ask, Asked, Error, ErrorCode, Expected, FixedTime, FrameTime, Moment, Mover,
+    Operation, SceneIds,
 };
 use engine_places_simulation::physics::{BodyAsk, BodyChange, RigidBody};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
 use crate::body::{BodyProblem, BodyWater, check_change};
 use crate::INVALID_RIGID_BODY;
 use crate::world::PhysicsWorld;
 
-#[derive(Serialize)]
-struct RigidBodyView {
+#[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct RigidBodyView {
     body: RigidBody,
     moved_by: Option<&'static str>,
     simulated: bool,
@@ -25,7 +24,7 @@ struct RigidBodyView {
     water: Option<BodyWater>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct BodyRequest {
     entity: String,
@@ -41,18 +40,19 @@ impl Operation for PhysicsBody {
         Query<'static, 'static, (&'static RigidBody, Option<&'static Mover>)>,
     );
     type Request = BodyRequest;
+    type Reply = Option<RigidBodyView>;
 
     fn run(
         (physics, ids, bodies): SystemParamItem<'_, '_, Self::Params>,
         request: BodyRequest,
-    ) -> Result<Value, Error> {
+    ) -> Result<Option<RigidBodyView>, Error> {
         let entity = ids.entity(&request.entity).ok_or_else(|| {
             Error::new(ErrorCode::UnknownEntity, "$.entity")
                 .expected(Expected::Entity)
                 .got(&request.entity)
         })?;
         let Ok((body, mover)) = bodies.get(entity) else {
-            return Ok(Value::Null);
+            return Ok(None);
         };
         let status = physics.status(entity);
         let simulated = status
@@ -71,15 +71,21 @@ impl Operation for PhysicsBody {
             sleeping: status.sleeping,
             water: status.water,
         };
-        Ok(json!(view))
+        Ok(Some(view))
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct AskRequest {
     entity: String,
     ask: BodyChange,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct AskReply {
+    ask: BodyChange,
+    at: ApplyAt,
 }
 
 pub(crate) struct BodyAskOperation;
@@ -93,11 +99,12 @@ impl Operation for BodyAskOperation {
         (Res<'static, FixedTime>, Res<'static, FrameTime>),
     );
     type Request = AskRequest;
+    type Reply = AskReply;
 
     fn run(
         (ids, bodies, mut asked, (fixed, frame)): SystemParamItem<'_, '_, Self::Params>,
         request: AskRequest,
-    ) -> Result<Value, Error> {
+    ) -> Result<AskReply, Error> {
         let entity = ids.entity(&request.entity).ok_or_else(|| {
             Error::new(ErrorCode::UnknownEntity, "$.entity")
                 .expected(Expected::Entity)
@@ -117,6 +124,9 @@ impl Operation for BodyAskOperation {
                 frame: frame.frame,
             },
         );
-        Ok(json!({ "ask": request.ask, "at": BodyAsk::AT }))
+        Ok(AskReply {
+            ask: request.ask,
+            at: BodyAsk::AT,
+        })
     }
 }

@@ -50,11 +50,12 @@ impl Operation for RaycastQuery {
     const CONTROL: bool = false;
     type Params = Refreshed;
     type Request = Self;
+    type Reply = RaycastResult;
 
     fn run(
         (mut fresh, ids, entities): SystemParamItem<'_, '_, Refreshed>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<RaycastResult, Error> {
         scan(&ids)?;
         let Self {
             origin,
@@ -66,7 +67,7 @@ impl Operation for RaycastQuery {
         let filter = query_filter(&ids, &entities, &filter)?;
         let world = fresh.world();
         let hit = world.raycast(ray, filter)?;
-        Ok(reply(RaycastResult {
+        Ok(RaycastResult {
             snapshot: world.stats(),
             complete: true,
             hit: hit.map(|hit| RayHit {
@@ -77,11 +78,7 @@ impl Operation for RaycastQuery {
                 started_inside: hit.started_inside,
                 placed: hit.placed.map(placed),
             }),
-        }))
-    }
-
-    fn schema() -> Value {
-        schema_of::<Self>()
+        })
     }
 }
 
@@ -104,11 +101,12 @@ impl Operation for OverlapQuery {
     const CONTROL: bool = false;
     type Params = Refreshed;
     type Request = Self;
+    type Reply = OverlapResult;
 
     fn run(
         (mut fresh, ids, entities): SystemParamItem<'_, '_, Refreshed>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<OverlapResult, Error> {
         scan(&ids)?;
         let Self {
             shape: source,
@@ -132,16 +130,12 @@ impl Operation for OverlapQuery {
         hits.sort_by(|a, b| {
             (a.scene.as_deref(), a.id.as_deref()).cmp(&(b.scene.as_deref(), b.id.as_deref()))
         });
-        Ok(reply(OverlapResult {
+        Ok(OverlapResult {
             snapshot: world.stats(),
             complete: true,
             total: hits.len(),
             hits,
-        }))
-    }
-
-    fn schema() -> Value {
-        schema_of::<Self>()
+        })
     }
 }
 
@@ -164,11 +158,12 @@ impl Operation for ShapeCastQuery {
     const CONTROL: bool = false;
     type Params = Refreshed;
     type Request = Self;
+    type Reply = ShapeCastResult;
 
     fn run(
         (mut fresh, ids, entities): SystemParamItem<'_, '_, Refreshed>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<ShapeCastResult, Error> {
         scan(&ids)?;
         let Self {
             shape: source,
@@ -187,7 +182,7 @@ impl Operation for ShapeCastQuery {
         let filter = query_filter(&ids, &entities, &filter)?;
         let world = fresh.world();
         let hit = world.cast_shape(shape, matrix, displacement, filter, options)?;
-        Ok(reply(ShapeCastResult {
+        Ok(ShapeCastResult {
             snapshot: world.stats(),
             complete: true,
             hit: hit.map(|hit| CastHit {
@@ -199,11 +194,7 @@ impl Operation for ShapeCastQuery {
                 started_overlapping: hit.started_overlapping,
                 placed: hit.placed.map(placed),
             }),
-        }))
-    }
-
-    fn schema() -> Value {
-        schema_of::<Self>()
+        })
     }
 }
 
@@ -224,11 +215,12 @@ impl Operation for CollisionEventsQuery {
     const NAME: &'static str = "collision_events";
     type Params = (Seen, Filled<'static, Collision>);
     type Request = Self;
+    type Reply = CollisionEventsResult;
 
     fn run(
         ((collision, ids, entities), slot): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<CollisionEventsResult, Error> {
         scan(&ids)?;
         let Self {
             entity,
@@ -271,7 +263,7 @@ impl Operation for CollisionEventsQuery {
             })
             .collect();
         let next = offset.saturating_add(rows.len());
-        Ok(reply(CollisionEventsResult {
+        Ok(CollisionEventsResult {
             sensor_only: true,
             sequence: events.sequence().to_string(),
             tick: events.tick().map(|tick| tick.to_string()),
@@ -284,11 +276,7 @@ impl Operation for CollisionEventsQuery {
             total,
             events: rows,
             next_offset: (next < total).then_some(next),
-        }))
-    }
-
-    fn schema() -> Value {
-        schema_of::<Self>()
+        })
     }
 }
 
@@ -336,14 +324,6 @@ pub(crate) enum CollisionSensorFilter {
 
 fn identity_rotation() -> [f64; 4] {
     [0.0, 0.0, 0.0, 1.0]
-}
-
-pub(crate) fn schema_of<T: schemars::JsonSchema>() -> Value {
-    serde_json::to_value(schemars::schema_for!(T)).unwrap_or(Value::Null)
-}
-
-pub(crate) fn reply(result: impl Serialize) -> Value {
-    serde_json::to_value(result).expect("results_serialize")
 }
 
 pub(crate) fn bounded<T: Setting>(

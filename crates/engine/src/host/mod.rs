@@ -30,7 +30,7 @@ pub use resolution::{render_size, view_size};
 pub use scene_load::{
     FileRead, IMAGE_FORMATS, Image, ImageFormat, SceneLoad, decode_image, image_format,
 };
-pub use engine_registry::run_operation;
+pub use engine_registry::{call, run_operation};
 pub use settings::{
     HostSettings, OVERLAY, SETTINGS, Setting, SettingsLog, apply_setting, apply_settings,
     has_setting, reset_setting,

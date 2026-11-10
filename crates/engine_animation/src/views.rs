@@ -10,13 +10,8 @@ use engine_places_rendering::animation::{
 };
 use glam::Quat;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
 use crate::skins::Skins;
-
-fn schema_of<T: schemars::JsonSchema>() -> Value {
-    serde_json::to_value(schemars::schema_for!(T)).unwrap_or(Value::Null)
-}
 
 fn unknown_entity(id: &str) -> Error {
     Error::new(ErrorCode::UnknownEntity, "$.entity")
@@ -57,6 +52,13 @@ fn layers(animator: &Animator, asked: &Asked<Animate>, entity: Entity) -> usize 
     animator.layers().len() + pending
 }
 
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct AnimationAsked {
+    pub temporary: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layer: Option<usize>,
+}
+
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AnimationPlay {
@@ -77,11 +79,12 @@ impl Operation for AnimationPlay {
     const NAME: &'static str = "animation_play";
     type Params = Ordered;
     type Request = Self;
+    type Reply = AnimationAsked;
 
     fn run(
         (ids, animators, asked, mut asks): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<AnimationAsked, Error> {
         let (entity, animator) = animator_of(&ids, &animators, &request.entity)?;
         let layers = layers(animator, &asked, entity);
         if request.layer >= layers {
@@ -112,11 +115,10 @@ impl Operation for AnimationPlay {
             animator: entity,
             command,
         });
-        Ok(json!({ "temporary": true, "layer": request.layer }))
-    }
-
-    fn schema() -> Value {
-        schema_of::<Self>()
+        Ok(AnimationAsked {
+            temporary: true,
+            layer: Some(request.layer),
+        })
     }
 }
 
@@ -131,11 +133,12 @@ impl Operation for AnimationLayer {
     const NAME: &'static str = "animation_layer";
     type Params = Ordered;
     type Request = Self;
+    type Reply = AnimationAsked;
 
     fn run(
         (ids, animators, asked, mut asks): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<AnimationAsked, Error> {
         let (entity, animator) = animator_of(&ids, &animators, &request.entity)?;
         if animator.rig().joint(&request.root).is_none() {
             return Err(unknown_joint(animator.rig(), "$.root", &request.root));
@@ -145,11 +148,10 @@ impl Operation for AnimationLayer {
             animator: entity,
             command: AnimatorCommand::Layer { root: request.root },
         });
-        Ok(json!({ "temporary": true, "layer": layer }))
-    }
-
-    fn schema() -> Value {
-        schema_of::<Self>()
+        Ok(AnimationAsked {
+            temporary: true,
+            layer: Some(layer),
+        })
     }
 }
 
@@ -166,11 +168,12 @@ impl Operation for AnimationAim {
     const NAME: &'static str = "animation_aim";
     type Params = Ordered;
     type Request = Self;
+    type Reply = AnimationAsked;
 
     fn run(
         (ids, animators, _, mut asks): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<AnimationAsked, Error> {
         let (entity, animator) = animator_of(&ids, &animators, &request.entity)?;
         if animator.rig().joint(&request.joint).is_none() {
             return Err(unknown_joint(animator.rig(), "$.joint", &request.joint));
@@ -194,11 +197,10 @@ impl Operation for AnimationAim {
                 rotation,
             },
         });
-        Ok(json!({ "temporary": true }))
-    }
-
-    fn schema() -> Value {
-        schema_of::<Self>()
+        Ok(AnimationAsked {
+            temporary: true,
+            layer: None,
+        })
     }
 }
 
@@ -342,6 +344,7 @@ impl Operation for AnimationState {
         (Option<Res<'static, AssetResidency>>, Res<'static, Skins>),
     );
     type Request = Self;
+    type Reply = AnimationStateView;
 
     fn run(
         (ids, animators, globals, poses, (residency, skins)): SystemParamItem<
@@ -350,20 +353,12 @@ impl Operation for AnimationState {
             Self::Params,
         >,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<AnimationStateView, Error> {
         let (_, animator) = animator_of(&ids, &animators, &request.entity)?;
-        Ok(json!(state_of(
+        Ok(state_of(
             animator,
             (&globals, &poses),
-            (residency.as_deref(), &skins)
-        )))
-    }
-
-    fn schema() -> Value {
-        schema_of::<Self>()
-    }
-
-    fn result_schema() -> Option<Value> {
-        Some(schema_of::<AnimationStateView>())
+            (residency.as_deref(), &skins),
+        ))
     }
 }

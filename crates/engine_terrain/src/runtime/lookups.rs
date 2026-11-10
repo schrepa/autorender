@@ -1,9 +1,8 @@
-use super::operations::{coordinate, reply};
+use super::operations::coordinate;
 use super::*;
 use crate::{HydrologySample, PATH_FAR};
 use engine_core::{Operation, SceneIds};
 use engine_places_simulation::water::{WaterBody, WaterSample};
-use serde_json::Value;
 
 const MAX_POINTS: usize = 256;
 
@@ -22,11 +21,12 @@ impl Operation for TerrainHeightQuery {
         Query<'static, 'static, &'static WaterBody>,
     );
     type Request = Self;
+    type Reply = TerrainHeightResult;
 
     fn run(
         (terrains, ids, bodies): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<TerrainHeightResult, Error> {
         heights((&terrains, &ids), &bodies, &request.points)
     }
 }
@@ -69,11 +69,12 @@ impl Operation for TerrainRouteQuery {
     const NAME: &'static str = "terrain_route";
     type Params = (Res<'static, Terrains>, SceneIds<'static, 'static>);
     type Request = Self;
+    type Reply = TerrainRouteResult;
 
     fn run(
         (terrains, ids): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<TerrainRouteResult, Error> {
         let Self {
             from,
             to,
@@ -108,7 +109,7 @@ impl Operation for TerrainRouteQuery {
         };
         let origin = Vec2::new(terrain.origin.x, terrain.origin.z);
         let route = terrains.route(sample.terrain, from, to, &options);
-        Ok(reply(TerrainRouteResult {
+        Ok(TerrainRouteResult {
             terrain: terrain_key(&ids, sample.terrain),
             options,
             origin: origin.to_array(),
@@ -122,7 +123,7 @@ impl Operation for TerrainRouteQuery {
                 steepest: route.steepest,
                 hairpin_steps: route.hairpin_steps,
             }),
-        }))
+        })
     }
 }
 
@@ -137,7 +138,7 @@ fn heights(
     (terrains, ids): (&Terrains, &SceneIds<'_, '_>),
     bodies: &Query<'_, '_, &WaterBody>,
     points: &[[f64; 2]],
-) -> Result<Value, Error> {
+) -> Result<TerrainHeightResult, Error> {
     if points.is_empty() || points.len() > MAX_POINTS {
         return Err(Error::new(ErrorCode::OutOfRange, "$.points")
             .range(1.0, MAX_POINTS as f64)
@@ -180,10 +181,10 @@ fn heights(
             }))
         })
         .collect::<Result<Vec<_>, Error>>()?;
-    Ok(reply(TerrainHeightResult {
+    Ok(TerrainHeightResult {
         samples,
         stats: terrains.stats(),
-    }))
+    })
 }
 
 #[derive(Serialize, schemars::JsonSchema)]

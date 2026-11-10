@@ -2,7 +2,7 @@ use std::any::Any;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::{Component, Entity, Resource};
-use engine_place::{ApplyAt, Ask, Error, ErrorCode, Feed, Slot};
+use engine_place::{ApplyAt, Ask, Error, ErrorCode, Event, EventDecl, Feed, Raises, Slot};
 use glam::{Mat3, Mat4, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -402,7 +402,8 @@ impl SensorPair {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
 pub enum SensorEventKind {
     Enter,
     Exit,
@@ -412,6 +413,26 @@ pub enum SensorEventKind {
 pub struct SensorEvent {
     pub pair: SensorPair,
     pub kind: SensorEventKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub struct SensorRow {
+    pub kind: SensorEventKind,
+    pub first: u64,
+    pub second: u64,
+}
+
+impl Event for SensorEvent {
+    const NAME: &'static str = "sensor";
+    type Row = SensorRow;
+
+    fn row(&self) -> SensorRow {
+        SensorRow {
+            kind: self.kind,
+            first: self.pair.first.to_bits(),
+            second: self.pair.second.to_bits(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -557,4 +578,11 @@ impl Default for Collision {
 
 impl Slot for Collision {
     const NAME: &'static str = "collision";
+    const EVENTS: &'static [EventDecl] = &[EventDecl::of::<SensorEvent, Self>()];
+}
+
+impl Raises<SensorEvent> for Collision {
+    fn raised(&self) -> &Feed<SensorEvent> {
+        self.0.events()
+    }
 }

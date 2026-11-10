@@ -6,8 +6,9 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{ReadOnlySystem, RunSystemError};
 use bevy_ecs::world::World;
-use engine_place::{Error, ErrorCode};
+use engine_place::{Error, ErrorCode, EventPage, Feed, page_of};
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::BrickId;
 use crate::registry::Registry;
@@ -58,7 +59,35 @@ impl BrickState {
     }
 }
 
-#[derive(Resource, Default)]
+pub const BRICK_STATE_EVENT: &str = "brick_state";
+
+const KEPT_CHANGES: usize = 256;
+
+#[derive(Clone, Debug)]
+pub struct BrickChange {
+    pub brick: BrickId,
+    pub gate: GateId,
+    pub state: BrickState,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum BrickStateWord {
+    Off,
+    On,
+    Faulted,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, schemars::JsonSchema)]
+pub struct BrickChangeRow {
+    pub brick: String,
+    pub whole: bool,
+    pub state: BrickStateWord,
+    pub off: Option<Value>,
+    pub error: Option<Value>,
+}
+
+#[derive(Resource)]
 pub struct BrickStates {
     states: Vec<BrickState>,
     parents: Vec<Option<GateId>>,
@@ -68,6 +97,37 @@ pub struct BrickStates {
     needs: Vec<Vec<BrickId>>,
     installs: Vec<u64>,
     generation: u64,
+    changes: Feed<BrickChange>,
+}
+
+impl Default for BrickStates {
+    fn default() -> Self {
+        Self::new(Vec::new(), Vec::new(), Vec::new(), Vec::new())
+    }
+}
+
+pub fn brick_changes(world: &World, after: u64) -> Option<EventPage> {
+    let states = world.get_resource::<BrickStates>()?;
+    let registry = world.get_resource::<Registry>();
+    Some(page_of(states.changes(), after, |change| BrickChangeRow {
+        brick: registry
+            .and_then(|registry| registry.record(change.brick))
+            .map_or_else(String::new, |record| record.package.to_owned()),
+        whole: states.root(change.brick) == Some(change.gate),
+        state: match &change.state {
+            BrickState::Off(_) => BrickStateWord::Off,
+            BrickState::On => BrickStateWord::On,
+            BrickState::Faulted(_) => BrickStateWord::Faulted,
+        },
+        off: match &change.state {
+            BrickState::Off(off) => serde_json::to_value(off).ok(),
+            BrickState::On | BrickState::Faulted(_) => None,
+        },
+        error: match &change.state {
+            BrickState::Faulted(error) => serde_json::to_value(error).ok(),
+            BrickState::Off(_) | BrickState::On => None,
+        },
+    }))
 }
 
 impl BrickStates {
@@ -88,6 +148,7 @@ impl BrickStates {
             needs: vec![Vec::new(); count],
             installs: vec![0; gates],
             generation: 0,
+            changes: Feed::new(KEPT_CHANGES),
         }
     }
 
@@ -144,6 +205,10 @@ impl BrickStates {
         self.generation
     }
 
+    pub fn changes(&self) -> &Feed<BrickChange> {
+        &self.changes
+    }
+
     pub fn len(&self) -> usize {
         self.states.len()
     }
@@ -191,9 +256,13 @@ impl BrickStates {
     }
 
     fn set(&mut self, gate: GateId, state: BrickState) {
-        if let Some(held) = self.states.get_mut(gate.index()) {
-            *held = state;
-            self.generation = self.generation.wrapping_add(1);
+        let Some(held) = self.states.get_mut(gate.index()) else {
+            return;
+        };
+        *held = state.clone();
+        self.generation = self.generation.wrapping_add(1);
+        if let Some(brick) = self.brick(gate) {
+            self.changes.push(BrickChange { brick, gate, state });
         }
     }
 

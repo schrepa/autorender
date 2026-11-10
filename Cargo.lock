@@ -1219,6 +1219,7 @@ dependencies = [
  "engine_places_rendering",
  "engine_render",
  "engine_sources",
+ "schemars",
  "serde",
  "serde_json",
 ]
@@ -1907,6 +1908,7 @@ dependencies = [
  "engine_places_rendering",
  "engine_render",
  "engine_sources",
+ "schemars",
  "serde",
  "serde_json",
 ]
@@ -2207,6 +2209,7 @@ dependencies = [
  "engine_sources",
  "glam 0.30.9",
  "libm",
+ "schemars",
  "serde",
  "serde_json",
 ]

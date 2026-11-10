@@ -3,8 +3,9 @@ use std::collections::BTreeSet;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 use engine_core::{Error, ErrorCode, Expected, SceneContext, set_parents};
+use engine_core::Call;
 use engine_registry::{OperationEntry, OperationScene};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::hierarchy::{ExpandedObject, validate_object};
@@ -16,34 +17,17 @@ pub const SPAWN: &str = "spawn";
 pub const REMOVE: &str = "remove";
 
 pub fn spawn_operation() -> OperationEntry {
-    OperationEntry::of::<()>(SPAWN, true, run_spawn).schemas(spawn_schema, entity_result)
+    OperationEntry::of(Call::exclusive::<SceneObject, Placed>(SPAWN, true, run_spawn))
 }
 
 pub fn remove_operation() -> OperationEntry {
-    OperationEntry::of::<()>(REMOVE, true, run_remove).schemas(remove_schema, entity_result)
+    OperationEntry::of(Call::exclusive::<RemoveRequest, Placed>(REMOVE, true, run_remove))
 }
 
-fn spawn_schema() -> Value {
-    serde_json::to_value(schemars::schema_for!(SceneObject)).unwrap_or(Value::Null)
-}
-
-fn remove_schema() -> Value {
-    json!({
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["entity"],
-        "properties": { "entity": { "type": "string" } }
-    })
-}
-
-fn entity_result() -> Option<Value> {
-    Some(json!({
-        "type": "object",
-        "properties": {
-            "entity": { "type": "string" },
-            "node": { "type": "integer" }
-        }
-    }))
+#[derive(Serialize, schemars::JsonSchema)]
+struct Placed {
+    entity: String,
+    node: u64,
 }
 
 fn scene_of(world: &World) -> Result<OperationScene, Error> {
@@ -118,10 +102,13 @@ pub fn remove(world: &mut World, id: &str) -> Result<Entity, Error> {
 fn run_spawn(world: &mut World, request: Value) -> Result<Value, Error> {
     let object: SceneObject = engine_settings::parse_value(request)?;
     let entity = spawn(world, &object)?;
-    Ok(json!({ "entity": object.id, "node": entity.to_bits() }))
+    Ok(json!(Placed {
+        entity: object.id,
+        node: entity.to_bits(),
+    }))
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 struct RemoveRequest {
     entity: String,
@@ -130,5 +117,8 @@ struct RemoveRequest {
 fn run_remove(world: &mut World, request: Value) -> Result<Value, Error> {
     let RemoveRequest { entity: id } = engine_settings::parse_value(request)?;
     let entity = remove(world, &id)?;
-    Ok(json!({ "entity": id, "node": entity.to_bits() }))
+    Ok(json!(Placed {
+        entity: id,
+        node: entity.to_bits(),
+    }))
 }

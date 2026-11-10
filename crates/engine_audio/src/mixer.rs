@@ -117,7 +117,7 @@ impl Playing {
     }
 }
 
-#[derive(Clone, Copy, Serialize)]
+#[derive(Clone, Copy, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum VoiceState {
     Waiting,
@@ -219,9 +219,9 @@ impl Voice {
     }
 }
 
-#[derive(Serialize)]
-pub(crate) struct VoiceView<'a> {
-    entity: Option<&'a str>,
+#[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct VoiceView {
+    entity: Option<String>,
     bus: Bus,
     volume: f32,
     pitch: f32,
@@ -290,12 +290,12 @@ impl Mixer {
         self.turn(next);
     }
 
-    pub(crate) fn listed<'a>(&self, ids: &'a SceneIds<'_, '_>) -> Vec<VoiceView<'a>> {
+    pub(crate) fn listed(&self, ids: &SceneIds<'_, '_>) -> Vec<VoiceView> {
         self.voices
             .iter()
             .map(|voice| VoiceView {
                 entity: match &voice.owner {
-                    Owner::Source(entity, _) => ids.id(*entity),
+                    Owner::Source(entity, _) => ids.id(*entity).map(str::to_owned),
                     Owner::Handle(_) => None,
                 },
                 bus: voice.play.bus,

@@ -101,6 +101,57 @@ pub fn reply() -> Result<Value, String> {
     Ok(reply)
 }
 
+pub fn calls(world: &World) -> Result<Value, String> {
+    let registry = registry(world)?;
+    let calls: Vec<Value> = registry
+        .operations()
+        .map(|operation| {
+            json!({
+                "name": operation.name,
+                "verb": if operation.control { Verb::Control.name() } else { Verb::Query.name() },
+                "brick": operation.brick,
+                "request": operation.request_schema(),
+                "reply": operation.reply_schema(),
+            })
+        })
+        .collect();
+    let events: Vec<Value> = registry
+        .events()
+        .map(|event| {
+            json!({
+                "name": event.name,
+                "brick": event.brick,
+                "row": event.row_schema(),
+            })
+        })
+        .collect();
+    Ok(json!({ "calls": calls, "events": events }))
+}
+
+fn declared_schemas(registry: &Registry, problems: &mut Vec<String>) {
+    for operation in registry.operations() {
+        for (part, schema) in [
+            ("request", operation.request_schema()),
+            ("reply", operation.reply_schema()),
+        ] {
+            if engine_core::open_schema(&schema) {
+                problems.push(format!(
+                    "call {} ({}) declares no {part} schema: derive JsonSchema on its {part} type",
+                    operation.name, operation.brick
+                ));
+            }
+        }
+    }
+    for event in registry.events() {
+        if engine_core::open_schema(&event.row_schema()) {
+            problems.push(format!(
+                "event {} ({}) declares no row schema: derive JsonSchema on its row type",
+                event.name, event.brick
+            ));
+        }
+    }
+}
+
 pub fn verbs(world: &World) -> Result<Vec<(&'static str, Value)>, String> {
     let registry = registry(world)?;
     Ok(Verb::ALL
@@ -166,6 +217,7 @@ pub fn game(world: &World) -> Result<Vec<(&'static str, String)>, String> {
     );
     control_state(registry, &controls, &schemas, &mut problems);
     typed_results(registry, &queries, &controls, &mut problems);
+    declared_schemas(registry, &mut problems);
     match serde_json::from_str::<Value>(&scene_schema) {
         Ok(scene) => authored_parity(world, &scene, &schemas, &mut problems),
         Err(error) => problems.push(format!("the scene schema is not JSON: {error}")),
@@ -181,6 +233,7 @@ pub fn game(world: &World) -> Result<Vec<(&'static str, String)>, String> {
         "queries": queries,
         "controls": controls,
         "bricks": registry.names().collect::<Vec<_>>(),
+        "events": registry.events().map(|event| event.name).collect::<Vec<_>>(),
         "errors": registry.error_codes(),
     });
     let protocol = serde_json::to_string_pretty(&summary)
@@ -371,7 +424,7 @@ fn named_schema(registry: &Registry, verb: Verb, core: schemars::Schema) -> Valu
             .operations()
             .filter(|operation| operation.control == control)
             .map(|operation| {
-                let args = operation_args(serialized(operation.schema()), &mut definitions);
+                let args = operation_args(operation.request_schema(), &mut definitions);
                 named_variant(verb, operation.name, args)
             }),
     );

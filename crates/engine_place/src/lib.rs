@@ -5,6 +5,7 @@
 
 mod asks;
 mod budget;
+mod calls;
 mod drawn;
 mod feeds;
 mod level;
@@ -26,6 +27,10 @@ use serde_json::Value;
 
 pub use asks::{Applied, ApplyAt, Ask, Asked, Moment};
 pub use budget::{BudgetUse, FrameBudget};
+pub use calls::{
+    Call, Event, EventDecl, EventPage, NamedRun, Operation, RESERVED_REPLY_KEYS, Raises, access_of,
+    answer, open_schema, page_of, schema_of,
+};
 pub use drawn::{
     DrawKind, Drawn, DrawnBounds, DrawnProjection, InstanceValues, KindDecl, KindSkip, Layers,
     NodeId, PositionReach,
@@ -56,6 +61,8 @@ pub trait Slot: Resource + Default {
     const NAME: &'static str;
     const WGSL: Option<&'static str> = None;
     const SMOKES: &'static [Smoke] = &[];
+    const CALLS: &'static [Call] = &[];
+    const EVENTS: &'static [EventDecl] = &[];
 }
 
 pub trait List: Send + Sync + 'static {

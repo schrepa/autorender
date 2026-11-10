@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     AssetLibrary, DrawnPoses, DrawnTable, Error, ErrorCode, Expected, FrameTime, GlobalTransforms,
-    GpuBits, Material, Operation, SceneIds, Surface, pose_rows,
+    GpuBits, Material, Operation, PoseRows, SceneIds, Surface, pose_rows,
 };
 use serde_json::{Value, json};
 
@@ -14,10 +14,19 @@ pub(crate) struct WatchedSlot {
     pub slot: Option<u32>,
 }
 
-#[derive(engine_core::__private::serde::Deserialize)]
+#[derive(engine_core::__private::serde::Deserialize, schemars::JsonSchema)]
 #[serde(crate = "engine_core::__private::serde", deny_unknown_fields)]
 pub(crate) struct DrawnRequest {
     entity: String,
+}
+
+#[derive(engine_core::__private::serde::Serialize, schemars::JsonSchema)]
+#[serde(crate = "engine_core::__private::serde")]
+pub(crate) struct DrawnReply {
+    slot: Option<u32>,
+    drawn_level: Option<u32>,
+    drawn_pose: Option<PoseRows>,
+    read_back: Option<Value>,
 }
 
 pub(crate) struct MeshDrawn;
@@ -34,6 +43,7 @@ impl Operation for MeshDrawn {
         (Res<'static, DrawnPoses>, Res<'static, GlobalTransforms>),
     );
     type Request = DrawnRequest;
+    type Reply = DrawnReply;
 
     fn run(
         (ids, table, totals, time, mut watched, (poses, globals)): SystemParamItem<
@@ -42,7 +52,7 @@ impl Operation for MeshDrawn {
             Self::Params,
         >,
         request: DrawnRequest,
-    ) -> Result<Value, Error> {
+    ) -> Result<DrawnReply, Error> {
         let id = request.entity;
         let entity = ids.entity(&id).ok_or_else(|| {
             Error::new(ErrorCode::UnknownEntity, "$.entity")
@@ -51,12 +61,12 @@ impl Operation for MeshDrawn {
         })?;
         let drawn_pose = poses.drawn_pose(&globals, entity).map(pose_rows);
         let Some(slot) = table.slot(entity) else {
-            return Ok(json!({
-                "slot": null,
-                "drawn_level": null,
-                "drawn_pose": drawn_pose,
-                "read_back": null,
-            }));
+            return Ok(DrawnReply {
+                slot: None,
+                drawn_level: None,
+                drawn_pose,
+                read_back: None,
+            });
         };
         watched.slot = Some(slot);
         let watched = totals
@@ -66,25 +76,32 @@ impl Operation for MeshDrawn {
             .map(|(_, word)| word);
         let age = totals.age(time.frame);
         let pose = watched.and_then(|_| totals.pose());
-        Ok(json!({
-            "slot": slot,
-            "drawn_level": watched.and_then(LodFade::drawn_level),
-            "drawn_pose": drawn_pose,
-            "read_back": watched.zip(age).map(|(word, age)| json!({
-                "level": LodFade::drawn_level(word),
-                "word": <LodFade as GpuBits>::decoded(word),
-                "pose": pose,
-                "age": age,
-            })),
-        }))
+        Ok(DrawnReply {
+            slot: Some(slot),
+            drawn_level: watched.and_then(LodFade::drawn_level),
+            drawn_pose,
+            read_back: watched.zip(age).map(|(word, age)| {
+                json!({
+                    "level": LodFade::drawn_level(word),
+                    "word": <LodFade as GpuBits>::decoded(word),
+                    "pose": pose,
+                    "age": age,
+                })
+            }),
+        })
     }
 }
 
-#[derive(engine_core::__private::serde::Deserialize)]
+#[derive(engine_core::__private::serde::Deserialize, schemars::JsonSchema)]
 #[serde(crate = "engine_core::__private::serde", deny_unknown_fields)]
-pub(crate) struct ListingRequest {}
+pub struct MeshesListing {}
 
-pub(crate) struct MeshesListing;
+#[derive(engine_core::__private::serde::Serialize, schemars::JsonSchema)]
+#[serde(crate = "engine_core::__private::serde")]
+pub struct MeshesListed {
+    pub instances: Vec<Value>,
+    pub missing: u32,
+}
 
 impl Operation for MeshesListing {
     const NAME: &'static str = "meshes_listing";
@@ -93,12 +110,13 @@ impl Operation for MeshesListing {
         Res<'static, GlobalTransforms>,
         Res<'static, AssetLibrary>,
     );
-    type Request = ListingRequest;
+    type Request = Self;
+    type Reply = MeshesListed;
 
     fn run(
         (table, globals, assets): SystemParamItem<'_, '_, Self::Params>,
-        _: ListingRequest,
-    ) -> Result<Value, Error> {
+        _: Self,
+    ) -> Result<MeshesListed, Error> {
         let instances: Vec<Value> = (0..table.records().len() as u32)
             .filter_map(|slot| Some((table.owner(slot)?, table.drawn(slot)?)))
             .filter(|(_, drawn)| drawn.kind == MESH)
@@ -123,9 +141,9 @@ impl Operation for MeshesListing {
                 })
             })
             .collect();
-        Ok(json!({
-            "instances": instances,
-            "missing": table.census(MESH).waiting,
-        }))
+        Ok(MeshesListed {
+            instances,
+            missing: table.census(MESH).waiting,
+        })
     }
 }

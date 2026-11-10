@@ -7,7 +7,7 @@ publish.workspace = true
 
 [features]
 default = []
-schema = ["engine_settings/schema", "dep:schemars"]
+schema = ["engine_settings/schema"]
 
 [dependencies]
 engine_assets.workspace = true
@@ -18,7 +18,7 @@ engine_settings.workspace = true
 engine_smoke.workspace = true
 bevy_ecs.workspace = true
 bytemuck.workspace = true
-schemars = { workspace = true, optional = true }
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

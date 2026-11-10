@@ -8,12 +8,13 @@ use bevy_ecs::schedule::{
 };
 use bevy_ecs::system::{IntoSystem, ScheduleSystem};
 use bevy_ecs::world::World;
-use engine_place::{AttachPoint, Error, ErrorCode, PlaceDecl, PlaceKind, Slot, Smoke};
+use engine_place::{AttachPoint, Error, ErrorCode, Operation, PlaceDecl, PlaceKind, Slot, Smoke};
+use engine_settings::Expected;
 use serde_json::Value;
 
 use crate::access::{AccessRule, MoverRule};
 use crate::attribution::CORE_ROW;
-use crate::entries::{Kept, OperationEntry, PieceEntry, SettingsEntry, StatsEntry};
+use crate::entries::{EventEntry, Kept, OperationEntry, PieceEntry, SettingsEntry, StatsEntry};
 use crate::hooks::{Named, add_removal};
 use crate::jobs::JobQueue;
 use crate::needs::{LeftOut, Read, ReadKind};
@@ -40,19 +41,32 @@ impl BrickId {
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct BrickSet(pub &'static str);
 
+fn unregistered(name: &str) -> Error {
+    Error::new(ErrorCode::UnknownVariant, "$.name")
+        .expected(Expected::Present)
+        .got(name)
+}
+
 pub fn run_operation(world: &mut World, name: &str, request: Value) -> Result<Value, Error> {
     let operation = world
         .get_resource::<Registry>()
         .and_then(|registry| registry.operation(name))
         .copied()
-        .ok_or_else(|| {
-            Error::new(ErrorCode::UnknownVariant, "$.name")
-                .expected(engine_settings::Expected::Present)
-                .got(name)
-        })?;
+        .ok_or_else(|| unregistered(name))?;
     operation
         .run(world, request)
         .map_err(|error| error.within("$.args"))
+}
+
+pub fn call<O: Operation>(world: &mut World, request: O::Request) -> Result<O::Reply, Error> {
+    let registered = world
+        .get_resource::<Registry>()
+        .and_then(|registry| registry.operation(O::NAME))
+        .is_some_and(OperationEntry::declares::<O>);
+    if !registered {
+        return Err(unregistered(O::NAME));
+    }
+    engine_place::answer::<O>(world, request).map_err(|error| error.within("$.args"))
 }
 
 #[derive(Resource, Default)]
@@ -62,6 +76,7 @@ pub struct Registry {
     core_fills: Vec<PlaceDecl>,
     core_sections: Vec<SettingsEntry>,
     core_operations: Vec<OperationEntry>,
+    core_events: Vec<EventEntry>,
     bases: Vec<u32>,
     left_out: Vec<&'static str>,
     rule: AccessRule,
@@ -121,6 +136,7 @@ impl RegistryBuilder {
         }
     }
 
+    #[track_caller]
     pub fn fill_core<S: Slot>(&mut self) {
         let registry = &mut self.registry;
         let slot = TypeId::of::<S>();
@@ -134,6 +150,12 @@ impl RegistryBuilder {
         let decl = PlaceDecl::slot::<S>();
         registry.core_fills.push(decl);
         registry.catalog_add(decl);
+        for call in S::CALLS {
+            registry.core_operation(OperationEntry::of(*call));
+        }
+        for event in S::EVENTS {
+            registry.core_event(EventEntry::of(*event));
+        }
     }
 
     pub fn core_settings(&mut self, entry: SettingsEntry) {
@@ -142,6 +164,10 @@ impl RegistryBuilder {
 
     pub fn core_operation(&mut self, entry: OperationEntry) {
         self.registry.core_operation(entry);
+    }
+
+    pub fn core_event(&mut self, entry: EventEntry) {
+        self.registry.core_event(entry);
     }
 
     pub fn mover_rule(&mut self, rule: MoverRule) {
@@ -262,6 +288,20 @@ impl Registry {
             return;
         }
         self.core_operations.push(entry);
+    }
+
+    pub fn core_event(&mut self, mut entry: EventEntry) {
+        entry.brick = CORE_ROW;
+        if let Some(owner) = self.event(entry.name).map(|known| known.brick) {
+            let path = format!("$.events.{}", entry.name);
+            self.problems.push(
+                Error::new(ErrorCode::NameTwice, path)
+                    .got(owner)
+                    .nearest(CORE_ROW),
+            );
+            return;
+        }
+        self.core_events.push(entry);
     }
 
     pub fn left_out(&self) -> &[&'static str] {
@@ -493,6 +533,16 @@ impl Registry {
         self.operations().find(|entry| entry.name == name)
     }
 
+    pub fn events(&self) -> impl Iterator<Item = &EventEntry> + '_ {
+        self.core_events
+            .iter()
+            .chain(self.bricks.iter().flat_map(|record| record.events()))
+    }
+
+    pub fn event(&self, name: &str) -> Option<&EventEntry> {
+        self.events().find(|entry| entry.name == name)
+    }
+
     pub fn check_named(&self, key: &str, value: &Value, path: &str) -> Result<(), Error> {
         self.named
             .iter()
@@ -654,6 +704,16 @@ impl Registry {
         for entry in record.operations() {
             if let Some(owner) = self.operation(entry.name).map(|known| known.brick) {
                 let path = format!("$.operations.{}", entry.name);
+                self.problems.push(
+                    Error::new(ErrorCode::NameTwice, path)
+                        .got(owner)
+                        .nearest(package),
+                );
+            }
+        }
+        for entry in record.events() {
+            if let Some(owner) = self.event(entry.name).map(|known| known.brick) {
+                let path = format!("$.events.{}", entry.name);
                 self.problems.push(
                     Error::new(ErrorCode::NameTwice, path)
                         .got(owner)

@@ -157,6 +157,11 @@ impl<T> Feed<T> {
         Events::Listed(listed)
     }
 
+    pub fn after(&self, seen: u64) -> (u64, &[T]) {
+        let from = seen.clamp(self.log.first, self.log.end());
+        (from, self.log.from(from).unwrap_or(&[]))
+    }
+
     pub fn behind(&self, cursor: &Cursor) -> u64 {
         if cursor.store == self.store {
             self.next.saturating_sub(cursor.seen)

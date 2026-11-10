@@ -13,15 +13,25 @@ pub struct Level {
     handed: Option<Ticket>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(Clone, Debug, PartialEq, Serialize, schemars::JsonSchema)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum LevelView {
     Idle,
-    Asked { path: String, progress: Progress },
-    Ready { path: String },
-    Failed { path: String, error: Error },
-    Missing { path: String },
+    Asked {
+        path: String,
+        progress: Progress,
+    },
+    Ready {
+        path: String,
+    },
+    Failed {
+        path: String,
+        #[cfg_attr(not(feature = "schema"), schemars(with = "serde_json::Value"))]
+        error: Error,
+    },
+    Missing {
+        path: String,
+    },
 }
 
 impl Level {

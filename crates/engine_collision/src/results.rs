@@ -3,7 +3,7 @@ use serde::Serialize;
 
 use crate::types::CollisionStats;
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub(crate) struct HitEntity {
     pub id: Option<String>,
     pub scene: Option<String>,
@@ -12,20 +12,20 @@ pub(crate) struct HitEntity {
     pub alive: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub(crate) struct PlacedHit {
     pub layer: u16,
     pub asset: u16,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub(crate) struct RaycastResult {
     pub snapshot: CollisionStats,
     pub complete: bool,
     pub hit: Option<RayHit>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub(crate) struct RayHit {
     pub entity: HitEntity,
     pub distance: f32,
@@ -35,7 +35,7 @@ pub(crate) struct RayHit {
     pub placed: Option<PlacedHit>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub(crate) struct OverlapResult {
     pub snapshot: CollisionStats,
     pub complete: bool,
@@ -43,14 +43,14 @@ pub(crate) struct OverlapResult {
     pub hits: Vec<HitEntity>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub(crate) struct ShapeCastResult {
     pub snapshot: CollisionStats,
     pub complete: bool,
     pub hit: Option<CastHit>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub(crate) struct CastHit {
     pub entity: HitEntity,
     pub fraction: f32,
@@ -61,7 +61,7 @@ pub(crate) struct CastHit {
     pub placed: Option<PlacedHit>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub(crate) struct CollisionEventsResult {
     pub sensor_only: bool,
     pub sequence: String,
@@ -70,6 +70,7 @@ pub(crate) struct CollisionEventsResult {
     pub complete: bool,
     pub candidate_pairs: usize,
     pub active_pairs: usize,
+    #[schemars(with = "Option<serde_json::Value>")]
     pub error: Option<Error>,
     pub feed: serde_json::Value,
     pub total: usize,
@@ -77,14 +78,14 @@ pub(crate) struct CollisionEventsResult {
     pub next_offset: Option<usize>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub(crate) struct SensorEventRow {
     pub kind: SensorEventKindView,
     pub first: HitEntity,
     pub second: HitEntity,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum SensorEventKindView {
     Enter,

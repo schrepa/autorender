@@ -11,8 +11,8 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{SystemParam, SystemParamItem};
 use bevy_ecs::world::World;
 use engine_registry::{MoverRule, Registry, SceneEntity};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::hierarchy::tracking::Invalidation;
 use crate::{
@@ -343,16 +343,33 @@ pub(crate) fn install_kinds(world: &mut World) {
     world.insert_resource(MovingKinds(moving));
 }
 
-fn named(world: &World, node: Entity) -> Value {
-    match world.get::<SceneEntity>(node) {
-        Some(authored) => json!({ "node": node.to_bits(), "id": authored.authored_id, "name": authored.name }),
-        None => json!({ "node": node.to_bits() }),
+#[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct MovedNode {
+    node: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    name: Option<String>,
+}
+
+fn named(world: &World, node: Entity) -> MovedNode {
+    let authored = world.get::<SceneEntity>(node);
+    MovedNode {
+        node: node.to_bits(),
+        id: authored.map(|authored| authored.authored_id.clone()),
+        name: authored.map(|authored| authored.name.clone()),
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct MovesRequest {}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct MovesReply {
+    asks: Vec<Value>,
+    moved_static: Vec<MovedNode>,
+}
 
 pub(crate) struct MovesState;
 
@@ -361,8 +378,12 @@ impl Operation for MovesState {
     const CONTROL: bool = false;
     type Params = &'static World;
     type Request = MovesRequest;
+    type Reply = MovesReply;
 
-    fn run(world: SystemParamItem<'_, '_, Self::Params>, _: MovesRequest) -> Result<Value, Error> {
+    fn run(
+        world: SystemParamItem<'_, '_, Self::Params>,
+        _: MovesRequest,
+    ) -> Result<MovesReply, Error> {
         let asks: Vec<Value> = world
             .get_resource::<Registry>()
             .map_or_else(Vec::new, |registry| {
@@ -372,7 +393,7 @@ impl Operation for MovesState {
                     .filter_map(|place| place.view(world))
                     .collect()
             });
-        let moved_static: Vec<Value> = world
+        let moved_static: Vec<MovedNode> = world
             .get_resource::<GlobalTransforms>()
             .map_or_else(Vec::new, |globals| {
                 globals
@@ -380,11 +401,14 @@ impl Operation for MovesState {
                     .map(|node| named(world, node))
                     .collect()
             });
-        Ok(json!({ "asks": asks, "moved_static": moved_static }))
+        Ok(MovesReply {
+            asks,
+            moved_static,
+        })
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TeleportControl {
     entity: String,
@@ -399,11 +423,12 @@ impl Operation for TeleportControl {
         Asks<'static, 'static, Teleport>,
     );
     type Request = Self;
+    type Reply = TeleportReply;
 
     fn run(
         (ids, nodes, mut asks): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<TeleportReply, Error> {
         let node = ids
             .entity(&request.entity)
             .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$.entity").got(&request.entity))?;
@@ -424,6 +449,11 @@ impl Operation for TeleportControl {
         } else {
             ApplyAt::FrameStart
         };
-        Ok(json!({ "at": at }))
+        Ok(TeleportReply { at })
     }
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct TeleportReply {
+    at: ApplyAt,
 }

@@ -8,7 +8,7 @@ use bevy_ecs::world::World;
 use engine_place::{Error, ErrorCode, GpuStruct, List, PlaceDecl, Slot, Smoke};
 
 use crate::entries::{
-    Filled, JoinEntry, OperationEntry, Owned, PieceEntry, SettingsEntry, StatsEntry,
+    EventEntry, Filled, JoinEntry, OperationEntry, Owned, PieceEntry, SettingsEntry, StatsEntry,
 };
 use crate::hooks::{NamedField, Removal};
 use crate::jobs::JobMember;
@@ -76,6 +76,7 @@ pub struct BrickRecord {
     section_rules: Vec<SectionRule>,
     stats: Vec<StatsEntry>,
     operations: Vec<OperationEntry>,
+    events: Vec<EventEntry>,
     piece: Option<PieceEntry>,
     pub(crate) removals: Vec<Removal>,
     pub(crate) named: Vec<NamedField>,
@@ -117,6 +118,7 @@ impl BrickRecord {
             section_rules: Vec::new(),
             stats: Vec::new(),
             operations: Vec::new(),
+            events: Vec::new(),
             piece: None,
             removals: Vec::new(),
             named: Vec::new(),
@@ -220,6 +222,10 @@ impl BrickRecord {
         &self.operations
     }
 
+    pub fn events(&self) -> &[EventEntry] {
+        &self.events
+    }
+
     pub fn piece_entry(&self) -> Option<&PieceEntry> {
         self.piece.as_ref()
     }
@@ -295,6 +301,7 @@ impl BrickRecord {
         self.prefix = Some(prefix);
     }
 
+    #[track_caller]
     pub fn fill<S: Slot>(&mut self, wgsl: Option<Box<dyn Any + Send + Sync>>) {
         if self.fills_slot(TypeId::of::<S>()) {
             let path = format!("$.places.{}", S::NAME);
@@ -303,6 +310,12 @@ impl BrickRecord {
             return;
         }
         self.fills.push(Filled::of::<S>(self.current, wgsl));
+        for call in S::CALLS {
+            self.operation(OperationEntry::of(*call));
+        }
+        for event in S::EVENTS {
+            self.event(EventEntry::of(*event));
+        }
     }
 
     pub fn join<L: List>(&mut self, member: L::Member, wgsl: Option<Box<dyn Any + Send + Sync>>) {
@@ -356,6 +369,17 @@ impl BrickRecord {
             return;
         }
         self.operations.push(entry);
+    }
+
+    pub fn event(&mut self, mut entry: EventEntry) {
+        entry.brick = self.package;
+        if self.events.iter().any(|known| known.name == entry.name) {
+            let path = format!("$.events.{}", entry.name);
+            self.problems
+                .push(Error::new(ErrorCode::NameTwice, path).got(self.package));
+            return;
+        }
+        self.events.push(entry);
     }
 
     pub fn on_remove(&mut self, removal: Removal) {

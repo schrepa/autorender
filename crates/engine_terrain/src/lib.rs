@@ -35,8 +35,8 @@ pub use runtime::{
     TerrainSample, TerrainScene, TerrainSettings, TerrainStats, TerrainSurface, Terrains,
 };
 pub use runtime::{
-    HeightSample, RouteFound, StandingWater, TerrainEditControl, TerrainEdited, TerrainHeightQuery,
-    TerrainHeightResult, TerrainRedoControl, TerrainRiverControl, TerrainRouteQuery,
-    TerrainRouteResult, TerrainUndoControl,
+    HeightSample, ListedTerrain, RouteFound, StandingWater, TerrainEditControl, TerrainEdited,
+    TerrainHeightQuery, TerrainHeightResult, TerrainListed, TerrainListing, TerrainRedoControl,
+    TerrainRiverControl, TerrainRouteQuery, TerrainRouteResult, TerrainUndoControl,
 };
 pub use select::{LodRanges, WantedTile, WantedView, wanted_tiles};

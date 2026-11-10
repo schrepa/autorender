@@ -117,7 +117,12 @@ pub use scene::*;
 pub use engine_place::{
     BitField, BitValue, FrameId, GpuBits, Readable, Readback, decode_bits, gpu_bits,
 };
-pub use section::{Cut, Operation, RESERVED_REPLY_KEYS, Section};
+pub use engine_place::{
+    Call, Event, EventDecl, EventPage, Operation, RESERVED_REPLY_KEYS, Raises, open_schema,
+    page_of,
+};
+pub use engine_registry::call;
+pub use section::{Cut, EventsQuery, Section};
 pub use shared::{FeedSettings, FrameBudgetSettings};
 pub use services::{
     Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, PartDraws, Placed,
@@ -168,8 +173,8 @@ use bevy_ecs::system::ResMut;
 use bevy_ecs::world::World;
 use clock::{Advanced, FixedClock, Interval};
 use engine_registry::{
-    BrickHooks, GateDriver, JobList, JobListed, MembersOf, OperationEntry, Registry,
-    RegistryBuilder,
+    BRICK_STATE_EVENT, BrickChangeRow, BrickHooks, EventEntry, GateDriver, JobList, JobListed,
+    MembersOf, OperationEntry, Registry, RegistryBuilder, brick_changes,
 };
 use schedules::{
     FixedMove, FixedPostSimulation, FixedPreSimulation, FixedSimulation, FrameStart, Presentation,
@@ -273,55 +278,18 @@ fn core_entries(registry: &mut RegistryBuilder) {
     registry.core_settings(bricks::settings_entry::<FrameLimits>());
     registry.core_settings(bricks::settings_entry::<InputSettings>());
     registry.core_settings(bricks::settings_entry::<FoldOrder>());
-    registry.core_operation(OperationEntry::of::<
-        <views::ViewControl as Operation>::Params,
-    >(
-        views::ViewControl::NAME,
-        true,
-        bricks::run_operation::<views::ViewControl>,
-    ));
-    registry.core_operation(OperationEntry::of::<
-        <moves::TeleportControl as Operation>::Params,
-    >(
-        moves::TeleportControl::NAME,
-        moves::TeleportControl::CONTROL,
-        bricks::run_operation::<moves::TeleportControl>,
-    ));
-    registry.core_operation(OperationEntry::of::<()>(
-        authoring::COMPONENT,
-        true,
-        authoring::run_component,
-    ));
-    registry.core_operation(OperationEntry::of::<
-        <moves::MovesState as Operation>::Params,
-    >(
-        moves::MovesState::NAME,
-        moves::MovesState::CONTROL,
-        bricks::run_operation::<moves::MovesState>,
-    ));
-    registry.core_operation(OperationEntry::of::<
-        <views::ViewsState as Operation>::Params,
-    >(
-        views::ViewsState::NAME,
-        views::ViewsState::CONTROL,
-        bricks::run_operation::<views::ViewsState>,
-    ));
-    registry.core_operation(
-        OperationEntry::of::<<input::Rebind as Operation>::Params>(
-            input::Rebind::NAME,
-            input::Rebind::CONTROL,
-            bricks::run_operation::<input::Rebind>,
-        )
-        .schemas(input::Rebind::schema, input::Rebind::result_schema),
-    );
-    registry.core_operation(
-        OperationEntry::of::<<why::Why as Operation>::Params>(
-            why::Why::NAME,
-            why::Why::CONTROL,
-            bricks::run_operation::<why::Why>,
-        )
-        .schemas(why::Why::schema, why::Why::result_schema),
-    );
+    registry.core_operation(OperationEntry::of(Call::of::<views::ViewControl>()));
+    registry.core_operation(OperationEntry::of(Call::of::<moves::TeleportControl>()));
+    registry.core_operation(OperationEntry::of(authoring::COMPONENT_CALL));
+    registry.core_operation(OperationEntry::of(Call::of::<moves::MovesState>()));
+    registry.core_operation(OperationEntry::of(Call::of::<views::ViewsState>()));
+    registry.core_operation(OperationEntry::of(Call::of::<input::Rebind>()));
+    registry.core_operation(OperationEntry::of(Call::of::<why::Why>().observed()));
+    registry.core_operation(OperationEntry::of(Call::of::<EventsQuery>()));
+    registry.core_event(EventEntry::of(EventDecl::custom::<BrickChangeRow>(
+        BRICK_STATE_EVENT,
+        brick_changes,
+    )));
     registry.mover_rule(moves::rule());
     registry.despawn_rule(hierarchy::despawn_owned);
     registry.fill_core::<Asked<Teleport>>();
@@ -538,10 +506,7 @@ impl Engine {
 
     #[track_caller]
     pub fn operation<O: Operation>(&mut self) -> &mut Self {
-        self.core_operation(
-            OperationEntry::of::<O::Params>(O::NAME, O::CONTROL, bricks::run_operation::<O>)
-                .schemas(O::schema, O::result_schema),
-        )
+        self.core_operation(OperationEntry::of(Call::of::<O>()))
     }
 
     pub fn core_operation(&mut self, entry: OperationEntry) -> &mut Self {

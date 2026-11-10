@@ -1,4 +1,4 @@
-use super::operations::{coordinate, reply, terrain_entity};
+use super::operations::{coordinate, terrain_entity};
 use super::*;
 use crate::scene::{SceneTerrainEdit, SceneTerrainRiver};
 use crate::{MAX_GIVEN_RIVERS, StampOp};
@@ -7,7 +7,6 @@ use engine_heightfield::MISSING_LAYER;
 use engine_heightfield::given::{MAX_DEPTH, MAX_DISCHARGE, MAX_WIDTH};
 use engine_places_simulation::ground::UNKNOWN_TERRAIN;
 use engine_places_world::terrain::TerrainLayers;
-use serde_json::Value;
 
 const CHANGE_SAMPLES: usize = 9;
 
@@ -41,11 +40,12 @@ impl Operation for TerrainEditControl {
     const NAME: &'static str = "terrain_edit";
     type Params = Editing;
     type Request = Self;
+    type Reply = TerrainEdited;
 
     fn run(
         (mut scenes, ids, kinds, terrains, mut redo): SystemParamItem<'_, '_, Editing>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<TerrainEdited, Error> {
         let Self {
             terrain,
             id,
@@ -68,7 +68,6 @@ impl Operation for TerrainEditControl {
                 change,
             },
         )
-        .map(reply)
     }
 }
 
@@ -102,14 +101,15 @@ impl Operation for TerrainRiverControl {
         Joined<'static, TerrainLayers>,
     );
     type Request = Self;
+    type Reply = TerrainEdited;
 
     fn run(
         (mut scenes, ids, kinds): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<TerrainEdited, Error> {
         let entity = terrain_entity(&scenes, &ids, request.terrain.as_deref())?;
         let rivers = kinds.iter().any(|kind| kind.name == RIVERS);
-        draw_river((&mut scenes, entity), rivers, &request).map(reply)
+        draw_river((&mut scenes, entity), rivers, &request)
     }
 }
 
@@ -126,11 +126,12 @@ impl Operation for TerrainUndoControl {
     const NAME: &'static str = "terrain_undo";
     type Params = Editing;
     type Request = Self;
+    type Reply = TerrainEdited;
 
     fn run(
         (mut scenes, ids, kinds, terrains, mut redo): SystemParamItem<'_, '_, Editing>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<TerrainEdited, Error> {
         let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
         let entity = terrain_entity(&scenes, &ids, request.terrain.as_deref())?;
         edit_terrain(
@@ -139,7 +140,6 @@ impl Operation for TerrainUndoControl {
             &mut redo.0,
             TerrainEditing::Undo,
         )
-        .map(reply)
     }
 }
 
@@ -154,11 +154,12 @@ impl Operation for TerrainRedoControl {
     const NAME: &'static str = "terrain_redo";
     type Params = Editing;
     type Request = Self;
+    type Reply = TerrainEdited;
 
     fn run(
         (mut scenes, ids, kinds, terrains, mut redo): SystemParamItem<'_, '_, Editing>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<TerrainEdited, Error> {
         let kinds: Vec<&'static LayerKind> = kinds.iter().copied().collect();
         let entity = terrain_entity(&scenes, &ids, request.terrain.as_deref())?;
         edit_terrain(
@@ -167,7 +168,6 @@ impl Operation for TerrainRedoControl {
             &mut redo.0,
             TerrainEditing::Redo,
         )
-        .map(reply)
     }
 }
 

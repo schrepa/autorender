@@ -6,7 +6,7 @@ use serde_json::{Value, json};
 use crate::Slot;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ApplyAt {
     TickEnd,
@@ -25,14 +25,14 @@ pub trait Ask: Send + Sync + 'static {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(schemars::JsonSchema)]
 pub struct Moment {
     pub tick: u64,
     pub frame: u64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[derive(schemars::JsonSchema)]
 pub struct Applied {
     pub node: Option<u64>,
     pub asked: Moment,

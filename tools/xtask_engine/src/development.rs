@@ -16,6 +16,11 @@ pub fn verbs() -> Result<Value, String> {
     ))
 }
 
+pub fn calls() -> Result<Value, String> {
+    let engine = crate::bricks::standard_engine().map_err(|error| error.to_string())?;
+    engine_dev::schemas::calls(engine.app.world())
+}
+
 pub fn scene(arguments: &[String]) -> Result<(), String> {
     let result = scene_command(arguments);
     let succeeded = result.is_ok();

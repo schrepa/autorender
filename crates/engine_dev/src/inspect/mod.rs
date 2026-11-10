@@ -9,7 +9,7 @@ use engine_core::{
     AssetLibrary, Drawn, Engine, FixedTime, FrameTime, GlobalTransforms, JobExchange,
     MaterialHandle, MeshHandle, Mover, Pace, Parent, PresentationState, TextureHandle, Transform,
 };
-use engine_registry::{BrickRecord, OperationScene, Registry};
+use engine_registry::{BrickRecord, OperationEntry, OperationScene, Registry};
 use engine_scene::{SceneEntity, SceneInstance, SceneMaterial, TextureOrigin};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -613,6 +613,7 @@ impl DevTools {
             at: registered.map(|operation| source_line(operation.at)),
             shows: shows.filter(|shows| !shows.is_empty()),
             args: operation_args(&verb_schema(world, verb), name),
+            reply: registered.map(OperationEntry::reply_schema),
         })
     }
 

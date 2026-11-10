@@ -10,6 +10,8 @@ mod content;
 mod control;
 mod views;
 
+pub(crate) use control::HighlandsControl;
+
 use engine_core::{Brick, Bricks, JobKind, Schedule, Source, stats};
 
 stats! {

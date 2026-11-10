@@ -156,7 +156,7 @@ pub(crate) struct MovingTile {
     pub index: u16,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, serde::Serialize, schemars::JsonSchema)]
 pub(crate) struct TileState {
     pub level: usize,
     pub tile: [i32; 2],

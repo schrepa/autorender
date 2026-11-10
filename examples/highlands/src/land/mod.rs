@@ -7,8 +7,9 @@ use engine::{Error, ErrorCode, Expected};
 use engine_core::{
     BASE_COLOR_MAP, METALLIC_ROUGHNESS_MAP, NORMAL_MAP, OCCLUSION_MAP, RecordExchange,
 };
-use serde_json::{Value, json};
+use serde_json::Value;
 
+use crate::bricks::game::HighlandsControl;
 use crate::jobs::ground;
 use crate::records;
 
@@ -105,7 +106,7 @@ fn world_mapped(material: Material, tiling: f32, top: TopLayer) -> engine::Resul
 
 pub(crate) fn provide(world: &mut World, files: &RockMaps) -> engine::Result<()> {
     world.insert_resource(ProvidedAssets::default());
-    control(world, json!("land"))?;
+    control(world, HighlandsControl::Land)?;
     let grounds = world.resource_scope(|world, mut records: Mut<RecordExchange>| {
         let mut assets = world.resource_mut::<AssetLibrary>();
         GROUNDS
@@ -164,17 +165,17 @@ pub(crate) fn populate(world: &mut World, document: &SceneDocument) -> engine::R
     let mouth = Vec2::from(center) + origin;
     control(
         world,
-        json!({"cave": {
-            "mouth": [mouth.x, mouth.y],
-            "radius": radius,
-            "rock": WALL_ROCK,
-            "wall": CAVE_WALL,
-        }}),
+        HighlandsControl::Cave {
+            mouth: [mouth.x, mouth.y],
+            radius,
+            rock: WALL_ROCK.to_owned(),
+            wall: CAVE_WALL.to_owned(),
+        },
     )
 }
 
-pub(crate) fn control(world: &mut World, request: Value) -> engine::Result<()> {
-    engine::host::run_operation(world, "highlands", request).map(drop)
+pub(crate) fn control(world: &mut World, request: HighlandsControl) -> engine::Result<()> {
+    engine::host::call::<HighlandsControl>(world, request)
 }
 
 fn scene_terrain(document: &SceneDocument) -> engine::Result<(String, Value)> {

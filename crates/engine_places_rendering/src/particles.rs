@@ -1,7 +1,8 @@
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use bevy_ecs::prelude::{Component, Resource};
-use engine_place::{DrawKind, Drawn, Slot};
+use bevy_ecs::prelude::{Component, Res, Resource};
+use bevy_ecs::system::SystemParamItem;
+use engine_place::{Call, DrawKind, Drawn, Error, ErrorCode, Operation, Slot};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -13,7 +14,7 @@ pub const MAX_SPREAD_DEGREES: f32 = 180.0;
 
 const MAX_BURSTS: usize = 1024;
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ParticleBlend {
     #[default]
@@ -22,7 +23,7 @@ pub enum ParticleBlend {
     Mist,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ParticleShape {
     Box,
@@ -111,20 +112,24 @@ impl ParticleEmitter {
     }
 }
 
-#[derive(Clone, Copy, Serialize, Deserialize)]
+#[derive(Clone, Copy, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 struct AuthoredEmitter {
     rate: f32,
+    #[schemars(with = "[f32; 3]")]
     offset: Vec3,
     emitting: bool,
     lifetime: f32,
     lifetime_spread: f32,
     speed: f32,
     speed_spread: f32,
+    #[schemars(with = "[f32; 3]")]
     direction: Vec3,
     spread_degrees: f32,
+    #[schemars(with = "[f32; 3]")]
     acceleration: Vec3,
     shape: ParticleShape,
+    #[schemars(with = "[f32; 3]")]
     extent: Vec3,
     size: [f32; 2],
     size_spread: f32,
@@ -242,6 +247,33 @@ pub struct ParticleBursts {
 
 impl Slot for ParticleBursts {
     const NAME: &'static str = "particle_bursts";
+    const CALLS: &'static [Call] = &[Call::of::<BurstParticles>()];
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BurstParticles {
+    pub at: [f32; 3],
+    pub count: u32,
+    #[serde(default)]
+    #[schemars(with = "AuthoredEmitter")]
+    pub emitter: ParticleEmitter,
+}
+
+impl Operation for BurstParticles {
+    const NAME: &'static str = "particle_burst";
+    type Params = Res<'static, ParticleBursts>;
+    type Request = Self;
+    type Reply = ();
+
+    fn run(bursts: SystemParamItem<'_, '_, Self::Params>, request: Self) -> Result<(), Error> {
+        let at = Vec3::from_array(request.at);
+        if !at.is_finite() {
+            return Err(Error::new(ErrorCode::InvalidValue, "$.at").got(request.at));
+        }
+        bursts.burst(at, request.count, request.emitter.look);
+        Ok(())
+    }
 }
 
 impl ParticleBursts {

@@ -7,7 +7,7 @@ use bevy_ecs::system::{Commands, Res, SystemParamItem};
 use engine_registry::MembersOf;
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::json;
 
 use crate::{
     Error, ErrorCode, Interest, InvalidSetting, List, Operation, Requests, Rule, Section, Setting,
@@ -1422,11 +1422,12 @@ impl Operation for Rebind {
     const NAME: &'static str = "rebind";
     type Params = (Res<'static, InputSettings>, Commands<'static, 'static>);
     type Request = Self;
+    type Reply = RebindReply;
 
     fn run(
         (settings, mut commands): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<RebindReply, Error> {
         let mut next = settings.clone();
         next.bindings.retain(|binding| {
             !request.reset.iter().any(|verb| verb.as_str() == &*binding.verb)
@@ -1436,10 +1437,11 @@ impl Operation for Rebind {
         next.check()?;
         let bindings = next.bindings.len();
         commands.insert_resource(next);
-        Ok(json!({ "bindings": bindings }))
+        Ok(RebindReply { bindings })
     }
+}
 
-    fn schema() -> Value {
-        serde_json::to_value(schemars::schema_for!(Self)).unwrap_or(Value::Null)
-    }
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct RebindReply {
+    bindings: usize,
 }
