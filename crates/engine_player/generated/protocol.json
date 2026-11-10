@@ -270,6 +270,7 @@
     "invalid_streamed",
     "invalid_grounded",
     "invalid_nav_agent",
+    "nav_steps_not_taken",
     "invalid_spline"
   ],
   "events": [

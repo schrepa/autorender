@@ -775,7 +775,7 @@
         }
       ],
       "type": "engine_sky::SkyBrick",
-      "version": "a9d1182ced4b8bb05377404deb9fd0ee484fb5befea88878b726abeaaf58f7b6"
+      "version": "ebe3f71355c694ecb195d299ace2c18cbac76a719f6a3b165d3d7e76905deaa6"
     },
     {
       "dependencies": [
@@ -1125,7 +1125,7 @@
         }
       ],
       "type": "engine_auto_exposure::AutoExposureBrick",
-      "version": "e1fdd52ae5d5f05e9c3ef2b552ed984920bc7f795e3803b3abaa2a8c13cb123d"
+      "version": "5a5c9e41cab8d16236e25853292ab9d0a49d07292b8967c5bb48ffb912b3845a"
     },
     {
       "dependencies": [
@@ -2019,7 +2019,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_wind::WindBrick",
-      "version": "cf6b2776f5a9fa75a97b9e25dee3b6eab203e6834207120df74eecaaec166282"
+      "version": "435c32511e27cb9c366d8b905cb7638715646a373844516fc9b4884bcca7547b"
     },
     {
       "dependencies": [
@@ -2079,7 +2079,7 @@
         }
       ],
       "type": "engine_collision::CollisionBrick",
-      "version": "919364b5b94c3d87eefb844181ca4dd8803c240c4c3907ec8c7021535d766ad2"
+      "version": "a3aab12768117e847e854ed53b3f7625782b742398fe17c409f2d1edf6e5579d"
     },
     {
       "dependencies": [
@@ -2146,7 +2146,7 @@
         }
       ],
       "type": "engine_physics::PhysicsBrick",
-      "version": "50f05c515dd1772607c38e21216a3a04ee3d50e58d91f81726509a4647dd800e"
+      "version": "edf0e643b988d03e4aef33e0413b209076648b6d800dcb80e0c6fd037c57592e"
     },
     {
       "dependencies": [
@@ -2262,7 +2262,7 @@
         }
       ],
       "type": "engine_terrain::runtime::brick::TerrainBrick",
-      "version": "d07bb904dc12bcfbf9bfa094342caf82eeb142e9baf3ee83c651961090dc3943"
+      "version": "362329dfb336bef3be31d058bf28c0152a62e073366ace7cc3a34cfc0f07a37a"
     },
     {
       "dependencies": [
@@ -2983,7 +2983,7 @@
         }
       ],
       "type": "engine_water::WaterBrick",
-      "version": "dfa0125b4c550a8ea6005c7caedd08133224e95eed896c64019bf5a6a2d6cd78"
+      "version": "7bd5ae1fc5a711450ae6533113cca2f9120eb03d502c9f3b7bc270a4ec5b3311"
     },
     {
       "dependencies": [
@@ -3206,7 +3206,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_grounding::GroundingBrick",
-      "version": "4d9aec921ec0af1b553bc00b7bc13a4eb02782f8c665cd53712c8521617948f6"
+      "version": "4eb765a3ec42f35c7860fcc0a91d8ac2025912151890ff04be40ce8f201f7931"
     },
     {
       "dependencies": [
@@ -3273,7 +3273,7 @@
         }
       ],
       "type": "engine_world_streaming::WorldStreamingBrick",
-      "version": "c8de17dc2f54fbd094f448b3428a46165cb2eeeefb2f8a1a3cb1435ae1fe8c3a"
+      "version": "5010b1bbafaeefd965d0992c5c7f08cad754cb09bcedae93c90c57fd5d8185bb"
     },
     {
       "dependencies": [
@@ -3347,7 +3347,7 @@
         }
       ],
       "type": "engine_navigation::NavigationBrick",
-      "version": "15836193c9d363af1c256fb54138feed8d15d5e121b6dca8967ceccfd7cf8c35"
+      "version": "d3232ac53fad89642ffafa747f662e6a9cc2827bcd4159624eba001e14f07082"
     },
     {
       "dependencies": [

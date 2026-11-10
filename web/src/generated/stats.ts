@@ -39,6 +39,8 @@ export interface FrameStats {
 
 export type Allowed = { kind: "range"; max: number; min: number } | { kind: "at_most"; max: number } | { kind: "at_least"; min: number } | { kind: "variants"; values: string[] };
 
+export type Awaits = "work" | "view";
+
 export interface BrickCost {
   allocations: number;
   brick: string;
@@ -112,6 +114,7 @@ export interface Readiness {
   failed: [string, Error][];
   loading: Progress;
   settling: number;
+  unsettled: Unsettled[];
 }
 
 export interface ResolutionStats {
@@ -121,4 +124,10 @@ export interface ResolutionStats {
   gpu_ms: number | null;
   render_height: number;
   render_width: number;
+}
+
+export interface Unsettled {
+  awaits: Awaits;
+  brick: string;
+  left: number;
 }
