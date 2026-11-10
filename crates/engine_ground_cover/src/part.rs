@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{DrawKind, Error, MaterialHandle, PassRole};
+use engine_core::{DrawKind, Error, PassRole};
 use engine_open_world_kit::ground::PALETTE_ENTRIES;
 use engine_render::{
     AfterRead, Allocation, Bind, Buffer, ComputePipeline, Count, Draw, DrawInput, Encode, Form,
@@ -14,7 +14,7 @@ use crate::growth::{BLADE_BYTES, BladeCounts, CoverPlan};
 use crate::layouts::{CoverFrame, CoverMaterial, CoverTerrain, Grow};
 use crate::settings::GroundCover;
 use crate::shaders::cover::{draw, faces::cover as face, grow};
-use crate::surface::CoverSurface;
+use crate::surface::{CoverSurface, SurfaceState};
 
 const DRAW_ARGS: u64 = size_of::<wgpu::util::DrawIndirectArgs>() as u64;
 const COUNT_BYTES: u64 = 32;
@@ -47,7 +47,7 @@ pub(crate) struct CoverGpu {
     finishing: ComputePipeline<Self>,
     form: Form<Self>,
     inputs: Vec<(&'static str, DrawInput<Self, Scene>)>,
-    material: Option<MaterialHandle>,
+    surface: SurfaceState,
     shadows: bool,
     cells: Vec<u32>,
     blade_bytes: u64,
@@ -125,7 +125,7 @@ impl GpuPart for CoverGpu {
             finishing,
             form,
             inputs,
-            material: None,
+            surface: SurfaceState::Unmade,
             shadows: false,
             cells: Vec::new(),
             blade_bytes: BLADE_BYTES,
@@ -139,7 +139,7 @@ impl GpuPart for CoverGpu {
         (plan, table, surface, settings): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        self.material = surface.material;
+        self.surface = surface.state;
         self.shadows = settings.shadows;
         if table.is_changed() {
             let terrains = size_of_val(table.terrains.as_slice()) as u64;
@@ -216,8 +216,12 @@ impl CoverGpu {
         if !self.drawn {
             return draw.skip("no cover grows this frame");
         }
-        let Some(material) = self.material else {
-            return draw.skip("cover material is not in the asset library");
+        let material = match self.surface {
+            SurfaceState::Resident(material) => material,
+            SurfaceState::Waiting(_) => return draw.skip("cover material is not resident yet"),
+            SurfaceState::Unmade => {
+                return draw.skip("cover material is not in the asset library");
+            }
         };
         let Some(pipeline) = draw.form(&self.form) else {
             return draw.skip("pass has no cover pipeline");
