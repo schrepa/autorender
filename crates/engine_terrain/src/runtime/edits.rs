@@ -5,8 +5,7 @@ use crate::{MAX_GIVEN_RIVERS, StampOp};
 use engine_core::{Joined, Operation, SceneIds};
 use engine_heightfield::MISSING_LAYER;
 use engine_heightfield::given::{MAX_DEPTH, MAX_DISCHARGE, MAX_WIDTH};
-use engine_places_simulation::ground::UNKNOWN_TERRAIN;
-use engine_places_world::terrain::TerrainLayers;
+use engine_open_world_kit::terrain::TerrainLayers;
 use serde_json::Value;
 
 const CHANGE_SAMPLES: usize = 9;

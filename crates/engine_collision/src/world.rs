@@ -10,13 +10,16 @@ use engine_core::{
 };
 use engine_math::collections::HashMap;
 use engine_places::queries::{CastFilter, CastHit, CastShape, SceneQueries, SceneQuery};
+use engine_places_simulation::ground::{
+    Ground, GroundPoint, GroundProbe, GroundQuery, GroundRead, GroundSurface,
+};
 use engine_places_simulation::physics::{
     Collide, Collider, ColliderShape, ColliderSolid, Collision, CollisionLayers, CollisionRay,
     QueryFilter, RayHit, SLIDE_STEPS, SensorEvent, SensorEventKind, SensorFilter, SensorPair,
     ShapeCastOptions, ShapeHit, Slid,
 };
-use engine_places_simulation::solids::{Bounds, Bvh, SolidField, SolidSource};
-use glam::{Mat4, Quat, Vec2, Vec3};
+use engine_solids::{Bounds, Bvh, SolidField, SolidSource};
+use glam::{Mat4, Quat, Vec3};
 
 use crate::{
     bvh::profiled,
@@ -56,6 +59,9 @@ struct Solids {
     sources: Vec<Arc<SolidField>>,
     limit: usize,
     ready: Result<(), Fault>,
+    span: Option<Bounds>,
+    revision: u64,
+    layout: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -100,6 +106,8 @@ pub struct CollisionWorld {
     report: CollisionReport,
     synced: Synced,
     sources: Vec<Arc<SolidField>>,
+    revision: u64,
+    layout: u64,
     pub(crate) sensors: SensorEvents,
 }
 
@@ -127,17 +135,28 @@ impl CollisionWorld {
         })
     }
 
-    pub(crate) fn ground_owners(&self) -> impl Iterator<Item = Entity> + '_ {
-        terrain::owners(&self.sources)
-    }
-
     fn sweep(&self) -> Solids {
+        let fields = self.sources.iter().flat_map(|source| {
+            source
+                .fields
+                .iter()
+                .map(|field| field.bounds())
+                .chain(source.solids.bounds())
+        });
         Solids {
             entries: Arc::clone(&self.entries),
             bvh: Arc::clone(&self.bvh),
             sources: self.sources.clone(),
             limit: self.config.query_candidates(),
             ready: self.ready(),
+            span: self
+                .bvh
+                .bounds()
+                .into_iter()
+                .chain(fields)
+                .reduce(Bounds::union),
+            revision: self.revision,
+            layout: self.layout,
         }
     }
 
@@ -157,6 +176,8 @@ impl CollisionWorld {
         self.sources.clear();
         self.sources
             .extend(sources.iter().map(|source| Arc::clone(&source.field)));
+        self.revision += 1;
+        self.layout += 1;
         self.report.placed_colliders = self
             .sources
             .iter()
@@ -193,6 +214,10 @@ impl CollisionWorld {
             };
         if !settled {
             self.sync_all(config, colliders, globals);
+            self.layout += 1;
+        }
+        if !settled || moved {
+            self.revision += 1;
         }
         !settled || moved
     }
@@ -439,10 +464,6 @@ impl CollisionWorld {
 }
 
 impl Collide for CollisionWorld {
-    fn grounds(&self) -> &[Arc<SolidField>] {
-        &self.sources
-    }
-
     fn solids(&self, min: Vec3, max: Vec3, found: &mut Vec<ColliderSolid>) {
         let bounds = Bounds { min, max };
         found.extend(
@@ -625,10 +646,6 @@ impl Collide for CollisionWorld {
     fn pairs(&self) -> &[SensorPair] {
         &self.sensors.pairs
     }
-
-    fn holds(&self, at: Vec2) -> bool {
-        self.sources.iter().any(|source| source.holds(at))
-    }
 }
 
 impl SceneQuery for Solids {
@@ -673,6 +690,86 @@ impl SceneQuery for Solids {
             point: hit.point,
             normal: hit.normal,
         })
+    }
+}
+
+impl Solids {
+    fn floor(&self, ray: CollisionRay, filter: QueryFilter) -> Result<Option<GroundPoint>, Fault> {
+        let mut broad = Aggregate::new("collision.broad", "bvh_traversal");
+        let mut nearest: Option<(f32, GroundPoint)> = None;
+        let mut keep = |distance: f32, normal: Vec3, surface: GroundSurface, owner: Entity| {
+            if nearest.is_none_or(|(old, held)| (distance, owner) < (old, held.owner)) {
+                nearest = Some((
+                    distance,
+                    GroundPoint {
+                        height: ray.origin.y - distance,
+                        normal,
+                        surface,
+                        owner,
+                    },
+                ));
+            }
+        };
+        for entry in candidates(
+            (&self.bvh, &self.entries),
+            self.limit,
+            |bounds| bounds.ray(ray),
+            filter,
+            &mut broad,
+        ) {
+            let entry = entry?;
+            if let Some((distance, normal, _)) = entry.affine.ray(ray) {
+                keep(distance, normal, GroundSurface::Collider, entry.entity);
+            }
+        }
+        if let Some(hit) = placed::ray(&self.sources, ray, filter) {
+            keep(hit.distance, hit.normal, GroundSurface::Placed, hit.entity);
+        }
+        if let Some(hit) = terrain::ray(&self.sources, ray, filter) {
+            keep(hit.distance, hit.normal, GroundSurface::Field, hit.entity);
+        }
+        Ok(nearest.map(|(_, point)| point))
+    }
+}
+
+impl GroundQuery for Solids {
+    fn down(&self, probe: GroundProbe) -> GroundRead<Option<GroundPoint>> {
+        let Some(span) = self.span else {
+            return GroundRead::Ready(None);
+        };
+        let (top, bottom) = (span.max.y + 1.0, span.min.y - 1.0);
+        let from = probe.below.map_or(top, |below| engine_math::min(below, top));
+        let outside = probe.at.x < span.min.x
+            || probe.at.x > span.max.x
+            || probe.at.y < span.min.z
+            || probe.at.y > span.max.z;
+        if outside || from.is_nan() || from <= bottom {
+            return GroundRead::Ready(None);
+        }
+        let Ok(ray) = normalized(CollisionRay {
+            origin: Vec3::new(probe.at.x, from, probe.at.y),
+            direction: Vec3::NEG_Y,
+            max_distance: from - bottom,
+        }) else {
+            return GroundRead::Ready(None);
+        };
+        let filter = QueryFilter {
+            layers: CollisionLayers::new(u32::MAX, probe.layers),
+            sensors: SensorFilter::Exclude,
+            exclude: probe.exclude,
+        };
+        match self.floor(ray, filter) {
+            Ok(point) => GroundRead::Ready(point),
+            Err(_) => GroundRead::NotLoaded,
+        }
+    }
+
+    fn revision(&self) -> u64 {
+        self.revision
+    }
+
+    fn layout(&self) -> u64 {
+        self.layout
     }
 }
 
@@ -831,7 +928,11 @@ pub(crate) fn sync(
     config: Res<CollisionConfig>,
     (frame, tick): (Res<FrameTime>, Res<FixedTime>),
     mut collision: ResMut<Collision>,
-    (mut stats, mut queries): (ResMut<CollisionStats>, ResMut<SceneQueries>),
+    (mut stats, mut queries, mut ground): (
+        ResMut<CollisionStats>,
+        ResMut<SceneQueries>,
+        ResMut<Ground>,
+    ),
 ) {
     let world = installed(&mut collision);
     world.refresh(
@@ -841,7 +942,11 @@ pub(crate) fn sync(
         &globals,
     );
     stats.set_if_neq(world.stats());
-    queries.0 = Arc::new(world.sweep());
+    let solids = Arc::new(world.sweep());
+    if ground.revision() != solids.revision {
+        *ground = Ground(Arc::clone(&solids) as Arc<dyn GroundQuery>);
+    }
+    queries.0 = solids as Arc<dyn SceneQuery>;
 }
 
 #[derive(SystemParam)]

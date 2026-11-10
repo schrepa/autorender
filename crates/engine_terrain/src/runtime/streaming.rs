@@ -3,7 +3,7 @@ use engine_core::{
     DeviceLimits, FrameBudget, FrameTime, GlobalTransforms, Joined, Views,
 };
 use engine_places_world::streaming::StreamingFocus;
-use engine_places_world::terrain::TerrainLayers;
+use engine_open_world_kit::terrain::TerrainLayers;
 use glam::UVec2;
 
 pub(super) fn vertical_fov(camera: &Camera) -> f32 {
@@ -377,7 +377,6 @@ impl Terrains {
             } else {
                 state.retire(&mut self.retired);
                 self.changed = true;
-                self.edits += 1;
             }
         }
         self.entries = kept;
@@ -392,7 +391,6 @@ impl Terrains {
                         let old =
                             std::mem::replace(state, TerrainState::new(entity, terrain, kinds));
                         old.retire(&mut self.retired);
-                        self.edits += 1;
                     } else {
                         if !Arc::ptr_eq(&terrain.edits, &state.terrain.edits) {
                             state.edit(terrain.edits.clone(), kinds);
@@ -410,7 +408,6 @@ impl Terrains {
                 }
                 None => {
                     self.entries.push(TerrainState::new(entity, terrain, kinds));
-                    self.edits += 1;
                 }
             }
         }

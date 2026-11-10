@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::Entity;
 use engine_core::AssetLibrary;
 use engine_heightfield::tile::shaded_elsewhere;
-use engine_places_simulation::ground::{Pyramid, TileKey};
-use engine_places_world::ground::{
+use engine_tiles::{Pyramid, TileKey};
+use engine_open_world_kit::ground::{
     PALETTE_ENTRIES, PaletteEntry, SurfaceMaps, SurfaceMaterial, SurfaceProjection, TerrainEntry,
     TerrainTiles, TileFace,
 };

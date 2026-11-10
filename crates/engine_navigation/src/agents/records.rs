@@ -4,29 +4,13 @@ use super::*;
 
 #[derive(Default)]
 pub(super) struct Interests {
-    grounds: BTreeMap<Vec<u8>, Interest<Vec<u8>>>,
     portals: BTreeMap<Vec<u8>, Interest<Vec<u8>>>,
-}
-
-#[derive(Clone, Copy)]
-enum Decode {
-    Ground { key: TileKey, pyramid: Pyramid },
-    Portals { key: TileKey },
-}
-
-impl Decode {
-    fn ground(self) -> bool {
-        match self {
-            Self::Ground { .. } => true,
-            Self::Portals { .. } => false,
-        }
-    }
 }
 
 struct Flight {
     input: Vec<u8>,
     job: Interest<RecordKey>,
-    decode: Decode,
+    key: TileKey,
 }
 
 pub(super) enum Resolved {
@@ -60,11 +44,89 @@ impl Kept {
 }
 
 #[derive(Default)]
+struct Grounds {
+    seen: Option<(u64, WalkArea)>,
+    held: BTreeMap<TileKey, (u64, Arc<WalkGround>)>,
+    order: BTreeMap<u64, TileKey>,
+    next: u64,
+    sampling: Option<Sampling>,
+}
+
+impl Grounds {
+    fn refresh(&mut self, seen: (u64, WalkArea)) {
+        if self.seen != Some(seen) {
+            self.seen = Some(seen);
+            self.held.clear();
+            self.order.clear();
+            self.sampling = None;
+        }
+    }
+
+    fn get(&mut self, key: TileKey) -> Option<Arc<WalkGround>> {
+        let (stamp, ground) = self.held.get_mut(&key)?;
+        self.order.remove(stamp);
+        self.next += 1;
+        *stamp = self.next;
+        self.order.insert(self.next, key);
+        Some(Arc::clone(ground))
+    }
+
+    fn hold(&mut self, key: TileKey, ground: Arc<WalkGround>, most: usize) {
+        self.next += 1;
+        if let Some((stamp, _)) = self.held.insert(key, (self.next, ground)) {
+            self.order.remove(&stamp);
+        }
+        self.order.insert(self.next, key);
+        while self.held.len() > most {
+            let Some((_, oldest)) = self.order.pop_first() else {
+                break;
+            };
+            self.held.remove(&oldest);
+        }
+    }
+
+    fn sample(
+        &mut self,
+        key: TileKey,
+        (area, floors): (&WalkArea, &Floors),
+        budget: &mut u64,
+        most: usize,
+    ) -> Option<Arc<WalkGround>> {
+        if let Some(ground) = self.get(key) {
+            return Some(ground);
+        }
+        if let Some(mut sampling) = self.sampling.take() {
+            if !sampling.advance(area, floors, budget) {
+                self.sampling = Some(sampling);
+                return None;
+            }
+            let done = sampling.key;
+            let ground = Arc::new(sampling.ground(area));
+            self.hold(done, Arc::clone(&ground), most);
+            if done == key {
+                return Some(ground);
+            }
+        }
+        if *budget == 0 {
+            return None;
+        }
+        let mut sampling = Sampling::new(key);
+        if !sampling.advance(area, floors, budget) {
+            self.sampling = Some(sampling);
+            return None;
+        }
+        let ground = Arc::new(sampling.ground(area));
+        self.hold(key, Arc::clone(&ground), most);
+        Some(ground)
+    }
+}
+
+#[derive(Default)]
 pub(super) struct WalkRecords {
-    grounds: Requests<Vec<u8>, Arc<WalkGround>>,
+    grounds: Grounds,
+    kept_grounds: usize,
     portals: Requests<Vec<u8>, Arc<TilePortals>>,
     flights: Vec<Flight>,
-    kept_grounds: Kept,
     kept_portals: Kept,
 }
 
@@ -76,7 +138,14 @@ enum Found<T> {
 
 impl WalkRecords {
     pub(super) fn held(&self) -> (u32, u32) {
-        (self.grounds.census().ready, self.portals.census().ready)
+        (
+            self.grounds.held.len() as u32,
+            self.portals.census().ready,
+        )
+    }
+
+    pub(super) fn refresh(&mut self, seen: (u64, WalkArea)) {
+        self.grounds.refresh(seen);
     }
 
     pub(super) fn settle(
@@ -85,82 +154,97 @@ impl WalkRecords {
         settings: &Navigation,
         failures: &mut JobFailures,
     ) {
-        let grounds: BTreeSet<Vec<u8>> = self
-            .grounds
-            .settle(now)
-            .into_iter()
-            .map(|(input, _)| input)
-            .collect();
+        self.kept_grounds = settings.kept_grounds as usize;
         let portals: BTreeSet<Vec<u8>> = self
             .portals
             .settle(now)
             .into_iter()
             .map(|(input, _)| input)
             .collect();
-        self.flights.retain(|flight| {
-            let released = if flight.decode.ground() {
-                &grounds
-            } else {
-                &portals
-            };
-            !released.contains(&flight.input)
-        });
-        let most = settings.grounds_per_tick as usize;
-        let mut decoded = 0;
+        self.flights
+            .retain(|flight| !portals.contains(&flight.input));
         let mut waiting = Vec::with_capacity(self.flights.len());
         for flight in std::mem::take(&mut self.flights) {
-            if flight.decode.ground() && decoded >= most {
-                waiting.push(flight);
-                continue;
-            }
             let Some(output) = records.get(&flight.job) else {
                 waiting.push(flight);
                 continue;
             };
-            let Flight { input, job, decode } = flight;
+            let Flight { input, job, key } = flight;
             drop(job);
-            match decode {
-                Decode::Ground { key, pyramid } => {
-                    decoded += 1;
-                    let made = made(WALK_GROUND_NAME, output, |bytes| {
-                        walk_ground(key, &pyramid, bytes)
-                    });
-                    end(&mut self.grounds, &input, made, (tick, failures));
-                }
-                Decode::Portals { key } => {
-                    let made = made(PORTALS_NAME, output, |bytes| walk_portals(key, bytes));
-                    end(&mut self.portals, &input, made, (tick, failures));
-                }
-            }
+            let made = made(PORTALS_NAME, output, |bytes| walk_portals(key, bytes));
+            end(&mut self.portals, &input, made, (tick, failures));
         }
         self.flights = waiting;
     }
 
-    pub(super) fn resolve(&mut self, running: &mut Running, jobs: &mut Jobs) -> Resolved {
+    fn ground(
+        &mut self,
+        running: &mut Running,
+        key: TileKey,
+        (floors, samples): (&Floors, &mut u64),
+    ) -> Option<Arc<WalkGround>> {
+        if let Some(ground) = running.held.grounds.get(&key) {
+            return Some(Arc::clone(ground));
+        }
+        let ground = self.grounds.sample(
+            key,
+            (&running.area, floors),
+            samples,
+            self.kept_grounds,
+        )?;
+        running.held.grounds.insert(key, Arc::clone(&ground));
+        Some(ground)
+    }
+
+    fn portals(
+        &mut self,
+        running: &mut Running,
+        key: TileKey,
+        (floors, jobs, samples): (&Floors, &mut Jobs, &mut u64),
+        priority: u32,
+    ) -> Option<Found<Arc<TilePortals>>> {
         let gait = running.search.gait();
+        let input = portals_key(floors.layout(), key, &gait);
+        let found = wanted(&mut self.portals, &mut running.interests.portals, &input);
+        if !matches!(found, Found::Asked) || self.flying(&input) {
+            return Some(found);
+        }
+        let ground = self.ground(running, key, (floors, samples))?;
+        if !jobs.admit(priority) {
+            return None;
+        }
+        let job = jobs.start(
+            &PORTALS,
+            portals_input(&running.area, &ground, &gait),
+            priority,
+        );
+        self.flights.push(Flight { input, job, key });
+        Some(found)
+    }
+
+    pub(super) fn resolve(
+        &mut self,
+        running: &mut Running,
+        (floors, jobs): (&Floors, &mut Jobs),
+        samples: &mut u64,
+    ) -> Resolved {
         let priority = job_priority(GAMEPLAY_JOBS, 0);
         let mut progress = false;
-        for &want in running.search.wants() {
+        let wants = running.search.wants().to_vec();
+        for want in wants {
             let found = match want {
-                Want::Ground(key) => {
-                    let input = ground_input(&running.walked, key);
-                    let found = wanted(&mut self.grounds, &mut running.interests.grounds, &input);
-                    if let Found::Asked = found {
-                        let decode = Decode::Ground {
-                            key,
-                            pyramid: running.walked.source.pyramid,
-                        };
-                        self.fly(jobs, (&WALK_GROUND, &input), priority, decode);
-                    }
-                    found.map(|ground| running.held.grounds.insert(key, ground))
-                }
+                Want::Ground(key) => match self.ground(running, key, (floors, &mut *samples)) {
+                    Some(_) => Found::Here(()),
+                    None => Found::Asked,
+                },
                 Want::Portals(key) => {
-                    let input = portals_input(&running.walked, key, &gait);
-                    let found = wanted(&mut self.portals, &mut running.interests.portals, &input);
-                    if let Found::Asked = found {
-                        self.fly(jobs, (&PORTALS, &input), priority, Decode::Portals { key });
+                    match self.portals(running, key, (floors, &mut *jobs, &mut *samples), priority)
+                    {
+                        Some(found) => {
+                            found.map(|portals| running.held.portals.insert(key, portals))
+                        }
+                        None => Found::Asked,
                     }
-                    found.map(|portals| running.held.portals.insert(key, portals))
                 }
             };
             match found {
@@ -176,14 +260,17 @@ impl WalkRecords {
         }
     }
 
-    pub(super) fn ask_ahead(&mut self, running: &mut Running, jobs: &mut Jobs) {
-        let gait = running.search.gait();
+    pub(super) fn ask_ahead(
+        &mut self,
+        running: &mut Running,
+        (floors, jobs): (&Floors, &mut Jobs),
+        samples: &mut u64,
+    ) {
         let priority = job_priority(GAMEPLAY_JOBS, 1);
         while let Some(&key) = running.search.ahead().get(running.asked_ahead) {
-            let input = portals_input(&running.walked, key, &gait);
-            let found = wanted(&mut self.portals, &mut running.interests.portals, &input);
-            if let Found::Asked = found
-                && !self.fly(jobs, (&PORTALS, &input), priority, Decode::Portals { key })
+            if self
+                .portals(running, key, (floors, &mut *jobs, &mut *samples), priority)
+                .is_none()
             {
                 return;
             }
@@ -192,17 +279,7 @@ impl WalkRecords {
     }
 
     pub(super) fn keep(&mut self, interests: Interests, settings: &Navigation) {
-        let Interests { grounds, portals } = interests;
-        for interest in grounds.into_values() {
-            if self
-                .grounds
-                .of(&interest)
-                .is_some_and(|request| request.ready().is_some())
-            {
-                self.kept_grounds
-                    .keep(interest, settings.kept_grounds as usize);
-            }
-        }
+        let Interests { portals } = interests;
         for interest in portals.into_values() {
             if self
                 .portals
@@ -215,30 +292,8 @@ impl WalkRecords {
         }
     }
 
-    fn fly(
-        &mut self,
-        jobs: &mut Jobs,
-        (kind, input): (&'static JobKind, &Vec<u8>),
-        priority: u32,
-        decode: Decode,
-    ) -> bool {
-        if self
-            .flights
-            .iter()
-            .any(|flight| flight.decode.ground() == decode.ground() && flight.input == *input)
-        {
-            return true;
-        }
-        if !jobs.admit(priority) {
-            return false;
-        }
-        let job = jobs.start(kind, input.clone(), priority);
-        self.flights.push(Flight {
-            input: input.clone(),
-            job,
-            decode,
-        });
-        true
+    fn flying(&self, input: &[u8]) -> bool {
+        self.flights.iter().any(|flight| flight.input == input)
     }
 }
 
@@ -279,19 +334,6 @@ fn end<T>(
             );
         }
     }
-}
-
-fn walk_ground(key: TileKey, pyramid: &Pyramid, bytes: &[u8]) -> Result<WalkGround, Error> {
-    let mut grid: GroundGrid = engine_codec::decode(bytes)?;
-    if grid.key != key {
-        return Err(engine_codec::invalid("$.key").got([
-            u16::from(grid.key.level),
-            grid.key.x,
-            grid.key.z,
-        ]));
-    }
-    let water = grid.water.take();
-    Ok(WalkGround::new(&grid, water, pyramid))
 }
 
 fn walk_portals(key: TileKey, bytes: &[u8]) -> Result<TilePortals, Error> {

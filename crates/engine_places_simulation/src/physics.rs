@@ -1,12 +1,9 @@
 use std::any::Any;
-use std::sync::Arc;
 
 use bevy_ecs::prelude::{Component, Entity, Resource};
 use engine_place::{ApplyAt, Ask, Error, ErrorCode, Feed, Slot};
-use glam::{Mat3, Mat4, Vec2, Vec3};
+use glam::{Mat3, Mat4, Vec3};
 use serde::{Deserialize, Serialize};
-
-use crate::solids::SolidField;
 
 pub const MIN_COLLIDER_EXTENT: f32 = 1.0e-4;
 pub const MAX_COLLIDER_EXTENT: f32 = 1.0e4;
@@ -464,11 +461,7 @@ pub trait Collide: Any + Send + Sync + 'static {
 
     fn pairs(&self) -> &[SensorPair];
 
-    fn grounds(&self) -> &[Arc<SolidField>];
-
     fn solids(&self, min: Vec3, max: Vec3, found: &mut Vec<ColliderSolid>);
-
-    fn holds(&self, at: Vec2) -> bool;
 }
 
 struct NoCollision {
@@ -533,15 +526,7 @@ impl Collide for NoCollision {
         &[]
     }
 
-    fn grounds(&self) -> &[Arc<SolidField>] {
-        &[]
-    }
-
     fn solids(&self, _: Vec3, _: Vec3, _: &mut Vec<ColliderSolid>) {}
-
-    fn holds(&self, _: Vec2) -> bool {
-        false
-    }
 }
 
 #[derive(Resource)]

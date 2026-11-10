@@ -10,8 +10,8 @@ use engine_core::{
 };
 use engine_heightfield::Stamp;
 use engine_heightfield::tile::shaded_elsewhere;
-use engine_places_simulation::ground::TileKey;
-use engine_places_world::ground::{TerrainEntry, TerrainTiles, TileFace};
+use engine_tiles::TileKey;
+use engine_open_world_kit::ground::{TerrainEntry, TerrainTiles, TileFace};
 use glam::Vec2;
 
 use crate::jobs::gpu::TILE_STRIDE;

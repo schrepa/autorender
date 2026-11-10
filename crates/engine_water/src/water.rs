@@ -8,7 +8,7 @@ use engine_core::{
     Writes,
 };
 use engine_heightfield::Fall;
-use engine_places_world::ground::{GroundTiles, Heightfield};
+use engine_open_world_kit::ground::{GroundTiles, Heightfield};
 use engine_render::{
     Access, Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND,
     DEBUG_TARGETS, DepthUse, Draw, DrawInput, Encode, GpuPart, Install, Lifetime, Own, Pass,

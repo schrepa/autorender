@@ -456,8 +456,6 @@ pub struct Terrains {
     pub(super) retired: Retired,
     pub(super) restored: u64,
     pub(super) changed: bool,
-    pub(super) grounds: u64,
-    pub(super) edits: u64,
     pub(super) settling: Settling,
 }
 

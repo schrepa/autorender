@@ -5,7 +5,7 @@ use engine_core::{
     Var, Views,
 };
 use engine_places_rendering::impostors::IMPOSTOR_VERTICES;
-use engine_places_world::ground::{GroundTiles, TerrainTiles};
+use engine_open_world_kit::ground::{GroundTiles, TerrainTiles};
 use engine_render::{
     Access, AfterRead, Allocation, Attach, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND,
     DEBUG_TARGETS, DepthUse, Draw, DrawInput, Encode, GpuPart, Install, Lifetime, Own, Pass,
@@ -768,7 +768,7 @@ impl ScatterGpu {
         (tiles, ground, baking): (
             &Res<'_, TerrainTiles>,
             &Res<'_, GroundTiles>,
-            &Res<'_, engine_places_world::ground::GroundBaking>,
+            &Res<'_, engine_open_world_kit::ground::GroundBaking>,
         ),
     ) {
         let held = &mut self.held;
@@ -1199,7 +1199,7 @@ impl GpuPart for ScatterGpu {
         Res<'static, FarCoverTable>,
         Res<'static, TerrainTiles>,
         Res<'static, GroundTiles>,
-        Res<'static, engine_places_world::ground::GroundBaking>,
+        Res<'static, engine_open_world_kit::ground::GroundBaking>,
         Res<'static, AssetResidency>,
         Res<'static, Views>,
         Res<'static, DrawnTable>,

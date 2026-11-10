@@ -127,6 +127,7 @@ fn engine() -> Result<(Engine, Assets), String> {
             .places(engine_places_rendering::PLACES)
             .places(engine_places_simulation::PLACES)
             .places(engine_places_world::PLACES)
+            .places(engine_open_world_kit::PLACES)
     })
     .map_err(|error| error.to_string())?;
     engine.set_frame(super::FRAME);

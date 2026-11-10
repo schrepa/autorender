@@ -11,6 +11,8 @@ const KINDS: &[&str] = &[
     "core",
     "core-internal",
     "place",
+    "shared",
+    "kit",
     "brick",
     "list",
     "host",
@@ -103,6 +105,8 @@ const RINGS: &[(&str, &[&str])] = &[
         "simulation",
         &[
             "engine_places_simulation",
+            "engine_tiles",
+            "engine_solids",
             "engine_collision",
             "engine_physics",
             "engine_navigation",
@@ -113,6 +117,7 @@ const RINGS: &[(&str, &[&str])] = &[
         "world",
         &[
             "engine_places_world",
+            "engine_open_world_kit",
             "engine_heightfield",
             "engine_layer_noise",
             "engine_layer_stamps",
@@ -134,9 +139,30 @@ const RINGS: &[(&str, &[&str])] = &[
     ),
 ];
 
-const RINGED: &[&str] = &["core", "core-internal", "place", "brick"];
+const RINGED: &[&str] = &["core", "core-internal", "place", "shared", "kit", "brick"];
 
-const PLACE_EXTERNALS: &[&str] = &[
+const KITS: &[(&str, &[&str])] = &[(
+    "engine_open_world_kit",
+    &[
+        "engine_terrain",
+        "engine_terrain_shading",
+        "engine_scatter",
+        "engine_ground_cover",
+        "engine_water",
+        "engine_world_streaming",
+        "engine_layer_noise",
+        "engine_layer_stamps",
+        "engine_layer_heightmap",
+        "engine_layer_paths",
+        "engine_layer_erosion",
+        "engine_layer_hydrology",
+        "engine_layer_relief",
+    ],
+)];
+
+const PLACE_EXTERNALS: &[&str] = &["glam", "bytemuck", "serde", "serde_json", "schemars"];
+
+const SHARED_EXTERNALS: &[&str] = &[
     "glam",
     "bytemuck",
     "serde",
@@ -215,8 +241,10 @@ fn check(root: &Path, problems: &mut Vec<String>) -> Result<usize, String> {
         .map(|member| (member.dir.as_path(), member))
         .collect();
     closed(&members, problems);
+    kits(&members, problems);
     placed(&members, problems);
     implementors(&root, &members, problems)?;
+    declarations(&root, &members, problems)?;
     for member in &members {
         check_member(&root, &workspace, member, &folders, problems)?;
     }
@@ -329,6 +357,82 @@ fn closed(members: &[Member], problems: &mut Vec<String>) {
     }
 }
 
+fn kits(members: &[Member], problems: &mut Vec<String>) {
+    for &(kit, users) in KITS {
+        match members.iter().find(|member| member.name == kit) {
+            None => problems.push(format!(
+                "Cargo.toml: the kit {kit} is no workspace crate"
+            )),
+            Some(member) if member.kind.as_deref() != Some("kit") => problems.push(format!(
+                "{}: the kits name this crate, which declares {}",
+                member.label(),
+                member.kind.as_deref().unwrap_or("no kind")
+            )),
+            Some(_) => {}
+        }
+        for user in users {
+            match members.iter().find(|member| member.name == *user) {
+                None => problems.push(format!(
+                    "Cargo.toml: the kit {kit} names {user}, which is no workspace crate"
+                )),
+                Some(member) if member.kind.as_deref() != Some("brick") => problems.push(format!(
+                    "{}: the kit {kit} names this crate as a part, which declares {}",
+                    member.label(),
+                    member.kind.as_deref().unwrap_or("no kind")
+                )),
+                Some(_) => {}
+            }
+        }
+    }
+    for member in members {
+        if member.kind.as_deref() == Some("kit") && !KITS.iter().any(|(kit, _)| *kit == member.name)
+        {
+            problems.push(format!(
+                "{}: a kit crate needs a place in the kits list",
+                member.label()
+            ));
+        }
+    }
+}
+
+fn kit_part(kit: &str, brick: &str) -> bool {
+    KITS.iter()
+        .any(|&(name, parts)| name == kit && parts.contains(&brick))
+}
+
+fn declarations(
+    root: &Path,
+    members: &[Member],
+    problems: &mut Vec<String>,
+) -> Result<(), String> {
+    for member in members {
+        let source = member.dir.join("src");
+        if member.kind.as_deref() != Some("shared") || !source.is_dir() {
+            continue;
+        }
+        let mut files = Vec::new();
+        matching_files(&source, declares_place, &mut files)?;
+        for file in files {
+            problems.push(format!(
+                "{}: a shared crate declares a place in {}; places live in place or kit crates",
+                member.label(),
+                relative(root, &file)
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn declares_place(line: &str) -> bool {
+    let mut words = line.split_whitespace();
+    let implements = words.next() == Some("impl")
+        && words.next().is_some_and(|path| {
+            matches!(path.rsplit("::").next(), Some("Slot" | "List" | "Ask"))
+        })
+        && words.next() == Some("for");
+    implements || line.contains("PlaceDecl::")
+}
+
 fn ring(name: &str) -> Option<&'static str> {
     RINGS
         .iter()
@@ -380,7 +484,7 @@ fn implementors(root: &Path, members: &[Member], problems: &mut Vec<String>) -> 
             continue;
         }
         let mut files = Vec::new();
-        brick_files(&source, &mut files)?;
+        matching_files(&source, implements_brick, &mut files)?;
         for file in files {
             problems.push(format!(
                 "{}: a {kind} crate implements Brick in {}; only a brick in a ring or a game may",
@@ -392,7 +496,11 @@ fn implementors(root: &Path, members: &[Member], problems: &mut Vec<String>) -> 
     Ok(())
 }
 
-fn brick_files(folder: &Path, found: &mut Vec<PathBuf>) -> Result<(), String> {
+fn matching_files(
+    folder: &Path,
+    matches: fn(&str) -> bool,
+    found: &mut Vec<PathBuf>,
+) -> Result<(), String> {
     let fail = |error: std::io::Error| format!("{}: {error}", folder.display());
     let mut paths = fs::read_dir(folder)
         .map_err(fail)?
@@ -402,12 +510,12 @@ fn brick_files(folder: &Path, found: &mut Vec<PathBuf>) -> Result<(), String> {
     paths.sort();
     for path in paths {
         if path.is_dir() {
-            brick_files(&path, found)?;
+            matching_files(&path, matches, found)?;
         } else if path.extension().is_some_and(|extension| extension == "rs")
             && fs::read_to_string(&path)
                 .map_err(|error| format!("{}: {error}", path.display()))?
                 .lines()
-                .any(implements_brick)
+                .any(matches)
         {
             found.push(path);
         }
@@ -455,7 +563,7 @@ fn check_member(
             "{at}: engine_rules is true on a game crate or absent"
         ));
     }
-    if matches!(kind, "brick" | "place" | "list")
+    if matches!(kind, "brick" | "place" | "shared" | "kit" | "list")
         && !forbids_unsafe(&read(&member.manifest)?, workspace)
     {
         problems.push(format!(
@@ -494,7 +602,7 @@ fn check_member(
             }
             continue;
         }
-        if matches!(kind, "brick" | "place" | "list") {
+        if matches!(kind, "brick" | "place" | "shared" | "kit" | "list") {
             if dependency.path.is_some() {
                 problems.push(format!(
                     "{edge}: a {kind} crate has no path dependency outside the workspace"
@@ -523,14 +631,21 @@ fn allowed(member: &Member, kind: &str, target: &Member) -> bool {
         "place" => {
             matches!(target_kind, "support" | "place") || matches!(name, "engine_place" | "engine_ecs")
         }
+        "shared" | "kit" => {
+            matches!(target_kind, "support" | "place" | "shared")
+                || matches!(name, "engine_place" | "engine_ecs")
+        }
         "brick" => {
-            matches!(target_kind, "support" | "place")
+            matches!(target_kind, "support" | "place" | "shared")
+                || (target_kind == "kit" && kit_part(name, &member.name))
                 || matches!(name, "engine_ecs" | "engine_core" | "engine_render")
         }
-        "list" => matches!(target_kind, "place" | "brick" | "list") || name == "engine_core",
+        "list" => {
+            matches!(target_kind, "place" | "kit" | "brick" | "list") || name == "engine_core"
+        }
         "game" => matches!(
             target_kind,
-            "host" | "list" | "brick" | "place" | "core" | "support"
+            "host" | "list" | "brick" | "kit" | "shared" | "place" | "core" | "support"
         ),
         "tool" => {
             target_kind != "brick"
@@ -558,6 +673,10 @@ fn external(kind: &str, package: &str) -> Option<String> {
         "place" if !PLACE_EXTERNALS.contains(&package) => Some(format!(
             "a place crate depends only on {} among external crates ({package})",
             PLACE_EXTERNALS.join(", ")
+        )),
+        "shared" | "kit" if !SHARED_EXTERNALS.contains(&package) => Some(format!(
+            "a {kind} crate depends only on {} among external crates ({package})",
+            SHARED_EXTERNALS.join(", ")
         )),
         "support" if engine_only(package) => Some(format!("{package} is engine-only")),
         "brick" | "game" if engine_only(package) && !page_bindings(package) => {

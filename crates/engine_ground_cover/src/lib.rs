@@ -13,7 +13,7 @@ mod settings;
 
 use bevy_ecs::prelude::Res;
 use engine_core::{Attributes, Brick, Bricks, KindDecl, Schedule, Source};
-use engine_places_world::ground::{Cover, FarCover};
+use engine_open_world_kit::ground::{Cover, FarCover};
 use engine_render::RenderBricks;
 
 pub use settings::{CoverLook, GroundCover, GroundCoverStats};

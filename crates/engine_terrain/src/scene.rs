@@ -9,9 +9,10 @@ use engine_heightfield::{INVALID_TERRAIN, UNKNOWN_MAP, UNREADABLE_MAP};
 use engine_heightfield::tile::{
     AuthoredPlacement, Biome, Biomes, MacroCauses, PlacementLayer, SteepLayer,
 };
-use engine_places_world::ground::{SurfaceMaterial, SurfaceProjection};
-use engine_places_world::paths::{ScenePath, ScenePaths};
-use engine_places_world::terrain::TerrainLayers;
+use engine_open_world_kit::ground::{SurfaceMaterial, SurfaceProjection};
+use engine_open_world_kit::paths::{ScenePath, ScenePaths};
+use engine_open_world_kit::terrain::TerrainLayers;
+use engine_places_world::streaming::StreamingFocus;
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::{Number, Value, json};
@@ -760,6 +761,14 @@ pub(crate) fn prefetch_kind() -> ComponentKindOf<TerrainPrefetch> {
     ComponentKind::of::<TerrainPrefetch>("prefetch")
         .check(check_prefetch)
         .schema(prefetch_schema)
+}
+
+pub(crate) fn focus_kind() -> ComponentKindOf<StreamingFocus> {
+    ComponentKind::of::<StreamingFocus>("streaming_focus").schema(focus_schema)
+}
+
+fn focus_schema() -> Value {
+    serde_json::to_value(schemars::schema_for!(StreamingFocus)).unwrap_or(Value::Null)
 }
 
 

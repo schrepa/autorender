@@ -4,7 +4,7 @@ use std::sync::Arc;
 use bevy_ecs::prelude::Entity;
 use engine_core::collections::HashMap;
 use engine_places_simulation::physics::{Collide, ColliderSolid, CollisionLayers};
-use engine_places_simulation::solids::{Bounds, FieldTile, SolidField};
+use engine_solids::{Bounds, FieldTile, SolidField};
 use glam::Vec3;
 use parry3d::shape::Shape;
 use rapier3d::prelude as rp;
@@ -95,11 +95,10 @@ impl Statics {
     pub fn sync(
         &mut self,
         solver: &mut Solver,
-        collision: &dyn Collide,
+        (collision, grounds): (&dyn Collide, &[Arc<SolidField>]),
         bodies: Option<(Vec3, Vec3)>,
         is_body: impl Fn(Entity) -> bool,
     ) {
-        let grounds = collision.grounds();
         let regrounded = self.sources.len() != grounds.len()
             || self
                 .sources

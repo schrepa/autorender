@@ -5,7 +5,7 @@ use engine_places_simulation::physics::{
     CollisionLayers, CollisionRay, PlacedPart, QueryFilter, RayHit, SensorFilter, ShapeCastOptions,
     ShapeHit,
 };
-use engine_places_simulation::solids::{Bounds, SolidField, WorldSolid};
+use engine_solids::{Bounds, SolidField, WorldSolid};
 use glam::Vec3;
 
 use crate::geometry::{AffineShape, Narrow, intersects};

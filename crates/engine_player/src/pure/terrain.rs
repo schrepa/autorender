@@ -4,7 +4,7 @@ use std::sync::Arc;
 use engine::BrickList;
 use engine::scene::{SceneDocument, SceneKinds};
 use engine_core::codec;
-use engine_core::{JobKind, JobRef, PureSession, RecordKey};
+use engine_core::{JobKind, PureSession, RecordKey};
 use engine_heightfield::layer::LayerKind;
 use engine_heightfield::path::lay_decks;
 use engine_heightfield::tile::{
@@ -15,11 +15,10 @@ use engine_heightfield::{
 };
 use engine_navigation::{
     Gait, NavOptions, NavPath, PORTALS, PortalsJob, Stepped, TilePortals, WalkData, WalkGround,
-    WalkSearch,
+    WalkObstacle, WalkSearch,
 };
-use engine_places_simulation::ground::{GroundGrid, GroundObstacle};
-use engine_places_world::terrain::TerrainLayers;
-use engine_terrain::jobs::{self, BAKE, BakeJob, GROUND_GRID, GroundIdentity, TILE_BUILD};
+use engine_open_world_kit::terrain::TerrainLayers;
+use engine_terrain::jobs::{self, BAKE, BakeJob, TILE_BUILD};
 use engine_terrain::{Terrain, TerrainScene};
 use engine_terrain_shading::jobs::lighting::{self, Ground};
 use engine_terrain_shading::jobs::{
@@ -42,7 +41,6 @@ const MACRO_TEXELS: u32 = 256;
 pub const KINDS: &[&JobKind] = &[
     &BAKE,
     &TILE_BUILD,
-    &GROUND_GRID,
     &LIGHTING,
     &BOUNCE,
     &MACRO_COLORS,
@@ -252,7 +250,7 @@ pub fn run(session: &mut dyn PureSession) -> Result<(), String> {
     for key in pyramid.level_tiles(gait.level) {
         let (ground, bytes) = portals(
             session,
-            (&tiles[&key], &baked, stack),
+            (&tiles[&key], &baked),
             (&pyramid, &gait),
             &[],
         )?;
@@ -270,7 +268,7 @@ pub fn run(session: &mut dyn PureSession) -> Result<(), String> {
     );
     let (_, bytes) = portals(
         session,
-        (&tile, &edited_layers, stack),
+        (&tile, &edited_layers),
         (&pyramid, &gait),
         &edits,
     )?;
@@ -288,7 +286,7 @@ pub fn run(session: &mut dyn PureSession) -> Result<(), String> {
 
     let route = (Vec2::new(212.0, 262.0), Vec2::new(412.0, 262.0));
     let (boulder, boulder_radius) = (Vec2::new(312.0, 262.0), 12.0);
-    let obstacles = [GroundObstacle::Circle {
+    let obstacles = [WalkObstacle::Circle {
         center: boulder,
         radius: boulder_radius,
     }];
@@ -514,24 +512,18 @@ fn codec_identity(bytes: &[u8]) -> Vec<u8> {
 
 fn portals(
     session: &mut dyn PureSession,
-    (tile, layers, stack): (&Tile, &Arc<Layers>, RecordKey),
+    (tile, layers): (&Tile, &Arc<Layers>),
     (pyramid, gait): (&Pyramid, &Gait),
     stamps: &[Stamp],
 ) -> Result<(WalkGround, Vec<u8>), String> {
     let key = tile.key();
+    let ground = walk_ground(tile, layers, pyramid);
     let job = PortalsJob {
-        grid: JobRef::from(&GROUND_GRID),
-        source: codec::encode(&GroundIdentity {
-            stack: stack.hash(),
-            pyramid: *pyramid,
-            edits: stamps.to_vec(),
-        }),
+        ground: ground.clone(),
         pyramid: *pyramid,
-        key,
         gait: *gait,
     };
     let bytes = session.run(&PORTALS, &job.input())?;
-    let ground = WalkGround::new(&walk_grid(tile, layers, pyramid), walk_water(tile), pyramid);
     session.check(
         codec::encode(&TilePortals::new(&ground, pyramid, gait)) == bytes,
         &|| {
@@ -545,7 +537,7 @@ fn portals(
     Ok((ground, bytes))
 }
 
-fn walk_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> GroundGrid {
+fn walk_ground(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> WalkGround {
     let side = TILE_SAMPLES as usize;
     let stride = TILE_STRIDE as usize;
     let stored = |x: usize, z: usize| (z + 1) * stride + x + 1;
@@ -578,13 +570,7 @@ fn walk_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> GroundGrid {
         holes = any.then(|| bits.into_boxed_slice());
     }
     lay_decks(&layers.bridges(), first, spacing, &mut heights);
-    GroundGrid {
-        key,
-        spacing,
-        heights,
-        holes,
-        water: None,
-    }
+    WalkGround::new((key, spacing), heights, holes, walk_water(tile))
 }
 
 fn walk_water(tile: &Tile) -> Option<Box<[f32]>> {
@@ -622,7 +608,7 @@ impl Graph {
         &self,
         pyramid: &Pyramid,
         route: (Vec2, Vec2),
-        obstacles: &[GroundObstacle],
+        obstacles: &[WalkObstacle],
         slice: u64,
     ) -> Result<Option<NavPath>, String> {
         let mut search =

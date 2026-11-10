@@ -40,8 +40,8 @@ use engine_core::{
 };
 use engine_places_rendering::reflections::TraceDepths;
 use engine_places_rendering::sky::EyeMedium;
-use engine_places_world::ground::Heightfield;
-use engine_places_world::water::Waterline;
+use engine_open_world_kit::ground::Heightfield;
+use engine_open_world_kit::water::Waterline;
 use engine_render::{DebugModes, DebugShown, RenderBricks, SlotModule, SurfaceKind};
 
 pub(crate) use engine_heightfield::TileKey;

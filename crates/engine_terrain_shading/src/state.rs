@@ -11,8 +11,8 @@ use engine_core::{
 };
 use engine_heightfield::tile::shaded_elsewhere;
 use engine_places_rendering::shadows::{ShadowChange, ShadowChanges};
-use engine_places_simulation::ground::{Pyramid, TileKey};
-use engine_places_world::ground::{
+use engine_tiles::{Pyramid, TileKey};
+use engine_open_world_kit::ground::{
     GroundBake, GroundBakes, GroundBaking, GroundTiles, Heightfield, HeldTile, PALETTE_ENTRIES,
     TerrainEntry, TerrainTiles, TileChange, TileFace, TileMaterials,
 };

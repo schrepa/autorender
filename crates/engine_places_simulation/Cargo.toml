@@ -8,10 +8,8 @@ publish.workspace = true
 [dependencies]
 engine_place.workspace = true
 engine_ecs.workspace = true
-engine_codec.workspace = true
 engine_math.workspace = true
 glam.workspace = true
-parry3d.workspace = true
 schemars.workspace = true
 serde.workspace = true
 

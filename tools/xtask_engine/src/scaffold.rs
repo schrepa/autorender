@@ -642,7 +642,7 @@ fn claim(
     };
     let kind = declared.kind.as_str();
     let core = matches!(declared.package.as_str(), "engine_core" | "engine_render");
-    if kind != "place" && !core {
+    if !matches!(kind, "place" | "kit") && !core {
         return Err(format!(
             "{part} is declared in {} (kind {kind}), which a brick cannot depend on",
             declared.package

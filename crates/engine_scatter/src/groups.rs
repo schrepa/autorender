@@ -8,7 +8,7 @@ use engine_core::{
 use engine_math::collections::HashMap;
 use engine_heightfield::tile::Placed;
 use engine_places_rendering::impostors::{ImpostorAsk, ImpostorRecord};
-use engine_places_world::ground::PlacedAsset;
+use engine_open_world_kit::ground::PlacedAsset;
 use engine_render::{pack_color, pack_surface};
 use glam::Vec3;
 

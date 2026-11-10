@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{GpuBits, GpuStruct, gpu_bits, gpu_consts, gpu_struct};
-use engine_places_world::ground::PaletteEntry;
+use engine_open_world_kit::ground::PaletteEntry;
 
 use crate::jobs::gpu::{BounceBin, BounceBlockWord, TILE_STRIDE};
 use crate::jobs::{bounce, lighting};
@@ -66,7 +66,7 @@ pub const HEIGHT_FORMAT: engine_render::wgpu::TextureFormat =
     engine_render::wgpu::TextureFormat::R32Float;
 
 pub const PALETTE_BYTES: usize =
-    engine_places_world::ground::PALETTE_ENTRIES as usize * size_of::<PaletteEntry>();
+    engine_open_world_kit::ground::PALETTE_ENTRIES as usize * size_of::<PaletteEntry>();
 
 const _: () = assert!(
     SUBDIVISION_MEASURE > SUBDIVISION_DRAW + 4

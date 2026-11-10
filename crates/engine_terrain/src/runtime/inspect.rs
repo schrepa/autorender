@@ -3,7 +3,6 @@ use super::*;
 use crate::layer::maps;
 use crate::{HydrologyBake, TerrainLayer};
 use engine_core::{Operation, SceneIds, stated};
-use engine_places_simulation::ground::UNKNOWN_TERRAIN;
 use serde_json::Value;
 
 pub const FALLS_SHOWN: usize = 16;

@@ -10,9 +10,9 @@ use engine_core::{
 };
 use engine_heightfield::layer::LayerKind;
 use engine_places_simulation::ground::Grounded;
-use engine_places_world::paths::{ScenePath, ScenePathSources, ScenePaths};
+use engine_open_world_kit::paths::{ScenePath, ScenePathSources, ScenePaths};
 use engine_places_world::streaming::{StreamedKey, StreamedKeys, Streams};
-use engine_places_world::terrain::TerrainLayers;
+use engine_open_world_kit::terrain::TerrainLayers;
 use glam::{EulerRot, Mat4, Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

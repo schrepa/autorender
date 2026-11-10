@@ -3,7 +3,7 @@ use engine_places_simulation::physics::{
     ColliderShape, ColliderSolid, MAX_COLLIDER_EXTENT, MAX_COLLISION_COORDINATE,
     MIN_COLLIDER_EXTENT,
 };
-use engine_places_simulation::solids::Bounds;
+use engine_solids::Bounds;
 use glam::{Mat3, Mat4, Vec3};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
