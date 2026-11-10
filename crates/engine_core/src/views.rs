@@ -2,7 +2,7 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::prelude::{Query, Res, Resource, World};
 use bevy_ecs::system::{Commands, SystemParam, SystemParamItem};
 use glam::{Mat4, UVec2, Vec2, Vec3, Vec4};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{
@@ -219,14 +219,18 @@ impl Views {
         &self.refused
     }
 
-    fn json(&self) -> Value {
-        let listed: Vec<Value> = self.listed.iter().map(ViewFacts::json).collect();
-        let refused: Vec<Value> = self
-            .refused
-            .iter()
-            .map(|(view, error)| json!({ "view": view.to_bits(), "error": error }))
-            .collect();
-        json!({ "views": listed, "refused": refused })
+    fn reply(&self) -> ViewsReply {
+        ViewsReply {
+            views: self.listed.iter().map(ViewFacts::json).collect(),
+            refused: self
+                .refused
+                .iter()
+                .map(|(view, error)| RefusedView {
+                    view: view.to_bits(),
+                    error: error.clone(),
+                })
+                .collect(),
+        }
     }
 }
 
@@ -629,9 +633,22 @@ impl Picking<'_, '_> {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ViewsRequest {}
+
+#[derive(Default, Serialize, schemars::JsonSchema)]
+pub(crate) struct ViewsReply {
+    views: Vec<Value>,
+    refused: Vec<RefusedView>,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct RefusedView {
+    view: u64,
+    #[schemars(with = "Value")]
+    error: Error,
+}
 
 pub(crate) struct ViewsState;
 
@@ -640,13 +657,17 @@ impl Operation for ViewsState {
     const CONTROL: bool = false;
     type Params = Option<Res<'static, Views>>;
     type Request = ViewsRequest;
+    type Reply = ViewsReply;
 
-    fn run(views: SystemParamItem<'_, '_, Self::Params>, _: ViewsRequest) -> Result<Value, Error> {
-        Ok(views.map_or_else(|| json!({ "views": [], "refused": [] }), |views| views.json()))
+    fn run(
+        views: SystemParamItem<'_, '_, Self::Params>,
+        _: ViewsRequest,
+    ) -> Result<ViewsReply, Error> {
+        Ok(views.map_or_else(ViewsReply::default, |views| views.reply()))
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ViewControl {
     #[serde(default)]
@@ -657,11 +678,12 @@ impl Operation for ViewControl {
     const NAME: &'static str = "view";
     type Params = (Res<'static, Views>, Commands<'static, 'static>);
     type Request = Self;
+    type Reply = ViewReply;
 
     fn run(
         (views, mut commands): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<ViewReply, Error> {
         let main = views.main();
         let held = views
             .frozen
@@ -678,6 +700,13 @@ impl Operation for ViewControl {
                 }
             });
         }
-        Ok(json!({ "frozen_at": frozen.map(|(_, eye)| eye.to_array()) }))
+        Ok(ViewReply {
+            frozen_at: frozen.map(|(_, eye)| eye.to_array()),
+        })
     }
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct ViewReply {
+    frozen_at: Option<[f32; 3]>,
 }

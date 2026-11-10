@@ -4,9 +4,8 @@ use std::panic::Location;
 use bevy_ecs::component::{ComponentId, Mutable};
 use bevy_ecs::query::FilteredAccessSet;
 use bevy_ecs::resource::Resource;
-use bevy_ecs::system::{IntoSystem, StaticSystemParam, System, SystemParam};
 use bevy_ecs::world::World;
-use engine_place::{Error, GpuStruct, List, PlaceDecl, Slot};
+use engine_place::{Call, Error, EventDecl, EventPage, GpuStruct, List, Operation, PlaceDecl, Slot};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -283,65 +282,72 @@ pub struct OperationEntry {
     pub brick: &'static str,
     pub control: bool,
     pub at: &'static Location<'static>,
-    run: fn(&mut World, Value) -> Result<Value, Error>,
-    access: fn(&mut World) -> FilteredAccessSet,
-    schema: fn() -> Value,
-    result_schema: fn() -> Option<Value>,
+    call: Call,
 }
 
 impl OperationEntry {
     #[track_caller]
-    pub fn of<P: SystemParam + 'static>(
-        name: &'static str,
-        control: bool,
-        run: fn(&mut World, Value) -> Result<Value, Error>,
-    ) -> Self {
+    pub fn of(call: Call) -> Self {
         Self {
-            name,
+            name: call.name,
             brick: "",
-            control,
+            control: call.control,
             at: Location::caller(),
-            run,
-            access: access_of::<P>,
-            schema: object_schema,
-            result_schema: no_schema,
+            call,
         }
     }
 
-    #[must_use]
-    pub fn schemas(mut self, schema: fn() -> Value, result_schema: fn() -> Option<Value>) -> Self {
-        self.schema = schema;
-        self.result_schema = result_schema;
-        self
+    pub fn declares<O: Operation>(&self) -> bool {
+        self.call.declares::<O>()
     }
 
     pub fn run(&self, world: &mut World, request: Value) -> Result<Value, Error> {
-        (self.run)(world, request)
+        self.call.run(world, request)
     }
 
     pub fn access(&self, world: &mut World) -> FilteredAccessSet {
-        (self.access)(world)
+        self.call.access(world)
     }
 
-    pub fn schema(&self) -> Value {
-        (self.schema)()
+    pub fn request_schema(&self) -> Value {
+        self.call.request_schema()
     }
 
-    pub fn result_schema(&self) -> Option<Value> {
-        (self.result_schema)()
+    pub fn reply_schema(&self) -> Value {
+        self.call.reply_schema()
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct EventEntry {
+    pub name: &'static str,
+    pub brick: &'static str,
+    pub at: &'static Location<'static>,
+    event: EventDecl,
+}
+
+impl EventEntry {
+    #[track_caller]
+    pub fn of(event: EventDecl) -> Self {
+        Self {
+            name: event.name,
+            brick: "",
+            at: Location::caller(),
+            event,
+        }
+    }
+
+    pub fn read(&self, world: &World, after: u64) -> Option<EventPage> {
+        self.event.read(world, after)
+    }
+
+    pub fn row_schema(&self) -> Value {
+        self.event.row_schema()
     }
 }
 
 fn no_scene_check(_: &Value, _: &str, _: &dyn Any) -> Result<(), Error> {
     Ok(())
-}
-
-fn object_schema() -> Value {
-    serde_json::json!({ "type": "object" })
-}
-
-fn no_schema() -> Option<Value> {
-    None
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -397,13 +403,6 @@ pub fn set_section<T: Resource + DeserializeOwned>(
     world.insert_resource(section);
     Ok(())
 }
-
-pub fn access_of<P: SystemParam + 'static>(world: &mut World) -> FilteredAccessSet {
-    let mut probe = IntoSystem::into_system(probe::<P>);
-    probe.initialize(world)
-}
-
-fn probe<P: SystemParam + 'static>(_: StaticSystemParam<P>) {}
 
 pub(crate) fn init_of<T: Resource + Default>(world: &mut World) {
     if !world.contains_resource::<T>() {

@@ -8,7 +8,6 @@ use engine_core::{
 };
 use engine_settings::{ErrorCode, Expected};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
 use crate::SceneSurface;
 use crate::validation::{identifier, moved};
@@ -632,6 +631,27 @@ pub struct SceneMaterialControl {
     pub material: SceneMaterial,
 }
 
+#[cfg(not(feature = "schema"))]
+impl schemars::JsonSchema for SceneMaterialControl {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "SceneMaterialControl".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "object",
+            "properties": { "material": { "type": "object" } },
+            "required": ["material"],
+        })
+    }
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct SceneMaterialReply {
+    pub temporary: bool,
+    pub material: String,
+}
+
 impl Operation for SceneMaterialControl {
     const NAME: &'static str = "scene_material";
     type Params = (
@@ -639,11 +659,12 @@ impl Operation for SceneMaterialControl {
         Option<ResMut<'static, AssetLibrary>>,
     );
     type Request = Self;
+    type Reply = SceneMaterialReply;
 
     fn run(
         (context, assets): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<SceneMaterialReply, Error> {
         let id = request.material.id.as_str();
         let unknown = |names: Vec<&str>| {
             Error::new(ErrorCode::UnknownReference, "$.material.id")
@@ -675,11 +696,9 @@ impl Operation for SceneMaterialControl {
             .material(|texture| textures[texture]);
         let mut assets = assets.ok_or_else(|| Error::new(ErrorCode::MissingAssetLibrary, "$"))?;
         assets.replace_material(handle, material)?;
-        Ok(json!({ "temporary": true, "material": id }))
-    }
-
-    #[cfg(feature = "schema")]
-    fn schema() -> Value {
-        serde_json::to_value(schemars::schema_for!(Self)).unwrap_or(Value::Null)
+        Ok(SceneMaterialReply {
+            temporary: true,
+            material: id.to_owned(),
+        })
     }
 }

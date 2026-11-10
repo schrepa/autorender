@@ -213,7 +213,10 @@ fn help(options: &[String]) -> Result<(), String> {
     let json = options.iter().any(|option| option == "--json");
     if json {
         let mut help = command_line::commands_json(&commands());
-        help["agent"] = serde_json::json!({ "verbs": development::verbs()? });
+        help["agent"] = serde_json::json!({
+            "verbs": development::verbs()?,
+            "calls": development::calls()?,
+        });
         println!("{help}");
     } else {
         println!("{}", command_line::commands_text(&commands()));

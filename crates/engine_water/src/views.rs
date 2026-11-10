@@ -2,12 +2,11 @@ use bevy_ecs::prelude::*;
 use engine_core::{Error, Operation};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::RiverFlow;
 use crate::state::WaterState;
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct PoolView {
     pub at: [f32; 3],
     pub rise: f32,
@@ -18,13 +17,18 @@ pub struct PoolView {
     pub area: f32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub(crate) struct FlowView {
     pub blocks: usize,
     pub pools: Vec<PoolView>,
 }
 
-#[derive(Deserialize, Default)]
+#[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct WaterPools {
+    pub terrains: Vec<FlowView>,
+}
+
+#[derive(Deserialize, Default, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WaterFlowQuery {}
 
@@ -32,9 +36,10 @@ impl Operation for WaterFlowQuery {
     const NAME: &'static str = "water_pools";
     type Params = Res<'static, WaterState>;
     type Request = Self;
+    type Reply = WaterPools;
 
-    fn run(state: SystemParamItem<'_, '_, Self::Params>, _: Self) -> Result<Value, Error> {
-        let flows: Vec<FlowView> = state
+    fn run(state: SystemParamItem<'_, '_, Self::Params>, _: Self) -> Result<WaterPools, Error> {
+        let terrains: Vec<FlowView> = state
             .terrains
             .iter()
             .filter(|terrain| !terrain.surroundings)
@@ -46,9 +51,7 @@ impl Operation for WaterFlowQuery {
                 }
             })
             .collect();
-        serde_json::to_value(flows).map_err(|error| {
-            Error::new(engine_core::ErrorCode::InvalidValue, "$").got(error.to_string())
-        })
+        Ok(WaterPools { terrains })
     }
 }
 

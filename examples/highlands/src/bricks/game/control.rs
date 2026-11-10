@@ -8,13 +8,12 @@ use engine_core::{
 use engine_places_simulation::physics::RigidBody;
 use glam::Vec2;
 use serde::Deserialize;
-use serde_json::Value;
 
 use crate::bricks::game::cave::{Cave, CaveMouth};
 use crate::bricks::game::content::{self, Content};
 use crate::bricks::game::views::{Views, bodies_view, show};
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum HighlandsControl {
     Land,
@@ -50,6 +49,7 @@ impl Operation for HighlandsControl {
         ),
     );
     type Request = Self;
+    type Reply = ();
 
     fn run(
         (
@@ -58,7 +58,7 @@ impl Operation for HighlandsControl {
             (rigid, mut commands),
         ): SystemParamItem<'_, '_, Self::Params>,
         control: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<(), Error> {
         match control {
             Self::Land => {
                 let mut provided = provided.ok_or_else(|| {
@@ -99,6 +99,6 @@ impl Operation for HighlandsControl {
             }
             Self::Reset => views.reset(),
         }
-        Ok(Value::Null)
+        Ok(())
     }
 }

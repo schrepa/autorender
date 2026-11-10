@@ -18,6 +18,7 @@ engine_math.workspace = true
 bytemuck.workspace = true
 libm.workspace = true
 glam.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 

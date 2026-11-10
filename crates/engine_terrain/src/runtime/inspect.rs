@@ -1,4 +1,4 @@
-use super::operations::{coordinate, reply, within};
+use super::operations::{coordinate, within};
 use super::*;
 use crate::layer::maps;
 use crate::{HydrologyBake, TerrainLayer};
@@ -18,7 +18,7 @@ pub struct TerrainInspect {
     pub terrain: Option<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct TerrainView {
     pub terrain: crate::scene::SceneTerrain,
     pub levels: u32,
@@ -32,23 +32,24 @@ pub struct TerrainView {
     pub paths: Vec<PathView>,
     pub edits: Vec<TerrainEditView>,
     pub rivers: Vec<TerrainRiverView>,
+    #[schemars(with = "Option<serde_json::Value>")]
     pub surroundings: Option<SurroundingsStatus>,
     pub baking: bool,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct TerrainEditView {
     pub id: String,
     pub stamp: Stamp,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct TerrainRiverView {
     pub id: String,
     pub river: GivenRiver,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct PathView {
     pub layer: usize,
     pub baked: bool,
@@ -63,7 +64,7 @@ pub struct PathView {
     pub tunneled: Option<f32>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct ErosionView {
     pub baking: bool,
     pub samples: Option<usize>,
@@ -72,7 +73,7 @@ pub struct ErosionView {
     pub highest: Option<f32>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct HydrologyView {
     pub baking: bool,
     pub samples: Option<usize>,
@@ -87,7 +88,7 @@ pub struct HydrologyView {
     pub rivers: Vec<RiverView>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct RiverFlowView {
     pub rivers: usize,
     pub lakes: usize,
@@ -97,7 +98,7 @@ pub struct RiverFlowView {
     pub rapid_share: f32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct FallView {
     pub top: [f32; 3],
     pub bottom: [f32; 3],
@@ -106,7 +107,7 @@ pub struct FallView {
     pub discharge: f32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub struct RiverView {
     pub name: Option<String>,
     pub given: Option<[u32; 2]>,
@@ -131,11 +132,12 @@ impl Operation for TerrainInspect {
         SceneIds<'static, 'static>,
     );
     type Request = Self;
+    type Reply = TerrainView;
 
     fn run(
         (terrains, scenes, ids): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<TerrainView, Error> {
         let built = |entity: Entity| {
             scenes
                 .get(entity)
@@ -157,7 +159,7 @@ impl Operation for TerrainInspect {
                 None => error,
             });
         };
-        Ok(reply(terrain_view(&terrains, entity, scene, terrain)))
+        Ok(terrain_view(&terrains, entity, scene, terrain))
     }
 }
 
@@ -361,8 +363,12 @@ impl Operation for TerrainLayerSweep {
     const NAME: &'static str = "terrain_layer_sweep";
     type Params = Res<'static, Terrains>;
     type Request = Self;
+    type Reply = LayerSweep;
 
-    fn run(terrains: SystemParamItem<'_, '_, Self::Params>, request: Self) -> Result<Value, Error> {
+    fn run(
+        terrains: SystemParamItem<'_, '_, Self::Params>,
+        request: Self,
+    ) -> Result<LayerSweep, Error> {
         let center = Vec2::new(
             coordinate(request.center[0], "$.center[0]")?,
             coordinate(request.center[1], "$.center[1]")?,
@@ -373,12 +379,12 @@ impl Operation for TerrainLayerSweep {
             SWEEP_SAMPLES,
             "$.samples",
         )?;
-        Ok(reply(layer_sweep(
+        Ok(layer_sweep(
             &terrains,
             center,
             half_extent as f32,
             request.samples,
-        )))
+        ))
     }
 }
 
@@ -439,9 +445,10 @@ impl Operation for TerrainListing {
     const NAME: &'static str = "terrain_listing";
     type Params = Res<'static, Terrains>;
     type Request = Self;
+    type Reply = TerrainListed;
 
-    fn run(terrains: SystemParamItem<'_, '_, Self::Params>, _: Self) -> Result<Value, Error> {
-        Ok(reply(TerrainListed {
+    fn run(terrains: SystemParamItem<'_, '_, Self::Params>, _: Self) -> Result<TerrainListed, Error> {
+        Ok(TerrainListed {
             terrains: terrains
                 .entries
                 .iter()
@@ -458,6 +465,6 @@ impl Operation for TerrainListing {
                     drawn: state.drawn,
                 })
                 .collect(),
-        }))
+        })
     }
 }

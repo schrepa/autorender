@@ -7,16 +7,11 @@ use engine_places_simulation::ground::{Ground, GroundRead, UNKNOWN_TERRAIN};
 use engine_places_simulation::navigation::{NavAgent, NavStatus, NavWalk};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
 use crate::{NavAgents, NavOptions, NavQuery, NavStats, Navigation, ObstacleColliders};
 
 const COORDINATE: Rule = Rule::Range(-1.0e6, 1.0e6);
 const FIRST_AGENTS: usize = 16;
-
-pub(crate) fn schema_of<T: schemars::JsonSchema>() -> Value {
-    serde_json::to_value(schemars::schema_for!(T)).unwrap_or(Value::Null)
-}
 
 #[derive(Serialize, schemars::JsonSchema)]
 pub struct NavAgentView {
@@ -120,24 +115,17 @@ impl Operation for NavAgentQuery {
         >,
     );
     type Request = Self;
+    type Reply = NavAgentView;
 
     fn run(
         (ids, agents): SystemParamItem<'_, '_, Self::Params>,
         Self { entity: id }: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<NavAgentView, Error> {
         let found = ids
             .entity(&id)
             .and_then(|entity| agents.get(entity).ok())
             .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$.entity").got(&id))?;
-        Ok(json!(agent_view(&ids, found)))
-    }
-
-    fn schema() -> Value {
-        schema_of::<Self>()
-    }
-
-    fn result_schema() -> Option<Value> {
-        Some(schema_of::<NavAgentView>())
+        Ok(agent_view(&ids, found))
     }
 }
 
@@ -163,11 +151,12 @@ impl Operation for NavAgentsQuery {
         >,
     );
     type Request = Self;
+    type Reply = NavAgentsView;
 
     fn run(
         (stats, navigation, ids, agents): SystemParamItem<'_, '_, Self::Params>,
         _: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<NavAgentsView, Error> {
         let (failed_jobs, latest_job_failure) = navigation.job_failures();
         let latest_job_failure = latest_job_failure.map(str::to_owned);
         let first = agents
@@ -181,7 +170,7 @@ impl Operation for NavAgentsQuery {
                 left: remaining(walk, transform.translation),
             })
             .collect();
-        Ok(json!(NavAgentsView {
+        Ok(NavAgentsView {
             agents: stats.agents,
             searching: stats.searching,
             waiting: stats.waiting,
@@ -196,15 +185,7 @@ impl Operation for NavAgentsQuery {
             failed_jobs,
             latest_job_failure,
             first,
-        }))
-    }
-
-    fn schema() -> Value {
-        schema_of::<Self>()
-    }
-
-    fn result_schema() -> Option<Value> {
-        Some(schema_of::<NavAgentsView>())
+        })
     }
 }
 
@@ -229,11 +210,12 @@ impl Operation for NavGoControl {
         Query<'static, 'static, &'static mut NavAgent>,
     );
     type Request = Self;
+    type Reply = NavGoResult;
 
     fn run(
         (ids, mut agents): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<NavGoResult, Error> {
         let Self {
             entity: id,
             destination,
@@ -252,14 +234,10 @@ impl Operation for NavGoControl {
             .and_then(|entity| agents.get_mut(entity).ok())
             .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$.entity").got(&id))?;
         agent.destination = destination;
-        Ok(json!(NavGoResult {
+        Ok(NavGoResult {
             temporary: true,
             destination,
-        }))
-    }
-
-    fn schema() -> Value {
-        schema_of::<Self>()
+        })
     }
 }
 
@@ -316,6 +294,7 @@ impl Operation for NavPathQuery {
         ObstacleColliders<'static, 'static>,
     );
     type Request = Self;
+    type Reply = NavPathResult;
 
     fn run(
         ((settings, ground), filled, records, ids, mut navigation, mut jobs, colliders): SystemParamItem<
@@ -324,16 +303,12 @@ impl Operation for NavPathQuery {
             Self::Params,
         >,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<NavPathResult, Error> {
         walk(
             ((&*settings, &*ground, &colliders), filled.listed(), &*records, &ids),
             (&mut *navigation, &mut jobs),
             request,
         )
-    }
-
-    fn schema() -> Value {
-        schema_of::<Self>()
     }
 }
 
@@ -361,7 +336,7 @@ fn walk(
     ),
     (navigation, jobs): (&mut NavAgents, &mut Jobs),
     NavPathQuery { from, to, options }: NavPathQuery,
-) -> Result<Value, Error> {
+) -> Result<NavPathResult, Error> {
     let from = Vec2::new(
         coordinate(from[0], "$.from[0]")?,
         coordinate(from[1], "$.from[1]")?,
@@ -389,7 +364,7 @@ fn walk(
         &options,
     );
     let round = |value: f32| (f64::from(value) * 100.0).round() / 100.0;
-    Ok(json!(NavPathResult {
+    Ok(NavPathResult {
         terrain,
         options,
         searching: found == NavQuery::Searching,
@@ -402,5 +377,5 @@ fn walk(
             }),
             NavQuery::Searching | NavQuery::Unreachable => None,
         },
-    }))
+    })
 }

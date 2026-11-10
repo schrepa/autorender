@@ -9,11 +9,12 @@ use bevy_ecs::resource::{IsResource, Resource};
 use bevy_ecs::schedule::IntoScheduleConfigs;
 use bevy_ecs::system::{
     Commands, In, IntoSystem, IsFunctionSystem, Query, ReadOnlySystemParam, Res, ScheduleSystem,
-    SystemParam, SystemParamFunction, SystemState,
+    SystemParam, SystemParamFunction,
 };
 use bevy_ecs::world::World;
+use engine_place::{Call, Event, EventDecl, Raises};
 use engine_registry::{
-    BrickRecord, BrickStates, GateFn, JobList, MembersOf, NamedField, OperationEntry,
+    BrickRecord, BrickStates, EventEntry, GateFn, JobList, MembersOf, NamedField, OperationEntry,
     OperationScene, PlainSystems, Registry, RegistryBuilder, Removal, SceneEntity, SectionRule,
     SettingsEntry, SpawnedBy, StatsEntry,
 };
@@ -97,6 +98,7 @@ impl Bricks<'_> {
         self
     }
 
+    #[track_caller]
     pub fn fill<S: Slot>(&mut self, wgsl: Option<Module>) -> &mut Self {
         self.record.fill::<S>(wgsl.map(boxed_module));
         self
@@ -168,10 +170,7 @@ impl Bricks<'_> {
 
     #[track_caller]
     pub fn operation<O: Operation>(&mut self) -> &mut Self {
-        self.record.operation(
-            OperationEntry::of::<O::Params>(O::NAME, O::CONTROL, run_operation::<O>)
-                .schemas(O::schema, O::result_schema),
-        );
+        self.record.operation(OperationEntry::of(Call::of::<O>()));
         self
     }
 
@@ -180,10 +179,14 @@ impl Bricks<'_> {
     where
         O::Params: Read,
     {
-        self.record.operation(
-            OperationEntry::of::<O::Params>(O::NAME, false, run_operation::<O>)
-                .schemas(O::schema, O::result_schema),
-        );
+        self.record
+            .operation(OperationEntry::of(Call::of::<O>().observed()));
+        self
+    }
+
+    #[track_caller]
+    pub fn event<E: Event, R: Raises<E>>(&mut self) -> &mut Self {
+        self.record.event(EventEntry::of(EventDecl::of::<E, R>()));
         self
     }
 
@@ -280,46 +283,6 @@ fn scene_of<S: Section>(value: &Value, path: &str, scene: &dyn Any) -> Result<()
             .check_scene(scene)
             .map_err(|error| error.within(path))
     })
-}
-
-pub(crate) fn run_operation<O: Operation>(
-    world: &mut World,
-    request: Value,
-) -> Result<Value, Error> {
-    let request: O::Request = engine_settings::parse_value(request)?;
-    answer::<O>(world, request)
-}
-
-fn answer<O: Operation>(world: &mut World, request: O::Request) -> Result<Value, Error> {
-    let mut state = SystemState::<O::Params>::new(world);
-    let params = state.get_mut(world).map_err(|refused| {
-        Error::new(
-            ErrorCode::MissingResource,
-            format!("$.operations.{}", O::NAME),
-        )
-        .got(refused.to_string())
-    })?;
-    let answer = O::run(params, request);
-    state.apply(world);
-    let answer = answer?;
-    let path = format!("$.operations.{}", O::NAME);
-    match answer.as_object() {
-        Some(fields) => {
-            if let Some(key) = crate::RESERVED_REPLY_KEYS
-                .iter()
-                .find(|key| fields.contains_key(**key))
-            {
-                return Err(Error::new(ErrorCode::InvalidValue, format!("{path}.{key}")).got(*key));
-            }
-        }
-        None if answer.is_null() => {}
-        None => {
-            return Err(Error::new(ErrorCode::InvalidValue, path)
-                .expected(crate::Expected::Object)
-                .got(answer));
-        }
-    }
-    Ok(answer)
 }
 
 pub trait Listing: Sized {

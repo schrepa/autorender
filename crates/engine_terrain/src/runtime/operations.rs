@@ -59,7 +59,3 @@ pub(super) fn terrain_entity(
             .ok_or_else(|| Error::new(UNKNOWN_TERRAIN, "$.terrain")),
     }
 }
-
-pub(super) fn reply(result: impl Serialize) -> serde_json::Value {
-    serde_json::to_value(result).expect("results_serialize")
-}

@@ -1,7 +1,8 @@
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use bevy_ecs::prelude::{Component, Resource};
-use engine_place::Slot;
+use bevy_ecs::prelude::{Component, Res, Resource};
+use bevy_ecs::system::SystemParamItem;
+use engine_place::{Call, Error, Operation, Slot};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -69,17 +70,45 @@ impl Default for SoundSource {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(transparent)]
 pub struct SoundHandle(u32);
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+#[serde(transparent)]
 pub struct VoiceHandle(u32);
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(default, deny_unknown_fields)]
 pub struct OneShot {
     pub bus: Bus,
     pub volume: f32,
     pub pitch: f32,
+    #[schemars(with = "Option<[f32; 3]>")]
     pub at: Option<Vec3>,
     pub radius: f32,
 }
@@ -131,6 +160,81 @@ pub struct Sounds {
 
 impl Slot for Sounds {
     const NAME: &'static str = "sounds";
+    const CALLS: &'static [Call] = &[
+        Call::of::<PlaySound>(),
+        Call::of::<StopVoice>(),
+        Call::of::<VoiceVolume>(),
+    ];
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PlaySound {
+    pub sound: SoundHandle,
+    #[serde(default)]
+    pub shot: OneShot,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct Voiced {
+    pub voice: Option<VoiceHandle>,
+}
+
+impl Operation for PlaySound {
+    const NAME: &'static str = "sound_play";
+    type Params = Res<'static, Sounds>;
+    type Request = Self;
+    type Reply = Voiced;
+
+    fn run(sounds: SystemParamItem<'_, '_, Self::Params>, request: Self) -> Result<Voiced, Error> {
+        Ok(Voiced {
+            voice: sounds.play(request.sound, request.shot),
+        })
+    }
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct StopVoice {
+    pub voice: VoiceHandle,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct Ordered {
+    pub ordered: bool,
+}
+
+impl Operation for StopVoice {
+    const NAME: &'static str = "sound_stop";
+    type Params = Res<'static, Sounds>;
+    type Request = Self;
+    type Reply = Ordered;
+
+    fn run(sounds: SystemParamItem<'_, '_, Self::Params>, request: Self) -> Result<Ordered, Error> {
+        Ok(Ordered {
+            ordered: sounds.stop(request.voice),
+        })
+    }
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceVolume {
+    pub voice: VoiceHandle,
+    pub volume: f32,
+}
+
+impl Operation for VoiceVolume {
+    const NAME: &'static str = "sound_volume";
+    type Params = Res<'static, Sounds>;
+    type Request = Self;
+    type Reply = Ordered;
+
+    fn run(sounds: SystemParamItem<'_, '_, Self::Params>, request: Self) -> Result<Ordered, Error> {
+        Ok(Ordered {
+            ordered: sounds.set_volume(request.voice, request.volume),
+        })
+    }
 }
 
 impl Sounds {

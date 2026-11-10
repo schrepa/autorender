@@ -7,7 +7,6 @@ use engine_core::{Error, Operation, SceneContext};
 use engine_registry::Registry;
 use engine_settings::{ErrorCode, Expected};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
 use crate::validation::identifier;
 use crate::{SceneDocument, SceneEnvironment};
@@ -126,6 +125,27 @@ pub struct SceneLookControl {
     pub name: String,
 }
 
+#[cfg(not(feature = "schema"))]
+impl schemars::JsonSchema for SceneLookControl {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "SceneLookControl".into()
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "type": "object",
+            "properties": { "name": { "type": "string" } },
+            "required": ["name"],
+        })
+    }
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct SceneLookReply {
+    pub temporary: bool,
+    pub look: String,
+}
+
 impl Operation for SceneLookControl {
     const NAME: &'static str = "scene_look";
     type Params = (
@@ -135,11 +155,12 @@ impl Operation for SceneLookControl {
         Commands<'static, 'static>,
     );
     type Request = Self;
+    type Reply = SceneLookReply;
 
     fn run(
         (looks, registry, context, mut commands): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<SceneLookReply, Error> {
         if let Some(look) = look_named(looks.as_deref(), &request.name, "$.name")? {
             let context = context.as_deref().cloned();
             crate::loading::within(context.as_ref(), || {
@@ -149,7 +170,10 @@ impl Operation for SceneLookControl {
                 let _ = crate::loading::within(context.as_ref(), || look.apply(world));
             });
         }
-        Ok(json!({ "temporary": true, "look": request.name }))
+        Ok(SceneLookReply {
+            temporary: true,
+            look: request.name,
+        })
     }
 }
 

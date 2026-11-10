@@ -2,13 +2,8 @@ use bevy_ecs::prelude::*;
 use engine_core::{Cursor, CursorRequests, Error, ErrorCode, Events, Operation};
 use engine_places_rendering::ui::{UiEvents, UiKind};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
 use crate::tree::{Flat, UiState};
-
-fn schema_of<T: schemars::JsonSchema>() -> Value {
-    serde_json::to_value(schemars::schema_for!(T)).unwrap_or(Value::Null)
-}
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -27,11 +22,12 @@ impl Operation for UiPress {
     const NAME: &'static str = "ui_press";
     type Params = (ResMut<'static, UiState>, Res<'static, CursorRequests>);
     type Request = Self;
+    type Reply = UiPressed;
 
     fn run(
         (mut state, cursor): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<UiPressed, Error> {
         let reach = crate::reaches(&cursor);
         let pressed = state
             .named(&request.id)
@@ -42,12 +38,34 @@ impl Operation for UiPress {
                 .variants(pressable_ids(&state, reach)));
         }
         state.pending.push(request.id.clone());
-        Ok(json!({ "id": request.id, "applies_on": "next_step" }))
+        Ok(UiPressed {
+            id: request.id,
+            applies_on: "next_step",
+        })
     }
+}
 
-    fn schema() -> Value {
-        schema_of::<Self>()
-    }
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct UiPressed {
+    id: String,
+    applies_on: &'static str,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct UiNodeView {
+    id: Option<String>,
+    kind: UiKind,
+    parent: Option<u32>,
+    rect: [f32; 4],
+    text: String,
+    fill: Option<f32>,
+    state: &'static str,
+}
+
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub(crate) struct UiTreeView {
+    nodes: Vec<UiNodeView>,
+    events: Vec<String>,
 }
 
 fn state_of(state: &UiState, at: u32) -> &'static str {
@@ -63,16 +81,16 @@ fn state_of(state: &UiState, at: u32) -> &'static str {
     }
 }
 
-fn node_view(state: &UiState, at: u32, flat: &Flat) -> Value {
-    json!({
-        "id": flat.node.id,
-        "kind": flat.node.kind,
-        "parent": flat.parent,
-        "rect": flat.at,
-        "text": flat.text,
-        "fill": (flat.node.kind == UiKind::Bar).then_some(flat.fill),
-        "state": state_of(state, at),
-    })
+fn node_view(state: &UiState, at: u32, flat: &Flat) -> UiNodeView {
+    UiNodeView {
+        id: flat.node.id.clone(),
+        kind: flat.node.kind,
+        parent: flat.parent,
+        rect: flat.at,
+        text: flat.text.clone(),
+        fill: (flat.node.kind == UiKind::Bar).then_some(flat.fill),
+        state: state_of(state, at),
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
@@ -83,12 +101,13 @@ impl Operation for UiTree {
     const NAME: &'static str = "ui_tree";
     type Params = (Res<'static, UiState>, Res<'static, UiEvents>);
     type Request = Self;
+    type Reply = UiTreeView;
 
     fn run(
         (state, events): SystemParamItem<'_, '_, Self::Params>,
         _: Self,
-    ) -> Result<Value, Error> {
-        let nodes: Vec<Value> = state
+    ) -> Result<UiTreeView, Error> {
+        let nodes: Vec<UiNodeView> = state
             .nodes
             .iter()
             .enumerate()
@@ -98,10 +117,9 @@ impl Operation for UiTree {
             Events::Listed(listed) => listed,
             Events::Missed(_) => &[],
         };
-        Ok(json!({ "nodes": nodes, "events": raised }))
-    }
-
-    fn schema() -> Value {
-        schema_of::<Self>()
+        Ok(UiTreeView {
+            nodes,
+            events: raised.to_vec(),
+        })
     }
 }

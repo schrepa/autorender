@@ -7,12 +7,12 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Applies, Asked, Brick, Bricks, ComponentKind, Error, ErrorCode, Level, Operation, Pause,
-    PauseReason, SceneComponents, Schedule, Source,
+    Applies, Asked, Brick, Bricks, ComponentKind, Error, ErrorCode, Level, LevelView, Operation,
+    Pause, PauseReason, SceneComponents, Schedule, Source,
 };
 use engine_places_rendering::screens::{Screen, ScreenAsk, Screens};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 const SCREEN: PauseReason = PauseReason::Brick("screen");
 
@@ -82,11 +82,23 @@ fn known(declared: &Query<'_, '_, &Screen>, name: &str) -> Result<(), Error> {
         .variants(declared.iter().map(|screen| screen.name.clone())))
 }
 
-fn stack_view(screens: &Screens) -> Value {
-    json!({"stack": screens.stack(), "top": screens.top()})
+#[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct ScreenStack {
+    stack: Vec<String>,
+    top: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    declared: Option<Vec<Screen>>,
 }
 
-#[derive(Deserialize)]
+fn stack_view(screens: &Screens) -> ScreenStack {
+    ScreenStack {
+        stack: screens.stack().to_vec(),
+        top: screens.top().map(str::to_owned),
+        declared: None,
+    }
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum ScreenRequest {
     Go { name: String },
@@ -103,11 +115,12 @@ impl Operation for ScreenOperation {
         Query<'static, 'static, &'static Screen>,
     );
     type Request = ScreenRequest;
+    type Reply = ScreenStack;
 
     fn run(
         (mut screens, declared): SystemParamItem<'_, '_, Self::Params>,
         request: ScreenRequest,
-    ) -> Result<Value, Error> {
+    ) -> Result<ScreenStack, Error> {
         match request {
             ScreenRequest::Go { name } => {
                 known(&declared, &name)?;
@@ -125,7 +138,7 @@ impl Operation for ScreenOperation {
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NoRequest {}
 
@@ -138,20 +151,22 @@ impl Operation for ScreenList {
         Query<'static, 'static, &'static Screen>,
     );
     type Request = NoRequest;
+    type Reply = ScreenStack;
 
     fn run(
         (screens, declared): SystemParamItem<'_, '_, Self::Params>,
         _: NoRequest,
-    ) -> Result<Value, Error> {
-        let mut listed: Vec<&Screen> = declared.iter().collect();
+    ) -> Result<ScreenStack, Error> {
+        let mut listed: Vec<Screen> = declared.iter().cloned().collect();
         listed.sort_by(|a, b| a.name.cmp(&b.name));
-        let mut view = stack_view(&screens);
-        view["declared"] = json!(listed);
-        Ok(view)
+        Ok(ScreenStack {
+            declared: Some(listed),
+            ..stack_view(&screens)
+        })
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct LevelAsk {
     path: String,
@@ -163,13 +178,14 @@ impl Operation for LevelOperation {
     const NAME: &'static str = "level";
     type Params = ResMut<'static, Level>;
     type Request = LevelAsk;
+    type Reply = LevelAsk;
 
     fn run(
         mut level: SystemParamItem<'_, '_, Self::Params>,
         request: LevelAsk,
-    ) -> Result<Value, Error> {
+    ) -> Result<LevelAsk, Error> {
         level.load(request.path.clone());
-        Ok(json!({"path": request.path}))
+        Ok(request)
     }
 }
 
@@ -179,8 +195,12 @@ impl Operation for LevelState {
     const NAME: &'static str = "level_progress";
     type Params = Res<'static, Level>;
     type Request = NoRequest;
+    type Reply = LevelView;
 
-    fn run(level: SystemParamItem<'_, '_, Self::Params>, _: NoRequest) -> Result<Value, Error> {
-        Ok(json!(level.view()))
+    fn run(
+        level: SystemParamItem<'_, '_, Self::Params>,
+        _: NoRequest,
+    ) -> Result<LevelView, Error> {
+        Ok(level.view())
     }
 }

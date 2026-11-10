@@ -3,7 +3,6 @@ use engine_places_simulation::navigation::NavAgent;
 use serde_json::Value;
 
 use crate::agents::SceneNavAgent;
-use crate::dev::schema_of;
 
 pub const INVALID_NAV_AGENT: ErrorCode = ErrorCode::brick("invalid_nav_agent");
 
@@ -15,7 +14,7 @@ pub(crate) fn nav_agent() -> ComponentKindOf<NavAgent> {
 }
 
 fn schema() -> Value {
-    schema_of::<SceneNavAgent>()
+    schemars::schema_for!(SceneNavAgent).to_value()
 }
 
 fn validate(agent: &NavAgent, path: &str) -> Result<(), Error> {

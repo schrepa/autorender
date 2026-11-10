@@ -207,6 +207,8 @@ pub enum DescribeResult {
         #[serde(skip_serializing_if = "Option::is_none")]
         shows: Option<&'static str>,
         args: Value,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reply: Option<Value>,
     },
     Brick {
         kind: TypeKind,

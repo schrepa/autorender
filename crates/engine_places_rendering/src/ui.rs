@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use bevy_ecs::prelude::{Component, Resource};
-use engine_place::{Cursor, Events, Feed, Slot};
+use bevy_ecs::prelude::{Component, Res, Resource};
+use bevy_ecs::system::SystemParamItem;
+use engine_place::{Call, Cursor, Error, Events, Feed, Operation, Slot};
 use serde::{Deserialize, Serialize};
 
 use crate::text::{DEFAULT_TEXT_SIZE, TextAlign};
@@ -198,7 +199,7 @@ pub struct UiRoot {
     pub bytes: Option<Arc<[u8]>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum UiValue {
     Text(String),
@@ -221,6 +222,26 @@ pub struct UiValues {
 
 impl Slot for UiValues {
     const NAME: &'static str = "ui_values";
+    const CALLS: &'static [Call] = &[Call::of::<SetUiValue>()];
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SetUiValue {
+    pub name: String,
+    pub value: UiValue,
+}
+
+impl Operation for SetUiValue {
+    const NAME: &'static str = "ui_value";
+    type Params = Res<'static, UiValues>;
+    type Request = Self;
+    type Reply = ();
+
+    fn run(values: SystemParamItem<'_, '_, Self::Params>, request: Self) -> Result<(), Error> {
+        values.set(&request.name, request.value);
+        Ok(())
+    }
 }
 
 impl UiValues {

@@ -4,10 +4,9 @@ use engine_places_simulation::ground::Ground;
 use engine_places_simulation::physics::{Collide, CollisionRay, QueryFilter};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::bounds;
-use crate::queries::{bounded, reply, schema_of};
+use crate::queries::bounded;
 use crate::types::missing_brick;
 use crate::world::{CollisionWorld, Fresh};
 
@@ -36,11 +35,12 @@ impl Operation for TerrainSweepQuery {
         Filled<'static, Ground>,
     );
     type Request = Self;
+    type Reply = TerrainSweepResult;
 
     fn run(
         (mut fresh, ground, grounded): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<TerrainSweepResult, Error> {
         let Self {
             center,
             half_extent,
@@ -68,14 +68,6 @@ impl Operation for TerrainSweepQuery {
             samples,
         )
     }
-
-    fn schema() -> Value {
-        schema_of::<Self>()
-    }
-
-    fn result_schema() -> Option<Value> {
-        Some(schema_of::<TerrainSweepResult>())
-    }
 }
 
 fn default_half_extent() -> f64 {
@@ -96,7 +88,7 @@ fn sweep(
     center: Vec2,
     half_extent: f32,
     samples: u32,
-) -> Result<Value, Error> {
+) -> Result<TerrainSweepResult, Error> {
     let Some(ground) = ground else {
         return Err(missing_brick(Ground::NAME, "$.op"));
     };
@@ -156,7 +148,7 @@ fn sweep(
             }
         }
     }
-    Ok(reply(TerrainSweepResult {
+    Ok(TerrainSweepResult {
         points: samples * samples,
         resident: queried,
         level_zero,
@@ -168,11 +160,11 @@ fn sweep(
             worst: rays,
         }),
         examples: collected,
-    }))
+    })
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
-struct TerrainSweepResult {
+pub(crate) struct TerrainSweepResult {
     points: u32,
     resident: usize,
     level_zero: usize,

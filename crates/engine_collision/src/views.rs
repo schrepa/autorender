@@ -2,26 +2,26 @@ use bevy_ecs::prelude::*;
 use engine_core::{Error, ErrorCode, GlobalTransforms, Operation, SceneIds};
 use engine_places_simulation::physics::{Collider, ColliderShape};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
-use crate::queries::{reply, resolve_entity, schema_of};
+use crate::queries::resolve_entity;
 use crate::types::{ColliderStatus, Fault, check_collider_transform};
 use crate::world::{CollisionWorld, Fresh};
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum ColliderShapeView {
     Cuboid { half_extents: [f32; 3] },
     Sphere { radius: f32 },
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, schemars::JsonSchema)]
 pub(crate) struct ColliderView {
     pub shape: ColliderShapeView,
     pub memberships: u32,
     pub filter: u32,
     pub sensor: bool,
     pub world_valid: bool,
+    #[schemars(with = "Option<serde_json::Value>")]
     pub world_error: Option<Error>,
     pub cache_status: String,
 }
@@ -43,21 +43,18 @@ impl Operation for ColliderQuery {
         Fresh<'static, 'static>,
     );
     type Request = Self;
+    type Reply = ColliderView;
 
     fn run(
         (ids, entities, colliders, globals, mut fresh): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<ColliderView, Error> {
         let entity = resolve_entity(&ids, &entities, &request.entity, false, "$.entity")?;
         let view = collider_view(&colliders, &globals, Some(fresh.world()), entity)
             .ok_or_else(|| {
                 Error::new(ErrorCode::MissingComponent, "$.entity").got(&request.entity)
             })?;
-        Ok(reply(view))
-    }
-
-    fn schema() -> Value {
-        schema_of::<Self>()
+        Ok(view)
     }
 }
 

@@ -24,7 +24,7 @@ pub use attribution::{
     BrickCost, BrickCosts, BrickRow, BrickTable, CORE_ROW, GPU_IDLE_ROW, UNATTRIBUTED_ROW,
 };
 pub use entries::{
-    Filled, JoinEntry, OperationEntry, Owned, PieceEntry, SettingsEntry, StatsEntry, access_of,
+    EventEntry, Filled, JoinEntry, OperationEntry, Owned, PieceEntry, SettingsEntry, StatsEntry,
     parse_section, set_section,
 };
 pub use hooks::{BrickHooks, NamedField, Removal};
@@ -36,12 +36,13 @@ pub use members::MembersOf;
 pub use owners::{Shared, ValueKind};
 pub use record::{BrickRecord, PlainSystems, RecordExt, SectionRule};
 pub use registry::{
-    BrickId, BrickSet, Registry, RegistryBuilder, check_sections, run_operation, settings,
+    BrickId, BrickSet, Registry, RegistryBuilder, call, check_sections, run_operation, settings,
 };
 pub use scene::{
     AuthoredId, OperationScene, SceneEntity, SceneRead, SpawnedBy, authored_entity, authored_id,
 };
 pub use services::FrameFacts;
 pub use state::{
-    BrickState, BrickStates, Despawn, GateDriver, GateFn, GateId, Scope, ask_on, fault, fault_of,
+    BRICK_STATE_EVENT, BrickChange, BrickChangeRow, BrickState, BrickStateWord, BrickStates,
+    Despawn, GateDriver, GateFn, GateId, Scope, ask_on, brick_changes, fault, fault_of,
 };

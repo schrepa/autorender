@@ -1,9 +1,11 @@
 use bevy_ecs::resource::Resource;
-use bevy_ecs::system::{SystemParam, SystemParamItem};
-use serde::{Serialize, de::DeserializeOwned};
-use serde_json::Value;
+use bevy_ecs::system::SystemParamItem;
+use bevy_ecs::world::World;
+use engine_place::{EventPage, Operation};
+use engine_registry::Registry;
+use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::{Error, SceneContext};
+use crate::{Error, ErrorCode, Expected, SceneContext};
 
 pub trait Section:
     Resource + Clone + Default + PartialEq + Serialize + DeserializeOwned + schemars::JsonSchema
@@ -43,23 +45,50 @@ impl Cut {
     }
 }
 
-pub const RESERVED_REPLY_KEYS: [&str; 4] = ["observation", "paused", "source", "rendering"];
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EventsRequest {
+    pub name: String,
+    #[serde(default)]
+    pub after: u64,
+}
 
-pub trait Operation: Send + Sync + 'static {
-    const NAME: &'static str;
-    const CONTROL: bool = true;
-    type Params: SystemParam + 'static;
-    type Request: DeserializeOwned + 'static;
+#[derive(Debug, Serialize, schemars::JsonSchema)]
+pub struct EventsReply {
+    pub name: String,
+    #[serde(flatten)]
+    pub page: EventPage,
+}
+
+pub struct EventsQuery;
+
+impl Operation for EventsQuery {
+    const NAME: &'static str = "events";
+    const CONTROL: bool = false;
+    type Params = &'static World;
+    type Request = EventsRequest;
+    type Reply = EventsReply;
+
     fn run(
-        params: SystemParamItem<'_, '_, Self::Params>,
-        request: Self::Request,
-    ) -> Result<Value, Error>;
-
-    fn schema() -> Value {
-        serde_json::json!({ "type": "object" })
-    }
-
-    fn result_schema() -> Option<Value> {
-        None
+        world: SystemParamItem<'_, '_, Self::Params>,
+        request: EventsRequest,
+    ) -> Result<EventsReply, Error> {
+        let registry = world
+            .get_resource::<Registry>()
+            .ok_or_else(|| Error::new(ErrorCode::MissingResource, "$.name"))?;
+        let event = registry.event(&request.name).ok_or_else(|| {
+            Error::new(ErrorCode::UnknownVariant, "$.name")
+                .got(&request.name)
+                .variants(registry.events().map(|event| event.name))
+        })?;
+        let page = event.read(world, request.after).ok_or_else(|| {
+            Error::new(ErrorCode::MissingResource, "$.name")
+                .expected(Expected::Present)
+                .got(&request.name)
+        })?;
+        Ok(EventsReply {
+            name: request.name,
+            page,
+        })
     }
 }

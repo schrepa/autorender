@@ -38,6 +38,8 @@ const GENERATED: &[&str] = &[
     <layouts::BlendedView as engine_core::GpuStruct>::WGSL,
 ];
 
+pub use drawn::{MeshesListed, MeshesListing};
+
 pub struct MeshesBrick;
 
 impl Brick for MeshesBrick {

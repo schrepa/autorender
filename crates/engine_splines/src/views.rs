@@ -2,12 +2,11 @@ use bevy_ecs::prelude::*;
 use engine_core::{Error, ErrorCode, Expected, Operation, SceneContext, SceneIds};
 use engine_places_world::splines::SplineMesh;
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
 use crate::spline_mesh::SplineBuilds;
 
-#[derive(Serialize)]
-struct SplineMeshView {
+#[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct SplineMeshView {
     points: Vec<[f32; 3]>,
     mesh: Option<String>,
     material: Option<String>,
@@ -15,10 +14,11 @@ struct SplineMeshView {
     copies: Option<u32>,
     chunks: Option<usize>,
     vertices: Option<u32>,
+    #[schemars(with = "Option<serde_json::Value>")]
     error: Option<Error>,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SplineMeshRequest {
     entity: String,
@@ -36,11 +36,12 @@ impl Operation for InspectSplineMesh {
         Option<Res<'static, SceneContext>>,
     );
     type Request = SplineMeshRequest;
+    type Reply = Option<SplineMeshView>;
 
     fn run(
         (ids, alive, splines, builds, context): SystemParamItem<'_, '_, Self::Params>,
         request: SplineMeshRequest,
-    ) -> Result<Value, Error> {
+    ) -> Result<Option<SplineMeshView>, Error> {
         let id = request.entity;
         let entity = ids.entity(&id).ok_or_else(|| {
             Error::new(ErrorCode::UnknownEntity, "$.entity")
@@ -53,7 +54,7 @@ impl Operation for InspectSplineMesh {
                 .got(&id));
         }
         let Ok(spline) = splines.get(entity) else {
-            return Ok(Value::Null);
+            return Ok(None);
         };
         let assets = context.as_deref().map(|context| &*context.assets);
         let mesh = assets.and_then(|assets| {
@@ -71,7 +72,7 @@ impl Operation for InspectSplineMesh {
                 .map(|(id, _)| id.clone())
         });
         let chunks = builds.of(entity);
-        Ok(json!(SplineMeshView {
+        Ok(Some(SplineMeshView {
             points: spline.points.iter().map(|point| point.to_array()).collect(),
             mesh,
             material,

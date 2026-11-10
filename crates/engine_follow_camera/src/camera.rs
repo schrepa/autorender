@@ -8,8 +8,7 @@ use engine_core::{
 use engine_math::{atan2, clamp, exp, max, min, sin, sin_cos};
 use engine_places::queries::{CastFilter, CastShape, SceneQueries};
 use glam::{Quat, Vec2, Vec3};
-use serde::Deserialize;
-use serde_json::{Value, json};
+use serde::{Deserialize, Serialize};
 
 use crate::{CameraTarget, FollowCamera, FollowCameraBrick};
 
@@ -284,7 +283,7 @@ pub(crate) fn follow(
     *orbit = Orbit::Following(follow, controls);
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CameraShake {
     strength: f32,
@@ -295,11 +294,12 @@ impl Operation for CameraShake {
     const NAME: &'static str = "camera_shake";
     type Params = ResMut<'static, Shake>;
     type Request = Self;
+    type Reply = Self;
 
     fn run(
         mut shake: SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<Self, Error> {
         request
             .strength
             .check("strength", STRENGTH)
@@ -314,6 +314,6 @@ impl Operation for CameraShake {
         } else {
             Shake::Still
         };
-        Ok(json!({"strength": request.strength, "seconds": request.seconds}))
+        Ok(request)
     }
 }

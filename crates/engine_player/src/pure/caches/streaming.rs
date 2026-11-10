@@ -4,10 +4,10 @@ use bevy_ecs::world::World;
 use engine::scene::{SceneDocument, SceneKinds};
 use engine_core::glam::Vec3;
 use engine_core::{
-    BrickList, Camera, Engine, Projection, PureSession, Readiness, Section, Teleport, Transform,
-    main_camera, place_camera, send_ask,
+    BrickList, Camera, Engine, Operation, Projection, PureSession, Readiness, Section, Teleport,
+    Transform, main_camera, place_camera, send_ask,
 };
-use engine_terrain::{TerrainStats, TileKey};
+use engine_terrain::{TerrainListing, TerrainStats, TileKey};
 use engine_terrain_shading::TerrainShadingStats;
 use engine_water::WaterStats;
 use serde_json::{Map, Value, json};
@@ -17,7 +17,6 @@ use super::hash;
 const TRACE: &str = "target/pure/caches-trace.txt";
 const FIXTURE: &str = "web/scripts/fixtures/terrain.scene.json";
 const FRAMES: u32 = 400;
-const LISTING: &str = "terrain_listing";
 const FIELDS: [&str; 29] = [
     "terrains",
     "resident_tiles",
@@ -129,31 +128,22 @@ fn stats(world: &World) -> Result<Value, String> {
 }
 
 fn listing(world: &mut World) -> Result<Vec<(bool, Vec<TileKey>, bool)>, String> {
-    let listed = engine::host::run_operation(world, LISTING, json!({}))
-        .map_err(|error| format!("{LISTING}: {error}"))?;
-    let unread = || format!("{LISTING} answered {listed}");
-    listed["terrains"]
-        .as_array()
-        .ok_or_else(unread)?
-        .iter()
+    let listed = engine::host::call::<TerrainListing>(world, TerrainListing {})
+        .map_err(|error| format!("{}: {error}", TerrainListing::NAME))?;
+    listed
+        .terrains
+        .into_iter()
         .map(|terrain| {
-            let tiles: Vec<[u16; 3]> =
-                serde_json::from_value(terrain["tiles"].clone()).map_err(|_| unread())?;
-            let keys: Vec<TileKey> = tiles
+            let keys: Vec<TileKey> = terrain
+                .tiles
                 .into_iter()
                 .map(|[level, x, z]| {
                     u8::try_from(level)
                         .map(|level| TileKey::new(level, x, z))
-                        .map_err(|_| unread())
+                        .map_err(|_| format!("{} answered level {level}", TerrainListing::NAME))
                 })
                 .collect::<Result<_, _>>()?;
-            match (
-                terrain["surroundings"].as_bool(),
-                terrain["drawn"].as_bool(),
-            ) {
-                (Some(surroundings), Some(drawn)) => Ok((surroundings, keys, drawn)),
-                _ => Err(unread()),
-            }
+            Ok((terrain.surroundings, keys, terrain.drawn))
         })
         .collect()
 }

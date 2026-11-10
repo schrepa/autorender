@@ -3,10 +3,10 @@ use engine_core::collections::HashMap;
 use engine_core::glam::{Quat, Vec3};
 use engine_core::{
     Camera, DrawKind, Drawn, Engine, GlobalTransforms, Listing, Material, MaterialHandle, Mesh,
-    MeshHandle, MeshVertex, Mover, MoverId, Pace, Parent, PureSession, Schedule, Transform,
-    make_fresh, set_parent, set_parents,
+    MeshHandle, MeshVertex, Mover, MoverId, Operation, Pace, Parent, PureSession, Schedule,
+    Transform, make_fresh, set_parent, set_parents,
 };
-use engine_meshes::MeshesBrick;
+use engine_meshes::{MeshesBrick, MeshesListing};
 
 use serde_json::{Value, json};
 
@@ -19,7 +19,6 @@ const CHECK_EVERY: u64 = 4;
 const EDITS_BEFORE_TICK: usize = 24;
 const EDITS_AFTER_TICK: usize = 6;
 const SHOWN: usize = 8;
-const RETAINED: &str = "meshes_listing";
 const MOVER: Mover = Mover {
     by: MoverId::Game,
     pace: Pace::Tick,
@@ -436,25 +435,13 @@ fn frame(engine: &mut Engine) -> Result<Frame, String> {
         .iter()
         .map(|(entity, global)| (entity, global.matrix().map(bits)))
         .collect();
-    let retained = engine::host::run_operation(engine.app.world_mut(), RETAINED, json!({}))
-        .map_err(|error| format!("{RETAINED}: {error}"))?;
-    let unread = || format!("{RETAINED} answered {retained}");
-    let mut instances: Vec<String> = retained["instances"]
-        .as_array()
-        .ok_or_else(unread)?
-        .iter()
-        .map(Value::to_string)
-        .collect();
+    let retained = engine::host::call::<MeshesListing>(engine.app.world_mut(), MeshesListing {})
+        .map_err(|error| format!("{}: {error}", MeshesListing::NAME))?;
+    let mut instances: Vec<String> = retained.instances.iter().map(Value::to_string).collect();
     instances.sort_unstable();
-    let count = |field: &str| {
-        retained[field]
-            .as_u64()
-            .and_then(|count| usize::try_from(count).ok())
-            .ok_or_else(unread)
-    };
     Ok(Frame {
         globals,
-        counts: [instances.len(), count("missing")?],
+        counts: [instances.len(), retained.missing as usize],
         instances,
     })
 }

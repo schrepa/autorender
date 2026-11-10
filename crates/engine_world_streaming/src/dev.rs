@@ -2,13 +2,13 @@ use bevy_ecs::prelude::*;
 use engine_core::__private::schemars::JsonSchema;
 use engine_core::{Error, ErrorCode, Expected, Operation, SceneIds};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::{STREAMING_GRIDS, StreamedId, WorldCells, WorldChanges};
 
 pub const MAX_CHANGES: usize = 256;
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
+#[schemars(crate = "engine_core::__private::schemars")]
 pub struct WorldCellsView {
     pub cells: u32,
     pub loaded: u32,
@@ -21,7 +21,8 @@ pub struct WorldCellsView {
     pub nearest: Vec<StreamedCellView>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
+#[schemars(crate = "engine_core::__private::schemars")]
 pub struct StreamingGridView {
     pub cell: f32,
     pub range: f32,
@@ -30,7 +31,8 @@ pub struct StreamingGridView {
     pub loaded: u32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
+#[schemars(crate = "engine_core::__private::schemars")]
 pub struct StreamedCellView {
     pub grid: u8,
     pub key: [i32; 2],
@@ -40,51 +42,60 @@ pub struct StreamedCellView {
     pub distance: f32,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
+#[schemars(crate = "engine_core::__private::schemars")]
 pub struct WorldChangesView {
     pub removed: usize,
     pub ids: Vec<String>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
+#[schemars(crate = "engine_core::__private::schemars")]
 pub struct StreamedIdView {
     pub id: String,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(crate = "engine_core::__private::schemars")]
 pub struct WorldCellsQuery {}
 
 impl Operation for WorldCellsQuery {
     const NAME: &'static str = "world_cells";
     type Params = Res<'static, WorldCells>;
     type Request = Self;
+    type Reply = WorldCellsView;
 
-    fn run(cells: SystemParamItem<'_, '_, Self::Params>, _: Self) -> Result<Value, Error> {
-        Ok(serde_json::to_value(world_cells(&cells)).expect("results_serialize"))
+    fn run(cells: SystemParamItem<'_, '_, Self::Params>, _: Self) -> Result<WorldCellsView, Error> {
+        Ok(world_cells(&cells))
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(crate = "engine_core::__private::schemars")]
 pub struct WorldChangesQuery {}
 
 impl Operation for WorldChangesQuery {
     const NAME: &'static str = "world_removals";
     type Params = Res<'static, WorldChanges>;
     type Request = Self;
+    type Reply = WorldChangesView;
 
-    fn run(changes: SystemParamItem<'_, '_, Self::Params>, _: Self) -> Result<Value, Error> {
-        Ok(serde_json::to_value(WorldChangesView {
+    fn run(
+        changes: SystemParamItem<'_, '_, Self::Params>,
+        _: Self,
+    ) -> Result<WorldChangesView, Error> {
+        Ok(WorldChangesView {
             removed: changes.removed().len(),
             ids: changes.removed().take(64).map(str::to_owned).collect(),
         })
-        .expect("results_serialize"))
     }
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+#[schemars(crate = "engine_core::__private::schemars")]
 pub struct StreamedIdQuery {
     pub entity: String,
 }
@@ -96,11 +107,12 @@ impl Operation for StreamedIdQuery {
         Query<'static, 'static, &'static StreamedId>,
     );
     type Request = Self;
+    type Reply = StreamedIdView;
 
     fn run(
         (ids, marked): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<StreamedIdView, Error> {
         let entity = ids.entity(&request.entity).ok_or_else(|| {
             Error::new(ErrorCode::UnknownEntity, "$.entity")
                 .expected(Expected::Entity)
@@ -109,10 +121,9 @@ impl Operation for StreamedIdQuery {
         let marked = marked.get(entity).map_err(|_| {
             Error::new(ErrorCode::MissingComponent, "$.component").got("StreamedId")
         })?;
-        Ok(serde_json::to_value(StreamedIdView {
+        Ok(StreamedIdView {
             id: marked.0.to_string(),
         })
-        .expect("results_serialize"))
     }
 }
 
@@ -170,16 +181,12 @@ impl Operation for WorldChangesControl {
     const NAME: &'static str = "world_changes";
     type Params = ResMut<'static, WorldChanges>;
     type Request = Self;
-
-    fn schema() -> Value {
-        serde_json::to_value(engine_core::__private::schemars::schema_for!(WorldChangesControl))
-            .expect("schema_serializes")
-    }
+    type Reply = WorldChangesResult;
 
     fn run(
         mut changes: SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<Value, Error> {
+    ) -> Result<WorldChangesResult, Error> {
         for (ids, path) in [
             (&request.remove, "$.remove"),
             (&request.restore, "$.restore"),
@@ -205,17 +212,17 @@ impl Operation for WorldChangesControl {
         if cleared || removed > 0 || restored > 0 {
             changes.set_changed();
         }
-        Ok(serde_json::to_value(WorldChangesResult {
+        Ok(WorldChangesResult {
             temporary: true,
             newly_removed: removed,
             restored,
             removed: total,
         })
-        .expect("results_serialize"))
     }
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, JsonSchema)]
+#[schemars(crate = "engine_core::__private::schemars")]
 pub struct WorldChangesResult {
     pub temporary: bool,
     pub newly_removed: usize,

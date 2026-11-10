@@ -251,11 +251,16 @@ pub(crate) fn advance(views: Res<Views>, mut steps: ResMut<ProbeSteps>, mut prob
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct PixelRequest {
     x: u32,
     y: u32,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct PixelReply {
+    pixel: [u32; 2],
 }
 
 pub(crate) struct ProbePixel;
@@ -268,11 +273,12 @@ impl Operation for ProbePixel {
         ResMut<'static, WholeFrames>,
     );
     type Request = PixelRequest;
+    type Reply = PixelReply;
 
     fn run(
         (views, mut probe, mut frames): SystemParamItem<'_, '_, Self::Params>,
         request: PixelRequest,
-    ) -> Result<Value, Error> {
+    ) -> Result<PixelReply, Error> {
         let size = views.main().map_or(UVec2::ZERO, ViewFacts::size);
         for (path, value, size) in [("$.x", request.x, size.x), ("$.y", request.y, size.y)] {
             if value >= size {
@@ -291,13 +297,21 @@ impl Operation for ProbePixel {
             whole: Some(frames.ask(WHOLE)),
             ..Probe::default()
         };
-        Ok(json!({ "pixel": [request.x, request.y] }))
+        Ok(PixelReply {
+            pixel: [request.x, request.y],
+        })
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct ProbedRequest {}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct ProbedReply {
+    probing: bool,
+    probe: Option<Value>,
+}
 
 pub(crate) struct ProbedPixel;
 
@@ -310,15 +324,19 @@ impl Operation for ProbedPixel {
         SceneIds<'static, 'static>,
     );
     type Request = ProbedRequest;
+    type Reply = ProbedReply;
 
     fn run(
         (probe, modes, (table, passes), ids): SystemParamItem<'_, '_, Self::Params>,
         _: ProbedRequest,
-    ) -> Result<Value, Error> {
+    ) -> Result<ProbedReply, Error> {
         let result = probe.read().map(|bytes| {
             probe.result(bytes, &modes, (table.as_deref(), passes.as_deref()), &ids)
         });
-        Ok(json!({ "probing": probe.probing(), "probe": result }))
+        Ok(ProbedReply {
+            probing: probe.probing(),
+            probe: result,
+        })
     }
 }
 

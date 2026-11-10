@@ -3,6 +3,7 @@ use engine::scene::SceneFiles;
 use engine::{Error, ErrorCode};
 use serde_json::json;
 
+use crate::bricks::game::HighlandsControl;
 use crate::land;
 use crate::options::CONTROLS;
 use crate::scene::{self, set};
@@ -104,7 +105,12 @@ engine::__if_dev! {
 }
 
 fn watch_bodies(world: &mut World, options: &Options) -> engine::Result<()> {
-    land::control(world, json!({"watch_bodies": {"on": options.watch_bodies}}))
+    land::control(
+        world,
+        HighlandsControl::WatchBodies {
+            on: options.watch_bodies,
+        },
+    )
 }
 
 fn report_failure(event: &str, error: &Error) {
@@ -118,7 +124,7 @@ fn report_failure(event: &str, error: &Error) {
 impl Game for Highlands {
     fn reset_camera(&mut self, engine: &mut Engine) {
         let world = engine.app.world_mut();
-        if let Err(error) = land::control(world, json!("reset")) {
+        if let Err(error) = land::control(world, HighlandsControl::Reset) {
             report_failure("highlands_reset_failed", &error);
         }
         if let Some((at, lens)) = self.start
