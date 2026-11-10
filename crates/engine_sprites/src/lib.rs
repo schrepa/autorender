@@ -190,7 +190,7 @@ fn publish_sheets(
     for (entity, sprite, drawn) in &sprites {
         refusals.judge(entity, SPRITE_PART, sprite_verdict(drawn, sprite, &sheets));
     }
-    let held: Vec<Asset> = sheets
+    let mut held: Vec<Asset> = sheets
         .made
         .values()
         .filter_map(|made| match made {
@@ -198,6 +198,7 @@ fn publish_sheets(
             SheetMaterial::Refused(_) => None,
         })
         .collect();
+    held.sort_unstable();
     match own.single() {
         Ok((entity, uses)) => {
             if uses.assets() != held.as_slice() {

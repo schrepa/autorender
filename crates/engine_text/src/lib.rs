@@ -18,8 +18,8 @@ use engine_core::{
     AlphaMode, Asset, AssetLibrary, AssetResidency, AssetUses, AttachPoint, Attributes, Brick,
     Bricks, ComponentKind, Cull, DrawKind, Drawn, DrawnPoses, DrawnTable, Error, ErrorCode,
     GlobalTransforms, KindDecl, KindSkip, LightingModel, Material, MaterialHandle, PassName,
-    PassPurpose, PassRole, PassViews, SceneComponents, SceneCx, SceneForm, Schedule, SlotSet,
-    Source, Spawner, SurfaceSlot, Views, Writes, gpu_struct, never, settings, stats,
+    PassPurpose, PassRole, PassViews, Refusals, SceneComponents, SceneCx, SceneForm, Schedule,
+    SlotSet, Source, Spawner, SurfaceSlot, Views, Writes, gpu_struct, never, settings, stats,
 };
 use engine_places_rendering::text::{DEFAULT_TEXT_SIZE, FontId, Glyph, Text, TextAlign};
 use engine_render::{
@@ -34,6 +34,8 @@ use serde_json::Value;
 use typeset::{Placed, Typesetter, ensure};
 
 pub const TEXT: DrawKind = DrawKind("text");
+
+pub const LABEL_PART: &str = "label";
 
 const GLYPH: &str = "glyph";
 
@@ -270,8 +272,9 @@ fn label_material() -> Result<Material, Error> {
 }
 
 fn hold_label_material(
-    labels: Query<&Drawn, With<Label>>,
+    labels: Query<(Entity, &Drawn), With<Label>>,
     (mut material, mut assets): (ResMut<LabelMaterial>, ResMut<AssetLibrary>),
+    mut refusals: ResMut<Refusals>,
     residency: Res<AssetResidency>,
     held: Query<(Entity, &AssetUses), With<LabelMaterialHeld>>,
     mut spawner: Spawner<TextBrick>,
@@ -282,7 +285,7 @@ fn hold_label_material(
         LabelSurface::Unmade => false,
     };
     if !live {
-        if !labels.iter().any(|drawn| drawn.kind == TEXT) {
+        if !labels.iter().any(|(_, drawn)| drawn.kind == TEXT) {
             return;
         }
         material.0 = match label_material().and_then(|made| assets.insert_material(made)) {
@@ -290,6 +293,19 @@ fn hold_label_material(
             Err(error) => LabelSurface::Refused(error),
         };
     }
+    let placed: Vec<Entity> = labels
+        .iter()
+        .filter(|(_, drawn)| drawn.kind == TEXT)
+        .map(|(entity, _)| entity)
+        .collect();
+    for &entity in &placed {
+        let verdict = match &material.0 {
+            LabelSurface::Refused(error) => Err(error.clone()),
+            LabelSurface::Made(_) | LabelSurface::Unmade => Ok(()),
+        };
+        refusals.judge(entity, LABEL_PART, verdict);
+    }
+    refusals.keep_part(LABEL_PART, |entity| placed.contains(&entity));
     let wanted: Vec<Asset> = material.made().map(Asset::Material).into_iter().collect();
     match held.single() {
         Ok((entity, uses)) => {
@@ -522,13 +538,10 @@ impl GpuPart for TextGpu {
 
     fn prepare(
         &mut self,
-        ((labels, table, globals, poses), text, settings, views, (material, residency)): SystemParamItem<
-            '_,
-            '_,
-            Self::Reads,
-        >,
+        reads: SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
+        let ((labels, table, globals, poses), text, settings, views, (material, residency)) = reads;
         self.staged.clear();
         self.labeled.clear();
         self.material = material
