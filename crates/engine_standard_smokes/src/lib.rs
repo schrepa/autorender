@@ -51,6 +51,11 @@ impl Brick for StandardSmokesBrick {
             without: &[partners::LEFT_OUT],
         },
         Smoke {
+            name: "missing_ground_names_its_filler",
+            run: partners::ground,
+            without: &[partners::GROUND_FILLER],
+        },
+        Smoke {
             name: "standard_list_starts_clean",
             run: engine_smoke::starts_clean,
             without: &[],

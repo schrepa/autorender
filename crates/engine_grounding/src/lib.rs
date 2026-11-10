@@ -7,10 +7,13 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Brick, Bricks, ComponentKind, Error, ErrorCode, Moves, Pace, Parent, Placement, Rule,
-    SceneComponents, Schedule, Setting, Source, Transform, settings,
+    Brick, Bricks, ComponentKind, Error, ErrorCode, Expected, GlobalTransforms, Mover, Moves, Pace,
+    Parent, Placement, Refusals, Rule, SceneComponents, Schedule, Setting, Settling, Slot, Source,
+    Transform, mover_of, settings,
 };
-use engine_places_simulation::ground::{Ground, GroundProbe, GroundSurface, Grounded, GroundedAt};
+use engine_places_simulation::ground::{
+    Ground, GroundPoint, GroundProbe, GroundRead, GroundSurface, Grounded, GroundedAt,
+};
 use engine_places_simulation::navigation::{NavStep, NavWalk};
 use glam::Vec2;
 use serde::Serialize;
@@ -19,6 +22,8 @@ use serde_json::Value;
 const OFFSET: Rule = Rule::range(-10_000.0, 10_000.0);
 
 pub const INVALID_GROUNDED: ErrorCode = ErrorCode::brick("invalid_grounded");
+
+pub const GROUNDED_PART: &str = "grounded";
 
 settings! {
     #[section("grounding")]
@@ -30,6 +35,11 @@ settings! {
     }
 }
 
+#[derive(Resource, Default)]
+struct GroundWaits {
+    settling: Settling,
+}
+
 pub struct GroundingBrick;
 
 impl Brick for GroundingBrick {
@@ -38,9 +48,11 @@ impl Brick for GroundingBrick {
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .settings::<Grounding>()
+            .requires::<Ground>()
+            .resource::<GroundWaits>()
             .errors(&[INVALID_GROUNDED])
             .join::<SceneComponents>(
-                ComponentKind::of::<Grounded>("grounded")
+                ComponentKind::of::<Grounded>(GROUNDED_PART)
                     .check(check_grounded)
                     .placement(Placement::Roots(INVALID_GROUNDED))
                     .schema(grounded_schema)
@@ -49,7 +61,8 @@ impl Brick for GroundingBrick {
             )
             .moves::<Grounded>(Pace::Tick)
             .systems(Schedule::FixedSimulation, steer)
-            .systems(Schedule::WorldSync, settle);
+            .systems(Schedule::WorldSync, settle)
+            .systems(Schedule::ViewSync, count_waiting);
     }
 }
 
@@ -105,7 +118,7 @@ type SteeredQuery<'w, 's> = Query<
 
 fn holds(at: GroundedAt, (position, offset): (Vec2, f32), revision: u64) -> bool {
     match at {
-        GroundedAt::Unsettled => false,
+        GroundedAt::Unsettled | GroundedAt::Waiting => false,
         GroundedAt::Stood {
             position: held,
             offset: kept,
@@ -120,59 +133,82 @@ fn holds(at: GroundedAt, (position, offset): (Vec2, f32), revision: u64) -> bool
     }
 }
 
+struct Placed {
+    at: GroundedAt,
+    height: Option<f32>,
+    verdict: Result<(), Error>,
+}
+
+fn unplaced(read: GroundRead<Option<GroundPoint>>, position: Vec2) -> Error {
+    match read {
+        GroundRead::Off => Error::new(ErrorCode::PlaceNotFilled, "$.grounded")
+            .expected(Expected::Present)
+            .got(Ground::NAME),
+        GroundRead::Ready(_) | GroundRead::NotLoaded => {
+            Error::new(ErrorCode::InvalidPosition, "$.grounded")
+                .got(position.to_array())
+        }
+    }
+}
+
 fn ground_under(
     (ground, settings): (&Ground, &Grounding),
     (entity, at, feet): (Entity, GroundedAt, f32),
     (position, offset): (Vec2, f32),
     walked: Option<f32>,
-) -> Option<(GroundedAt, Option<f32>)> {
+) -> Option<Placed> {
     let revision = ground.revision();
     if holds(at, (position, offset), revision) {
         return None;
     }
     let probe = GroundProbe::at(position).excluding(entity);
     let near = probe.below(walked.unwrap_or(feet) + settings.deck_above);
-    let floor = match ground.down(near).ready().flatten() {
-        Some(point) => Some(point),
-        None if walked.is_none() => ground.down(probe).ready().flatten(),
-        None => None,
+    let read = match ground.down(near) {
+        GroundRead::Ready(None) if walked.is_none() => ground.down(probe),
+        read @ (GroundRead::Ready(_) | GroundRead::NotLoaded | GroundRead::Off) => read,
     };
-    let stood = match (floor, walked) {
-        (Some(point), _) => Some((point.height, Some(point.surface))),
-        (None, Some(walked)) => Some((walked, None)),
-        (None, None) => None,
+    let stood = |surface: Option<GroundSurface>, height: f32| Placed {
+        at: GroundedAt::Stood {
+            position,
+            offset,
+            surface,
+            revision,
+        },
+        height: Some(height + offset),
+        verdict: Ok(()),
     };
-    Some(match stood {
-        Some((height, surface)) => (
-            GroundedAt::Stood {
+    Some(match (read, walked) {
+        (GroundRead::Ready(Some(point)), _) => stood(Some(point.surface), point.height),
+        (GroundRead::Ready(None) | GroundRead::NotLoaded | GroundRead::Off, Some(walked)) => {
+            stood(None, walked)
+        }
+        (GroundRead::NotLoaded, None) => Placed {
+            at: GroundedAt::Waiting,
+            height: None,
+            verdict: Ok(()),
+        },
+        (GroundRead::Ready(None) | GroundRead::Off, None) => Placed {
+            at: GroundedAt::Unsupported {
                 position,
                 offset,
-                surface,
                 revision,
             },
-            Some(height + offset),
-        ),
-        None => (
-            GroundedAt::Unsupported {
-                position,
-                offset,
-                revision,
-            },
-            None,
-        ),
+            height: None,
+            verdict: Err(unplaced(read, position)),
+        },
     })
 }
 
 fn stand(
     (ground, settings): (&Ground, &Grounding),
-    entity: Entity,
+    (entity, refusals): (Entity, &mut Refusals),
     transform: &mut Mut<'_, Transform>,
     (grounded, at): (&Grounded, &mut Mut<'_, GroundedAt>),
     walked: Option<f32>,
 ) {
     let position = Vec2::new(transform.translation.x, transform.translation.z);
     let feet = transform.translation.y - grounded.offset;
-    let Some((next, height)) = ground_under(
+    let Some(placed) = ground_under(
         (ground, settings),
         (entity, **at, feet),
         (position, grounded.offset),
@@ -180,18 +216,20 @@ fn stand(
     ) else {
         return;
     };
-    if let Some(height) = height
+    if let Some(height) = placed.height
         && transform.translation.y != height
     {
         transform.translation.y = height;
     }
-    **at = next;
+    **at = placed.at;
+    refusals.judge(entity, GROUNDED_PART, placed.verdict);
 }
 
 fn steer(
     (ground, settings): (Res<Ground>, Res<Grounding>),
     mut moves: Moves<GroundingBrick>,
     mut query: SteeredQuery,
+    mut refusals: ResMut<Refusals>,
 ) {
     for (entity, grounded, mut at, mut walk) in &mut query {
         let Some(step) = walk.step.filter(|step| !step.taken) else {
@@ -211,7 +249,7 @@ fn steer(
         }
         stand(
             (&ground, &settings),
-            entity,
+            (entity, &mut refusals),
             &mut transform,
             (grounded, &mut at),
             Some(step.to.y),
@@ -223,6 +261,7 @@ fn settle(
     (ground, settings): (Res<Ground>, Res<Grounding>),
     mut moves: Moves<GroundingBrick>,
     mut query: GroundedQuery,
+    mut refusals: ResMut<Refusals>,
 ) {
     for (entity, grounded, mut at, walk) in &mut query {
         let Some(mut transform) = moves.get_mut(entity) else {
@@ -232,10 +271,30 @@ fn settle(
         let walked = walk.and_then(|walk| walk.walked(position));
         stand(
             (&ground, &settings),
-            entity,
+            (entity, &mut refusals),
             &mut transform,
             (grounded, &mut at),
             walked,
         );
     }
+    refusals.keep_part(GROUNDED_PART, |entity| query.contains(entity));
+}
+
+fn count_waiting(
+    waits: Res<GroundWaits>,
+    globals: Res<GlobalTransforms>,
+    grounded: Query<(Entity, &GroundedAt, &Mover), (With<Grounded>, Without<Parent>)>,
+) {
+    let by = mover_of::<GroundingBrick>();
+    let waiting = grounded
+        .iter()
+        .filter(|&(entity, at, mover)| {
+            mover.by == by
+                && globals.active(entity)
+                && matches!(at, GroundedAt::Unsettled | GroundedAt::Waiting)
+        })
+        .count();
+    waits
+        .settling
+        .left(u32::try_from(waiting).unwrap_or(u32::MAX));
 }

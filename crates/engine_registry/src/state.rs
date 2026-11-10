@@ -123,6 +123,7 @@ pub struct BrickStates {
     roots: Vec<GateId>,
     types: Vec<TypeId>,
     needs: Vec<Vec<BrickId>>,
+    required: Vec<Vec<GateId>>,
     unmet: Vec<BrickId>,
     installs: Vec<u64>,
     generation: u64,
@@ -165,6 +166,7 @@ impl BrickStates {
             roots,
             types,
             needs: vec![Vec::new(); count],
+            required: vec![Vec::new(); count],
             unmet: Vec::new(),
             installs: vec![0; gates],
             generation: 0,
@@ -174,6 +176,10 @@ impl BrickStates {
 
     pub(crate) fn set_needs(&mut self, needs: Vec<Vec<BrickId>>) {
         self.needs = needs;
+    }
+
+    pub(crate) fn set_required(&mut self, required: Vec<Vec<GateId>>) {
+        self.required = required;
     }
 
     pub(crate) fn set_unmet(&mut self, mut bricks: Vec<BrickId>) {
@@ -510,6 +516,19 @@ impl GateDriver {
     }
 
     pub fn run(&mut self, world: &mut World) {
+        self.turn_all(world);
+        let changed = world
+            .get_resource::<Registry>()
+            .zip(world.get_resource::<BrickStates>())
+            .and_then(|(registry, states)| registry.gated_change(states));
+        if let Some(rows) = changed
+            && let Some(mut registry) = world.get_resource_mut::<Registry>()
+        {
+            registry.hold_gated(rows);
+        }
+    }
+
+    fn turn_all(&mut self, world: &mut World) {
         for _ in 0..=self.conditions.len() {
             let before = generation(world);
             let Some(want) = self.wanted(world) else {
@@ -591,11 +610,21 @@ impl GateDriver {
             let mut dropped = false;
             for (brick, root) in states.roots.iter().enumerate() {
                 let needs = states.needs.get(brick).map_or(&[][..], Vec::as_slice);
-                let lacking = needs.iter().copied().find(|need| {
-                    states
-                        .root(*need)
-                        .is_none_or(|need| want[need.index()].is_err())
-                });
+                let required = states.required.get(brick).map_or(&[][..], Vec::as_slice);
+                let lacking = needs
+                    .iter()
+                    .copied()
+                    .find(|need| {
+                        states
+                            .root(*need)
+                            .is_none_or(|need| want[need.index()].is_err())
+                    })
+                    .or_else(|| {
+                        required
+                            .iter()
+                            .find(|filler| want[filler.index()].is_err())
+                            .and_then(|&filler| states.brick(filler))
+                    });
                 if let (Ok(()), Some(need)) = (want[root.index()], lacking) {
                     want[root.index()] = Err(Off::Needs {
                         brick: package(world, need),

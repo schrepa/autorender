@@ -19,7 +19,7 @@ use crate::attribution::CORE_ROW;
 use crate::entries::{EventEntry, Kept, OperationEntry, PieceEntry, SettingsEntry, StatsEntry};
 use crate::hooks::{Named, add_removal};
 use crate::jobs::JobQueue;
-use crate::needs::{Accessed, LeftOut, PlaceUses, Read, ReadKind, STANDARD};
+use crate::needs::{Accessed, LeftOut, PlaceUses, Read, ReadKind, RequiredFill};
 use crate::order::{self, PlaceRules};
 use crate::owners::{Shared, Used, ValueKind, Values, note, ownership};
 use crate::record::{BrickRecord, crate_segment};
@@ -93,8 +93,11 @@ pub struct Registry {
     despawn: Option<Despawn>,
     problems: Vec<Error>,
     left: Vec<LeftOut>,
+    known: Vec<LeftOut>,
+    required: Vec<RequiredFill>,
     reads: Vec<Read>,
     unmet: Vec<Error>,
+    gated: Vec<Error>,
 }
 
 #[derive(Default)]
@@ -131,6 +134,7 @@ impl RegistryBuilder {
         registry.check_names(&record);
         registry.left_out.retain(|&left| left != package);
         registry.left.retain(|left| left.package != package);
+        registry.known.retain(|known| known.package != package);
         self.listed.push(package);
         registry.bricks.push(record);
     }
@@ -197,22 +201,22 @@ impl RegistryBuilder {
         }
         if !self.registry.left_out.contains(&package) {
             self.registry.left_out.push(package);
-            self.registry.left.push(LeftOut {
-                package,
-                places: record
-                    .fills()
-                    .iter()
-                    .map(|filled| filled.place.name())
-                    .chain(record.joins().iter().map(|joined| joined.place.name()))
-                    .collect(),
-                passes: record
-                    .render_entries::<engine_place::PassEntry>()
-                    .copied()
-                    .collect(),
-            });
+            self.registry.left.push(LeftOut::of(record));
         }
         self.left_owned
             .extend(record.owned().iter().map(|owned| (owned.type_id, package)));
+    }
+
+    pub fn known(&mut self, record: &BrickRecord) {
+        let registry = &mut self.registry;
+        let package = record.package;
+        if registry.has(package)
+            || registry.left_out.contains(&package)
+            || registry.known.iter().any(|known| known.package == package)
+        {
+            return;
+        }
+        registry.known.push(LeftOut::of(record));
     }
 
     pub fn install(self, world: &mut World, schedules: &[InternedScheduleLabel]) -> GateDriver {
@@ -258,10 +262,12 @@ impl RegistryBuilder {
         registry.problems.append(&mut refused);
         uses.append(&mut found);
         let (needs, unmet) = registry.analyze(world, &uses);
+        let required = registry.required_gates();
         {
             let mut states = world.resource_mut::<BrickStates>();
             states.set_needs(needs);
             states.set_unmet(unmet);
+            states.set_required(required);
         }
         world.insert_resource(registry);
         GateDriver::new(conditions)
@@ -381,37 +387,71 @@ impl Registry {
     }
 
     pub fn could_provide(&self, place: &str) -> Vec<&'static str> {
-        let left: Vec<&'static str> = self
-            .left
-            .iter()
-            .filter(|left| left.provides(place))
-            .map(|left| left.package)
-            .collect();
-        if !left.is_empty() {
-            return left;
-        }
-        self.standard(|standard| standard.places.contains(&place))
+        self.handed_over(|handed| handed.provides(place))
     }
 
     pub fn could_write(&self, target: &str, before: Option<AttachPoint>) -> Vec<&'static str> {
-        let left: Vec<&'static str> = self
-            .left
-            .iter()
-            .filter(|left| left.writes(target, before))
-            .map(|left| left.package)
-            .collect();
-        if !left.is_empty() {
-            return left;
-        }
-        self.standard(|standard| standard.targets.contains(&target))
+        self.handed_over(|handed| handed.writes(target, before))
     }
 
-    fn standard(&self, provides: impl Fn(&crate::needs::Standard) -> bool) -> Vec<&'static str> {
-        STANDARD
+    fn handed_over(&self, wanted: impl Fn(&LeftOut) -> bool) -> Vec<&'static str> {
+        let packages = |handed: &[LeftOut]| -> Vec<&'static str> {
+            handed
+                .iter()
+                .filter(|&left| wanted(left))
+                .map(|left| left.package)
+                .collect()
+        };
+        let left = packages(self.left.as_slice());
+        if left.is_empty() {
+            packages(self.known.as_slice())
+        } else {
+            left
+        }
+    }
+
+    pub(crate) fn hold_gated(&mut self, rows: Vec<Error>) {
+        let held = std::mem::replace(&mut self.gated, rows);
+        self.unmet.retain(|row| !held.contains(row));
+        for row in &self.gated {
+            if !self.unmet.contains(row) {
+                self.unmet.push(row.clone());
+            }
+        }
+    }
+
+    pub(crate) fn gated_change(&self, states: &BrickStates) -> Option<Vec<Error>> {
+        let rows: Vec<Error> = self
+            .required
             .iter()
-            .filter(|&standard| !self.has(standard.package) && provides(standard))
-            .map(|standard| standard.package)
-            .collect()
+            .filter(|required| !states.on(required.filler))
+            .filter_map(|required| {
+                let reader = self.record(required.reader)?;
+                let filler = self.record(states.brick(required.filler)?)?;
+                let state = states.gate_state(required.filler)?.view();
+                Some(
+                    Error::new(
+                        ErrorCode::PlaceNotFilled,
+                        format!("$.bricks.{}.reads.{}", reader.package, required.place),
+                    )
+                    .expected(Expected::Present)
+                    .got(serde_json::json!({ "filler": filler.package, "state": state })),
+                )
+            })
+            .collect();
+        (rows != self.gated).then_some(rows)
+    }
+
+    fn required_gates(&self) -> Vec<Vec<GateId>> {
+        let mut gates: Vec<Vec<GateId>> = vec![Vec::new(); self.bricks.len()];
+        for required in &self.required {
+            if let Some(held) = gates.get_mut(required.reader.index())
+                && !held.contains(&required.filler)
+            {
+                held.push(required.filler);
+            }
+        }
+        gates
     }
 
     pub fn problems(&self) -> &[Error] {
@@ -1175,6 +1215,7 @@ impl Registry {
         self.private = held.private;
         self.accessed = self.place_access(world, uses);
         let (reads, unmet, lacking) = self.slot_reads(world, uses);
+        self.required = self.required_fills(&reads);
         self.note_reads(&[ReadKind::Slot], reads);
         for error in unmet {
             self.report_unmet(error);
@@ -1247,19 +1288,44 @@ impl Registry {
                     required,
                 });
                 if required && filler.is_none() {
-                    unmet.push(
-                        Error::new(
-                            ErrorCode::PlaceNotFilled,
-                            format!("$.bricks.{}.reads.{}", record.package, decl.name()),
-                        )
-                        .expected(Expected::Present)
-                        .nearest(self.could_provide(decl.name())),
-                    );
+                    let missing = Error::new(
+                        ErrorCode::PlaceNotFilled,
+                        format!("$.bricks.{}.reads.{}", record.package, decl.name()),
+                    )
+                    .expected(Expected::Present);
+                    let could = self.could_provide(decl.name());
+                    unmet.push(if could.is_empty() {
+                        missing
+                    } else {
+                        missing.nearest(could)
+                    });
                     lacking.push(brick);
                 }
             }
         }
         (reads, unmet, lacking)
+    }
+
+    fn required_fills(&self, reads: &[Read]) -> Vec<RequiredFill> {
+        reads
+            .iter()
+            .filter(|read| read.required)
+            .filter_map(|read| {
+                let decl = self.place(&read.place)?;
+                let filler = self.filler_id(decl.type_id())?;
+                let scope = self
+                    .record(filler)?
+                    .fills()
+                    .iter()
+                    .find(|filled| filled.slot == decl.type_id())?
+                    .scope;
+                Some(RequiredFill {
+                    reader: self.id(read.reader)?,
+                    filler: self.gate(filler, scope)?,
+                    place: decl.name(),
+                })
+            })
+            .collect()
     }
 
     fn check_operations(&mut self, world: &mut World, uses: &mut Vec<Used>) {

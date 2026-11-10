@@ -1,7 +1,11 @@
 use std::any::TypeId;
 
-use engine_place::{AttachPoint, PassEntry};
+use engine_place::{AttachPoint, PassEntry, PassViews, PlaceDecl};
 use serde::Serialize;
+
+use crate::BrickId;
+use crate::record::BrickRecord;
+use crate::state::GateId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -19,14 +23,6 @@ pub struct Read {
     pub providers: Vec<&'static str>,
     pub required: bool,
 }
-
-pub(crate) struct Standard {
-    pub(crate) package: &'static str,
-    pub(crate) places: &'static [&'static str],
-    pub(crate) targets: &'static [&'static str],
-}
-
-include!(concat!(env!("OUT_DIR"), "/standard.rs"));
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct PlaceUses {
@@ -64,13 +60,22 @@ pub(crate) struct LeftOut {
 }
 
 impl LeftOut {
+    pub(crate) fn of(record: &BrickRecord) -> Self {
+        Self {
+            package: record.package,
+            places: record.places().map(PlaceDecl::name).collect(),
+            passes: record.render_entries::<PassEntry>().copied().collect(),
+        }
+    }
+
     pub(crate) fn provides(&self, place: &str) -> bool {
         self.places.contains(&place)
     }
 
     pub(crate) fn writes(&self, target: &str, before: Option<AttachPoint>) -> bool {
         self.passes.iter().any(|entry| {
-            before.is_none_or(|at| entry.pass.at < at)
+            entry.pass.views != PassViews::Owned
+                && before.is_none_or(|at| entry.pass.at < at)
                 && entry
                     .pass
                     .writes
@@ -79,4 +84,11 @@ impl LeftOut {
                     .any(|written| written.name() == target)
         })
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct RequiredFill {
+    pub(crate) reader: BrickId,
+    pub(crate) filler: GateId,
+    pub(crate) place: &'static str,
 }

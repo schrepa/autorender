@@ -40,8 +40,41 @@ pub use engine_ui::UiBrick;
 const POST_ORDER: [&str; 2] = ["bloom", "haze"];
 const DISPLAY_ORDER: [&str; 2] = ["tonemap", "dither"];
 
+fn known<L: Listing>(list: L) -> L {
+    list.knows::<AmbientOcclusionBrick>()
+        .knows::<AnimationBrick>()
+        .knows::<AudioBrick>()
+        .knows::<AutoExposureBrick>()
+        .knows::<BloomBrick>()
+        .knows::<DebugViewBrick>()
+        .knows::<DitherBrick>()
+        .knows::<DynamicResolutionBrick>()
+        .knows::<FlyCameraBrick>()
+        .knows::<FollowCameraBrick>()
+        .knows::<ImpostorsBrick>()
+        .knows::<LightingModelBrick>()
+        .knows::<LightsBrick>()
+        .knows::<MeshesBrick>()
+        .knows::<ParticlesBrick>()
+        .knows::<PrepassBrick>()
+        .knows::<ReflectionProbesBrick>()
+        .knows::<ReflectionsBrick>()
+        .knows::<ScreensBrick>()
+        .knows::<ShadowsBrick>()
+        .knows::<SkyBrick>()
+        .knows::<SpritesBrick>()
+        .knows::<SunBrick>()
+        .knows::<TaaBrick>()
+        .knows::<TextBrick>()
+        .knows::<TextureCook>()
+        .knows::<TimeOfDayBrick>()
+        .knows::<TonemapBrick>()
+        .knows::<UiBrick>()
+}
+
 pub fn minimal<L: Listing>(list: L) -> L {
-    list.with::<TextureCook>()
+    known(list)
+        .with::<TextureCook>()
         .with::<TimeOfDayBrick>()
         .with::<SunBrick>()
         .with::<LightingModelBrick>()
@@ -53,7 +86,8 @@ pub fn minimal<L: Listing>(list: L) -> L {
 }
 
 pub fn two_d<L: Listing>(list: L) -> L {
-    list.without::<ShadowsBrick>()
+    known(list)
+        .without::<ShadowsBrick>()
         .without::<ReflectionProbesBrick>()
         .with::<TextureCook>()
         .with::<LightingModelBrick>()
@@ -68,7 +102,8 @@ pub fn two_d<L: Listing>(list: L) -> L {
 }
 
 pub fn rendering<L: Listing>(list: L) -> L {
-    list.with::<TextureCook>()
+    known(list)
+        .with::<TextureCook>()
         .with::<TimeOfDayBrick>()
         .with::<SunBrick>()
         .with::<LightingModelBrick>()
