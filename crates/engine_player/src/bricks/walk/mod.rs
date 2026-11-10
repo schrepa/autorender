@@ -1,4 +1,4 @@
-include!(concat!(env!("OUT_DIR"), "/bricks/walk.rs"));
+engine::brick!(walk);
 
 use bevy_ecs::prelude::*;
 use engine_core::{

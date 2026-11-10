@@ -12,8 +12,8 @@ use serde_json::json;
 
 use crate::process::{Client, Project, WASM_TARGET, project_option, read_clients, run};
 
-const USAGE: &str =
-    "usage: cargo xtask new app --project DIR | new brick NAME --project DIR [--place PLACE]";
+const USAGE: &str = "usage: cargo xtask new app --project DIR | new brick NAME --project DIR \
+                     [--kind gameplay|drawn] [--place PLACE]";
 
 const APP_TEMPLATE: &str = "crates/engine/examples/app_template";
 
@@ -21,11 +21,58 @@ pub(crate) const TEMPLATE_CRATE: &str = "app_template";
 
 const TEMPLATE_KIND: &str = "kind = \"game\"\n";
 
-const BRICK_TEMPLATE: &str = "src/bricks/glimmer";
+const TEMPLATE_SCENE: &str = "template.scene.json";
 
-const TEMPLATE_BRICK: &str = "glimmer";
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum BrickKind {
+    Gameplay,
+    Drawn,
+}
 
-const BRICK_NEEDS: [&str; 3] = ["engine_core", "engine_ecs", "engine_render"];
+impl BrickKind {
+    const ALL: [(Self, &'static str); 2] = [(Self::Gameplay, "gameplay"), (Self::Drawn, "drawn")];
+
+    fn named(given: &str) -> Result<Self, String> {
+        Self::ALL
+            .iter()
+            .find(|(_, name)| *name == given)
+            .map(|(kind, _)| *kind)
+            .ok_or_else(|| {
+                json!({
+                    "code": "unknown_variant",
+                    "path": "--kind",
+                    "got": given,
+                    "variants": Self::ALL.iter().map(|(_, name)| *name).collect::<Vec<_>>(),
+                })
+                .to_string()
+            })
+    }
+
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Gameplay => "gameplay",
+            Self::Drawn => "drawn",
+        }
+    }
+
+    const fn template(self) -> &'static str {
+        match self {
+            Self::Gameplay => "turning",
+            Self::Drawn => "glimmer",
+        }
+    }
+
+    const fn needs(self) -> &'static [&'static str] {
+        match self {
+            Self::Gameplay => &["engine", "serde"],
+            Self::Drawn => &["engine_core", "engine_ecs", "engine_render"],
+        }
+    }
+
+    fn folder(self) -> String {
+        format!("src/bricks/{}", self.template())
+    }
+}
 
 const RESERVED: [&str; 4] = ["engine", "generated", "face", "place"];
 
@@ -138,14 +185,15 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
         return Err(format!("a client named {name} already exists"));
     }
     let mut files = Vec::new();
+    let drawn = BrickKind::Drawn;
     for (inside, text) in template_files(&root.join(APP_TEMPLATE))? {
-        if inside.starts_with(BRICK_TEMPLATE) {
+        if inside.starts_with(drawn.folder()) {
             continue;
         }
         let text = if inside == Path::new("Cargo.toml") {
             game_manifest(&text, &name, &page)?
         } else {
-            text.replace(&format!("    pub mod {TEMPLATE_BRICK};\n"), "")
+            text.replace(&format!("    pub mod {};\n", drawn.template()), "")
                 .replace(TEMPLATE_CRATE, &wasm)
                 .replace("Template", &pascal)
         };
@@ -230,7 +278,7 @@ fn xtask_main(wasm: &str) -> String {
         r#"use {wasm} as app;
 
 fn main() -> std::process::ExitCode {{
-    engine_checks::app::main(env!("CARGO_MANIFEST_DIR"), app::bricks, app::build)
+    engine_checks::app::main(env!("CARGO_MANIFEST_DIR"), app::GAME.bricks, app::GAME.build)
 }}
 "#
     )
@@ -256,15 +304,15 @@ fn page_html(name: &str, pascal: &str) -> String {
 
 fn page_entry(wasm: &str, pascal: &str) -> String {
     format!(
-        r#"import {{ loadGame }} from "../engine/bindings";
-import {{ startGame }} from "../engine/host";
+        r#"import {{ playGame }} from "../engine/game";
 import JobWorker from "./worker.ts?worker";
 
-startGame({{
-  async create(canvas) {{
-    const {{ {pascal}Game }} = await loadGame("{wasm}", () => import("../../pkg/{wasm}"), JobWorker);
-    return {pascal}Game.create(canvas);
-  }},
+playGame({{
+  wasm: "{wasm}",
+  scene: "{TEMPLATE_SCENE}",
+  load: () => import("../../pkg/{wasm}"),
+  worker: JobWorker,
+  game: bindings => bindings.{pascal}Game,
 }});
 "#
     )
@@ -306,11 +354,24 @@ fn brick(root: &Path, options: &[String]) -> Result<(), String> {
     let (Some(project), Some((name, rest))) = (project, rest.split_first()) else {
         return Err(USAGE.into());
     };
-    let place = match rest {
-        [] => None,
-        [flag, place] if flag == "--place" => Some(place.as_str()),
-        _ => return Err(USAGE.into()),
-    };
+    let (mut place, mut kind) = (None, BrickKind::Gameplay);
+    let mut given = rest.iter();
+    while let Some(flag) = given.next() {
+        match (flag.as_str(), given.next()) {
+            ("--place", Some(value)) => place = Some(value.as_str()),
+            ("--kind", Some(value)) => kind = BrickKind::named(value)?,
+            _ => return Err(USAGE.into()),
+        }
+    }
+    if place.is_some() && kind != BrickKind::Drawn {
+        return Err(json!({
+            "code": "invalid_arguments",
+            "path": "--place",
+            "expected": "--kind drawn",
+            "got": kind.name(),
+        })
+        .to_string());
+    }
     let named_options = std::iter::once(("NAME", name.as_str()))
         .chain(place.map(|place| ("--place", place)));
     for (path, given) in named_options {
@@ -365,15 +426,16 @@ fn brick(root: &Path, options: &[String]) -> Result<(), String> {
         None => None,
     };
     let upper = name.to_ascii_uppercase();
-    let template_named = pascal(TEMPLATE_BRICK, '_');
-    let template_upper = TEMPLATE_BRICK.to_ascii_uppercase();
+    let template = kind.template();
+    let template_named = pascal(template, '_');
+    let template_upper = template.to_ascii_uppercase();
     let rename = |text: &str| {
-        text.replace(TEMPLATE_BRICK, name)
+        text.replace(template, name)
             .replace(&template_named, &named)
             .replace(&template_upper, &upper)
     };
     let mut files = Vec::new();
-    for (inside, text) in template_files(&root.join(APP_TEMPLATE).join(BRICK_TEMPLATE))? {
+    for (inside, text) in template_files(&root.join(APP_TEMPLATE).join(kind.folder()))? {
         let inside: PathBuf = inside
             .components()
             .map(|part| rename(&part.as_os_str().to_string_lossy()))
@@ -400,7 +462,7 @@ fn brick(root: &Path, options: &[String]) -> Result<(), String> {
     }
     write_files(root, &files)?;
     let listed = declare_module(root, &project, name, &named)?;
-    need_dependencies(root, &project, claim.as_ref())?;
+    need_dependencies(root, &project, kind, claim.as_ref())?;
     run(root, "cargo", &["check", "-p", &game])?;
     run(
         root,
@@ -415,6 +477,7 @@ fn brick(root: &Path, options: &[String]) -> Result<(), String> {
             "project": project,
             "module": module,
             "brick": format!("{}::bricks::{name}::{named}Brick", game.replace('-', "_")),
+            "kind": kind.name(),
             "listed": listed,
             "part": place,
             "claims": claim.as_ref().map(|claim| claim.shape.name()),
@@ -526,7 +589,8 @@ fn registered(
     let anchor = format!(".settings::<{named}>()\n");
     if !text.contains(&anchor) {
         return Err(format!(
-            "{APP_TEMPLATE}/{BRICK_TEMPLATE}/mod.rs no longer registers its settings"
+            "{APP_TEMPLATE}/{}/mod.rs no longer registers its settings",
+            BrickKind::Drawn.folder()
         ));
     }
     Ok(text.replacen(&anchor, &format!("{anchor}            {line}\n"), 1))
@@ -588,9 +652,14 @@ fn declare_module(root: &Path, project: &str, name: &str, named: &str) -> Result
     Ok(listed)
 }
 
-fn need_dependencies(root: &Path, project: &str, claim: Option<&Claim>) -> Result<(), String> {
+fn need_dependencies(
+    root: &Path,
+    project: &str,
+    kind: BrickKind,
+    claim: Option<&Claim>,
+) -> Result<(), String> {
     let path = root.join(project).join("Cargo.toml");
-    let mut needs: Vec<&str> = BRICK_NEEDS.to_vec();
+    let mut needs: Vec<&str> = kind.needs().to_vec();
     if let Some(claim) = claim
         && !needs.contains(&claim.package.as_str())
     {

@@ -1,7 +1,13 @@
 use bevy_ecs::resource::Resource;
-use engine_core::{BrickList, DeviceLimits, Engine, Error, ErrorCode};
+use bevy_ecs::world::World;
+use engine_core::{
+    BrickList, Bricks, Camera, DeviceLimits, Engine, Error, ErrorCode, Smoke, Transform,
+    main_camera, place_camera,
+};
 use engine_render::{Renderer, wgpu};
-use engine_scene::{SceneFiles, SceneInstance, SceneLookControl, SceneMaterialControl};
+use engine_scene::{
+    SceneDocument, SceneFiles, SceneInstance, SceneLookControl, SceneMaterialControl,
+};
 
 pub fn engine(bricks: impl FnOnce(BrickList) -> BrickList) -> crate::Result<Engine> {
     listed(bricks(BrickList::default()))
@@ -31,63 +37,134 @@ pub(crate) fn limit(engine: &mut Engine, limits: DeviceLimits) {
     world.insert_resource(DeviceLimits { cores, ..limits });
 }
 
-pub trait Game: 'static {
-    fn before_frame(&mut self, _engine: &mut Engine) {}
+pub trait Game: Resource + Sized {
+    const FILES: &'static [&'static str] = &[];
 
-    fn reset_camera(&mut self, _engine: &mut Engine) {}
+    const SMOKES: &'static [Smoke] = &[];
 
-    fn scene(&self) -> Option<&SceneInstance> {
+    fn register(_bricks: &mut Bricks<'_>) {}
+
+    fn load_scene(
+        engine: &mut Engine,
+        document: &SceneDocument,
+        files: &SceneFiles,
+        _arrival: Arrival,
+    ) -> Result<SceneInstance, Error> {
+        document.instantiate_with(engine.app.world_mut(), files)
+    }
+
+    fn reset_camera(engine: &mut Engine, scene: &LoadedScene) {
+        scene.place_camera(engine.app.world_mut());
+    }
+
+    fn content(_engine: &Engine, _scene: &LoadedScene) -> Option<Vec<u8>> {
         None
     }
-
-    fn content(&self, _engine: &Engine) -> Option<Vec<u8>> {
-        None
-    }
-
-    fn reload_scene(
-        &mut self,
-        _engine: &mut Engine,
-        _source: &str,
-        _files: &SceneFiles,
-    ) -> Result<(), Error> {
-        Err(Error::new(ErrorCode::UnsupportedCommand, "$.op").got("reload"))
-    }
-
-    fn inspectors(_inspectors: &mut Inspectors) {}
 }
 
-pub struct Inspectors<'a> {
-    #[cfg(feature = "dev")]
-    tools: &'a mut engine_dev::DevTools,
-    #[cfg(not(feature = "dev"))]
-    _tools: std::marker::PhantomData<&'a mut ()>,
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Arrival {
+    Opening,
+    Reload,
 }
 
-impl<'a> Inspectors<'a> {
-    #[cfg(feature = "dev")]
-    pub(crate) fn new(tools: &'a mut engine_dev::DevTools) -> Self {
-        Self { tools }
+#[derive(Default)]
+pub struct LoadedScene {
+    instance: Option<SceneInstance>,
+    start: Option<(Transform, Camera)>,
+}
+
+impl LoadedScene {
+    pub fn instance(&self) -> Option<&SceneInstance> {
+        self.instance.as_ref()
     }
 
-    pub fn resource<R: Resource>(
-        &mut self,
-        schemas: &str,
-        name: &str,
-        view: impl Fn(&R) -> serde_json::Value + Send + Sync + 'static,
-    ) -> &mut Self {
-        #[cfg(feature = "dev")]
+    pub fn start(&self) -> Option<(Transform, Camera)> {
+        self.start
+    }
+
+    pub fn place_camera(&self, world: &mut World) {
+        if let Some((at, lens)) = self.start
+            && let Some(camera) = main_camera(world)
         {
-            let schemas: serde_json::Value =
-                serde_json::from_str(schemas).expect("inspector_schema_json");
-            self.tools
-                .register_resource::<R>(
-                    engine_dev::InspectorDescriptor::generated(&schemas, name),
-                    view,
-                )
-                .unwrap_or_else(|error| panic!("inspector_valid {name} {error:?}"));
+            place_camera(world, camera, at, lens);
         }
-        #[cfg(not(feature = "dev"))]
-        let _ = (schemas, name, view);
-        self
     }
+
+    pub(crate) fn replace(&mut self, world: &mut World, instance: SceneInstance) {
+        if let Some(previous) = self.instance.replace(instance) {
+            previous.despawn(world);
+        }
+        self.start = main_camera(world).and_then(|camera| {
+            Some((*world.get::<Transform>(camera)?, *world.get::<Camera>(camera)?))
+        });
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct DefaultScene {
+    pub path: &'static str,
+    pub text: &'static str,
+}
+
+pub struct GameEntry<G> {
+    pub title: &'static str,
+    pub folder: &'static str,
+    pub bricks: fn(BrickList) -> BrickList,
+    pub build: fn(&mut Engine) -> crate::Result<G>,
+    pub scene: Option<DefaultScene>,
+}
+
+impl<G> Clone for GameEntry<G> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+
+impl<G> Copy for GameEntry<G> {}
+
+#[derive(Resource, Default)]
+pub struct GameFiles {
+    files: SceneFiles,
+}
+
+impl GameFiles {
+    pub fn bytes(&self, name: &str) -> Option<&[u8]> {
+        self.files.buffer(name, "$").ok()
+    }
+}
+
+pub fn default_build<G: Default>(_: &mut Engine) -> crate::Result<G> {
+    Ok(G::default())
+}
+
+pub fn built<G: Game>(
+    entry: &GameEntry<G>,
+    engine: &mut Engine,
+    files: SceneFiles,
+) -> crate::Result<G> {
+    engine.app.world_mut().insert_resource(GameFiles { files });
+    let game = (entry.build)(engine);
+    engine.app.world_mut().remove_resource::<GameFiles>();
+    game
+}
+
+pub fn without(list: BrickList, names: &str, path: &str) -> crate::Result<BrickList> {
+    let packages: Vec<&'static str> = list.listed().iter().map(|listed| listed.package()).collect();
+    let left_out = names
+        .split(',')
+        .filter(|name| !name.is_empty())
+        .map(|name| {
+            packages
+                .iter()
+                .copied()
+                .find(|&package| package == name)
+                .ok_or_else(|| {
+                    Error::new(ErrorCode::InvalidArguments, path)
+                        .got(name)
+                        .variants(packages.iter().copied())
+                })
+        })
+        .collect::<crate::Result<Vec<&'static str>>>()?;
+    Ok(left_out.into_iter().fold(list, BrickList::without_package))
 }

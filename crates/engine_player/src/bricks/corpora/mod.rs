@@ -1,4 +1,4 @@
-include!(concat!(env!("OUT_DIR"), "/bricks/corpora.rs"));
+engine::brick!(corpora);
 
 #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
 use engine_core::Corpus;

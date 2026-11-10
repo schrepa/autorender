@@ -1,7 +1,8 @@
 use crate::GameHost;
-use crate::game::Game;
+use crate::game::{Game, GameEntry};
 use crate::host::{JobId, JobOrder, JobShare};
-use engine_core::{BrickList, Engine};
+use engine_core::BrickList;
+use engine_scene::SceneFiles;
 use engine_settings::js_error as js;
 use wasm_bindgen::prelude::*;
 use web_sys::HtmlCanvasElement;
@@ -12,11 +13,8 @@ pub struct SceneLoading {
 }
 
 impl SceneLoading {
-    pub fn new(source: &str, bricks: Option<fn(BrickList) -> BrickList>) -> Result<Self, JsValue> {
-        let kinds = match bricks {
-            Some(bricks) => crate::scene_kinds(bricks).map_err(js)?,
-            None => engine_scene::SceneKinds::default(),
-        };
+    pub fn new(source: &str, bricks: fn(BrickList) -> BrickList) -> Result<Self, JsValue> {
+        let kinds = crate::scene_kinds(bricks).map_err(js)?;
         Ok(Self {
             load: Some(crate::host::SceneLoad::new(source, &kinds).map_err(js)?),
         })
@@ -92,15 +90,36 @@ impl<G: Game> std::ops::DerefMut for PageHost<G> {
 }
 
 impl<G: Game> PageHost<G> {
-    pub async fn launch<E: Into<crate::Error>>(
+    pub async fn start(
         canvas: HtmlCanvasElement,
-        bricks: impl FnOnce(BrickList) -> BrickList,
-        build: impl FnOnce(&mut Engine) -> Result<G, E>,
+        game: GameEntry<G>,
+        query: &str,
+        scene: Option<(String, SceneFiles)>,
+        files: SceneFiles,
     ) -> Result<Self, JsValue> {
+        let parameters = web_sys::UrlSearchParams::new_with_str(query)?;
+        let without = parameters.get("without").unwrap_or_default();
+        let bricks = crate::game::without((game.bricks)(BrickList::default()), &without, "?without")
+            .map_err(js)?;
         let target = engine_render::RenderTarget::Canvas(canvas);
-        Ok(Self {
-            host: GameHost::launch(target, bricks, build).await.map_err(js)?,
+        let mut host = GameHost::launch(target, move |_| bricks, |engine| {
+            crate::game::built(&game, engine, files)
         })
+        .await
+        .map_err(js)?;
+        match scene {
+            Some((source, files)) => host.open_scene(&source, &files).map_err(js)?,
+            None => {
+                if let Some(scene) = game.scene {
+                    let kinds = engine_scene::SceneKinds::of(host.engine().app.world());
+                    let files = crate::host::SceneLoad::new(scene.text, &kinds)
+                        .and_then(crate::host::SceneLoad::finish)
+                        .map_err(js)?;
+                    host.open_scene(scene.text, &files).map_err(js)?;
+                }
+            }
+        }
+        Ok(Self { host })
     }
 
     pub fn frame(&mut self, timestamp: f64, width: u32, height: u32) -> Result<(), JsValue> {

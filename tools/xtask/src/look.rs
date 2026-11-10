@@ -90,7 +90,7 @@ pub fn look(root: &Path, arguments: &[String]) -> Result<(), Failure> {
                 let served = source.strip_prefix("web/").ok_or_else(|| {
                     format!("{}: source {source} is outside web/", plan.display())
                 })?;
-                format!("?source=/{served}")
+                format!("?scene=/{served}")
             }
             None => String::new(),
         };
@@ -105,7 +105,7 @@ pub fn look(root: &Path, arguments: &[String]) -> Result<(), Failure> {
         let program = build_native(root, &project)?;
         command.args(["--native", &program]);
         if let Some(source) = &source {
-            command.args(["--source", source]);
+            command.args(["--scene", source]);
         }
         None
     };

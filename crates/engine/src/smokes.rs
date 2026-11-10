@@ -3,14 +3,14 @@ mod harness;
 use engine_core::{BrickList, Engine, ErrorCode};
 pub use engine_core::{Smoke, SmokeFailure, SmokeSession};
 use engine_registry::Registry;
-use engine_scene::{SceneFiles, SceneInstance, SceneKinds};
+use engine_scene::{SceneFiles, SceneKinds};
 use serde_json::{Map, Value, json};
 
-use crate::{Error, Game, Inspectors, Result};
+use crate::{Error, Result};
 
 pub use harness::{GpuSession, SmokeHost, run};
 
-pub type Build<'b, G> = &'b dyn Fn(Option<&str>, &mut Engine) -> Result<G>;
+pub type Build<'b, G> = &'b dyn Fn(&mut Engine) -> Result<G>;
 
 pub const ALL: &str = "all";
 
@@ -46,76 +46,6 @@ pub fn registered(bricks: &BrickList) -> Result<Vec<SmokeEntry>> {
                 .collect()
         })
         .unwrap_or_default())
-}
-
-pub type SceneBuild<G> = fn(&str, &SceneFiles, &mut Engine) -> Result<G>;
-
-pub enum Played<G> {
-    Plain(SceneBuild<G>),
-    Scene(G),
-}
-
-pub fn played<G>(
-    source: Option<&str>,
-    engine: &mut Engine,
-    scene: SceneBuild<G>,
-) -> Result<Played<G>> {
-    let Some(document) = source else {
-        return Ok(Played::Plain(scene));
-    };
-    Ok(Played::Scene(scene(
-        document,
-        &SceneFiles::default(),
-        engine,
-    )?))
-}
-
-impl<G: Game> Game for Played<G> {
-    fn before_frame(&mut self, engine: &mut Engine) {
-        if let Self::Scene(game) = self {
-            game.before_frame(engine);
-        }
-    }
-
-    fn reset_camera(&mut self, engine: &mut Engine) {
-        if let Self::Scene(game) = self {
-            game.reset_camera(engine);
-        }
-    }
-
-    fn scene(&self) -> Option<&SceneInstance> {
-        match self {
-            Self::Plain(_) => None,
-            Self::Scene(game) => game.scene(),
-        }
-    }
-
-    fn content(&self, engine: &Engine) -> Option<Vec<u8>> {
-        match self {
-            Self::Plain(_) => None,
-            Self::Scene(game) => game.content(engine),
-        }
-    }
-
-    fn reload_scene(
-        &mut self,
-        engine: &mut Engine,
-        source: &str,
-        files: &SceneFiles,
-    ) -> Result<()> {
-        match self {
-            Self::Plain(scene) => {
-                let built = scene(source, files, engine)?;
-                *self = Self::Scene(built);
-                Ok(())
-            }
-            Self::Scene(game) => game.reload_scene(engine, source, files),
-        }
-    }
-
-    fn inspectors(inspectors: &mut Inspectors) {
-        G::inspectors(inspectors);
-    }
 }
 
 pub fn select<'a>(entries: &'a [SmokeEntry], names: &str) -> Result<Vec<&'a SmokeEntry>> {

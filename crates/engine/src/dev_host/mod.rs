@@ -4,7 +4,7 @@ mod controls;
 use crate::app_host::AppHost;
 use engine_core::{Error, ErrorCode};
 use engine_dev::{
-    BrowserControl, CaptureRequest, Context, Control, DevTools, Envelope, ProfileRequest,
+    BrowserControl, CaptureRequest, Context, DevTools, Envelope, ProfileRequest,
     RendererFacts, ToolCall, Verb,
 };
 use engine_scene::SceneInstance;
@@ -66,53 +66,6 @@ impl DevHost {
     pub fn drop_edges(&mut self) {
         self.input.drop_edges();
         self.agent.drop_edges();
-    }
-
-    pub fn submits_frame(
-        &self,
-        world: &bevy_ecs::prelude::World,
-        source: &str,
-        paused: bool,
-    ) -> bool {
-        let Ok(envelope) = Envelope::parse(source) else {
-            return false;
-        };
-        if envelope.verb != Verb::Control {
-            return false;
-        }
-        let (Ok(name), Ok(args)) = (envelope.name(), envelope.args()) else {
-            return false;
-        };
-        self.submits(world, (name, args), paused)
-    }
-
-    pub fn submits(
-        &self,
-        world: &bevy_ecs::prelude::World,
-        named: (&str, Value),
-        paused: bool,
-    ) -> bool {
-        match self.tools.control(world, named, paused) {
-            Ok(Control::Operation(_)) => true,
-            Ok(Control::Host(
-                BrowserControl::Benchmark { .. }
-                | BrowserControl::Frames { .. }
-                | BrowserControl::Pause { .. }
-                | BrowserControl::Resume { .. }
-                | BrowserControl::Game { .. }
-                | BrowserControl::Reload { .. }
-                | BrowserControl::Environment(_)
-                | BrowserControl::Parent { .. }
-                | BrowserControl::Input { .. },
-            ))
-            | Err(_) => false,
-            Ok(Control::Host(
-                BrowserControl::Present { .. }
-                | BrowserControl::Camera { .. }
-                | BrowserControl::Step { .. }
-                | BrowserControl::Render {},
-            )) => true,
-        }
     }
 
     pub fn command(

@@ -32,8 +32,8 @@ pub use scene_load::{
 };
 pub use engine_registry::run_operation;
 pub use settings::{
-    HostSettings, OVERLAY, SETTINGS, Setting, SettingsLog, apply_setting, apply_settings,
-    has_setting, reset_setting,
+    HostSettings, OVERLAY, SETTINGS, Setting, Settings, SettingsLog, TypedSettings,
+    apply_setting, apply_settings, changed_section, has_setting, reset_setting,
 };
 
 #[cfg(all(feature = "schema", not(target_arch = "wasm32")))]

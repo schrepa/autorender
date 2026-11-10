@@ -13,6 +13,8 @@ pub use engine_bloom::BloomBrick;
 pub use engine_debug_view::DebugViewBrick;
 pub use engine_dither::DitherBrick;
 pub use engine_dynamic_resolution::DynamicResolutionBrick;
+pub use engine_fly_camera::FlyCameraBrick;
+pub use engine_follow_camera::FollowCameraBrick;
 pub use engine_impostors::ImpostorsBrick;
 pub use engine_lighting::LightingModelBrick;
 pub use engine_lights::LightsBrick;
@@ -24,6 +26,7 @@ pub use engine_reflections::ReflectionsBrick;
 pub use engine_screens::ScreensBrick;
 pub use engine_shadows::ShadowsBrick;
 pub use engine_sky::SkyBrick;
+pub use engine_sprites::SpritesBrick;
 pub use engine_sun::SunBrick;
 pub use engine_taa::TaaBrick;
 pub use engine_text::TextBrick;
@@ -31,6 +34,31 @@ pub use engine_texture_cook::TextureCook;
 pub use engine_time_of_day::TimeOfDayBrick;
 pub use engine_tonemap::TonemapBrick;
 pub use engine_ui::UiBrick;
+
+pub fn minimal<L: Listing>(list: L) -> L {
+    list.with::<TextureCook>()
+        .with::<TimeOfDayBrick>()
+        .with::<SunBrick>()
+        .with::<LightingModelBrick>()
+        .with::<MeshesBrick>()
+        .with::<TonemapBrick>()
+        .with::<FlyCameraBrick>()
+        .places(engine_places::PLACES)
+        .places(engine_places_rendering::PLACES)
+}
+
+pub fn two_d<L: Listing>(list: L) -> L {
+    list.with::<TextureCook>()
+        .with::<LightingModelBrick>()
+        .with::<SpritesBrick>()
+        .with::<TextBrick>()
+        .with::<UiBrick>()
+        .with::<ScreensBrick>()
+        .with::<TonemapBrick>()
+        .with::<FollowCameraBrick>()
+        .places(engine_places::PLACES)
+        .places(engine_places_rendering::PLACES)
+}
 
 pub fn rendering<L: Listing>(list: L) -> L {
     list.with::<TextureCook>()
@@ -57,6 +85,7 @@ pub fn rendering<L: Listing>(list: L) -> L {
         .with::<ReflectionProbesBrick>()
         .with::<ReflectionsBrick>()
         .with::<ParticlesBrick>()
+        .with::<AnimationBrick>()
         .with::<DynamicResolutionBrick>()
         .places(engine_places::PLACES)
         .places(engine_places_rendering::PLACES)
