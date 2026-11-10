@@ -1,6 +1,7 @@
 use bevy_ecs::world::World;
+use engine_registry::CORE_ROW;
 
-use crate::{Board, FrameBudget, GlobalTransforms, Level, Readiness, WorkClock, settings};
+use crate::{Board, FrameBudget, GlobalTransforms, Level, Readiness, Views, WorkClock, settings};
 
 settings! {
     #[section("feeds")]
@@ -52,13 +53,16 @@ pub(crate) fn settle_readiness(world: &mut World, board: &Board) {
     let compiling = world
         .get_resource::<Readiness>()
         .map_or(0, |readiness| readiness.compiling);
+    let viewed = world
+        .get_resource::<Views>()
+        .is_some_and(|views| !views.listed().is_empty());
     let mut readiness = Readiness {
         compiling,
         ..Readiness::default()
     };
-    board.add_to(&mut readiness);
+    board.add_to(&mut readiness, viewed);
     if let Some(cooking) = world.get_resource::<crate::cook::Cooking>() {
-        readiness.settle(u32::try_from(cooking.left()).unwrap_or(u32::MAX));
+        readiness.settle(CORE_ROW, u32::try_from(cooking.left()).unwrap_or(u32::MAX));
     }
     world.insert_resource(readiness);
     crate::loads::settle_scene(world);

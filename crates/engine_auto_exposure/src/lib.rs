@@ -60,10 +60,19 @@ impl Brick for AutoExposureBrick {
     }
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub(crate) struct ExposureFeedback {
     read: Option<[f32; 5]>,
     settling: Settling,
+}
+
+impl Default for ExposureFeedback {
+    fn default() -> Self {
+        Self {
+            read: None,
+            settling: Settling::on_view(),
+        }
+    }
 }
 
 impl Readable for ExposureFeedback {

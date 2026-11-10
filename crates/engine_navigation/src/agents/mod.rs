@@ -12,6 +12,8 @@ use engine_core::{
 };
 
 pub const NAVIGATION_PART: &str = "navigation";
+pub const NAV_STEPS_NOT_TAKEN: ErrorCode = ErrorCode::brick("nav_steps_not_taken");
+const STEPS_NOT_TAKEN: &str = "steps_not_taken";
 use engine_math::{atan2, max};
 use engine_places_simulation::ground::{Ground, GroundProbe, GroundRead};
 use engine_places_simulation::navigation::{NavAgent, NavStatus, NavStep, NavWalk};
@@ -545,7 +547,10 @@ fn walk(
             }
             continue;
         }
-        if walk.status == NavStatus::Refused {
+        let untaken = walk.refused.as_deref() == Some(STEPS_NOT_TAKEN);
+        if walk.status == NavStatus::Refused
+            && !(untaken && walk.destination == agent.destination)
+        {
             refusals.accept(entity, NAVIGATION_PART);
             *walk = NavWalk::default();
         }
@@ -577,6 +582,21 @@ fn walk(
     let seconds = time.delta_seconds;
     for (entity, agent, mut walk, transform) in agents.iter_mut() {
         stats.agents += 1;
+        if let Some(untaken) = walk.step.filter(|step| !step.taken) {
+            refusals.refuse(
+                entity,
+                NAVIGATION_PART,
+                Error::new(NAV_STEPS_NOT_TAKEN, "$.nav_agent").got(untaken.to.to_array()),
+            );
+            *walk = NavWalk {
+                status: NavStatus::Refused,
+                refused: Some(STEPS_NOT_TAKEN.to_owned()),
+                destination: walk.destination,
+                ..NavWalk::default()
+            };
+            stats.refused += 1;
+            continue;
+        }
         match walk.status {
             NavStatus::Searching => stats.searching += 1,
             NavStatus::Arrived => stats.arrived += 1,
@@ -774,6 +794,7 @@ fn step(
         to: position,
         facing,
         blocked,
+        taken: false,
     };
     (next, failed)
 }

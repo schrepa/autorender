@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     Clock, DrawnState, DrawnTable, Error, ErrorCode, Expected, GlobalTransforms, Mobility, Mover,
-    NodeWord, Operation, Pace, Readiness, Refusal, Refusals,
+    NodeWord, Operation, Pace, Readiness, Refusal, Refusals, Unsettled,
 };
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -73,6 +73,7 @@ pub(crate) struct BrickWhy {
     doing: bool,
     state: Option<BrickStateView>,
     needs: Vec<String>,
+    waiting: Vec<Unsettled>,
     failed: Vec<Refusal>,
     problems: Vec<Refusal>,
 }
@@ -186,8 +187,13 @@ fn brick_answer(world: &World, brick: &str) -> Result<BrickWhy, Error> {
         .iter()
         .filter_map(|&need| registry.record(need).map(|record| record.package.to_owned()))
         .collect();
-    let failed: Vec<Refusal> = world
-        .get_resource::<Readiness>()
+    let readiness = world.get_resource::<Readiness>();
+    let waiting: Vec<Unsettled> = readiness
+        .into_iter()
+        .flat_map(|readiness| readiness.of(brick))
+        .cloned()
+        .collect();
+    let failed: Vec<Refusal> = readiness
         .into_iter()
         .flat_map(|readiness| readiness.failed.iter())
         .filter(|(by, _)| by == brick)
@@ -205,6 +211,7 @@ fn brick_answer(world: &World, brick: &str) -> Result<BrickWhy, Error> {
         doing: state.is_some_and(engine_registry::BrickState::on) && failed.is_empty(),
         state: state.map(engine_registry::BrickState::view),
         needs,
+        waiting,
         failed,
         problems,
     })

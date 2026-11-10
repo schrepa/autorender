@@ -15,8 +15,8 @@ use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, JobKind, SceneComponents, Schedule, Source};
 
 pub use agents::{
-    NAVIGATION_PART, NavAgents, NavQuery, NavStats, Navigation, ObstacleColliders, SceneNavAgent,
-    WalkArea,
+    NAV_STEPS_NOT_TAKEN, NAVIGATION_PART, NavAgents, NavQuery, NavStats, Navigation,
+    ObstacleColliders, SceneNavAgent, WalkArea,
 };
 pub use dev::{
     NavAgentQuery, NavAgentRow, NavAgentView, NavAgentsQuery, NavAgentsView, NavGoControl,
@@ -38,7 +38,7 @@ impl Brick for NavigationBrick {
         bricks
             .when(|navigation: Res<Navigation>| navigation.enabled)
             .settings::<Navigation>()
-            .errors(&[scene::INVALID_NAV_AGENT])
+            .errors(&[scene::INVALID_NAV_AGENT, agents::NAV_STEPS_NOT_TAKEN])
             .resource::<NavAgents>()
             .stats::<NavStats>()
             .systems(Schedule::FixedMove, agents::walk_agents)

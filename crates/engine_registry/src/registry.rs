@@ -8,7 +8,9 @@ use bevy_ecs::schedule::{
 };
 use bevy_ecs::system::{IntoSystem, ScheduleSystem};
 use bevy_ecs::world::World;
-use engine_place::{AttachPoint, Error, ErrorCode, Operation, PlaceDecl, PlaceKind, Slot, Smoke};
+use engine_place::{
+    AttachPoint, Board, Error, ErrorCode, Operation, PlaceDecl, PlaceKind, Slot, Smoke,
+};
 use engine_settings::Expected;
 use serde_json::Value;
 
@@ -53,20 +55,21 @@ pub fn run_operation(world: &mut World, name: &str, request: Value) -> Result<Va
         .and_then(|registry| registry.operation(name))
         .copied()
         .ok_or_else(|| unregistered(name))?;
-    operation
-        .run(world, request)
+    Board::owned_by(operation.brick, || operation.run(world, request))
         .map_err(|error| error.within("$.args"))
 }
 
 pub fn call<O: Operation>(world: &mut World, request: O::Request) -> Result<O::Reply, Error> {
-    let registered = world
+    let Some(brick) = world
         .get_resource::<Registry>()
         .and_then(|registry| registry.operation(O::NAME))
-        .is_some_and(OperationEntry::declares::<O>);
-    if !registered {
+        .filter(|entry| entry.declares::<O>())
+        .map(|entry| entry.brick)
+    else {
         return Err(unregistered(O::NAME));
-    }
-    engine_place::answer::<O>(world, request).map_err(|error| error.within("$.args"))
+    };
+    Board::owned_by(brick, || engine_place::answer::<O>(world, request))
+        .map_err(|error| error.within("$.args"))
 }
 
 #[derive(Resource, Default)]
@@ -230,9 +233,11 @@ impl RegistryBuilder {
             entry.owned().init(world);
         }
         for record in &registry.bricks {
-            for owned in record.owned() {
-                owned.init(world);
-            }
+            Board::owned_by(record.package, || {
+                for owned in record.owned() {
+                    owned.init(world);
+                }
+            });
         }
         registry.join_members(world);
         registry.resolve_named(world);
@@ -1032,11 +1037,9 @@ impl Registry {
                     collective_conditions: Vec::new(),
                     metadata: chain,
                 };
-                #[cfg(feature = "profiling")]
-                let before = crate::measured::keys(all.entry(group.schedule));
+                let before = crate::attributed::keys(all.entry(group.schedule));
                 all.add_systems(group.schedule, chained.in_set(BrickSet(package)));
-                #[cfg(feature = "profiling")]
-                crate::measured::wrap(
+                crate::attributed::wrap(
                     all.entry(group.schedule),
                     &before,
                     (package, brick.profile_index()),

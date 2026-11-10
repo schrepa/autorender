@@ -4,14 +4,17 @@ use bevy_ecs::schedule::{ApplyDeferred, Schedule, SystemKey, SystemWithAccess};
 use bevy_ecs::system::{
     Adapt, AdapterSystem, IntoSystem, RunSystemError, System, SystemIn, SystemInput,
 };
+use engine_place::Board;
 
-struct Measured {
+struct Attributed {
     brick: &'static str,
+    #[cfg(feature = "profiling")]
     index: u16,
+    #[cfg(feature = "profiling")]
     row: usize,
 }
 
-impl Adapt<SystemWithAccess> for Measured {
+impl Adapt<SystemWithAccess> for Attributed {
     type In = ();
     type Out = ();
 
@@ -22,10 +25,13 @@ impl Adapt<SystemWithAccess> for Measured {
             SystemIn<'_, SystemWithAccess>,
         ) -> Result<<SystemWithAccess as System>::Out, RunSystemError>,
     ) -> Result<Self::Out, RunSystemError> {
+        #[cfg(feature = "profiling")]
         let _span = engine_profile::span("brick", self.brick);
+        #[cfg(feature = "profiling")]
         let _scope = engine_profile::enter(self.index);
+        #[cfg(feature = "profiling")]
         let _row = engine_profile::timed(self.row);
-        run_system(input)
+        Board::owned_by(self.brick, || run_system(input))
     }
 }
 
@@ -45,6 +51,8 @@ pub(crate) fn wrap(
     before: &[SystemKey],
     (brick, index): (&'static str, u16),
 ) {
+    #[cfg(not(feature = "profiling"))]
+    let _ = index;
     let systems = &mut schedule.graph_mut().systems;
     let added: Vec<SystemKey> = systems
         .iter()
@@ -62,11 +70,13 @@ pub(crate) fn wrap(
             SystemWithAccess::new(Box::new(IntoSystem::<(), (), _>::into_system(idle))),
         );
         let name = inner.name();
-        let row = engine_profile::row(Box::leak(name.to_string().into_boxed_str()));
-        *slot = SystemWithAccess::new(Box::new(AdapterSystem::new(
-            Measured { brick, index, row },
-            inner,
-            name,
-        )));
+        let attributed = Attributed {
+            brick,
+            #[cfg(feature = "profiling")]
+            index,
+            #[cfg(feature = "profiling")]
+            row: engine_profile::row(Box::leak(name.to_string().into_boxed_str())),
+        };
+        *slot = SystemWithAccess::new(Box::new(AdapterSystem::new(attributed, inner, name)));
     }
 }

@@ -81,7 +81,7 @@ pub use engine_assets::{
 };
 pub use engine_textures::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
 pub use engine_place::{
-    Applied, ApplyAt, Ask, Asked, AttachPoint, BlendedPass, Board, BudgetUse, Census,
+    Applied, ApplyAt, Ask, Asked, AttachPoint, Awaits, BlendedPass, Board, BudgetUse, Census,
     Clock, ColorPass, PositionReach,
     Cursor, DrawKind, Drawn, DrawnBounds, DrawnProjection, Error, ErrorCode, Events,
     Feed, FeedView, FrameBudget, GpuStruct, Hold, InstanceValues, Interest, JobRef,
@@ -90,7 +90,8 @@ pub use engine_place::{
     PassMask, PassName, PassPurpose, PassRaster, PassRole, PassViews, PlaceDecl, Progress, Readiness, Request, Requests, Ring,
     ScenePass, ScenePasses, Since, Slot, SlotSet, Smoke,
     SmokeFailure, SmokeSession,
-    Settling, Stamp, StoreId, TargetName, TextureHandle, Ticket, Writes, every, gpu_consts,
+    Settling, Stamp, StoreId, TargetName, TextureHandle, Ticket, Unsettled, Writes, every,
+    gpu_consts,
     never,
     smoke_check, smoke_eq,
 };

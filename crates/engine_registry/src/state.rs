@@ -7,7 +7,7 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{ReadOnlySystem, RunSystemError};
 use bevy_ecs::world::World;
 use engine_place::{
-    EntityIds, Error, ErrorCode, EventPage, Feed, Refusal, missing_events, page_of,
+    Board, EntityIds, Error, ErrorCode, EventPage, Feed, Refusal, missing_events, page_of,
 };
 use serde::Serialize;
 
@@ -416,9 +416,11 @@ fn turn_on(world: &mut World, gate: GateId) {
         return;
     };
     let work = turning(world, brick, gate);
-    for &(insert, _) in &work.resources {
-        insert(world);
-    }
+    Board::owned_by(package(world, brick), || {
+        for &(insert, _) in &work.resources {
+            insert(world);
+        }
+    });
     for reset in &work.private {
         reset.apply(world);
     }

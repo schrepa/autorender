@@ -50,7 +50,7 @@ pub use passes::{
     every, never, wgsl_name,
 };
 pub use readback::{FrameId, Readable, Readback};
-pub use readiness::Readiness;
+pub use readiness::{Awaits, CORE_ROW, Readiness, Unsettled};
 pub use requests::{
     Board, Census, Hold, Interest, Progress, Request, Requests, Settling, Ticket,
 };
