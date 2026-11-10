@@ -499,18 +499,26 @@ fn impostor_asks(
                 return None;
             }
             let asset = resolved().find(|asset| asset.mesh.handle == group.meshes[0])?;
-            let parts = groups[index + 1..]
+            let drawn_parts: Vec<_> = groups[index + 1..]
                 .iter()
                 .take_while(|drawn| drawn.objects == index as u32)
                 .filter(|drawn| {
                     drawn.part.is_some_and(|part| {
-                        residency.resident(drawn.meshes[0])
-                            && asset
-                                .parts
-                                .get(part)
-                                .is_some_and(|rendered| !rendered.meshes.is_empty())
+                        asset
+                            .parts
+                            .get(part)
+                            .is_some_and(|rendered| !rendered.meshes.is_empty())
                     })
                 })
+                .collect();
+            if drawn_parts
+                .iter()
+                .any(|drawn| !residency.resident(drawn.meshes[0]))
+            {
+                return None;
+            }
+            let parts = drawn_parts
+                .iter()
                 .map(|drawn| (drawn.meshes[0], drawn.material))
                 .collect();
             Some(ImpostorAsk {

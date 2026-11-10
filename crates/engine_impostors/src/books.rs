@@ -454,6 +454,7 @@ struct Supply {
 enum Supplied {
     Resident(ImpostorRecord),
     Coming,
+    Waiting,
     Refused,
 }
 
@@ -461,7 +462,7 @@ impl Supplied {
     fn record(&self) -> ImpostorRecord {
         match self {
             Self::Resident(record) => *record,
-            Self::Coming | Self::Refused => ImpostorRecord::default(),
+            Self::Coming | Self::Waiting | Self::Refused => ImpostorRecord::default(),
         }
     }
 }
@@ -506,6 +507,7 @@ struct Book {
     supplied: HashSet<ImpostorKey>,
     answers: Requests<ImpostorIdentity, Arc<[u8]>>,
     baking: BTreeSet<ImpostorIdentity>,
+    waiting: u32,
 }
 
 struct Supplying<'a, 'w, 's> {
@@ -553,6 +555,7 @@ impl Book {
             supplied: HashSet::default(),
             answers: Requests::default(),
             baking: BTreeSet::new(),
+            waiting: 0,
         }
     }
 
@@ -850,7 +853,7 @@ impl Book {
                 !matches!(self.answers.get(&supply.identity), Some(Request::Failed(_)))
             })
             .count();
-        (waiting + self.baking.len()) as u64
+        (waiting + self.baking.len()) as u64 + u64::from(self.waiting)
     }
 
     fn unsettled(&self) -> u32 {
@@ -864,7 +867,9 @@ impl Book {
                 )
             })
             .count();
-        u32::try_from(waiting).unwrap_or(u32::MAX)
+        u32::try_from(waiting)
+            .unwrap_or(u32::MAX)
+            .saturating_add(self.waiting)
     }
 }
 
@@ -1169,6 +1174,15 @@ fn current_material<'a>(
     }
 }
 
+fn drawable((library, residency): Sources<'_>, handle: MaterialHandle) -> bool {
+    residency.material_resident(handle)
+        && library.material(handle).is_some_and(|material| {
+            material
+                .textures()
+                .all(|texture| residency.texture_resident(texture))
+        })
+}
+
 fn retain_book(book: &mut Book, cx: &mut Supplying<'_, '_, '_>, sources: Sources<'_>) {
     book.retain(cx, keep_key(sources.1), current_material(sources));
 }
@@ -1187,13 +1201,13 @@ fn bake_of(
     let (mut low, mut high) = (bounds.min(), bounds.max());
     let mut parts = Vec::with_capacity(ask.parts.len());
     for &(part_mesh, part_material) in &ask.parts {
-        if !residency.resident(part_mesh) {
-            continue;
+        if !residency.resident(part_mesh) || !drawable((library, residency), part_material) {
+            return None;
         }
         let (Some(finest), Some(value)) =
             (library.mesh(part_mesh), library.material(part_material))
         else {
-            continue;
+            return None;
         };
         content = (
             combined(content.0, finest.identity(content_hash)),
@@ -1220,7 +1234,7 @@ fn supply_ask(
     (budget, least): (Option<u32>, usize),
 ) -> Option<Supplied> {
     if !sources.1.resident(ask.mesh) {
-        return None;
+        return Some(Supplied::Waiting);
     }
     if sources
         .0
@@ -1229,12 +1243,20 @@ fn supply_ask(
     {
         return None;
     }
+    if ask
+        .material
+        .is_some_and(|handle| !drawable(sources, handle))
+    {
+        return Some(Supplied::Waiting);
+    }
     let material = ask.material.and_then(current_material(sources));
     let key = (ask.mesh, ask.material, hemisphere);
     if let Some(resident) = book.record(key, material.as_ref()) {
         return Some(Supplied::Resident(resident));
     }
-    let bake = bake_of(sources, ask, material)?;
+    let Some(bake) = bake_of(sources, ask, material) else {
+        return Some(Supplied::Waiting);
+    };
     Some(book.supply(cx, key, &bake, budget))
 }
 
@@ -1251,6 +1273,10 @@ fn supply_all(
             Some(_) | None => None,
         };
         let record = match supplied {
+            Some(Supplied::Waiting) => {
+                book.waiting = book.waiting.saturating_add(1);
+                ImpostorRecord::default()
+            }
             Some(supplied) => {
                 settled.asked += 1;
                 settled.refused += u32::from(matches!(supplied, Supplied::Refused));
@@ -1279,6 +1305,7 @@ fn settle_book(
     asked: &[(Entity, &ImpostorAsks)],
 ) -> Vec<(Entity, ImpostorRecords)> {
     book.fit(cx, AtlasShape::of(frame.pixels));
+    book.waiting = 0;
     retain_book(book, cx, sources);
     let shown = frame.detail && frame.switched_on;
     if !shown {
