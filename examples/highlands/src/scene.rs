@@ -1,6 +1,5 @@
 use engine::prelude::*;
 use engine::scene::SceneFiles;
-use engine_collision::CollisionConfig;
 use engine_fly_camera::FlyCamera;
 use engine_physics::Physics;
 
@@ -18,9 +17,6 @@ pub(crate) fn furnish(
 ) -> engine::Result<SceneInstance> {
     let (instance, ()) = document.instantiate_then(world, files, |world, _| {
         land::populate(world, document)?;
-        world
-            .section::<CollisionConfig>()
-            .set(|collision| collision.enabled = false)?;
         world
             .section::<Physics>()
             .set(|physics| physics.enabled = false)?;

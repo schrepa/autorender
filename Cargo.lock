@@ -2905,7 +2905,6 @@ version = "0.1.0"
 dependencies = [
  "engine",
  "engine_cards",
- "engine_collision",
  "engine_core",
  "engine_ecs",
  "engine_fly_camera",
