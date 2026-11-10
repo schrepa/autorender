@@ -232,10 +232,10 @@ impl Attributes {
         if missing == Self::NONE {
             return Ok(());
         }
-        let names: Vec<&str> = missing.iter().map(Attribute::name).collect();
+        let held: Vec<&str> = self.iter().map(Attribute::name).collect();
         Err(Error::new(ErrorCode::InvalidRenderable, path)
-            .got(names)
-            .variants(self.iter().map(Attribute::name)))
+            .got(held)
+            .variants(needed.iter().map(Attribute::name)))
     }
 }
 
