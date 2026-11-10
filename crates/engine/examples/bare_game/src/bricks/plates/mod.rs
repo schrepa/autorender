@@ -15,6 +15,10 @@ pub const PLATE: DrawKind = DrawKind("plate");
 
 pub const PLATE_MODULE: &str = "plate";
 
+const PLATE_MATERIAL: &str = "the plate material";
+
+const ROW_MATERIAL: &str = "$.drawn.material";
+
 const GENERATED: &[&str] = &[<PlateInstance as GpuStruct>::WGSL];
 
 const SKIPS: &[KindSkip] = &[
@@ -98,6 +102,8 @@ struct PlatesGpu {
     instances: Buffer<Self>,
     form: Form<Self>,
     material: Option<MaterialHandle>,
+    waiting: bool,
+    refused: Option<Error>,
     staged: Vec<PlateInstance>,
 }
 
@@ -116,6 +122,8 @@ impl GpuPart for PlatesGpu {
             instances,
             form,
             material: None,
+            waiting: false,
+            refused: None,
             staged: Vec::new(),
         })
     }
@@ -126,6 +134,8 @@ impl GpuPart for PlatesGpu {
         cx: &mut Prepare<'_, Self>,
     ) {
         self.material = None;
+        self.waiting = false;
+        self.refused = None;
         self.staged.clear();
         for (slot, entity, drawn) in table.rows(PLATE) {
             let Some(pose) = poses.drawn_pose(&globals, entity) else {
@@ -136,6 +146,12 @@ impl GpuPart for PlatesGpu {
                 self.material = drawn
                     .material
                     .filter(|material| residency.material_resident(*material));
+                if let (Some(material), None) = (drawn.material, self.material) {
+                    match residency.refusal(material, ROW_MATERIAL) {
+                        Some(error) => self.refused = self.refused.take().or(Some(error)),
+                        None => self.waiting = true,
+                    }
+                }
             }
             self.staged.push(PlateInstance {
                 center: pose.w_axis.to_array(),
@@ -159,7 +175,11 @@ impl PlatesGpu {
             return draw.skip("no plate has a pose yet");
         }
         let Some(material) = self.material else {
-            return draw.wait("the plate material");
+            return match (&self.refused, self.waiting) {
+                (Some(error), _) => draw.refuse(PLATE_MATERIAL, error),
+                (None, true) => draw.wait(PLATE_MATERIAL),
+                (None, false) => draw.skip("no plate names a material"),
+            };
         };
         let Some(pipeline) = draw.form(&self.form) else {
             return draw.skip("pass has no plate form");

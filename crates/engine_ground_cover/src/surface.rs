@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asset, AssetLibrary, AssetResidency, AssetUses, Cull, Error, Material, MaterialHandle, Request,
+    Asset, AssetLibrary, AssetResidency, AssetUses, Cull, Error, Material, MaterialHandle,
     SurfaceSlot,
 };
 use engine_places::surface::{OCCLUSION, ROUGHNESS, TRANSMISSION};
@@ -9,6 +9,7 @@ use engine_render::SlotModule;
 use crate::shaders::cover::surface;
 
 const COVER_SURFACE: &str = "cover";
+const COVER_MATERIAL: &str = "$.cover.material";
 
 const COVER_SLOTS: [&str; 7] = [
     SurfaceSlot::BaseColor.name(),
@@ -91,11 +92,9 @@ pub(crate) fn hold_surface(
     let state = match material {
         Err(error) => SurfaceState::Refused(error),
         Ok(handle) if residency.material_resident(handle) => SurfaceState::Resident(handle),
-        Ok(handle) => match residency.state(Asset::Material(handle)) {
-            Some(Request::Failed(error)) => SurfaceState::Failed(handle, error.clone()),
-            Some(Request::Asked(_) | Request::Ready(_) | Request::Missing) | None => {
-                SurfaceState::Waiting(handle)
-            }
+        Ok(handle) => match residency.refusal(handle, COVER_MATERIAL) {
+            Some(error) => SurfaceState::Failed(handle, error),
+            None => SurfaceState::Waiting(handle),
         },
     };
     if surface.state != state {

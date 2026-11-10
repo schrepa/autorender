@@ -18,9 +18,9 @@ use engine_core::{
     AlphaMode, Asset, AssetLibrary, AssetResidency, AssetUses, AttachPoint, Attributes, Brick,
     Bricks, ComponentKind, Cull, DrawKind, Drawn, DrawnPoses, DrawnTable, DropReason, Error,
     ErrorCode, GlobalTransforms, KindDecl, KindSkip, LightingModel, Material, MaterialHandle,
-    PassName, PassPurpose, PassRole, PassViews, Refusals, Request, SceneComponents, SceneCx,
-    SceneForm, Schedule, SlotSet, Source, Spawner, SurfaceSlot, Views, Writes, gpu_struct, never,
-    settings, stats,
+    PassName, PassPurpose, PassRole, PassViews, Refusals, SceneComponents, SceneCx, SceneForm,
+    Schedule, SlotSet, Source, Spawner, SurfaceSlot, Views, Writes, gpu_struct, never, settings,
+    stats,
 };
 use engine_places_rendering::text::{DEFAULT_TEXT_SIZE, FontId, Glyph, Text, TextAlign};
 use engine_render::{
@@ -286,12 +286,9 @@ impl LabelMaterial {
             LabelSurface::Made(made) if residency.material_resident(*made) => {
                 LabelHeld::Resident(*made)
             }
-            LabelSurface::Made(made) => match residency.state(Asset::Material(*made)) {
-                Some(Request::Failed(error)) => LabelHeld::Refused(error.clone()),
-                Some(Request::Asked(_) | Request::Ready(_) | Request::Missing) | None => {
-                    LabelHeld::Waiting
-                }
-            },
+            LabelSurface::Made(made) => residency
+                .refusal(*made, LABEL_MATERIAL_PATH)
+                .map_or(LabelHeld::Waiting, LabelHeld::Refused),
             LabelSurface::Unmade => LabelHeld::Waiting,
             LabelSurface::Refused(error) => LabelHeld::Refused(error.clone()),
         }
@@ -299,6 +296,7 @@ impl LabelMaterial {
 }
 
 const LABEL_MATERIAL: &str = "the label material";
+const LABEL_MATERIAL_PATH: &str = "$.label.material";
 
 enum LabelHeld {
     Waiting,

@@ -1,13 +1,14 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     AlphaMode, Asset, AssetLibrary, AssetResidency, AssetUses, Error, Material, MaterialHandle,
-    Request, SurfaceSlot,
+    SurfaceSlot,
 };
 use engine_render::SlotModule;
 
 use crate::shaders::terrain_shading::holes;
 
 const HOLED_GROUND: &str = "holed_ground";
+const HOLED_MATERIAL: &str = "$.holed_ground.material";
 const HOLE_CUTOFF: f32 = 0.5;
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -94,11 +95,9 @@ pub(crate) fn hold_material(
     let state = match material {
         Err(error) => HoledState::Refused(error),
         Ok(handle) if residency.material_resident(handle) => HoledState::Resident(handle),
-        Ok(handle) => match residency.state(Asset::Material(handle)) {
-            Some(Request::Failed(error)) => HoledState::Failed(handle, error.clone()),
-            Some(Request::Asked(_) | Request::Ready(_) | Request::Missing) | None => {
-                HoledState::Waiting(handle)
-            }
+        Ok(handle) => match residency.refusal(handle, HOLED_MATERIAL) {
+            Some(error) => HoledState::Failed(handle, error),
+            None => HoledState::Waiting(handle),
         },
     };
     if ground.state != state {

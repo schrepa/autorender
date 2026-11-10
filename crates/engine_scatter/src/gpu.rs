@@ -81,6 +81,9 @@ const CARD_STREAMS: &[VertexLayout] = &[VertexLayout::Buffer(CARDS), VertexLayou
 
 const SHADOW_CARD_STREAMS: &[VertexLayout] = &[VertexLayout::Buffer(CARDS)];
 
+const PLACED_MESHES: &str = "the placed meshes";
+const PLACED_MESH: &str = "$.placed.mesh";
+
 const OCCUPANCY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 pub(crate) const PLACED: engine_core::DrawKind = engine_core::DrawKind("placed");
@@ -305,6 +308,7 @@ struct Held {
     cast: Vec<Level>,
     lit_waiting: bool,
     cast_waiting: bool,
+    refused: Option<Error>,
     lists: Vec<(u32, u32)>,
     ids_per_view: u32,
     group_count: u32,
@@ -606,6 +610,7 @@ impl ScatterGpu {
         held.cast.clear();
         held.lit_waiting = false;
         held.cast_waiting = false;
+        held.refused = None;
         for (group, drawn) in state.groups.groups.iter().enumerate() {
             if drawn.count == 0 {
                 continue;
@@ -613,6 +618,9 @@ impl ScatterGpu {
             for (level, &mesh) in drawn.meshes.iter().enumerate() {
                 if !residency.resident(mesh) {
                     held.lit_waiting = true;
+                    if held.refused.is_none() {
+                        held.refused = residency.refusal(mesh, PLACED_MESH);
+                    }
                     continue;
                 }
                 held.lit.push(Level {
@@ -638,6 +646,9 @@ impl ScatterGpu {
             for (level, &mesh) in drawn.casters.iter().enumerate() {
                 if !residency.resident(mesh) {
                     held.cast_waiting = true;
+                    if held.refused.is_none() {
+                        held.refused = residency.refusal(mesh, PLACED_MESH);
+                    }
                     continue;
                 }
                 held.cast.push(Level {
@@ -1030,10 +1041,11 @@ impl ScatterGpu {
         } else {
             self.held.lit_waiting
         };
-        match (drawn, waiting) {
-            (0, true) => draw.wait("the placed meshes"),
-            (0, false) => draw.skip("nothing placed reaches this view"),
-            (drawn, _) => drawn,
+        match (drawn, &self.held.refused, waiting) {
+            (0, Some(error), _) => draw.refuse(PLACED_MESHES, error),
+            (0, None, true) => draw.wait(PLACED_MESHES),
+            (0, None, false) => draw.skip("nothing placed reaches this view"),
+            (drawn, _, _) => drawn,
         }
     }
 

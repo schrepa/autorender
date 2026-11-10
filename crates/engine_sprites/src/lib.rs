@@ -210,17 +210,21 @@ fn publish_sheets(
     }
 }
 
+const SPRITE_MATERIALS: &str = "the sprite materials";
+const SPRITE_MATERIAL_PATH: &str = "$.sprite.material";
+
 struct SpriteRun {
     material: MaterialHandle,
     blended: bool,
     instances: Range<u32>,
 }
 
-#[derive(Clone, Copy, Default)]
+#[derive(Clone, Default)]
 struct SpriteRows {
     listed: u32,
     incomplete: u32,
     waiting: u32,
+    refused: Option<Error>,
 }
 
 struct SpritesGpu {
@@ -285,8 +289,10 @@ impl SpritesGpu {
         if self.runs.is_empty() {
             return if self.rows.listed == 0 {
                 draw.skip("no drawn row is a sprite")
+            } else if let Some(error) = &self.rows.refused {
+                draw.refuse(SPRITE_MATERIALS, error)
             } else if self.rows.waiting > 0 {
-                draw.wait("the sprite materials")
+                draw.wait(SPRITE_MATERIALS)
             } else if self.rows.incomplete > 0 {
                 0
             } else {
@@ -348,7 +354,10 @@ fn stage(
             continue;
         };
         if !residency.material_resident(material) {
-            rows.waiting += 1;
+            match residency.refusal(material, SPRITE_MATERIAL_PATH) {
+                Some(error) => rows.refused = rows.refused.or(Some(error)),
+                None => rows.waiting += 1,
+            }
             continue;
         }
         let blended = assets

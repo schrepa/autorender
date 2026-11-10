@@ -6,7 +6,7 @@ use engine_assets::{
     MeshLods, TextureHandle,
 };
 
-use crate::{Census, Feed, Interest, Request, Requests};
+use crate::{Census, Error, ErrorCode, Expected, Feed, Interest, Request, Requests};
 
 #[derive(Component, Clone, Debug, Default)]
 pub struct AssetUses {
@@ -406,6 +406,15 @@ impl AssetResidency {
 
     pub fn state(&self, asset: impl Into<Asset>) -> Option<&Request<Resident>> {
         self.wanted.get(&asset.into())
+    }
+
+    pub fn refusal(&self, asset: impl Into<Asset>, path: &str) -> Option<Error> {
+        let gone = || Error::new(ErrorCode::UnknownReference, path).expected(Expected::Live);
+        match self.state(asset)? {
+            Request::Failed(error) => Some(error.clone()),
+            Request::Missing => Some(gone()),
+            Request::Asked(_) | Request::Ready(_) => None,
+        }
     }
 
     pub fn census(&self) -> Census {

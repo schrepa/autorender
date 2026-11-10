@@ -26,6 +26,10 @@ pub const LOOK: &str = "glimmer";
 
 pub const GLIMMER_PART: &str = "glimmer";
 
+const GLIMMER_MATERIALS: &str = "the glimmer materials";
+
+const ROW_MATERIAL: &str = "$.drawn.material";
+
 const FORM: KindForm = KindForm {
     kind: GLIMMER,
     placed: FormSide::pulled(shaders::glimmer::draw::VS_GLIMMER),
@@ -263,6 +267,7 @@ struct GlimmerGpu {
     runs: Vec<(MaterialHandle, Range<u32>)>,
     staged: Vec<GlimmerInstance>,
     waiting: bool,
+    refused: Option<Error>,
 }
 
 impl GpuPart for GlimmerGpu {
@@ -282,6 +287,7 @@ impl GpuPart for GlimmerGpu {
             runs: Vec::new(),
             staged: Vec::new(),
             waiting: false,
+            refused: None,
         })
     }
 
@@ -292,11 +298,17 @@ impl GpuPart for GlimmerGpu {
     ) {
         let mut placed: Vec<(MaterialHandle, GlimmerInstance)> = Vec::new();
         self.waiting = false;
+        self.refused = None;
         for (slot, entity, thing) in table.rows(GLIMMER) {
             let held = thing
                 .material
                 .filter(|made| residency.material_resident(*made));
-            self.waiting |= thing.material.is_some() && held.is_none();
+            if let (Some(made), None) = (thing.material, held) {
+                match residency.refusal(made, ROW_MATERIAL) {
+                    Some(error) => self.refused = self.refused.take().or(Some(error)),
+                    None => self.waiting = true,
+                }
+            }
             let (Some(pose), Some(material)) = (poses.drawn_pose(&globals, entity), held) else {
                 continue;
             };
@@ -333,11 +345,12 @@ impl GpuPart for GlimmerGpu {
 
 impl GlimmerGpu {
     fn draw(&self, _: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
-        if self.runs.is_empty() && self.waiting {
-            return draw.wait("the glimmer materials");
-        }
         if self.runs.is_empty() {
-            return draw.skip("no glimmer has a pose yet");
+            return match (&self.refused, self.waiting) {
+                (Some(error), _) => draw.refuse(GLIMMER_MATERIALS, error),
+                (None, true) => draw.wait(GLIMMER_MATERIALS),
+                (None, false) => draw.skip("no glimmer has a pose yet"),
+            };
         }
         let Some(pipeline) = draw.form(&self.form) else {
             return draw.skip("pass has no glimmer form");
