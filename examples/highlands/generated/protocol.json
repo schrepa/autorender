@@ -255,6 +255,7 @@
     "collision_invalid_cast",
     "collision_invalid_config",
     "collision_incomplete_world",
+    "collision_collider_budget",
     "collision_candidate_budget",
     "collision_pair_budget",
     "collision_result_budget",
@@ -347,7 +348,6 @@
     "world_changes": "now",
     "world_removals": "now"
   },
-  "max_request_bytes": 16384,
   "profile_max_events": 65536,
   "queries": [
     "status",

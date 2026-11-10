@@ -168,7 +168,6 @@
     "struct_too_wide",
     "schedule_ambiguity"
   ],
-  "max_request_bytes": 16384,
   "profile_max_events": 65536,
   "queries": [
     "status",

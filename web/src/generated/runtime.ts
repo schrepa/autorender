@@ -38,6 +38,7 @@ export interface Runtime {
   resume(reason: number): void;
   reset_camera(): void;
   reload_scene(source: string, files: unknown): void;
+  set_file_root(root: string): void;
   take_level_request(): string | undefined;
   report_level(done: number, total: number): void;
   fail_level(message: string): void;

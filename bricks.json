@@ -59,7 +59,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_time_of_day::TimeOfDayBrick",
-      "version": "f2327696ef356f6b71f0999140cc78b568956f161fb2e8b74c033d7f3dd0b732"
+      "version": "ab2b2000b61a56e0c3a9f014452b5f57af7755dc0da73bc671b6322985807b94"
     },
     {
       "dependencies": [
@@ -85,14 +85,16 @@
           "place": "sun_path",
           "providers": [
             "engine_time_of_day"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "sky",
           "providers": [
             "engine_sky"
-          ]
+          ],
+          "required": false
         }
       ],
       "resources": [
@@ -108,7 +110,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_sun::SunBrick",
-      "version": "eda2dadabe4fcbe9d357db6af592d6fd63b357d5e4b3e17db41393637994112f"
+      "version": "72c0624afcac5f1551769da175ac2cea4453e709fa5884b13af7c18e6dfdb9cc"
     },
     {
       "dependencies": [
@@ -138,21 +140,24 @@
           "place": "sky",
           "providers": [
             "engine_sky"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "lights",
           "providers": [
             "engine_lights"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "sun",
           "providers": [
             "engine_sun"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
@@ -161,7 +166,8 @@
             "engine_shadows",
             "engine_sky",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
@@ -171,42 +177,48 @@
             "engine_probes",
             "engine_terrain_shading",
             "engine_scatter"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "interior",
           "providers": [
             "engine_probes"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "ambient_occlusion",
           "providers": [
             "engine_ambient_occlusion"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "sky",
           "providers": [
             "engine_sky"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "sky_visibility",
           "providers": [
             "engine_shadows"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "tonemap",
           "providers": [
             "engine_tonemap"
-          ]
+          ],
+          "required": false
         }
       ],
       "resources": [
@@ -228,7 +240,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_lighting::LightingModelBrick",
-      "version": "c2572ec8907cbc141a925d0a44807cf596765c2e0690971e062ae666599bf0a2"
+      "version": "f8c24eb7874b3dfbeb4672d364b1604dc340d163f82851ba5b1f68d0e5dfbd78"
     },
     {
       "dependencies": [
@@ -272,7 +284,8 @@
           "place": "skin",
           "providers": [
             "engine_animation"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "target",
@@ -285,7 +298,8 @@
             "engine_meshes",
             "engine_impostors",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": true
         }
       ],
       "resources": [
@@ -302,7 +316,7 @@
         }
       ],
       "type": "engine_meshes::MeshesBrick",
-      "version": "7b7379caa1c0f0d6180814ffd140c0f798629340dddf2e881c151a0ec7df4add"
+      "version": "4bfe0ed6a8e9cf3d3b54b19057c75df67d4e0e076f67b6879ce213659b4ddbc6"
     },
     {
       "dependencies": [
@@ -351,21 +365,24 @@
           "place": "lighting",
           "providers": [
             "engine_lighting"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "debug",
           "providers": [
             "engine_debug_view"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "instances",
           "providers": [
             "engine_meshes"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
@@ -375,7 +392,8 @@
             "engine_debug_view",
             "engine_terrain_shading",
             "engine_water"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "target",
@@ -388,7 +406,8 @@
             "engine_meshes",
             "engine_impostors",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": true
         }
       ],
       "resources": [
@@ -412,7 +431,7 @@
         }
       ],
       "type": "engine_impostors::ImpostorsBrick",
-      "version": "77bd021f7410d89e88dd016ebf86b1a33c12e65a38b6195adbf8ec80ad3e7e8e"
+      "version": "478df6353158f9938a9cdbdaeb362d0d57e86315a9daf083246895cfc49da36e"
     },
     {
       "dependencies": [
@@ -459,35 +478,40 @@
           "place": "debug",
           "providers": [
             "engine_debug_view"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "sun",
           "providers": [
             "engine_sun"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "debug",
           "providers": [
             "engine_debug_view"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "impostors",
           "providers": [
             "engine_impostors"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "lighting",
           "providers": [
             "engine_lighting"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "target",
@@ -500,7 +524,8 @@
             "engine_meshes",
             "engine_impostors",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": true
         }
       ],
       "resources": [
@@ -531,7 +556,7 @@
         }
       ],
       "type": "engine_shadows::ShadowsBrick",
-      "version": "bb2e2fb73eec1c3c737522ceca1bfc6a5cf2734b0bdde1fbaa85610dfb85a849"
+      "version": "0e71b331a6752476ef892feba502da2aba7faa02591a587c5a42d2124b946414"
     },
     {
       "dependencies": [
@@ -566,7 +591,8 @@
           "place": "instances",
           "providers": [
             "engine_meshes"
-          ]
+          ],
+          "required": false
         }
       ],
       "resources": [
@@ -590,7 +616,7 @@
         }
       ],
       "type": "engine_lights::LightsBrick",
-      "version": "6bef229ba87c190b36f95eb3af6f9d82d4b04cde2a877a6ea9502d7b1b6bd345"
+      "version": "ad7746fcefd30a6875a9260b03df7a47c1dc5575703ca1cfb56cf1dcf7116ca8"
     },
     {
       "dependencies": [
@@ -642,70 +668,80 @@
           "place": "eye_medium",
           "providers": [
             "engine_water"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "sun",
           "providers": [
             "engine_sun"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "sun_path",
           "providers": [
             "engine_time_of_day"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "view_wind",
           "providers": [
             "engine_wind"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "sun",
           "providers": [
             "engine_sun"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "tonemap",
           "providers": [
             "engine_tonemap"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "lighting",
           "providers": [
             "engine_lighting"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "sky_cloud_shadows",
           "providers": [
             "engine_sky"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "open_sky",
           "providers": [
             "engine_terrain_shading"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "shadows",
           "providers": [
             "engine_shadows"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "target",
@@ -718,7 +754,8 @@
             "engine_meshes",
             "engine_impostors",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": true
         }
       ],
       "resources": [
@@ -775,7 +812,7 @@
         }
       ],
       "type": "engine_sky::SkyBrick",
-      "version": "5cee55bc5fe0a8569f7ec10d67b892ac5e29e3855a3298615b40f8f24e0c88cf"
+      "version": "0bded984f3b8e083d348189195db088a1cc41447583e30af46260bda59bbf910"
     },
     {
       "dependencies": [
@@ -831,7 +868,8 @@
           "place": "occlusion_source",
           "providers": [
             "engine_scatter"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "target",
@@ -844,7 +882,8 @@
             "engine_meshes",
             "engine_impostors",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": true
         }
       ],
       "resources": [
@@ -866,7 +905,7 @@
         }
       ],
       "type": "engine_ambient_occlusion::AmbientOcclusionBrick",
-      "version": "f63ec2e4398becc9fefb286c1964093836468f93a1b871c7aaad86ab780d35ff"
+      "version": "63b0dd16ac4aa64ef57fdb7dc307c688fa9ba52053b5c6f2cd3a43afed2265c9"
     },
     {
       "dependencies": [
@@ -897,7 +936,8 @@
           "place": "tonemap",
           "providers": [
             "engine_tonemap"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "target",
@@ -911,7 +951,8 @@
             "engine_sky",
             "engine_reflections",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": true
         }
       ],
       "resources": [
@@ -967,7 +1008,8 @@
           "place": "tonemap",
           "providers": [
             "engine_tonemap"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "target",
@@ -981,7 +1023,8 @@
             "engine_sky",
             "engine_reflections",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": true
         },
         {
           "kind": "target",
@@ -994,14 +1037,16 @@
             "engine_meshes",
             "engine_impostors",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": true
         },
         {
           "kind": "target",
           "place": "transparency",
           "providers": [
             "engine_render"
-          ]
+          ],
+          "required": true
         },
         {
           "kind": "target",
@@ -1014,7 +1059,8 @@
             "engine_shadows",
             "engine_sky",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": true
         }
       ],
       "resources": [
@@ -1069,14 +1115,16 @@
           "place": "sky",
           "providers": [
             "engine_sky"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "sun",
           "providers": [
             "engine_sun"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "target",
@@ -1090,7 +1138,8 @@
             "engine_sky",
             "engine_reflections",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": true
         },
         {
           "kind": "target",
@@ -1103,7 +1152,8 @@
             "engine_meshes",
             "engine_impostors",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": true
         }
       ],
       "resources": [
@@ -1125,7 +1175,7 @@
         }
       ],
       "type": "engine_auto_exposure::AutoExposureBrick",
-      "version": "aea69d3f9971017fbda526c32ecf46d05fd5daa7c9782daa0aad2e5aadb62bd0"
+      "version": "8dbb32282bf8ed75e7ba7f7338a9a4f2c80274ba41d391a102a8ff2710cf5cd7"
     },
     {
       "dependencies": [
@@ -1153,7 +1203,8 @@
           "place": "exposure",
           "providers": [
             "engine_auto_exposure"
-          ]
+          ],
+          "required": false
         }
       ],
       "resources": [
@@ -1169,7 +1220,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_tonemap::TonemapBrick",
-      "version": "dd8a6457d9638af0b7db25eac068523c9bf9ea04346c3f4f8e0011a55c47999c"
+      "version": "396dd09d66036545d42f6be2c2e9b67a0b424da1ca4f2402915793c94e572faf"
     },
     {
       "dependencies": [
@@ -1253,21 +1304,24 @@
           "place": "impostors",
           "providers": [
             "engine_impostors"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "instances",
           "providers": [
             "engine_meshes"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "debug",
           "providers": [
             "engine_debug_view"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
@@ -1277,35 +1331,40 @@
             "engine_debug_view",
             "engine_terrain_shading",
             "engine_water"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "sun",
           "providers": [
             "engine_sun"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "target",
           "place": "debug_ids",
           "providers": [
             "engine_debug_view"
-          ]
+          ],
+          "required": true
         },
         {
           "kind": "target",
           "place": "debug_count",
           "providers": [
             "engine_debug_view"
-          ]
+          ],
+          "required": true
         },
         {
           "kind": "target",
           "place": "debug_words",
           "providers": [
             "engine_debug_view"
-          ]
+          ],
+          "required": true
         }
       ],
       "resources": [
@@ -1324,7 +1383,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_debug_view::DebugViewBrick",
-      "version": "e6c1d46b5a86bfd515dddf15d785f72a7f8a544148998b701896be149f5c698c"
+      "version": "ffce5e7048743f19c2c6a43f3bf77853ade92189d02fdc49d7d38078c76e6d2b"
     },
     {
       "dependencies": [
@@ -1385,7 +1444,7 @@
         }
       ],
       "type": "engine_audio::AudioBrick",
-      "version": "38570c80d423b475373b604be1c6c4fc95c673d6df4c681098694d15e3af1a2d"
+      "version": "b30224af09e0bca43b495c1f1b3ff107b1a8d73501580abc8b8c64a1660340a9"
     },
     {
       "dependencies": [
@@ -1429,7 +1488,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_screens::ScreensBrick",
-      "version": "4b03985e1df54380775437fb3472c324ca5c79677ce8b747990e6bda606f61b2"
+      "version": "58ce2641575ac6ab0945f26cd053b2286a785aae4932af72fcb397468fe1dca0"
     },
     {
       "dependencies": [
@@ -1472,7 +1531,8 @@
           "place": "text",
           "providers": [
             "engine_text"
-          ]
+          ],
+          "required": false
         }
       ],
       "resources": [
@@ -1494,7 +1554,7 @@
         }
       ],
       "type": "engine_text::TextBrick",
-      "version": "c8f4153c5e52f9359c97cec887eb57bd47f1e81f6e82a707e063ed6c0fa1fecf"
+      "version": "7ca82a08e2a2d42fe4c17f52b5db4b1ee3e4d5808514d6ddb25426a855ba99dc"
     },
     {
       "dependencies": [
@@ -1547,21 +1607,24 @@
           "place": "screens",
           "providers": [
             "engine_screens"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "text",
           "providers": [
             "engine_text"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "text",
           "providers": [
             "engine_text"
-          ]
+          ],
+          "required": false
         }
       ],
       "resources": [
@@ -1583,7 +1646,7 @@
         }
       ],
       "type": "engine_ui::UiBrick",
-      "version": "769fe902878352f155a4e044d57c4a82b6ef24b5741ccd9b67e6ed35d2faa301"
+      "version": "4de417baf0dc82d86e7493cb298cc1fda69b6a16e740f648775810bb9e4b482f"
     },
     {
       "dependencies": [
@@ -1622,28 +1685,32 @@
           "place": "sky",
           "providers": [
             "engine_sky"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "sun",
           "providers": [
             "engine_sun"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "lighting",
           "providers": [
             "engine_lighting"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "sky",
           "providers": [
             "engine_sky"
-          ]
+          ],
+          "required": false
         }
       ],
       "resources": [
@@ -1668,7 +1735,7 @@
         }
       ],
       "type": "engine_probes::ReflectionProbesBrick",
-      "version": "a3b91cdf05a16439a68034dcb27a2aaa3978558068f040010d773e648559d902"
+      "version": "740c7eb1e3c5d4ef70263638666f5bf2c9eef75f21fde6571d54e7834072cccd"
     },
     {
       "dependencies": [
@@ -1705,7 +1772,8 @@
           "place": "lighting",
           "providers": [
             "engine_lighting"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
@@ -1713,14 +1781,16 @@
           "providers": [
             "engine_terrain_shading",
             "engine_water"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "trace_source",
           "providers": [
             "engine_terrain_shading"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "target",
@@ -1733,7 +1803,8 @@
             "engine_meshes",
             "engine_impostors",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": true
         },
         {
           "kind": "target",
@@ -1747,7 +1818,8 @@
             "engine_sky",
             "engine_reflections",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": true
         },
         {
           "kind": "target",
@@ -1760,7 +1832,8 @@
             "engine_shadows",
             "engine_sky",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": true
         },
         {
           "kind": "target",
@@ -1773,14 +1846,16 @@
             "engine_shadows",
             "engine_sky",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": true
         },
         {
           "kind": "target",
           "place": "transparency",
           "providers": [
             "engine_render"
-          ]
+          ],
+          "required": true
         }
       ],
       "resources": [
@@ -1796,7 +1871,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_reflections::ReflectionsBrick",
-      "version": "4f39b8e30d407e61e76e19168367197bbe54aa78ebb5648f8d3f7472c89f25aa"
+      "version": "68f2cd48cd2f09e5a07f20fbd322a951ea708d7bb64df933459c6c50d7c6377b"
     },
     {
       "dependencies": [
@@ -1832,26 +1907,30 @@
           "place": "lighting",
           "providers": [
             "engine_lighting"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "particle_formula",
-          "providers": []
+          "providers": [],
+          "required": false
         },
         {
           "kind": "face",
           "place": "sky",
           "providers": [
             "engine_sky"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "sun",
           "providers": [
             "engine_sun"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
@@ -1860,7 +1939,8 @@
             "engine_shadows",
             "engine_sky",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": false
         }
       ],
       "resources": [
@@ -1883,7 +1963,7 @@
         }
       ],
       "type": "engine_particles::ParticlesBrick",
-      "version": "63496ecdbea1c61297e7c08f529c1499cd42df425a34c1ab2dca2809059e73f5"
+      "version": "501792acc2317c4f4818beba4f4144f22463e3d4e447e6625973cb7532fa815a"
     },
     {
       "dependencies": [
@@ -1946,7 +2026,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_animation::AnimationBrick",
-      "version": "ce763a684710557a0e907b736f40e41755204a9b116f8fe8185791bbbd8aae7d"
+      "version": "33b6e32e474a3249cbae7e986cae7b5f434e46ef58e18b053c60fe0edc563625"
     },
     {
       "dependencies": [
@@ -2019,7 +2099,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_wind::WindBrick",
-      "version": "2306251d068b9169aaf6f24069f0ec971fbf9c46c1223d437b1b51720b8c7882"
+      "version": "a7ef77e20ea76ff6eb61bcd239e9be90918f44056c90872fe948efa0ef96243e"
     },
     {
       "dependencies": [
@@ -2079,7 +2159,7 @@
         }
       ],
       "type": "engine_collision::CollisionBrick",
-      "version": "734187cc946ad06af9ec9dafe1ad887f48d8ac0bec57e31359666ef47a534845"
+      "version": "42d7031edea96dc5d7e926ad129c9f8580e3d9d43e2523a05f356f841ccbc5f1"
     },
     {
       "dependencies": [
@@ -2117,14 +2197,16 @@
           "place": "collision",
           "providers": [
             "engine_collision"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "wind",
           "providers": [
             "engine_wind"
-          ]
+          ],
+          "required": false
         }
       ],
       "resources": [
@@ -2146,7 +2228,7 @@
         }
       ],
       "type": "engine_physics::PhysicsBrick",
-      "version": "fd1ae22f67c445b05044bb3f33bfe11f10c646ba55f91d8b563c8d25f4411e55"
+      "version": "b87724dc872bf0cb6a8e209d6b76e86afaa1ebd97f0ae6b4104085bdf3bf9672"
     },
     {
       "dependencies": [
@@ -2237,7 +2319,8 @@
           "place": "collision",
           "providers": [
             "engine_collision"
-          ]
+          ],
+          "required": false
         }
       ],
       "resources": [
@@ -2262,7 +2345,7 @@
         }
       ],
       "type": "engine_terrain::runtime::brick::TerrainBrick",
-      "version": "4cec219d30ad49ebbf5b104f9c9a2072c97ea8b173fdd70d6f949bba16218aff"
+      "version": "628a6258c646b9a7c162fde700966ee22a5e58686df392970317945bc57ea0b8"
     },
     {
       "dependencies": [
@@ -2338,63 +2421,72 @@
           "place": "debug",
           "providers": [
             "engine_debug_view"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "terrain_tiles",
           "providers": [
             "engine_terrain"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "cover",
           "providers": [
             "engine_ground_cover"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "ground_tiles",
           "providers": [
             "engine_terrain_shading"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "horizons",
           "providers": [
             "engine_terrain_shading"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "sky",
           "providers": [
             "engine_sky"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "sun",
           "providers": [
             "engine_sun"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "ground_surface",
           "providers": [
             "engine_terrain"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "lighting",
           "providers": [
             "engine_lighting"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
@@ -2403,21 +2495,24 @@
             "engine_shadows",
             "engine_sky",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "debug",
           "providers": [
             "engine_debug_view"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "instances",
           "providers": [
             "engine_meshes"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
@@ -2425,49 +2520,56 @@
           "providers": [
             "engine_scatter",
             "engine_ground_cover"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "bounce",
           "providers": [
             "engine_terrain_shading"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "foliage",
           "providers": [
             "engine_scatter"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "shadows",
           "providers": [
             "engine_shadows"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "water",
           "providers": [
             "engine_water"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "impostors",
           "providers": [
             "engine_impostors"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "placed_tiles",
           "providers": [
             "engine_scatter"
-          ]
+          ],
+          "required": false
         }
       ],
       "resources": [
@@ -2495,7 +2597,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "b31aaaf8acff5dfe20c26203daba2ffc8438a690405c71d48c11ce54d2441a8a"
+      "version": "99715a09fa6bb3585d2b9ec0d8664658e7cc573d2bf9cbeac4a4c2c1ba4f1e99"
     },
     {
       "dependencies": [
@@ -2540,77 +2642,88 @@
           "place": "ground_tiles",
           "providers": [
             "engine_terrain_shading"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "impostors",
           "providers": [
             "engine_impostors"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "terrain_tiles",
           "providers": [
             "engine_terrain"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "impostors",
           "providers": [
             "engine_impostors"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "instances",
           "providers": [
             "engine_meshes"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "debug",
           "providers": [
             "engine_debug_view"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "foliage",
           "providers": [
             "engine_scatter"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "lighting",
           "providers": [
             "engine_lighting"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "cover",
           "providers": [
             "engine_ground_cover"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "ground_tiles",
           "providers": [
             "engine_terrain_shading"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "view_wind",
           "providers": [
             "engine_wind"
-          ]
+          ],
+          "required": false
         }
       ],
       "resources": [
@@ -2646,7 +2759,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "36ce215cef77dc08cd342c3798301f01eb10887caec1d95273c39a538bad5544"
+      "version": "5adfffcbd1444f77d23dea1fbb41ddd997191a82ca94efdf57dd2fb114c6281f"
     },
     {
       "dependencies": [
@@ -2682,56 +2795,64 @@
           "place": "foliage",
           "providers": [
             "engine_scatter"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "ground_tiles",
           "providers": [
             "engine_terrain_shading"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "terrain_tiles",
           "providers": [
             "engine_terrain"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "view_wind",
           "providers": [
             "engine_wind"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "ground_tiles",
           "providers": [
             "engine_terrain_shading"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "foliage",
           "providers": [
             "engine_scatter"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "lighting",
           "providers": [
             "engine_lighting"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "sun",
           "providers": [
             "engine_sun"
-          ]
+          ],
+          "required": false
         }
       ],
       "resources": [
@@ -2756,7 +2877,7 @@
         }
       ],
       "type": "engine_ground_cover::GroundCoverBrick",
-      "version": "af4b7a778f3ce46dc215156efbb217a6a0f99d0e31cc918ca4d6b052041f3988"
+      "version": "49660a1b1eccb889acb7ad806efa7afad1b45e110416f9e7326058b3f47fd657"
     },
     {
       "dependencies": [
@@ -2830,77 +2951,88 @@
           "place": "debug",
           "providers": [
             "engine_debug_view"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "ground",
           "providers": [
             "engine_collision"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "ground_baking",
           "providers": [
             "engine_terrain_shading"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "ground_tiles",
           "providers": [
             "engine_terrain_shading"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "heightfield",
           "providers": [
             "engine_terrain_shading"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "terrain_tiles",
           "providers": [
             "engine_terrain"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "water_obstacles",
           "providers": [
             "engine_physics"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "wind",
           "providers": [
             "engine_wind"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "debug",
           "providers": [
             "engine_debug_view"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "heightfield",
           "providers": [
             "engine_terrain_shading"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "lighting",
           "providers": [
             "engine_lighting"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
@@ -2909,28 +3041,32 @@
             "engine_shadows",
             "engine_sky",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "ground_tiles",
           "providers": [
             "engine_terrain_shading"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "sun",
           "providers": [
             "engine_sun"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "face",
           "place": "sky",
           "providers": [
             "engine_sky"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "target",
@@ -2943,7 +3079,8 @@
             "engine_meshes",
             "engine_impostors",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": true
         },
         {
           "kind": "target",
@@ -2957,7 +3094,8 @@
             "engine_sky",
             "engine_reflections",
             "engine_terrain_shading"
-          ]
+          ],
+          "required": true
         }
       ],
       "resources": [
@@ -2983,7 +3121,7 @@
         }
       ],
       "type": "engine_water::WaterBrick",
-      "version": "109d9aadcbfe713f951ea2e984ff647b16ff2377719318cfd65d12f8d74126e1"
+      "version": "d18ae15a57d1dbebe1d8286923030da8c37cbca589328ab45a72d302d00e791c"
     },
     {
       "dependencies": [
@@ -3062,7 +3200,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_heightmap::LayerHeightmapBrick",
-      "version": "46dca3aaedaf509cbc2d01a9838b166fdbd24a0f497c567320840b76f6e1c422"
+      "version": "a2ce1ad43e2d21b351280c65f73320379bb807794c40da10024bea474c688f4e"
     },
     {
       "dependencies": [
@@ -3191,7 +3329,8 @@
           "place": "ground",
           "providers": [
             "engine_collision"
-          ]
+          ],
+          "required": false
         }
       ],
       "resources": [
@@ -3206,7 +3345,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_grounding::GroundingBrick",
-      "version": "23e9cf5fe97f71607d6f6fbc9cb6ef38d7c45da2a5adc6176f24797a8d1f3910"
+      "version": "73f69803c84fdf7be9e4d7a17f3849a650b8cb0ea736007a8ce6746de289b22c"
     },
     {
       "dependencies": [
@@ -3273,7 +3412,7 @@
         }
       ],
       "type": "engine_world_streaming::WorldStreamingBrick",
-      "version": "61449c8a21af388ed40f726bbc1ce28fd0c6c2de2467daa73a98fdf49eaa8b71"
+      "version": "33eeb6ae8963412f4b694cd26d54f8c7243fc4e5a04a2ce3237739a638cdb8d3"
     },
     {
       "dependencies": [
@@ -3318,14 +3457,16 @@
           "place": "collision",
           "providers": [
             "engine_collision"
-          ]
+          ],
+          "required": false
         },
         {
           "kind": "slot",
           "place": "ground",
           "providers": [
             "engine_collision"
-          ]
+          ],
+          "required": false
         }
       ],
       "resources": [
@@ -3347,7 +3488,7 @@
         }
       ],
       "type": "engine_navigation::NavigationBrick",
-      "version": "34c71c045ba558a9bb70002a911907a61f95f5c52c28d52dc040dc461714e506"
+      "version": "43e4b2ab16037842df89548dc3abf426a89dd1003a515240f2d88c05f4531ca5"
     },
     {
       "dependencies": [
@@ -3925,6 +4066,34 @@
     }
   ],
   "left_out": [],
+  "list_order": {
+    "fold_ties": [],
+    "pass_ties": [
+      {
+        "first": {
+          "brick": "engine_shadows",
+          "pass": "shadow_marks"
+        },
+        "target": "scene",
+        "then": {
+          "brick": "engine_sky",
+          "pass": "sky_dome"
+        }
+      },
+      {
+        "first": {
+          "brick": "engine_shadows",
+          "pass": "shadow_marks"
+        },
+        "target": "scene",
+        "then": {
+          "brick": "engine_sky",
+          "pass": "cloud_march"
+        }
+      }
+    ],
+    "unlisted_steps": []
+  },
   "ownership": [],
   "places": [
     {
@@ -3941,9 +4110,16 @@
         "engine_scatter"
       ],
       "name": "ambient",
-      "readers": null,
+      "readers": [
+        "engine_lighting"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_sky",
+        "engine_probes",
+        "engine_terrain_shading",
+        "engine_scatter"
+      ]
     },
     {
       "contract": true,
@@ -3954,9 +4130,13 @@
       "kind": "slot",
       "members": [],
       "name": "ambient_occlusion",
-      "readers": null,
+      "readers": [
+        "engine_lighting"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_ambient_occlusion"
+      ]
     },
     {
       "contract": false,
@@ -3965,9 +4145,11 @@
       "kind": "slot",
       "members": [],
       "name": "animate",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_animation"
+      ]
     },
     {
       "contract": false,
@@ -3976,9 +4158,11 @@
       "kind": "component",
       "members": [],
       "name": "animator",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_animation"
+      ]
     },
     {
       "contract": false,
@@ -3987,9 +4171,21 @@
       "kind": "ledger",
       "members": [],
       "name": "asset_library",
-      "readers": null,
+      "readers": [
+        "engine_meshes",
+        "engine_world_streaming",
+        "engine_impostors",
+        "engine_scatter"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_splines",
+        "engine_animation",
+        "engine_text",
+        "engine_terrain",
+        "engine_terrain_shading",
+        "engine_ground_cover"
+      ]
     },
     {
       "contract": false,
@@ -3998,9 +4194,11 @@
       "kind": "component",
       "members": [],
       "name": "attachment",
-      "readers": null,
+      "readers": [
+        "engine_animation"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": false,
@@ -4009,9 +4207,11 @@
       "kind": "slot",
       "members": [],
       "name": "body_ask",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_physics"
+      ]
     },
     {
       "contract": false,
@@ -4020,9 +4220,11 @@
       "kind": "component",
       "members": [],
       "name": "body_push",
-      "readers": null,
+      "readers": [
+        "engine_physics"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": true,
@@ -4033,9 +4235,11 @@
       "kind": "slot",
       "members": [],
       "name": "bounce",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_terrain_shading"
+      ]
     },
     {
       "contract": false,
@@ -4044,9 +4248,12 @@
       "kind": "component",
       "members": [],
       "name": "camera",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_shadows",
+        "engine_probes"
+      ]
     },
     {
       "contract": true,
@@ -4055,9 +4262,11 @@
       "kind": "slot",
       "members": [],
       "name": "caster_routes",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_shadows"
+      ]
     },
     {
       "contract": false,
@@ -4066,9 +4275,13 @@
       "kind": "component",
       "members": [],
       "name": "collider",
-      "readers": null,
+      "readers": [
+        "engine_collision",
+        "engine_navigation",
+        "engine_physics"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": false,
@@ -4077,9 +4290,15 @@
       "kind": "slot",
       "members": [],
       "name": "collision",
-      "readers": null,
+      "readers": [
+        "engine_terrain",
+        "engine_navigation",
+        "engine_physics"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_collision"
+      ]
     },
     {
       "contract": false,
@@ -4088,9 +4307,11 @@
       "kind": "list",
       "members": [],
       "name": "contexts",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_ui"
+      ]
     },
     {
       "contract": false,
@@ -4105,9 +4326,15 @@
         "engine_water"
       ],
       "name": "cooks",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_texture_cook",
+        "engine_impostors",
+        "engine_terrain",
+        "engine_terrain_shading",
+        "engine_water"
+      ]
     },
     {
       "contract": true,
@@ -4119,9 +4346,14 @@
       "kind": "slot",
       "members": [],
       "name": "cover",
-      "readers": null,
+      "readers": [
+        "engine_terrain_shading",
+        "engine_scatter"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_ground_cover"
+      ]
     },
     {
       "contract": false,
@@ -4130,9 +4362,11 @@
       "kind": "list",
       "members": [],
       "name": "cursor",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_ui"
+      ]
     },
     {
       "contract": true,
@@ -4149,9 +4383,18 @@
       "kind": "slot",
       "members": [],
       "name": "debug",
-      "readers": null,
+      "readers": [
+        "engine_shadows",
+        "engine_terrain_shading",
+        "engine_water",
+        "engine_render",
+        "engine_impostors",
+        "engine_scatter"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_debug_view"
+      ]
     },
     {
       "contract": true,
@@ -4169,9 +4412,17 @@
         "engine_water"
       ],
       "name": "debug_modes",
-      "readers": null,
+      "readers": [
+        "engine_render",
+        "engine_impostors"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_shadows",
+        "engine_debug_view",
+        "engine_terrain_shading",
+        "engine_water"
+      ]
     },
     {
       "contract": false,
@@ -4180,9 +4431,12 @@
       "kind": "component",
       "members": [],
       "name": "drawn",
-      "readers": null,
+      "readers": [
+        "engine_particles",
+        "engine_text"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": false,
@@ -4191,9 +4445,14 @@
       "kind": "ledger",
       "members": [],
       "name": "drawn_areas",
-      "readers": null,
+      "readers": [
+        "engine_shadows"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_terrain_shading",
+        "engine_scatter"
+      ]
     },
     {
       "contract": true,
@@ -4204,9 +4463,13 @@
       "kind": "slot",
       "members": [],
       "name": "exposure",
-      "readers": null,
+      "readers": [
+        "engine_tonemap"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_auto_exposure"
+      ]
     },
     {
       "contract": false,
@@ -4215,9 +4478,13 @@
       "kind": "slot",
       "members": [],
       "name": "eye_medium",
-      "readers": null,
+      "readers": [
+        "engine_sky"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_water"
+      ]
     },
     {
       "contract": true,
@@ -4231,9 +4498,14 @@
         "engine_ground_cover"
       ],
       "name": "far_cover",
-      "readers": null,
+      "readers": [
+        "engine_terrain_shading"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_scatter",
+        "engine_ground_cover"
+      ]
     },
     {
       "contract": false,
@@ -4242,9 +4514,12 @@
       "kind": "ledger",
       "members": [],
       "name": "files",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_audio",
+        "engine_animation"
+      ]
     },
     {
       "contract": true,
@@ -4257,9 +4532,14 @@
       "kind": "slot",
       "members": [],
       "name": "foliage",
-      "readers": null,
+      "readers": [
+        "engine_ground_cover",
+        "engine_terrain_shading"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_scatter"
+      ]
     },
     {
       "contract": false,
@@ -4268,9 +4548,17 @@
       "kind": "ledger",
       "members": [],
       "name": "frame_budget",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_impostors",
+        "engine_shadows",
+        "engine_sky",
+        "engine_probes",
+        "engine_terrain",
+        "engine_terrain_shading",
+        "engine_water"
+      ]
     },
     {
       "contract": false,
@@ -4279,9 +4567,15 @@
       "kind": "slot",
       "members": [],
       "name": "ground",
-      "readers": null,
+      "readers": [
+        "engine_navigation",
+        "engine_grounding",
+        "engine_water"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_collision"
+      ]
     },
     {
       "contract": false,
@@ -4290,9 +4584,13 @@
       "kind": "slot",
       "members": [],
       "name": "ground_baking",
-      "readers": null,
+      "readers": [
+        "engine_water"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_terrain_shading"
+      ]
     },
     {
       "contract": true,
@@ -4303,9 +4601,13 @@
       "kind": "slot",
       "members": [],
       "name": "ground_surface",
-      "readers": null,
+      "readers": [
+        "engine_terrain_shading"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_terrain"
+      ]
     },
     {
       "contract": true,
@@ -4319,9 +4621,15 @@
       "kind": "slot",
       "members": [],
       "name": "ground_tiles",
-      "readers": null,
+      "readers": [
+        "engine_scatter",
+        "engine_ground_cover",
+        "engine_water"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_terrain_shading"
+      ]
     },
     {
       "contract": false,
@@ -4330,9 +4638,11 @@
       "kind": "component",
       "members": [],
       "name": "grounded",
-      "readers": null,
+      "readers": [
+        "engine_grounding"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": false,
@@ -4341,9 +4651,11 @@
       "kind": "component",
       "members": [],
       "name": "grounded_at",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_grounding"
+      ]
     },
     {
       "contract": false,
@@ -4352,9 +4664,11 @@
       "kind": "slot",
       "members": [],
       "name": "hand_over",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "core"
+      ]
     },
     {
       "contract": true,
@@ -4365,9 +4679,13 @@
       "kind": "slot",
       "members": [],
       "name": "heightfield",
-      "readers": null,
+      "readers": [
+        "engine_water"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_terrain_shading"
+      ]
     },
     {
       "contract": true,
@@ -4378,9 +4696,11 @@
       "kind": "slot",
       "members": [],
       "name": "horizons",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_terrain_shading"
+      ]
     },
     {
       "contract": false,
@@ -4389,9 +4709,11 @@
       "kind": "slot",
       "members": [],
       "name": "hydrology",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_terrain"
+      ]
     },
     {
       "contract": false,
@@ -4400,9 +4722,12 @@
       "kind": "component",
       "members": [],
       "name": "impostor_asks",
-      "readers": null,
+      "readers": [
+        "engine_impostors",
+        "engine_scatter"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": false,
@@ -4411,9 +4736,13 @@
       "kind": "component",
       "members": [],
       "name": "impostor_records",
-      "readers": null,
+      "readers": [
+        "engine_scatter"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_impostors"
+      ]
     },
     {
       "contract": true,
@@ -4427,9 +4756,16 @@
       "kind": "slot",
       "members": [],
       "name": "impostors",
-      "readers": null,
+      "readers": [
+        "engine_scatter",
+        "engine_shadows",
+        "engine_debug_view",
+        "engine_terrain_shading"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_impostors"
+      ]
     },
     {
       "contract": true,
@@ -4444,9 +4780,17 @@
       "kind": "slot",
       "members": [],
       "name": "instances",
-      "readers": null,
+      "readers": [
+        "engine_impostors",
+        "engine_lights",
+        "engine_debug_view",
+        "engine_terrain_shading",
+        "engine_scatter"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_meshes"
+      ]
     },
     {
       "contract": true,
@@ -4459,9 +4803,13 @@
         "engine_probes"
       ],
       "name": "interior",
-      "readers": null,
+      "readers": [
+        "engine_lighting"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_probes"
+      ]
     },
     {
       "contract": false,
@@ -4470,9 +4818,11 @@
       "kind": "slot",
       "members": [],
       "name": "jitter",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_taa"
+      ]
     },
     {
       "contract": false,
@@ -4481,9 +4831,11 @@
       "kind": "component",
       "members": [],
       "name": "last_levels",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_impostors"
+      ]
     },
     {
       "contract": false,
@@ -4492,9 +4844,12 @@
       "kind": "component",
       "members": [],
       "name": "level_batches",
-      "readers": null,
+      "readers": [
+        "engine_meshes",
+        "engine_impostors"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": true,
@@ -4514,9 +4869,22 @@
       "kind": "slot",
       "members": [],
       "name": "lighting",
-      "readers": null,
+      "readers": [
+        "engine_impostors",
+        "engine_shadows",
+        "engine_sky",
+        "engine_probes",
+        "engine_terrain_shading",
+        "engine_scatter",
+        "engine_ground_cover",
+        "engine_water",
+        "engine_reflections",
+        "engine_particles"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_lighting"
+      ]
     },
     {
       "contract": true,
@@ -4527,9 +4895,13 @@
       "kind": "slot",
       "members": [],
       "name": "lights",
-      "readers": null,
+      "readers": [
+        "engine_lighting"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_lights"
+      ]
     },
     {
       "contract": true,
@@ -4540,9 +4912,13 @@
       "kind": "slot",
       "members": [],
       "name": "lit",
-      "readers": null,
+      "readers": [
+        "engine_render"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_lighting"
+      ]
     },
     {
       "contract": false,
@@ -4551,9 +4927,11 @@
       "kind": "component",
       "members": [],
       "name": "local_light",
-      "readers": null,
+      "readers": [
+        "engine_lights"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": false,
@@ -4562,9 +4940,11 @@
       "kind": "component",
       "members": [],
       "name": "model",
-      "readers": null,
+      "readers": [
+        "engine_animation"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": false,
@@ -4573,9 +4953,11 @@
       "kind": "component",
       "members": [],
       "name": "nav_agent",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_navigation"
+      ]
     },
     {
       "contract": false,
@@ -4584,9 +4966,12 @@
       "kind": "component",
       "members": [],
       "name": "nav_walk",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_navigation",
+        "engine_grounding"
+      ]
     },
     {
       "contract": false,
@@ -4595,9 +4980,13 @@
       "kind": "slot",
       "members": [],
       "name": "occlusion_source",
-      "readers": null,
+      "readers": [
+        "engine_ambient_occlusion"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_scatter"
+      ]
     },
     {
       "contract": true,
@@ -4608,9 +4997,13 @@
       "kind": "slot",
       "members": [],
       "name": "open_sky",
-      "readers": null,
+      "readers": [
+        "engine_sky"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_terrain_shading"
+      ]
     },
     {
       "contract": false,
@@ -4619,9 +5012,12 @@
       "kind": "component",
       "members": [],
       "name": "owned_views",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_shadows",
+        "engine_probes"
+      ]
     },
     {
       "contract": false,
@@ -4630,9 +5026,11 @@
       "kind": "slot",
       "members": [],
       "name": "particle_bursts",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_particles"
+      ]
     },
     {
       "contract": false,
@@ -4641,9 +5039,11 @@
       "kind": "component",
       "members": [],
       "name": "particle_emitter",
-      "readers": null,
+      "readers": [
+        "engine_particles"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": true,
@@ -4654,9 +5054,11 @@
       "kind": "slot",
       "members": [],
       "name": "particle_formula",
-      "readers": null,
+      "readers": [
+        "engine_particles"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": false,
@@ -4667,9 +5069,11 @@
         "engine_screens"
       ],
       "name": "pause",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_screens"
+      ]
     },
     {
       "contract": true,
@@ -4680,9 +5084,13 @@
       "kind": "slot",
       "members": [],
       "name": "placed_tiles",
-      "readers": null,
+      "readers": [
+        "engine_terrain_shading"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_scatter"
+      ]
     },
     {
       "contract": false,
@@ -4691,9 +5099,11 @@
       "kind": "slot",
       "members": [],
       "name": "probe_captures",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_probes"
+      ]
     },
     {
       "contract": false,
@@ -4702,9 +5112,11 @@
       "kind": "ledger",
       "members": [],
       "name": "readiness",
-      "readers": null,
+      "readers": [
+        "engine_shadows"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": false,
@@ -4713,9 +5125,11 @@
       "kind": "ledger",
       "members": [],
       "name": "record_exchange",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_terrain_shading"
+      ]
     },
     {
       "contract": false,
@@ -4724,9 +5138,11 @@
       "kind": "component",
       "members": [],
       "name": "reflection_probe",
-      "readers": null,
+      "readers": [
+        "engine_probes"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": false,
@@ -4735,9 +5151,17 @@
       "kind": "ledger",
       "members": [],
       "name": "refusals",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_audio",
+        "engine_particles",
+        "engine_animation",
+        "engine_collision",
+        "engine_navigation",
+        "engine_physics",
+        "engine_text"
+      ]
     },
     {
       "contract": false,
@@ -4746,9 +5170,11 @@
       "kind": "slot",
       "members": [],
       "name": "render_scale",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_dynamic_resolution"
+      ]
     },
     {
       "contract": true,
@@ -4759,9 +5185,13 @@
       "kind": "slot",
       "members": [],
       "name": "resolve",
-      "readers": null,
+      "readers": [
+        "engine_render"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_taa"
+      ]
     },
     {
       "contract": false,
@@ -4770,9 +5200,11 @@
       "kind": "component",
       "members": [],
       "name": "rigid_body",
-      "readers": null,
+      "readers": [
+        "engine_physics"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": false,
@@ -4796,9 +5228,24 @@
         "engine_splines"
       ],
       "name": "scene_components",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_lights",
+        "engine_audio",
+        "engine_screens",
+        "engine_text",
+        "engine_ui",
+        "engine_probes",
+        "engine_particles",
+        "engine_animation",
+        "engine_collision",
+        "engine_physics",
+        "engine_terrain",
+        "engine_grounding",
+        "engine_navigation",
+        "engine_splines"
+      ]
     },
     {
       "contract": false,
@@ -4809,9 +5256,11 @@
         "engine_terrain"
       ],
       "name": "scene_path_sources",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_terrain"
+      ]
     },
     {
       "contract": false,
@@ -4820,9 +5269,11 @@
       "kind": "slot",
       "members": [],
       "name": "scene_queries",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_collision"
+      ]
     },
     {
       "contract": false,
@@ -4831,9 +5282,11 @@
       "kind": "component",
       "members": [],
       "name": "screen",
-      "readers": null,
+      "readers": [
+        "engine_screens"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": false,
@@ -4842,9 +5295,11 @@
       "kind": "slot",
       "members": [],
       "name": "screen_change",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_screens"
+      ]
     },
     {
       "contract": false,
@@ -4853,9 +5308,13 @@
       "kind": "slot",
       "members": [],
       "name": "screens",
-      "readers": null,
+      "readers": [
+        "engine_ui"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_screens"
+      ]
     },
     {
       "contract": true,
@@ -4867,9 +5326,14 @@
       "kind": "slot",
       "members": [],
       "name": "shadows",
-      "readers": null,
+      "readers": [
+        "engine_sky",
+        "engine_terrain_shading"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_shadows"
+      ]
     },
     {
       "contract": true,
@@ -4880,9 +5344,13 @@
       "kind": "slot",
       "members": [],
       "name": "skin",
-      "readers": null,
+      "readers": [
+        "engine_meshes"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_animation"
+      ]
     },
     {
       "contract": true,
@@ -4899,9 +5367,19 @@
       "kind": "slot",
       "members": [],
       "name": "sky",
-      "readers": null,
+      "readers": [
+        "engine_lighting",
+        "engine_probes",
+        "engine_sun",
+        "engine_auto_exposure",
+        "engine_terrain_shading",
+        "engine_water",
+        "engine_particles"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_sky"
+      ]
     },
     {
       "contract": true,
@@ -4912,9 +5390,11 @@
       "kind": "slot",
       "members": [],
       "name": "sky_cloud_shadows",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_sky"
+      ]
     },
     {
       "contract": true,
@@ -4925,9 +5405,13 @@
       "kind": "slot",
       "members": [],
       "name": "sky_visibility",
-      "readers": null,
+      "readers": [
+        "engine_lighting"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_shadows"
+      ]
     },
     {
       "contract": false,
@@ -4936,9 +5420,14 @@
       "kind": "component",
       "members": [],
       "name": "solid_source",
-      "readers": null,
+      "readers": [
+        "engine_collision",
+        "engine_physics"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_terrain"
+      ]
     },
     {
       "contract": false,
@@ -4947,9 +5436,11 @@
       "kind": "component",
       "members": [],
       "name": "sound_source",
-      "readers": null,
+      "readers": [
+        "engine_audio"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": false,
@@ -4958,9 +5449,11 @@
       "kind": "slot",
       "members": [],
       "name": "sounds",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_audio"
+      ]
     },
     {
       "contract": false,
@@ -4969,9 +5462,11 @@
       "kind": "component",
       "members": [],
       "name": "spline_mesh",
-      "readers": null,
+      "readers": [
+        "engine_splines"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": false,
@@ -4984,9 +5479,13 @@
         "engine_splines"
       ],
       "name": "streamed_keys",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_terrain",
+        "engine_world_streaming",
+        "engine_splines"
+      ]
     },
     {
       "contract": false,
@@ -4995,9 +5494,9 @@
       "kind": "component",
       "members": [],
       "name": "streaming_focus",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": true,
@@ -5015,9 +5514,22 @@
       "kind": "slot",
       "members": [],
       "name": "sun",
-      "readers": null,
+      "readers": [
+        "engine_shadows",
+        "engine_sky",
+        "engine_probes",
+        "engine_lighting",
+        "engine_auto_exposure",
+        "engine_debug_view",
+        "engine_terrain_shading",
+        "engine_ground_cover",
+        "engine_water",
+        "engine_particles"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_sun"
+      ]
     },
     {
       "contract": true,
@@ -5035,9 +5547,17 @@
         "engine_terrain_shading"
       ],
       "name": "sun_blockers",
-      "readers": null,
+      "readers": [
+        "engine_lighting",
+        "engine_water",
+        "engine_particles"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_shadows",
+        "engine_sky",
+        "engine_terrain_shading"
+      ]
     },
     {
       "contract": false,
@@ -5048,9 +5568,11 @@
         "engine_time_of_day"
       ],
       "name": "sun_clocks",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_time_of_day"
+      ]
     },
     {
       "contract": false,
@@ -5059,9 +5581,14 @@
       "kind": "slot",
       "members": [],
       "name": "sun_path",
-      "readers": null,
+      "readers": [
+        "engine_sun",
+        "engine_sky"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_time_of_day"
+      ]
     },
     {
       "contract": false,
@@ -5070,9 +5597,11 @@
       "kind": "slot",
       "members": [],
       "name": "teleport",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "core"
+      ]
     },
     {
       "contract": false,
@@ -5090,9 +5619,18 @@
         "engine_layer_relief"
       ],
       "name": "terrain_layers",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_terrain",
+        "engine_layer_noise",
+        "engine_layer_stamps",
+        "engine_layer_heightmap",
+        "engine_layer_paths",
+        "engine_layer_erosion",
+        "engine_layer_hydrology",
+        "engine_layer_relief"
+      ]
     },
     {
       "contract": false,
@@ -5101,9 +5639,16 @@
       "kind": "slot",
       "members": [],
       "name": "terrain_tiles",
-      "readers": null,
+      "readers": [
+        "engine_water",
+        "engine_terrain_shading",
+        "engine_scatter",
+        "engine_ground_cover"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_terrain"
+      ]
     },
     {
       "contract": true,
@@ -5115,9 +5660,13 @@
       "kind": "slot",
       "members": [],
       "name": "text",
-      "readers": null,
+      "readers": [
+        "engine_ui"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_text"
+      ]
     },
     {
       "contract": false,
@@ -5128,9 +5677,11 @@
         "engine_texture_cook"
       ],
       "name": "texture_jobs",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_texture_cook"
+      ]
     },
     {
       "contract": true,
@@ -5144,9 +5695,16 @@
       "kind": "slot",
       "members": [],
       "name": "tonemap",
-      "readers": null,
+      "readers": [
+        "engine_lighting",
+        "engine_sky",
+        "engine_taa",
+        "engine_bloom"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_tonemap"
+      ]
     },
     {
       "contract": true,
@@ -5160,9 +5718,14 @@
         "engine_water"
       ],
       "name": "trace_depths",
-      "readers": null,
+      "readers": [
+        "engine_reflections"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_terrain_shading",
+        "engine_water"
+      ]
     },
     {
       "contract": false,
@@ -5173,9 +5736,11 @@
         "engine_reflections"
       ],
       "name": "trace_readers",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_reflections"
+      ]
     },
     {
       "contract": true,
@@ -5186,9 +5751,13 @@
       "kind": "slot",
       "members": [],
       "name": "trace_source",
-      "readers": null,
+      "readers": [
+        "engine_reflections"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_terrain_shading"
+      ]
     },
     {
       "contract": false,
@@ -5197,9 +5766,11 @@
       "kind": "component",
       "members": [],
       "name": "ui",
-      "readers": null,
+      "readers": [
+        "engine_ui"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": false,
@@ -5208,9 +5779,11 @@
       "kind": "slot",
       "members": [],
       "name": "ui_events",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_ui"
+      ]
     },
     {
       "contract": false,
@@ -5219,9 +5792,11 @@
       "kind": "slot",
       "members": [],
       "name": "ui_values",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_ui"
+      ]
     },
     {
       "contract": false,
@@ -5232,9 +5807,11 @@
         "engine_ui"
       ],
       "name": "verbs",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_ui"
+      ]
     },
     {
       "contract": false,
@@ -5243,9 +5820,11 @@
       "kind": "component",
       "members": [],
       "name": "view",
-      "readers": null,
+      "readers": [
+        "engine_taa"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": false,
@@ -5254,9 +5833,11 @@
       "kind": "slot",
       "members": [],
       "name": "view_cut",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "core"
+      ]
     },
     {
       "contract": true,
@@ -5267,9 +5848,15 @@
       "kind": "slot",
       "members": [],
       "name": "view_wind",
-      "readers": null,
+      "readers": [
+        "engine_sky",
+        "engine_ground_cover",
+        "engine_scatter"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_wind"
+      ]
     },
     {
       "contract": true,
@@ -5280,9 +5867,13 @@
       "kind": "slot",
       "members": [],
       "name": "water",
-      "readers": null,
+      "readers": [
+        "engine_terrain_shading"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_water"
+      ]
     },
     {
       "contract": false,
@@ -5291,9 +5882,14 @@
       "kind": "component",
       "members": [],
       "name": "water_body",
-      "readers": null,
+      "readers": [
+        "engine_terrain",
+        "engine_navigation",
+        "engine_physics",
+        "engine_water"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": []
     },
     {
       "contract": false,
@@ -5302,9 +5898,13 @@
       "kind": "slot",
       "members": [],
       "name": "water_obstacles",
-      "readers": null,
+      "readers": [
+        "engine_water"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_physics"
+      ]
     },
     {
       "contract": false,
@@ -5313,9 +5913,11 @@
       "kind": "list",
       "members": [],
       "name": "whole_frames",
-      "readers": null,
+      "readers": [],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_debug_view"
+      ]
     },
     {
       "contract": false,
@@ -5324,9 +5926,14 @@
       "kind": "slot",
       "members": [],
       "name": "wind",
-      "readers": null,
+      "readers": [
+        "engine_physics",
+        "engine_water"
+      ],
       "smokes": [],
-      "writers": null
+      "writers": [
+        "engine_wind"
+      ]
     }
   ],
   "unmet": []

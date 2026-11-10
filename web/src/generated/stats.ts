@@ -67,7 +67,7 @@ export interface BudgetUse {
   spent: number;
 }
 
-export type DropReason = "unknown_pipeline" | "pass_mismatch" | "unfilled_holes" | "geometry_not_resident" | "material_not_resident" | "material_not_held" | "material_waiting" | "geometry_lacks_streams" | "no_render_pass" | "pipeline_skipped" | "pipeline_compiling" | "pipeline_refused" | "missing_input";
+export type DropReason = "unknown_pipeline" | "pass_mismatch" | "unfilled_holes" | "geometry_not_resident" | "geometry_not_held" | "geometry_waiting" | "geometry_failed" | "material_not_resident" | "material_not_held" | "material_waiting" | "material_failed" | "geometry_lacks_streams" | "no_render_pass" | "pipeline_over_limit" | "pipeline_compiling" | "pipeline_refused" | "missing_input" | "missing_bind_group" | "row_incomplete";
 
 export interface DroppedDraws {
   count: number;

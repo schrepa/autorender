@@ -284,7 +284,6 @@ export interface SceneObservation {
 
 export interface StatusLimits {
   page_size: number;
-  request_bytes: number;
   response_bytes: number;
   scan_entities: number;
 }
