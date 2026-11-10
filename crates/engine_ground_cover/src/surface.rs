@@ -1,5 +1,8 @@
 use bevy_ecs::prelude::*;
-use engine_core::{AssetLibrary, Cull, Error, Material, MaterialHandle, SurfaceSlot};
+use engine_core::{
+    Asset, AssetLibrary, AssetResidency, AssetUses, Cull, Error, Material, MaterialHandle,
+    SurfaceSlot,
+};
 use engine_places::surface::{OCCLUSION, ROUGHNESS, TRANSMISSION};
 use engine_render::SlotModule;
 
@@ -17,9 +20,27 @@ const COVER_SLOTS: [&str; 7] = [
     SurfaceSlot::Kind.name(),
 ];
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) enum SurfaceState {
+    #[default]
+    Unmade,
+    Waiting(MaterialHandle),
+    Resident(MaterialHandle),
+}
+
+impl SurfaceState {
+    fn material(self) -> Option<MaterialHandle> {
+        match self {
+            Self::Unmade => None,
+            Self::Waiting(handle) | Self::Resident(handle) => Some(handle),
+        }
+    }
+}
+
 #[derive(Resource, Default)]
 pub(crate) struct CoverSurface {
-    pub(crate) material: Option<MaterialHandle>,
+    pub(crate) state: SurfaceState,
+    uses: AssetUses,
 }
 
 pub(crate) fn slot_modules() -> impl Iterator<Item = SlotModule> {
@@ -40,13 +61,31 @@ fn cover_material() -> Result<Material, Error> {
     )
 }
 
-pub(crate) fn hold_surface(mut library: ResMut<AssetLibrary>, mut surface: ResMut<CoverSurface>) {
-    if surface
-        .material
-        .is_some_and(|handle| library.material(handle).is_some())
-    {
-        return;
+pub(crate) fn hold_surface(
+    mut library: ResMut<AssetLibrary>,
+    residency: Res<AssetResidency>,
+    mut surface: ResMut<CoverSurface>,
+) {
+    let kept = surface
+        .state
+        .material()
+        .filter(|&handle| library.material(handle).is_some());
+    let material = match kept {
+        Some(handle) => Some(handle),
+        None => cover_material()
+            .and_then(|material| library.insert_material(material))
+            .ok(),
+    };
+    let wanted: Vec<Asset> = material.map(Asset::Material).into_iter().collect();
+    if surface.uses.assets() != wanted.as_slice() {
+        surface.uses = AssetUses::new(&residency, wanted);
     }
-    let made = cover_material().and_then(|material| library.insert_material(material));
-    surface.material = made.ok();
+    let state = match material {
+        None => SurfaceState::Unmade,
+        Some(handle) if residency.material_resident(handle) => SurfaceState::Resident(handle),
+        Some(handle) => SurfaceState::Waiting(handle),
+    };
+    if surface.state != state {
+        surface.state = state;
+    }
 }
