@@ -181,7 +181,7 @@ impl Published {
         })
     }
 
-    fn update(&mut self, state: &TerrainState) -> Option<Arc<SolidField>> {
+    fn update(&mut self, state: &TerrainState, loads: bool) -> Option<Arc<SolidField>> {
         let since = state.store.changes().since(&mut self.cursor);
         let touched = match since {
             Since::Same => false,
@@ -241,11 +241,16 @@ impl Published {
                 .map(|(_, field)| Arc::clone(field))
                 .collect(),
             solids: Arc::new(SolidTree::new(solids)),
+            extent: (state.terrain.collision && loads).then(|| {
+                let corner = Vec2::new(state.terrain.origin.x, state.terrain.origin.z);
+                [corner, corner + state.terrain.pyramid.extent()]
+            }),
         }))
     }
 }
 
 pub(crate) fn sync_solids(
+    settings: Res<TerrainSettings>,
     terrains: Res<Terrains>,
     mut sources: Query<(Entity, &mut SolidSource), With<TerrainScene>>,
     mut published: Local<HashMap<Entity, Published>>,
@@ -261,7 +266,8 @@ pub(crate) fn sync_solids(
             }
             continue;
         };
-        if let Some(field) = published.entry(entity).or_default().update(state) {
+        let loads = settings.collision_radius > 0.0;
+        if let Some(field) = published.entry(entity).or_default().update(state, loads) {
             source.field = field;
         }
     }

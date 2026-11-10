@@ -73,6 +73,7 @@ fn collider_view(
     let cache_status = cache.map_or("unavailable", |cache| match cache.collider_status(entity) {
         Some(ColliderStatus::Active) => "active",
         Some(ColliderStatus::Invalid) => "invalid",
+        Some(ColliderStatus::OverBudget) => "over_budget",
         None => "not_cached",
     });
     Some(ColliderView {

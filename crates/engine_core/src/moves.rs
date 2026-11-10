@@ -279,10 +279,13 @@ pub(crate) fn start_frame(world: &mut World) -> bool {
 #[derive(Resource, Default)]
 pub(crate) struct MovingKinds(pub(crate) Vec<ComponentId>);
 
+#[derive(Resource, Default)]
+pub(crate) struct Claims(Vec<(ComponentId, Mover)>);
+
 #[derive(Clone, Copy)]
 pub(crate) enum NodeKind {
     Claimed {
-        claim: fn(&mut World, Mover),
+        claim: fn(&mut World, Mover) -> ComponentId,
         mover: Mover,
     },
     Moving {
@@ -292,39 +295,95 @@ pub(crate) enum NodeKind {
 
 pub const MOVER_PART: &str = "mover";
 
-pub(crate) fn claim<C: Component>(world: &mut World, mover: Mover) {
+pub(crate) fn claim<C: Component>(world: &mut World, mover: Mover) -> ComponentId {
     world.add_observer(move |add: On<Add, C>, mut commands: Commands| {
         let node = add.entity;
         commands.queue(move |world: &mut World| claimed(world, node, mover));
     });
-    world.add_observer(
-        move |remove: On<Remove, C>, mut refusals: ResMut<Refusals>| {
-            refusals.accept(remove.entity, MOVER_PART);
-        },
-    );
+    world.add_observer(move |remove: On<Remove, C>, mut commands: Commands| {
+        let node = remove.entity;
+        commands.queue(move |world: &mut World| released(world, node, mover));
+    });
+    world.register_component::<C>()
+}
+
+fn claimants(world: &World, node: Entity) -> Option<(Option<Mover>, Vec<Mover>)> {
+    let held = world.get_entity(node).ok()?;
+    let claimants = world
+        .get_resource::<Claims>()
+        .map_or_else(Vec::new, |claims| {
+            claims
+                .0
+                .iter()
+                .filter(|&&(kind, _)| held.contains_id(kind))
+                .map(|&(_, mover)| mover)
+                .collect()
+        });
+    Some((held.get::<Mover>().copied(), claimants))
 }
 
 fn claimed(world: &mut World, node: Entity, mover: Mover) {
-    let holder = match world.get_entity(node) {
-        Ok(held) => held.get::<Mover>().copied(),
-        Err(_) => return,
+    let Some((holder, claimants)) = claimants(world, node) else {
+        return;
     };
-    match holder {
+    let holder = match holder {
+        Some(holder) => holder,
         None => {
             world.entity_mut(node).insert(mover);
+            mover
         }
-        Some(holder) if holder.by == mover.by => {}
-        Some(holder) => {
-            if let Some(mut refusals) = world.get_resource_mut::<Refusals>() {
-                refusals.refuse(
-                    node,
-                    MOVER_PART,
-                    Error::new(ErrorCode::UsageConflict, "$.mover")
-                        .got(mover.by)
-                        .nearest(holder.by),
-                );
+    };
+    settle(world, node, Some(holder), &claimants);
+}
+
+fn released(world: &mut World, node: Entity, mover: Mover) {
+    let Some((holder, claimants)) = claimants(world, node) else {
+        if let Some(mut refusals) = world.get_resource_mut::<Refusals>() {
+            refusals.accept(node, MOVER_PART);
+        }
+        return;
+    };
+    let holder = match holder {
+        Some(holder)
+            if holder.by == mover.by
+                && claimants.iter().all(|claimant| claimant.by != mover.by) =>
+        {
+            let next = claimants.first().copied();
+            let mut held = world.entity_mut(node);
+            match next {
+                Some(next) => {
+                    held.insert(next);
+                }
+                None => {
+                    held.remove::<Mover>();
+                }
             }
+            next
         }
+        holder => holder,
+    };
+    settle(world, node, holder, &claimants);
+}
+
+fn settle(world: &mut World, node: Entity, holder: Option<Mover>, claimants: &[Mover]) {
+    let conflict = holder.and_then(|holder| {
+        claimants
+            .iter()
+            .find(|claimant| claimant.by != holder.by)
+            .map(|claimant| (holder, *claimant))
+    });
+    let Some(mut refusals) = world.get_resource_mut::<Refusals>() else {
+        return;
+    };
+    match conflict {
+        Some((holder, claimant)) => refusals.refuse(
+            node,
+            MOVER_PART,
+            Error::new(ErrorCode::UsageConflict, "$.mover")
+                .got(claimant.by)
+                .nearest(holder.by),
+        ),
+        None => refusals.accept(node, MOVER_PART),
     }
 }
 
@@ -348,13 +407,15 @@ pub(crate) fn install_kinds(world: &mut World) {
                 .flat_map(|record| record.entries::<NodeKind>().copied())
                 .collect()
         });
+    let mut claims = Vec::new();
     let mut moving = Vec::new();
     for kind in kinds {
         match kind {
-            NodeKind::Claimed { claim, mover } => claim(world, mover),
+            NodeKind::Claimed { claim, mover } => claims.push((claim(world, mover), mover)),
             NodeKind::Moving { track } => moving.push(track(world)),
         }
     }
+    world.insert_resource(Claims(claims));
     world.insert_resource(MovingKinds(moving));
 }
 

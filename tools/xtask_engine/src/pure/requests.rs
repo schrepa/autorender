@@ -59,6 +59,7 @@ const UNREACHED: &[(&str, &str)] = &[
         "reading an error whose code names more bytes than a brick code holds answers it (crates/engine_codec/src/codes.rs)",
     ),
     ("collision_candidate_budget", COLLISION),
+    ("collision_collider_budget", COLLISION),
     ("collision_incomplete_world", COLLISION),
     ("collision_invalid_cast", COLLISION),
     ("collision_invalid_config", COLLISION),

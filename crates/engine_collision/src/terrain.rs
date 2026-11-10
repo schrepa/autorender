@@ -6,7 +6,7 @@ use engine_places_simulation::physics::{
     CollisionLayers, CollisionRay, QueryFilter, RayHit, SensorFilter, ShapeCastOptions, ShapeHit,
 };
 use engine_solids::{Bounds, FieldTile, SolidField};
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 use parry3d::{
     bounding_volume::Aabb,
     math::Pose,
@@ -29,6 +29,25 @@ fn accepts(filter: QueryFilter, entity: Entity) -> bool {
     filter.exclude != Some(entity)
         && filter.layers.interacts(CollisionLayers::default())
         && filter.sensors != SensorFilter::Only
+}
+
+pub(crate) fn awaits(sources: &[Arc<SolidField>], at: Vec2, filter: QueryFilter) -> bool {
+    if !filter.layers.interacts(CollisionLayers::default()) || filter.sensors == SensorFilter::Only
+    {
+        return false;
+    }
+    let inside = |low: Vec2, high: Vec2| at.cmpge(low).all() && at.cmple(high).all();
+    sources.iter().any(|source| {
+        source
+            .extent
+            .is_some_and(|[low, high]| inside(low, high))
+            && !source.fields.iter().any(|field| {
+                inside(
+                    Vec2::new(field.min.x, field.min.z),
+                    Vec2::new(field.max.x, field.max.z),
+                )
+            })
+    })
 }
 
 pub(crate) fn ray(

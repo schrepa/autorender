@@ -17,6 +17,7 @@ pub const COLLISION_INVALID_RAY: ErrorCode = ErrorCode::brick("collision_invalid
 pub const COLLISION_INVALID_CAST: ErrorCode = ErrorCode::brick("collision_invalid_cast");
 pub const COLLISION_INVALID_CONFIG: ErrorCode = ErrorCode::brick("collision_invalid_config");
 pub const COLLISION_INCOMPLETE_WORLD: ErrorCode = ErrorCode::brick("collision_incomplete_world");
+pub const COLLISION_COLLIDER_BUDGET: ErrorCode = ErrorCode::brick("collision_collider_budget");
 pub const COLLISION_CANDIDATE_BUDGET: ErrorCode = ErrorCode::brick("collision_candidate_budget");
 pub const COLLISION_PAIR_BUDGET: ErrorCode = ErrorCode::brick("collision_pair_budget");
 pub const COLLISION_RESULT_BUDGET: ErrorCode = ErrorCode::brick("collision_result_budget");

@@ -75,13 +75,11 @@ enum Synced {
 }
 
 impl Synced {
-    fn of(valid: bool, report: &CollisionReport) -> Self {
-        if !valid {
-            Self::Incomplete(Fault::InvalidConfig)
-        } else if report.overflow_colliders > 0 {
-            Self::Incomplete(Fault::IncompleteWorld)
-        } else {
+    fn of(valid: bool) -> Self {
+        if valid {
             Self::Complete
+        } else {
+            Self::Incomplete(Fault::InvalidConfig)
         }
     }
 
@@ -129,10 +127,15 @@ impl CollisionWorld {
         CollisionStats::of(&self.report, &self.config, self.synced == Synced::Complete)
     }
     pub(crate) fn collider_status(&self, entity: Entity) -> Option<ColliderStatus> {
-        self.held.get(&entity).map(|slot| match slot {
-            Some(_) => ColliderStatus::Active,
-            None => ColliderStatus::Invalid,
-        })
+        match self.held.get(&entity) {
+            Some(Some(_)) => Some(ColliderStatus::Active),
+            Some(None) => Some(ColliderStatus::Invalid),
+            None => self
+                .invalid
+                .iter()
+                .any(|&(refused, fault)| refused == entity && fault == Fault::ColliderBudget)
+                .then_some(ColliderStatus::OverBudget),
+        }
     }
 
     fn sweep(&self) -> Solids {
@@ -235,7 +238,7 @@ impl CollisionWorld {
         self.config = config;
         self.report.colliders = count;
         self.report.invalid_colliders = 0;
-        self.report.overflow_colliders = count.saturating_sub(limit);
+        self.report.overflow_colliders = 0;
         let held = std::mem::take(&mut self.held);
         self.invalid.clear();
         self.held.reserve(admitted);
@@ -246,10 +249,10 @@ impl CollisionWorld {
         self.bounds.reserve_exact(admitted);
         let configuration_valid = config.check().is_ok();
         let mut same_leaves = true;
-        let active = colliders
+        let mut active = colliders
             .iter()
             .filter(|&(entity, ..)| globals.active(entity));
-        for data in active.take(limit) {
+        for data in active.by_ref().take(limit) {
             let (entity, collider, _) = data;
             let affine = read(globals, data);
             if let Err(fault) = affine {
@@ -270,6 +273,10 @@ impl CollisionWorld {
             same_leaves &= held.get(&entity) == Some(&slot);
             self.held.insert(entity, slot);
         }
+        for (entity, ..) in active {
+            self.invalid.push((entity, Fault::ColliderBudget));
+            self.report.overflow_colliders += 1;
+        }
         same_leaves &= held.len() == self.held.len();
         {
             let _profile = span("collision", "bvh_update");
@@ -281,7 +288,7 @@ impl CollisionWorld {
             + self.entries.capacity() * size_of::<Entry>()
             + self.bounds.capacity() * size_of::<Bounds>()
             + self.bvh.bytes();
-        self.synced = Synced::of(configuration_valid, &self.report);
+        self.synced = Synced::of(configuration_valid);
     }
 
     fn sync_moved(
@@ -734,6 +741,14 @@ impl Solids {
 
 impl GroundQuery for Solids {
     fn down(&self, probe: GroundProbe) -> GroundRead<Option<GroundPoint>> {
+        let filter = QueryFilter {
+            layers: CollisionLayers::new(u32::MAX, probe.layers),
+            sensors: SensorFilter::Exclude,
+            exclude: probe.exclude,
+        };
+        if terrain::awaits(&self.sources, probe.at, filter) {
+            return GroundRead::NotLoaded;
+        }
         let Some(span) = self.span else {
             return GroundRead::Ready(None);
         };
@@ -754,11 +769,6 @@ impl GroundQuery for Solids {
             max_distance: from - bottom,
         }) else {
             return GroundRead::Ready(None);
-        };
-        let filter = QueryFilter {
-            layers: CollisionLayers::new(u32::MAX, probe.layers),
-            sensors: SensorFilter::Exclude,
-            exclude: probe.exclude,
         };
         match self.floor(ray, filter) {
             Ok(point) => GroundRead::Ready(point),

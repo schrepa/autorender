@@ -186,6 +186,12 @@ impl<'a> Floors<'a> {
     }
 }
 
+enum Sampled {
+    Done,
+    Spent,
+    Unloaded,
+}
+
 struct Sampling {
     key: TileKey,
     next: usize,
@@ -207,22 +213,27 @@ impl Sampling {
         }
     }
 
-    fn advance(&mut self, area: &WalkArea, floors: &Floors, budget: &mut u64) -> bool {
+    fn advance(&mut self, area: &WalkArea, floors: &Floors, budget: &mut u64) -> Sampled {
         let side = TILE_SAMPLES as usize;
         let level = u32::from(self.key.level);
         let spacing = area.pyramid.spacing(level);
         let first = area.pyramid.first_sample(self.key);
         while self.next < WALK_SAMPLES {
             if *budget == 0 {
-                return false;
+                return Sampled::Spent;
             }
             *budget -= 1;
             let index = self.next;
-            self.next += 1;
             let (column, row) = ((index % side) as i64, (index / side) as i64);
             let at = area.corner
                 + Vec2::new((first[0] + column) as f32, (first[1] + row) as f32) * spacing;
-            let Some(height) = floors.read(at).ready().flatten() else {
+            let height = match floors.read(at) {
+                GroundRead::NotLoaded => return Sampled::Unloaded,
+                GroundRead::Ready(height) => height,
+                GroundRead::Off => None,
+            };
+            self.next += 1;
+            let Some(height) = height else {
                 self.holes[index / 64] |= 1 << (index % 64);
                 self.holed = true;
                 continue;
@@ -234,7 +245,7 @@ impl Sampling {
                     [index] = surface;
             }
         }
-        true
+        Sampled::Done
     }
 
     fn ground(self, area: &WalkArea) -> WalkGround {

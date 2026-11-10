@@ -54,6 +54,7 @@ struct Grounds {
     order: BTreeMap<u64, TileKey>,
     next: u64,
     sampling: Option<Sampling>,
+    parked: BTreeMap<TileKey, Sampling>,
 }
 
 impl Grounds {
@@ -63,6 +64,7 @@ impl Grounds {
             self.held.clear();
             self.order.clear();
             self.sampling = None;
+            self.parked.clear();
         }
     }
 
@@ -99,29 +101,46 @@ impl Grounds {
         if let Some(ground) = self.get(key) {
             return Some(ground);
         }
-        if let Some(mut sampling) = self.sampling.take() {
-            if !sampling.advance(area, floors, budget) {
-                self.sampling = Some(sampling);
-                return None;
-            }
+        if let Some(sampling) = self.sampling.take() {
             let done = sampling.key;
-            let ground = Arc::new(sampling.ground(area));
-            self.hold(done, Arc::clone(&ground), most);
-            if done == key {
-                return Some(ground);
+            let ground = self.finish(sampling, (area, floors), budget, most);
+            if done == key || self.sampling.is_some() {
+                return ground;
             }
         }
         if *budget == 0 {
             return None;
         }
-        let mut sampling = Sampling::new(key);
-        if !sampling.advance(area, floors, budget) {
-            self.sampling = Some(sampling);
-            return None;
+        let sampling = self
+            .parked
+            .remove(&key)
+            .unwrap_or_else(|| Sampling::new(key));
+        self.finish(sampling, (area, floors), budget, most)
+    }
+
+    fn finish(
+        &mut self,
+        mut sampling: Sampling,
+        (area, floors): (&WalkArea, &Floors),
+        budget: &mut u64,
+        most: usize,
+    ) -> Option<Arc<WalkGround>> {
+        match sampling.advance(area, floors, budget) {
+            Sampled::Spent => {
+                self.sampling = Some(sampling);
+                None
+            }
+            Sampled::Unloaded => {
+                self.parked.insert(sampling.key, sampling);
+                None
+            }
+            Sampled::Done => {
+                let key = sampling.key;
+                let ground = Arc::new(sampling.ground(area));
+                self.hold(key, Arc::clone(&ground), most);
+                Some(ground)
+            }
         }
-        let ground = Arc::new(sampling.ground(area));
-        self.hold(key, Arc::clone(&ground), most);
-        Some(ground)
     }
 }
 

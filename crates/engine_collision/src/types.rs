@@ -3,7 +3,7 @@ use std::borrow::Cow;
 use engine_core::rule::Bound;
 use engine_core::{Error, settings, stats};
 use engine_places_simulation::physics::{
-    COLLISION_CANDIDATE_BUDGET, COLLISION_INCOMPLETE_WORLD, COLLISION_INVALID_CAST,
+    COLLISION_CANDIDATE_BUDGET, COLLISION_COLLIDER_BUDGET, COLLISION_INCOMPLETE_WORLD, COLLISION_INVALID_CAST,
     COLLISION_INVALID_CONFIG, COLLISION_INVALID_RAY, COLLISION_INVALID_SHAPE,
     COLLISION_INVALID_TRANSFORM, COLLISION_NUMERICAL_FAILURE, COLLISION_PAIR_BUDGET,
     COLLISION_RESULT_BUDGET, ColliderShape, CollisionRay, MAX_COLLIDER_EXTENT,
@@ -225,6 +225,7 @@ pub(crate) enum Fault {
     InvalidCast,
     InvalidConfig,
     IncompleteWorld,
+    ColliderBudget,
     CandidateBudget,
     PairBudget,
     ResultBudget,
@@ -244,6 +245,7 @@ impl Fault {
             Self::InvalidCast => COLLISION_INVALID_CAST,
             Self::InvalidConfig => COLLISION_INVALID_CONFIG,
             Self::IncompleteWorld => COLLISION_INCOMPLETE_WORLD,
+            Self::ColliderBudget => COLLISION_COLLIDER_BUDGET,
             Self::CandidateBudget => COLLISION_CANDIDATE_BUDGET,
             Self::PairBudget => COLLISION_PAIR_BUDGET,
             Self::ResultBudget => COLLISION_RESULT_BUDGET,
@@ -311,4 +313,5 @@ pub(crate) fn normalized(mut ray: CollisionRay) -> Result<CollisionRay, Fault> {
 pub(crate) enum ColliderStatus {
     Active,
     Invalid,
+    OverBudget,
 }

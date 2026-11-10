@@ -10,7 +10,7 @@ use std::sync::{Arc, OnceLock};
 use bevy_ecs::prelude::{Component, Entity};
 use engine_math::max;
 use engine_places_simulation::physics::{ColliderShape, CollisionRay};
-use glam::{Mat3, Mat4, Vec3};
+use glam::{Mat3, Mat4, Vec2, Vec3};
 use parry3d::shape::{HeightField, HeightFieldCellStatus};
 use parry3d::utils::Array2;
 
@@ -439,6 +439,7 @@ impl SolidTree {
 pub struct SolidField {
     pub fields: Vec<Arc<FieldTile>>,
     pub solids: Arc<SolidTree>,
+    pub extent: Option<[Vec2; 2]>,
 }
 
 pub const PLACES: &[engine_place::PlaceDecl] =
