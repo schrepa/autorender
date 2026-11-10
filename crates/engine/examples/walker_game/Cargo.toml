@@ -26,6 +26,7 @@ engine.workspace = true
 engine_collision.workspace = true
 engine_core.workspace = true
 engine_ecs.workspace = true
+engine_grounding.workspace = true
 engine_navigation.workspace = true
 engine_places_simulation.workspace = true
 engine_smoke.workspace = true

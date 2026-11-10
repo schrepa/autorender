@@ -5,6 +5,7 @@
 
 use engine::prelude::*;
 use engine_collision::CollisionBrick;
+use engine_grounding::GroundingBrick;
 use engine_navigation::NavigationBrick;
 
 mod smokes;
@@ -20,6 +21,7 @@ pub fn bricks<L: Listing>(list: L) -> L {
     engine_standard_rendering::minimal(list)
         .with::<CollisionBrick>()
         .with::<NavigationBrick>()
+        .with::<GroundingBrick>()
         .places(engine_places_simulation::PLACES)
         .places(engine_solids::PLACES)
 }

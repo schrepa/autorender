@@ -40,7 +40,7 @@ fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         .cloned()
         .unwrap_or(Value::Null);
     smoke_check!(
-        color["state"] == "drew" && number(&color["draws"]) > 0.0,
+        color["state"]["state"] == "drew" && number(&color["state"]["draws"]) > 0.0,
         "sprite_draws",
         color,
         json!({ "state": "drew", "draws": above(0) })

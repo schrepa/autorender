@@ -37,7 +37,7 @@ fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         .cloned()
         .unwrap_or(Value::Null);
     smoke_check!(
-        own["state"] == "drew" && number(&own["draws"]) > 0.0,
+        own["state"]["state"] == "drew" && number(&own["state"]["draws"]) > 0.0,
         "glimmer_draws_in_its_own_pass",
         own,
         json!({ "state": "drew", "draws": above(0) })
