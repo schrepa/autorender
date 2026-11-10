@@ -30,6 +30,7 @@ engine_layer_erosion.workspace = true
 engine_layer_hydrology.workspace = true
 engine_layer_relief.workspace = true
 engine_open_world_kit.workspace = true
+engine_solids.workspace = true
 
 [lints]
 workspace = true

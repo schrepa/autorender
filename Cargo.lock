@@ -1959,6 +1959,7 @@ version = "0.1.0"
 dependencies = [
  "engine_ecs",
  "engine_math",
+ "engine_place",
  "engine_places_simulation",
  "glam 0.30.9",
  "parry3d",
@@ -2022,6 +2023,7 @@ dependencies = [
  "engine_places_simulation",
  "engine_places_world",
  "engine_scatter",
+ "engine_solids",
  "engine_splines",
  "engine_standard_rendering",
  "engine_terrain",

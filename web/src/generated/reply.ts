@@ -53,7 +53,7 @@ export interface CaptureResult {
   temporary?: boolean | null;
 }
 
-export type DescribeResult = { bricks: DescribedBrick[]; types: DescribedType[]; verbs: string[] } | { control_state?: Record<string, unknown> | null; kind: TypeKind; name: string; schema: unknown } | { kind: TypeKind; name: string; schema: unknown } | { codes: string[]; kind: TypeKind; name: string } | { at?: string | null; brick?: string | null; descriptor: InspectorDescriptor; kind: TypeKind } | { args: unknown; at?: string | null; brick?: string | null; kind: TypeKind; name: string; shows?: string | null; verb: string } | { brick: DescribedBrick; kind: TypeKind } | { at: string; brick: string; kind: TypeKind; name: string; schema: unknown };
+export type DescribeResult = { bricks: DescribedBrick[]; types: DescribedType[]; verbs: string[] } | { control_state?: Record<string, unknown> | null; kind: TypeKind; name: string; schema: unknown } | { kind: TypeKind; name: string; schema: unknown } | { codes: string[]; kind: TypeKind; name: string } | { at?: string | null; brick?: string | null; descriptor: InspectorDescriptor; kind: TypeKind } | { args: unknown; at?: string | null; brick?: string | null; kind: TypeKind; name: string; reply?: unknown; shows?: string | null; verb: string } | { brick: DescribedBrick; kind: TypeKind } | { at: string; brick: string; kind: TypeKind; name: string; schema: unknown };
 
 export interface DescribedBrick {
   crate: string;

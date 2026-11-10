@@ -441,6 +441,9 @@ pub struct SolidField {
     pub solids: Arc<SolidTree>,
 }
 
+pub const PLACES: &[engine_place::PlaceDecl] =
+    &[engine_place::PlaceDecl::component::<SolidSource>("solid_source")];
+
 #[derive(Component, Clone, Default)]
 pub struct SolidSource {
     pub field: Arc<SolidField>,

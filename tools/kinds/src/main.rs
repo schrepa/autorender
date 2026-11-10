@@ -141,7 +141,12 @@ const RINGS: &[(&str, &[&str])] = &[
 
 const RINGED: &[&str] = &["core", "core-internal", "place", "shared", "kit", "brick"];
 
-const KITS: &[(&str, &[&str])] = &[(
+const KITS: &[(&str, &[&str])] = &[
+    (
+        "engine_solids",
+        &["engine_collision", "engine_physics", "engine_terrain"],
+    ),
+    (
     "engine_open_world_kit",
     &[
         "engine_terrain",
@@ -158,7 +163,8 @@ const KITS: &[(&str, &[&str])] = &[(
         "engine_layer_hydrology",
         "engine_layer_relief",
     ],
-)];
+    ),
+];
 
 const PLACE_EXTERNALS: &[&str] = &["glam", "bytemuck", "serde", "serde_json", "schemars"];
 

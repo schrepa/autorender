@@ -1,14 +1,14 @@
 [
   {
+    "name": "textures",
+    "owner": "engine_texture_cook",
+    "replays": []
+  },
+  {
     "name": "tables",
     "owner": "engine_sky",
     "replays": [
       "engine_sky"
     ]
-  },
-  {
-    "name": "textures",
-    "owner": "engine_texture_cook",
-    "replays": []
   }
 ]

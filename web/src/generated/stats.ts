@@ -11,6 +11,8 @@ export interface FrameStats {
   frame: number;
   instances: number;
   jobs: JobStats;
+  kind_passes: KindPass[];
+  kind_problems: Error[];
   linked: { faces: Record<string, string>; lists: Record<string, string[]>; nobody: string[] };
   mesh_upload_bytes: number;
   pipelines: number;
@@ -91,6 +93,14 @@ export interface JobStats {
   submitted: number;
   workers: number;
 }
+
+export interface KindPass {
+  kind: string;
+  pass: string;
+  state: KindPassState;
+}
+
+export type KindPassState = { draws: number; state: "drew" } | { reason: string; state: "skipped" } | { state: "silent" };
 
 export interface Progress {
   done: number;

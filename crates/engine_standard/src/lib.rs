@@ -53,5 +53,6 @@ pub fn everything<L: Listing>(list: L) -> L {
     .with::<NavigationBrick>()
     .with::<SplinesBrick>()
     .places(engine_places_simulation::PLACES)
+    .places(engine_solids::PLACES)
     .places(engine_places_world::PLACES)
 }
