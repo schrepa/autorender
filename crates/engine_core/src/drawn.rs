@@ -785,7 +785,7 @@ pub(crate) fn install(world: &mut World) {
 }
 
 pub(crate) fn install_kinds(world: &mut World) {
-    let mut kinds: Vec<(&'static str, KindDecl)> = world
+    let kinds: Vec<(&'static str, KindDecl)> = world
         .get_resource::<Registry>()
         .into_iter()
         .flat_map(|registry| registry.iter())
@@ -795,7 +795,6 @@ pub(crate) fn install_kinds(world: &mut World) {
                 .map(move |decl| (record.package, *decl))
         })
         .collect();
-    kinds.sort_by_key(|(brick, decl)| (decl.kind, *brick));
     let mut problems = Vec::new();
     let mut listed: Vec<KindDecl> = Vec::with_capacity(kinds.len());
     for (brick, decl) in kinds {
