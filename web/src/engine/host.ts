@@ -118,6 +118,7 @@ export interface GameOptions<T extends Runtime> {
   poll?(game: T): void;
   level?(game: T, path: string, signal: AbortSignal, progress: (done: number, total: number) => void): Promise<void>;
   source?: { url: string; load(signal: AbortSignal): Promise<string>; files(source: string, signal: AbortSignal): Promise<unknown> };
+  filesOf?(source: string): Promise<unknown>;
   ready?(game: T, controls: HostControls<T>): void;
   beforeFrame?(game: T, timestamp: number): void;
   afterFrame?(game: T, timestamp: number): void;
@@ -417,6 +418,7 @@ async function start() {
         jobs?.exchange();
       },
       source: options.source,
+      filesOf: options.filesOf,
       gpuWorkDone: () => (canvas.getContext("webgpu") as GPUCanvasContext | null)
         ?.getConfiguration()?.device.queue.onSubmittedWorkDone(),
       fail, stopped: () => state.kind === "failed" ? state.stopped : undefined,

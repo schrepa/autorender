@@ -6,12 +6,16 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod calls;
+mod colliders;
 mod empty;
+mod far_ground;
 mod ground;
 mod image;
+mod movers;
 mod partners;
 mod poses;
 pub mod requests;
+mod unpaused;
 
 use engine_core::{Brick, Bricks, Smoke, Source};
 
@@ -53,6 +57,26 @@ impl Brick for StandardSmokesBrick {
         Smoke {
             name: "standard_list_starts_clean",
             run: engine_smoke::starts_clean,
+            without: &[],
+        },
+        Smoke {
+            name: "removed_mover_releases_its_claim",
+            run: movers::run,
+            without: &[],
+        },
+        Smoke {
+            name: "colliders_over_the_limit_are_refused_alone",
+            run: colliders::run,
+            without: &[],
+        },
+        Smoke {
+            name: "far_ground_stands_on_terrain_covers",
+            run: far_ground::run,
+            without: &[],
+        },
+        Smoke {
+            name: "calls_by_name_apply_without_a_pause",
+            run: unpaused::run,
             without: &[],
         },
     ];
