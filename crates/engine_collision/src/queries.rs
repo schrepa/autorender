@@ -1,32 +1,21 @@
 use bevy_ecs::prelude::*;
 use crate::bounds::{self, MAX_SCAN_ENTITIES, default_limit};
 use engine_core::rule::range;
-use engine_core::{Error, ErrorCode, Expected, Filled, Operation, Rule, SceneIds, Setting, stated};
+use engine_core::{Error, ErrorCode, Expected, Operation, Rule, SceneIds, Setting, stated};
 use engine_places_simulation::physics::{
-    Collide, ColliderShape, Collision, CollisionLayers, CollisionRay, MAX_COLLIDER_EXTENT,
-    MIN_COLLIDER_EXTENT, PlacedPart, QueryFilter, SensorEvent, SensorEventKind, SensorFilter,
-    ShapeCastOptions,
+    Collide, ColliderShape, CollisionLayers, CollisionRay, MAX_COLLIDER_EXTENT,
+    MIN_COLLIDER_EXTENT, PlacedPart, QueryFilter, SensorFilter, ShapeCastOptions,
 };
 use glam::{Mat4, Quat, Vec3};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::results::{
-    CastHit, CollisionEventsResult, HitEntity, OverlapResult, PlacedHit, RayHit, RaycastResult,
-    SensorEventKindView, SensorEventRow, ShapeCastResult,
+    CastHit, HitEntity, OverlapResult, PlacedHit, RayHit, RaycastResult, ShapeCastResult,
 };
 use crate::types::{
-    Fault, validate_collider_transform, validate_ray, validate_shape, validate_shape_cast,
+    validate_collider_transform, validate_ray, validate_shape, validate_shape_cast,
 };
-use crate::world::{Fresh, SensorEvents, world_of};
-
-const EVENT_OFFSET: Rule = Rule::Range(0.0, 131_072.0);
-
-type Seen = (
-    Res<'static, Collision>,
-    SceneIds<'static, 'static>,
-    Query<'static, 'static, Entity>,
-);
+use crate::world::Fresh;
 
 type Refreshed = (
     Fresh<'static, 'static>,
@@ -194,88 +183,6 @@ impl Operation for ShapeCastQuery {
                 started_overlapping: hit.started_overlapping,
                 placed: hit.placed.map(placed),
             }),
-        })
-    }
-}
-
-#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct CollisionEventsQuery {
-    #[serde(default)]
-    pub entity: Option<String>,
-    #[serde(default)]
-    #[schemars(transform = stated(EVENT_OFFSET))]
-    pub offset: usize,
-    #[serde(default = "default_limit")]
-    #[schemars(transform = stated(bounds::PAGE))]
-    pub limit: usize,
-}
-
-impl Operation for CollisionEventsQuery {
-    const NAME: &'static str = "collision_events";
-    type Params = (Seen, Filled<'static, Collision>);
-    type Request = Self;
-    type Reply = CollisionEventsResult;
-
-    fn run(
-        ((collision, ids, entities), slot): SystemParamItem<'_, '_, Self::Params>,
-        request: Self,
-    ) -> Result<CollisionEventsResult, Error> {
-        scan(&ids)?;
-        let Self {
-            entity,
-            offset,
-            limit,
-        } = request;
-        page(limit)?;
-        bounded(
-            offset,
-            EVENT_OFFSET,
-            ErrorCode::InvalidPage,
-            "$.offset",
-        )?;
-        let entity = entity
-            .as_deref()
-            .map(|id| resolve_entity(&ids, &entities, id, false, "$.entity"))
-            .transpose()?;
-        if !slot.on() {
-            return Err(Fault::MissingPlugin.error());
-        }
-        let unsynced = SensorEvents::default();
-        let events = world_of(&collision).map_or(&unsynced, |world| &world.sensors);
-        let matches = |event: &&SensorEvent| {
-            entity.is_none_or(|entity| event.pair.first == entity || event.pair.second == entity)
-        };
-        let total = events.last().iter().filter(matches).count();
-        let rows: Vec<_> = events
-            .last()
-            .iter()
-            .filter(matches)
-            .skip(offset)
-            .take(limit)
-            .map(|event| SensorEventRow {
-                kind: match event.kind {
-                    SensorEventKind::Enter => SensorEventKindView::Enter,
-                    SensorEventKind::Exit => SensorEventKindView::Exit,
-                },
-                first: hit_entity(&ids, &entities, event.pair.first),
-                second: hit_entity(&ids, &entities, event.pair.second),
-            })
-            .collect();
-        let next = offset.saturating_add(rows.len());
-        Ok(CollisionEventsResult {
-            sensor_only: true,
-            sequence: events.sequence().to_string(),
-            tick: events.tick().map(|tick| tick.to_string()),
-            committed_tick: events.committed_tick().map(|tick| tick.to_string()),
-            complete: events.complete(),
-            candidate_pairs: events.candidate_pairs(),
-            active_pairs: events.pairs().len(),
-            error: events.error(),
-            feed: serde_json::to_value(events.feed()).unwrap_or(Value::Null),
-            total,
-            events: rows,
-            next_offset: (next < total).then_some(next),
         })
     }
 }

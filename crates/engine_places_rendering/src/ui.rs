@@ -3,7 +3,9 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use bevy_ecs::prelude::{Component, Res, Resource};
 use bevy_ecs::system::SystemParamItem;
-use engine_place::{Call, Cursor, Error, Events, Feed, Operation, Slot};
+use engine_place::{
+    Call, Cursor, EntityIds, Error, Event, EventDecl, Events, Feed, Operation, Raises, Slot,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::text::{DEFAULT_TEXT_SIZE, TextAlign};
@@ -292,10 +294,31 @@ impl UiValues {
     }
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, schemars::JsonSchema)]
+pub struct UiPressed {
+    pub button: Option<String>,
+    pub action: Option<UiAction>,
+}
+
+impl Event for UiPressed {
+    const NAME: &'static str = "ui_pressed";
+    type Row = Self;
+
+    fn row(&self, _: &dyn EntityIds) -> Self {
+        self.clone()
+    }
+}
+
 #[derive(Resource)]
 pub struct UiEvents {
-    raised: Feed<String>,
+    raised: Feed<UiPressed>,
     pointer_over: bool,
+}
+
+impl Raises<UiPressed> for UiEvents {
+    fn raised(&self) -> &Feed<UiPressed> {
+        &self.raised
+    }
 }
 
 impl Default for UiEvents {
@@ -309,10 +332,11 @@ impl Default for UiEvents {
 
 impl Slot for UiEvents {
     const NAME: &'static str = "ui_events";
+    const EVENTS: &'static [EventDecl] = &[EventDecl::of::<UiPressed, Self>()];
 }
 
 impl UiEvents {
-    pub fn since<'a>(&'a self, cursor: &mut Cursor) -> Events<'a, String> {
+    pub fn since<'a>(&'a self, cursor: &mut Cursor) -> Events<'a, UiPressed> {
         self.raised.events(cursor)
     }
 
@@ -321,8 +345,8 @@ impl UiEvents {
     }
 
     #[doc(hidden)]
-    pub fn emit(&mut self, name: &str) {
-        self.raised.push(name.to_owned());
+    pub fn press(&mut self, button: Option<String>, action: Option<UiAction>) {
+        self.raised.push(UiPressed { button, action });
     }
 
     #[doc(hidden)]

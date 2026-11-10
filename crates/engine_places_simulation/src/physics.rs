@@ -1,7 +1,9 @@
 use std::any::Any;
 
 use bevy_ecs::prelude::{Component, Entity, Resource};
-use engine_place::{ApplyAt, Ask, Error, ErrorCode, Event, EventDecl, Feed, Raises, Slot};
+use engine_place::{
+    ApplyAt, Ask, EntityIds, Error, ErrorCode, Event, EventDecl, Feed, Raises, Slot,
+};
 use glam::{Mat3, Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -412,22 +414,22 @@ pub struct SensorEvent {
     pub kind: SensorEventKind,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub struct SensorRow {
     pub kind: SensorEventKind,
-    pub first: u64,
-    pub second: u64,
+    pub first: Option<String>,
+    pub second: Option<String>,
 }
 
 impl Event for SensorEvent {
-    const NAME: &'static str = "sensor";
+    const NAME: &'static str = "collision";
     type Row = SensorRow;
 
-    fn row(&self) -> SensorRow {
+    fn row(&self, ids: &dyn EntityIds) -> SensorRow {
         SensorRow {
             kind: self.kind,
-            first: self.pair.first.to_bits(),
-            second: self.pair.second.to_bits(),
+            first: ids.id(self.pair.first),
+            second: ids.id(self.pair.second),
         }
     }
 }

@@ -19,6 +19,7 @@ use engine_places::skin::Skin;
 use engine_places_rendering::animation::{Animate, Animator, Attachment};
 use engine_render::RenderBricks;
 
+pub use animator::{AnimationEnded, AnimationEndedRow, AnimationEnds};
 pub use import::{ImportShared, Model, import_glb};
 pub use views::{
     AnimationAim, AnimationLayer, AnimationPlay, AnimationState, AnimationStateView, ClipView,
@@ -50,6 +51,8 @@ impl Brick for AnimationBrick {
             .settings::<AnimationSettings>()
             .resource::<animator::Books>()
             .resource::<skins::Skins>()
+            .resource::<animator::AnimationEnds>()
+            .event::<animator::AnimationEnded, animator::AnimationEnds>()
             .fill::<Asked<Animate>>(None)
             .fill::<Skin>(Some(shaders::animation::faces::skin::MODULE))
             .join::<SceneComponents>(

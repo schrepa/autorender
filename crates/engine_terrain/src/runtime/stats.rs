@@ -35,7 +35,12 @@ pub struct TerrainBakes {
 pub struct LayerStats {
     pub index: usize,
     pub layer: String,
+    #[schemars(schema_with = "layer_kind_stats")]
     pub stats: serde_json::Value,
+}
+
+fn layer_kind_stats(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    engine_core::shaped_by(generator.subschema_for::<serde_json::Value>(), "terrain_layer_kind")
 }
 
 pub(super) fn layer_stats(layers: &Layers) -> Vec<LayerStats> {

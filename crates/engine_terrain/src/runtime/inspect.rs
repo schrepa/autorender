@@ -31,7 +31,6 @@ pub struct TerrainView {
     pub paths: Vec<PathView>,
     pub edits: Vec<TerrainEditView>,
     pub rivers: Vec<TerrainRiverView>,
-    #[schemars(with = "Option<serde_json::Value>")]
     pub surroundings: Option<SurroundingsStatus>,
     pub baking: bool,
 }

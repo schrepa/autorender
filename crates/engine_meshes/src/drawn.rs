@@ -3,10 +3,8 @@ use engine_core::{
     AssetLibrary, DrawnPoses, DrawnTable, Error, ErrorCode, Expected, FrameTime, GlobalTransforms,
     GpuBits, Material, Operation, PoseRows, SceneIds, Surface, pose_rows,
 };
-use serde_json::{Value, json};
-
 use crate::MESH;
-use crate::layouts::LodFade;
+use crate::layouts::{LodFade, LodHistory};
 use crate::presentation::PresentationTotals;
 
 #[derive(Resource, Default)]
@@ -26,7 +24,34 @@ pub(crate) struct DrawnReply {
     slot: Option<u32>,
     drawn_level: Option<u32>,
     drawn_pose: Option<PoseRows>,
-    read_back: Option<Value>,
+    read_back: Option<ReadBack>,
+}
+
+#[derive(engine_core::__private::serde::Serialize, schemars::JsonSchema)]
+#[serde(crate = "engine_core::__private::serde")]
+pub(crate) struct FadeWord {
+    shown: u32,
+    previous: u32,
+    progress: u32,
+    held: bool,
+}
+
+#[derive(engine_core::__private::serde::Serialize, schemars::JsonSchema)]
+#[serde(crate = "engine_core::__private::serde")]
+pub(crate) struct ReadBack {
+    level: Option<u32>,
+    word: Option<FadeWord>,
+    pose: Option<PoseRows>,
+    age: u64,
+}
+
+fn fade_word(word: u32) -> Option<FadeWord> {
+    LodFade::unpack(word).map(|fade| FadeWord {
+        shown: fade.shown,
+        previous: fade.previous,
+        progress: fade.progress,
+        held: fade.history == LodHistory::Held,
+    })
 }
 
 pub(crate) struct MeshDrawn;
@@ -80,13 +105,11 @@ impl Operation for MeshDrawn {
             slot: Some(slot),
             drawn_level: watched.and_then(LodFade::drawn_level),
             drawn_pose,
-            read_back: watched.zip(age).map(|(word, age)| {
-                json!({
-                    "level": LodFade::drawn_level(word),
-                    "word": <LodFade as GpuBits>::decoded(word),
-                    "pose": pose,
-                    "age": age,
-                })
+            read_back: watched.zip(age).map(|(word, age)| ReadBack {
+                level: LodFade::drawn_level(word),
+                word: fade_word(word),
+                pose,
+                age,
             }),
         })
     }
@@ -99,8 +122,27 @@ pub struct MeshesListing {}
 #[derive(engine_core::__private::serde::Serialize, schemars::JsonSchema)]
 #[serde(crate = "engine_core::__private::serde")]
 pub struct MeshesListed {
-    pub instances: Vec<Value>,
+    pub instances: Vec<MeshInstance>,
     pub missing: u32,
+}
+
+#[derive(engine_core::__private::serde::Serialize, schemars::JsonSchema)]
+#[serde(crate = "engine_core::__private::serde")]
+pub struct MeshSurface {
+    pub roughness: f32,
+    pub metalness: f32,
+    pub emission: f32,
+}
+
+#[derive(engine_core::__private::serde::Serialize, schemars::JsonSchema)]
+#[serde(crate = "engine_core::__private::serde")]
+pub struct MeshInstance {
+    pub mesh: Option<u32>,
+    pub material: Option<u32>,
+    pub model: [f32; 16],
+    pub color: [f32; 4],
+    pub tint: [f32; 4],
+    pub surface: MeshSurface,
 }
 
 impl Operation for MeshesListing {
@@ -117,7 +159,7 @@ impl Operation for MeshesListing {
         (table, globals, assets): SystemParamItem<'_, '_, Self::Params>,
         _: Self,
     ) -> Result<MeshesListed, Error> {
-        let instances: Vec<Value> = (0..table.records().len() as u32)
+        let instances: Vec<MeshInstance> = (0..table.records().len() as u32)
             .filter_map(|slot| Some((table.owner(slot)?, table.drawn(slot)?)))
             .filter(|(_, drawn)| drawn.kind == MESH)
             .map(|(entity, drawn)| {
@@ -127,18 +169,18 @@ impl Operation for MeshesListing {
                     .get(entity)
                     .and_then(|global| global.matrix())
                     .unwrap_or(glam::Mat4::IDENTITY);
-                json!({
-                    "mesh": drawn.geometry.map(|mesh| mesh.slot() as u32),
-                    "material": drawn.material.map(|material| material.slot() as u32),
-                    "model": model.to_cols_array(),
-                    "color": material.map_or([1.0; 4], Material::color),
-                    "tint": drawn.values.tint,
-                    "surface": {
-                        "roughness": surface.roughness,
-                        "metalness": surface.metalness,
-                        "emission": surface.emission,
+                MeshInstance {
+                    mesh: drawn.geometry.map(|mesh| mesh.slot() as u32),
+                    material: drawn.material.map(|material| material.slot() as u32),
+                    model: model.to_cols_array(),
+                    color: material.map_or([1.0; 4], Material::color),
+                    tint: drawn.values.tint,
+                    surface: MeshSurface {
+                        roughness: surface.roughness,
+                        metalness: surface.metalness,
+                        emission: surface.emission,
                     },
-                })
+                }
             })
             .collect();
         Ok(MeshesListed {

@@ -512,6 +512,12 @@ pub struct SceneIds<'w, 's> {
     entities: Query<'w, 's, (Entity, &'static SceneEntity)>,
 }
 
+impl crate::EntityIds for SceneIds<'_, '_> {
+    fn id(&self, entity: Entity) -> Option<String> {
+        SceneIds::id(self, entity).map(str::to_owned)
+    }
+}
+
 impl SceneIds<'_, '_> {
     pub fn loaded(&self) -> bool {
         self.scene.is_some()

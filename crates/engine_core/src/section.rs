@@ -5,7 +5,7 @@ use engine_place::{EventPage, Operation};
 use engine_registry::Registry;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 
-use crate::{Error, ErrorCode, Expected, SceneContext};
+use crate::{Error, ErrorCode, SceneContext};
 
 pub trait Section:
     Resource + Clone + Default + PartialEq + Serialize + DeserializeOwned + schemars::JsonSchema
@@ -81,11 +81,8 @@ impl Operation for EventsQuery {
                 .got(&request.name)
                 .variants(registry.events().map(|event| event.name))
         })?;
-        let page = event.read(world, request.after).ok_or_else(|| {
-            Error::new(ErrorCode::MissingResource, "$.name")
-                .expected(Expected::Present)
-                .got(&request.name)
-        })?;
+        let page = event.read(world, request.after)?;
+
         Ok(EventsReply {
             name: request.name,
             page,

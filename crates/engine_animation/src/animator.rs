@@ -3,8 +3,8 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
-    Applies, Clock, DrawKind, Drawn, FixedTime, FrameTime, GlobalTransforms, Mover, Moves, Pace,
-    Parent, Pause, Spawner, Transform, mover_of,
+    Applies, Clock, DrawKind, Drawn, EntityIds, Event, Feed, FeedSettings, FixedTime, FrameTime,
+    GlobalTransforms, Mover, Moves, Pace, Parent, Pause, Raises, Spawner, Transform, mover_of,
 };
 use engine_places_rendering::animation::{
     Animate, Animator, Attachment, Clip, Joint, Keys, Rig, Track,
@@ -31,6 +31,90 @@ struct Scratch {
     locals: Vec<Transform>,
     below: Vec<Transform>,
     target: Vec<Transform>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct AnimationEnded {
+    pub animator: Entity,
+    pub layer: usize,
+    pub clip: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, schemars::JsonSchema)]
+pub struct AnimationEndedRow {
+    pub entity: Option<String>,
+    pub layer: usize,
+    pub clip: Option<String>,
+}
+
+impl Event for AnimationEnded {
+    const NAME: &'static str = "animation_ended";
+    type Row = AnimationEndedRow;
+
+    fn row(&self, ids: &dyn EntityIds) -> AnimationEndedRow {
+        AnimationEndedRow {
+            entity: ids.id(self.animator),
+            layer: self.layer,
+            clip: self.clip.clone(),
+        }
+    }
+}
+
+#[derive(Resource)]
+pub struct AnimationEnds {
+    raised: Feed<AnimationEnded>,
+}
+
+impl Default for AnimationEnds {
+    fn default() -> Self {
+        Self {
+            raised: Feed::new(FeedSettings::default().events as usize),
+        }
+    }
+}
+
+impl Raises<AnimationEnded> for AnimationEnds {
+    fn raised(&self) -> &Feed<AnimationEnded> {
+        &self.raised
+    }
+}
+
+fn finished_layers(animator: &Animator) -> Vec<bool> {
+    (0..animator.layers().len())
+        .map(|layer| animator.finished(layer))
+        .collect()
+}
+
+fn playing_clip(animator: &Animator, layer: usize) -> Option<String> {
+    let playing = animator.layers().get(layer)?.playing.last()?;
+    match playing.track {
+        Track::Clip { clip, .. } => animator
+            .rig()
+            .clips
+            .get(clip as usize)
+            .map(|clip| clip.name.clone()),
+        Track::Rest => None,
+    }
+}
+
+fn step_ending(
+    entity: Entity,
+    animator: &mut Animator,
+    seconds: f32,
+    (ends, feeds): (&mut AnimationEnds, &FeedSettings),
+) {
+    let before = finished_layers(animator);
+    animator.step(seconds);
+    ends.raised.resize(feeds.events as usize);
+    for (layer, was) in before.into_iter().enumerate() {
+        if !was && animator.finished(layer) {
+            ends.raised.push(AnimationEnded {
+                animator: entity,
+                layer,
+                clip: playing_clip(animator, layer),
+            });
+        }
+    }
 }
 
 #[derive(Resource, Default)]
@@ -177,9 +261,9 @@ pub(crate) fn command(
 }
 
 pub(crate) fn advance(
-    time: Res<FixedTime>,
+    (time, feeds): (Res<FixedTime>, Res<FeedSettings>),
     globals: Res<GlobalTransforms>,
-    mut books: ResMut<Books>,
+    (mut books, mut ends): (ResMut<Books>, ResMut<AnimationEnds>),
     mut animators: Query<(Entity, &mut Animator)>,
     mut moves: Moves<AnimationBrick>,
 ) {
@@ -188,17 +272,17 @@ pub(crate) fn advance(
         if !globals.active(entity) || clock_of(&globals, entity) != Clock::Game {
             continue;
         }
-        animator.step(time.delta_seconds);
+        step_ending(entity, &mut *animator, time.delta_seconds, (&mut *ends, &*feeds));
         pose(&animator, skeletons.get(&entity), scratch, &mut moves);
     }
 }
 
 pub(crate) fn advance_real(
-    frame: Res<FrameTime>,
+    (frame, feeds): (Res<FrameTime>, Res<FeedSettings>),
     pause: Res<Pause>,
     globals: Res<GlobalTransforms>,
     mut applies: Applies<Animate>,
-    mut books: ResMut<Books>,
+    (mut books, mut ends): (ResMut<Books>, ResMut<AnimationEnds>),
     mut animators: Query<(Entity, &mut Animator)>,
     mut moves: Moves<AnimationBrick>,
 ) {
@@ -210,7 +294,7 @@ pub(crate) fn advance_real(
         if !globals.active(entity) || clock_of(&globals, entity) != Clock::Real {
             continue;
         }
-        animator.step(frame.real_seconds as f32);
+        step_ending(entity, &mut *animator, frame.real_seconds as f32, (&mut *ends, &*feeds));
         pose(&animator, skeletons.get(&entity), scratch, &mut moves);
     }
 }

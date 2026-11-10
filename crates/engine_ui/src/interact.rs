@@ -156,15 +156,16 @@ fn activate(
     asks: &mut Asks<'_, '_, ScreenAsk>,
     events: &mut ResMut<'_, UiEvents>,
 ) {
-    let Some(action) = state.nodes[at as usize].node.action.clone() else {
+    let node = &state.nodes[at as usize].node;
+    events.press(node.id.clone(), node.action.clone());
+    let Some(action) = node.action.clone() else {
         return;
     };
     match action {
         UiAction::Go(name) => asks.send(ScreenAsk::Go(name)),
         UiAction::Push(name) => asks.send(ScreenAsk::Push(name)),
         UiAction::Pop => asks.send(ScreenAsk::Pop),
-        UiAction::Emit(name) => {
-            events.emit(&name);
+        UiAction::Emit(_) => {
             state.events += 1;
         }
     }

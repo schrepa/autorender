@@ -41,10 +41,12 @@ pub use registry::{
     BrickId, BrickSet, Registry, RegistryBuilder, call, check_sections, run_operation, settings,
 };
 pub use scene::{
-    AuthoredId, OperationScene, SceneEntity, SceneRead, SpawnedBy, authored_entity, authored_id,
+    AuthoredId, OperationScene, SceneEntity, SceneNames, SceneRead, SpawnedBy, authored_entity,
+    authored_id,
 };
 pub use services::FrameFacts;
 pub use state::{
-    BRICK_STATE_EVENT, BrickChange, BrickChangeRow, BrickState, BrickStateWord, BrickStates,
+    BRICK_STATE_EVENT, BrickChange, BrickChangeRow, BrickState, BrickStateView, BrickStateWord,
+    BrickStates,
     Despawn, GateDriver, GateFn, GateId, Off, Scope, ask_on, brick_changes, fault, fault_of,
 };

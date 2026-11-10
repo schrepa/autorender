@@ -46,7 +46,7 @@ impl Surroundings {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct SurroundingsStatus {
     pub reach: [f32; 2],
     pub tiles: u32,

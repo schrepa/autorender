@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use bevy_ecs::prelude::{Component, Res, Resource};
 use bevy_ecs::system::SystemParamItem;
-use engine_place::{Call, Error, Operation, Slot};
+use engine_place::{Call, Error, Lands, Operation, Slot};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -182,6 +182,7 @@ pub struct Voiced {
 
 impl Operation for PlaySound {
     const NAME: &'static str = "sound_play";
+    const LANDS: Lands = Lands::NextFrame;
     type Params = Res<'static, Sounds>;
     type Request = Self;
     type Reply = Voiced;
@@ -206,6 +207,7 @@ pub struct Ordered {
 
 impl Operation for StopVoice {
     const NAME: &'static str = "sound_stop";
+    const LANDS: Lands = Lands::NextFrame;
     type Params = Res<'static, Sounds>;
     type Request = Self;
     type Reply = Ordered;
@@ -226,6 +228,7 @@ pub struct VoiceVolume {
 
 impl Operation for VoiceVolume {
     const NAME: &'static str = "sound_volume";
+    const LANDS: Lands = Lands::NextFrame;
     type Params = Res<'static, Sounds>;
     type Request = Self;
     type Reply = Ordered;

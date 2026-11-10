@@ -6,9 +6,10 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{ReadOnlySystem, RunSystemError};
 use bevy_ecs::world::World;
-use engine_place::{Error, ErrorCode, EventPage, Feed, page_of};
+use engine_place::{
+    EntityIds, Error, ErrorCode, EventPage, Feed, Refusal, missing_events, page_of,
+};
 use serde::Serialize;
-use serde_json::Value;
 
 use crate::BrickId;
 use crate::registry::Registry;
@@ -35,7 +36,7 @@ impl GateId {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(tag = "because", rename_all = "snake_case")]
 pub enum Off {
     Unstarted,
@@ -57,6 +58,33 @@ impl BrickState {
     pub fn on(&self) -> bool {
         matches!(self, Self::On)
     }
+
+    pub fn view(&self) -> BrickStateView {
+        match self {
+            Self::Off(off) => BrickStateView {
+                state: BrickStateWord::Off,
+                off: Some(*off),
+                error: None,
+            },
+            Self::On => BrickStateView {
+                state: BrickStateWord::On,
+                off: None,
+                error: None,
+            },
+            Self::Faulted(error) => BrickStateView {
+                state: BrickStateWord::Faulted,
+                off: None,
+                error: Some(Refusal::of(error)),
+            },
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, schemars::JsonSchema)]
+pub struct BrickStateView {
+    pub state: BrickStateWord,
+    pub off: Option<Off>,
+    pub error: Option<Refusal>,
 }
 
 pub const BRICK_STATE_EVENT: &str = "brick_state";
@@ -82,9 +110,8 @@ pub enum BrickStateWord {
 pub struct BrickChangeRow {
     pub brick: String,
     pub whole: bool,
-    pub state: BrickStateWord,
-    pub off: Option<Value>,
-    pub error: Option<Value>,
+    #[serde(flatten)]
+    pub state: BrickStateView,
 }
 
 #[derive(Resource)]
@@ -106,28 +133,18 @@ impl Default for BrickStates {
     }
 }
 
-pub fn brick_changes(world: &World, after: u64) -> Option<EventPage> {
-    let states = world.get_resource::<BrickStates>()?;
+pub fn brick_changes(world: &World, _: &dyn EntityIds, after: u64) -> Result<EventPage, Error> {
+    let states = world
+        .get_resource::<BrickStates>()
+        .ok_or_else(|| missing_events(BRICK_STATE_EVENT))?;
     let registry = world.get_resource::<Registry>();
-    Some(page_of(states.changes(), after, |change| BrickChangeRow {
+    page_of(states.changes(), after, |change| BrickChangeRow {
         brick: registry
             .and_then(|registry| registry.record(change.brick))
             .map_or_else(String::new, |record| record.package.to_owned()),
         whole: states.root(change.brick) == Some(change.gate),
-        state: match &change.state {
-            BrickState::Off(_) => BrickStateWord::Off,
-            BrickState::On => BrickStateWord::On,
-            BrickState::Faulted(_) => BrickStateWord::Faulted,
-        },
-        off: match &change.state {
-            BrickState::Off(off) => serde_json::to_value(off).ok(),
-            BrickState::On | BrickState::Faulted(_) => None,
-        },
-        error: match &change.state {
-            BrickState::Faulted(error) => serde_json::to_value(error).ok(),
-            BrickState::Off(_) | BrickState::On => None,
-        },
-    }))
+        state: change.state.view(),
+    })
 }
 
 impl BrickStates {

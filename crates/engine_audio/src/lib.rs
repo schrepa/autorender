@@ -19,7 +19,7 @@ use browser as backend;
 #[cfg(not(target_arch = "wasm32"))]
 use native as backend;
 
-pub use mixer::SOUND_PART;
+pub use mixer::{SOUND_PART, SoundEnded, SoundEndedRow, SoundEnds};
 pub use settings::{Audio, AudioStats};
 
 use engine_core::{Brick, Bricks, ComponentKind, SceneComponents, Schedule, Source};
@@ -35,6 +35,8 @@ impl Brick for AudioBrick {
             .stats::<AudioStats>()
             .errors(&[mixer::AUDIO_FAILED])
             .resource::<mixer::Mixer>()
+            .resource::<mixer::SoundEnds>()
+            .event::<mixer::SoundEnded, mixer::SoundEnds>()
             .fill::<Sounds>(None)
             .join::<SceneComponents>(
                 ComponentKind::of::<SoundSource>("sound")

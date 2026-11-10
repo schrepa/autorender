@@ -2,7 +2,7 @@ use bevy_ecs::resource::Resource;
 use engine_settings::Error;
 use serde::Serialize;
 
-use crate::{Census, Interest, Progress, Request, Requests, Ticket};
+use crate::{Census, Interest, Progress, Refusal, Request, Requests, Ticket};
 
 #[derive(Resource, Default, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -26,8 +26,7 @@ pub enum LevelView {
     },
     Failed {
         path: String,
-        #[cfg_attr(not(feature = "schema"), schemars(with = "serde_json::Value"))]
-        error: Error,
+        error: Refusal,
     },
     Missing {
         path: String,
@@ -111,7 +110,7 @@ impl Level {
             },
             Some(Request::Ready(())) => LevelView::Ready { path },
             Some(Request::Failed(error)) => LevelView::Failed {
-                error: error.clone(),
+                error: Refusal::of(error),
                 path,
             },
             Some(Request::Missing) | None => LevelView::Missing { path },

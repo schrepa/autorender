@@ -2,11 +2,11 @@ use std::collections::BTreeSet;
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
+use engine_core::{Call, Lands, Rows, shaped_by};
 use engine_core::{Error, ErrorCode, Expected, SceneContext, set_parents};
-use engine_core::Call;
 use engine_registry::{OperationEntry, OperationScene};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use crate::hierarchy::{ExpandedObject, validate_object};
 use crate::instance::spawn_entity;
@@ -17,17 +17,53 @@ pub const SPAWN: &str = "spawn";
 pub const REMOVE: &str = "remove";
 
 pub fn spawn_operation() -> OperationEntry {
-    OperationEntry::of(Call::exclusive::<SceneObject, Placed>(SPAWN, true, run_spawn))
+    OperationEntry::of(Call::exclusive::<SpawnRequest, Rows<Placed>>(
+        SPAWN,
+        (true, Lands::Now),
+        run_spawn,
+    ))
 }
 
 pub fn remove_operation() -> OperationEntry {
-    OperationEntry::of(Call::exclusive::<RemoveRequest, Placed>(REMOVE, true, run_remove))
+    OperationEntry::of(Call::exclusive::<RemoveRequest, Rows<Placed>>(
+        REMOVE,
+        (true, Lands::Now),
+        run_remove,
+    ))
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
 struct Placed {
     entity: String,
-    node: u64,
+}
+
+struct Described;
+
+impl schemars::JsonSchema for Described {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        "SpawnedObject".into()
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let mut schema = <SceneObject as schemars::JsonSchema>::json_schema(generator);
+        if let Some(Value::Array(required)) = schema.get_mut("required") {
+            required.retain(|field| field != "id");
+        }
+        shaped_by(schema, "component")
+    }
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SpawnRequest {
+    #[schemars(with = "Vec<Described>")]
+    entities: Vec<Value>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct RemoveRequest {
+    entities: Vec<String>,
 }
 
 fn scene_of(world: &World) -> Result<OperationScene, Error> {
@@ -93,32 +129,56 @@ pub fn remove(world: &mut World, id: &str) -> Result<Entity, Error> {
     let entity = scene
         .installed
         .remove(id)
-        .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$.entity").got(id))?;
+        .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$").got(id))?;
     world.insert_resource(scene);
-    world.despawn(entity);
+    let _ = world.try_despawn(entity);
     Ok(entity)
 }
 
-fn run_spawn(world: &mut World, request: Value) -> Result<Value, Error> {
-    let object: SceneObject = engine_settings::parse_value(request)?;
-    let entity = spawn(world, &object)?;
-    Ok(json!(Placed {
-        entity: object.id,
-        node: entity.to_bits(),
-    }))
+fn unused_id(world: &World) -> Result<String, Error> {
+    let scene = scene_of(world)?;
+    let mut at = scene.entity_count();
+    loop {
+        let id = format!("spawned-{at}");
+        if scene.entity(&id).is_none() {
+            return Ok(id);
+        }
+        at += 1;
+    }
 }
 
-#[derive(Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-struct RemoveRequest {
-    entity: String,
+fn described(world: &World, mut described: Value) -> Result<SceneObject, Error> {
+    let Value::Object(fields) = &mut described else {
+        return Err(Error::new(ErrorCode::InvalidType, "$")
+            .expected(Expected::Object)
+            .got(described));
+    };
+    if !fields.contains_key("id") {
+        fields.insert("id".to_owned(), Value::String(unused_id(world)?));
+    }
+    engine_settings::parse_value(described)
+}
+
+fn finished<T: Serialize>(rows: &Rows<T>) -> Result<Value, Error> {
+    serde_json::to_value(rows)
+        .map_err(|error| Error::new(ErrorCode::InvalidValue, "$").got(error.to_string()))
+}
+
+fn run_spawn(world: &mut World, request: Value) -> Result<Value, Error> {
+    let SpawnRequest { entities } = engine_settings::parse_value(request)?;
+    let rows = Rows::each("entities", entities, |description| {
+        let object = described(world, description)?;
+        spawn(world, &object)?;
+        Ok(Placed { entity: object.id })
+    });
+    finished(&rows)
 }
 
 fn run_remove(world: &mut World, request: Value) -> Result<Value, Error> {
-    let RemoveRequest { entity: id } = engine_settings::parse_value(request)?;
-    let entity = remove(world, &id)?;
-    Ok(json!(Placed {
-        entity: id,
-        node: entity.to_bits(),
-    }))
+    let RemoveRequest { entities } = engine_settings::parse_value(request)?;
+    let rows = Rows::each("entities", entities, |id| {
+        remove(world, &id)?;
+        Ok(Placed { entity: id })
+    });
+    finished(&rows)
 }

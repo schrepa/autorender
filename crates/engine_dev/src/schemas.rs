@@ -110,6 +110,7 @@ pub fn calls(world: &World) -> Result<Value, String> {
                 "name": operation.name,
                 "verb": if operation.control { Verb::Control.name() } else { Verb::Query.name() },
                 "brick": operation.brick,
+                "lands": operation.lands,
                 "request": operation.request_schema(),
                 "reply": operation.reply_schema(),
             })
@@ -125,7 +126,23 @@ pub fn calls(world: &World) -> Result<Value, String> {
             })
         })
         .collect();
-    Ok(json!({ "calls": calls, "events": events }))
+    Ok(json!({ "calls": calls, "events": events, "run_points": run_points() }))
+}
+
+fn run_points() -> Vec<engine_core::RunPoint> {
+    engine_core::Schedule::ALL
+        .into_iter()
+        .map(engine_core::Schedule::point)
+        .collect()
+}
+
+fn closed(what: &str, schema: &Value, problems: &mut Vec<String>) {
+    for at in engine_core::open_parts(schema) {
+        problems.push(format!(
+            "{what} leaves {at} open: give it a typed struct, or mark a field another schema checks with {}",
+            engine_core::SHAPED_BY
+        ));
+    }
 }
 
 fn declared_schemas(registry: &Registry, problems: &mut Vec<String>) {
@@ -139,15 +156,24 @@ fn declared_schemas(registry: &Registry, problems: &mut Vec<String>) {
                     "call {} ({}) declares no {part} schema: derive JsonSchema on its {part} type",
                     operation.name, operation.brick
                 ));
+            } else {
+                closed(
+                    &format!("call {} ({}) {part}", operation.name, operation.brick),
+                    &schema,
+                    problems,
+                );
             }
         }
     }
     for event in registry.events() {
-        if engine_core::open_schema(&event.row_schema()) {
+        let row = event.row_schema();
+        if engine_core::open_schema(&row) {
             problems.push(format!(
                 "event {} ({}) declares no row schema: derive JsonSchema on its row type",
                 event.name, event.brick
             ));
+        } else {
+            closed(&format!("event {} ({}) row", event.name, event.brick), &row, problems);
         }
     }
 }
@@ -234,6 +260,11 @@ pub fn game(world: &World) -> Result<Vec<(&'static str, String)>, String> {
         "controls": controls,
         "bricks": registry.names().collect::<Vec<_>>(),
         "events": registry.events().map(|event| event.name).collect::<Vec<_>>(),
+        "lands": registry
+            .operations()
+            .map(|operation| (operation.name, operation.lands.name()))
+            .collect::<std::collections::BTreeMap<_, _>>(),
+        "run_points": run_points(),
         "errors": registry.error_codes(),
     });
     let protocol = serde_json::to_string_pretty(&summary)

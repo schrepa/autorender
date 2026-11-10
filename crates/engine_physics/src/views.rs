@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    ApplyAt, Ask, Asked, Error, ErrorCode, Expected, FixedTime, FrameTime, Moment, Mover,
+    ApplyAt, Ask, Asked, Error, ErrorCode, Expected, FixedTime, FrameTime, Lands, Moment, Mover,
     Operation, SceneIds,
 };
 use engine_places_simulation::physics::{BodyAsk, BodyChange, RigidBody};
@@ -92,6 +92,7 @@ pub(crate) struct BodyAskOperation;
 
 impl Operation for BodyAskOperation {
     const NAME: &'static str = BodyAsk::NAME;
+    const LANDS: Lands = Lands::NextStep;
     type Params = (
         SceneIds<'static, 'static>,
         Query<'static, 'static, (), With<RigidBody>>,

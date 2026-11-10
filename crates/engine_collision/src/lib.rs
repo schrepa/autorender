@@ -78,7 +78,6 @@ impl Brick for CollisionBrick {
             .operation::<queries::RaycastQuery>()
             .operation::<queries::OverlapQuery>()
             .operation::<queries::ShapeCastQuery>()
-            .observation::<queries::CollisionEventsQuery>()
             .operation::<views::ColliderQuery>();
     }
 }

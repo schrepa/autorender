@@ -64,7 +64,7 @@ fn motion(session: &mut dyn SmokeSession) -> Checked<()> {
     control(
         session,
         "teleport",
-        json!({"entity": "player", "translation": moved}),
+        json!({"moves": [{"entity": "player", "translation": moved}]}),
     )?;
     session.step(6);
     let delta = |after: &[f64], before: &[f64]| -> Vec<f64> {

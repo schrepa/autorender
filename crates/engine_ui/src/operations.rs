@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Cursor, CursorRequests, Error, ErrorCode, Events, Operation};
-use engine_places_rendering::ui::{UiEvents, UiKind};
+use engine_core::{Cursor, CursorRequests, Error, ErrorCode, Events, Lands, Operation};
+use engine_places_rendering::ui::{UiAction, UiEvents, UiKind};
 use serde::{Deserialize, Serialize};
 
 use crate::tree::{Flat, UiState};
@@ -20,6 +20,7 @@ fn pressable_ids(state: &UiState, reach: bool) -> Vec<String> {
 
 impl Operation for UiPress {
     const NAME: &'static str = "ui_press";
+    const LANDS: Lands = Lands::NextFrame;
     type Params = (ResMut<'static, UiState>, Res<'static, CursorRequests>);
     type Request = Self;
     type Reply = UiPressed;
@@ -38,17 +39,13 @@ impl Operation for UiPress {
                 .variants(pressable_ids(&state, reach)));
         }
         state.pending.push(request.id.clone());
-        Ok(UiPressed {
-            id: request.id,
-            applies_on: "next_step",
-        })
+        Ok(UiPressed { id: request.id })
     }
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
 pub(crate) struct UiPressed {
     id: String,
-    applies_on: &'static str,
 }
 
 #[derive(Debug, Serialize, schemars::JsonSchema)]
@@ -119,7 +116,13 @@ impl Operation for UiTree {
         };
         Ok(UiTreeView {
             nodes,
-            events: raised.to_vec(),
+            events: raised
+                .iter()
+                .filter_map(|pressed| match &pressed.action {
+                    Some(UiAction::Emit(name)) => Some(name.clone()),
+                    Some(UiAction::Go(_) | UiAction::Push(_) | UiAction::Pop) | None => None,
+                })
+                .collect(),
         })
     }
 }

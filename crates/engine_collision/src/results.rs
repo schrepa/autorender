@@ -1,4 +1,3 @@
-use engine_core::Error;
 use serde::Serialize;
 
 use crate::types::CollisionStats;
@@ -59,35 +58,4 @@ pub(crate) struct CastHit {
     pub normal: [f32; 3],
     pub started_overlapping: bool,
     pub placed: Option<PlacedHit>,
-}
-
-#[derive(Serialize, schemars::JsonSchema)]
-pub(crate) struct CollisionEventsResult {
-    pub sensor_only: bool,
-    pub sequence: String,
-    pub tick: Option<String>,
-    pub committed_tick: Option<String>,
-    pub complete: bool,
-    pub candidate_pairs: usize,
-    pub active_pairs: usize,
-    #[schemars(with = "Option<serde_json::Value>")]
-    pub error: Option<Error>,
-    pub feed: serde_json::Value,
-    pub total: usize,
-    pub events: Vec<SensorEventRow>,
-    pub next_offset: Option<usize>,
-}
-
-#[derive(Serialize, schemars::JsonSchema)]
-pub(crate) struct SensorEventRow {
-    pub kind: SensorEventKindView,
-    pub first: HitEntity,
-    pub second: HitEntity,
-}
-
-#[derive(Serialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum SensorEventKindView {
-    Enter,
-    Exit,
 }
