@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Cut, DrawKind, Spawner};
+use engine_core::{Attribute, Cut, DrawnTable, Spawner};
 use engine_places::meshes::{LastLevel, LastLevels, LevelBatches};
 use engine_places_rendering::impostors::{
     IMPOSTOR_VERTICES, ImpostorAsk, ImpostorAsks, ImpostorRecords,
@@ -11,7 +11,7 @@ use crate::settings::ImpostorStats;
 #[derive(Component)]
 pub(crate) struct MeshCards;
 
-fn asks_of(batches: &LevelBatches) -> ImpostorAsks {
+fn asks_of(batches: &LevelBatches, table: &DrawnTable) -> ImpostorAsks {
     ImpostorAsks {
         generation: batches.generation,
         hemisphere: false,
@@ -19,7 +19,10 @@ fn asks_of(batches: &LevelBatches) -> ImpostorAsks {
             .batches
             .iter()
             .map(|batch| {
-                (batch.kind == DrawKind::MESH).then(|| ImpostorAsk {
+                let rigid = table
+                    .kind(batch.kind)
+                    .is_some_and(|declared| !declared.needs.has(Attribute::Joints));
+                rigid.then(|| ImpostorAsk {
                     mesh: batch.mesh,
                     material: batch.material,
                     parts: Vec::new(),
@@ -30,6 +33,7 @@ fn asks_of(batches: &LevelBatches) -> ImpostorAsks {
 }
 
 pub(crate) fn ask_meshes(
+    table: Res<DrawnTable>,
     meshes: Query<Ref<LevelBatches>>,
     own: Query<(Entity, &ImpostorAsks), With<MeshCards>>,
     mut spawner: Spawner<ImpostorsBrick>,
@@ -41,7 +45,7 @@ pub(crate) fn ask_meshes(
     if !batches.is_changed() && held.is_ok() {
         return;
     }
-    let asks = asks_of(&batches);
+    let asks = asks_of(&batches, &table);
     match held {
         Ok((entity, held)) => {
             if *held != asks {

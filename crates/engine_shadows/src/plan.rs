@@ -7,13 +7,12 @@ use engine_core::{
     Node, OwnedView, OwnedViews, Pace, PartDraws, PassName, Readable, Readback, Readiness,
     Settling, Since, Views, Spawner, Transform, gpu_bits, mover_of,
 };
-use engine_places_rendering::shadows::{
-    CasterMap, Refresh, Region as MapView, ShadowChange, ShadowChanges, ShadowMaps,
-};
+use engine_places_rendering::shadows::{CasterMap, Refresh, Region as MapView, ShadowMaps};
 use engine_places_rendering::sun::Sun;
 use engine_render::DebugShown;
 
 use crate::atlas::MapsKey;
+use crate::changes::{ShadowChange, ShadowChanges};
 use crate::constants::LEVEL_WORDS;
 use crate::gpu_layouts::{CasterCull, ComposeData, Route, ShadowPiece};
 use crate::part::{SHADOW_FORMAT, ShadowsGpu};

@@ -2,15 +2,14 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asset, AssetLibrary, AssetResidency, AssetUses, Cut, Detail, DeviceLimits, Drawn, FrameTime,
-    Readable, Readback, Spawner, Transform, Views,
+    Asset, AssetLibrary, AssetResidency, AssetUses, Cut, Detail, DeviceLimits, Drawn, DrawnArea,
+    DrawnAreas, FrameTime, Readable, Readback, Spawner, Transform, Views,
 };
 use engine_math::collections::HashMap;
 use engine_places_rendering::impostors::{
     ImpostorAsks, ImpostorRecord, ImpostorRecords, Impostors,
 };
 use engine_places_rendering::occlusion::OcclusionSource;
-use engine_places_rendering::shadows::{ShadowChange, ShadowChanges};
 use engine_places_simulation::ground::TileKey;
 use engine_places_world::ground::{
     Foliage, GroundTiles, PlacedTiles, PooledTile, TerrainTiles, TileFace,
@@ -566,16 +565,16 @@ pub(crate) fn publish_tiles(state: Res<ScatterState>, mut placed: ResMut<PlacedT
         }));
 }
 
-pub(crate) fn publish_changes(state: Res<ScatterState>, mut shadows: ResMut<ShadowChanges>) {
+pub(crate) fn publish_changes(state: Res<ScatterState>, mut areas: ResMut<DrawnAreas>) {
     for &(min, max) in &state.moved {
-        shadows.push(ShadowChange::Box {
+        areas.push(DrawnArea::Box {
             min,
             max,
             spacing: f32::INFINITY,
         });
     }
     if state.restyled {
-        shadows.push(ShadowChange::All);
+        areas.push(DrawnArea::All);
     }
 }
 

@@ -51,7 +51,6 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::component::<lights::LocalLight>("local_light"),
     PlaceDecl::slot::<shadows::ShadowMaps>(),
     PlaceDecl::slot::<shadows::CasterRoutes>(),
-    PlaceDecl::ledger::<shadows::ShadowChanges>("shadow_changes"),
     PlaceDecl::slot::<probes::ProbeCaptures>(),
     PlaceDecl::component::<probes::ReflectionProbe>("reflection_probe"),
     PlaceDecl::slot::<reflections::TraceSource>(),

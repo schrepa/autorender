@@ -1,8 +1,7 @@
 import package::engine::materials::material_model;
 import package::engine::shading::{SurfaceInput, SurfacePoint, derived};
-import package::engine::slots::{slot_base_color, slot_cutoff, slot_emissive, slot_kind,
-    slot_light_inputs, slot_metalness, slot_normal, slot_occlusion, slot_opacity, slot_roughness,
-    slot_transmission};
+import package::engine::slots::{open_slots, slot_base_color, slot_cutoff, slot_emissive,
+    slot_kind, slot_light_inputs, slot_normal, slot_opacity};
 import package::engine::surfaces::SURFACE_SOLID;
 import package::engine::view::stable_normalize;
 
@@ -33,12 +32,9 @@ fn surface_point(input: SurfaceInput) -> SurfacePoint {
     point.normal = slot_normal(input, point);
     point.normal_dx = dpdx(point.normal);
     point.normal_dy = dpdy(point.normal);
-    point.roughness = slot_roughness(input, point);
-    point.metalness = slot_metalness(input, point);
+    point = open_slots(input, point);
     point = derived(point);
     point.emissive = slot_emissive(input, point);
-    point.occlusion = slot_occlusion(input, point);
-    point.transmission = slot_transmission(input, point);
     point.kind = slot_kind(input, point);
     point.lighting = material_model();
     point.inputs = slot_light_inputs(input, point);

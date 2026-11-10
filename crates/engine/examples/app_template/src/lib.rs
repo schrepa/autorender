@@ -2,6 +2,7 @@ extern crate engine_ecs as bevy_ecs;
 
 use engine::prelude::*;
 use engine_fly_camera::FlyCameraBrick;
+use engine_places::meshes::MESH;
 
 pub mod bricks {
     pub mod glimmer;
@@ -47,7 +48,7 @@ pub fn build(engine: &mut Engine) -> engine::Result<Template> {
             scale: Vec3::new(20.0, 1.0, 20.0),
             ..Transform::default()
         },
-        Drawn::new(DrawKind::MESH, mesh, ground),
+        Drawn::new(MESH, mesh, ground),
     ));
     world.spawn((
         Transform {
@@ -56,7 +57,7 @@ pub fn build(engine: &mut Engine) -> engine::Result<Template> {
             ..Transform::default()
         },
         Turning,
-        Drawn::new(DrawKind::MESH, mesh, block),
+        Drawn::new(MESH, mesh, block),
     ));
     let camera = world
         .spawn((

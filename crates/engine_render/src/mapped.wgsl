@@ -1,22 +1,12 @@
-import package::engine::materials::{MAP_BASE_COLOR, MAP_EMISSIVE, MAP_METALLIC_ROUGHNESS,
-    MAP_NORMAL, MAP_OCCLUSION, MASK_MIP_SCALE, SURFACE_EMISSION, alpha_cutoff, base_color_map,
-    base_color_sampler, emissive_factor, emissive_map, emissive_sampler, map_present, map_uv,
-    metallic_roughness_map, metallic_roughness_sampler, normal_map, normal_sampler, normal_scale,
-    occlusion_map, occlusion_sampler, occlusion_strength};
+import package::engine::materials::{MAP_BASE_COLOR, MAP_EMISSIVE, MAP_NORMAL, MASK_MIP_SCALE,
+    SURFACE_EMISSION, alpha_cutoff, base_color_map, base_color_sampler, emissive_factor,
+    emissive_map, emissive_sampler, map_present, map_uv, normal_map, normal_sampler, normal_scale};
 import package::engine::shading::{SurfaceInput, SurfacePoint};
 import package::engine::view::stable_normalize;
 
 fn base_texel(input: SurfaceInput) -> vec4<f32> {
     return textureSampleBias(base_color_map, base_color_sampler,
         map_uv(MAP_BASE_COLOR, input.uv, input.uv1), input.bias);
-}
-
-fn metal_rough(input: SurfaceInput) -> vec4<f32> {
-    if !map_present(MAP_METALLIC_ROUGHNESS) {
-        return vec4<f32>(1.0);
-    }
-    return textureSampleBias(metallic_roughness_map, metallic_roughness_sampler,
-        map_uv(MAP_METALLIC_ROUGHNESS, input.uv, input.uv1), input.bias);
 }
 
 fn deflected_normal(normal: vec3<f32>, dp_dx: vec3<f32>, dp_dy: vec3<f32>, uv_dx: vec2<f32>,
@@ -70,24 +60,7 @@ fn normal(input: SurfaceInput, point: SurfacePoint) -> vec3<f32> {
     return shading;
 }
 
-fn roughness(input: SurfaceInput, point: SurfacePoint) -> f32 {
-    return input.surface.x * metal_rough(input).g;
-}
-
-fn metalness(input: SurfaceInput, point: SurfacePoint) -> f32 {
-    return input.surface.y * metal_rough(input).b;
-}
-
 fn emissive(input: SurfaceInput, point: SurfacePoint) -> vec3<f32> {
     let glow = input.surface.z * SURFACE_EMISSION * base_texel(input).a;
     return point.base_color * glow + emissive_factor() * emissive_texel(input);
-}
-
-fn occlusion(input: SurfaceInput, point: SurfacePoint) -> f32 {
-    if !map_present(MAP_OCCLUSION) {
-        return 1.0;
-    }
-    let sampled = textureSampleBias(occlusion_map, occlusion_sampler,
-        map_uv(MAP_OCCLUSION, input.uv, input.uv1), input.bias).r;
-    return 1.0 + occlusion_strength() * (sampled - 1.0);
 }

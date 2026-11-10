@@ -63,6 +63,7 @@ impl Brick for ShadowsBrick {
             .resource::<plan::ShadowFeedback>()
             .resource::<plan::ShadowDrawn>()
             .resource::<plan::ShadowPlan>()
+            .resource::<changes::ShadowChanges>()
             .piece::<gpu_layouts::ShadowPiece>()
             .fill::<ShadowMaps>(Some(shaders::shadows::faces::shadows::MODULE))
             .fill::<CasterRoutes>(Some(shaders::shadows::faces::routes::MODULE))

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use bevy_ecs::system::{Res, ResMut, SystemParamItem};
 use engine_core::{
     AlphaMode, AssetLibrary, ColorSpace, Cull, DepthBias, Error, Filter, LightingModel, MAPPED,
-    MAPPED_MAPS, MAPPED_SLOTS, Material, Operation, Sampler, SceneContext, SurfaceSlot,
+    MAPPED_MAPS, MAPPED_SLOTS, Material, Operation, Sampler, SceneContext,
     TextureHandle, TextureRef, UvTransform, Wrap,
 };
 use engine_settings::{ErrorCode, Expected};
@@ -250,8 +250,8 @@ impl PreparedMaterial {
     }
 }
 
-fn home_slot(material: &Material, map: &str) -> Option<SurfaceSlot> {
-    let mapped = |slot: SurfaceSlot| {
+fn home_slot<'a>(material: &'a Material, map: &str) -> Option<&'a str> {
+    let mapped = |slot: &str| {
         MAPPED_SLOTS
             .iter()
             .any(|(known, maps)| *known == slot && maps.contains(&map))
@@ -259,10 +259,10 @@ fn home_slot(material: &Material, map: &str) -> Option<SurfaceSlot> {
     let slots = material.slots();
     slots
         .iter()
-        .find(|(slot, module)| module == MAPPED && mapped(*slot))
+        .find(|(slot, module)| module == MAPPED && mapped(slot.as_str()))
         .or_else(|| slots.iter().find(|(_, module)| module != MAPPED))
         .or_else(|| slots.first())
-        .map(|(slot, _)| *slot)
+        .map(|(slot, _)| slot.as_str())
 }
 
 impl SceneMaterial {
@@ -276,7 +276,7 @@ impl SceneMaterial {
             .iter()
             .map(|(slot, module)| {
                 (
-                    slot.name().to_owned(),
+                    slot.clone(),
                     SceneSlotFill {
                         module: module.clone(),
                         maps: BTreeMap::new(),
@@ -285,7 +285,7 @@ impl SceneMaterial {
             })
             .collect();
         for (name, map) in material.maps() {
-            let fill = home_slot(material, name).and_then(|slot| fills.get_mut(slot.name()));
+            let fill = home_slot(material, name).and_then(|slot| fills.get_mut(slot));
             if let Some(fill) = fill {
                 fill.maps.insert(
                     name.clone(),
@@ -488,15 +488,8 @@ impl SceneMaterial {
                 .map_err(|error| failed(error, "transmission"))?;
         }
         for (name, fill) in self.slots.iter().flatten() {
-            let Some(slot) = SurfaceSlot::named(name) else {
-                return Err(
-                    Error::new(ErrorCode::UnknownVariant, format!("{path}.slots.{name}"))
-                        .variants(SurfaceSlot::ALL.map(SurfaceSlot::name))
-                        .got(name.as_str()),
-                );
-            };
             material = material
-                .with_slot(slot, fill.module())
+                .with_slot(name, fill.module())
                 .map_err(|error| failed(error, &format!("slots.{name}")))?;
         }
         for (name, value) in self.values.iter().flatten() {

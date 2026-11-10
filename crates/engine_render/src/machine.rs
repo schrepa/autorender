@@ -114,6 +114,7 @@ pub(crate) struct BuiltPipeline {
     pub(crate) compute_ready: Option<wgpu::ComputePipeline>,
     pub(crate) geometry: Vec<engine_core::GeometryStream>,
     pub(crate) holes: bool,
+    pub(crate) material: bool,
     pub(crate) home: u32,
     pub(crate) layout_key: String,
     pub(crate) program_key: u64,
@@ -895,6 +896,7 @@ impl Machine {
                 .enumerate()
                 .find(|(at, pass)| decl_in_pass(&decl, *at as u32, pass))
                 .map_or(u32::MAX, |(at, _)| at as u32);
+            let material = material && groups.iter().all(|group| group.index != 1);
             pipelines.push(BuiltPipeline {
                 decl,
                 stages,
@@ -910,6 +912,7 @@ impl Machine {
                 compute_ready: None,
                 geometry,
                 holes,
+                material,
                 home,
                 layout_key,
                 program_key,

@@ -9,9 +9,14 @@ mod highlights;
 mod light;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, Schedule, Source, gpu_struct};
-use engine_places_rendering::lighting::Lighting;
-use engine_render::{Lit, RenderBricks, SurfaceKind};
+use engine_core::{
+    Brick, Bricks, MAPPED, METALLIC_ROUGHNESS_MAP, Module, OCCLUSION_MAP, Schedule, Source,
+    gpu_struct,
+};
+use engine_places_rendering::lighting::{
+    Lighting, METALNESS, OCCLUSION, ROUGHNESS, TRANSMISSION,
+};
+use engine_render::{Lit, OpenSlot, RenderBricks, SlotModule, SurfaceKind};
 use engine_places_rendering::sky::SkyLight;
 
 pub use highlights::Highlights;
@@ -25,6 +30,16 @@ gpu_struct! {
         pub widening: [f32; 4],
     }
 }
+
+const OPEN_SLOTS: [&str; 4] = [ROUGHNESS, METALNESS, OCCLUSION, TRANSMISSION];
+
+const MAPPED_SLOTS: [(&str, &[&str]); 3] = [
+    (ROUGHNESS, &[METALLIC_ROUGHNESS_MAP]),
+    (METALNESS, &[METALLIC_ROUGHNESS_MAP]),
+    (OCCLUSION, &[OCCLUSION_MAP]),
+];
+
+const STANDARD: Module = shaders::lighting_model::slots::standard::MODULE;
 
 pub struct LightingModelBrick;
 
@@ -40,6 +55,23 @@ impl Brick for LightingModelBrick {
             .fill::<Lighting>(Some(shaders::lighting_model::faces::lighting::MODULE))
             .fill::<Lit>(Some(shaders::lighting_model::faces::lighting::MODULE))
             .systems(Schedule::ViewSync, (publish_lighting, publish_piece));
+        for name in OPEN_SLOTS {
+            bricks.open_slot(OpenSlot {
+                name,
+                returns: "f32",
+                standard: STANDARD,
+            });
+        }
+        for (slot, maps) in MAPPED_SLOTS {
+            bricks.material_slot(SlotModule {
+                slot,
+                name: MAPPED,
+                module: shaders::lighting_model::slots::mapped::MODULE,
+                maps,
+                values: &[],
+                reach: 0.0,
+            });
+        }
     }
 }
 

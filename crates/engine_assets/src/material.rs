@@ -271,28 +271,20 @@ pub enum SurfaceSlot {
     Opacity,
     Cutoff,
     Normal,
-    Roughness,
-    Metalness,
     Emissive,
-    Occlusion,
-    Transmission,
     Kind,
     LightInputs,
     Output,
 }
 
 impl SurfaceSlot {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 9] = [
         Self::Position,
         Self::BaseColor,
         Self::Opacity,
         Self::Cutoff,
         Self::Normal,
-        Self::Roughness,
-        Self::Metalness,
         Self::Emissive,
-        Self::Occlusion,
-        Self::Transmission,
         Self::Kind,
         Self::LightInputs,
         Self::Output,
@@ -305,11 +297,7 @@ impl SurfaceSlot {
             Self::Opacity => "opacity",
             Self::Cutoff => "cutoff",
             Self::Normal => "normal",
-            Self::Roughness => "roughness",
-            Self::Metalness => "metalness",
             Self::Emissive => "emissive",
-            Self::Occlusion => "occlusion",
-            Self::Transmission => "transmission",
             Self::Kind => "kind",
             Self::LightInputs => "light_inputs",
             Self::Output => "output",
@@ -346,15 +334,15 @@ pub const MAPPED_MAPS: [(&str, ColorSpace); 5] = [
     (OCCLUSION_MAP, ColorSpace::Linear),
     (EMISSIVE_MAP, ColorSpace::Srgb),
 ];
-pub const MAPPED_SLOTS: [(SurfaceSlot, &[&str]); 8] = [
-    (SurfaceSlot::BaseColor, &[BASE_COLOR_MAP]),
-    (SurfaceSlot::Opacity, &[BASE_COLOR_MAP]),
-    (SurfaceSlot::Cutoff, &[BASE_COLOR_MAP]),
-    (SurfaceSlot::Normal, &[NORMAL_MAP]),
-    (SurfaceSlot::Roughness, &[METALLIC_ROUGHNESS_MAP]),
-    (SurfaceSlot::Metalness, &[METALLIC_ROUGHNESS_MAP]),
-    (SurfaceSlot::Emissive, &[EMISSIVE_MAP, BASE_COLOR_MAP]),
-    (SurfaceSlot::Occlusion, &[OCCLUSION_MAP]),
+pub const MAPPED_SLOTS: [(&str, &[&str]); 8] = [
+    (SurfaceSlot::BaseColor.name(), &[BASE_COLOR_MAP]),
+    (SurfaceSlot::Opacity.name(), &[BASE_COLOR_MAP]),
+    (SurfaceSlot::Cutoff.name(), &[BASE_COLOR_MAP]),
+    (SurfaceSlot::Normal.name(), &[NORMAL_MAP]),
+    ("roughness", &[METALLIC_ROUGHNESS_MAP]),
+    ("metalness", &[METALLIC_ROUGHNESS_MAP]),
+    (SurfaceSlot::Emissive.name(), &[EMISSIVE_MAP, BASE_COLOR_MAP]),
+    ("occlusion", &[OCCLUSION_MAP]),
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -367,7 +355,7 @@ pub struct Material {
     emissive: [f32; 3],
     transmission: f32,
     maps: Vec<(String, TextureRef)>,
-    slots: Vec<(SurfaceSlot, String)>,
+    slots: Vec<(String, String)>,
     values: Vec<(String, f32)>,
     lighting: LightingModel,
 }
@@ -527,18 +515,23 @@ impl Material {
         Ok(self)
     }
 
-    pub fn with_slot(mut self, slot: SurfaceSlot, module: impl Into<String>) -> Result<Self, Error> {
+    pub fn with_slot(mut self, slot: &str, module: impl Into<String>) -> Result<Self, Error> {
+        if !is_identifier(slot) {
+            return Err(Error::new(ErrorCode::InvalidMaterial, "$.slots")
+                .expected(Expected::Id)
+                .got(slot));
+        }
         let module = module.into();
         if !is_identifier(&module) {
             return Err(
-                Error::new(ErrorCode::InvalidMaterial, format!("$.slots.{}", slot.name()))
+                Error::new(ErrorCode::InvalidMaterial, format!("$.slots.{slot}"))
                     .expected(Expected::Id)
                     .got(module),
             );
         }
-        self.slots.retain(|(known, _)| *known != slot);
-        self.slots.push((slot, module));
-        self.slots.sort_by_key(|(known, _)| *known);
+        self.slots.retain(|(known, _)| known != slot);
+        self.slots.push((slot.to_owned(), module));
+        self.slots.sort();
         Ok(self)
     }
 
@@ -600,14 +593,14 @@ impl Material {
         self.transmission
     }
 
-    pub fn slots(&self) -> &[(SurfaceSlot, String)] {
+    pub fn slots(&self) -> &[(String, String)] {
         &self.slots
     }
 
-    pub fn slot(&self, slot: SurfaceSlot) -> Option<&str> {
+    pub fn slot(&self, slot: &str) -> Option<&str> {
         self.slots
             .iter()
-            .find(|(known, _)| *known == slot)
+            .find(|(known, _)| known == slot)
             .map(|(_, module)| module.as_str())
     }
 
@@ -697,7 +690,7 @@ pub struct MaterialBinding {
     state: BoundState,
     maps: Vec<BoundMap>,
     factors: [u32; 6],
-    slots: Vec<(SurfaceSlot, String)>,
+    slots: Vec<(String, String)>,
     values: Vec<(String, u32)>,
     lighting: LightingModel,
 }

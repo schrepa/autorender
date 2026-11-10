@@ -121,7 +121,9 @@ impl Probe {
         };
         let canvas = word(bytes, CANVAS_ORDER);
         let drawn = kind.is_some();
-        let table = table.filter(|_| matches!(kind, Some(DrawKind::MESH | DrawKind::SKIN)));
+        let table = table.filter(|table| {
+            kind.is_some() && table.drawn(object).map(|drawn| drawn.kind) == kind
+        });
         let entity = table.and_then(|table| table.owner(object));
         let membership = table
             .and_then(|table| table.records().get(object as usize))

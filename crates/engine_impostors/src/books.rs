@@ -309,7 +309,7 @@ fn material_content(library: &AssetLibrary, material: Option<&Material>) -> u128
         texture_ref(&mut bytes, map);
     }
     for (slot, module) in material.slots() {
-        bytes.extend_from_slice(slot.name().as_bytes());
+        bytes.extend_from_slice(slot.as_bytes());
         bytes.push(0);
         bytes.extend_from_slice(module.as_bytes());
         bytes.push(0);

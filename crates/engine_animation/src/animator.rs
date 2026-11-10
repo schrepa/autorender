@@ -3,9 +3,10 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
-    Applies, Clock, DrawKind, Drawn, FixedTime, FrameTime, GlobalTransforms, Mover, Moves, Pace,
+    Applies, Clock, Drawn, FixedTime, FrameTime, GlobalTransforms, Mover, Moves, Pace,
     Parent, Pause, Spawner, Transform, mover_of,
 };
+use engine_places::meshes::SKIN;
 use engine_places_rendering::animation::{
     Animate, Animator, Attachment, Clip, Joint, Keys, Rig, Track,
 };
@@ -255,7 +256,7 @@ fn spawn(
         .map(|part| {
             spawner.spawn((
                 Transform::IDENTITY,
-                Drawn::new(DrawKind::SKIN, part.mesh, part.material),
+                Drawn::new(SKIN, part.mesh, part.material),
             ))
         })
         .collect();
