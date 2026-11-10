@@ -207,15 +207,15 @@ pub fn apply_settings(world: &mut World, entries: &[(String, Value)]) -> Result<
     scoped(world, |world| {
         let before: Vec<(SettingsEntry, Value)> = touched
             .iter()
-            .map(|entry| (*entry, entry.current(world)))
-            .collect();
+            .map(|entry| entry.current(world).map(|value| (*entry, value)))
+            .collect::<Result<_, _>>()?;
         let applied = entries
             .iter()
             .try_for_each(|(key, value)| set_one(world, key, value))
             .and_then(|()| engine_registry::check_sections(world));
         if applied.is_err() {
             for (entry, value) in &before {
-                if entry.current(world) != *value {
+                if entry.current(world).ok().as_ref() != Some(value) {
                     let _ = entry.set(world, value);
                 }
             }
@@ -231,7 +231,7 @@ fn set_one(world: &mut World, key: &str, value: &Value) -> Result<(), Error> {
         return entry.set(world, value);
     };
     known_field(&entry, key, field)?;
-    let mut current = entry.current(world);
+    let mut current = entry.current(world)?;
     let Some(fields) = current.as_object_mut() else {
         return Err(not_object(section));
     };
@@ -248,7 +248,7 @@ pub fn reset_setting(world: &mut World, key: &str) -> Result<(), Error> {
     };
     scoped(world, |world| {
         let defaults = entry.default_value();
-        let mut current = entry.current(world);
+        let mut current = entry.current(world)?;
         let Some(fields) = current.as_object_mut() else {
             return Err(not_object(section));
         };

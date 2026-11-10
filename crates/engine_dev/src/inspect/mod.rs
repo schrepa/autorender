@@ -904,7 +904,11 @@ pub(crate) fn frustum_culling(world: &World) -> bool {
     world
         .get_resource::<Registry>()
         .and_then(|registry| registry.section("culling"))
-        .is_some_and(|section| section.current(world)["frustum"] == json!(true))
+        .is_some_and(|section| {
+            section
+                .current(world)
+                .is_ok_and(|current| current["frustum"] == json!(true))
+        })
 }
 
 fn assets(world: &World, context: Context<'_>) -> Result<AssetsResult, Error> {

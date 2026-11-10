@@ -236,10 +236,13 @@ impl OperationCall {
 }
 
 fn environment(world: &mut World, control: &EnvironmentControl) -> Result<Value, Error> {
-    let current = |world: &World| {
-        serde_json::to_value(SceneEnvironment::current(world)).expect("environment_serializes")
+    let current = |world: &World| -> Result<Value, Error> {
+        let environment = SceneEnvironment::current(world)?;
+        serde_json::to_value(environment).map_err(|error| {
+            Error::new(ErrorCode::InvalidValue, "$.environment").got(error.to_string())
+        })
     };
-    let before = current(world);
+    let before = current(world)?;
     let environment = if control.merge {
         let mut merged = serde_json::Map::new();
         for (key, value) in &control.sections {
@@ -253,7 +256,7 @@ fn environment(world: &mut World, control: &EnvironmentControl) -> Result<Value,
         control.sections()
     };
     let skipped = environment.apply_sections(world, "$")?;
-    let after = current(world);
+    let after = current(world)?;
     let named = environment.ordered_keys(world);
     let pick = |all: &Value| {
         named

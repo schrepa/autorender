@@ -156,7 +156,10 @@ impl DevTools {
                     read: Box::new(move |world, _, _| {
                         section
                             .present(world)
-                            .then(|| in_scene(world, || section.current(world)))
+                            .then(|| {
+                                in_scene(world, || section.current(world))
+                                    .unwrap_or_else(|error| json!({ "unreadable": error }))
+                            })
                     }),
                     brick: Some(section.brick),
                 },
@@ -236,7 +239,12 @@ impl DevTools {
                 descriptor: InspectorDescriptor::new("Environment", sections_schema(registry)),
                 kind: InspectorKind::Resource,
                 has: Box::new(|_, _| true),
-                read: Box::new(|world, _, _| Some(json!(SceneEnvironment::current(world)))),
+                read: Box::new(|world, _, _| {
+                    Some(match SceneEnvironment::current(world) {
+                        Ok(environment) => json!(environment),
+                        Err(error) => json!({ "unreadable": error }),
+                    })
+                }),
                 brick: None,
             },
         );

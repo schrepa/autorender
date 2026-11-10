@@ -6,7 +6,7 @@ use bevy_ecs::query::FilteredAccessSet;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 use engine_place::{
-    Call, Error, EventDecl, EventPage, GpuStruct, Lands, List, Operation, PlaceDecl, Slot,
+    Call, Error, ErrorCode, EventDecl, EventPage, GpuStruct, Lands, List, Operation, PlaceDecl, Slot,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -134,7 +134,7 @@ pub struct SettingsEntry {
     set: fn(&mut World, &Value, &str) -> Result<(), Error>,
     reset: fn(&mut World),
     touch: fn(&mut World),
-    current: fn(&World) -> Value,
+    current: fn(&World) -> Result<Value, Error>,
     default: fn() -> Value,
     present: fn(&World) -> bool,
     schema: fn() -> schemars::Schema,
@@ -164,7 +164,7 @@ impl SettingsEntry {
             set,
             reset: reset_of::<T>,
             touch: touch_of::<T>,
-            current: current_of::<T>,
+            current: written_of::<T>,
             default: default_of::<T>,
             present: present_of::<T>,
             schema,
@@ -211,7 +211,7 @@ impl SettingsEntry {
         (self.reset)(world);
     }
 
-    pub fn current(&self, world: &World) -> Value {
+    pub fn current(&self, world: &World) -> Result<Value, Error> {
         (self.current)(world)
     }
 
@@ -435,6 +435,17 @@ fn current_of<T: Resource + Default + Serialize>(world: &World) -> Value {
         Some(value) => to_json(value),
         None => to_json(&T::default()),
     }
+}
+
+fn written_of<T: Resource + Default + Serialize>(world: &World) -> Result<Value, Error> {
+    let written = match world.get_resource::<T>() {
+        Some(value) => serde_json::to_value(value),
+        None => serde_json::to_value(T::default()),
+    };
+    written.map_err(|error| {
+        Error::new(ErrorCode::InvalidValue, "$")
+            .got(format!("{} cannot be written here: {error}", std::any::type_name::<T>()))
+    })
 }
 
 fn parse_of<T: DeserializeOwned>(value: &Value, path: &str) -> Result<(), Error> {

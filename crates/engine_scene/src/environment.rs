@@ -14,14 +14,14 @@ pub struct SceneEnvironment {
 }
 
 impl SceneEnvironment {
-    pub fn current(world: &World) -> Self {
+    pub fn current(world: &World) -> Result<Self, Error> {
         let context = crate::loading::kept(world);
         crate::loading::within(context.as_ref(), || {
             let mut sections = BTreeMap::new();
             for section in registered(world) {
-                sections.insert(section.key.to_owned(), section.current(world));
+                sections.insert(section.key.to_owned(), section.current(world)?);
             }
-            Self { sections }
+            Ok(Self { sections })
         })
     }
 
@@ -98,7 +98,7 @@ impl SceneEnvironment {
                 let Some(section) = listed(world, key) else {
                     continue;
                 };
-                before.push((section, section.current(world)));
+                before.push((section, section.current(world)?));
                 section.set_at(world, &self.sections[key], &format!("{path}.{key}"))?;
             }
             let Err(refused) = engine_registry::check_sections(world) else {
@@ -138,13 +138,13 @@ impl SceneEnvironment {
 
 pub(crate) fn held(world: &World) -> Vec<(SettingsEntry, Value)> {
     registered(world)
-        .map(|section| (*section, section.current(world)))
+        .filter_map(|section| Some((*section, section.current(world).ok()?)))
         .collect()
 }
 
 pub(crate) fn restore(world: &mut World, held: &[(SettingsEntry, Value)]) {
     for (section, value) in held {
-        if section.current(world) != *value {
+        if section.current(world).ok().as_ref() != Some(value) {
             let _ = section.set_at(world, value, "$");
         }
     }
