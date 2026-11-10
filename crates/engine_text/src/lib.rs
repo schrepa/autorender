@@ -15,15 +15,17 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use bevy_ecs::world::World;
 use engine_core::{
-    AttachPoint, Attributes, Brick, Bricks, ComponentKind, DrawKind, Drawn, DrawnPoses, DrawnTable,
-    Error, ErrorCode, GlobalTransforms, KindDecl, KindSkip, PassName, PassPurpose, PassViews,
-    SceneComponents, SceneCx, SceneForm, ScenePass, Schedule, SlotSet, Source, TargetName, Views,
-    Writes, gpu_struct, never, settings, stats,
+    AlphaMode, Asset, AssetLibrary, AssetResidency, AssetUses, AttachPoint, Attributes, Brick,
+    Bricks, ComponentKind, Cull, DrawKind, Drawn, DrawnPoses, DrawnTable, Error, ErrorCode,
+    GlobalTransforms, KindDecl, KindSkip, LightingModel, Material, MaterialHandle, PassName,
+    PassPurpose, PassRole, PassViews, SceneComponents, SceneCx, SceneForm, Schedule, SlotSet,
+    Source, Spawner, SurfaceSlot, Views, Writes, gpu_struct, never, settings, stats,
 };
 use engine_places_rendering::text::{DEFAULT_TEXT_SIZE, FontId, Glyph, Text, TextAlign};
 use engine_render::{
-    Allocation, Attach, Bind, Buffer, DepthUse, Draw, Encode, GpuPart, Install, Lifetime, Own,
-    Pass, Pipeline, Prepare, RenderBricks, RenderPipeline, Scene, SceneDraw, Shape, Texture, wgpu,
+    Allocation, Attach, Bind, Buffer, DepthUse, Draw, Encode, Form, FormSide, GpuPart, Install,
+    KindForm, Lifetime, Own, Pass, Pipeline, Prepare, RenderBricks, RenderPipeline, Scene,
+    SceneDraw, Shape, SlotModule, Texture, Varyings, wgpu,
 };
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -32,6 +34,23 @@ use serde_json::Value;
 use typeset::{Placed, Typesetter, ensure};
 
 pub const TEXT: DrawKind = DrawKind("text");
+
+const GLYPH: &str = "glyph";
+
+const GLYPH_CUTOFF: f32 = 0.5;
+
+const LABEL_FORM: KindForm = KindForm {
+    kind: TEXT,
+    placed: FormSide {
+        vertex: shaders::text::label::VS_LABEL,
+        streams: &[],
+    },
+    owned: Some(FormSide {
+        vertex: shaders::text::label::VS_LABEL_VIEW,
+        streams: &[],
+    }),
+    varyings: Varyings::SurfaceExtra,
+};
 
 const GENERATED: &[&str] = &[
     <GlyphInstance as engine_core::GpuStruct>::WGSL,
@@ -213,6 +232,77 @@ fn install(mut text: ResMut<Text>) {
     ensure(&mut text);
 }
 
+enum LabelSurface {
+    Unmade,
+    Made(MaterialHandle),
+    Refused(Error),
+}
+
+#[derive(Resource)]
+struct LabelMaterial(LabelSurface);
+
+impl Default for LabelMaterial {
+    fn default() -> Self {
+        Self(LabelSurface::Unmade)
+    }
+}
+
+impl LabelMaterial {
+    fn made(&self) -> Option<MaterialHandle> {
+        match self.0 {
+            LabelSurface::Made(material) => Some(material),
+            LabelSurface::Unmade | LabelSurface::Refused(_) => None,
+        }
+    }
+}
+
+#[derive(Component)]
+struct LabelMaterialHeld;
+
+fn label_material() -> Result<Material, Error> {
+    Ok(Material::new([1.0; 4])?
+        .with_slot(SurfaceSlot::Opacity, GLYPH)?
+        .with_alpha_mode(AlphaMode::Mask {
+            cutoff: GLYPH_CUTOFF,
+        })?
+        .with_cull(Cull::None)
+        .with_lighting(LightingModel::Unlit))
+}
+
+fn hold_label_material(
+    labels: Query<&Drawn, With<Label>>,
+    (mut material, mut assets): (ResMut<LabelMaterial>, ResMut<AssetLibrary>),
+    residency: Res<AssetResidency>,
+    held: Query<(Entity, &AssetUses), With<LabelMaterialHeld>>,
+    mut spawner: Spawner<TextBrick>,
+) {
+    let live = match &material.0 {
+        LabelSurface::Made(made) => assets.material(*made).is_some(),
+        LabelSurface::Refused(_) => true,
+        LabelSurface::Unmade => false,
+    };
+    if !live {
+        if !labels.iter().any(|drawn| drawn.kind == TEXT) {
+            return;
+        }
+        material.0 = match label_material().and_then(|made| assets.insert_material(made)) {
+            Ok(made) => LabelSurface::Made(made),
+            Err(error) => LabelSurface::Refused(error),
+        };
+    }
+    let wanted: Vec<Asset> = material.made().map(Asset::Material).into_iter().collect();
+    match held.single() {
+        Ok((entity, uses)) => {
+            if uses.assets() != wanted.as_slice() {
+                spawner.insert(entity, AssetUses::new(&residency, wanted));
+            }
+        }
+        Err(_) => {
+            spawner.spawn((LabelMaterialHeld, AssetUses::new(&residency, wanted)));
+        }
+    }
+}
+
 fn sync(
     (text, settings, views): (Res<Text>, Res<TextSettings>, Res<Views>),
     mut labels: Query<&mut Label>,
@@ -260,10 +350,20 @@ impl Brick for TextBrick {
             )
             .systems(Schedule::FixedPreSimulation, install)
             .systems(Schedule::FrameStart, (install, sync))
+            .resource::<LabelMaterial>()
+            .systems(Schedule::ViewSync, hold_label_material)
             .operation::<operations::TextMeasure>()
             .observation::<operations::TextRuns>()
             .generated(GENERATED)
             .pass::<TextPass>()
+            .material_slot(SlotModule {
+                slot: SurfaceSlot::Opacity,
+                name: GLYPH,
+                module: shaders::text::glyph::MODULE,
+                maps: &[],
+                values: &[],
+                reach: 0.0,
+            })
             .draw_kind(KindDecl {
                 kind: TEXT,
                 needs: Attributes::NONE,
@@ -285,7 +385,8 @@ impl Brick for TextBrick {
 struct TextGpu {
     pass: Pass<Self>,
     pipeline: Pipeline<Self, Own>,
-    placings: Vec<(&'static str, Pipeline<Self, Scene>)>,
+    form: Form<Self>,
+    material: Option<MaterialHandle>,
     instances: Buffer<Self>,
     labels: Buffer<Self>,
     atlas: Texture<Self>,
@@ -299,20 +400,27 @@ struct TextGpu {
 impl TextGpu {
     fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
         if self.labeled.is_empty() {
-            return 0;
+            return if self.worlds.is_empty() {
+                0
+            } else {
+                draw.skip("labels place no glyphs")
+            };
         }
-        let Some((_, placing)) = self
-            .placings
-            .iter()
-            .find(|(name, _)| *name == scene.pass.name())
-        else {
-            return 0;
+        if scene.role == PassRole::Blended {
+            return draw.skip("labels are masked, never blended");
+        }
+        let Some(material) = self.material else {
+            return draw.skip("the label material is not resident yet");
+        };
+        let Some(pipeline) = draw.form(&self.form) else {
+            return draw.skip("pass has no label form");
         };
         draw.draw(
-            placing,
+            &pipeline,
             Shape::Pulled {
                 vertices: 0..6,
                 instances: 0..self.labeled.len() as u32,
+                material: Some(material),
             },
         );
         1
@@ -368,10 +476,11 @@ impl GpuPart for TextGpu {
         Res<'static, Text>,
         Res<'static, TextSettings>,
         Res<'static, Views>,
+        (Res<'static, LabelMaterial>, Res<'static, AssetResidency>),
     );
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        use shaders::text::{draw, faces::text as face};
+        use shaders::text::{draw, faces::text as face, label};
         let instances = cx.buffer("instances", Lifetime::Kept);
         let labels = cx.buffer("labels", Lifetime::Kept);
         let atlas = cx.texture("atlas", wgpu::TextureFormat::R8Unorm, Lifetime::Kept);
@@ -394,46 +503,12 @@ impl GpuPart for TextGpu {
             },
             &[(draw::INSTANCES, Bind::Buffer(instances))],
         )?;
-        let listed: Vec<ScenePass> = cx
-            .passes()
-            .listed()
-            .iter()
-            .filter(|listed| {
-                listed.bit.is_some()
-                    && cx.passes().takes(listed, TEXT)
-                    && listed.pass.views != PassViews::Owned
-                    && listed.pass.at != AttachPoint::Transparent
-            })
-            .copied()
-            .collect();
-        let mut placings = Vec::with_capacity(listed.len());
-        for listed in listed {
-            let fragment = if listed.pass.writes.contains(TargetName::COLOR) {
-                draw::FS_LABEL
-            } else {
-                draw::FS_LABEL_DEPTH
-            };
-            let placing = cx.render_pipeline(
-                Scene::named(listed.name),
-                &RenderPipeline {
-                    vertex: draw::VS_LABEL,
-                    fragment: Some(fragment),
-                    vertices: &[],
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth: DepthUse::Write {
-                        bias: wgpu::DepthBiasState::default(),
-                    },
-                    blend: None,
-                    writes: wgpu::ColorWrites::ALL,
-                },
-                &[(draw::LABELS, Bind::Buffer(labels))],
-            )?;
-            placings.push((listed.name, placing));
-        }
+        let form = cx.form(&LABEL_FORM, &[(label::LABELS, Bind::Buffer(labels))])?;
         Ok(Self {
             pass,
             pipeline,
-            placings,
+            form,
+            material: None,
             instances,
             labels,
             atlas,
@@ -447,7 +522,7 @@ impl GpuPart for TextGpu {
 
     fn prepare(
         &mut self,
-        ((labels, table, globals, poses), text, settings, views): SystemParamItem<
+        ((labels, table, globals, poses), text, settings, views, (material, residency)): SystemParamItem<
             '_,
             '_,
             Self::Reads,
@@ -456,6 +531,9 @@ impl GpuPart for TextGpu {
     ) {
         self.staged.clear();
         self.labeled.clear();
+        self.material = material
+            .made()
+            .filter(|made| residency.material_resident(*made));
         let Some(typesetter) = Typesetter::of(&text) else {
             return;
         };
@@ -541,6 +619,7 @@ impl GpuPart for TextGpu {
             Shape::Pulled {
                 vertices: 0..6,
                 instances: 0..self.staged.len() as u32,
+                material: None,
             },
         );
         1
