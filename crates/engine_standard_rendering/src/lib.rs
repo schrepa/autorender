@@ -3,7 +3,7 @@
     clippy::match_wildcard_for_single_variants
 )]
 
-use engine_core::Listing;
+use engine_core::{FoldOrder, Listing};
 
 pub use engine_ambient_occlusion::AmbientOcclusionBrick;
 pub use engine_animation::{AnimationBrick, ImportShared, Model, import_glb};
@@ -31,6 +31,9 @@ pub use engine_texture_cook::TextureCook;
 pub use engine_time_of_day::TimeOfDayBrick;
 pub use engine_tonemap::TonemapBrick;
 pub use engine_ui::UiBrick;
+
+const POST_ORDER: [&str; 2] = ["bloom", "haze"];
+const DISPLAY_ORDER: [&str; 2] = ["tonemap", "dither"];
 
 pub fn rendering<L: Listing>(list: L) -> L {
     list.with::<TextureCook>()
@@ -60,4 +63,8 @@ pub fn rendering<L: Listing>(list: L) -> L {
         .with::<DynamicResolutionBrick>()
         .places(engine_places::PLACES)
         .places(engine_places_rendering::PLACES)
+        .settings(FoldOrder {
+            post: POST_ORDER.map(str::to_owned).to_vec(),
+            display: DISPLAY_ORDER.map(str::to_owned).to_vec(),
+        })
 }

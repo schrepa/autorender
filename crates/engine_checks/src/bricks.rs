@@ -9,7 +9,7 @@ use bevy_ecs::world::World;
 use engine::Engine;
 use engine_core::{BrickList, PlaceDecl, Smoke};
 use engine_place::PlaceKind;
-use engine_registry::{BrickRecord, BrickSet, Registry};
+use engine_registry::{BrickRecord, BrickSet, ReadKind, Registry};
 use engine_render::Installation;
 use serde_json::{Value, json};
 
@@ -56,7 +56,7 @@ fn registry(world: &World) -> Result<&Registry, String> {
 fn uses(
     world: &mut World,
     packages: &[&'static str],
-    slots: &[TypeId],
+    places: &[TypeId],
 ) -> BTreeMap<TypeId, Uses> {
     let labels: Vec<_> = world
         .resource::<Schedules>()
@@ -87,7 +87,7 @@ fn uses(
                         .components()
                         .get_info(*kind.index())
                         .and_then(|info| info.type_id())
-                        .filter(|type_id| slots.contains(type_id))
+                        .filter(|type_id| places.contains(type_id))
                     else {
                         continue;
                     };
@@ -156,9 +156,9 @@ fn kind(decl: &PlaceDecl) -> &'static str {
 
 fn record(
     brick: &BrickRecord,
+    registry: &Registry,
     repository: &Repository,
-    listed: &BrickList,
-    installed: &Installation,
+    (listed, installed): (&BrickList, &Installation),
 ) -> Value {
     let jobs: Vec<&'static str> = listed
         .listed()
@@ -199,6 +199,12 @@ fn record(
         "resources": brick.owned().iter().map(|owned| owned.name).collect::<Vec<_>>(),
         "jobs": jobs,
         "parts": parts,
+        "reads": registry
+            .reads()
+            .iter()
+            .filter(|read| read.reader == brick.package)
+            .map(|read| json!({ "kind": read.kind, "place": read.place, "providers": read.providers }))
+            .collect::<Vec<_>>(),
         "smokes": smokes(brick.smokes()),
         "dependencies": repository
             .package(brick.package)
@@ -222,6 +228,12 @@ fn places(registry: &Registry, uses: &BTreeMap<TypeId, Uses>) -> Vec<Value> {
                 "smokes": smokes(decl.smokes()),
                 "writers": used.map(|used| scheduled(&used.writers)),
                 "readers": used.map(|used| scheduled(&used.readers)),
+                "face_readers": registry
+                    .reads()
+                    .iter()
+                    .filter(|read| read.kind == ReadKind::Face && read.place == decl.name())
+                    .map(|read| read.reader)
+                    .collect::<Vec<_>>(),
             })
         })
         .collect()
@@ -252,29 +264,29 @@ pub fn bricks_json(
 ) -> Result<String, String> {
     let installed = crate::install::noop(engine)?;
     let world = engine.app.world_mut();
-    let (packages, slots) = {
+    let (packages, places) = {
         let registry = registry(world)?;
         let packages: Vec<&'static str> = registry.names().collect();
-        let slots: Vec<TypeId> = registry
+        let places: Vec<TypeId> = registry
             .catalog()
             .iter()
-            .filter(|decl| decl.kind() == PlaceKind::Slot)
             .map(|decl| decl.type_id())
             .collect();
-        (packages, slots)
+        (packages, places)
     };
-    let uses = uses(world, &packages, &slots);
+    let uses = uses(world, &packages, &places);
     let registry = registry(world)?;
     let listed = list(BrickList::default());
     let bricks: Vec<Value> = registry
         .bricks()
         .iter()
-        .map(|brick| record(brick, repository, &listed, &installed))
+        .map(|brick| record(brick, registry, repository, (&listed, &installed)))
         .collect();
     let text = serde_json::to_string_pretty(&json!({
         "bricks": bricks,
         "places": places(registry, &uses),
         "left_out": registry.left_out(),
+        "unmet": registry.unmet(),
         "ownership": registry.ownership(),
         "frame": frame(&installed),
     }))

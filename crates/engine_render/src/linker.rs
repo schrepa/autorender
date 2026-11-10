@@ -276,6 +276,32 @@ impl Linker {
             .collect()
     }
 
+    pub(crate) fn face_readers(&self) -> Vec<(&'static str, String)> {
+        let mut found: Vec<(&'static str, String)> = Vec::new();
+        for module in &self.modules {
+            let own = prefix(&module.path);
+            if own == crate::places::FACE_ROOT || own == crate::places::PLACE_ROOT {
+                continue;
+            }
+            for imported in imports(&module.text) {
+                let mut segments = imported.split("::");
+                if segments.next() != Some(crate::places::FACE_ROOT) {
+                    continue;
+                }
+                let Some(face) = segments.next().filter(|face| !face.is_empty()) else {
+                    continue;
+                };
+                if !found
+                    .iter()
+                    .any(|(package, known)| *package == module.package && known == face)
+                {
+                    found.push((module.package, face.to_owned()));
+                }
+            }
+        }
+        found
+    }
+
     pub(crate) fn declared(&self, var: Var) -> Option<&Declaration> {
         let (path, name) = path_of((var.module(), var.name()));
         self.module(path)?

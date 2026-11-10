@@ -141,11 +141,12 @@ pub struct ResourceEntry {
 #[derive(Clone, Copy, Debug)]
 pub struct PassEntry {
     pub label: &'static str,
-    pub package: &'static str,
+    pub brick: &'static str,
     pub registered: u32,
     pub layer: Option<AttachPoint>,
     pub shared: bool,
     pub group: Option<&'static str>,
+    pub blends: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -167,6 +168,7 @@ struct Node {
     current: Bits,
     colors: Vec<(ResourceId, Access)>,
     depth: Option<(ResourceId, Access)>,
+    composes: bool,
 }
 
 impl Node {
@@ -208,14 +210,20 @@ impl Node {
         self.inputs().without(&self.outputs())
     }
 
-    fn key(&self, index: usize) -> (u8, u8, &'static str, u32, usize) {
+    fn place(&self) -> (u8, u8) {
         (
             self.entry.layer.map_or(0, |layer| layer as u8 + 1),
             u8::from(!self.entry.shared),
-            self.entry.package,
-            self.entry.registered,
-            index,
         )
+    }
+
+    fn key(&self, index: usize) -> (u8, u8, bool, u32, usize) {
+        let (layer, member) = self.place();
+        (layer, member, self.composes, self.entry.registered, index)
+    }
+
+    fn peer(&self, other: &Self) -> bool {
+        self.entry.layer.is_some() && !self.entry.shared && self.place() == other.place()
     }
 
     fn batch(&self, positioned_before: bool) -> u8 {
@@ -253,6 +261,13 @@ pub struct StaticGraph {
     nodes: Vec<Node>,
     order: Vec<usize>,
     batches: Vec<u8>,
+    unmet: Vec<Bits>,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum Tie {
+    Read { writer: usize, reader: usize },
+    Write { first: usize, second: usize, resource: usize },
 }
 
 fn refused(code: ErrorCode, path: String) -> Error {
@@ -277,7 +292,7 @@ fn follows_of(before: &[Bits]) -> Vec<Bits> {
         .collect()
 }
 
-fn nodes_of(passes: Vec<Declared>, width: usize) -> (Vec<Node>, Vec<Vec<PassId>>) {
+fn nodes_of(passes: Vec<Declared>, width: usize, views: &Bits) -> (Vec<Node>, Vec<Vec<PassId>>) {
     let count = passes.len();
     let mut nodes = Vec::with_capacity(count);
     let mut after = Vec::with_capacity(count);
@@ -295,14 +310,19 @@ fn nodes_of(passes: Vec<Declared>, width: usize) -> (Vec<Node>, Vec<Vec<PassId>>
             current.insert(resource.index());
         }
         after.push(declared.after);
-        nodes.push(Node {
+        let mut node = Node {
             entry: declared.entry,
             reads,
             writes,
             current,
             colors: declared.colors,
             depth: declared.depth,
-        });
+            composes: false,
+        };
+        node.composes = !node.entry.shared
+            && node.entry.blends
+            && !node.outputs().intersect(views).is_empty();
+        nodes.push(node);
     }
     (nodes, after)
 }
@@ -322,13 +342,15 @@ fn passes_before(
     nodes: &[Node],
     after: &[Vec<PassId>],
     views: &Bits,
-) -> Vec<Bits> {
+) -> Result<Vec<Bits>, Error> {
     let count = nodes.len();
     let mut before = vec![Bits::of(count); count];
     let mut kept = Vec::new();
+    let mut ties = Vec::new();
     for (late, reader) in nodes.iter().enumerate() {
         let reads = reader.reads_only();
         let inputs = reader.inputs();
+        let made = reader.outputs();
         for (early, writer) in nodes.iter().enumerate() {
             if early == late {
                 continue;
@@ -337,9 +359,15 @@ fn passes_before(
             for resource in outputs.intersect(&inputs).iter() {
                 let entry = &resources[resource];
                 if entry.view {
-                    let placed_earlier =
-                        reader.entry.layer.is_none() || writer.key(early) < reader.key(late);
-                    if placed_earlier {
+                    if reader.peer(writer) {
+                        if reads.contains(resource) {
+                            ties.push(Tie::Read {
+                                writer: early,
+                                reader: late,
+                            });
+                        }
+                    } else if reader.entry.layer.is_none() || writer.key(early) < reader.key(late)
+                    {
                         before[late].insert(early);
                     } else if reads.contains(resource) {
                         before[early].insert(late);
@@ -356,13 +384,19 @@ fn passes_before(
                     }
                 }
             }
-            if reader.entry.layer.is_some() && writer.entry.layer.is_some() {
-                let shared_view = !reader
-                    .outputs()
-                    .intersect(&outputs)
-                    .intersect(views)
-                    .is_empty();
-                if shared_view && writer.key(early) < reader.key(late) {
+            if reader.entry.layer.is_some()
+                && writer.entry.layer.is_some()
+                && let Some(resource) = made.intersect(&outputs).intersect(views).first()
+            {
+                if reader.peer(writer) {
+                    if early < late {
+                        ties.push(Tie::Write {
+                            first: early,
+                            second: late,
+                            resource,
+                        });
+                    }
+                } else if writer.key(early) < reader.key(late) {
                     before[late].insert(early);
                 }
             }
@@ -381,13 +415,64 @@ fn passes_before(
             before[late].insert(pass.index());
         }
     }
+    settle_ties(resources, nodes, &mut before, &ties)?;
     let follows = follows_of(&before);
     for (early, late) in kept {
         if !follows[early].contains(late) {
             before[late].insert(early);
         }
     }
-    before
+    Ok(before)
+}
+
+fn settle_ties(
+    resources: &[ResourceEntry],
+    nodes: &[Node],
+    before: &mut [Bits],
+    ties: &[Tie],
+) -> Result<(), Error> {
+    let follows = follows_of(before);
+    for &tie in ties {
+        if let Tie::Read { writer, reader } = tie
+            && !follows[writer].contains(reader)
+        {
+            before[reader].insert(writer);
+        }
+    }
+    let follows = follows_of(before);
+    for &tie in ties {
+        let Tie::Write {
+            first,
+            second,
+            resource,
+        } = tie
+        else {
+            continue;
+        };
+        if follows[first].contains(second) || follows[second].contains(first) {
+            continue;
+        }
+        let (one, other) = (&nodes[first], &nodes[second]);
+        if one.composes && other.composes && one.entry.brick != other.entry.brick {
+            return Err(refused(
+                ErrorCode::AmbiguousPasses,
+                format!(
+                    "$.passes.{}.writes.{}",
+                    other.entry.label, resources[resource].label
+                ),
+            )
+            .got([
+                format!("{}.{}", one.entry.brick, one.entry.label),
+                format!("{}.{}", other.entry.brick, other.entry.label),
+            ]));
+        }
+        if one.key(first) < other.key(second) {
+            before[second].insert(first);
+        } else {
+            before[first].insert(second);
+        }
+    }
+    Ok(())
 }
 
 fn placed_order(nodes: &[Node], before: &[Bits]) -> Result<Vec<usize>, Error> {
@@ -401,7 +486,7 @@ fn placed_order(nodes: &[Node], before: &[Bits]) -> Result<Vec<usize>, Error> {
             last.is_some_and(|last| {
                 entry.group.is_some()
                     && entry.group == last.group
-                    && entry.package == last.package
+                    && entry.brick == last.brick
                     && entry.layer == last.layer
             })
         };
@@ -481,31 +566,40 @@ fn check_writers_ordered(
     Ok(())
 }
 
-fn check_reads_written(
+fn unmet_of(
     resources: &[ResourceEntry],
     nodes: &[Node],
     reach: &[Bits],
-) -> Result<(), Error> {
+) -> Result<Vec<Bits>, Error> {
+    let mut unmet = vec![Bits::of(resources.len()); nodes.len()];
     for (late, reader) in nodes.iter().enumerate() {
-        for resource in reader.reads_only().iter() {
-            if resources[resource].life != Life::Frame || resources[resource].view {
+        for resource in reader.required().iter() {
+            let entry = &resources[resource];
+            if !matches!(entry.life, Life::Frame | Life::Output) {
                 continue;
             }
             let written = (0..nodes.len()).any(|early| {
                 reach[late].contains(early) && nodes[early].outputs().contains(resource)
             });
-            if !written {
+            if written {
+                continue;
+            }
+            let own = !entry.view
+                && nodes.iter().enumerate().any(|(index, other)| {
+                    index != late
+                        && other.entry.brick == reader.entry.brick
+                        && other.outputs().contains(resource)
+                });
+            if own {
                 return Err(refused(
                     ErrorCode::ReadBeforeWrite,
-                    format!(
-                        "$.passes.{}.reads.{}",
-                        reader.entry.label, resources[resource].label
-                    ),
+                    format!("$.passes.{}.reads.{}", reader.entry.label, entry.label),
                 ));
             }
+            unmet[late].insert(resource);
         }
     }
-    Ok(())
+    Ok(unmet)
 }
 
 fn batches_of(nodes: &[Node], order: &[usize]) -> Vec<u8> {
@@ -524,8 +618,8 @@ fn batches_of(nodes: &[Node], order: &[usize]) -> Vec<u8> {
 
 impl StaticGraph {
     pub fn build(resources: Vec<ResourceEntry>, passes: Vec<Declared>) -> Result<Self, Error> {
-        let (nodes, after) = nodes_of(passes, resources.len());
         let views = view_bits(&resources);
+        let (nodes, after) = nodes_of(passes, resources.len(), &views);
         for node in &nodes {
             if node.entry.layer.is_none() && !node.outputs().intersect(&views).is_empty() {
                 return Err(refused(
@@ -534,22 +628,46 @@ impl StaticGraph {
                 ));
             }
         }
-        let before = passes_before(&resources, &nodes, &after, &views);
+        let before = passes_before(&resources, &nodes, &after, &views)?;
         let order = placed_order(&nodes, &before)?;
         let reach = reach_of(&before, &order);
         check_writers_ordered(&resources, &nodes, &reach, &views)?;
-        check_reads_written(&resources, &nodes, &reach)?;
+        let unmet = unmet_of(&resources, &nodes, &reach)?;
         let batches = batches_of(&nodes, &order);
         Ok(Self {
             resources,
             nodes,
             order,
             batches,
+            unmet,
         })
     }
 
     pub fn passes(&self) -> usize {
         self.nodes.len()
+    }
+
+    pub fn entry(&self, pass: usize) -> Option<&PassEntry> {
+        self.nodes.get(pass).map(|node| &node.entry)
+    }
+
+    pub fn label(&self, resource: usize) -> &'static str {
+        self.resources.get(resource).map_or("", |entry| entry.label)
+    }
+
+    pub fn unmet(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
+        self.unmet
+            .iter()
+            .enumerate()
+            .flat_map(|(pass, unmet)| unmet.iter().map(move |resource| (pass, resource)))
+    }
+
+    pub fn writers(&self, resource: usize) -> impl Iterator<Item = usize> + '_ {
+        self.nodes
+            .iter()
+            .enumerate()
+            .filter(move |(_, node)| node.outputs().contains(resource))
+            .map(|(index, _)| index)
     }
 
     pub fn resources(&self) -> usize {
@@ -665,16 +783,23 @@ impl StaticGraph {
         let mut passes = Vec::new();
         for mut planned in kept.into_iter().flatten() {
             let node = &self.nodes[planned.pass.index()];
-            let refused_read = node.required().without(&written).iter().find(|&resource| {
-                let unwritten = self.resources[resource].life == Life::Frame
-                    && !planned_writes.contains(resource);
-                let elsewhere = self
-                    .nodes
-                    .iter()
-                    .filter(|other| other.outputs().contains(resource))
-                    .all(|other| other.entry.package != node.entry.package);
-                !(unwritten && elsewhere)
-            });
+            let reported = &self.unmet[planned.pass.index()];
+            let refused_read = node
+                .required()
+                .without(&written)
+                .without(reported)
+                .iter()
+                .find(|&resource| {
+                    let unwritten = matches!(self.resources[resource].life, Life::Frame | Life::Output)
+                        && !planned_writes.contains(resource);
+                    let elsewhere = self
+                        .nodes
+                        .iter()
+                        .filter(|other| other.outputs().contains(resource))
+                        .all(|other| other.entry.brick != node.entry.brick);
+                    !(unwritten && elsewhere)
+                });
+
             if let Some(resource) = refused_read {
                 return Err(refused(
                     ErrorCode::ReadBeforeWrite,

@@ -74,6 +74,68 @@ pub(crate) fn stage_of(
     }
 }
 
+const FOLDS: [(Stage, &str); 2] = [(Stage::Color, "post"), (Stage::Display, "display")];
+
+fn steps(order: &engine_core::FoldOrder, stage: Stage) -> &[String] {
+    match stage {
+        Stage::Color => &order.post,
+        Stage::Display => &order.display,
+    }
+}
+
+pub(crate) fn ordered(
+    applied: Vec<AppliedModule>,
+    order: Option<&engine_core::FoldOrder>,
+) -> Vec<AppliedModule> {
+    let Some(order) = order else {
+        return applied;
+    };
+    let mut left: Vec<Option<AppliedModule>> = applied.into_iter().map(Some).collect();
+    let mut sorted = Vec::with_capacity(left.len());
+    for (stage, _) in FOLDS {
+        for step in steps(order, stage) {
+            let found = left.iter_mut().find(|member| {
+                member
+                    .as_ref()
+                    .is_some_and(|member| member.stage == stage && member.pass == step.as_str())
+            });
+            if let Some(member) = found.and_then(Option::take) {
+                sorted.push(member);
+            }
+        }
+    }
+    sorted.extend(left.into_iter().flatten());
+    sorted
+}
+
+pub(crate) fn unknown_steps(applied: &[AppliedModule], order: &engine_core::FoldOrder) -> Vec<Error> {
+    let mut unknown = Vec::new();
+    for (stage, field) in FOLDS {
+        let known: Vec<&'static str> = applied
+            .iter()
+            .filter(|member| member.stage == stage)
+            .map(|member| member.pass)
+            .collect();
+        for (at, step) in steps(order, stage).iter().enumerate() {
+            if known.contains(&step.as_str()) && !steps(order, stage)[..at].contains(step) {
+                continue;
+            }
+            unknown.push(
+                Error::new(
+                    ErrorCode::UnknownVariant,
+                    format!(
+                        "$.settings.{}.{field}[{at}]",
+                        <engine_core::FoldOrder as engine_core::Section>::KEY
+                    ),
+                )
+                .got(step)
+                .variants(known.iter().copied()),
+            );
+        }
+    }
+    unknown
+}
+
 pub(crate) fn applied_source(applied: &[AppliedModule]) -> String {
     let mut imports = String::from(
         "import package::engine::post::frame::post;\nimport package::engine::post::pixel::PostPixel;\n",

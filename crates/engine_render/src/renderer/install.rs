@@ -592,9 +592,18 @@ pub(crate) fn install(
     let built = world.resource_scope::<Registry, _>(|world, registry| {
         install_with((device, limits), world, &registry, edited)
     })?;
+    let scenes = scene_passes(world);
+    let unknown = world
+        .get_resource::<engine_core::FoldOrder>()
+        .map(|order| crate::shared::unknown_steps(&built.applied, order))
+        .unwrap_or_default();
     if let Some(mut registry) = world.get_resource_mut::<Registry>() {
         for problem in &built.machine.over_limit {
             registry.report(problem.clone());
+        }
+        crate::needs::report(&built.machine, &scenes, &mut registry);
+        for error in unknown {
+            registry.report_unmet(error);
         }
     }
     Ok(built)
@@ -620,7 +629,10 @@ fn install_with(
     let (switches, links) = faces(registry, &mut linker, &mut roots, &mut problems);
     let material = material_layout(registry, &mut linker, &mut roots, &mut problems);
     let outputs = outputs(registry, &mut roots);
-    let applied = applied_modules(registry, &mut linker, &mut roots, &mut problems);
+    let applied = crate::shared::ordered(
+        applied_modules(registry, &mut linker, &mut roots, &mut problems),
+        world.get_resource::<engine_core::FoldOrder>(),
+    );
     linker.add_generated(
         crate::shared::APPLIED_MODULE.to_owned(),
         CORE_PACKAGE,

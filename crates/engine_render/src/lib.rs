@@ -34,6 +34,7 @@ mod install;
 mod kinds;
 mod linker;
 mod machine;
+mod needs;
 mod pieces;
 mod pipelines;
 mod places;
