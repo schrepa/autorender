@@ -1,11 +1,11 @@
 import package::engine::color::luminance;
 import package::engine::shading::{Shaded, SurfacePoint};
+import package::engine::slots::shade as shade_point;
 import package::engine::surfaces::SURFACE_WATER;
 import package::engine::view::{camera, eye_world, stable_normalize, view_pixel};
 import package::face::ground_tiles::{detail_resolved, detail_span};
 import package::face::heightfield::{terrain_uniform, use_terrain};
 import package::face::lighting::{environment_brdf, sun_visibility};
-import package::face::lit::finish;
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
 import package::generated::writes::{Outputs, outputs};
@@ -165,7 +165,6 @@ fn shade_fall(input: FallOutput, held: f32) -> FallShade {
     }
     var point: SurfacePoint;
     point.base_color = vec3<f32>(FALL_ALBEDO);
-    point.opacity = 1.0;
     point.emissive = vec3<f32>(0.0);
     point.occlusion = input.sky;
     point.roughness = WATER_SMOOTHEST;
@@ -185,9 +184,10 @@ fn shade_fall(input: FallOutput, held: f32) -> FallShade {
     let body = water_body(0.0) * (vec3<f32>(1.0) - clarity)
         * water_scattered(view, sunlight, seen)
         * ((1.0 - reflectance) * scattering.x * input.sky);
+    point.inputs.added_light = body + glow;
     var shade: FallShade;
     shade.point = point;
-    shade.shaded = finish(point, input.clip_position.xy, body + glow);
+    shade.shaded = shade_point(point, input.clip_position.xy);
     shade.shown = shown;
     shade.coverage = coverage;
     return shade;

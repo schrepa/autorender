@@ -9,7 +9,7 @@ import package::generated::pieces::lighting_model::piece;
 import package::lighting_model::inputs::sun_seen;
 import package::lighting_model::local::shaped_light;
 import package::lighting_model::surface::{reflected, shade_surface};
-import package::place::lighting::{LightInputs, Reflecting};
+import package::place::lighting::Reflecting;
 
 const SURFACE_THIN: u32 = THIN_KIND;
 
@@ -51,8 +51,8 @@ fn environment_brdf(f0: vec3<f32>, roughness: f32, n_v: f32) -> vec3<f32> {
 
 fn surface_sun(point: SurfacePoint) -> SunAt {
     return SunAt(point.world + sun_direction() * point.inputs.thickness, point.geometric,
-        point.world_dx, point.world_dy, point.inputs.shadow_softness, point.kind,
-        point.inputs.shadow_lift_first, point.inputs.shadow_lifts);
+        point.world_dx, point.world_dy, point.inputs.sun_softness, point.kind,
+        point.inputs.receiver_lift_first, point.inputs.receiver_lifts);
 }
 
 fn sun_visibility(at: SunAt) -> f32 {
@@ -129,7 +129,7 @@ fn reflecting(point: SurfacePoint) -> Reflecting {
     return reflected(widened(point));
 }
 
-fn finish(surface: SurfacePoint, pixel: vec2<f32>, added: vec3<f32>) -> Shaded {
+fn lit(surface: SurfacePoint, pixel: vec2<f32>) -> Shaded {
     let point = widened(surface);
-    return shade_surface(point, pixel, local_light(point, pixel) + added);
+    return shade_surface(point, pixel, local_light(point, pixel) + point.inputs.added_light);
 }

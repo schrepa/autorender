@@ -12,6 +12,7 @@ pub const SLOTS_MODULE: &str = "engine::slots";
 pub const SURFACES_MODULE: &str = "engine::surfaces";
 pub const MAPPED_MODULE: &str = "engine::mapped";
 pub const RECORD: &str = "material_record";
+pub const LIGHTING_ENTRY: &str = "lit";
 pub const MASK_MIP_SCALE: f32 = 0.25;
 const MODULE_ROWS: usize = SurfaceSlot::ALL.len().div_ceil(4);
 const MAPS_AT: usize = 4 * (3 + MODULE_ROWS);
@@ -387,7 +388,7 @@ impl MaterialLayout {
 
     pub(crate) fn slots_source(&self, full: bool) -> String {
         let mut imports = String::from(
-            "import package::engine::shading::{PositionInput, Shaded, SurfaceInput, SurfacePoint, unlit};\n",
+            "import package::engine::shading::{LightInputs, PositionInput, Shaded, SurfaceInput, SurfacePoint, unlit};\n",
         );
         let mut body = String::new();
         let surface = "input: SurfaceInput, point: SurfacePoint";
@@ -446,30 +447,24 @@ impl MaterialLayout {
             let _ = writeln!(body, "    return standard_{name}({args});\n}}");
         }
         if full {
-            imports.push_str("import package::face::lit::{LightInputs, finish};\n");
+            let _ = writeln!(imports, "import package::face::lit::{LIGHTING_ENTRY};");
             body.push_str(
-                "\nfn shade_model(point: SurfacePoint, pixel: vec2<f32>) -> Shaded {\n    var shaded = modeled(point, pixel);\n    shaded.opacity = point.opacity;\n    return shaded;\n}\n",
+                "\nfn shade(point: SurfacePoint, pixel: vec2<f32>) -> Shaded {\n    var shaded = modeled(point, pixel);\n    shaded.opacity = point.opacity;\n    return shaded;\n}\n",
             );
             body.push_str(
-                "\nfn modeled(point: SurfacePoint, pixel: vec2<f32>) -> Shaded {\n    let model = material_model();\n    if model == LIGHTING_UNLIT {\n        return unlit(point);\n    }\n",
+                "\nfn modeled(point: SurfacePoint, pixel: vec2<f32>) -> Shaded {\n    if point.lighting == LIGHTING_UNLIT {\n        return unlit(point);\n    }\n",
             );
             for (index, (_, path)) in self.models.iter().enumerate() {
                 let id = index + 2;
-                let _ = writeln!(imports, "import package::{path}::finish as model_{id};");
+                let _ = writeln!(imports, "import package::{path}::{LIGHTING_ENTRY} as model_{id};");
                 let _ = writeln!(
                     body,
-                    "    if model == {id}u {{\n        return model_{id}(point, pixel, vec3<f32>(0.0));\n    }}"
+                    "    if point.lighting == {id}u {{\n        return model_{id}(point, pixel);\n    }}"
                 );
             }
-            body.push_str("    return finish(point, pixel, vec3<f32>(0.0));\n}\n");
-        } else {
-            body.push_str("\nalias LightInputs = u32;\n");
+            let _ = writeln!(body, "    return {LIGHTING_ENTRY}(point, pixel);\n}}");
         }
-        let mut used = vec![
-            "material_module".to_owned(),
-            "material_model".to_owned(),
-            "LIGHTING_UNLIT".to_owned(),
-        ];
+        let mut used = vec!["material_module".to_owned(), "LIGHTING_UNLIT".to_owned()];
         used.extend(
             SurfaceSlot::ALL
                 .iter()

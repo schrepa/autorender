@@ -5,13 +5,13 @@ import package::engine::mesh::declarations::{AffinePose as PoseRows, FADE_LEVEL_
     faded_slot_slot};
 import package::engine::mesh::vertex::pose_matrix;
 import package::engine::shading::{SurfacePoint, ViewPixel, derived};
+import package::engine::slots::shade;
 import package::engine::surfaces::SURFACE_SOLID;
 import package::engine::view::{camera, material_detail, stable_normalize, view_pixel};
 import package::face::debug::debug_targets;
 import package::face::debug_modes::point_source;
 import package::face::instances::{AffinePose, DEBUG_FADING, SlotColor};
 import package::face::lighting::SURFACE_THIN;
-import package::face::lit::finish;
 import package::generated::impostors::{card_frames_first, card_frames_second,
     card_frames_third, card_frames_with_first, card_frames_with_origin, card_frames_with_second,
     card_frames_with_third, impostor_flags_frames as flags_frames,
@@ -354,7 +354,7 @@ fn card_depth(input: CardVertex, point: SurfacePoint, over: bool) -> f32 {
 }
 
 fn card_lit(input: CardVertex, point: SurfacePoint, over: bool) -> CardShaded {
-    let shaded = finish(point, input.clip_position.xy, vec3<f32>(0.0));
+    let shaded = shade(point, input.clip_position.xy);
     return CardShaded(point, shaded, card_depth(input, point, over));
 }
 

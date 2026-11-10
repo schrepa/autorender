@@ -48,5 +48,5 @@ fn probe_bounce(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> vec4<f32>
     if open != 0.0 && !point.inputs.sun_known {
         visible *= sun_visibility(surface_sun(point));
     }
-    return vec4<f32>(point.inputs.bounce, visible);
+    return vec4<f32>(point.inputs.added_indirect, visible);
 }

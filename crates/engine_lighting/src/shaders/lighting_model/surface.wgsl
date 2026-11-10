@@ -127,7 +127,7 @@ fn shade_surface(point: SurfacePoint, pixel: vec2<f32>, local: vec3<f32>) -> Sha
         * (1.0 - abs(point.geometric.y));
     let inside = light.inside;
     let open = light.open;
-    let bounce = point.inputs.bounce + light.bounce * point.occlusion;
+    let bounce = point.inputs.added_indirect + light.bounce * point.occlusion;
     let seen = mix(1.0, ambient_occlusion(pixel) * sky_visibility(pixel),
         transmission_occlusion(point));
     let sky_light = ((point.diffuse_color * (ambient_light(light) + light.horizon * rim)

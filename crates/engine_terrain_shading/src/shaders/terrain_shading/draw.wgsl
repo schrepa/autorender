@@ -5,13 +5,13 @@ import package::face::far_cover::{GroundAt, far_color};
 import package::face::ground_tiles::macro_color;
 import package::face::bounce::bounce_light;
 import package::face::foliage::foliage;
-import package::face::lit::finish;
 import package::face::shadows::{kept_level, kept_texels};
 import package::face::sun::sun_direction;
 import package::engine::math::PI;
 import package::engine::view::{camera, detail_across, detail_distance, detail_level, eye_world,
     fade_noise, material_detail, stable_normalize, view_pixel};
 import package::engine::shading::{SurfacePoint, ViewPixel};
+import package::engine::slots::shade;
 import package::engine::surfaces::SURFACE_GROUND;
 import package::face::water::{WATER_HELD, WaterCell, water_cell, water_level};
 import package::generated::writes::{DepthOutputs, Outputs, depth_outputs, outputs};
@@ -1326,7 +1326,7 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook, seen: TerrainSeen,
     point.opacity = 1.0;
     point.emissive = vec3<f32>(0.0);
     point.occlusion = occlusion * sky;
-    point.inputs.bounce = bounce_light(world, normal, true).light * occlusion;
+    point.inputs.added_indirect = bounce_light(world, normal, true).light * occlusion;
     point.inputs.sky_bend = sky_map.gba * 2.0 - 1.0;
     point.roughness = roughness;
     point.alpha = roughness * roughness;
@@ -1345,8 +1345,8 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook, seen: TerrainSeen,
     point.kind = SURFACE_GROUND;
     point.inputs.ignore_face = true;
     point.transmission = foliage().x * ground.canopy;
-    point.inputs.shadow_lift_first = lift.first;
-    point.inputs.shadow_lifts = lift.lifts;
+    point.inputs.receiver_lift_first = lift.first;
+    point.inputs.receiver_lifts = lift.lifts;
     return point;
 }
 
@@ -1449,7 +1449,7 @@ fn terrain_resolve_targets(input: TerrainResolveInput, dither: f32) -> DepthOutp
     let position = input.position;
     let resolved = terrain_resolved(position, dither);
     let point = resolved.point;
-    let shaded = finish(point, position.xy, vec3<f32>(0.0));
+    let shaded = shade(point, position.xy);
     let previous = vec4<f32>(resolved.previous.xy, 0.0, resolved.previous.z);
     return depth_outputs(point, shaded, view_pixel(position, previous), resolved.depth);
 }
@@ -1468,7 +1468,7 @@ fn terrain_probe_targets(input: TerrainOutput, holes: bool) -> Outputs {
     use_terrain(input.terrain);
     let point = terrain_point(input.relative.xyz);
     terrain_holes_test(input.cell, holes);
-    let shaded = finish(point, input.clip_position.xy, vec3<f32>(0.0));
+    let shaded = shade(point, input.clip_position.xy);
     let still = view_pixel(input.clip_position, vec4<f32>(0.0)).clip;
     return outputs(point, shaded, ViewPixel(still, still));
 }

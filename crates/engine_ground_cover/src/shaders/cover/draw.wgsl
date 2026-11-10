@@ -3,9 +3,9 @@ import package::cover::laws::{COVER_LEAF_STEPS, COVER_ROOT_OCCLUSION, STRAIGHT_F
     STRAIGHT_JOINTS};
 import package::engine::math::PI;
 import package::engine::shading::SurfacePoint;
+import package::engine::slots::shade;
 import package::engine::view::{camera, stable_normalize, view_pixel};
 import package::face::lighting::SURFACE_THIN;
-import package::face::lit::finish;
 import package::face::foliage::foliage;
 import package::face::sun::sun_direction;
 import package::generated::cover::{CoverBlade, CoverFrame, cover_facing_angle,
@@ -215,6 +215,6 @@ fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
 @fragment
 fn fs_cover(input: CoverOutput, @builtin(front_facing) front: bool) -> Outputs {
     let point = cover_surface(input, front);
-    let shaded = finish(point, input.clip_position.xy, vec3<f32>(0.0));
+    let shaded = shade(point, input.clip_position.xy);
     return outputs(point, shaded, view_pixel(input.clip_position, input.previous));
 }
