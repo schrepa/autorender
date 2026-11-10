@@ -9,6 +9,7 @@ use engine_render::SlotModule;
 use crate::shaders::cover::surface;
 
 const COVER_SURFACE: &str = "cover";
+const COVER_MATERIAL: &str = "$.cover.material";
 
 const COVER_SLOTS: [&str; 7] = [
     SurfaceSlot::BaseColor.name(),
@@ -20,19 +21,23 @@ const COVER_SLOTS: [&str; 7] = [
     SurfaceSlot::Kind.name(),
 ];
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) enum SurfaceState {
     #[default]
     Unmade,
     Waiting(MaterialHandle),
     Resident(MaterialHandle),
+    Failed(MaterialHandle, Error),
+    Refused(Error),
 }
 
 impl SurfaceState {
-    fn material(self) -> Option<MaterialHandle> {
+    fn material(&self) -> Option<MaterialHandle> {
         match self {
-            Self::Unmade => None,
-            Self::Waiting(handle) | Self::Resident(handle) => Some(handle),
+            Self::Unmade | Self::Refused(_) => None,
+            Self::Waiting(handle) | Self::Resident(handle) | Self::Failed(handle, _) => {
+                Some(*handle)
+            }
         }
     }
 }
@@ -71,19 +76,26 @@ pub(crate) fn hold_surface(
         .material()
         .filter(|&handle| library.material(handle).is_some());
     let material = match kept {
-        Some(handle) => Some(handle),
-        None => cover_material()
-            .and_then(|material| library.insert_material(material))
-            .ok(),
+        Some(handle) => Ok(handle),
+        None => cover_material().and_then(|material| library.insert_material(material)),
     };
-    let wanted: Vec<Asset> = material.map(Asset::Material).into_iter().collect();
+    let wanted: Vec<Asset> = material
+        .as_ref()
+        .ok()
+        .copied()
+        .map(Asset::Material)
+        .into_iter()
+        .collect();
     if surface.uses.assets() != wanted.as_slice() {
         surface.uses = AssetUses::new(&residency, wanted);
     }
     let state = match material {
-        None => SurfaceState::Unmade,
-        Some(handle) if residency.material_resident(handle) => SurfaceState::Resident(handle),
-        Some(handle) => SurfaceState::Waiting(handle),
+        Err(error) => SurfaceState::Refused(error),
+        Ok(handle) if residency.material_resident(handle) => SurfaceState::Resident(handle),
+        Ok(handle) => match residency.refusal(handle, COVER_MATERIAL) {
+            Some(error) => SurfaceState::Failed(handle, error),
+            None => SurfaceState::Waiting(handle),
+        },
     };
     if surface.state != state {
         surface.state = state;

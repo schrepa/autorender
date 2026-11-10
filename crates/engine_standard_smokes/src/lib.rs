@@ -18,6 +18,7 @@ mod partners;
 mod poses;
 pub mod requests;
 mod unpaused;
+mod waits;
 
 use engine_core::{Brick, Bricks, Smoke, Source};
 use engine_render::RenderBricks;
@@ -95,6 +96,11 @@ impl Brick for StandardSmokesBrick {
         Smoke {
             name: "terrain_draws_in_a_foreign_lit_pass",
             run: lit_pass::run,
+            without: &[],
+        },
+        Smoke {
+            name: "waiting_kinds_are_unsettled",
+            run: waits::run,
             without: &[],
         },
     ];

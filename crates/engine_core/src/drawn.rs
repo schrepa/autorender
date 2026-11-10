@@ -522,16 +522,11 @@ impl DrawnTable {
                 .map(|material| (Asset::Material(material), "$.drawn.material")),
         ];
         for (asset, path) in assets.into_iter().flatten() {
-            match cx.residency.state(asset) {
-                Some(Request::Ready(_)) => {}
-                Some(Request::Failed(error)) => return Some(DrawnState::Refused(error.clone())),
-                Some(Request::Missing) => {
-                    return Some(DrawnState::Refused(Error::new(
-                        ErrorCode::UnknownReference,
-                        path,
-                    )));
-                }
-                Some(Request::Asked(_)) | None => return Some(DrawnState::Waiting),
+            if let Some(error) = cx.residency.refusal(asset, path) {
+                return Some(DrawnState::Refused(error));
+            }
+            if !matches!(cx.residency.state(asset), Some(Request::Ready(_))) {
+                return Some(DrawnState::Waiting);
             }
         }
         if let Some(material) = drawn.material {

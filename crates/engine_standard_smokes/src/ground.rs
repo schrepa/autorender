@@ -6,7 +6,7 @@ use super::requests::seen;
 
 const GROUND: &str = "ground";
 
-fn fixture() -> Value {
+pub(super) fn fixture() -> Value {
     json!({
         "id": "collision-ground", "revision": 1,
         "materials": [],

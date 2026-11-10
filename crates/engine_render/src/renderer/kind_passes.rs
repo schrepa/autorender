@@ -1,10 +1,31 @@
 use bevy_ecs::world::World;
 use engine_core::{
-    Asset, AssetResidency, DrawKind, DropReason, DroppedDraws, Error, ErrorCode, KindPass,
-    KindPassState, Request,
+    Asset, AssetResidency, DrawKind, DrawReports, DropReason, DroppedDraws, Error, ErrorCode,
+    KindPass, KindPassState, KindRefusal, Request,
 };
+use engine_registry::CORE_ROW;
 
-use crate::encode::Run;
+use crate::encode::{KindAnswer, Run};
+
+fn brick_of(run: &Run, part: u32) -> &'static str {
+    run.machine
+        .declared
+        .parts
+        .get(part as usize)
+        .map_or(CORE_ROW, |info| info.package)
+}
+
+fn part_of(run: &Run, kind: DrawKind) -> Option<u32> {
+    run.installs
+        .draw_entries
+        .iter()
+        .find(|member| member.kind.kind == kind)
+        .map(|member| member.part)
+}
+
+fn kind_brick(run: &Run, kind: DrawKind) -> &'static str {
+    part_of(run, kind).map_or(CORE_ROW, |part| brick_of(run, part))
+}
 
 fn dropped_state(run: &Run, kind: DrawKind, pass: &'static str) -> Option<KindPassState> {
     let mut draws = 0;
@@ -42,8 +63,10 @@ fn state_of(
         .iter()
         .find(|tally| tally.kind == decl.kind && tally.pass == pass);
     match tallied {
-        Some(tally) => Some(match (tally.skipped, tally.reached) {
-            (Some(reason), _) => KindPassState::Skipped { reason },
+        Some(tally) => Some(match (tally.answer, tally.reached) {
+            (Some(KindAnswer::Refused(on)), _) => KindPassState::Refused { on },
+            (Some(KindAnswer::Waiting(on)), _) => KindPassState::Waiting { on },
+            (Some(KindAnswer::Skipped(reason)), _) => KindPassState::Skipped { reason },
             (None, 0) => dropped_state(run, decl.kind, pass).unwrap_or(KindPassState::Silent),
             (None, draws) => KindPassState::Drew { draws },
         }),
@@ -67,6 +90,7 @@ pub(super) fn dropped_draws(run: &Run) -> Vec<DroppedDraws> {
         .dropped
         .iter()
         .map(|dropped| DroppedDraws {
+            brick: brick_of(run, dropped.part),
             part: run
                 .machine
                 .declared
@@ -94,6 +118,8 @@ fn kind_fault(pair: &KindPass) -> Option<Error> {
         KindPassState::Dropped { reason, .. } if reason.faults() => Some(error().got(reason)),
         KindPassState::Dropped { .. }
         | KindPassState::Drew { .. }
+        | KindPassState::Waiting { .. }
+        | KindPassState::Refused { .. }
         | KindPassState::Skipped { .. } => None,
     }
 }
@@ -147,6 +173,7 @@ pub(super) fn kind_passes(run: &mut Run, world: &World) -> Vec<KindPass> {
                 continue;
             };
             listed.push(KindPass {
+                brick: kind_brick(run, decl.kind),
                 kind: decl.kind.name(),
                 pass: scene.name,
                 state,
@@ -164,15 +191,43 @@ pub(super) fn kind_passes(run: &mut Run, world: &World) -> Vec<KindPass> {
         };
         kinds.reported.push(named);
         kinds.problems.push(error.clone());
-        let owner = run
-            .installs
-            .draw_entries
-            .iter()
-            .find(|member| member.kind.kind == named.0)
-            .map(|member| member.part);
-        if let Some(part) = owner {
+        if let Some(part) = part_of(run, named.0) {
             run.installs.faults.push((part, error));
         }
     }
+    run.tallies.kinds.report = Some(draw_reports(run, &listed));
     listed
+}
+
+fn draw_reports(run: &Run, listed: &[KindPass]) -> DrawReports {
+    let kinds = listed
+        .iter()
+        .filter(|pair| match pair.state {
+            KindPassState::Waiting { .. }
+            | KindPassState::Refused { .. }
+            | KindPassState::Dropped { .. }
+            | KindPassState::Silent => true,
+            KindPassState::Drew { .. } | KindPassState::Skipped { .. } => false,
+        })
+        .copied()
+        .collect();
+    let refused = run
+        .tallies
+        .kinds
+        .refused
+        .iter()
+        .map(|refused| KindRefusal {
+            brick: kind_brick(run, refused.kind),
+            error: refused.error.clone(),
+        })
+        .collect();
+    DrawReports {
+        kinds,
+        refused,
+        dropped: dropped_draws(run),
+    }
+}
+
+pub(super) fn take_reports(run: &mut Run) -> Option<DrawReports> {
+    run.tallies.kinds.report.take()
 }

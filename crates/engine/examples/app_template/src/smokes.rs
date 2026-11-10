@@ -1,15 +1,20 @@
 use engine_core::{PassName, Smoke, SmokeFailure, SmokeSession, smoke_check};
-use engine_smoke::{above, control, counted_in_joined_passes, number, settled};
+use engine_smoke::{above, control, counted_in_joined_passes, number, query, settled};
 use serde_json::{Value, json};
 
 use crate::bricks::glimmer::{GLIMMER, GlimmerPass, LOOK};
 
 const FRAMES: u32 = 8;
 
-pub(crate) const SMOKES: [Smoke; 2] = [
+pub(crate) const SMOKES: [Smoke; 3] = [
     Smoke {
         name: "glimmer_counted_in_every_pass",
         run,
+        without: &[],
+    },
+    Smoke {
+        name: "dropped_material_leaves_nothing_waiting",
+        run: dropped,
         without: &[],
     },
     Smoke {
@@ -36,6 +41,59 @@ fn scene() -> Value {
              "view": {}},
         ],
     })
+}
+
+fn emptied() -> Value {
+    let mut emptied = scene();
+    emptied["materials"] = json!([]);
+    if let Some(entities) = emptied["entities"].as_array_mut() {
+        entities.retain(|entity| entity["id"] != "spark");
+    }
+    emptied
+}
+
+fn glimmer_cells(rendering: &Value) -> Vec<Value> {
+    rendering["kind_passes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|cell| cell["kind"] == GLIMMER.name())
+        .cloned()
+        .collect()
+}
+
+fn dropped(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
+    session.source(&scene().to_string());
+    control(session, "pause", json!({}))?;
+    let drawn = settled(session)?;
+    let brick = glimmer_cells(&drawn)
+        .first()
+        .and_then(|cell| cell["brick"].as_str())
+        .unwrap_or_default()
+        .to_owned();
+    smoke_check!(
+        !brick.is_empty(),
+        "glimmer_cells_name_their_brick",
+        glimmer_cells(&drawn),
+        json!([{ "kind": GLIMMER.name(), "brick": "the glimmer brick" }])
+    );
+    session.source(&emptied().to_string());
+    control(session, "pause", json!({}))?;
+    let shown = settled(session)?;
+    let held: Vec<Value> = glimmer_cells(&shown)
+        .into_iter()
+        .filter(|cell| cell["state"]["state"] == "waiting" || cell["state"]["state"] == "refused")
+        .collect();
+    let why = query(session, "why", json!({ "brick": brick }))?;
+    let got = json!({
+        "cells": held,
+        "waiting": why["waiting"],
+        "drawing": why["drawing"],
+        "failed": why["failed"],
+    });
+    let wanted = json!({ "cells": [], "waiting": [], "drawing": [], "failed": [] });
+    smoke_check!(got == wanted, "a_dropped_material_leaves_nothing_waiting", got, wanted);
+    Ok(())
 }
 
 fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {

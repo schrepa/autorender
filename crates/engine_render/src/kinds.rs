@@ -809,6 +809,16 @@ impl<P: GpuPart> Draw<'_, P, Scene> {
         0
     }
 
+    pub fn wait(&mut self, on: &'static str) -> u32 {
+        self.raw.run().tallies.kinds.wait(on);
+        0
+    }
+
+    pub fn refuse(&mut self, on: &'static str, error: &Error) -> u32 {
+        self.raw.run().tallies.kinds.refuse(on, error);
+        0
+    }
+
     pub fn drop_rows(&mut self, reason: DropReason, rows: u32) {
         if rows == 0 {
             return;

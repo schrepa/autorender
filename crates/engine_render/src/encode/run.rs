@@ -129,12 +129,36 @@ pub(crate) struct Tallies {
     pub(crate) kinds: KindTallies,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum KindAnswer {
+    Skipped(&'static str),
+    Waiting(&'static str),
+    Refused(&'static str),
+}
+
+impl KindAnswer {
+    const fn rank(self) -> u8 {
+        match self {
+            Self::Skipped(_) => 0,
+            Self::Waiting(_) => 1,
+            Self::Refused(_) => 2,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct KindTally {
     pub(crate) kind: engine_core::DrawKind,
     pub(crate) pass: &'static str,
     pub(crate) reached: u32,
-    pub(crate) skipped: Option<&'static str>,
+    pub(crate) answer: Option<KindAnswer>,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct RefusedTally {
+    pub(crate) kind: engine_core::DrawKind,
+    pub(crate) pass: &'static str,
+    pub(crate) error: Error,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -153,8 +177,10 @@ pub(crate) struct KindTallies {
     pub(crate) ran: Vec<&'static str>,
     pub(crate) listed: Vec<KindTally>,
     pub(crate) dropped: Vec<DroppedTally>,
+    pub(crate) refused: Vec<RefusedTally>,
     pub(crate) reported: Vec<(engine_core::DrawKind, &'static str)>,
     pub(crate) problems: Vec<Error>,
+    pub(crate) report: Option<engine_core::DrawReports>,
 }
 
 impl KindTallies {
@@ -176,7 +202,7 @@ impl KindTallies {
                     kind,
                     pass,
                     reached: 0,
-                    skipped: None,
+                    answer: None,
                 });
                 self.listed.len() - 1
             }
@@ -188,9 +214,36 @@ impl KindTallies {
         self.drawing = None;
     }
 
+    fn answer(&mut self, answer: KindAnswer) {
+        if let Some(tally) = self.drawing.and_then(|at| self.listed.get_mut(at))
+            && tally.answer.is_none_or(|held| held.rank() <= answer.rank())
+        {
+            tally.answer = Some(answer);
+        }
+    }
+
     pub(crate) fn skip(&mut self, reason: &'static str) {
-        if let Some(tally) = self.drawing.and_then(|at| self.listed.get_mut(at)) {
-            tally.skipped = Some(reason);
+        self.answer(KindAnswer::Skipped(reason));
+    }
+
+    pub(crate) fn wait(&mut self, on: &'static str) {
+        self.answer(KindAnswer::Waiting(on));
+    }
+
+    pub(crate) fn refuse(&mut self, on: &'static str, error: &Error) {
+        let Some(tally) = self.drawing.and_then(|at| self.listed.get(at)).copied() else {
+            return;
+        };
+        self.answer(KindAnswer::Refused(on));
+        let known = self.refused.iter().any(|refused| {
+            refused.kind == tally.kind && refused.pass == tally.pass && refused.error == *error
+        });
+        if !known {
+            self.refused.push(RefusedTally {
+                kind: tally.kind,
+                pass: tally.pass,
+                error: error.clone(),
+            });
         }
     }
 
@@ -235,6 +288,7 @@ impl KindTallies {
         self.ran.clear();
         self.listed.clear();
         self.dropped.clear();
+        self.refused.clear();
     }
 }
 

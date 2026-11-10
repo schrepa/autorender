@@ -1,14 +1,16 @@
 use engine_core::{SmokeFailure, SmokeSession, TargetName, smoke_check, smoke_eq};
-use engine_smoke::{Checked, query, render};
+use engine_smoke::{Checked, control, environment, query, render, settled};
 use serde_json::{Value, json};
 
-use super::requests::seen;
+use super::image::image;
+use super::requests::{grid, seen};
 
 pub(super) const LEFT_OUT: &str = "engine_prepass";
 pub(super) const GROUND_FILLER: &str = "engine_collision";
 const OCCLUSION: &str = "engine_ambient_occlusion";
 const GROUNDING: &str = "engine_grounding";
 const GROUND: &str = "ground";
+const OCCLUSION_PASSES: [&str; 2] = ["ambient_occlusion", "effects_filter"];
 const UNWRITTEN: &str = "read_before_write";
 const UNFILLED: &str = "place_not_filled";
 
@@ -113,7 +115,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         json!(suggested),
         json!([wanted])
     );
-    Ok(())
+    occlusion_off(session)
 }
 
 pub(super) fn ground(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
@@ -136,6 +138,29 @@ pub(super) fn ground(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure>
         why["state"]["off"]["because"].clone(),
         json!("unmet"),
         "grounding_without_ground_is_held_off"
+    );
+    Ok(())
+}
+
+fn occlusion_off(session: &mut dyn SmokeSession) -> Checked<()> {
+    session.source(&grid(2).to_string());
+    control(session, "pause", json!({}))?;
+    let shown = settled(session)?;
+    let ran: Vec<&Value> = shown["render_passes"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|pass| OCCLUSION_PASSES.iter().any(|name| *pass == *name))
+        .collect();
+    smoke_eq!(json!(ran), json!([]), "no_occlusion_pass_runs");
+    let starved = image(session)?;
+    environment(session, json!({ "ambient_occlusion": { "enabled": false } }))?;
+    let without = image(session)?;
+    let wanted = json!({ "sha256": without });
+    smoke_eq!(
+        seen(starved == without, json!({ "sha256": starved }), &wanted),
+        wanted,
+        "the_boxes_look_as_without_occlusion"
     );
     Ok(())
 }

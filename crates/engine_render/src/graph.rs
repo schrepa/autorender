@@ -665,7 +665,7 @@ fn starved_of(resources: &[ResourceEntry], nodes: &[Node], unmet: &[Bits]) -> Bi
                 let mut writers = nodes.iter().enumerate().filter(|(early, writer)| {
                     *early != late && writer.outputs().contains(resource)
                 });
-                matches!(resources[resource].life, Life::Frame | Life::Output)
+                matches!(resources[resource].life, Life::Frame | Life::Kept | Life::Output)
                     && writers
                         .clone()
                         .any(|(_, writer)| writer.entry.brick == reader.entry.brick)

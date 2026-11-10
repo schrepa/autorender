@@ -64,6 +64,9 @@ pub(crate) fn settle_readiness(world: &mut World, board: &Board) {
     if let Some(cooking) = world.get_resource::<crate::cook::Cooking>() {
         readiness.settle(CORE_ROW, u32::try_from(cooking.left()).unwrap_or(u32::MAX));
     }
+    if let Some(reports) = world.get_resource::<crate::DrawReports>() {
+        reports.add_to(&mut readiness);
+    }
     world.insert_resource(readiness);
     crate::loads::settle_scene(world);
 }
