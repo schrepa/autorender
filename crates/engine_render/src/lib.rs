@@ -79,8 +79,8 @@ pub use platform::{
 pub use pyramid::{PYRAMID_GROUP, PyramidExtent};
 #[doc(hidden)]
 pub use renderer::{
-    DeviceHealth, GpuPassTimes, Installation, InstalledPart, InstalledPiece, Renderer,
-    StartingRenderer, device_limits, install_noop,
+    DeviceHealth, FoldStep, GpuPassTimes, Installation, InstalledPart, InstalledPiece, PassTie,
+    Renderer, StartingRenderer, device_limits, install_noop,
 };
 pub use shaders::FULLSCREEN;
 pub use surface::{

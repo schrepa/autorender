@@ -104,6 +104,17 @@ pub fn render(session: &mut dyn SmokeSession) -> Checked<Value> {
     Ok(rendered["rendering"].take())
 }
 
+pub fn starts_clean(session: &mut dyn SmokeSession) -> Checked<()> {
+    let empty = json!({
+        "id": "starts-clean", "revision": 1, "materials": [], "meshes": [], "entities": [],
+    });
+    session.source(&empty.to_string());
+    render(session)?;
+    let status = query(session, "status", json!({}))?;
+    smoke_eq!(status["unmet"], json!([]), "the_list_starts_with_no_unmet_need");
+    Ok(())
+}
+
 pub fn rendered_when(
     session: &mut dyn SmokeSession,
     mut frame: impl FnMut(&mut dyn SmokeSession) -> Checked<Value>,

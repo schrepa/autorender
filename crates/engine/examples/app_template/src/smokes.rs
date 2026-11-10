@@ -6,10 +6,18 @@ use crate::bricks::glimmer::{GLIMMER, GlimmerPass, LOOK};
 
 const FRAMES: u32 = 8;
 
-pub(crate) const SMOKES: [Smoke; 1] = [Smoke {
-    name: "glimmer_counted_in_every_pass",
-    run,
-}];
+pub(crate) const SMOKES: [Smoke; 2] = [
+    Smoke {
+        name: "glimmer_counted_in_every_pass",
+        run,
+        without: &[],
+    },
+    Smoke {
+        name: "app_template_starts_clean",
+        run: engine_smoke::starts_clean,
+        without: &[],
+    },
+];
 
 fn scene() -> Value {
     json!({

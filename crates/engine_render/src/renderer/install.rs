@@ -55,6 +55,19 @@ pub struct InstalledPiece {
     pub size: u64,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PassTie {
+    pub target: &'static str,
+    pub first: (&'static str, &'static str),
+    pub then: (&'static str, &'static str),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct FoldStep {
+    pub stage: &'static str,
+    pub step: &'static str,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Installation {
     pub parts: Vec<InstalledPart>,
@@ -64,9 +77,41 @@ pub struct Installation {
     pub frame_variants: usize,
     pub pieces: Vec<InstalledPiece>,
     pub arena: u64,
+    pub pass_ties: Vec<PassTie>,
+    pub unlisted_steps: Vec<FoldStep>,
+    pub fold_ties: Vec<(FoldStep, FoldStep)>,
 }
 
-fn listing(built: &mut Built) -> Installation {
+fn pass_ties(machine: &Machine) -> Vec<PassTie> {
+    let named = |pass: usize| {
+        machine
+            .graph
+            .entry(pass)
+            .map_or(("", ""), |entry| (entry.brick, entry.label))
+    };
+    machine
+        .graph
+        .ties()
+        .iter()
+        .map(|tie| PassTie {
+            target: machine.graph.label(tie.resource),
+            first: named(tie.first),
+            then: named(tie.then),
+        })
+        .collect()
+}
+
+fn fold_ties(unlisted: &[FoldStep]) -> Vec<(FoldStep, FoldStep)> {
+    let mut ties = Vec::new();
+    for (at, &first) in unlisted.iter().enumerate() {
+        if let Some(&then) = unlisted[at + 1..].iter().find(|then| then.stage == first.stage) {
+            ties.push((first, then));
+        }
+    }
+    ties
+}
+
+fn listing(built: &mut Built, order: Option<&engine_core::FoldOrder>) -> Installation {
     let modules = built.machine.linker.paths();
     let texts = modules
         .iter()
@@ -100,6 +145,10 @@ fn listing(built: &mut Built) -> Installation {
         .collect();
     layouts.sort_unstable();
     layouts.dedup();
+    let unlisted_steps: Vec<FoldStep> = crate::shared::unlisted(&built.applied, order)
+        .into_iter()
+        .map(|(stage, step)| FoldStep { stage, step })
+        .collect();
     Installation {
         parts,
         modules,
@@ -108,6 +157,9 @@ fn listing(built: &mut Built) -> Installation {
         frame_variants: machine.variants.len(),
         pieces: built.placed.pieces.clone(),
         arena: built.placed.arena,
+        pass_ties: pass_ties(machine),
+        fold_ties: fold_ties(&unlisted_steps),
+        unlisted_steps,
     }
 }
 
@@ -630,19 +682,15 @@ pub(crate) fn install(
         .get_resource::<engine_core::FoldOrder>()
         .map(|order| crate::shared::unknown_steps(&built.applied, order))
         .unwrap_or_default();
-    let needing = world
-        .get_resource_mut::<Registry>()
-        .map(|mut registry| {
-            for problem in &built.machine.over_limit {
-                registry.report(problem.clone());
-            }
-            for error in unknown {
-                registry.report_unmet(error);
-            }
-            crate::needs::report(&built.machine, &scenes, &mut registry)
-        })
-        .unwrap_or_default();
-    engine_registry::hold_unmet(world, needing);
+    if let Some(mut registry) = world.get_resource_mut::<Registry>() {
+        for problem in &built.machine.over_limit {
+            registry.report(problem.clone());
+        }
+        for error in unknown {
+            registry.report_unmet(error);
+        }
+        crate::needs::report(&built.machine, &scenes, &mut registry);
+    }
     Ok(built)
 }
 
@@ -1016,7 +1064,7 @@ pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
     let (device, queue) = noop_device().map_err(|error| vec![error])?;
     let limits = device_limits(&device.limits(), device.features(), 0);
     let mut installed = install(&device, limits, world, std::collections::BTreeMap::new())?;
-    let listed = listing(&mut installed);
+    let listed = listing(&mut installed, world.get_resource::<engine_core::FoldOrder>());
     let queue = crate::gpu_calls::Queue::new(queue);
     let mut assets = new_assets(&device, &queue);
     assets

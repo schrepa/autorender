@@ -346,7 +346,9 @@ impl Renderer {
         run.uniforms.cameras = weighted(world, cameras);
         run.planning.runs = Bits::of(run.machine.graph.passes());
         for at in run.machine.declared.passes.len()..run.machine.graph.passes() {
-            run.planning.runs.insert(at);
+            if !run.machine.graph.starved(at) {
+                run.planning.runs.insert(at);
+            }
         }
         for index in 0..run.parts.len() {
             if !run.drawable(index as u32) {

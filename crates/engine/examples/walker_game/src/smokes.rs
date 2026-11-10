@@ -10,14 +10,21 @@ const TICKS: u32 = 30;
 
 const ROUNDS: u32 = 60;
 
-pub(crate) const SMOKES: [Smoke; 2] = [
+pub(crate) const SMOKES: [Smoke; 3] = [
     Smoke {
         name: "walker_crosses_a_collider_floor",
         run,
+        without: &[],
     },
     Smoke {
         name: "walker_without_grounding_is_refused",
         run: run_ungrounded,
+        without: &[],
+    },
+    Smoke {
+        name: "walker_game_starts_clean",
+        run: engine_smoke::starts_clean,
+        without: &[],
     },
 ];
 

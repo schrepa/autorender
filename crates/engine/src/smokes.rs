@@ -21,6 +21,7 @@ pub struct SmokeEntry {
     pub name: &'static str,
     pub owner: &'static str,
     pub run: fn(&mut dyn SmokeSession) -> std::result::Result<(), SmokeFailure>,
+    pub without: &'static [&'static str],
 }
 
 impl SmokeEntry {
@@ -29,7 +30,14 @@ impl SmokeEntry {
             name: smoke.name,
             owner,
             run: smoke.run,
+            without: smoke.without,
         }
+    }
+
+    pub fn list(&self, bricks: &BrickList) -> BrickList {
+        self.without
+            .iter()
+            .fold(bricks.clone(), |list, package| list.without_package(package))
     }
 }
 

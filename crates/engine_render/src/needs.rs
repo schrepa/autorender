@@ -1,5 +1,5 @@
 use engine_core::{AttachPoint, Error, ErrorCode, ScenePasses, TargetName};
-use engine_registry::{BrickId, Read, ReadKind, Registry};
+use engine_registry::{Read, ReadKind, Registry};
 
 use crate::machine::{Machine, Target, final_target};
 
@@ -74,6 +74,7 @@ fn reads_of(machine: &Machine, scenes: &ScenePasses, registry: &Registry) -> Vec
                 kind: ReadKind::Face,
                 place: face,
                 providers,
+                required: false,
             },
         );
     }
@@ -93,6 +94,7 @@ fn reads_of(machine: &Machine, scenes: &ScenePasses, registry: &Registry) -> Vec
                     kind: ReadKind::Target,
                     place: name.to_owned(),
                     providers: writers_of(machine, scenes, name),
+                    required: true,
                 },
             );
         }
@@ -110,11 +112,7 @@ fn readers_of(machine: &Machine, pass: usize) -> Vec<usize> {
         .collect()
 }
 
-fn unmet_of(
-    machine: &Machine,
-    scenes: &ScenePasses,
-    registry: &Registry,
-) -> Vec<(&'static str, Error)> {
+fn unmet_of(machine: &Machine, scenes: &ScenePasses, registry: &Registry) -> Vec<Error> {
     let mut unmet = Vec::new();
     for (pass, resource) in machine.graph.unmet() {
         let target = named(machine, resource);
@@ -138,11 +136,13 @@ fn unmet_of(
                 continue;
             };
             let reader = brick_of(machine, scenes, reading);
+            if reader.is_empty() || reader == crate::linker::CORE_PACKAGE {
+                continue;
+            }
             let could = target
                 .map(|name| registry.could_write(name, entry.layer))
                 .unwrap_or_default();
-            unmet.push((
-                reader,
+            unmet.push(
                 Error::new(
                     ErrorCode::ReadBeforeWrite,
                     format!("$.bricks.{reader}.passes.{}.reads.{label}", entry.label),
@@ -152,23 +152,16 @@ fn unmet_of(
                     "listed_writers": listed,
                 }))
                 .nearest(could),
-            ));
+            );
         }
     }
     unmet
 }
 
-pub(crate) fn report(
-    machine: &Machine,
-    scenes: &ScenePasses,
-    registry: &mut Registry,
-) -> Vec<BrickId> {
+pub(crate) fn report(machine: &Machine, scenes: &ScenePasses, registry: &mut Registry) {
     let reads = reads_of(machine, scenes, registry);
     registry.note_reads(&[ReadKind::Face, ReadKind::Target], reads);
-    let mut needing = Vec::new();
-    for (reader, error) in unmet_of(machine, scenes, registry) {
-        needing.extend(registry.id(reader));
+    for error in unmet_of(machine, scenes, registry) {
         registry.report_unmet(error);
     }
-    needing
 }

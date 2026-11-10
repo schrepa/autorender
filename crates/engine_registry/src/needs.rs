@@ -15,7 +15,16 @@ pub struct Read {
     pub kind: ReadKind,
     pub place: String,
     pub providers: Vec<&'static str>,
+    pub required: bool,
 }
+
+pub(crate) struct Standard {
+    pub(crate) package: &'static str,
+    pub(crate) places: &'static [&'static str],
+    pub(crate) targets: &'static [&'static str],
+}
+
+include!(concat!(env!("OUT_DIR"), "/standard.rs"));
 
 #[derive(Clone, Debug)]
 pub(crate) struct LeftOut {

@@ -262,6 +262,15 @@ pub struct StaticGraph {
     order: Vec<usize>,
     batches: Vec<u8>,
     unmet: Vec<Bits>,
+    starved: Bits,
+    ties: Vec<ListedTie>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ListedTie {
+    pub first: usize,
+    pub then: usize,
+    pub resource: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -348,7 +357,7 @@ fn passes_before(
     nodes: &[Node],
     after: &[Vec<PassId>],
     views: &Bits,
-) -> Result<Vec<Bits>, Error> {
+) -> Result<(Vec<Bits>, Vec<ListedTie>), Error> {
     let count = nodes.len();
     let mut before = vec![Bits::of(count); count];
     let mut kept = Vec::new();
@@ -420,14 +429,14 @@ fn passes_before(
             before[late].insert(pass.index());
         }
     }
-    settle_ties(resources, nodes, &mut before, &ties)?;
+    let listed = settle_ties(resources, nodes, &mut before, &ties)?;
     let follows = follows_of(&before);
     for (early, late) in kept {
         if !follows[early].contains(late) {
             before[late].insert(early);
         }
     }
-    Ok(before)
+    Ok((before, listed))
 }
 
 fn settle_ties(
@@ -435,7 +444,8 @@ fn settle_ties(
     nodes: &[Node],
     before: &mut [Bits],
     ties: &[Tie],
-) -> Result<(), Error> {
+) -> Result<Vec<ListedTie>, Error> {
+    let mut listed = Vec::new();
     for &tie in ties {
         if let Tie::Read { writer, reader } = tie
             && !earlier(before, reader, writer)
@@ -469,13 +479,21 @@ fn settle_ties(
                 format!("{}.{}", other.entry.brick, other.entry.label),
             ]));
         }
-        if one.key(first) < other.key(second) {
-            before[second].insert(first);
+        let (early, late) = if one.key(first) < other.key(second) {
+            (first, second)
         } else {
-            before[first].insert(second);
+            (second, first)
+        };
+        before[late].insert(early);
+        if one.composes == other.composes && one.entry.brick != other.entry.brick {
+            listed.push(ListedTie {
+                first: early,
+                then: late,
+                resource,
+            });
         }
     }
-    Ok(())
+    Ok(listed)
 }
 
 fn earlier(before: &[Bits], first: usize, then: usize) -> bool {
@@ -621,6 +639,49 @@ fn unmet_of(
     Ok(unmet)
 }
 
+fn starved_of(resources: &[ResourceEntry], nodes: &[Node], unmet: &[Bits]) -> Bits {
+    let mut starved = Bits::of(nodes.len());
+    for (pass, unmet) in unmet.iter().enumerate() {
+        if unmet.is_empty() {
+            continue;
+        }
+        starved.insert(pass);
+        if nodes[pass].entry.brick.is_empty() {
+            let made = nodes[pass].outputs();
+            for (reader, node) in nodes.iter().enumerate() {
+                if !node.reads_only().intersect(&made).is_empty() {
+                    starved.insert(reader);
+                }
+            }
+        }
+    }
+    loop {
+        let mut grew = false;
+        for (late, reader) in nodes.iter().enumerate() {
+            if starved.contains(late) {
+                continue;
+            }
+            let unfed = reader.required().iter().any(|resource| {
+                let mut writers = nodes.iter().enumerate().filter(|(early, writer)| {
+                    *early != late && writer.outputs().contains(resource)
+                });
+                matches!(resources[resource].life, Life::Frame | Life::Output)
+                    && writers
+                        .clone()
+                        .any(|(_, writer)| writer.entry.brick == reader.entry.brick)
+                    && writers.all(|(early, _)| starved.contains(early))
+            });
+            if unfed {
+                starved.insert(late);
+                grew = true;
+            }
+        }
+        if !grew {
+            return starved;
+        }
+    }
+}
+
 fn batches_of(nodes: &[Node], order: &[usize]) -> Vec<u8> {
     let mut batches = Vec::with_capacity(order.len());
     let mut positioned = false;
@@ -647,11 +708,12 @@ impl StaticGraph {
                 ));
             }
         }
-        let before = passes_before(&resources, &nodes, &after, &views)?;
+        let (before, ties) = passes_before(&resources, &nodes, &after, &views)?;
         let order = placed_order(&nodes, &before)?;
         let reach = reach_of(&before, &order);
         check_writers_ordered(&resources, &nodes, &reach, &views)?;
         let unmet = unmet_of(&resources, &nodes, &reach)?;
+        let starved = starved_of(&resources, &nodes, &unmet);
         let batches = batches_of(&nodes, &order);
         Ok(Self {
             resources,
@@ -659,7 +721,17 @@ impl StaticGraph {
             order,
             batches,
             unmet,
+            starved,
+            ties,
         })
+    }
+
+    pub fn starved(&self, pass: usize) -> bool {
+        self.starved.contains(pass)
+    }
+
+    pub fn ties(&self) -> &[ListedTie] {
+        &self.ties
     }
 
     pub fn passes(&self) -> usize {
@@ -799,11 +871,9 @@ impl StaticGraph {
         let mut passes = Vec::new();
         for mut planned in kept.into_iter().flatten() {
             let node = &self.nodes[planned.pass.index()];
-            let reported = &self.unmet[planned.pass.index()];
             let refused_read = node
                 .required()
                 .without(&written)
-                .without(reported)
                 .iter()
                 .find(|&resource| {
                     let unwritten =

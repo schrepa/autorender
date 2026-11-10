@@ -71,6 +71,7 @@ pub struct BrickRecord {
     pub(crate) systems: Vec<SystemsCall>,
     pub(crate) fills: Vec<Filled>,
     pub(crate) joins: Vec<JoinEntry>,
+    required: Vec<TypeId>,
     owned: Vec<Owned>,
     settings: Vec<SettingsEntry>,
     section_rules: Vec<SectionRule>,
@@ -113,6 +114,7 @@ impl BrickRecord {
             systems: Vec::new(),
             fills: Vec::new(),
             joins: Vec::new(),
+            required: Vec::new(),
             owned: Vec::new(),
             settings: Vec::new(),
             section_rules: Vec::new(),
@@ -253,6 +255,10 @@ impl BrickRecord {
             .chain(self.joins.iter().map(|joined| &joined.place))
     }
 
+    pub fn requires(&self, slot: TypeId) -> bool {
+        self.required.contains(&slot)
+    }
+
     pub fn fills_slot(&self, slot: TypeId) -> bool {
         self.fills.iter().any(|filled| filled.slot == slot)
     }
@@ -315,6 +321,13 @@ impl BrickRecord {
         }
         for event in S::EVENTS {
             self.event(EventEntry::of(*event));
+        }
+    }
+
+    pub fn require<S: Slot>(&mut self) {
+        let slot = TypeId::of::<S>();
+        if !self.required.contains(&slot) {
+            self.required.push(slot);
         }
     }
 

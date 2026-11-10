@@ -105,6 +105,11 @@ impl Bricks<'_> {
         self
     }
 
+    pub fn requires<S: Slot>(&mut self) -> &mut Self {
+        self.record.require::<S>();
+        self
+    }
+
     pub fn join<L: List>(
         &mut self,
         member: impl Into<L::Member>,

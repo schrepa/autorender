@@ -7,10 +7,18 @@ const FRAMES: u32 = 8;
 
 const WHITE_SHEET: &str = "/////////////////////w==";
 
-pub(crate) const SMOKES: [Smoke; 1] = [Smoke {
-    name: "sprite_and_label_draw",
-    run,
-}];
+pub(crate) const SMOKES: [Smoke; 2] = [
+    Smoke {
+        name: "sprite_and_label_draw",
+        run,
+        without: &[],
+    },
+    Smoke {
+        name: "flat_game_starts_clean",
+        run: engine_smoke::starts_clean,
+        without: &[],
+    },
+];
 
 fn scene() -> Value {
     json!({
