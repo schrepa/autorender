@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asks, Binding, BindingSource, Button, Clock, ContextAsk, Contexts, CursorAsk, CursorMode,
-    CursorRequests, FrameTime, GlobalTransforms, HandOver, Input, Interest, MouseButton, Mover,
+    Asks, Binding, BindingSource, Button, Clock, Contexts, CursorMode, CursorRequests,
+    FrameTime, GlobalTransforms, HandOver, Hold, Input, MouseButton, Mover,
     Moves, Pace, Player, Stick, Trigger, Verb, VerbId, VerbShape, Views, mover_of,
 };
 use engine_math::{atan2, clamp};
@@ -74,9 +74,9 @@ pub(crate) const TURN: Verb = Verb {
 
 pub(crate) struct Controls {
     verbs: [VerbId; 4],
-    looking: (CursorMode, Option<Interest<ContextAsk>>),
-    _context: Interest<ContextAsk>,
-    _cursor: Interest<CursorAsk>,
+    looking: (CursorMode, Option<Hold>),
+    _context: Hold,
+    _cursor: Hold,
 }
 
 impl Controls {

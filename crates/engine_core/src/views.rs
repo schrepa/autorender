@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use crate::{
     AssetLibrary, Camera, Clear, ColorSpace, Detail, Drawn, DrawnFlags, DrawnPoses, DrawnTable, Error,
-    ErrorCode, FrameFacts, FrameId, FrameTime, GlobalTransforms, Interest, Jitter, Layers, List,
+    ErrorCode, FrameFacts, FrameId, FrameTime, GlobalTransforms, Hold, Jitter, Layers, List,
     Mobility, Operation, OwnedView, OwnedViews, PassBit, PassMask, PassViews, Requests,
     ScenePasses, Target, View, ViewCut, ViewHistory, ViewJitter, ViewLayer, take_asks,
 };
@@ -544,10 +544,10 @@ impl List for WholeFrames {
 }
 
 impl WholeFrames {
-    pub fn ask(&mut self, by: &'static str) -> Interest<&'static str> {
+    pub fn ask(&mut self, by: &'static str) -> Hold {
         let interest = self.requests.ask(by);
         self.end();
-        interest
+        interest.into()
     }
 
     pub fn asked(&mut self) -> bool {

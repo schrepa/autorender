@@ -7,9 +7,9 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Error, ErrorCode, Filled, FixedTime, GAMEPLAY_JOBS, GlobalTransforms,
-    Interest, JobFailures, JobKind, JobRef, Jobs, Parent, RecordKey, Records, Refusals, Request,
-    Requests, Transform, fields, job_output, job_priority, settings, stats,
+    Background, Error, ErrorCode, Filled, FixedTime, GAMEPLAY_JOBS, GlobalTransforms, Hold,
+    Interest, JobFailures, JobKind, JobRef, Jobs, Landed, Parent, RecordKey, Records, Refusals,
+    Request, Requests, Transform, fields, job_priority, settings, stats,
 };
 
 pub const NAVIGATION_PART: &str = "navigation";
@@ -357,15 +357,7 @@ fn portals_input(walked: &Walked, key: TileKey, gait: &Gait) -> Vec<u8> {
     .input()
 }
 
-fn made<T>(
-    kind: &str,
-    output: Result<Arc<[u8]>, Error>,
-    decode: impl FnOnce(&[u8]) -> Result<T, Error>,
-) -> Result<T, String> {
-    job_output(kind, output.map_err(worker_message), decode)
-}
-
-fn worker_message(error: Error) -> String {
+fn worker_message(error: &Error) -> String {
     if error.code == ErrorCode::InvalidRecord
         && let Some(Value::String(message)) = &error.detail.got
     {

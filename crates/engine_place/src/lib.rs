@@ -50,7 +50,9 @@ pub use passes::{
 };
 pub use readback::{FrameId, Readable, Readback};
 pub use readiness::Readiness;
-pub use requests::{Board, Census, Interest, Progress, Request, Requests, Settling, Ticket};
+pub use requests::{
+    Board, Census, Hold, Interest, Progress, Request, Requests, Settling, Ticket,
+};
 pub use level::{Level, LevelView};
 pub use views::{
     Clear, Jitter, OwnedView, OwnedViews, Rect, Target, View, ViewCut, ViewHistory, ViewJitter,

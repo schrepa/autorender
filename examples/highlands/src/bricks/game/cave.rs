@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, DrawKind, Drawn, Interest, Jobs, MaterialHandle, Mesh, MeshHandle, RecordKey, Records,
-    Spawner, Transform, math,
+    AssetLibrary, Background, DrawKind, Drawn, Jobs, Landed, MaterialHandle, Mesh, MeshHandle,
+    Records, Spawner, Transform, math,
 };
 use engine_places_rendering::lights::{LightRegion, LocalLight};
 use engine_places_rendering::probes::{Interior, ReflectionProbe};
@@ -30,7 +30,7 @@ pub(crate) struct Cave {
 }
 
 struct Asked {
-    ticket: Interest<RecordKey>,
+    work: Background<Mesh>,
     mesh: MeshHandle,
     points: [Vec3; CAVE_POINTS],
     inward: Vec3,
@@ -148,10 +148,13 @@ pub(crate) fn open(
             return;
         }
     };
-    let ticket = jobs.fetch(&CAVE, &cave_input(&points), content.priority());
+    let work = Background::asked(
+        jobs.fetch(&CAVE, &cave_input(&points), content.priority()),
+        Mesh::from_record,
+    );
     content.hold(mesh);
     cave.asked = Some(Asked {
-        ticket,
+        work,
         mesh,
         points,
         inward,
@@ -167,32 +170,34 @@ fn arrive(
     assets: &mut AssetLibrary,
     spawner: &mut Spawner<HighlandsBrick>,
 ) {
-    let Some(record) = cave
-        .asked
-        .as_ref()
-        .and_then(|asked| records.get(&asked.ticket))
-    else {
+    let Some(asked) = cave.asked.as_mut() else {
         return;
+    };
+    let failed = match asked.work.poll(records) {
+        Landed::Waiting => return,
+        Landed::Ready(_) => None,
+        Landed::Failed(error) => Some(error.clone()),
     };
     let Some(asked) = cave.asked.take() else {
         return;
     };
-    let built = match record.and_then(|bytes| Mesh::from_record(&bytes)) {
-        Ok(built) => built,
-        Err(error) => {
-            content.filled(&CAVE, asked.mesh, Err(error));
-            return;
-        }
+    if let Some(error) = failed {
+        content.filled(&CAVE, asked.mesh, Err(error));
+        return;
+    }
+    let mesh = asked.mesh;
+    let Some(built) = asked.work.into_ready() else {
+        return;
     };
     let (low, high) = cave_interior(&built, &asked.points, asked.inward);
     spawn_cave(
         spawner,
-        asked.mesh,
+        mesh,
         (&asked.points, asked.inward, low, high),
         (&asked.rock, asked.framing),
     );
-    let filled = assets.fill_mesh(asked.mesh, built);
-    content.filled(&CAVE, asked.mesh, filled);
+    let filled = assets.fill_mesh(mesh, built);
+    content.filled(&CAVE, mesh, filled);
 }
 
 fn spawn_cave(

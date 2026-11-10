@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Error, Interest, JobKind, Jobs, Mesh, MeshHandle, ProvidedAssets, RecordExchange,
-    RecordKey, Records, Requests, URGENT_JOBS, job_priority,
+    AssetLibrary, Background, Error, Hold, JobKind, Jobs, Landed, Mesh, MeshHandle, ProvidedAssets,
+    RecordExchange, Records, Requests, URGENT_JOBS, job_priority,
 };
 use glam::Vec3;
 
@@ -14,9 +14,9 @@ const SPRUCES: u32 = 3;
 
 #[derive(Resource, Default)]
 pub(crate) struct Content {
-    asked: Vec<(Interest<RecordKey>, MeshHandle, &'static JobKind)>,
+    asked: Vec<(Background<Mesh>, MeshHandle, &'static JobKind)>,
     fills: Requests<MeshHandle, ()>,
-    filling: Vec<Interest<MeshHandle>>,
+    filling: Vec<Hold>,
     pub(crate) boulders: Vec<MeshHandle>,
     failures: u64,
     latest: Option<String>,
@@ -30,14 +30,14 @@ impl Content {
         input: &[u8],
     ) -> Result<MeshHandle, Error> {
         let handle = assets.reserve_mesh()?;
-        let ticket = jobs.fetch(kind, input, self.priority());
-        self.asked.push((ticket, handle, kind));
+        let work = Background::asked(jobs.fetch(kind, input, self.priority()), Mesh::from_record);
+        self.asked.push((work, handle, kind));
         self.hold(handle);
         Ok(handle)
     }
 
     pub(crate) fn hold(&mut self, mesh: MeshHandle) {
-        self.filling.push(self.fills.ask(mesh));
+        self.filling.push(self.fills.ask(mesh).into());
     }
 
     pub(crate) fn filled(&mut self, kind: &JobKind, mesh: MeshHandle, filled: Result<(), Error>) {
@@ -111,14 +111,21 @@ pub(crate) fn arrive(
 ) {
     let content = &mut *content;
     let asked = std::mem::take(&mut content.asked);
-    for (ticket, handle, kind) in asked {
-        let Some(record) = records.get(&ticket) else {
-            content.asked.push((ticket, handle, kind));
+    for (mut work, handle, kind) in asked {
+        let landed = match work.poll(&*records) {
+            Landed::Waiting => None,
+            Landed::Ready(_) => Some(None),
+            Landed::Failed(error) => Some(Some(error.clone())),
+        };
+        let Some(failed) = landed else {
+            content.asked.push((work, handle, kind));
             continue;
         };
-        let filled = record
-            .and_then(|bytes| Mesh::from_record(&bytes))
-            .and_then(|mesh| assets.fill_mesh(handle, mesh));
+        let filled = match (failed, work.into_ready()) {
+            (Some(error), _) => Err(error),
+            (None, Some(mesh)) => assets.fill_mesh(handle, mesh),
+            (None, None) => continue,
+        };
         content.filled(kind, handle, filled);
     }
 }

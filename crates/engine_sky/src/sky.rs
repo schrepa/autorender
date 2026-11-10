@@ -74,7 +74,6 @@ fn piece_regions() -> [CopyRegion; 6] {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum Air {
     #[default]
-    Off,
     Waiting,
     Shown(u64),
 }
@@ -88,7 +87,7 @@ impl AirPlan {
     fn shown(&self) -> Option<u64> {
         match self.air {
             Air::Shown(tables) => Some(tables),
-            Air::Off | Air::Waiting => None,
+            Air::Waiting => None,
         }
     }
 
@@ -102,10 +101,9 @@ impl AirPlan {
         (sun, eye, moon): (Vec3, Vec3, [f32; 4]),
         air: &mut SkyAir,
     ) {
-        self.air = match (settings.enabled, tables) {
-            (false, _) => Air::Off,
-            (true, Some(tables)) => Air::Shown(tables.id),
-            (true, None) => Air::Waiting,
+        self.air = match tables {
+            Some(tables) => Air::Shown(tables.id),
+            None => Air::Waiting,
         };
         if self.shows() {
             let height = max(eye.y + settings.altitude, 0.5);

@@ -1,8 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asks, Binding, BindingSource, Button, Clock, ContextAsk, Contexts, CursorAsk, CursorMode,
-    CursorRequests, Error, ErrorCode, FrameTime, GlobalTransforms, HandOver, Input, Interest,
-    MouseButton, Mover, Moves, Operation, Pace, Player, Poses, Rule, Setting, Stick, Verb, VerbId,
+    Asks, Binding, BindingSource, Button, Clock, Contexts, CursorMode, CursorRequests, Error,
+    ErrorCode, FrameTime, GlobalTransforms, HandOver, Hold, Input, MouseButton, Mover, Moves, Operation, Pace, Player, Poses, Rule, Setting, Stick, Verb, VerbId,
     VerbShape, Views, mover_of,
 };
 use engine_math::{atan2, clamp, exp, max, min, sin, sin_cos};
@@ -82,9 +81,9 @@ impl Follow {
 pub(crate) struct Controls {
     look: VerbId,
     turn: VerbId,
-    looking: (CursorMode, Option<Interest<ContextAsk>>),
-    _context: Interest<ContextAsk>,
-    _cursor: Interest<CursorAsk>,
+    looking: (CursorMode, Option<Hold>),
+    _context: Hold,
+    _cursor: Hold,
 }
 
 fn context_of(mode: CursorMode) -> Option<&'static str> {

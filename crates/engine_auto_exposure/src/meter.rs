@@ -38,11 +38,7 @@ impl ExposureUniform {
         elapsed: f32,
         drawn: [u32; 2],
     ) -> Self {
-        let noon = if sky.on {
-            sky.sun_intensity * NOON_LIGHT
-        } else {
-            0.0
-        };
+        let noon = sky.sun_intensity * NOON_LIGHT;
         Self {
             frame: [authored, elapsed, settings.strength, settings.compensation],
             reach: [

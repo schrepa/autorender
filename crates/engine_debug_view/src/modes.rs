@@ -1,7 +1,7 @@
 use std::any::TypeId;
 
 use bevy_ecs::prelude::*;
-use engine_core::{DrawKind, Interest, Joined, WholeFrames};
+use engine_core::{DrawKind, Hold, Joined, WholeFrames};
 use engine_render::{DebugMode, DebugModes, DebugShown};
 use serde_json::Value;
 
@@ -25,7 +25,7 @@ type Drawn = (TypeId, u32);
 pub(crate) const WHOLE: &str = "debug_view";
 
 #[derive(Resource, Default)]
-pub(crate) struct Whole(Option<Interest<&'static str>>);
+pub(crate) struct Whole(Option<Hold>);
 
 pub(crate) fn member(name: &'static str) -> DebugMode {
     DebugMode {

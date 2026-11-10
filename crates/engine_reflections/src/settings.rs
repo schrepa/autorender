@@ -1,4 +1,4 @@
-use engine_core::{settings, stats};
+use engine_core::settings;
 
 settings! {
     #[section("reflections")]
@@ -10,12 +10,5 @@ settings! {
         pub intensity: f32 = 1.0 => range(0.0, 1.0),
         pub max_roughness: f32 = 0.75 => range(0.05, 1.0),
         pub distance: f32 = 120.0 => range(0.001, 100_000.0),
-    }
-}
-
-stats! {
-    #[section("reflections_stats")]
-    pub struct ReflectionsStats {
-        pub active: bool,
     }
 }

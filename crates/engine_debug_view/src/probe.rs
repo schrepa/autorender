@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat4, UVec2, Vec4};
 use engine_core::math::{clamp, half, max, pow};
 use engine_core::{
-    AttachPoint, DrawKind, DrawnTable, Error, ErrorCode, GpuBits, Interest, Joined, Operation,
+    AttachPoint, DrawKind, DrawnTable, Error, ErrorCode, GpuBits, Hold, Joined, Operation,
     PassMask, PassViews, Readable, Readback, SceneIds, ScenePasses, ViewFacts, Views, WholeFrames,
 };
 use engine_places::meshes::{DEBUG_FADING, DEBUG_LEVEL_AT, DEBUG_LEVEL_MASK};
@@ -50,7 +50,7 @@ pub(crate) struct Probe {
     depth_row: u32,
     size: (u32, u32),
     view_projection: Mat4,
-    whole: Option<Interest<&'static str>>,
+    whole: Option<Hold>,
 }
 
 #[derive(Resource, Default)]

@@ -2,8 +2,8 @@ include!(concat!(env!("OUT_DIR"), "/bricks/walk.rs"));
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Binding, BindingSource, Brick, Bricks, ComponentKind, ContextAsk, Contexts, Filled, FixedTime,
-    Input, Interest, Moves, Pace, Player, SceneComponents, Schedule, Source, Stick, Verb, VerbId,
+    Binding, BindingSource, Brick, Bricks, ComponentKind, Contexts, Filled, FixedTime, Hold,
+    Input, Moves, Pace, Player, SceneComponents, Schedule, Source, Stick, Verb, VerbId,
     VerbShape, Verbs, stats,
 };
 use engine_core::math::clamp;
@@ -44,7 +44,7 @@ const MOVE: Verb = Verb {
 };
 
 #[derive(Resource, Default)]
-struct Walking(Option<(VerbId, Interest<ContextAsk>)>);
+struct Walking(Option<(VerbId, Hold)>);
 
 pub struct PlayerWalkBrick;
 

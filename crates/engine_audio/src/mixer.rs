@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use bevy_ecs::prelude::*;
 use engine_core::math::clamp;
 use engine_core::{
-    Error, ErrorCode, FrameTime, GlobalTransforms, Interest, Pause, Poses, Refusals, Request,
-    Requests, SceneIds, Spawner, Ticket, Views,
+    Background, Error, ErrorCode, Files, FrameTime, GlobalTransforms, Interest, Landed, Pause,
+    Poses, Refusals, Request, Requests, SceneIds, Spawner, Ticket, Views,
 };
 use engine_places_rendering::audio::{
     Bus, OneShot, SoundHandle, SoundOrder, SoundSource, Sounds, VoiceHandle,
@@ -92,7 +92,6 @@ impl Start {
 enum Device {
     #[default]
     Allowed,
-    Off,
     Refused,
     Failed,
 }
@@ -239,6 +238,7 @@ pub(crate) struct Mixer {
     sounds: Requests<u32, Decoded>,
     files: BTreeMap<(String, bool), File>,
     loaded: BTreeMap<SoundHandle, Interest<u32>>,
+    reads: BTreeMap<String, Background<Arc<[u8]>, String>>,
     cut: u32,
     failures: u32,
     latest: Option<String>,
@@ -266,26 +266,17 @@ impl Mixer {
             return;
         }
         match next {
-            Device::Off | Device::Refused => self.shut(),
+            Device::Refused => self.shut(),
             Device::Allowed | Device::Failed => {}
         }
         self.device = next;
     }
 
     pub(crate) fn set_available(&mut self, available: bool) {
-        let next = match (available, self.device) {
-            (_, Device::Off) => Device::Off,
-            (false, Device::Allowed | Device::Refused | Device::Failed) => Device::Refused,
-            (true, Device::Allowed | Device::Refused | Device::Failed) => Device::Allowed,
-        };
-        self.turn(next);
-    }
-
-    fn set_enabled(&mut self, enabled: bool) {
-        let next = match (enabled, self.device) {
-            (false, _) => Device::Off,
-            (true, Device::Off) => Device::Allowed,
-            (true, held @ (Device::Allowed | Device::Refused | Device::Failed)) => held,
+        let next = if available {
+            Device::Allowed
+        } else {
+            Device::Refused
         };
         self.turn(next);
     }
@@ -314,7 +305,7 @@ impl Mixer {
             return true;
         }
         match self.device {
-            Device::Off | Device::Refused | Device::Failed => false,
+            Device::Refused | Device::Failed => false,
             Device::Allowed => match self.backend.open() {
                 Ok(()) => true,
                 Err(failure) => {
@@ -337,8 +328,10 @@ impl Mixer {
     }
 
     fn verdict(&self, source: &SoundSource) -> Result<(), Error> {
-        if source.bytes.is_none() {
-            return Err(Error::new(ErrorCode::MissingFile, "$.sound.file").got(&source.file));
+        if source.bytes.is_none()
+            && let Some(error) = self.reads.get(&source.file).and_then(|read| read.failure())
+        {
+            return Err(error.clone());
         }
         let Some(file) = self.files.get(&(source.file.clone(), source.stream)) else {
             return Ok(());
@@ -388,6 +381,48 @@ impl Mixer {
     fn prune(&mut self, named: &BTreeSet<(&str, bool)>) {
         self.files
             .retain(|(file, stream), _| named.contains(&(file.as_str(), *stream)));
+        self.reads.retain(|file, _| {
+            named.contains(&(file.as_str(), false)) || named.contains(&(file.as_str(), true))
+        });
+    }
+
+    fn read<'s>(
+        &mut self,
+        sources: impl Iterator<Item = &'s SoundSource>,
+        files: &mut Files,
+    ) -> bool {
+        for source in sources {
+            if source.bytes.is_none() && !self.reads.contains_key(&source.file) {
+                let read = files.read(&source.file, |bytes| Ok(Arc::from(bytes)));
+                self.reads.insert(source.file.clone(), read);
+            }
+        }
+        let mut landed = false;
+        let mut failed = Vec::new();
+        for (file, read) in &mut self.reads {
+            if !read.waiting() {
+                continue;
+            }
+            match read.poll(&*files) {
+                Landed::Waiting => {}
+                Landed::Ready(_) => landed = true,
+                Landed::Failed(error) => {
+                    landed = true;
+                    failed.push(format!("{file}: {error}"));
+                }
+            }
+        }
+        for failure in failed {
+            self.fail(failure);
+        }
+        landed
+    }
+
+    fn bytes_of(&self, source: &SoundSource) -> Option<Arc<[u8]>> {
+        match &source.bytes {
+            Some(bytes) => Some(Arc::clone(bytes)),
+            None => self.reads.get(&source.file)?.ready().cloned(),
+        }
     }
 
     fn sound_of(&mut self, source: &SoundSource) -> Option<Interest<u32>> {
@@ -400,10 +435,7 @@ impl Mixer {
         {
             return Some(held.sound.clone());
         }
-        let Some(bytes) = source.bytes.clone() else {
-            self.fail(format!("no_bytes:{}", source.file));
-            return None;
-        };
+        let bytes = self.bytes_of(source)?;
         let sound = self.decode(Arc::clone(&bytes), source.stream);
         self.files.insert(
             key,
@@ -486,10 +518,8 @@ impl Mixer {
                 None => self.cut_one(),
             },
             SoundOrder::PlayBytes { voice, bytes, shot } => {
-                if self.device != Device::Off {
-                    let sound = self.decode(bytes, false);
-                    self.add(Voice::shot(voice, sound, &shot), limit);
-                }
+                let sound = self.decode(bytes, false);
+                self.add(Voice::shot(voice, sound, &shot), limit);
             }
             SoundOrder::Stop(voice) => {
                 if let Some(at) = self.voices.iter().position(|held| held.of_handle(voice)) {
@@ -630,7 +660,7 @@ pub(crate) fn mix(
         Res<GlobalTransforms>,
         Option<Res<Pause>>,
     ),
-    sounds: Res<Sounds>,
+    (sounds, mut files): (Res<Sounds>, ResMut<Files>),
     sources: Query<(Entity, Ref<SoundSource>)>,
     (mut stats, mut mixer, mut spawner): (ResMut<AudioStats>, ResMut<Mixer>, Spawner<AudioBrick>),
     mut refusals: ResMut<Refusals>,
@@ -639,8 +669,7 @@ pub(crate) fn mix(
     let failures = mixer.failures;
     let closed = !mixer.backend.opened();
     let limit = settings.max_voices;
-    mixer.set_enabled(settings.enabled);
-    if !mixer.files.is_empty() {
+    if !mixer.files.is_empty() || !mixer.reads.is_empty() {
         let named: BTreeSet<(&str, bool)> = sources
             .iter()
             .map(|(_, source)| {
@@ -654,12 +683,16 @@ pub(crate) fn mix(
     for order in sounds.take_orders() {
         mixer.order(order, limit);
     }
+    let landed = mixer.read(
+        sources.iter().map(|(_, source)| source.into_inner()),
+        &mut files,
+    );
     for (entity, source) in &sources {
-        if source.is_changed() {
+        if source.is_changed() || (landed && source.bytes.is_none()) {
             mixer.reconcile(entity, &source, limit);
         } else if source.looping
             && source.autoplay
-            && source.bytes.is_some()
+            && mixer.bytes_of(&source).is_some()
             && mixer.room(limit)
             && !mixer.voices.iter().any(|voice| voice.of_entity(entity))
         {
