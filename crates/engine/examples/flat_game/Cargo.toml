@@ -25,6 +25,7 @@ engine_sources.workspace = true
 engine.workspace = true
 engine_core.workspace = true
 engine_ecs.workspace = true
+engine_particles.workspace = true
 engine_smoke.workspace = true
 engine_sprites.workspace = true
 engine_standard_rendering.workspace = true

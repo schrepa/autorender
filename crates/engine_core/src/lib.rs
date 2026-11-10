@@ -330,12 +330,7 @@ fn install_passes(world: &mut World) {
         .get_resource::<DrawnTable>()
         .map(|table| table.kinds().to_vec())
         .unwrap_or_default();
-    let left: Vec<&'static str> = world
-        .get_resource::<Registry>()
-        .into_iter()
-        .flat_map(Registry::left_passes)
-        .collect();
-    let (passes, problems) = ScenePasses::of(registered, kinds, &left);
+    let (passes, problems) = ScenePasses::of(registered, kinds);
     world.insert_resource(passes);
     if let Some(mut registry) = world.get_resource_mut::<Registry>() {
         for problem in problems {

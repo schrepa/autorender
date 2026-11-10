@@ -53,9 +53,7 @@ pub fn minimal<L: Listing>(list: L) -> L {
 }
 
 pub fn two_d<L: Listing>(list: L) -> L {
-    list.without::<ShadowsBrick>()
-        .without::<ReflectionProbesBrick>()
-        .with::<TextureCook>()
+    list.with::<TextureCook>()
         .with::<LightingModelBrick>()
         .with::<SpritesBrick>()
         .with::<TextBrick>()

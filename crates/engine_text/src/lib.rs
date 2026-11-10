@@ -361,6 +361,15 @@ fn sync(
     stats.set_if_neq(state.stats());
 }
 
+const SKIPS: &[KindSkip] = &[
+    KindSkip::role(PassRole::Depth, PassViews::Owned, "labels cast no shadows"),
+    KindSkip::role(
+        PassRole::Lit,
+        PassViews::Owned,
+        "labels stay out of probe captures",
+    ),
+];
+
 pub struct TextBrick;
 
 impl Brick for TextBrick {
@@ -408,16 +417,7 @@ impl Brick for TextBrick {
                 kind: TEXT,
                 needs: Attributes::NONE,
                 streams: &[],
-                skips: &[
-                    KindSkip {
-                        pass: "shadow",
-                        reason: "labels cast no shadows",
-                    },
-                    KindSkip {
-                        pass: "probe",
-                        reason: "labels stay out of probe captures",
-                    },
-                ],
+                skips: SKIPS,
             })
             .draws::<TextGpu>(TEXT, TextGpu::draw);
     }

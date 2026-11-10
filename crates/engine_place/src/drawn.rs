@@ -3,7 +3,9 @@ use bevy_ecs::entity::Entity;
 use engine_assets::{Attributes, StreamShape};
 use serde::{Deserialize, Serialize};
 
-use crate::{GeometryHandle, MaterialHandle, PassMask};
+use crate::{
+    GeometryHandle, MaterialHandle, Pass, PassMask, PassName, PassPurpose, PassRole, PassViews,
+};
 
 pub type NodeId = Entity;
 
@@ -17,9 +19,47 @@ impl DrawKind {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SkippedPasses {
+    Named(&'static str),
+    Role(PassRole, PassViews),
+    Purpose(PassPurpose),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct KindSkip {
-    pub pass: &'static str,
+    passes: SkippedPasses,
     pub reason: &'static str,
+}
+
+impl KindSkip {
+    pub const fn pass<N: PassName>(reason: &'static str) -> Self {
+        Self {
+            passes: SkippedPasses::Named(N::NAME),
+            reason,
+        }
+    }
+
+    pub const fn role(role: PassRole, views: PassViews, reason: &'static str) -> Self {
+        Self {
+            passes: SkippedPasses::Role(role, views),
+            reason,
+        }
+    }
+
+    pub const fn purpose(purpose: PassPurpose, reason: &'static str) -> Self {
+        Self {
+            passes: SkippedPasses::Purpose(purpose),
+            reason,
+        }
+    }
+
+    pub fn skips(&self, name: &str, pass: &Pass) -> bool {
+        match self.passes {
+            SkippedPasses::Named(named) => named == name,
+            SkippedPasses::Role(role, views) => pass.role() == role && pass.views == views,
+            SkippedPasses::Purpose(purpose) => pass.purpose == purpose,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -31,12 +71,12 @@ pub struct KindDecl {
 }
 
 impl KindDecl {
-    pub fn skip(&self, pass: &str) -> Option<&KindSkip> {
-        self.skips.iter().find(|skip| skip.pass == pass)
+    pub fn skip(&self, name: &str, pass: &Pass) -> Option<&KindSkip> {
+        self.skips.iter().find(|skip| skip.skips(name, pass))
     }
 
-    pub fn joins(&self, name: &str, pass: &crate::Pass) -> bool {
-        (pass.takes)(self) && self.skip(name).is_none()
+    pub fn joins(&self, name: &str, pass: &Pass) -> bool {
+        (pass.takes)(self) && self.skip(name, pass).is_none()
     }
 }
 

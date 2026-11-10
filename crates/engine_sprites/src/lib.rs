@@ -13,8 +13,8 @@ use engine_core::{
     AlphaMode, Asset, AssetLibrary, AssetResidency, AssetUses, Attributes, BASE_COLOR_MAP, Brick,
     Bricks, ComponentKind, Cull, DrawKind, Drawn, DrawnPoses, DrawnTable, DropReason, Error,
     ErrorCode, GlobalTransforms, KindDecl, KindSkip, LightingModel, MAPPED, Material,
-    MaterialHandle, PassRole, Refusals, Sampler, SceneComponents, Schedule, Source, Spawner,
-    SurfaceSlot, TextureHandle, TextureRef, gpu_struct,
+    MaterialHandle, PassRole, PassViews, Refusals, Sampler, SceneComponents, Schedule, Source,
+    Spawner, SurfaceSlot, TextureHandle, TextureRef, gpu_struct,
 };
 use engine_render::{
     Allocation, Bind, Buffer, Draw, Form, FormSide, GpuPart, Install, KindForm, Lifetime, Prepare,
@@ -69,6 +69,15 @@ fn sprite_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(Sprite)).unwrap_or(Value::Null)
 }
 
+const SKIPS: &[KindSkip] = &[
+    KindSkip::role(PassRole::Depth, PassViews::Owned, "sprites cast no shadows"),
+    KindSkip::role(
+        PassRole::Lit,
+        PassViews::Owned,
+        "sprites stay out of probe captures",
+    ),
+];
+
 pub struct SpritesBrick;
 
 impl Brick for SpritesBrick {
@@ -88,16 +97,7 @@ impl Brick for SpritesBrick {
                 kind: SPRITES,
                 needs: Attributes::NONE,
                 streams: &[],
-                skips: &[
-                    KindSkip {
-                        pass: "shadow",
-                        reason: "sprites cast no shadows",
-                    },
-                    KindSkip {
-                        pass: "probe",
-                        reason: "sprites stay out of probe captures",
-                    },
-                ],
+                skips: SKIPS,
             })
             .draws::<SpritesGpu>(SPRITES, SpritesGpu::draw);
     }

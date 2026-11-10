@@ -18,14 +18,8 @@ pub const PLATE_MODULE: &str = "plate";
 const GENERATED: &[&str] = &[<PlateInstance as GpuStruct>::WGSL];
 
 const SKIPS: &[KindSkip] = &[
-    KindSkip {
-        pass: ColorPass::NAME,
-        reason: "plates draw in their own pass",
-    },
-    KindSkip {
-        pass: BlendedPass::NAME,
-        reason: "plates are opaque",
-    },
+    KindSkip::pass::<ColorPass>("plates draw in their own pass"),
+    KindSkip::pass::<BlendedPass>("plates are opaque"),
 ];
 
 const FORM: KindForm = KindForm {

@@ -13,8 +13,8 @@ mod scene;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Attributes, Brick, Bricks, ComponentKind, GpuStruct, KindDecl, KindSkip, SceneComponents,
-    Schedule, Source,
+    Attributes, Brick, Bricks, ColorPass, ComponentKind, GpuStruct, KindDecl, KindSkip,
+    PassPurpose, PassRole, PassViews, SceneComponents, Schedule, Source,
 };
 use engine_places_rendering::particles::{ParticleBursts, ParticleEmitter};
 use engine_render::RenderBricks;
@@ -27,6 +27,22 @@ const GENERATED: &[&str] = &[
     emitters::WGSL,
     <emitters::Emitter as GpuStruct>::WGSL,
     <part::Particles as GpuStruct>::WGSL,
+];
+
+const SKIPS: &[KindSkip] = &[
+    KindSkip::role(
+        PassRole::Depth,
+        PassViews::Owned,
+        "particles cast no shadows",
+    ),
+    KindSkip::role(
+        PassRole::Lit,
+        PassViews::Owned,
+        "particles stay out of probe captures",
+    ),
+    KindSkip::pass::<ColorPass>("particles only blend"),
+    KindSkip::role(PassRole::Depth, PassViews::Main, "particles write no depth"),
+    KindSkip::purpose(PassPurpose::Debug, "particles carry no debug record"),
 ];
 
 pub struct ParticlesBrick;
@@ -60,28 +76,7 @@ impl Brick for ParticlesBrick {
                 kind: PARTICLES,
                 needs: Attributes::NONE,
                 streams: &[],
-                skips: &[
-                    KindSkip {
-                        pass: "shadow",
-                        reason: "particles cast no shadows",
-                    },
-                    KindSkip {
-                        pass: "probe",
-                        reason: "particles stay out of probe captures",
-                    },
-                    KindSkip {
-                        pass: "color",
-                        reason: "particles only blend",
-                    },
-                    KindSkip {
-                        pass: "prepass",
-                        reason: "particles write no depth",
-                    },
-                    KindSkip {
-                        pass: "debug_view",
-                        reason: "particles carry no debug record",
-                    },
-                ],
+                skips: SKIPS,
             })
             .draws::<part::ParticlesGpu>(PARTICLES, part::ParticlesGpu::draw);
     }

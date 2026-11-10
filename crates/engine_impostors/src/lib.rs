@@ -12,8 +12,8 @@ mod part;
 mod settings;
 
 use engine_core::{
-    Attributes, Brick, Bricks, Cook, CookList, GpuBits, JobKind, KindDecl, KindSkip, Schedule,
-    Source,
+    Attributes, Brick, Bricks, Cook, CookList, GpuBits, JobKind, KindDecl, KindSkip, PassRole,
+    PassViews, Schedule, Source,
 };
 use engine_places_rendering::impostors::{ImpostorFlags, Impostors};
 use engine_render::RenderBricks;
@@ -23,6 +23,19 @@ pub use settings::{ImpostorSettings, ImpostorStats};
 const GENERATED: &[&str] = &[
     <ImpostorFlags as GpuBits>::WGSL,
     <cards::CardFrames as GpuBits>::WGSL,
+];
+
+const SKIPS: &[KindSkip] = &[
+    KindSkip::role(
+        PassRole::Depth,
+        PassViews::Owned,
+        "impostor cards cast no shadows",
+    ),
+    KindSkip::role(
+        PassRole::Lit,
+        PassViews::Owned,
+        "impostor cards stay out of probe captures",
+    ),
 ];
 
 pub struct ImpostorsBrick;
@@ -56,16 +69,7 @@ impl Brick for ImpostorsBrick {
                 kind: cards::CARD,
                 needs: Attributes::NONE,
                 streams: &[],
-                skips: &[
-                    KindSkip {
-                        pass: "shadow",
-                        reason: "impostor cards cast no shadows",
-                    },
-                    KindSkip {
-                        pass: "probe",
-                        reason: "impostor cards stay out of probe captures",
-                    },
-                ],
+                skips: SKIPS,
             })
             .draws::<cards::CardGpu>(cards::CARD, cards::CardGpu::draw);
     }

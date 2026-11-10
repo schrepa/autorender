@@ -113,6 +113,10 @@ impl Default for GlimmerBook {
     }
 }
 
+const SKIPS: &[KindSkip] = &[KindSkip::pass::<BlendedPass>(
+    "glimmers are masked, never blended",
+)];
+
 pub struct GlimmerBrick;
 
 impl Brick for GlimmerBrick {
@@ -128,10 +132,7 @@ impl Brick for GlimmerBrick {
                 kind: GLIMMER,
                 needs: Attributes::NONE,
                 streams: &[],
-                skips: &[KindSkip {
-                    pass: BlendedPass::NAME,
-                    reason: "glimmers are masked, never blended",
-                }],
+                skips: SKIPS,
             })
             .pass::<GlimmerPass>()
             .material_slot(SlotModule {
