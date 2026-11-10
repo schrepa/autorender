@@ -9,7 +9,7 @@ mod highlights;
 mod light;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, MAPPED, Module, Rule, Schedule, Source, gpu_struct};
+use engine_core::{Brick, Bricks, MAPPED, Module, Rule, Schedule, Source, Switched, gpu_struct};
 use engine_places::surface::{
     METALLIC_ROUGHNESS_MAP, METALNESS, OCCLUSION, OCCLUSION_MAP, OCCLUSION_STRENGTH, ROUGHNESS,
     SurfaceValues, TRANSMISSION,
@@ -84,13 +84,7 @@ impl Brick for LightingModelBrick {
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .settings::<SurfaceLight>()
-            .settings::<Highlights>()
-            .within(
-                |highlights: Res<Highlights>| highlights.enabled,
-                |bricks| {
-                    bricks.resource::<SizedHighlights>();
-                },
-            )
+            .within_switch::<Highlights>(|_| {})
             .piece::<LightingPiece>()
             .surface_kind(SurfaceKind { name: "thin" })
             .fill::<Lighting>(Some(shaders::lighting_model::faces::lighting::MODULE))
@@ -120,12 +114,9 @@ impl Brick for LightingModelBrick {
     }
 }
 
-#[derive(Resource, Default)]
-struct SizedHighlights;
-
-fn publish_lighting(sized: Option<Res<SizedHighlights>>, mut lighting: ResMut<Lighting>) {
+fn publish_lighting(sized: Switched<Highlights>, mut lighting: ResMut<Lighting>) {
     lighting.set_if_neq(Lighting {
-        highlights: sized.is_some(),
+        highlights: sized.on(),
     });
 }
 
@@ -133,14 +124,14 @@ fn publish_piece(
     (surface, highlights, sized): (
         Res<SurfaceLight>,
         Res<Highlights>,
-        Option<Res<SizedHighlights>>,
+        Switched<Highlights>,
     ),
     sky: Res<SkyLight>,
     mut piece: ResMut<LightingPiece>,
 ) {
     piece.set_if_neq(LightingPiece {
         model: [surface.rim, surface.emission, surface.specular, 0.0],
-        highlights: sized_highlights(&highlights, &sky, sized.is_some()),
+        highlights: sized_highlights(&highlights, &sky, sized.on()),
         widening: [surface.specular_variance, surface.specular_limit, 0.0, 0.0],
     });
 }

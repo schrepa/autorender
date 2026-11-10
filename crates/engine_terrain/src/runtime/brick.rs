@@ -39,8 +39,7 @@ impl Brick for TerrainBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|settings: Res<TerrainSettings>| settings.enabled)
-            .settings::<TerrainSettings>()
+            .switch::<TerrainSettings>()
             .stats::<TerrainStats>()
             .errors(ERRORS)
             .resource::<Terrains>()

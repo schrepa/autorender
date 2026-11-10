@@ -640,13 +640,32 @@ impl SceneContext {
     }
 }
 
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum Levels {
+    #[default]
+    ByPixelError,
+    Finest,
+}
+
 settings! {
     #[section("detail")]
     pub struct Detail {
-        pub enabled: bool = true => any,
+        pub levels: Levels = Levels::ByPixelError => any,
         pub pixel_error: f32 = 1.0 => range(0.25, 64.0),
         pub fade_seconds: f32 = 0.5 => range(0.0, 4.0),
         pub margin: f32 = 0.1 => range(0.0, 0.5),
+    }
+}
+
+impl Detail {
+    pub fn chosen_error(&self) -> Option<f32> {
+        match self.levels {
+            Levels::ByPixelError => Some(self.pixel_error),
+            Levels::Finest => None,
+        }
     }
 }
 

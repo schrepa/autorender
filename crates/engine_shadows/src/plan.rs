@@ -5,7 +5,7 @@ use engine_core::glam::Vec3;
 use engine_core::{
     Camera, Cursor, Cut, DeviceLimits, FrameBudget, FrameTime, GpuBits, Mobility, Mover, Moves,
     Node, OwnedView, OwnedViews, Pace, PartDraws, PassName, Readable, Readback, Readiness,
-    Settling, Since, Spawner, Transform, Views, gpu_bits, mover_of,
+    Settling, Since, Spawner, Switched, Transform, Views, gpu_bits, mover_of,
 };
 use engine_places_rendering::shadows::{CasterMap, Refresh, Region as MapView, ShadowMaps};
 use engine_places_rendering::sun::Sun;
@@ -383,7 +383,11 @@ fn publish_views(
 }
 
 pub(crate) fn plan_shadows(
-    (settings, sky): (Res<ShadowSettings>, Res<SkyOcclusion>),
+    (settings, sky, occluding): (
+        Res<ShadowSettings>,
+        Res<SkyOcclusion>,
+        Switched<SkyOcclusion>,
+    ),
     (sun, views, limits): (Res<Sun>, Res<Views>, Res<DeviceLimits>),
     (changes, shown, time, readiness): (
         Res<ShadowChanges>,
@@ -453,8 +457,9 @@ pub(crate) fn plan_shadows(
     );
     plan.drawn = plan.clipmap.take_drawing();
     let quiet = readiness.loading.total == 0 && readiness.compiling == 0;
+    let occludes = occluding.on();
     plan.sky_draw = plan.sky.prepare(
-        &sky,
+        (&sky, occludes),
         (eye, time.real_elapsed),
         (still_changed || casters_changed, quiet),
     );
@@ -480,7 +485,7 @@ pub(crate) fn plan_shadows(
         sky.strength,
         sky.floor,
         0.0,
-        if sky.enabled { 1.0 } else { 0.0 },
+        if occludes { 1.0 } else { 0.0 },
     ];
     piece.set_if_neq(regions.lookup_piece(
         (settings.tile_texels, settings.sample_texels),

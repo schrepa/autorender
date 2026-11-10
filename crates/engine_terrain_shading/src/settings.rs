@@ -4,8 +4,8 @@ pub const MAX_BOUNCE_LEVELS: u32 = 8;
 
 settings! {
     #[section("terrain_shading")]
+    #[switch(on)]
     pub struct TerrainShading {
-        pub enabled: bool = true => any,
         pub subdivision_error: f32 = 2.0 => range(0.25, 64.0),
         pub subdivision_depth: u32 = 27 => range(10, 29),
         pub subdivision_leaves: u32 = 131_072 => range(1024, 4_000_000),

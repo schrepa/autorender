@@ -9,7 +9,7 @@ use crate::RiverFlow;
 use crate::drawn::{flood_input, start_drawing};
 use crate::flow::Running;
 use crate::jobs::REWATER;
-use crate::state::{Base, Drawing, WaterState, WaterTerrain, Watered};
+use crate::state::{Drawing, WaterState, WaterTerrain, Watered, Work};
 use crate::water_blocks::Blocks;
 
 const REACH_SAMPLES: f32 = 2.25;
@@ -50,7 +50,7 @@ fn rewater_terrain(
         let flying = terrain
             .held
             .get(key)
-            .is_some_and(|held| matches!(held.base, Base::Redrawing(..)));
+            .is_some_and(|held| held.redrawing());
         waiting += u32::from(flying);
         !flying
     });
@@ -108,7 +108,7 @@ fn rewater_terrain(
         };
         let input = flood_input(held, tile, (flow.0, &flow.1), reached);
         let job = start_drawing(jobs, &REWATER, input, job_priority(VIEW_JOBS, 0));
-        held.base = Base::Redrawing(job, Drawing::Flood(running.clone()));
+        held.work = Some(Work::Redraw(job, Drawing::Flood(running.clone())));
         sent = true;
     }
     waiting

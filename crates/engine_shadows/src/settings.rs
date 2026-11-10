@@ -2,11 +2,11 @@ use engine_core::{Cut, settings, stats};
 
 settings! {
     #[section("shadows")]
+    #[switch(on)]
     #[derive(Copy)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneShadows")]
     pub struct ShadowSettings {
-        pub enabled: bool = true => any,
         pub levels: u32 = 16 => at_least(1),
         pub finest_texel: f32 = 0.04 => range(0.005, 1.0),
         pub tile_texels: u32 = 128 => power_of_two(64, 512),
@@ -17,22 +17,13 @@ settings! {
     }
 }
 
-impl ShadowSettings {
-    pub fn off() -> Self {
-        Self {
-            enabled: false,
-            ..Self::default()
-        }
-    }
-}
-
 settings! {
     #[section("sky_occlusion")]
+    #[switch(on)]
     #[derive(Copy)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneSkyOcclusion")]
     pub struct SkyOcclusion {
-        pub enabled: bool = true => any,
         pub strength: f32 = 1.0 => range(0.0, 1.0),
         pub floor: f32 = 0.0 => range(0.0, 1.0),
         pub near_distance: f32 = 48.0 => range(8.0, 256.0),
@@ -43,13 +34,6 @@ settings! {
 }
 
 impl SkyOcclusion {
-    pub fn off() -> Self {
-        Self {
-            enabled: false,
-            ..Self::default()
-        }
-    }
-
     pub fn direction_count(&self) -> u32 {
         match self.directions {
             ..9 => 5,

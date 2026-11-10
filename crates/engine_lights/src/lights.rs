@@ -12,11 +12,11 @@ use crate::part::LightTotals;
 
 settings! {
     #[section("local_lights")]
+    #[switch(on)]
     #[derive(Copy)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneLocalLights")]
     pub struct LocalLightSettings {
-        pub enabled: bool = true => any,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max_lights: Option<u32> = None => budget,
         #[serde(skip_serializing_if = "Option::is_none")]

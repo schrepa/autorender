@@ -18,7 +18,6 @@ mod settings;
 mod shadow_fit;
 mod sky;
 
-use bevy_ecs::prelude::*;
 use engine_core::{
     AttachPoint, Brick, Bricks, Pass, PassCull, PassName, PassPurpose, PassRaster, PassViews,
     Schedule, SlotSet, Source, Writes, every,
@@ -56,9 +55,8 @@ impl Brick for ShadowsBrick {
     const SOURCE: &'static Source = &SOURCE;
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|shadows: Res<ShadowSettings>| shadows.enabled)
-            .settings::<ShadowSettings>()
-            .settings::<SkyOcclusion>()
+            .switch::<ShadowSettings>()
+            .within_switch::<SkyOcclusion>(|_| {})
             .stats::<ShadowStats>()
             .resource::<plan::ShadowFeedback>()
             .resource::<plan::ShadowDrawn>()

@@ -46,8 +46,7 @@ impl Brick for BloomBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|bloom: Res<Bloom>| bloom.enabled)
-            .settings::<Bloom>()
+            .switch::<Bloom>()
             .stats::<BloomStats>()
             .piece::<BloomPiece>()
             .applies::<BloomPass>(shaders::bloom::apply::MODULE)

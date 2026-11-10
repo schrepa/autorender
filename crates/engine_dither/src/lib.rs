@@ -5,7 +5,6 @@
 
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
-use bevy_ecs::prelude::Res;
 use engine_core::{
     AttachPoint, Brick, Bricks, Pass, PassName, PassPurpose, PassViews, SlotSet, Source, Writes,
     never, settings,
@@ -14,11 +13,11 @@ use engine_render::RenderBricks;
 
 settings! {
     #[section("dither")]
+    #[switch(on)]
     #[derive(Copy, Eq)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneDither")]
     pub struct Dither {
-        pub enabled: bool = true => any,
     }
 }
 
@@ -43,8 +42,7 @@ impl Brick for DitherBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|dither: Res<Dither>| dither.enabled)
-            .settings::<Dither>()
+            .switch::<Dither>()
             .applies::<DitherPass>(shaders::dither::apply::MODULE);
     }
 }

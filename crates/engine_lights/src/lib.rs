@@ -10,7 +10,6 @@ mod lights;
 mod part;
 mod scene;
 
-use bevy_ecs::prelude::*;
 use engine_core::{
     Brick, Bricks, ComponentKind, GpuBits, GpuStruct, SceneComponents, Schedule, Source,
 };
@@ -34,8 +33,7 @@ impl Brick for LightsBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|settings: Res<LocalLightSettings>| settings.enabled)
-            .settings::<LocalLightSettings>()
+            .switch::<LocalLightSettings>()
             .stats::<LightStats>()
             .resource::<lights::LightGather>()
             .resource::<lights::LightList>()

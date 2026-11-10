@@ -19,7 +19,6 @@ mod world;
 pub use settings::{Physics, PhysicsStats};
 pub use world::BODY_PART;
 
-use bevy_ecs::prelude::*;
 use engine_core::{
     Asked, Brick, Bricks, ComponentKind, ErrorCode, Pace, Placement, SceneComponents, Schedule,
     Source,
@@ -36,8 +35,7 @@ impl Brick for PhysicsBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(simulating)
-            .settings::<Physics>()
+            .switch::<Physics>()
             .stats::<PhysicsStats>()
             .errors(&[INVALID_RIGID_BODY])
             .resource::<world::PhysicsWorld>()
@@ -64,8 +62,4 @@ impl Brick for PhysicsBrick {
             .observation::<views::PhysicsBody>()
             .operation::<views::BodyAskOperation>();
     }
-}
-
-fn simulating(physics: Res<Physics>) -> bool {
-    physics.enabled
 }

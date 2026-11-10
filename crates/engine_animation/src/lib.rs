@@ -12,7 +12,6 @@ mod scene;
 mod skins;
 mod views;
 
-use bevy_ecs::prelude::*;
 use engine_core::{
     Asked, Brick, Bricks, ComponentKind, GpuStruct, SceneComponents, Schedule, Source, settings,
 };
@@ -35,10 +34,10 @@ const GENERATED: &[&str] = &[
 
 settings! {
     #[section("animation")]
+    #[switch(on)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneAnimation")]
     pub struct AnimationSettings {
-        pub enabled: bool = true => any,
     }
 }
 
@@ -49,8 +48,7 @@ impl Brick for AnimationBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|animation: Res<AnimationSettings>| animation.enabled)
-            .settings::<AnimationSettings>()
+            .switch::<AnimationSettings>()
             .resource::<animator::Books>()
             .resource::<skins::Skins>()
             .resource::<models::ModelLoads>()

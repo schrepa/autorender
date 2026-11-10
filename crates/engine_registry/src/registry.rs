@@ -251,7 +251,7 @@ impl RegistryBuilder {
         registry.order_schedules(world, schedules, &firsts, &orders);
         registry.add_systems(world, &listed);
         let mut uses: Vec<Used> = Vec::new();
-        let conditions = registry.conditions(world, &mut uses);
+        let (conditions, switches) = registry.conditions(world, &mut uses);
         registry.add_hooks(world, &mut uses);
         registry.check_operations(world, &mut uses);
         let (mut refused, mut found) = order::build(world, schedules);
@@ -264,7 +264,7 @@ impl RegistryBuilder {
             states.set_unmet(unmet);
         }
         world.insert_resource(registry);
-        GateDriver::new(conditions)
+        GateDriver::new(conditions, switches)
     }
 }
 
@@ -465,6 +465,14 @@ impl Registry {
         let base = *self.bases.get(brick.index())?;
         let record = self.record(brick)?;
         (scope.index() < record.scopes()).then_some(GateId(base + scope.0))
+    }
+
+    pub fn switch_gate(&self, section: &str) -> Option<GateId> {
+        self.iter().find_map(|(brick, record)| {
+            record
+                .switched(section)
+                .and_then(|scope| self.gate(brick, scope))
+        })
     }
 
     pub fn catalog(&self) -> &[PlaceDecl] {
@@ -1110,8 +1118,13 @@ impl Registry {
         }
     }
 
-    fn conditions(&mut self, world: &mut World, uses: &mut Vec<Used>) -> Vec<Option<GateFn>> {
+    fn conditions(
+        &mut self,
+        world: &mut World,
+        uses: &mut Vec<Used>,
+    ) -> (Vec<Option<GateFn>>, Vec<Option<&'static str>>) {
         let mut conditions: Vec<Option<GateFn>> = Vec::new();
+        let mut switches: Vec<Option<&'static str>> = Vec::new();
         for (index, record) in self.bricks.iter_mut().enumerate() {
             let brick = BrickId(index as u32);
             for scope in &mut record.scopes {
@@ -1124,9 +1137,10 @@ impl Registry {
                     condition
                 });
                 conditions.push(condition);
+                switches.push(scope.switch);
             }
         }
-        conditions
+        (conditions, switches)
     }
 
     fn analyze(&mut self, world: &World, uses: &[Used]) -> (Vec<Vec<BrickId>>, Vec<BrickId>) {

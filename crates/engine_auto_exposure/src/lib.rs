@@ -52,8 +52,7 @@ impl Brick for AutoExposureBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|exposure: Res<AutoExposure>| exposure.enabled)
-            .settings::<AutoExposure>()
+            .switch::<AutoExposure>()
             .stats::<ExposureStats>()
             .resource::<ExposureFeedback>()
             .fill::<Exposure>(Some(shaders::auto_exposure::faces::exposure::MODULE))

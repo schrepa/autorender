@@ -34,9 +34,9 @@ const CONTEXT: &str = "ui";
 
 settings! {
     #[section("ui")]
+    #[switch(on)]
     #[serde(deny_unknown_fields)]
     pub struct UiSettings {
-        pub enabled: bool = true => any,
         pub scale: f32 = 1.0 => range(0.25, 8.0),
         pub max_nodes: u32 = 4096 => range(1, 1_000_000),
         pub max_rects: u32 = 8192 => range(1, 1_000_000),
@@ -282,8 +282,7 @@ impl Brick for UiBrick {
             bricks.join::<Verbs>(verb, None);
         }
         bricks
-            .when(|ui: Res<UiSettings>| ui.enabled)
-            .settings::<UiSettings>()
+            .switch::<UiSettings>()
             .stats::<UiStats>()
             .resource::<UiState>()
             .fill::<UiValues>(None)

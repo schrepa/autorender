@@ -118,11 +118,11 @@ impl SkyMaps {
 
     pub(crate) fn prepare(
         &mut self,
-        settings: &SkyOcclusion,
+        (settings, occludes): (&SkyOcclusion, bool),
         (eye, now): (Vec3, f64),
         (changed, quiet): (bool, bool),
     ) -> Option<SkyDraw> {
-        if !settings.enabled {
+        if !occludes {
             self.release();
             return None;
         }

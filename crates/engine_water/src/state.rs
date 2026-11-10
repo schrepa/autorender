@@ -3,7 +3,7 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Background, Cursor, Feed, FrameBudget, FrameTime, JobFailures, Jobs, RecordKey, Records,
+    Background, Cursor, Error, Feed, FrameBudget, FrameTime, JobFailures, Jobs, RecordKey, Records,
     Requests, Settling, Since, Spawner, Taken, VIEW_JOBS, Views, job_priority,
 };
 use engine_heightfield::tile::{Solid, TileJob};
@@ -29,14 +29,10 @@ use crate::{RiverFlow, TileWater, Water, WaterBrick, WaterWindow};
 
 pub(crate) type Watered = Option<Arc<Running>>;
 
-pub(crate) enum Base {
-    Waiting,
-    Asking(Background<(Arc<[u8]>, bool)>),
-    Drawing(DrawnWork),
-    Failed,
-    Made,
-    Redrawing(DrawnWork, Drawing),
-    Left,
+pub(crate) enum Work {
+    Base(Background<(Arc<[u8]>, bool)>),
+    Draw(DrawnWork),
+    Redraw(DrawnWork, Drawing),
 }
 
 pub(crate) enum Drawing {
@@ -46,7 +42,9 @@ pub(crate) enum Drawing {
 
 pub(crate) struct HeldWater {
     pub(crate) face: TileFace,
-    pub(crate) base: Base,
+    pub(crate) work: Option<Work>,
+    pub(crate) made: Option<Result<(), Error>>,
+    pub(crate) left: bool,
     pub(crate) water: Option<Arc<TileWater>>,
     pub(crate) drawn: Option<Arc<DrawnWater>>,
     pub(crate) watered: Watered,
@@ -57,7 +55,9 @@ impl HeldWater {
     fn new(face: TileFace) -> Self {
         Self {
             face,
-            base: Base::Waiting,
+            work: None,
+            made: None,
+            left: false,
             water: None,
             drawn: None,
             watered: None,
@@ -66,11 +66,25 @@ impl HeldWater {
     }
 
     pub(crate) fn resident(&self) -> bool {
-        matches!(self.base, Base::Made | Base::Redrawing(..))
+        !self.left && matches!(self.made, Some(Ok(())))
     }
 
     pub(crate) fn on_face(&self) -> bool {
-        !matches!(self.base, Base::Left)
+        !self.left
+    }
+
+    fn unasked(&self) -> bool {
+        self.work.is_none() && self.made.is_none()
+    }
+
+    pub(crate) fn redrawing(&self) -> bool {
+        matches!(self.work, Some(Work::Redraw(..)))
+    }
+
+    pub(crate) fn keep_made(&mut self) {
+        self.work = None;
+        self.made = Some(Ok(()));
+        self.left = false;
     }
 
     pub(crate) fn shown(&self) -> Option<RecordKey> {
@@ -191,7 +205,8 @@ impl WaterTerrain {
                 && (held.resident() || !held.on_face())
                 && self.kept.contains(&(key, held.face.stamp))
             {
-                held.base = Base::Left;
+                held.work = None;
+                held.left = true;
                 self.held.insert(key, held);
             }
             self.touch(key);
@@ -201,7 +216,7 @@ impl WaterTerrain {
             Some(mut held) if held.face.stamp == face.stamp => {
                 held.face = face.clone();
                 if !held.on_face() {
-                    held.base = Base::Made;
+                    held.keep_made();
                 }
                 held
             }
@@ -246,15 +261,7 @@ impl WaterTerrain {
         let mut asking: Vec<(u32, TileKey)> = self
             .held
             .iter()
-            .filter(|(_, held)| match held.base {
-                Base::Waiting => true,
-                Base::Asking(_)
-                | Base::Drawing(_)
-                | Base::Failed
-                | Base::Made
-                | Base::Redrawing(..)
-                | Base::Left => false,
-            })
+            .filter(|(_, held)| held.unasked())
             .map(|(&key, _)| {
                 let span = pyramid.tile_size(u32::from(key.level));
                 let middle = pyramid.tile_origin(key) + Vec2::splat(0.5 * span);
@@ -276,7 +283,7 @@ impl WaterTerrain {
                 },
             );
             if let Some(held) = self.held.get_mut(&key) {
-                held.base = Base::Asking(work);
+                held.work = Some(Work::Base(work));
             }
         }
     }
@@ -291,7 +298,7 @@ impl WaterTerrain {
         let asked: Vec<TileKey> = self
             .held
             .iter()
-            .filter(|(_, held)| matches!(held.base, Base::Asking(_)))
+            .filter(|(_, held)| matches!(held.work, Some(Work::Base(_))))
             .map(|(&key, _)| key)
             .collect();
         for key in asked {
@@ -301,25 +308,25 @@ impl WaterTerrain {
             let Some(held) = self
                 .held
                 .get_mut(&key)
-                .filter(|held| matches!(held.base, Base::Asking(_)))
+                .filter(|held| matches!(held.work, Some(Work::Base(_))))
             else {
                 continue;
             };
-            let Base::Asking(work) = std::mem::replace(&mut held.base, Base::Failed) else {
+            let Some(Work::Base(work)) = held.work.take() else {
                 continue;
             };
             let made = match work.take(records) {
                 Taken::Waiting(work) => {
-                    held.base = Base::Asking(work);
+                    held.work = Some(Work::Base(work));
                     continue;
                 }
                 Taken::Ready(made) => Ok(made),
-                Taken::Failed(error) => Err(error.to_string()),
+                Taken::Failed(error) => Err(error),
             };
             taken = true;
             match made {
                 Ok((_, true)) => {
-                    held.base = Base::Made;
+                    held.keep_made();
                     held.hold(None);
                     held.watered = None;
                     self.touch(key);
@@ -327,10 +334,11 @@ impl WaterTerrain {
                 Ok((record, false)) => {
                     let input = draw_input(held, &record);
                     let priority = job_priority(VIEW_JOBS, 0);
-                    held.base = Base::Drawing(start_drawing(jobs, &DRAWN, input, priority));
+                    held.work = Some(Work::Draw(start_drawing(jobs, &DRAWN, input, priority)));
                 }
                 Err(error) => {
-                    failures.record(frame, error);
+                    failures.record(frame, error.to_string());
+                    held.made = Some(Err(error));
                 }
             }
         }

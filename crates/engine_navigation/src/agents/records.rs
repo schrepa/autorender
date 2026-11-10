@@ -17,12 +17,6 @@ fn undecoded(error: Error) -> Error {
         .got(format!("its output does not decode: {error}"))
 }
 
-pub(super) enum Resolved {
-    Progress,
-    Waiting,
-    Failed,
-}
-
 #[derive(Default)]
 struct Kept {
     held: BTreeMap<Vec<u8>, (u64, Interest<Vec<u8>>)>,
@@ -153,12 +147,6 @@ pub(super) struct WalkRecords {
     kept_portals: Kept,
 }
 
-enum Found<T> {
-    Here(T),
-    Asked,
-    Failed,
-}
-
 impl WalkRecords {
     pub(super) fn held(&self) -> (u32, u32) {
         (self.grounds.held.len() as u32, self.portals.census().ready)
@@ -227,11 +215,11 @@ impl WalkRecords {
         key: TileKey,
         (floors, jobs, samples): (&Floors, &mut Jobs, &mut u64),
         priority: u32,
-    ) -> Option<Found<Arc<TilePortals>>> {
+    ) -> Option<Option<Request<Arc<TilePortals>>>> {
         let gait = running.search.gait();
         let input = portals_key(floors.layout(), key, &gait);
         let found = wanted(&mut self.portals, &mut running.interests.portals, &input);
-        if !matches!(found, Found::Asked) || self.flying(&input) {
+        if !matches!(found, Some(Request::Asked(_)) | None) || self.flying(&input) {
             return Some(found);
         }
         let ground = self.ground(running, key, (floors, samples))?;
@@ -253,37 +241,34 @@ impl WalkRecords {
         running: &mut Running,
         (floors, jobs): (&Floors, &mut Jobs),
         samples: &mut u64,
-    ) -> Resolved {
+    ) -> Result<bool, Error> {
         let priority = job_priority(GAMEPLAY_JOBS, 0);
         let mut progress = false;
         let wants = running.search.wants().to_vec();
         for want in wants {
-            let found = match want {
-                Want::Ground(key) => match self.ground(running, key, (floors, &mut *samples)) {
-                    Some(_) => Found::Here(()),
-                    None => Found::Asked,
-                },
-                Want::Portals(key) => {
-                    match self.portals(running, key, (floors, &mut *jobs, &mut *samples), priority)
-                    {
-                        Some(found) => {
-                            found.map(|portals| running.held.portals.insert(key, portals))
-                        }
-                        None => Found::Asked,
-                    }
+            let key = match want {
+                Want::Ground(key) => {
+                    let ground = self.ground(running, key, (floors, &mut *samples));
+                    progress |= ground.is_some();
+                    continue;
                 }
+                Want::Portals(key) => key,
             };
-            match found {
-                Found::Here(()) => progress = true,
-                Found::Failed => return Resolved::Failed,
-                Found::Asked => {}
+            let found = self.portals(running, key, (floors, &mut *jobs, &mut *samples), priority);
+            match found.flatten() {
+                Some(Request::Ready(portals)) => {
+                    running.held.portals.insert(key, portals);
+                    progress = true;
+                }
+                Some(Request::Failed(error)) => return Err(error),
+                Some(Request::Missing) => {
+                    let missing = Error::new(ErrorCode::InvalidRecord, "$.navigation");
+                    return Err(missing.got(MISSING_RECORD));
+                }
+                Some(Request::Asked(_)) | None => {}
             }
         }
-        if progress {
-            Resolved::Progress
-        } else {
-            Resolved::Waiting
-        }
+        Ok(progress)
     }
 
     pub(super) fn ask_ahead(
@@ -327,15 +312,11 @@ fn wanted<T>(
     requests: &mut Requests<Vec<u8>, Arc<T>>,
     held: &mut BTreeMap<Vec<u8>, Interest<Vec<u8>>>,
     input: &Vec<u8>,
-) -> Found<Arc<T>> {
+) -> Option<Request<Arc<T>>> {
     if !held.contains_key(input) {
         held.insert(input.clone(), requests.ask(input.clone()));
     }
-    match requests.get(input) {
-        Some(Request::Ready(value)) => Found::Here(Arc::clone(value)),
-        Some(Request::Asked(_)) | None => Found::Asked,
-        Some(Request::Failed(_) | Request::Missing) => Found::Failed,
-    }
+    requests.get(input).cloned()
 }
 
 fn end<T>(
@@ -369,17 +350,4 @@ fn walk_portals(key: TileKey, bytes: &[u8]) -> Result<TilePortals, Error> {
         return Err(engine_codec::invalid("$.key").got([u16::from(held.level), held.x, held.z]));
     }
     Ok(portals)
-}
-
-impl<T> Found<T> {
-    fn map<U>(self, change: impl FnOnce(T) -> U) -> Found<()> {
-        match self {
-            Self::Here(value) => {
-                change(value);
-                Found::Here(())
-            }
-            Self::Asked => Found::Asked,
-            Self::Failed => Found::Failed,
-        }
-    }
 }

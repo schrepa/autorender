@@ -109,8 +109,7 @@ impl Brick for WaterBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|water: Res<Water>| water.enabled)
-            .settings::<Water>()
+            .switch::<Water>()
             .stats::<WaterStats>()
             .errors(&[engine_heightfield::INVALID_TERRAIN])
             .resource::<WaterState>()

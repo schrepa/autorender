@@ -14,6 +14,7 @@ use engine_places_world::splines::SplineMesh;
 use engine_places_world::streaming::{StreamedKey, StreamedKeys, Streams};
 
 pub const INVALID_SPLINE: ErrorCode = ErrorCode::brick("invalid_spline");
+pub const SPLINE_PART: &str = "spline";
 
 const SPLINE: &str = "spline";
 

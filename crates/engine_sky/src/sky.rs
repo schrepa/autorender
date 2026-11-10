@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParamItem;
 use engine_core::math::{max, min};
-use engine_core::{Error, Filter, FrameBudget, FrameTime, StoreId, Views};
+use engine_core::{Error, Filter, FrameBudget, FrameTime, StoreId, Switched, Views};
 use engine_places_rendering::sky::EyeMedium;
 use engine_places_rendering::sun::{Sun, SunPath};
 use engine_places_rendering::wind::ViewWind;
@@ -221,9 +221,9 @@ fn apply_haze(
     haze: &HazeSettings,
     view_projection: Mat4,
     eye: Vec3,
-    marches: bool,
+    hazes: bool,
 ) {
-    if !haze.enabled {
+    if !hazes {
         return;
     }
     let visibility = if haze.visibility > 0.0 {
@@ -237,9 +237,7 @@ fn apply_haze(
     let at_zero = extinction * min(falloff * eye.y, 60.0).exp();
     piece.aerial[1] = max(piece.aerial[1], at_zero) * haze.strength;
     piece.aerial_color[3] = 1.0;
-    if marches {
-        piece.haze_march = [haze.reach, haze.forward, haze.spread, 1.0 / haze.size];
-    }
+    piece.haze_march = [haze.reach, haze.forward, haze.spread, 1.0 / haze.size];
 }
 
 #[derive(Resource, Default)]
@@ -273,8 +271,8 @@ impl SkyPlan {
 
 type SkySections<'w> = (
     Res<'w, Sky>,
-    Res<'w, Clouds>,
-    Res<'w, HazeSettings>,
+    (Res<'w, Clouds>, Switched<'w, Clouds>),
+    (Res<'w, HazeSettings>, Switched<'w, HazeSettings>),
     Res<'w, NightSky>,
 );
 
@@ -295,7 +293,7 @@ type SkySteps<'w> = (
 );
 
 pub(crate) fn plan_sky(
-    (sky, clouds, haze, night): SkySections<'_>,
+    (sky, (clouds, clouds_on), (haze, haze_on), night): SkySections<'_>,
     (sun, path, wind): SkyLights<'_>,
     (tables, medium, views, time): SkyFrame<'_>,
     (mut cloud_steps, mut haze_steps, mut environment_steps, mut budget): SkySteps<'_>,
@@ -322,19 +320,17 @@ pub(crate) fn plan_sky(
         &mut plan.air,
     );
     let shows = plan.tables.shows();
-    let clouds = Clouds {
-        enabled: clouds.enabled && shows,
-        ..*clouds
-    };
-    let hazes = haze.enabled;
+    let clouds = *clouds;
+    let clouded = clouds_on.on() && shows;
+    let hazes = haze_on.on();
     plan.piece = sky_piece(&sky, shows, sun_direction, &plan.piece);
     apply_night(&mut plan.piece, &night, &path, sun_direction);
     apply_haze(&mut plan.piece, &haze, view_projection, eye, hazes);
-    (plan.piece.cloud_shadow, plan.piece.cloud_layer) = shadow_lighting(&clouds, eye);
+    (plan.piece.cloud_shadow, plan.piece.cloud_layer) = shadow_lighting((&clouds, clouded), eye);
     plan.piece.wind = [wind.velocity[0], wind.velocity[1], 0.0, 0.0];
     plan.clouds.prepare(
         (
-            &clouds,
+            (&clouds, clouded),
             tables.cloud_noise(),
             (eye, medium.surface),
             seconds,

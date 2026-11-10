@@ -14,7 +14,7 @@ use crate::gpu::{
 };
 use crate::jobs::drawn::{DrawnWater, INFO_BYTES, PATCH_BYTES, SURFACE_BYTES};
 use crate::jobs::gpu::WATER_BLOCK as BLOCK;
-use crate::state::{Base, HeldWater, WaterState, WaterTerrain};
+use crate::state::{HeldWater, WaterState, WaterTerrain};
 use crate::water::WaterGpu;
 
 const PER_LAYER: u32 = SIDE * SIDE;
@@ -117,10 +117,10 @@ fn tile_water<'a>(terrains: &'a [WaterTerrain], tile: &HeldTile) -> Shown<'a> {
     if water.face.stamp != tile.stamp {
         return Shown::Coming;
     }
-    match water.base {
-        Base::Made | Base::Redrawing(..) => Shown::Ready(water),
-        Base::Waiting | Base::Asking(_) | Base::Drawing(_) => Shown::Coming,
-        Base::Failed | Base::Left => Shown::Gone,
+    match water.made {
+        Some(Ok(())) => Shown::Ready(water),
+        None => Shown::Coming,
+        Some(Err(_)) => Shown::Gone,
     }
 }
 

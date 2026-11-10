@@ -1,7 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{
-    AssetResidency, CullPlan, Culling, Detail, DrawnTable, OcclusionCulling, SubpixelCulling, stats,
-};
+use engine_core::{AssetResidency, CullPlan, Culling, Detail, DrawnTable, stats};
 
 use crate::MESH;
 use crate::presentation::PresentationTotals;
@@ -71,12 +69,7 @@ fn counted(value: usize) -> u32 {
 
 pub(crate) fn mesh_stats(
     (table, plan): (Res<DrawnTable>, Res<CullPlan>),
-    (culling, occlusion, subpixel, detail): (
-        Res<Culling>,
-        Res<OcclusionCulling>,
-        Res<SubpixelCulling>,
-        Res<Detail>,
-    ),
+    (culling, detail): (Res<Culling>, Res<Detail>),
     residency: Res<AssetResidency>,
     totals: Res<PresentationTotals>,
     frame: Res<engine_core::FrameTime>,
@@ -92,7 +85,9 @@ pub(crate) fn mesh_stats(
     });
     let listed = census.drawn;
     let visible = gpu_visible.unwrap_or(listed);
-    let levels = last.filter(|_| detail.enabled).map(|totals| totals.levels);
+    let levels = last
+        .filter(|_| detail.chosen_error().is_some())
+        .map(|totals| totals.levels);
     let next = MeshStats {
         invalid_transforms: census.unplaced,
         render_candidates: census.drawn + census.unplaced + census.waiting,
@@ -120,13 +115,13 @@ pub(crate) fn mesh_stats(
         occlusion_culling: CullingStats {
             active: plan.occlusion,
             instances: last
-                .filter(|_| occlusion.enabled)
+                .filter(|_| culling.occlusion)
                 .map(|totals| totals.occluded),
         },
         subpixel_culling: CullingStats {
             active: plan.subpixel,
             instances: last
-                .filter(|_| subpixel.enabled)
+                .filter(|_| culling.subpixel)
                 .map(|totals| totals.subpixel),
         },
         views: totals.views().map(|views| views.drawn),

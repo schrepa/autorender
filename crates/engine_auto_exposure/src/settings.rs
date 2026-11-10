@@ -2,11 +2,11 @@ use engine_core::{settings, stats};
 
 settings! {
     #[section("auto_exposure")]
+    #[switch(off)]
     #[derive(Copy)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneAutoExposure")]
     pub struct AutoExposure {
-        pub enabled: bool = false => any,
         pub strength: f32 = 1.0 => range(0.0, 1.0),
         pub compensation: f32 = 0.0 => range(-8.0, 8.0),
         pub brighten: f32 = 3.0 => range(0.0, 16.0),

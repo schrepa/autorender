@@ -9,17 +9,17 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::world::World;
 use glam::Vec3;
 
-use engine_core::{Brick, Bricks, FrameTime, Schedule, Source, settings};
+use engine_core::{Brick, Bricks, FrameTime, Schedule, Source, Switch, settings};
 use engine_math::{max, sin_cos};
 use engine_places_rendering::sun::{SunClocks, SunPath, north_axis, star_turn, stepped_hours};
 
 settings! {
     #[section("time_of_day")]
+    #[switch(on)]
     #[derive(Copy)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneTimeOfDay")]
     pub struct TimeOfDay {
-        pub enabled: bool = true => any,
         pub hours: f32 = 15.0 => range(0.0, 24.0),
         pub speed: f32 = 0.0 => range(0.0, 24.0),
         pub step: f32 = 2.0 => range(0.1, 60.0),
@@ -112,9 +112,7 @@ fn publish_path(settings: Res<TimeOfDay>, mut day: ResMut<DayTime>, mut path: Re
 pub struct TimeOfDayBrick;
 
 fn clock_runs(world: &World) -> bool {
-    world
-        .get_resource::<TimeOfDay>()
-        .is_some_and(|day| day.enabled)
+    world.get_resource::<TimeOfDay>().is_some_and(Switch::on)
 }
 
 impl Brick for TimeOfDayBrick {
@@ -122,8 +120,7 @@ impl Brick for TimeOfDayBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|day: Res<TimeOfDay>| day.enabled)
-            .settings::<TimeOfDay>()
+            .switch::<TimeOfDay>()
             .resource::<DayTime>()
             .fill::<SunPath>(None)
             .join::<SunClocks>(clock_runs as fn(&World) -> bool, None)

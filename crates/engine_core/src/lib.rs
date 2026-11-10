@@ -61,10 +61,7 @@ pub use bevy_app::App;
 pub use bricks::*;
 pub use clock::*;
 pub use cook::{Cook, CookAsks, CookList, cook};
-pub use cull::{
-    CullPlan, Culling, OcclusionCulling, SubpixelCulling, frustum_bounded, frustum_planes,
-    frustum_sees,
-};
+pub use cull::{CullPlan, Culling, frustum_bounded, frustum_planes, frustum_sees};
 pub use cursor::*;
 pub use drawn::{
     DRAWN_PART, DrawnBatch, DrawnCensus, DrawnFlags, DrawnRecord, DrawnSettings, DrawnState,
@@ -133,11 +130,11 @@ pub use render_stats::{
 };
 pub use scene::*;
 pub use schedules::{RunPace, RunPoint};
-pub use section::{Cut, EventsQuery, Section};
+pub use section::{Cut, EventsQuery, Section, Switch};
 pub use services::{
-    Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, PartDraws, Placed, Placement,
-    Prepared, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneForm, SceneIds, SubScene,
-    SubSceneEntity, WorkClock, scene_component, scene_components,
+    Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, Levels, PartDraws, Placed,
+    Placement, Prepared, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneForm, SceneIds,
+    SubScene, SubSceneEntity, WorkClock, scene_component, scene_components,
 };
 pub use shared::{FeedSettings, FrameBudgetSettings};
 pub use source::{Entry, Module, ShaderText, Source, Var};
@@ -286,8 +283,6 @@ fn core_entries(registry: &mut RegistryBuilder) {
     registry.core_settings(bricks::settings_entry::<FrameBudgetSettings>());
     registry.core_settings(bricks::settings_entry::<DrawnSettings>());
     registry.core_settings(bricks::settings_entry::<Culling>());
-    registry.core_settings(bricks::settings_entry::<OcclusionCulling>());
-    registry.core_settings(bricks::settings_entry::<SubpixelCulling>());
     registry.core_settings(bricks::settings_entry::<FrameLimits>());
     registry.core_settings(bricks::settings_entry::<InputSettings>());
     registry.core_settings(bricks::settings_entry::<FoldOrder>());
@@ -403,8 +398,6 @@ impl Engine {
             .init_resource::<FrameBudgetSettings>()
             .init_resource::<DrawnSettings>()
             .init_resource::<Culling>()
-            .init_resource::<OcclusionCulling>()
-            .init_resource::<SubpixelCulling>()
             .init_resource::<CullPlan>()
             .insert_resource(exchange)
             .insert_resource(listed)

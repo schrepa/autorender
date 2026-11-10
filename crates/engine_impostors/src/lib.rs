@@ -33,7 +33,7 @@ impl Brick for ImpostorsBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .settings::<ImpostorSettings>()
+            .within_switch::<ImpostorSettings>(|_| {})
             .stats::<ImpostorStats>()
             .resource::<books::ImpostorBooks>()
             .resource::<part::BakeReads>()

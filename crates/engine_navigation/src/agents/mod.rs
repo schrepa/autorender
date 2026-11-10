@@ -7,13 +7,12 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::{
     Background, Error, ErrorCode, Filled, FixedTime, GAMEPLAY_JOBS, GlobalTransforms, Interest,
-    JobFailures, Jobs, Landed, Parent, Records, Refusals, Request, Requests, Transform, fields,
-    job_priority, settings, stats,
+    JobFailures, Jobs, Landed, MISSING_RECORD, Parent, Records, Refusals, Request, Requests,
+    Transform, fields, job_priority, settings, stats,
 };
 
 pub const NAVIGATION_PART: &str = "navigation";
 pub const NAV_STEPS_NOT_TAKEN: ErrorCode = ErrorCode::brick("nav_steps_not_taken");
-const STEPS_NOT_TAKEN: &str = "steps_not_taken";
 use engine_math::{atan2, max};
 use engine_places_simulation::ground::{Ground, GroundProbe, GroundRead};
 use engine_places_simulation::navigation::{NavAgent, NavStatus, NavStep, NavWalk};
@@ -32,14 +31,14 @@ use crate::{
     WalkGround, WalkSearch, Want,
 };
 pub use obstacles::ObstacleColliders;
-use records::{Interests, Resolved, WalkRecords};
+use records::{Interests, WalkRecords};
 
 settings! {
     #[section("navigation")]
+    #[switch(on)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneNavigation")]
     pub struct Navigation {
-        pub enabled: bool = true => any,
         pub samples_per_tick: u32 = 32_768 => at_least(1024),
         pub obstacle_layers: u32 = 0 => any,
         pub floor_layers: u32 = u32::MAX => any,
@@ -369,9 +368,9 @@ impl Search {
                 return None;
             }
             match records.resolve(running, (floors, jobs), &mut *budgets.samples) {
-                Resolved::Progress => {}
-                Resolved::Waiting => return None,
-                Resolved::Failed => return Some((origin, None)),
+                Ok(true) => {}
+                Ok(false) => return None,
+                Err(_) => return Some((origin, None)),
             }
         }
     }
@@ -538,24 +537,20 @@ fn walk(
     navigation.elapsed = time.elapsed_seconds;
     navigation.settle_records(settings, records);
     for (entity, agent, mut walk, transform) in agents.iter_mut() {
+        let held = refusals.reason(entity, NAVIGATION_PART);
         if let Err(invalid) = SceneNavAgent::from(*agent).validate() {
-            let field = invalid.field.to_string();
-            refusals.refuse(
-                entity,
-                NAVIGATION_PART,
-                invalid.error(ErrorCode::InvalidValue, "$.nav_agent"),
-            );
-            if walk.refused.as_ref() != Some(&field) {
+            let reason = invalid.error(ErrorCode::InvalidValue, "$.nav_agent");
+            if held.is_none_or(|held| held.path != reason.path) {
                 navigation.searches.retain(|(owner, _)| *owner != entity);
                 *walk = NavWalk {
                     status: NavStatus::Refused,
-                    refused: Some(field),
                     ..NavWalk::default()
                 };
             }
+            refusals.refuse(entity, NAVIGATION_PART, reason);
             continue;
         }
-        let untaken = walk.refused.as_deref() == Some(STEPS_NOT_TAKEN);
+        let untaken = held.is_some_and(|held| held.code == NAV_STEPS_NOT_TAKEN);
         if walk.status == NavStatus::Refused && !(untaken && walk.destination == agent.destination)
         {
             refusals.accept(entity, NAVIGATION_PART);
@@ -597,7 +592,6 @@ fn walk(
             );
             *walk = NavWalk {
                 status: NavStatus::Refused,
-                refused: Some(STEPS_NOT_TAKEN.to_owned()),
                 destination: walk.destination,
                 ..NavWalk::default()
             };

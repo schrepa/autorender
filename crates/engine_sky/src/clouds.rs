@@ -29,7 +29,7 @@ const BUDGET: &str = "clouds";
 pub(crate) type CloudLight<'a> = (&'a Sun, &'a SkyPiece);
 
 type CloudInputs<'a> = (
-    &'a Clouds,
+    (&'a Clouds, bool),
     Option<&'a StaticTable<CloudNoise>>,
     (glam::Vec3, Option<f32>),
     f64,
@@ -395,13 +395,12 @@ impl CloudPlan {
 
     pub(crate) fn prepare(
         &mut self,
-        (settings, noise, (eye, surface), seconds): CloudInputs<'_>,
+        ((settings, wanted), noise, (eye, surface), seconds): CloudInputs<'_>,
         light: CloudLight<'_>,
         budget: &mut FrameBudget,
     ) {
         self.rows = 0;
         self.job = None;
-        let wanted = settings.enabled;
         if let Some(noise) = noise.filter(|_| wanted)
             && self.noise.is_none_or(|held| held != noise.id)
         {
@@ -999,9 +998,12 @@ pub(crate) fn shadow_grid(eye: glam::Vec3) -> Option<([f32; 2], f32)> {
     Some(([first(eye.x), first(eye.z)], cell))
 }
 
-pub(crate) fn shadow_lighting(clouds: &Clouds, eye: glam::Vec3) -> ([f32; 4], [f32; 4]) {
+pub(crate) fn shadow_lighting(
+    (clouds, shown): (&Clouds, bool),
+    eye: glam::Vec3,
+) -> ([f32; 4], [f32; 4]) {
     match shadow_grid(eye) {
-        Some((first, cell)) if clouds.enabled => (
+        Some((first, cell)) if shown => (
             [first[0], first[1], 1.0 / cell, clouds.shadows],
             [clouds.base, 0.0, 0.0, 0.0],
         ),

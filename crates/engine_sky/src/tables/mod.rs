@@ -7,8 +7,8 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Background, Error, ErrorCode, Job, JobCx, JobKind, Jobs, Landed, Records, URGENT_JOBS,
-    job_priority,
+    Background, Error, ErrorCode, Job, JobCx, JobKind, Jobs, Landed, Records, Switched,
+    URGENT_JOBS, job_priority,
 };
 
 use crate::SOURCE;
@@ -64,17 +64,11 @@ impl Failures {
     }
 }
 
-enum Part {
-    Asked(Background<Vec<u8>>),
-    Arrived,
-    Failed { _failure: Background<Vec<u8>> },
-}
-
 struct TableState<T> {
     kind: &'static JobKind,
     name: &'static str,
     wanted: Option<Vec<Vec<u8>>>,
-    parts: Vec<Part>,
+    parts: Vec<Background<Option<Vec<u8>>>>,
     assembling: Option<T>,
     ready: Option<StaticTable<T>>,
 }
@@ -102,7 +96,7 @@ impl<T: Assembly> TableState<T> {
             .enumerate()
             .map(|(place, identity)| {
                 let priority = job_priority(URGENT_JOBS, place as u32);
-                Part::Asked(jobs.fetch(kind, identity, priority, |bytes| Ok(bytes.to_vec())))
+                jobs.fetch(kind, identity, priority, |bytes| Ok(Some(bytes.to_vec())))
             })
             .collect();
         self.assembling = None;
@@ -111,28 +105,27 @@ impl<T: Assembly> TableState<T> {
 
     fn update(&mut self, records: &Records, next: &mut u64, failures: &mut Failures) {
         let (name, kind) = (self.name, self.kind.name());
-        for part in &mut self.parts {
-            let Part::Asked(work) = part else {
-                continue;
-            };
-            let taken = match work.poll(records) {
+        for part in self.parts.iter_mut().filter(|part| part.waiting()) {
+            let landed = match part.poll(records) {
                 Landed::Waiting => continue,
                 Landed::Failed(error) => Err(format!("{name}: {error}")),
-                Landed::Ready(bytes) => T::take(&mut self.assembling, bytes)
-                    .map_err(|error| format!("{name}: its output does not decode: {error}")),
+                Landed::Ready(_) => Ok(()),
             };
-            *part = match taken {
-                Ok(()) => Part::Arrived,
-                Err(error) => {
-                    failures.record(error.clone());
-                    Part::Failed {
-                        _failure: Background::failed(table_error(kind, error)),
-                    }
+            let taken = match landed {
+                Ok(()) => {
+                    let bytes = part.ready_mut().and_then(Option::take).unwrap_or_default();
+                    T::take(&mut self.assembling, &bytes)
+                        .map_err(|error| format!("{name}: its output does not decode: {error}"))
                 }
+                Err(error) => Err(error),
             };
+            if let Err(error) = taken {
+                failures.record(error.clone());
+                *part = Background::failed(table_error(kind, error));
+            }
         }
         if !self.parts.is_empty()
-            && self.parts.iter().all(|part| matches!(part, Part::Arrived))
+            && self.parts.iter().all(|part| part.ready().is_some())
             && let Some(table) = self.assembling.take()
         {
             *next += 1;
@@ -143,15 +136,15 @@ impl<T: Assembly> TableState<T> {
         }
     }
 
-    fn count(&self, state: fn(&Part) -> bool) -> u64 {
-        self.parts.iter().filter(|part| state(part)).count() as u64
-    }
-
     fn row(&self) -> StaticTableRow {
         StaticTableRow {
             kind: self.name.to_owned(),
             parts: self.parts.len() as u64,
-            arrived: self.count(|part| matches!(part, Part::Arrived)),
+            arrived: self
+                .parts
+                .iter()
+                .filter(|part| part.ready().is_some())
+                .count() as u64,
             showing: self.ready.is_some(),
         }
     }
@@ -203,9 +196,9 @@ struct Wants {
 }
 
 impl Wants {
-    fn of(clouds: Clouds, sky: Sky) -> Self {
+    fn of(clouds: bool, sky: Sky) -> Self {
         Self {
-            clouds: clouds.enabled,
+            clouds,
             sky: Air {
                 rayleigh: sky.rayleigh,
                 rayleigh_height: sky.rayleigh_height,
@@ -231,12 +224,12 @@ impl Wants {
 
 pub(crate) fn ask_tables(
     sky: Res<Sky>,
-    clouds: Res<Clouds>,
+    clouds: Switched<Clouds>,
     records: Res<Records>,
     mut tables: ResMut<StaticTables>,
     mut jobs: Jobs,
 ) {
-    let wants = Wants::of(*clouds, *sky);
+    let wants = Wants::of(clouds.on(), *sky);
     let tables = &mut *tables;
     if tables.wants != Some(wants) {
         tables.wants = Some(wants);

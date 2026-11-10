@@ -88,7 +88,7 @@ fn run_ungrounded(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     session.source(&scene(ungrounded_walker()).to_string());
     control(session, "pause", json!({}))?;
     settled(session)?;
-    let wanted = json!({ "status": "refused", "refused": "steps_not_taken" });
+    let wanted = json!({ "status": "refused" });
     let mut seen = Value::Null;
     for _ in 0..ROUNDS {
         session.step(TICKS);
@@ -104,7 +104,7 @@ fn run_ungrounded(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
             break;
         }
     }
-    let got = json!({ "status": seen["status"], "refused": seen["refused"] });
+    let got = json!({ "status": seen["status"] });
     smoke_eq!(got, wanted, "ungrounded_walker_is_refused");
     let why = query(session, "why", json!({ "entity": WALKER }))?;
     let reasons: Vec<&Value> = why["refused"]

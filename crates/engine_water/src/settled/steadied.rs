@@ -13,7 +13,7 @@ use crate::TileKey;
 use crate::drawn::{draw_input, start_drawing};
 use crate::jobs::drawn::is_dry;
 use crate::jobs::{DRAWN, STEADIED, SteadiedJob};
-use crate::state::{Base, Drawing, WaterTerrain};
+use crate::state::{Drawing, WaterTerrain, Work};
 
 const TILE_ARRAY_BYTES: u64 = (TILE_STRIDE as u64) * (TILE_STRIDE as u64) * 4;
 
@@ -317,8 +317,10 @@ fn give_waters(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>) -> bool 
             };
             let bytes = Arc::clone(bytes);
             let held = terrain.resident(&key)?;
-            let coming =
-                matches!(&held.base, Base::Redrawing(_, Drawing::Given(given)) if *given == record);
+            let coming = matches!(
+                &held.work,
+                Some(Work::Redraw(_, Drawing::Given(given))) if *given == record
+            );
             let holds = coming || held.given == Some(record);
             (held.face.current && held.watered.is_none() && !holds).then_some((key, bytes, record))
         })
@@ -340,12 +342,12 @@ fn give_waters(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>) -> bool 
             held.drawn = None;
             held.watered = None;
             held.given = Some(record);
-            held.base = Base::Made;
+            held.keep_made();
             terrain.touch(key);
         } else {
             let input = draw_input(held, &bytes);
             let job = start_drawing(cx.jobs, &DRAWN, input, job_priority(VIEW_JOBS, 0));
-            held.base = Base::Redrawing(job, Drawing::Given(record));
+            held.work = Some(Work::Redraw(job, Drawing::Given(record)));
         }
     }
     false

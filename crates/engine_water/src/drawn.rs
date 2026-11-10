@@ -5,7 +5,7 @@ use engine_heightfield::tile::TileJob;
 
 use crate::TileWater;
 use crate::jobs::drawn::{DrawHead, DrawnWater, FloodHead, landed};
-use crate::state::{Base, Drawing, HeldWater, WaterState};
+use crate::state::{Drawing, HeldWater, WaterState, Work};
 
 pub(crate) type DrawnWork = Background<Option<(TileWater, DrawnWater)>>;
 
@@ -76,7 +76,7 @@ pub(crate) fn draw(
         let drawing: Vec<TileKey> = terrain
             .held
             .iter()
-            .filter(|(_, held)| matches!(held.base, Base::Drawing(_) | Base::Redrawing(..)))
+            .filter(|(_, held)| matches!(held.work, Some(Work::Draw(_) | Work::Redraw(..))))
             .map(|(&key, _)| key)
             .collect();
         for key in drawing {
@@ -86,42 +86,39 @@ pub(crate) fn draw(
             let Some(held) = terrain.held.get_mut(&key) else {
                 continue;
             };
-            let (work, drawing) = match std::mem::replace(&mut held.base, Base::Made) {
-                Base::Drawing(work) => (work, None),
-                Base::Redrawing(work, drawing) => (work, Some(drawing)),
-                other @ (Base::Waiting
-                | Base::Asking(_)
-                | Base::Failed
-                | Base::Made
-                | Base::Left) => {
-                    held.base = other;
+            let (work, drawing) = match held.work.take() {
+                Some(Work::Draw(work)) => (work, None),
+                Some(Work::Redraw(work, drawing)) => (work, Some(drawing)),
+                other @ (Some(Work::Base(_)) | None) => {
+                    held.work = other;
                     continue;
                 }
             };
             let made = match work.take(&*records) {
                 Taken::Waiting(work) => {
-                    held.base = match drawing {
-                        None => Base::Drawing(work),
-                        Some(drawing) => Base::Redrawing(work, drawing),
-                    };
+                    held.work = Some(match drawing {
+                        None => Work::Draw(work),
+                        Some(drawing) => Work::Redraw(work, drawing),
+                    });
                     continue;
                 }
                 Taken::Ready(made) => Ok(made),
-                Taken::Failed(error) => Err(error.to_string()),
+                Taken::Failed(error) => Err(error),
             };
             landed_any = true;
             match drawing {
                 None => match made {
                     Ok(made) => {
+                        held.keep_made();
                         held.hold(made);
                         held.watered = None;
                     }
                     Err(error) => {
-                        held.base = Base::Failed;
-                        state.failures.record(frame, error);
+                        state.failures.record(frame, error.to_string());
+                        held.made = Some(Err(error));
                     }
                 },
-                Some(drawing) => match (made, drawing) {
+                Some(drawing) => match (made.map_err(|error| error.to_string()), drawing) {
                     (Ok(made), Drawing::Given(record)) => {
                         held.hold(made);
                         held.watered = None;

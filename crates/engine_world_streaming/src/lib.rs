@@ -65,11 +65,11 @@ const JUMP_SPEED: f32 = 1000.0;
 
 settings! {
     #[section("world_streaming")]
+    #[switch(on)]
     #[derive(Copy)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneWorldStreaming")]
     pub struct WorldStreaming {
-        pub enabled: bool = true => any,
         pub distance: f32 = 1.0 => range(0.05, 20.0),
         pub unload: f32 = 1.25 => range(1.0, 4.0),
         pub prefetch: f32 = 1.5 => range(0.0, 10.0),
@@ -606,8 +606,7 @@ impl Brick for WorldStreamingBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|settings: Res<WorldStreaming>| settings.enabled)
-            .settings::<WorldStreaming>()
+            .switch::<WorldStreaming>()
             .settings::<StreamedScene>()
             .stats::<CellStats>()
             .resource::<WorldCells>()

@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Drawn, Error, Expected, GeometryHandle, Mesh, MeshVertex, Spawner, Transform,
+    AssetLibrary, Drawn, Error, Expected, GeometryHandle, Mesh, MeshVertex, Refusals, Spawner,
+    Transform,
 };
 use engine_math::collections::HashMap;
 use engine_math::{clamp, max};
@@ -8,7 +9,7 @@ use engine_places::meshes::MESH;
 use engine_places_world::splines::SplineMesh;
 use glam::Vec3;
 
-use crate::{INVALID_SPLINE, SplinesBrick};
+use crate::{INVALID_SPLINE, SPLINE_PART, SplinesBrick};
 
 pub const CHUNK_LENGTH: f32 = 256.0;
 pub const MAX_SPLINE_POINTS: usize = 4096;
@@ -32,7 +33,6 @@ pub(crate) struct SplineChunks {
     pub(crate) length: f32,
     pub(crate) copies: u32,
     pub(crate) vertices: u32,
-    pub(crate) error: Option<Error>,
     built: Option<SplineMesh>,
 }
 
@@ -42,7 +42,9 @@ pub(crate) fn release(
     mut builds: ResMut<SplineBuilds>,
     mut assets: ResMut<AssetLibrary>,
     mut spawner: Spawner<SplinesBrick>,
+    mut refusals: ResMut<Refusals>,
 ) {
+    refusals.accept(entity, SPLINE_PART);
     let Some(chunks) = builds.built.remove(&entity) else {
         return;
     };
@@ -71,6 +73,7 @@ pub(crate) fn build(
     mut assets: ResMut<AssetLibrary>,
     mut builds: ResMut<SplineBuilds>,
     mut spawner: Spawner<SplinesBrick>,
+    mut refusals: ResMut<Refusals>,
 ) {
     let built = &mut builds.built;
     let stale: Vec<(Entity, SplineMesh, bool)> = splines
@@ -89,10 +92,10 @@ pub(crate) fn build(
         let bent = match bend(&assets, &spline) {
             Ok(bent) => bent,
             Err(error) => {
+                refusals.refuse(entity, SPLINE_PART, error.within("$.spline"));
                 built.insert(
                     entity,
                     SplineChunks {
-                        error: Some(error),
                         built: Some(spline),
                         ..SplineChunks::default()
                     },
@@ -111,11 +114,12 @@ pub(crate) fn build(
             built: Some(spline.clone()),
             ..SplineChunks::default()
         };
+        let mut verdict = Ok(());
         for mesh in bent.meshes {
             let handle = match assets.insert_mesh(mesh) {
                 Ok(handle) => handle,
                 Err(error) => {
-                    chunks.error = Some(error);
+                    verdict = Err(error.within("$.spline"));
                     break;
                 }
             };
@@ -135,6 +139,7 @@ pub(crate) fn build(
                     .collect(),
             );
         }
+        refusals.judge(entity, SPLINE_PART, verdict);
         built.insert(entity, chunks);
     }
 }

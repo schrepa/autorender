@@ -11,7 +11,6 @@ mod emitters;
 mod part;
 mod scene;
 
-use bevy_ecs::prelude::*;
 use engine_core::{
     Attributes, Brick, Bricks, ComponentKind, GpuStruct, KindDecl, KindSkip, SceneComponents,
     Schedule, Source,
@@ -36,8 +35,7 @@ impl Brick for ParticlesBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(enabled)
-            .settings::<ParticleSettings>()
+            .switch::<ParticleSettings>()
             .stats::<ParticleStats>()
             .resource::<emitters::Gather>()
             .resource::<emitters::Packed>()
@@ -85,8 +83,4 @@ impl Brick for ParticlesBrick {
             })
             .draws::<part::ParticlesGpu>(PARTICLES, part::ParticlesGpu::draw);
     }
-}
-
-fn enabled(settings: Res<ParticleSettings>) -> bool {
-    settings.enabled
 }

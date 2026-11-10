@@ -46,8 +46,8 @@ const RING: PassFragment = PassFragment {
 
 settings! {
     #[section("glimmer")]
+    #[switch(on)]
     pub struct Glimmer {
-        pub enabled: bool = true => any,
         pub size: f32 = 0.25 => range(0.01, 100.0),
         pub ring: [f32; 4] = [1.0, 0.85, 0.3, 1.0] => range(0.0, 1.0),
         pub events: u32 = 256 => at_least(1),
@@ -120,8 +120,7 @@ impl Brick for GlimmerBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(enabled)
-            .settings::<Glimmer>()
+            .switch::<Glimmer>()
             .stats::<GlimmerStats>()
             .resource::<GlimmerBook>()
             .draw_kind(KindDecl {
@@ -159,10 +158,6 @@ impl Brick for GlimmerBrick {
             .systems(Schedule::FrameStart, (open_view, judge))
             .systems(Schedule::Presentation, (ask, answer));
     }
-}
-
-fn enabled(settings: Res<Glimmer>) -> bool {
-    settings.enabled
 }
 
 fn open_view(

@@ -9,8 +9,8 @@ use engine_core::{
     AlphaMode, AssetLibrary, AssetResidency, Background, Census, CookAsks, Cull, Detail,
     DeviceLimits, Error, ErrorCode, Feed, Filter, FrameBudget, FrameTime, GeometryHandle, GpuBits,
     Hold, IDLE_JOBS, Job, JobCx, JobKind, Jobs, Landed, LightingModel, Material, MaterialHandle,
-    Records, Request, Requests, Settling, TextureRef, VIEW_JOBS, WorkClock, Wrap, content_hash,
-    gpu_struct, job_priority,
+    Records, Request, Requests, Settling, Switched, TextureRef, VIEW_JOBS, WorkClock, Wrap,
+    content_hash, gpu_struct, job_priority,
 };
 use engine_places_rendering::impostors::{
     ImpostorAsk, ImpostorAsks, ImpostorFlags, ImpostorRecord, ImpostorRecords, Impostors,
@@ -1025,7 +1025,7 @@ pub(crate) fn policy(
 }
 
 struct Frame {
-    enabled: bool,
+    switched_on: bool,
     pixels: f32,
     max: Option<u32>,
     least: usize,
@@ -1038,7 +1038,12 @@ struct Frame {
 type Sources<'a> = (&'a AssetLibrary, &'a AssetResidency);
 
 pub(crate) fn settle(
-    (settings, detail, limits): (Res<ImpostorSettings>, Res<Detail>, Res<DeviceLimits>),
+    (settings, switch, detail, limits): (
+        Res<ImpostorSettings>,
+        Switched<ImpostorSettings>,
+        Res<Detail>,
+        Res<DeviceLimits>,
+    ),
     (clock, time, records): (Res<WorkClock>, Res<FrameTime>, Res<Records>),
     (library, residency): (Res<AssetLibrary>, Res<AssetResidency>),
     (mut books, mut budget, mut stats): (
@@ -1056,11 +1061,11 @@ pub(crate) fn settle(
     }
     let cooking = books.everything.interests(&()) > 0;
     let frame = Frame {
-        enabled: settings.enabled,
+        switched_on: switch.on(),
         pixels: settings.pixels,
         max: settings.max,
         least: settings.min_triangles as usize,
-        detail: detail.enabled,
+        detail: detail.chosen_error().is_some(),
         cooking,
         now: clock.now().filter(|_| !cooking),
         seconds: time.real_elapsed,
@@ -1275,7 +1280,7 @@ fn settle_book(
 ) -> Vec<(Entity, ImpostorRecords)> {
     book.fit(cx, AtlasShape::of(frame.pixels));
     retain_book(book, cx, sources);
-    let shown = frame.detail && frame.enabled;
+    let shown = frame.detail && frame.switched_on;
     if !shown {
         book.release(cx);
     } else {

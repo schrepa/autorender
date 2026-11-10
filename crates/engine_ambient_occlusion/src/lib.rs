@@ -30,8 +30,7 @@ impl Brick for AmbientOcclusionBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|ambient: Res<AmbientOcclusion>| ambient.enabled)
-            .settings::<AmbientOcclusion>()
+            .switch::<AmbientOcclusion>()
             .stats::<AmbientOcclusionStats>()
             .piece::<AmbientPiece>()
             .fill::<AmbientVisibility>(Some(

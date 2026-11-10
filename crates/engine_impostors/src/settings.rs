@@ -2,10 +2,10 @@ use engine_core::{Cut, settings, stats};
 
 settings! {
     #[section("impostors")]
+    #[switch(off)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneImpostors")]
     pub struct ImpostorSettings {
-        pub enabled: bool = false => any,
         pub pixels: f32 = 128.0 => range(8.0, 4096.0),
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max: Option<u32> = None => budget,

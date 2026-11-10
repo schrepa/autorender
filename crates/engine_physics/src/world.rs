@@ -210,19 +210,11 @@ impl PhysicsWorld {
     }
 
     pub fn status(&self, entity: Entity) -> Option<BodyStatus> {
-        if let Ok(index) = self
+        let index = self
             .bodies
             .binary_search_by_key(&entity, |body| body.entity)
-        {
-            return Some(self.bodies[index].status.clone());
-        }
-        self.problems
-            .iter()
-            .find(|(found, _)| *found == entity)
-            .map(|(_, problem)| BodyStatus {
-                problem: Some(problem.clone()),
-                ..BodyStatus::default()
-            })
+            .ok()?;
+        Some(self.bodies[index].status.clone())
     }
 
     fn problem(&self, entity: Entity) -> Option<&BodyProblem> {
@@ -468,7 +460,6 @@ fn write(bodies: &mut [Body], solver: &Solver, moves: &mut Moves<'_, '_, Physics
             continue;
         };
         body.status = BodyStatus {
-            problem: None,
             mass: rigid.mass(),
             volume: body.form().volume,
             velocity: rigid.linvel(),

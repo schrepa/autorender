@@ -20,7 +20,6 @@ pub struct NavAgentView {
     #[schemars(with = "crate::SceneNavAgent")]
     pub agent: NavAgent,
     pub status: NavStatus,
-    pub refused: Option<String>,
     pub searched_for: Option<[f32; 2]>,
     pub length: f32,
     pub points: usize,
@@ -85,7 +84,6 @@ fn agent_view(
     NavAgentView {
         agent,
         status: walk.status,
-        refused: walk.refused.clone(),
         searched_for: walk.destination,
         length: walk.length,
         points: walk.points.len(),

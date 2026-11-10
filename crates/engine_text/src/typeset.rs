@@ -37,7 +37,6 @@ pub(crate) struct State {
     cut: u32,
     ratio: f32,
     limit: u32,
-    enabled: bool,
     frame: u64,
     stats: TextStats,
 }
@@ -54,7 +53,6 @@ impl Default for State {
             cut: 0,
             ratio: 1.0,
             limit: settings.max_glyphs,
-            enabled: settings.enabled,
             frame: 0,
             stats: TextStats::default(),
         }
@@ -65,7 +63,6 @@ impl State {
     pub(crate) fn sync(&mut self, settings: &TextSettings, frame: FrameFacts) {
         self.ratio = frame.pixel_ratio;
         self.limit = settings.max_glyphs;
-        self.enabled = settings.enabled;
         self.atlas.resize(settings.atlas_size);
     }
 
@@ -106,28 +103,26 @@ impl State {
         let placed = std::mem::take(&mut self.placed_glyphs);
         staged.clear();
         world.clear();
-        if self.enabled {
-            let display = frame.display_size.max(UVec2::ONE);
-            let limit = self.limit as usize;
-            for (label, at) in labels.filter(|(label, _)| label.visible && !label.text.is_empty()) {
-                let placing = self.label_placing(label);
-                match at {
-                    Placed::Screen => self.place(
-                        &placing,
-                        display,
-                        limit.saturating_sub(world.len()),
-                        staged,
-                        &mut cut,
-                    ),
-                    Placed::World(index) => self.place_world(
-                        &placing,
-                        (index, limit.saturating_sub(staged.len())),
-                        world,
-                        &mut cut,
-                    ),
-                }
-                runs += 1;
+        let display = frame.display_size.max(UVec2::ONE);
+        let limit = self.limit as usize;
+        for (label, at) in labels.filter(|(label, _)| label.visible && !label.text.is_empty()) {
+            let placing = self.label_placing(label);
+            match at {
+                Placed::Screen => self.place(
+                    &placing,
+                    display,
+                    limit.saturating_sub(world.len()),
+                    staged,
+                    &mut cut,
+                ),
+                Placed::World(index) => self.place_world(
+                    &placing,
+                    (index, limit.saturating_sub(staged.len())),
+                    world,
+                    &mut cut,
+                ),
             }
+            runs += 1;
         }
         let resets = u32::from(self.atlas.settle());
         let shown = (staged.len() + world.len()) as u32 + placed;
@@ -143,7 +138,7 @@ impl State {
     }
 
     fn place_run(&mut self, run: &TextRun, display: UVec2, glyphs: &mut Vec<Glyph>) {
-        if !self.enabled || run.text.is_empty() {
+        if run.text.is_empty() {
             return;
         }
         let placing = self.run_placing(run);

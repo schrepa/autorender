@@ -65,10 +65,7 @@ impl Brick for SkyBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|sky: Res<Sky>| sky.enabled)
-            .settings::<Clouds>()
-            .settings::<Sky>()
-            .settings::<Haze>()
+            .switch::<Sky>()
             .settings::<NightSky>()
             .stats::<views::StaticTablesView>()
             .stats::<views::CloudStats>()
@@ -83,18 +80,12 @@ impl Brick for SkyBrick {
             .fill::<SkyLight>(Some(shaders::sky::faces::sky::MODULE))
             .join::<SunBlockers>((), Some(shaders::sky::blockers::MODULE))
             .join::<Ambient>((), Some(shaders::sky::ambient::MODULE))
-            .within(
-                |clouds: Res<Clouds>| clouds.enabled,
-                |bricks| {
-                    bricks.fill::<CloudShadows>(Some(shaders::sky::faces::cloud_shadows::MODULE));
-                },
-            )
-            .within(
-                |haze: Res<Haze>| haze.enabled,
-                |bricks| {
-                    bricks.applies::<HazePass>(shaders::sky::haze::MODULE);
-                },
-            )
+            .within_switch::<Clouds>(|bricks| {
+                bricks.fill::<CloudShadows>(Some(shaders::sky::faces::cloud_shadows::MODULE));
+            })
+            .within_switch::<Haze>(|bricks| {
+                bricks.applies::<HazePass>(shaders::sky::haze::MODULE);
+            })
             .systems(
                 Schedule::ViewSync,
                 (

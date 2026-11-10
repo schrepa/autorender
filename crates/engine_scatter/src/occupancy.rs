@@ -208,14 +208,14 @@ impl OccupancyWindows {
     )]
     fn prepare_windows(
         &mut self,
-        settings: &OccupancySettings,
+        (settings, runs): (&OccupancySettings, bool),
         eye: Vec3,
         (covers, slots): (&[Cover], u32),
     ) -> Option<Lit> {
         for frame in &mut self.frames {
             frame.held = false;
         }
-        self.runs = settings.enabled;
+        self.runs = runs;
         if !self.runs {
             self.release();
             return None;
@@ -392,11 +392,11 @@ impl OccupancyWindows {
 
     pub(crate) fn place(
         &mut self,
-        settings: &OccupancySettings,
+        occupancy: (&OccupancySettings, bool),
         eye: Vec3,
         placed: (&[Cover], u32),
     ) -> Option<Lit> {
-        self.prepare_windows(settings, eye, placed)
+        self.prepare_windows(occupancy, eye, placed)
     }
 
     pub(crate) fn moved(&mut self, moved: &[(Vec3, Vec3)]) {
