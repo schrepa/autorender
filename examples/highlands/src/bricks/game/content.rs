@@ -30,7 +30,7 @@ impl Content {
         input: &[u8],
     ) -> Result<MeshHandle, Error> {
         let handle = assets.reserve_mesh()?;
-        let work = Background::asked(jobs.fetch(kind, input, self.priority()), Mesh::from_record);
+        let work = jobs.fetch(kind, input, self.priority(), |bytes| Mesh::from_record(&bytes));
         self.asked.push((work, handle, kind));
         self.hold(handle);
         Ok(handle)

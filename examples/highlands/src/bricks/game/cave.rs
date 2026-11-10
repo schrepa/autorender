@@ -149,10 +149,9 @@ pub(crate) fn open(
             return;
         }
     };
-    let work = Background::asked(
-        jobs.fetch(&CAVE, &cave_input(&points), content.priority()),
-        Mesh::from_record,
-    );
+    let work = jobs.fetch(&CAVE, &cave_input(&points), content.priority(), |bytes| {
+        Mesh::from_record(&bytes)
+    });
     content.hold(mesh);
     cave.asked = Some(Asked {
         work,

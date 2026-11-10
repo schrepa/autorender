@@ -1,13 +1,16 @@
 use std::sync::Arc;
 
-use engine_core::{Error, ErrorCode, Interest, RecordKey, Request, VIEW_JOBS, job_priority};
+use engine_core::{
+    Background, Error, ErrorCode, Hold, Interest, RecordKey, Request, Taken, VIEW_JOBS,
+    job_priority, record_missing,
+};
 use engine_heightfield::tile::TILE_STRIDE;
 use engine_heightfield::{Pyramid, TILE_QUADS};
 use glam::Vec2;
 
 use super::{Follow, Found, Settled};
 use crate::TileKey;
-use crate::drawn::draw_input;
+use crate::drawn::{draw_input, start_drawing};
 use crate::jobs::drawn::is_dry;
 use crate::jobs::{DRAWN, STEADIED, SteadiedJob};
 use crate::state::{Base, Drawing, WaterTerrain};
@@ -16,8 +19,9 @@ const TILE_ARRAY_BYTES: u64 = (TILE_STRIDE as u64) * (TILE_STRIDE as u64) * 4;
 
 pub(super) struct Steadying {
     tile: TileKey,
-    pub(super) job: Interest<RecordKey>,
-    reads: Vec<Interest<RecordKey>>,
+    pub(super) water: RecordKey,
+    job: Background<Arc<[u8]>>,
+    reads: Vec<Hold>,
 }
 
 pub(super) struct Watering {
@@ -56,25 +60,30 @@ fn take_waters(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>, frame: u
             flying.push(flight);
             continue;
         }
-        let output = match cx.records.request(&flight.job) {
-            None | Some(Request::Asked(_)) => {
-                flying.push(flight);
+        let Steadying {
+            tile,
+            water,
+            job,
+            reads,
+        } = flight;
+        let made = match job.take(cx.records) {
+            Taken::Waiting(job) => {
+                flying.push(Steadying {
+                    tile,
+                    water,
+                    job,
+                    reads,
+                });
                 continue;
             }
-            Some(Request::Ready(bytes)) => Ok(Arc::clone(bytes)),
-            Some(Request::Failed(error)) => Err(error.to_string()),
-            Some(Request::Missing) => Err(format!("{}: no record", STEADIED.name())),
+            Taken::Ready(bytes) => Ok(bytes),
+            Taken::Failed(error) if record_missing(&error) => {
+                Err(format!("{}: no record", STEADIED.name()))
+            }
+            Taken::Failed(error) => Err(error.to_string()),
         };
         taken = true;
-        let Steadying { tile, job, reads } = flight;
         drop(reads);
-        let water = *job.key();
-        drop(job);
-        let made = output.and_then(|bytes| {
-            is_dry(&bytes).map(|_| bytes).map_err(|error| {
-                format!("{}: its output does not decode: {error}", STEADIED.name())
-            })
-        });
         let resident = terrain.resident(&tile).is_some();
         let settled = &mut terrain.settled;
         let Some(ticket) = settled.waters.ticket(&water) else {
@@ -256,9 +265,9 @@ fn ask_waters(
         let Some(tile) = terrain.tile_job(key) else {
             continue;
         };
-        let shared: Option<Vec<Interest<RecordKey>>> = reads
+        let shared: Option<Vec<Hold>> = reads
             .iter()
-            .map(|&(_, shared)| cx.shares.keep(shared))
+            .map(|&(_, shared)| cx.shares.keep(shared).map(Hold::from))
             .collect();
         let Some(shared) = shared else {
             continue;
@@ -279,9 +288,14 @@ fn ask_waters(
         if fresh {
             let job = cx
                 .jobs
-                .start(&STEADIED, input, job_priority(VIEW_JOBS, place));
+                .start(&STEADIED, input, job_priority(VIEW_JOBS, place), |bytes| {
+                    is_dry(&bytes)
+                        .map(|_| bytes)
+                        .map_err(|error| STEADIED.undecoded(error))
+                });
             settled.steadying.push(Steadying {
                 tile: key,
+                water: record,
                 job,
                 reads: shared,
             });
@@ -330,7 +344,7 @@ fn give_waters(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>) -> bool 
             terrain.touch(key);
         } else {
             let input = draw_input(held, &bytes);
-            let job = cx.jobs.start(&DRAWN, input, job_priority(VIEW_JOBS, 0));
+            let job = start_drawing(cx.jobs, &DRAWN, input, job_priority(VIEW_JOBS, 0));
             held.base = Base::Redrawing(job, Drawing::Given(record));
         }
     }

@@ -102,10 +102,7 @@ impl<T: Assembly> TableState<T> {
             .enumerate()
             .map(|(place, identity)| {
                 let priority = job_priority(URGENT_JOBS, place as u32);
-                Part::Asked(Background::asked(
-                    jobs.fetch(kind, identity, priority),
-                    |bytes| Ok(bytes.to_vec()),
-                ))
+                Part::Asked(jobs.fetch(kind, identity, priority, |bytes| Ok(bytes.to_vec())))
             })
             .collect();
         self.assembling = None;

@@ -4,10 +4,10 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
-    AssetLibrary, Cursor, DeviceLimits, DrawnArea, DrawnAreas, Error, Feed, FrameId, FrameTime, Interest,
-    JobFailures, JobKind, Jobs, Readable, Readback, RecordExchange, RecordKey, Records,
-    Settling, Since, Stamp, TextureHandle, TextureSet, TextureSource, TextureUsage, Views, codec,
-    content_hash,
+    AssetLibrary, Background, Cursor, DeviceLimits, DrawnArea, DrawnAreas, Error, Feed, FrameId,
+    FrameTime, JobFailures, JobKind, Jobs, Landed, Readable, Readback, RecordExchange, RecordKey,
+    Records, Settling, Since, Stamp, TextureHandle, TextureSet, TextureSource, TextureUsage, Views,
+    codec, content_hash,
 };
 use engine_heightfield::tile::shaded_elsewhere;
 use engine_tiles::{Pyramid, TileKey};
@@ -35,24 +35,24 @@ const FEWEST_PROBES: u32 = 16;
 
 pub(crate) type TileId = (Entity, TileKey);
 
-enum Baking {
+enum Baking<T> {
     Off,
     Asked {
-        interest: Interest<RecordKey>,
+        work: Background<Arc<T>>,
         input: Vec<u8>,
     },
     Made {
         input: Vec<u8>,
     },
     Failed {
-        interest: Interest<RecordKey>,
+        _failure: Background<Arc<T>>,
         input: Vec<u8>,
     },
 }
 
 pub(crate) struct Bake<T> {
     pub(crate) made: Option<Arc<T>>,
-    baking: Baking,
+    baking: Baking<T>,
 }
 
 impl<T> Default for Bake<T> {
@@ -64,7 +64,7 @@ impl<T> Default for Bake<T> {
     }
 }
 
-impl<T: engine_codec::Codec> Bake<T> {
+impl<T: engine_codec::Codec + Send + Sync + 'static> Bake<T> {
     fn waiting(&self) -> bool {
         match self.baking {
             Baking::Off | Baking::Asked { .. } => true,
@@ -96,32 +96,38 @@ impl<T: engine_codec::Codec> Bake<T> {
             return;
         };
         self.baking = match std::mem::replace(&mut self.baking, Baking::Off) {
-            Baking::Asked { interest, input } if input == wanted => match records.get(&interest) {
-                None => Baking::Asked { interest, input },
-                Some(arrived) => match arrived
-                    .map_err(|error| format!("{}: {error}", kind.name()))
-                    .and_then(|bytes| {
-                        codec::decode::<T>(&bytes).map_err(|error| {
-                            format!("{}: its output does not decode: {error}", kind.name())
-                        })
-                    }) {
-                    Ok(made) => {
-                        self.made = Some(Arc::new(made));
+            Baking::Asked { mut work, input } if input == wanted => {
+                let landed = match work.poll(records) {
+                    Landed::Waiting => None,
+                    Landed::Ready(made) => Some(Ok(Arc::clone(made))),
+                    Landed::Failed(error) => Some(Err(format!("{}: {error}", kind.name()))),
+                };
+                match landed {
+                    None => Baking::Asked { work, input },
+                    Some(Ok(made)) => {
+                        self.made = Some(made);
                         Baking::Made { input }
                     }
-                    Err(error) => {
+                    Some(Err(error)) => {
                         failures.record(frame, error);
-                        Baking::Failed { interest, input }
+                        Baking::Failed {
+                            _failure: work,
+                            input,
+                        }
                     }
-                },
-            },
+                }
+            }
             Baking::Made { input } if input == wanted => Baking::Made { input },
-            Baking::Failed { interest, input } if input == wanted => {
-                Baking::Failed { interest, input }
+            Baking::Failed { _failure, input } if input == wanted => {
+                Baking::Failed { _failure, input }
             }
             Baking::Off | Baking::Asked { .. } | Baking::Made { .. } | Baking::Failed { .. } => {
                 Baking::Asked {
-                    interest: jobs.fetch(kind, &wanted, VIEW_PRIORITY),
+                    work: jobs.fetch(kind, &wanted, VIEW_PRIORITY, move |bytes| {
+                        codec::decode::<T>(&bytes)
+                            .map(Arc::new)
+                            .map_err(|error| kind.undecoded(error))
+                    }),
                     input: wanted,
                 }
             }
@@ -135,7 +141,7 @@ enum Coloring {
     Unasked,
     Making {
         job: MacroJob,
-        interest: Interest<RecordKey>,
+        work: Background<Arc<[u8]>>,
         shown: Option<TextureHandle>,
     },
     Loading {
@@ -222,25 +228,28 @@ impl Colors {
         let coloring = match coloring {
             Coloring::Making {
                 job,
-                interest,
+                mut work,
                 shown,
-            } => match records.get(&interest).map(|made| {
-                made.and_then(|pixels| exchange.textures(assets, colors_set(&job, pixels)))
-            }) {
-                None => Coloring::Making {
-                    job,
-                    interest,
-                    shown,
-                },
-                Some(Ok(handles)) => match handles.first() {
-                    Some(&handle) => Coloring::Loading { job, handle, shown },
-                    None => Coloring::Failed { job, shown },
-                },
-                Some(Err(error)) => {
-                    failed = Some(error);
-                    Coloring::Failed { job, shown }
+            } => {
+                let landed = match work.poll(records) {
+                    Landed::Waiting => None,
+                    Landed::Ready(pixels) => Some(Ok(Arc::clone(pixels))),
+                    Landed::Failed(error) => Some(Err(error.clone())),
+                };
+                match landed.map(|made| {
+                    made.and_then(|pixels| exchange.textures(assets, colors_set(&job, pixels)))
+                }) {
+                    None => Coloring::Making { job, work, shown },
+                    Some(Ok(handles)) => match handles.first() {
+                        Some(&handle) => Coloring::Loading { job, handle, shown },
+                        None => Coloring::Failed { job, shown },
+                    },
+                    Some(Err(error)) => {
+                        failed = Some(error);
+                        Coloring::Failed { job, shown }
+                    }
                 }
-            },
+            }
             Coloring::Loading { job, handle, shown } if assets.texture(handle).is_some() => {
                 gone.extend(shown);
                 Coloring::Shown { job, handle }
@@ -273,7 +282,7 @@ impl Colors {
             Coloring::Shown { handle, .. } => Some(handle),
         };
         self.coloring = Coloring::Making {
-            interest: jobs.fetch(&MACRO_COLORS, &codec::encode(&wanted), VIEW_PRIORITY),
+            work: jobs.fetch(&MACRO_COLORS, &codec::encode(&wanted), VIEW_PRIORITY, Ok),
             job: wanted,
             shown,
         };

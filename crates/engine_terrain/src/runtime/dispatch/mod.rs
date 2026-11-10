@@ -1,5 +1,5 @@
 use super::*;
-use engine_core::{FrameBudget, RecordKey};
+use engine_core::{FrameBudget, Landed, RecordKey};
 
 const BUDGET: &str = "terrain";
 
@@ -7,12 +7,6 @@ pub(super) struct Asking<'a, 'w, 's> {
     pub(super) jobs: &'a mut Jobs<'w, 's>,
     pub(super) records: &'a Records,
     pub(super) kinds: &'a [&'static LayerKind],
-}
-
-impl Asking<'_, '_, '_> {
-    pub(super) fn take(&self, ticket: &Interest<RecordKey>) -> Option<Result<Arc<[u8]>, Error>> {
-        self.records.get(ticket)
-    }
 }
 
 pub(super) struct Work<'a> {
@@ -97,7 +91,7 @@ fn load_records(
     let mut handed: Vec<(TileKey, Generation, u32)> = state
         .slots
         .iter()
-        .filter_map(|(key, slot)| slot.loading().map(|(_, made, priority)| (key, made, priority)))
+        .filter_map(|(key, slot)| slot.loading().map(|(made, priority)| (key, made, priority)))
         .collect();
     handed.sort_by_key(|&(_, _, priority)| priority);
     for (key, made, _) in handed {
@@ -106,20 +100,20 @@ fn load_records(
         }
         let Some(output) = state
             .slots
-            .get(&key)
-            .and_then(TileSlot::loading)
-            .and_then(|(ticket, _, _)| asking.take(ticket))
+            .get_mut(&key)
+            .and_then(TileSlot::work_mut)
+            .and_then(|tile| landed_tile(tile.poll(asking.records)))
         else {
             continue;
         };
-        match job_output(TILE_BUILD.name(), output, crate::jobs::tile_output) {
+        match output {
             Ok(tile) if made == generation && target.contains(&key) && tile.key() == key => {
                 if !work.spend(2 * TILE_ARRAY_BYTES) {
                     break;
                 }
                 state.slot_event(key, SlotEvent::Done);
                 let stamps = state.reaching(key);
-                state.store.arrive(Arc::new(tile), stamps, materials);
+                state.store.arrive(tile, stamps, materials);
             }
             Ok(_) => state.slot_event(key, SlotEvent::Done),
             Err(error) => {
@@ -135,17 +129,16 @@ fn load_records(
         }
         let job = state.tile_job(recipe.hash(), key);
         let input = job.identity();
-        if held
-            .and_then(TileSlot::failed)
-            .is_some_and(|interest| *interest.key() == RecordKey::of(&TILE_BUILD, &input))
-        {
+        let record = RecordKey::of(&TILE_BUILD, &input);
+        if held.and_then(TileSlot::failed) == Some(record) {
             continue;
         }
-        let interest = asking.jobs.fetch(&TILE_BUILD, &input, priority);
+        let fetched = fetch_tile(asking.jobs, &input, priority);
         state.slot_event(
             key,
             SlotEvent::Asked {
-                interest,
+                work: fetched,
+                record,
                 made: generation,
                 priority,
             },
@@ -164,23 +157,23 @@ fn prefetch(
     let idle: Vec<(TileKey, Generation)> = state
         .slots
         .iter()
-        .filter_map(|(key, slot)| slot.prefetching().map(|(_, made)| (key, made)))
+        .filter_map(|(key, slot)| slot.prefetching().map(|made| (key, made)))
         .collect();
     for (key, made) in idle {
         let output = state
             .slots
-            .get(&key)
-            .and_then(TileSlot::prefetching)
-            .and_then(|(ticket, _)| asking.take(ticket));
+            .get_mut(&key)
+            .and_then(TileSlot::work_mut)
+            .and_then(|tile| landed_tile(tile.poll(asking.records)));
         if let Some(output) = output {
             state.slot_event(key, SlotEvent::Done);
-            if let Ok(tile) = job_output(TILE_BUILD.name(), output, crate::jobs::tile_output)
+            if let Ok(tile) = output
                 && made == generation
                 && tile.key() == key
                 && !state.store.contains(&key)
             {
                 let stamps = state.reaching(key);
-                state.store.keep_unseen(Arc::new(tile), stamps, (frame, materials));
+                state.store.keep_unseen(tile, stamps, (frame, materials));
             }
         } else if made != generation || !named.contains(&key) {
             state.slot_event(key, SlotEvent::Done);
@@ -198,14 +191,30 @@ fn prefetch(
         }
         let priority = job_priority(IDLE_JOBS, place as u32);
         let job = state.tile_job(recipe.hash(), key);
-        let interest = asking.jobs.fetch(&TILE_BUILD, &job.identity(), priority);
+        let work = fetch_tile(asking.jobs, &job.identity(), priority);
         state.slot_event(
             key,
             SlotEvent::Prefetched {
-                interest,
+                work,
                 made: generation,
             },
         );
+    }
+}
+
+fn fetch_tile(jobs: &mut Jobs<'_, '_>, input: &[u8], priority: u32) -> TileWork {
+    jobs.fetch(&TILE_BUILD, input, priority, |bytes| {
+        crate::jobs::tile_output(&bytes)
+            .map(Arc::new)
+            .map_err(|error| TILE_BUILD.undecoded(error))
+    })
+}
+
+fn landed_tile(landed: Landed<'_, Arc<Tile>>) -> Option<Result<Arc<Tile>, String>> {
+    match landed {
+        Landed::Waiting => None,
+        Landed::Ready(tile) => Some(Ok(Arc::clone(tile))),
+        Landed::Failed(error) => Some(Err(format!("{}: {error}", TILE_BUILD.name()))),
     }
 }
 
