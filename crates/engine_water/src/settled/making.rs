@@ -6,7 +6,7 @@ use engine_core::{
 };
 
 use super::{
-    Follow, Landed, Making, Settle, Settled, arrive, both, claim, end, record_input, water_part,
+    Follow, LandedTile, Making, Settle, Settled, arrive, both, claim, end, record_input, water_part,
 };
 use crate::jobs::{PARTS, SETTLED, WaterJob};
 use crate::state::WaterTerrain;
@@ -142,7 +142,7 @@ pub(super) fn take_settles(
     terrain: &mut WaterTerrain,
     cx: &mut Follow<'_, '_, '_>,
     (kept, frame): (&[TileKey], u64),
-    landed: &mut Vec<Landed>,
+    landed: &mut Vec<LandedTile>,
 ) {
     let mut waiting = Vec::new();
     for making in std::mem::take(&mut terrain.settled.making) {

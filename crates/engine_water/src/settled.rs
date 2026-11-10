@@ -905,13 +905,13 @@ fn take_arrived(
     }
 }
 
-type Landed = (TileKey, Option<(RecordKey, Arc<SteadyWater>)>);
+type LandedTile = (TileKey, Option<(RecordKey, Arc<SteadyWater>)>);
 
 fn take_fetches(
     terrain: &mut WaterTerrain,
     cx: &mut Follow<'_, '_, '_>,
     (kept, frame): (&[TileKey], u64),
-    landed: &mut Vec<Landed>,
+    landed: &mut Vec<LandedTile>,
 ) {
     let mut flying = Vec::new();
     let mut taken = false;
@@ -961,7 +961,7 @@ fn arrive(
     (key, alone, record): (TileKey, bool, RecordKey),
     output: Result<Arc<[u8]>, Option<Error>>,
     (kept, frame): (&[TileKey], u64),
-) -> Option<Landed> {
+) -> Option<LandedTile> {
     let settled = &mut terrain.settled;
     settled.changed();
     let error = match output {
