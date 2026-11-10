@@ -363,13 +363,12 @@ fn projected_rect(rect: [f32; 4], view: Mat4, min: Vec3, max: Vec3) -> Option<[f
 
 const PATCH_ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![0 => Sint32x2, 1 => Float32x2, 2 => Uint32x2, 3 => Uint32, 4 => Uint32];
 
-pub(super) fn patch_layout() -> wgpu::VertexBufferLayout<'static> {
-    wgpu::VertexBufferLayout {
+pub(super) const PATCH_STREAM: engine_render::VertexLayout =
+    engine_render::VertexLayout::Buffer(wgpu::VertexBufferLayout {
         array_stride: size_of::<PatchRecord>() as u64,
         step_mode: wgpu::VertexStepMode::Instance,
         attributes: &PATCH_ATTRIBUTES,
-    }
-}
+    });
 
 pub(super) fn grid_indices() -> Vec<u32> {
     let at = |x: u32, z: u32| z * GRID + x;
