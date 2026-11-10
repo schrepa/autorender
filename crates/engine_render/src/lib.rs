@@ -449,6 +449,7 @@ pub enum Shape<'a, P, S> {
     Pulled {
         vertices: Range<u32>,
         instances: Range<u32>,
+        material: Option<MaterialHandle>,
     },
     Buffers {
         vertices: &'a [DrawInput<P, S>],
@@ -461,6 +462,7 @@ pub enum Shape<'a, P, S> {
         indices: Option<DrawInput<P, S>>,
         args: DrawInput<P, S>,
         offset: u64,
+        material: Option<MaterialHandle>,
     },
     IndirectAt {
         vertices: &'a [(DrawInput<P, S>, u64)],
@@ -1279,9 +1281,11 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
             Shape::Pulled {
                 vertices,
                 instances,
+                material,
             } => encode::RawShape::Pulled {
                 vertices,
                 instances,
+                material,
             },
             Shape::Buffers {
                 vertices,
@@ -1299,11 +1303,13 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
                 indices,
                 args,
                 offset,
+                material,
             } => encode::RawShape::Indirect {
                 vertices: inputs(vertices),
                 indices: indices.map(|input| input.0),
                 args: args.0,
                 offset,
+                material,
             },
             Shape::IndirectAt {
                 vertices,

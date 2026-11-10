@@ -32,6 +32,7 @@ gpu_struct! {
 const TRIANGLE: Shape<'static, OverlayGpu, Own> = Shape::Pulled {
     vertices: 0..3,
     instances: 0..1,
+    material: None,
 };
 
 pub(crate) struct OverlayGpu {

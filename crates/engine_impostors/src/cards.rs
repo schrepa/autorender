@@ -212,6 +212,7 @@ impl GpuPart for CardGpu {
                     indices: None,
                     args: self.late_input,
                     offset: 0,
+                    material: None,
                 },
             );
             return 1;
@@ -240,6 +241,7 @@ impl CardGpu {
                     indices: None,
                     args: *args,
                     offset,
+                    material: None,
                 },
             );
         }

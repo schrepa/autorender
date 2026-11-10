@@ -371,6 +371,7 @@ impl GpuPart for ShadowsGpu {
                     Shape::Pulled {
                         vertices: 0..3,
                         instances: 0..1,
+                        material: None,
                     },
                 );
             }
@@ -409,6 +410,7 @@ impl GpuPart for ShadowsGpu {
                     Shape::Pulled {
                         vertices: 0..6,
                         instances: 0..self.moving,
+                        material: None,
                     },
                 );
             }

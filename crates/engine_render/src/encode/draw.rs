@@ -105,17 +105,25 @@ impl Run {
         if filled.is_some_and(|filled| self.filled[filled].groups.is_empty()) {
             self.fill_groups(pipeline, filled);
         }
-        let variant = match &shape {
+        let (variant, painted) = match &shape {
             RawShape::MeshIndirect { mesh, material, .. } | RawShape::Mesh { mesh, material, .. } => {
                 let Some(variant) = self.mesh_variant(*mesh, *material) else {
                     return;
                 };
-                Some(variant)
+                (Some(variant), None)
             }
-            RawShape::Pulled { .. }
-            | RawShape::Buffers { .. }
-            | RawShape::Indirect { .. }
-            | RawShape::IndirectAt { .. } => None,
+            RawShape::Pulled { material, .. } | RawShape::Indirect { material, .. } => {
+                match material {
+                    Some(handle) => {
+                        let Some(variant) = self.assets.materials.variant(Some(*handle)) else {
+                            return;
+                        };
+                        (Some(variant), Some(*material))
+                    }
+                    None => (None, Some(None)),
+                }
+            }
+            RawShape::Buffers { .. } | RawShape::IndirectAt { .. } => (None, Some(None)),
         };
         let Some(ready) = self.render_pipeline(pipeline, variant) else {
             return;
@@ -193,6 +201,20 @@ impl Run {
                 }
             }
         }
+        if let Some(material) = painted
+            && built.material
+        {
+            let Some(group) = assets.materials.group(material) else {
+                return;
+            };
+            if open.set.material != Some(material) {
+                render.set_bind_group(1, group, &[]);
+                open.set.material = Some(material);
+                if let Some(known) = open.set.own.get_mut(1) {
+                    *known = None;
+                }
+            }
+        }
         let input = |input: u32| input_of(machine, (&*tables, set), part, input);
         let geometry = &built.geometry;
         let geometry_slots = geometry.len() as u32;
@@ -200,6 +222,7 @@ impl Run {
             RawShape::Pulled {
                 vertices,
                 instances,
+                ..
             } => timed_draw(render, timed, |render| render.draw(vertices, instances)),
             RawShape::Buffers {
                 vertices,
@@ -227,6 +250,7 @@ impl Run {
                 indices,
                 args,
                 offset,
+                ..
             } => {
                 for (slot, (stream, _)) in vertices.listed().iter().enumerate() {
                     if let Some(buffer) = input(*stream) {

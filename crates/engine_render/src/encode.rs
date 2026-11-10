@@ -419,6 +419,7 @@ pub(crate) enum RawShape {
     Pulled {
         vertices: Range<u32>,
         instances: Range<u32>,
+        material: Option<MaterialHandle>,
     },
     Buffers {
         vertices: Streams,
@@ -431,6 +432,7 @@ pub(crate) enum RawShape {
         indices: Option<u32>,
         args: u32,
         offset: u64,
+        material: Option<MaterialHandle>,
     },
     IndirectAt {
         vertices: Streams,

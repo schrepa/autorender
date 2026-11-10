@@ -111,6 +111,7 @@ impl GpuPart for AmbientGpu {
             Shape::Pulled {
                 vertices: 0..3,
                 instances: 0..1,
+                material: None,
             },
         );
         0

@@ -249,6 +249,7 @@ const ADDED_COLOR: wgpu::BlendState = wgpu::BlendState {
 const TRIANGLE: Shape<'static, TraceGpu, Own> = Shape::Pulled {
     vertices: 0..3,
     instances: 0..1,
+    material: None,
 };
 
 fn screen(fragment: Entry) -> RenderPipeline<'static> {

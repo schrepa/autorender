@@ -313,6 +313,7 @@ impl TextGpu {
             Shape::Pulled {
                 vertices: 0..6,
                 instances: 0..self.labeled.len() as u32,
+                material: None,
             },
         );
         1
@@ -541,6 +542,7 @@ impl GpuPart for TextGpu {
             Shape::Pulled {
                 vertices: 0..6,
                 instances: 0..self.staged.len() as u32,
+                material: None,
             },
         );
         1

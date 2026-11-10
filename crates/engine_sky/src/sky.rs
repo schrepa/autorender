@@ -682,6 +682,7 @@ impl GpuPart for SkyGpu {
                 Shape::Pulled {
                     vertices: 0..3,
                     instances: 0..1,
+                    material: None,
                 },
             );
         }

@@ -324,6 +324,7 @@ impl GlimmerGpu {
             Shape::Pulled {
                 vertices: 0..6,
                 instances: 0..count,
+                material: None,
             },
         );
         count

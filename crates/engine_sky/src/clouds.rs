@@ -930,6 +930,7 @@ impl CloudPass {
                 indices: None,
                 args: self.composite_draws,
                 offset: 0,
+                material: None,
             },
         );
     }

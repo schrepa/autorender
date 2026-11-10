@@ -242,6 +242,7 @@ impl SpritesGpu {
                 Shape::Pulled {
                     vertices: 0..6,
                     instances: range.clone(),
+                    material: None,
                 },
             );
             drawn += 1;
