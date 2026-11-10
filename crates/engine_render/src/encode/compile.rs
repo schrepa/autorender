@@ -541,35 +541,55 @@ impl Run {
         &mut self,
         pipeline: u32,
         variant: Option<crate::surface::MaterialVariant>,
-    ) -> Option<usize> {
-        let layout = self.recording.open()?.layout;
+    ) -> Result<usize, engine_core::DropReason> {
+        use engine_core::DropReason;
+        let layout = self
+            .recording
+            .open()
+            .ok_or(DropReason::NoRenderPass)?
+            .layout;
         let bits = variant;
-        let built = self.machine.pipelines.get(pipeline as usize)?;
+        let built = self
+            .machine
+            .pipelines
+            .get(pipeline as usize)
+            .ok_or(DropReason::UnknownPipeline)?;
         if built.skipped {
-            return None;
+            return Err(DropReason::PipelineSkipped);
         }
         if let Some(at) = built
             .ready
             .iter()
             .position(|ready| ready.layout == layout && ready.bits == bits)
         {
-            return Some(at);
+            return Ok(at);
         }
-        let (key, made) = self.compile(
+        let program = built.program_key;
+        let Some((key, made)) = self.compile(
             pipeline,
             (layout.formats(), layout.depth),
             (layout.plain, layout.main),
             variant,
-        )?;
+        ) else {
+            return Err(if self.pipelines.making.program_waits(program) {
+                DropReason::PipelineCompiling
+            } else {
+                DropReason::PipelineRefused
+            });
+        };
         self.tallies.rebuilt.compiles += 1;
-        let built = self.machine.pipelines.get_mut(pipeline as usize)?;
+        let built = self
+            .machine
+            .pipelines
+            .get_mut(pipeline as usize)
+            .ok_or(DropReason::UnknownPipeline)?;
         built.ready.push(Ready {
             layout,
             bits,
             key,
             made,
         });
-        Some(built.ready.len() - 1)
+        Ok(built.ready.len() - 1)
     }
 
     pub(crate) fn set_switches(&mut self, switches: Vec<(u32, bool)>) {

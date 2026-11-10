@@ -387,9 +387,7 @@ impl<P: GpuPart> Draw<'_, P, Scene> {
     }
 
     pub fn skip(&mut self, reason: &'static str) -> u32 {
-        let run = self.raw.run();
-        let point = run.point;
-        run.tallies.kinds.skip(point, reason);
+        self.raw.run().tallies.kinds.skip(reason);
         0
     }
 }

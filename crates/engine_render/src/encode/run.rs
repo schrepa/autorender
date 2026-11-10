@@ -133,15 +133,26 @@ pub(crate) struct Tallies {
 pub(crate) struct KindTally {
     pub(crate) kind: engine_core::DrawKind,
     pub(crate) pass: &'static str,
-    pub(crate) draws: u32,
+    pub(crate) reached: u32,
     pub(crate) skipped: Option<&'static str>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct DroppedTally {
+    pub(crate) part: u32,
+    pub(crate) kind: Option<engine_core::DrawKind>,
+    pub(crate) pass: &'static str,
+    pub(crate) reason: engine_core::DropReason,
+    pub(crate) material: Option<engine_core::MaterialHandle>,
+    pub(crate) count: u32,
 }
 
 #[derive(Default)]
 pub(crate) struct KindTallies {
-    pub(crate) drawing: Option<engine_core::DrawKind>,
+    pub(crate) drawing: Option<usize>,
     pub(crate) ran: Vec<&'static str>,
     pub(crate) listed: Vec<KindTally>,
+    pub(crate) dropped: Vec<DroppedTally>,
     pub(crate) reported: Vec<(engine_core::DrawKind, &'static str)>,
     pub(crate) problems: Vec<Error>,
 }
@@ -153,7 +164,7 @@ impl KindTallies {
         }
     }
 
-    fn tally(&mut self, kind: engine_core::DrawKind, pass: &'static str) -> &mut KindTally {
+    pub(crate) fn begin(&mut self, kind: engine_core::DrawKind, pass: &'static str) {
         let at = match self
             .listed
             .iter()
@@ -164,23 +175,54 @@ impl KindTallies {
                 self.listed.push(KindTally {
                     kind,
                     pass,
-                    draws: 0,
+                    reached: 0,
                     skipped: None,
                 });
                 self.listed.len() - 1
             }
         };
-        &mut self.listed[at]
+        self.drawing = Some(at);
     }
 
-    pub(crate) fn drew(&mut self, kind: engine_core::DrawKind, pass: &'static str, draws: u32) {
+    pub(crate) fn end(&mut self) {
         self.drawing = None;
-        self.tally(kind, pass).draws += draws;
     }
 
-    pub(crate) fn skip(&mut self, pass: Option<&'static str>, reason: &'static str) {
-        if let (Some(kind), Some(pass)) = (self.drawing, pass) {
-            self.tally(kind, pass).skipped = Some(reason);
+    pub(crate) fn skip(&mut self, reason: &'static str) {
+        if let Some(tally) = self.drawing.and_then(|at| self.listed.get_mut(at)) {
+            tally.skipped = Some(reason);
+        }
+    }
+
+    pub(crate) fn reached(&mut self) {
+        if let Some(tally) = self.drawing.and_then(|at| self.listed.get_mut(at)) {
+            tally.reached += 1;
+        }
+    }
+
+    pub(crate) fn drop_draw(
+        &mut self,
+        (part, own_pass): (u32, &'static str),
+        reason: engine_core::DropReason,
+        material: Option<engine_core::MaterialHandle>,
+    ) {
+        let (kind, pass) = match self.drawing.and_then(|at| self.listed.get(at)) {
+            Some(tally) => (Some(tally.kind), tally.pass),
+            None => (None, own_pass),
+        };
+        let known = self.dropped.iter_mut().find(|known| {
+            known.part == part && known.kind == kind && known.pass == pass && known.reason == reason
+        });
+        match known {
+            Some(known) => known.count += 1,
+            None => self.dropped.push(DroppedTally {
+                part,
+                kind,
+                pass,
+                reason,
+                material,
+                count: 1,
+            }),
         }
     }
 
@@ -188,6 +230,7 @@ impl KindTallies {
         self.drawing = None;
         self.ran.clear();
         self.listed.clear();
+        self.dropped.clear();
     }
 }
 

@@ -45,6 +45,10 @@ impl Making {
         self.pending.contains(&made)
     }
 
+    pub(crate) fn program_waits(&self, program: u64) -> bool {
+        self.pending.iter().any(|(known, _)| *known == program)
+    }
+
     pub(crate) fn refused(&self, made: (u64, u64)) -> bool {
         self.refused.contains(&made)
     }

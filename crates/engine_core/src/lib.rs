@@ -120,7 +120,9 @@ pub use presentation::*;
 pub use provided::*;
 pub use records::*;
 pub use refusals::{Refusals, Refused};
-pub use render_stats::{KindPass, KindPassState, LinkedStats, Names, RenderStats};
+pub use render_stats::{
+    DropReason, DroppedDraws, KindPass, KindPassState, LinkedStats, Names, RenderStats,
+};
 pub use scene::*;
 pub use schedules::{RunPace, RunPoint};
 pub use engine_place::{

@@ -752,6 +752,7 @@ impl Renderer {
             readback_overflows: run.reading.list.overflows(),
             kind_passes,
             kind_problems: run.tallies.kinds.problems.clone(),
+            dropped_draws: super::kind_passes::dropped_draws(run),
             ..RenderStats::default()
         };
         let immediate = self.core.queue.take_immediate();

@@ -1,4 +1,35 @@
+use engine_core::{DropReason, GeometryStream};
+
 use super::*;
+use crate::mesh_arena::MeshDraw;
+
+type Painted = (Option<crate::surface::MaterialVariant>, Option<Option<MaterialHandle>>);
+
+fn mesh_draw<'a>(
+    assets: &'a Assets,
+    mesh: GeometryHandle,
+    geometry: &[GeometryStream],
+) -> Result<MeshDraw<'a>, DropReason> {
+    let draw = assets
+        .meshes
+        .draw(mesh)
+        .ok_or(DropReason::GeometryNotResident)?;
+    if draw.holds(geometry) {
+        Ok(draw)
+    } else {
+        Err(DropReason::GeometryLacksStreams)
+    }
+}
+
+fn material_of(shape: &RawShape) -> Option<MaterialHandle> {
+    match shape {
+        RawShape::MeshIndirect { material, .. }
+        | RawShape::Mesh { material, .. }
+        | RawShape::Pulled { material, .. }
+        | RawShape::Indirect { material, .. } => *material,
+        RawShape::Buffers { .. } | RawShape::IndirectAt { .. } => None,
+    }
+}
 
 fn input_of<'b>(
     machine: &Machine,
@@ -66,19 +97,6 @@ impl Run {
         }
     }
 
-    fn mesh_variant(
-        &self,
-        mesh: GeometryHandle,
-        material: Option<MaterialHandle>,
-    ) -> Option<crate::surface::MaterialVariant> {
-        self.assets.meshes.get(mesh)?;
-        self.assets.materials.variant(material)
-    }
-
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     pub(crate) fn draw(
         &mut self,
         part: u32,
@@ -88,46 +106,82 @@ impl Run {
         timed: TimedDraw<'_>,
     ) {
         let _row = engine_profile::timed(engine_profile::row("render.draw"));
-        let Some((pipeline, filled)) = self.pipeline_of(handle) else {
-            return;
-        };
+        let material = material_of(&shape);
+        match self.issue_draw(part, point, handle, shape, timed) {
+            Ok(()) => self.tallies.kinds.reached(),
+            Err(reason) => {
+                let pass = self
+                    .machine
+                    .declared
+                    .passes
+                    .get(self.pass as usize)
+                    .map_or("", |declared| declared.name);
+                self.tallies.kinds.drop_draw((part, pass), reason, material);
+            }
+        }
+    }
+
+    fn drawn_variant(&self, shape: &RawShape) -> Result<Painted, DropReason> {
+        match shape {
+            RawShape::MeshIndirect { mesh, material, .. } | RawShape::Mesh { mesh, material, .. } => {
+                if self.assets.meshes.get(*mesh).is_none() {
+                    return Err(DropReason::GeometryNotResident);
+                }
+                let variant = self
+                    .assets
+                    .materials
+                    .variant(*material)
+                    .ok_or(DropReason::MaterialNotResident)?;
+                Ok((Some(variant), None))
+            }
+            RawShape::Pulled { material, .. } | RawShape::Indirect { material, .. } => {
+                match material {
+                    Some(handle) => {
+                        let variant = self
+                            .assets
+                            .materials
+                            .variant(Some(*handle))
+                            .ok_or(DropReason::MaterialNotResident)?;
+                        Ok((Some(variant), Some(*material)))
+                    }
+                    None => Ok((None, Some(None))),
+                }
+            }
+            RawShape::Buffers { .. } | RawShape::IndirectAt { .. } => Ok((None, Some(None))),
+        }
+    }
+
+    #[expect(
+        clippy::too_many_lines,
+        reason = "longer than the line ceiling; it may only shrink"
+    )]
+    fn issue_draw(
+        &mut self,
+        part: u32,
+        point: Option<&'static str>,
+        handle: u32,
+        shape: RawShape,
+        timed: TimedDraw<'_>,
+    ) -> Result<(), DropReason> {
+        let (pipeline, filled) = self
+            .pipeline_of(handle)
+            .ok_or(DropReason::UnknownPipeline)?;
         if !self.scoped(part, point, pipeline) {
             let saved = self.part;
             self.part = part;
             let error = fault(self.path("draw.pipeline"), ErrorCode::PassMismatch);
             self.fault(error);
             self.part = saved;
-            return;
+            return Err(DropReason::PassMismatch);
         }
         if self.machine.pipelines[pipeline as usize].holes && filled.is_none() {
-            return;
+            return Err(DropReason::UnfilledHoles);
         }
         if filled.is_some_and(|filled| self.filled[filled].groups.is_empty()) {
             self.fill_groups(pipeline, filled);
         }
-        let (variant, painted) = match &shape {
-            RawShape::MeshIndirect { mesh, material, .. } | RawShape::Mesh { mesh, material, .. } => {
-                let Some(variant) = self.mesh_variant(*mesh, *material) else {
-                    return;
-                };
-                (Some(variant), None)
-            }
-            RawShape::Pulled { material, .. } | RawShape::Indirect { material, .. } => {
-                match material {
-                    Some(handle) => {
-                        let Some(variant) = self.assets.materials.variant(Some(*handle)) else {
-                            return;
-                        };
-                        (Some(variant), Some(*material))
-                    }
-                    None => (None, Some(None)),
-                }
-            }
-            RawShape::Buffers { .. } | RawShape::IndirectAt { .. } => (None, Some(None)),
-        };
-        let Some(ready) = self.render_pipeline(pipeline, variant) else {
-            return;
-        };
+        let (variant, painted) = self.drawn_variant(&shape)?;
+        let ready = self.render_pipeline(pipeline, variant)?;
         let Self {
             machine,
             recording,
@@ -145,9 +199,7 @@ impl Run {
         } = self;
         let parity = frames.parity;
         let set = &sets.list[sets.at];
-        let Some(open) = recording.open_mut() else {
-            return;
-        };
+        let open = recording.open_mut().ok_or(DropReason::NoRenderPass)?;
         let built = &machine.pipelines[pipeline as usize];
         let chosen = &built.ready[ready];
         let render = &mut open.pass;
@@ -204,9 +256,10 @@ impl Run {
         if let Some(material) = painted
             && built.material
         {
-            let Some(group) = assets.materials.group(material) else {
-                return;
-            };
+            let group = assets
+                .materials
+                .group(material)
+                .ok_or(DropReason::MaterialNotResident)?;
             if open.set.material != Some(material) {
                 render.set_bind_group(1, group, &[]);
                 open.set.material = Some(material);
@@ -257,7 +310,7 @@ impl Run {
                         render.set_vertex_buffer(slot as u32, buffer.slice(..));
                     }
                 }
-                let Some(args) = input(args) else { return };
+                let args = input(args).ok_or(DropReason::MissingInput)?;
                 match indices.and_then(input) {
                     Some(indices) => {
                         render.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -279,7 +332,7 @@ impl Run {
                         render.set_vertex_buffer(slot as u32, buffer.slice(*start..));
                     }
                 }
-                let Some(args) = input(args) else { return };
+                let args = input(args).ok_or(DropReason::MissingInput)?;
                 match indices.and_then(input) {
                     Some(indices) => {
                         render.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
@@ -297,16 +350,12 @@ impl Run {
                 offset,
                 streams,
             } => {
-                let Some(draw) = assets.meshes.draw(mesh) else {
-                    return;
-                };
-                let Some(group) = assets.materials.group(material) else {
-                    return;
-                };
-                let Some(args) = input(args) else { return };
-                if !draw.holds(geometry) {
-                    return;
-                }
+                let draw = mesh_draw(assets, mesh, geometry)?;
+                let group = assets
+                    .materials
+                    .group(material)
+                    .ok_or(DropReason::MaterialNotResident)?;
+                let args = input(args).ok_or(DropReason::MissingInput)?;
                 if open.set.material != Some(material) {
                     render.set_bind_group(1, group, &[]);
                     open.set.material = Some(material);
@@ -332,15 +381,11 @@ impl Run {
                 material,
                 instances,
             } => {
-                let Some(draw) = assets.meshes.draw(mesh) else {
-                    return;
-                };
-                let Some(group) = assets.materials.group(material) else {
-                    return;
-                };
-                if !draw.holds(geometry) {
-                    return;
-                }
+                let draw = mesh_draw(assets, mesh, geometry)?;
+                let group = assets
+                    .materials
+                    .group(material)
+                    .ok_or(DropReason::MaterialNotResident)?;
                 if open.set.material != Some(material) {
                     render.set_bind_group(1, group, &[]);
                     open.set.material = Some(material);
@@ -357,6 +402,7 @@ impl Run {
                 });
             }
         }
+        Ok(())
     }
 
     pub(super) fn fill_groups(&mut self, pipeline: u32, filled: Option<usize>) {
