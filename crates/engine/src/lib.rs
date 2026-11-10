@@ -83,7 +83,7 @@ mod pacing;
 mod resolution;
 #[cfg(feature = "profiling")]
 pub use app_host::{PROFILE_DURATION_MS, PROFILE_EVENTS};
-pub use engine_render::{AdapterInfo, RenderTarget};
+pub use engine_render::{AdapterInfo, RenderTarget, TransparencySettings};
 #[cfg(not(target_arch = "wasm32"))]
 pub use engine_render::{
     GpuPreference, NativeWindow, keep_pipeline_cache_in, start_native_instances_with,

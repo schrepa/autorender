@@ -50,17 +50,6 @@ impl MeshesGpu {
                 let Some(slot) = self.state.view_slot(scene.pass.name(), scene.view) else {
                     return draw.skip("view has no visible list");
                 };
-                let items = || {
-                    self.state
-                        .draws
-                        .items
-                        .iter()
-                        .filter(|item| item.look.skinned == skinned)
-                };
-                let kept = items().any(|item| !(streams.solid && item.blended));
-                if items().next().is_some() && !kept {
-                    return draw.skip("blended materials cast no shadow");
-                }
                 self.draw_view(draw, (streams, &pipelines), slot, skinned)
             }
             Drawing::Blended(streams) => {
@@ -145,7 +134,7 @@ impl MeshesGpu {
     ) -> u32 {
         let mut drawn = 0;
         for item in &self.state.draws.items {
-            if item.look.skinned != skinned || (streams.solid && item.blended) {
+            if item.look.skinned != skinned {
                 continue;
             }
             let Some(pipeline) = pipelines.of(item.look) else {

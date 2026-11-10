@@ -68,6 +68,10 @@ fn noise_phase() -> f32 {
     return camera.noise_phase;
 }
 
+fn transparency_weighting() -> vec4<f32> {
+    return camera.transparency;
+}
+
 fn fade_noise(position: vec2<f32>) -> f32 {
     return fract(fract(52.9829189 * fract(dot(position, vec2<f32>(0.06711056, 0.00583715))))
         + noise_phase());
