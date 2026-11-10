@@ -6,7 +6,8 @@ use engine::command_line::CommandOption;
 use engine::host::{HostSettings, JobRef, OVERLAY, SETTINGS, SceneLoad};
 use engine::scene::{SceneFiles, SceneKinds};
 use engine::{
-    BrickList, Engine, Error, ErrorCode, Expected, Game, GameEntry, GameHost, GpuPreference,
+    BrickList, DefaultScene, Engine, Error, ErrorCode, Expected, Game, GameEntry, GameHost,
+    GpuPreference,
 };
 use serde_json::json;
 
@@ -195,7 +196,7 @@ pub enum StartScene {
     #[default]
     Empty,
     File(PathBuf),
-    Declared(&'static str),
+    Declared(DefaultScene),
 }
 
 pub fn open_scene<G: Game>(
@@ -206,15 +207,17 @@ pub fn open_scene<G: Game>(
     let kinds = SceneKinds::of(host.engine().app.world());
     match scene {
         StartScene::Empty => {}
-        StartScene::Declared(text) => {
-            let files = SceneLoad::new(text, &kinds).and_then(SceneLoad::finish)?;
-            host.open_scene(text, &files)?;
+        StartScene::Declared(scene) => {
+            let files = SceneLoad::new(scene.text, &kinds).and_then(SceneLoad::finish)?;
+            host.open_scene(scene.text, &files)?;
+            host.set_file_root(&folder_of(Path::new(scene.path)));
         }
         StartScene::File(path) => {
             let source = std::fs::read_to_string(path)
                 .map_err(|error| crate::file_error("--scene", path, &error))?;
             let files = crate::files::scene_files(path, &source, &kinds)?;
             host.open_scene(&source, &files)?;
+            host.set_file_root(&folder_of(path));
             #[cfg(feature = "dev")]
             host.watch_source(path);
         }
@@ -224,6 +227,12 @@ pub fn open_scene<G: Game>(
         engine::scene::show_look(world, environment, "--environment")?;
     }
     Ok(())
+}
+
+fn folder_of(path: &Path) -> String {
+    path.parent()
+        .map(|folder| folder.to_string_lossy().into_owned())
+        .unwrap_or_default()
 }
 
 #[derive(Clone, Debug)]
@@ -616,7 +625,7 @@ impl HostOptions {
             Some(scene) if cfg!(feature = "dev") && Path::new(scene.path).is_file() => {
                 StartScene::File(scene.path.into())
             }
-            Some(scene) => StartScene::Declared(scene.text),
+            Some(scene) => StartScene::Declared(scene),
             None => StartScene::Empty,
         }
     }

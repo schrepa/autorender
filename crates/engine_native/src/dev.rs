@@ -167,9 +167,7 @@ impl<G: Game> DevSession<G> {
     }
 
     fn request(&mut self, line: &str, late: &dyn Fn() -> Option<Value>) -> Value {
-        if line.len() <= engine::dev::MAX_REQUEST_BYTES
-            && let Ok(Value::Object(command)) = serde_json::from_str::<Value>(line)
-        {
+        if let Ok(Value::Object(command)) = serde_json::from_str::<Value>(line) {
             if command.get("verb") == Some(&json!("profile"))
                 && let Some(deep) = command.get("deep")
             {

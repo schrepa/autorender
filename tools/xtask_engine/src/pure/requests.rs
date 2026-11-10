@@ -4,8 +4,7 @@ use std::path::Path;
 
 use engine::{Engine, Error, ErrorCode};
 use engine_dev::{
-    Context, Control, DevTools, Envelope, InspectorDescriptor, MAX_REQUEST_BYTES,
-    MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
+    Context, Control, DevTools, Envelope, InspectorDescriptor, MAX_SCAN_ENTITIES, PROTOCOL_VERSION,
 };
 use engine_scene::{SceneDocument, SceneInstance, SceneKinds};
 use serde_json::{Value, json};
@@ -140,6 +139,7 @@ const UNREACHED: &[(&str, &str)] = &[
     ("read_before_write", APP_BUILD),
     ("render_failed", "rendering needs a GPU"),
     ("request_outcome_unknown", BRIDGE),
+    ("request_too_large", BRIDGE),
     (
         "response_too_large",
         "replies fit by design: the schema generator checks that every description fits one, and inspect pages bound theirs",
@@ -318,13 +318,6 @@ fn crowd() -> String {
 
 fn request_source(refusal: &Value) -> String {
     match &refusal["source"] {
-        Value::String(source) if source == "OVERSIZED" => json!({
-            "verb": "query",
-            "name": "status",
-            "version": PROTOCOL_VERSION,
-            "args": { "pad": " ".repeat(MAX_REQUEST_BYTES) },
-        })
-        .to_string(),
         Value::String(source) => source.clone(),
         _ => {
             let mut request = refusal["request"].clone();

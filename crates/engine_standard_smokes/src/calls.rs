@@ -80,6 +80,7 @@ fn ids_of(reply: &Value) -> Vec<String> {
 pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     session.source(&fixture().to_string());
     settled(session)?;
+    let loaded = world_entities(session)?;
     let collisions = cursor(session, "collision")?;
     let presses = cursor(session, "ui_pressed")?;
     let spawn = control(session, "spawn", spawned())?;
@@ -90,7 +91,13 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     collided(session, collisions, &ids[0])?;
     pressed(session, presses)?;
     changed(session, &ids[0])?;
-    removed(session, &ids)
+    removed(session, &ids)?;
+    reloaded(session, &loaded)
+}
+
+fn world_entities(session: &mut dyn SmokeSession) -> Checked<Value> {
+    let mut status = query(session, "status", json!({}))?;
+    Ok(status["world_entities"].take())
 }
 
 fn moved(session: &mut dyn SmokeSession, ids: &[String]) -> Checked<()> {
@@ -175,5 +182,20 @@ fn removed(session: &mut dyn SmokeSession, ids: &[String]) -> Checked<()> {
     let wanted = json!({"done": 0, "refused": 1});
     let got = json!({"done": again["done"], "refused": again["refused"]});
     smoke_eq!(got, wanted, "removed_entities_are_gone");
+    Ok(())
+}
+
+fn reloaded(session: &mut dyn SmokeSession, loaded: &Value) -> Checked<()> {
+    let removal = control(session, "remove", json!({ "entities": [GATE] }))?;
+    all_done(&removal, 1, "remove_takes_scene_file_entities")?;
+    let spawn = control(session, "spawn", spawned())?;
+    all_done(&spawn, SPAWNED, "spawn_lands_every_row")?;
+    session.source(&fixture().to_string());
+    settled(session)?;
+    smoke_eq!(
+        world_entities(session)?,
+        *loaded,
+        "spawned_entities_leave_with_their_scene"
+    );
     Ok(())
 }

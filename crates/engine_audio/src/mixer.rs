@@ -9,9 +9,7 @@ use engine_core::{
     GlobalTransforms, Interest, Landed, Pause, Poses, Raises, Refusals, Request, Requests,
     SceneIds, Spawner, Ticket, Views,
 };
-use engine_places_rendering::audio::{
-    Bus, OneShot, SoundHandle, SoundOrder, SoundSource, Sounds, VoiceHandle,
-};
+use engine_places_rendering::audio::{Bus, OneShot, SoundOrder, SoundSource, Sounds, VoiceHandle};
 use glam::{Mat4, Vec3};
 use serde::Serialize;
 
@@ -281,7 +279,6 @@ pub(crate) struct Mixer {
     voices: Vec<Voice>,
     sounds: Requests<u32, Decoded>,
     files: BTreeMap<(String, bool), File>,
-    loaded: BTreeMap<SoundHandle, Interest<u32>>,
     reads: BTreeMap<String, Background<Arc<[u8]>, String>>,
     cut: u32,
     failures: u32,
@@ -550,15 +547,18 @@ impl Mixer {
         }
     }
 
-    fn order(&mut self, order: SoundOrder, limit: u32) {
+    fn order(&mut self, order: SoundOrder, named: Option<&SoundSource>, limit: u32) {
         match order {
-            SoundOrder::Load { sound, bytes } => {
-                let decoded = self.decode(bytes, false);
-                self.loaded.insert(sound, decoded);
-            }
-            SoundOrder::Play { voice, sound, shot } => match self.loaded.get(&sound).cloned() {
-                Some(held) => self.add(Voice::shot(voice, held, &shot), limit),
-                None => self.cut_one(),
+            SoundOrder::Play {
+                voice,
+                entity,
+                shot,
+            } => match named.and_then(|source| self.sound_of(source)) {
+                Some(sound) => self.add(Voice::shot(voice, sound, &shot), limit),
+                None => {
+                    self.latest = Some(format!("sound_play {entity}: no sound ready on it"));
+                    self.cut_one();
+                }
             },
             SoundOrder::PlayBytes { voice, bytes, shot } => {
                 let sound = self.decode(bytes, false);
@@ -712,7 +712,7 @@ impl Mixer {
 pub(crate) fn mix(
     (settings, time, feeds): (Res<Audio>, Res<FrameTime>, Res<FeedSettings>),
     (views, poses, globals, pause): (Res<Views>, Poses, Res<GlobalTransforms>, Option<Res<Pause>>),
-    (sounds, mut files): (Res<Sounds>, ResMut<Files>),
+    (sounds, mut files, ids): (Res<Sounds>, ResMut<Files>, SceneIds<'_, '_>),
     sources: Query<(Entity, Ref<SoundSource>)>,
     (mut stats, mut mixer, mut spawner, mut ends): (
         ResMut<AudioStats>,
@@ -738,7 +738,14 @@ pub(crate) fn mix(
     }
     mixer.cut = mixer.cut.saturating_add(sounds.take_cut());
     for order in sounds.take_orders() {
-        mixer.order(order, limit);
+        let named = match &order {
+            SoundOrder::Play { entity, .. } => ids
+                .entity(entity)
+                .and_then(|held| sources.get(held).ok())
+                .map(|(_, source)| source.into_inner()),
+            SoundOrder::PlayBytes { .. } | SoundOrder::Stop(_) | SoundOrder::Volume(..) => None,
+        };
+        mixer.order(order, named, limit);
     }
     let landed = mixer.read(
         sources.iter().map(|(_, source)| source.into_inner()),

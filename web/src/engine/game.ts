@@ -75,7 +75,9 @@ export function playGame<T extends Runtime, B extends PlayedBindings>(game: Play
       const files = source && text !== undefined ? await source.files(text, signal) : undefined;
       const found = await gameFiles(new loaded.SceneFileSet(), played.files(), signal);
       signal.throwIfAborted();
-      return played.create(canvas, location.search, text, files, found);
+      const running = await played.create(canvas, location.search, text, files, found);
+      if (url !== undefined) running.set_file_root(new URL(".", sceneUrl()).href);
+      return running;
     },
     async level(running, path, signal, progress) {
       const target = checkedScene(path, url === undefined ? location.href : sceneUrl());
@@ -83,6 +85,7 @@ export function playGame<T extends Runtime, B extends PlayedBindings>(game: Play
       const files = await loadSceneFiles(target, text, await bindings(), signal, progress);
       signal.throwIfAborted();
       running.reload_scene(text, files);
+      running.set_file_root(new URL(".", target).href);
     },
   });
 }

@@ -90,7 +90,7 @@ impl DevHost {
             Verb::Control => self
                 .tools
                 .parse_control(app.engine.app.world(), &envelope, paused)
-                .and_then(|control| controls::run(self, app, scene, control, size)),
+                .and_then(|control| controls::run(self, app, scene, control, (size, paused))),
             Verb::Capture | Verb::Profile => looped(&envelope, paused).map(Done::Loop),
         };
         self.answered(app, scene, answered)
@@ -110,7 +110,7 @@ impl DevHost {
                 let answered = self
                     .tools
                     .control(app.engine.app.world(), (name, args), paused)
-                    .and_then(|control| controls::run(self, app, scene, control, size));
+                    .and_then(|control| controls::run(self, app, scene, control, (size, paused)));
                 match self.answered(app, scene, answered) {
                     Handled::Reply(reply) => reply,
                     Handled::Loop(_) => self.refusal(

@@ -263,7 +263,7 @@ impl SceneInstance {
             let _ = world.try_despawn(entity);
         }
         for &entity in self.entities.values() {
-            world.despawn(entity);
+            let _ = world.try_despawn(entity);
         }
         if let Some(mut assets) = world.get_resource_mut::<AssetLibrary>() {
             self.owned.remove(&mut assets);
@@ -334,6 +334,7 @@ impl SceneDocument {
                 return Err(error);
             }
         };
+        replaced.retire(world);
         let instance = SceneInstance {
             id: self.id.clone(),
             revision: self.revision,
@@ -525,6 +526,12 @@ impl Replaced {
             looks: world.get_resource::<crate::SceneLooks>().cloned(),
             scene: world.get_resource::<OperationScene>().cloned(),
             sections,
+        }
+    }
+
+    fn retire(self, world: &mut World) {
+        for entity in self.scene.into_iter().flat_map(|scene| scene.installed.into_values()) {
+            let _ = world.try_despawn(entity);
         }
     }
 

@@ -32,8 +32,8 @@ pub use protocol::bounds::{MAX_PAGE_SIZE, MAX_SCAN_ENTITIES};
 pub use protocol::{
     BenchmarkInput, BenchmarkMode, BrowserControl, CaptureRequest, CompareRequest, Control,
     DeepProfile, DescribeRequest, Detail, Envelope, EnvironmentControl, InspectRequest,
-    MAX_REQUEST_BYTES, MAX_RESPONSE_BYTES, PROTOCOL_VERSION, PointerControl, ProfileRequest, Query,
-    TouchControl, Vendor, Verb,
+    MAX_RESPONSE_BYTES, PROTOCOL_VERSION, PointerControl, ProfileRequest, Query, TouchControl,
+    Vendor, Verb,
 };
 pub use reply::{Observation, Reply, SceneObservation};
 

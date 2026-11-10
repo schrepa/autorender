@@ -7,7 +7,6 @@
     {"rule": "unknown_variant", "path": "$.name", "request": {"verb": "query", "name": "weather"}},
     {"rule": "unknown_variant", "path": "$.verb", "request": {"verb": "weather"}},
     {"rule": "invalid_value", "path": "$.limit", "request": {"verb": "inspect", "limit": -1}},
-    {"rule": "request_too_large", "path": "$", "source": "OVERSIZED"},
     {"rule": "unsupported_version", "path": "$.version", "request": {"verb": "query", "name": "status", "version": 2}},
     {"rule": "missing_field", "path": "$.version", "source": "{\"verb\": \"query\", \"name\": \"status\"}"},
     {"rule": "invalid_type", "path": "$.version", "request": {"verb": "query", "name": "status", "version": "1"}},

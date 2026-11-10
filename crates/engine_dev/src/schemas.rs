@@ -193,7 +193,6 @@ pub fn verbs(world: &World) -> Result<Vec<(&'static str, Value)>, String> {
 pub fn summary() -> Value {
     json!({
         "version": protocol::PROTOCOL_VERSION,
-        "max_request_bytes": protocol::MAX_REQUEST_BYTES,
         "profile_max_events": engine_profile::MAX_EVENTS,
         "verbs": Verb::names().collect::<Vec<_>>(),
         "queries": protocol::Query::NAMES,
@@ -257,7 +256,6 @@ pub fn game(world: &World) -> Result<Vec<(&'static str, String)>, String> {
     }
     let summary = json!({
         "version": protocol::PROTOCOL_VERSION,
-        "max_request_bytes": protocol::MAX_REQUEST_BYTES,
         "profile_max_events": engine_profile::MAX_EVENTS,
         "verbs": Verb::names().collect::<Vec<_>>(),
         "queries": queries,

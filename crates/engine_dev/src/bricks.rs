@@ -104,11 +104,6 @@ impl DevTools {
         paused: bool,
     ) -> Result<Control, Error> {
         if let Some(name) = registered(world, name, true)? {
-            if !paused {
-                return Err(Error::new(ErrorCode::PauseRequired, "$")
-                    .expected(Expected::Paused)
-                    .got(name));
-            }
             return Ok(Control::Operation(crate::controls::OperationCall::Brick {
                 name,
                 request: args,

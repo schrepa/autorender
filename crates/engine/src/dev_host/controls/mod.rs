@@ -14,12 +14,16 @@ pub(super) fn run(
     app: &mut AppHost,
     scene: Option<&SceneInstance>,
     control: Control,
-    size: (u32, u32),
+    (size, paused): ((u32, u32), bool),
 ) -> Result<Done, Error> {
     match control {
         Control::Operation(call) => {
             let result = call.apply(&mut app.engine, scene)?;
-            then_render(app, size, result).map(Done::Result)
+            if paused {
+                then_render(app, size, result).map(Done::Result)
+            } else {
+                Ok(Done::Result(result))
+            }
         }
         Control::Host(control) => host_control(host, app, control, size).map_err(in_args),
     }
