@@ -18,6 +18,9 @@ pub(crate) const PASSES_MODULE: &str = "generated::passes";
 pub(crate) const KINDS_MODULE: &str = "generated::kinds";
 pub(crate) const TRANSPARENCY_MODULE: &str = "engine::transparency";
 pub(crate) const COVER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
+pub(crate) const ACCUMULATED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+pub(crate) const TRANSPARENCY_COMPOSITE_MODULE: &str = "engine::transparency_composite";
+const TRANSPARENCY_PASS: &str = "transparency_composite";
 pub(crate) const MOST_APPLIED: usize = 128;
 pub(crate) static PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<Resolve>(),
@@ -268,6 +271,77 @@ impl GpuPart for Composite {
     }
 }
 
+pub(crate) struct Transparency {
+    pass: Pass<Self>,
+    pipeline: crate::Pipeline<Self, crate::Own>,
+}
+
+const COMPOSITED: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::SrcAlpha,
+        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+        operation: wgpu::BlendOperation::Add,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::Zero,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
+
+impl GpuPart for Transparency {
+    type Reads = ();
+    const NAME: &'static str = "transparency";
+    const LABELS: &'static [&'static str] = &["engine/transparency-"];
+
+    fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
+        let module = crate::shaders::core_module(TRANSPARENCY_COMPOSITE_MODULE);
+        let pass = cx
+            .pass(TRANSPARENCY_PASS)
+            .at(AttachPoint::Post)
+            .label("engine/transparency-composite")
+            .span("transparency")
+            .target(engine_core::TargetName::COLOR)
+            .id();
+        let pipeline = cx.render_pipeline(
+            pass,
+            &crate::RenderPipeline {
+                blend: Some(COMPOSITED),
+                ..fullscreen(engine_core::Entry::generated(module, "fs_transparency"))
+            },
+            &[
+                (
+                    engine_core::Var::generated(module, "transparency_cover"),
+                    crate::Bind::Target(engine_core::TargetName::TRANSPARENCY),
+                ),
+                (
+                    engine_core::Var::generated(module, "transparency_sum"),
+                    crate::Bind::Target(engine_core::TargetName::ACCUMULATED),
+                ),
+            ],
+        )?;
+        Ok(Self { pass, pipeline })
+    }
+
+    fn prepare(&mut self, (): (), _cx: &mut Prepare<'_, Self>) {}
+
+    fn view(&mut self, _view: &engine_core::ViewFacts, cx: &mut Prepare<'_, Self>) {
+        cx.run(self.pass);
+    }
+
+    fn encode(&mut self, _pass: Pass<Self>, cx: &mut crate::Encode<'_, Self>) -> u32 {
+        let mut draw = cx.render(crate::Attach::Declared);
+        draw.draw(
+            &self.pipeline,
+            crate::Shape::Pulled {
+                vertices: 0..3,
+                instances: 0..1,
+            },
+        );
+        0
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
 pub(crate) struct PostUniform {
@@ -324,6 +398,7 @@ pub(crate) fn pass_module(colored: bool, written: &[&OutputDecl]) -> (String, St
         String::from("import package::engine::shading::{Shaded, SurfacePoint, ViewPixel};\n");
     let (mut fields, mut filled) = (String::new(), String::new());
     let (mut copied, mut blended) = (String::new(), String::new());
+    let (mut covered, mut added) = (String::new(), String::new());
     if colored {
         key.push_str(engine_core::TargetName::COLOR.name());
         fields.push_str("    @location(0) color: vec4<f32>,\n");
@@ -332,6 +407,8 @@ pub(crate) fn pass_module(colored: bool, written: &[&OutputDecl]) -> (String, St
         blended.push_str(
             "    written.color = vec4<f32>(shaded.linear * shaded.opacity, shaded.opacity);\n",
         );
+        covered.push_str("    written.color = vec4<f32>(0.0);\n");
+        added.push_str("    written.color = vec4<f32>(shaded.linear * shaded.opacity, 0.0);\n");
     }
     for (location, output) in (u32::from(colored)..).zip(written) {
         let name = output.name;
@@ -349,7 +426,7 @@ pub(crate) fn pass_module(colored: bool, written: &[&OutputDecl]) -> (String, St
         }
     }
     let text = format!(
-        "{imports}\nstruct Outputs {{\n{fields}}}\n\nstruct DepthOutputs {{\n{fields}    @builtin(frag_depth) depth: f32,\n}}\n\nfn outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written: Outputs;\n{filled}    return written;\n}}\n\nfn blended_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written = outputs(point, shaded, at);\n{blended}    return written;\n}}\n\nfn depth_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel, depth: f32) -> DepthOutputs {{\n    let written = outputs(point, shaded, at);\n    var out: DepthOutputs;\n{copied}    out.depth = depth;\n    return out;\n}}\n"
+        "{imports}\nstruct Outputs {{\n{fields}}}\n\nstruct DepthOutputs {{\n{fields}    @builtin(frag_depth) depth: f32,\n}}\n\nfn outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written: Outputs;\n{filled}    return written;\n}}\n\nfn blended_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written = outputs(point, shaded, at);\n{blended}    return written;\n}}\n\nfn covered_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written = outputs(point, shaded, at);\n{covered}    return written;\n}}\n\nfn added_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written: Outputs;\n{added}    return written;\n}}\n\nfn depth_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel, depth: f32) -> DepthOutputs {{\n    let written = outputs(point, shaded, at);\n    var out: DepthOutputs;\n{copied}    out.depth = depth;\n    return out;\n}}\n"
     );
     (key, text)
 }

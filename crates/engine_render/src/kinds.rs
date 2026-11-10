@@ -230,11 +230,14 @@ fn kind_program(
             cull_mode: fragment.cull,
             ..Default::default()
         },
-        depth: DepthUse::Write {
-            bias: wgpu::DepthBiasState {
-                constant: 0,
-                slope_scale: 0.0,
-                clamp: 0.0,
+        depth: match role {
+            PassRole::Blended => DepthUse::Test,
+            PassRole::Lit | PassRole::Depth | PassRole::Shown => DepthUse::Write {
+                bias: wgpu::DepthBiasState {
+                    constant: 0,
+                    slope_scale: 0.0,
+                    clamp: 0.0,
+                },
             },
         },
         blend: (role == PassRole::Shown).then_some(DEBUG_BLEND),
@@ -294,11 +297,17 @@ impl<P: GpuPart> Install<'_, P> {
             };
             let built = roles.contains(&facts.0);
             let plain = match kind_program(form, facts, (false, topology)).filter(|_| built) {
-                Some(program) => Some(self.core.pipeline(scope, program, bound.clone())?),
+                Some(program) => {
+                    let reached = self.reached(&program, &bound);
+                    Some(self.core.pipeline(scope, program, reached)?)
+                }
                 None => None,
             };
             let mirrored = match kind_program(form, facts, (true, topology)).filter(|_| built && owned) {
-                Some(program) => Some(self.core.pipeline(scope, program, bound.clone())?),
+                Some(program) => {
+                    let reached = self.reached(&program, &bound);
+                    Some(self.core.pipeline(scope, program, reached)?)
+                }
                 None => None,
             };
             scenes.push(FormScene {
@@ -316,6 +325,24 @@ impl<P: GpuPart> Install<'_, P> {
             scenes,
             part: PhantomData,
         })
+    }
+
+    fn reached(
+        &mut self,
+        program: &Program,
+        bound: &[(Var, crate::install::Bound)],
+    ) -> Vec<(Var, crate::install::Bound)> {
+        let entries: Vec<Entry> = match program {
+            Program::Render(render) => std::iter::once(render.vertex)
+                .chain(render.fragment)
+                .collect(),
+            Program::Compute(entry) => vec![*entry],
+        };
+        bound
+            .iter()
+            .filter(|(var, _)| entries.iter().any(|entry| self.core.reaches(*entry, *var)))
+            .cloned()
+            .collect()
     }
 
     pub fn form_as<N: PassName>(

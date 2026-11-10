@@ -1084,13 +1084,15 @@ pub(crate) fn layered(output: &OutputDecl) -> bool {
     !output.layers.is_empty()
 }
 
-pub(crate) fn cover_location(outputs: &[OutputDecl], pass: &PassDecl) -> Option<usize> {
-    let cover = outputs
-        .iter()
-        .position(|output| output.name == engine_core::TargetName::TRANSPARENCY.name())?;
+pub(crate) fn output_location(
+    outputs: &[OutputDecl],
+    pass: &PassDecl,
+    name: engine_core::TargetName,
+) -> Option<usize> {
+    let output = outputs.iter().position(|output| output.name == name.name())?;
     pass_set(outputs, pass)
         .iter()
-        .position(|(target, ..)| *target == Target::Output(cover as u32))
+        .position(|(target, ..)| *target == Target::Output(output as u32))
 }
 
 fn set_formats(outputs: &[OutputDecl], pass: &PassDecl, layer: AttachPoint) -> Vec<SetFormat> {

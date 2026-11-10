@@ -2,7 +2,7 @@ use super::making::{Created, Finished};
 use super::run::Pipelines;
 use super::*;
 use crate::install::{Faces, FragmentUse, RenderDecl};
-use crate::machine::{BuiltPipeline, Stage, cover_location};
+use crate::machine::{BuiltPipeline, Stage, output_location};
 
 fn stage_switches(switches: &[(u32, bool)], stages: &[Stage]) -> Vec<(u32, bool)> {
     switches
@@ -191,20 +191,59 @@ const COVERED: wgpu::BlendState = wgpu::BlendState {
     },
 };
 
-fn blend_targets(
-    targets: &mut [Option<wgpu::ColorTargetState>],
-    alpha: crate::surface::Alpha,
-    cover: Option<usize>,
-) {
+const SUMMED: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
+
+fn blend_targets(targets: &mut [Option<wgpu::ColorTargetState>], alpha: crate::surface::Alpha) {
     let additive = alpha == crate::surface::Alpha::Additive;
     for (location, target) in targets.iter_mut().enumerate() {
         let Some(target) = target else { continue };
         if location == 0 {
             target.blend = blendable(target.format).then_some(if additive { ADDED } else { OVER });
-        } else if cover == Some(location) && !additive {
-            target.blend = blendable(target.format).then_some(COVERED);
         } else {
             target.write_mask = wgpu::ColorWrites::empty();
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Weighing {
+    Covers,
+    Adds,
+    Chosen,
+}
+
+fn weigh_targets(
+    targets: &mut [Option<wgpu::ColorTargetState>],
+    weighing: Weighing,
+    (cover, accumulated): (usize, usize),
+) {
+    let adds = matches!(weighing, Weighing::Adds | Weighing::Chosen);
+    let covers = matches!(weighing, Weighing::Covers | Weighing::Chosen);
+    for (location, target) in targets.iter_mut().enumerate() {
+        let Some(target) = target else { continue };
+        let blend = if location == 0 {
+            adds.then_some(ADDED)
+        } else if location == cover {
+            covers.then_some(COVERED)
+        } else if location == accumulated {
+            covers.then_some(SUMMED)
+        } else {
+            None
+        };
+        match blend.filter(|_| blendable(target.format)) {
+            Some(blend) => target.blend = Some(blend),
+            None => target.write_mask = wgpu::ColorWrites::empty(),
         }
     }
 }
@@ -792,7 +831,7 @@ impl Compiler<'_> {
         let written = fragment_stage
             .zip(shape.fragment)
             .and_then(|(stage, entry)| fragment_locations(&stage.composed.text, entry.name()));
-        let blended = shape
+        let alpha = shape
             .styling
             .map(|styling| styling.draw().alpha)
             .filter(|alpha| {
@@ -800,14 +839,41 @@ impl Compiler<'_> {
                     alpha,
                     crate::surface::Alpha::Blend | crate::surface::Alpha::Additive
                 )
-            })
-            .map(|alpha| {
-                let home = machine.declared.passes.get(built.home as usize);
-                (alpha, home.and_then(|pass| cover_location(&machine.outputs, pass)))
+            });
+        let weighed = machine
+            .declared
+            .passes
+            .get(built.home as usize)
+            .filter(|_| shape.main)
+            .and_then(|pass| {
+                let at = |name| output_location(&machine.outputs, pass, name);
+                Some((
+                    at(engine_core::TargetName::TRANSPARENCY)?,
+                    at(engine_core::TargetName::ACCUMULATED)?,
+                ))
             });
         let mut targets = color_targets(desc, shape.formats, written.as_deref(), shape.main);
-        if let Some((alpha, cover)) = blended {
-            blend_targets(&mut targets, alpha, cover.filter(|_| shape.main));
+        let declared = desc.blend.is_some() || desc.targets.is_some();
+        match (weighed, alpha) {
+            (Some(layout), alpha) => {
+                use crate::surface::Alpha;
+                let weighing = match (alpha, desc.faces) {
+                    (Some(Alpha::Additive), Faces::Declared | Faces::Material(_)) => {
+                        Some(Weighing::Adds)
+                    }
+                    (None, Faces::Declared) => (!declared).then_some(Weighing::Chosen),
+                    (
+                        Some(Alpha::Opaque | Alpha::Mask | Alpha::Blend),
+                        Faces::Declared | Faces::Material(_),
+                    )
+                    | (None, Faces::Material(_)) => Some(Weighing::Covers),
+                };
+                if let Some(weighing) = weighing {
+                    weigh_targets(&mut targets, weighing, layout);
+                }
+            }
+            (None, Some(alpha)) => blend_targets(&mut targets, alpha),
+            (None, None) => {}
         }
         let vertex = built
             .stages

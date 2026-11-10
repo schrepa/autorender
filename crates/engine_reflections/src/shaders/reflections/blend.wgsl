@@ -1,5 +1,4 @@
 import package::engine::transparency::cover;
-import package::face::transparency::revealed;
 import package::generated::pieces::reflections::piece;
 
 @group(1) @binding(0) var reflections: texture_2d<f32>;
@@ -11,6 +10,6 @@ fn fs_reflections_blend(@builtin(position) position: vec4<f32>) -> @location(0) 
     let pixel = vec2<i32>(position.xy);
     let traced = textureLoad(reflections, pixel, 0);
     let replaced = textureLoad(reflected_target, pixel, 0).rgb;
-    let seen = revealed(pixel).x * (1.0 - cover(blended_mask, pixel)) * piece().applied.y;
+    let seen = (1.0 - cover(blended_mask, pixel)) * piece().applied.y;
     return vec4<f32>((traced.rgb - replaced * traced.a) * seen, 0.0);
 }

@@ -1,13 +1,18 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, gpu_consts, gpu_struct};
+use engine_core::{
+    DrawKind, Error, KindDecl, PassName, PassPurpose, PassViews, SlotSet, Writes, gpu_consts,
+    gpu_struct,
+};
 use engine_open_world_kit::ground::{GroundTiles, TerrainEntry, TerrainTiles};
 use engine_render::{
-    Allocation, Attach, AttachPoint, Bind, Buffer, DepthUse, Encode, GpuPart, Install, Lifetime,
-    Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, wgpu,
+    Allocation, AttachPoint, Bind, Buffer, Draw, FaceCull, Form, FormSide, GpuPart, Install,
+    KindForm, Lifetime, OwnFragments, Prepare, RoleFragments, Scene, SceneDraw, Shape, TargetName,
+    Varyings,
 };
 use glam::Vec2;
 
 use crate::bricks::pond::Pond;
+use crate::bricks::pond::shaders::pond::surface;
 
 gpu_consts! {
     pub(crate) const POND_MOST: u32 = 16;
@@ -22,24 +27,69 @@ gpu_struct! {
     }
 }
 
-const COVERING: wgpu::BlendState = wgpu::BlendState {
-    color: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
-        operation: wgpu::BlendOperation::Add,
+pub(crate) const POND_KIND: DrawKind = DrawKind("pond");
+
+pub(crate) struct PondPass;
+
+impl PassName for PondPass {
+    const NAME: &'static str = "pond";
+    const PASS: engine_core::Pass = engine_core::Pass {
+        writes: Writes::LIT,
+        reads: SlotSet::ALL,
+        views: PassViews::Main,
+        at: AttachPoint::LateOpaque,
+        purpose: PassPurpose::Scene,
+        takes: takes_pond,
+    };
+}
+
+fn takes_pond(kind: &KindDecl) -> bool {
+    kind.kind == POND_KIND
+}
+
+const POND_FRAGMENTS: OwnFragments = OwnFragments {
+    placed: RoleFragments {
+        lit: Some(surface::FS_POND),
+        shown: Some(surface::FS_DEBUG_POND),
+        ..RoleFragments::NONE
     },
-    alpha: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::Zero,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
+    owned: RoleFragments::NONE,
+    cull: FaceCull::None,
+};
+
+const POND_FORM: KindForm = KindForm {
+    kind: POND_KIND,
+    placed: FormSide {
+        vertex: surface::VS_POND,
+        streams: &[],
     },
+    owned: None,
+    varyings: Varyings::Own(&POND_FRAGMENTS),
 };
 
 pub(crate) struct PondGpu {
-    pass: Pass<Self>,
     ponds: Buffer<Self>,
-    pipeline: Pipeline<Self, Own>,
+    form: Form<Self>,
     drawn: u32,
+}
+
+impl PondGpu {
+    pub(crate) fn draw(&self, _scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
+        if self.drawn == 0 {
+            return draw.skip("no pond is placed");
+        }
+        let Some(pipeline) = draw.form(&self.form) else {
+            return draw.skip("the pond draws only in its own pass and the debug view");
+        };
+        draw.draw(
+            &pipeline,
+            Shape::Pulled {
+                vertices: 0..6,
+                instances: 0..self.drawn,
+            },
+        );
+        1
+    }
 }
 
 impl GpuPart for PondGpu {
@@ -50,32 +100,17 @@ impl GpuPart for PondGpu {
     );
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        use crate::bricks::pond::shaders::pond::surface;
         let ponds = cx.buffer("ponds", Lifetime::Kept);
-        let pass = cx.pass("pond").at(AttachPoint::LateOpaque).id();
-        let pipeline = cx.render_pipeline(
-            pass,
-            &RenderPipeline {
-                vertex: surface::VS_POND,
-                fragment: Some(surface::FS_POND),
-                vertices: &[],
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    cull_mode: None,
-                    ..Default::default()
-                },
-                depth: DepthUse::Write {
-                    bias: wgpu::DepthBiasState::default(),
-                },
-                blend: Some(COVERING),
-                writes: wgpu::ColorWrites::ALL,
-            },
-            &[(surface::PONDS, Bind::Buffer(ponds))],
+        let form = cx.form(
+            &POND_FORM,
+            &[
+                (surface::PONDS, Bind::Buffer(ponds)),
+                (surface::POND_SCENE, Bind::Target(TargetName::COLOR)),
+            ],
         )?;
         Ok(Self {
-            pass,
             ponds,
-            pipeline,
+            form,
             drawn: 0,
         })
     }
@@ -94,20 +129,6 @@ impl GpuPart for PondGpu {
             cx.allocate_buffer(self.ponds, std::mem::size_of_val(&shapes) as u64);
         cx.write(self.ponds, 0, &shapes);
         self.drawn = count;
-        cx.run(self.pass);
-    }
-
-    fn encode(&mut self, _pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
-        let mut draw = cx.render(Attach::Declared);
-        draw.draw(
-            &self.pipeline,
-            Shape::Pulled {
-                vertices: 0..6,
-                instances: 0..self.drawn,
-                material: None,
-            },
-        );
-        1
     }
 }
 

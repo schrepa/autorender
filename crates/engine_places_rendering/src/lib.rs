@@ -56,7 +56,6 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<reflections::TraceSource>(),
     PlaceDecl::list::<reflections::TraceReaders>(),
     PlaceDecl::list::<reflections::TraceDepths>(),
-    PlaceDecl::slot::<particles::Transparency>(),
     PlaceDecl::slot::<particles::ParticleFormula>(),
     PlaceDecl::slot::<particles::ParticleBursts>(),
     PlaceDecl::component::<particles::ParticleEmitter>("particle_emitter"),

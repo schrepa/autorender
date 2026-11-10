@@ -16,7 +16,7 @@ use engine_core::{
     Attributes, Brick, Bricks, ComponentKind, GpuStruct, KindDecl, KindSkip, SceneComponents,
     Schedule, Source,
 };
-use engine_places_rendering::particles::{ParticleBursts, ParticleEmitter, Transparency};
+use engine_places_rendering::particles::{ParticleBursts, ParticleEmitter};
 use engine_render::RenderBricks;
 
 pub use emitters::{EMITTER_PART, ParticleSettings, ParticleStats};
@@ -41,7 +41,6 @@ impl Brick for ParticlesBrick {
             .stats::<ParticleStats>()
             .resource::<emitters::Gather>()
             .resource::<emitters::Packed>()
-            .fill::<Transparency>(Some(shaders::particles::faces::transparency::MODULE))
             .fill::<ParticleBursts>(None)
             .moving::<ParticleEmitter>()
             .join::<SceneComponents>(
@@ -69,10 +68,20 @@ impl Brick for ParticlesBrick {
                         pass: "probe",
                         reason: "particles stay out of probe captures",
                     },
+                    KindSkip {
+                        pass: "color",
+                        reason: "particles only blend",
+                    },
+                    KindSkip {
+                        pass: "prepass",
+                        reason: "particles write no depth",
+                    },
+                    KindSkip {
+                        pass: "debug_view",
+                        reason: "particles carry no debug record",
+                    },
                 ],
             })
-            .pass::<part::WeightedPass>()
-            .pass::<part::CompositePass>()
             .draws::<part::ParticlesGpu>(PARTICLES, part::ParticlesGpu::draw);
     }
 }

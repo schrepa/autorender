@@ -1,7 +1,6 @@
 import package::engine::post::frame::{depth_texture, linear, post};
 import package::engine::transparency::cover;
 import package::face::tonemap::exposure;
-import package::face::transparency::revealed;
 import package::generated::pieces::taa::piece;
 import package::generated::taa::TaaView;
 
@@ -158,7 +157,7 @@ fn fs_temporal_resolve(@builtin(position) position: vec4<f32>) -> Resolved {
         past = weighed(max(past, vec3<f32>(0.0)));
         var weight = piece().options.w * near;
         if piece().options.z > 0.0 {
-            let covered = 1.0 - revealed(pixel).y * (1.0 - cover(blended_mask, pixel));
+            let covered = cover(blended_mask, pixel);
             weight = max(weight, min(piece().options.z * covered, 1.0));
         }
         color = mix(rgb(clamp(ycocg(past), low, high)), current, weight);

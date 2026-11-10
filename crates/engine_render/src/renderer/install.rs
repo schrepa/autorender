@@ -368,14 +368,20 @@ fn applied_modules(
 }
 
 fn outputs(registry: &Registry, roots: &mut Vec<(String, String)>) -> Vec<OutputDecl> {
-    let cover = engine_core::TargetName::TRANSPARENCY.name();
-    roots.push((crate::shared::TRANSPARENCY_MODULE.to_owned(), cover.to_owned()));
-    let mut found = vec![OutputDecl {
-        name: cover,
-        format: crate::shared::COVER_FORMAT,
-        layers: vec![engine_core::AttachPoint::Transparent],
-        module: Some(crate::shared::TRANSPARENCY_MODULE.to_owned()),
-    }];
+    let mut found = Vec::new();
+    for (target, format) in [
+        (engine_core::TargetName::TRANSPARENCY, crate::shared::COVER_FORMAT),
+        (engine_core::TargetName::ACCUMULATED, crate::shared::ACCUMULATED_FORMAT),
+    ] {
+        let name = target.name();
+        roots.push((crate::shared::TRANSPARENCY_MODULE.to_owned(), name.to_owned()));
+        found.push(OutputDecl {
+            name,
+            format,
+            layers: vec![engine_core::AttachPoint::Transparent],
+            module: Some(crate::shared::TRANSPARENCY_MODULE.to_owned()),
+        });
+    }
     for (_, record) in registry.iter() {
         for target in record.render_entries::<crate::TargetDecl>() {
             let module = target.module.as_ref().and_then(module_path);
@@ -543,6 +549,7 @@ fn names_twice(registry: &Registry, world: &World, problems: &mut Vec<Error>) {
             let name = target.name.name();
             if crate::install::ViewTarget::of(target.name).is_some()
                 || target.name == engine_core::TargetName::TRANSPARENCY
+                || target.name == engine_core::TargetName::ACCUMULATED
                 || seen.contains(&name)
             {
                 problems.push(
@@ -668,6 +675,12 @@ fn install_with(
     let mut listed: Vec<Listed> = vec![
         Listed {
             record: core_part::<crate::shared::ScenePart>(),
+            package: CORE_PACKAGE,
+            brick: None,
+            fills: Vec::new(),
+        },
+        Listed {
+            record: core_part::<crate::shared::Transparency>(),
             package: CORE_PACKAGE,
             brick: None,
             fills: Vec::new(),

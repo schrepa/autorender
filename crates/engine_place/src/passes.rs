@@ -61,11 +61,13 @@ impl TargetName {
     pub const DEPTH: Self = Self("depth");
     pub const MOTION: Self = Self("motion");
     pub const TRANSPARENCY: Self = Self("transparency");
-    pub const CORE: [Self; 4] = [
+    pub const ACCUMULATED: Self = Self("accumulated");
+    pub const CORE: [Self; 5] = [
         Self::COLOR,
         Self::DEPTH,
         Self::MOTION,
         Self::TRANSPARENCY,
+        Self::ACCUMULATED,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -251,7 +253,11 @@ pub struct BlendedPass;
 impl PassName for BlendedPass {
     const NAME: &'static str = "blended";
     const PASS: Pass = Pass {
-        writes: Writes(&[TargetName::COLOR, TargetName::TRANSPARENCY]),
+        writes: Writes(&[
+            TargetName::COLOR,
+            TargetName::TRANSPARENCY,
+            TargetName::ACCUMULATED,
+        ]),
         reads: SlotSet::ALL,
         views: PassViews::Every,
         at: AttachPoint::Transparent,
