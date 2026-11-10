@@ -144,6 +144,14 @@ impl Brick for WaterBrick {
                         pass: "probe",
                         reason: "the water surface stay out of probe captures",
                     },
+                    KindSkip {
+                        pass: "color",
+                        reason: "the water surface draws in its own pass, after the scene it refracts",
+                    },
+                    KindSkip {
+                        pass: "prepass",
+                        reason: "the water surface refracts the scene behind it, so it fills no depth before it",
+                    },
                 ],
             })
             .pass::<water::WaterPass>()

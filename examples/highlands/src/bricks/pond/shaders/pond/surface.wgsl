@@ -2,11 +2,14 @@ import package::engine::shading::{Shaded, SurfacePoint};
 import package::engine::slots::shade as shade_point;
 import package::engine::surfaces::SURFACE_POND;
 import package::engine::view::{camera, stable_normalize, view_pixel};
+import package::face::debug::{DebugTargets, debug_record, debug_targets};
 import package::face::ground_tiles::{GroundTerrain, ground_height, terrain_info};
+import package::generated::kinds::KIND_POND;
 import package::generated::pond::{POND_MOST, PondShape};
 import package::generated::writes::{Outputs, outputs};
 
 @group(1) @binding(0) var<uniform> ponds: array<PondShape, POND_MOST>;
+@group(1) @binding(1) var pond_scene: texture_2d<f32>;
 
 const POND_BODY: vec3<f32> = vec3<f32>(0.02, 0.05, 0.06);
 const POND_ROUGHNESS: f32 = 0.06;
@@ -97,6 +100,18 @@ fn fs_pond(input: PondOutput) -> Outputs {
     let previous = (camera.previous_view_projection * vec4<f32>(input.world, 1.0)).xyw;
     var targets = outputs(shade.point, shade.shaded,
         view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
-    targets.color = vec4<f32>(shade.shaded.linear * shade.cover, shade.cover);
+    let last = vec2<i32>(textureDimensions(pond_scene)) - 1;
+    let seen = textureLoad(pond_scene, min(vec2<i32>(input.clip_position.xy), last), 0).rgb;
+    targets.color = vec4<f32>(shade.shaded.linear * shade.cover + seen * (1.0 - shade.cover), 1.0);
     return targets;
+}
+
+@fragment
+fn fs_debug_pond(input: PondOutput) -> DebugTargets {
+    let shape = ponds[input.pond];
+    if shape.surface.x - pond_ground(shape, input.world) <= 0.0 {
+        discard;
+    }
+    return debug_targets(debug_record(KIND_POND, 0u), input.pond, 0u, vec3<f32>(0.0, 1.0, 0.0),
+        0u);
 }

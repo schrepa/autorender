@@ -1,15 +1,16 @@
 import package::engine::drawn::{drawn_records, drawn_shown};
 import package::engine::math::{pcg, unit};
+import package::engine::shading::{Shaded, SurfacePoint};
 import package::engine::surfaces::SURFACE_SOLID;
-import package::engine::view::camera;
+import package::engine::view::{camera, view_pixel};
 import package::face::lighting::sun_visibility;
 import package::face::particle_formula::{Particle, ParticleIn, custom_particle};
 import package::face::sky::{ambient, atmospheric, atmospheric_cover, sky_average};
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
 import package::generated::particles::{Emitter, NO_SLOT, Particles};
+import package::generated::writes::{Outputs, added_outputs, covered_outputs};
 import package::particles::standard::standard;
-import package::particles::weighted::{TransparentTargets, weighted_particle};
 
 @group(1) @binding(0) var<uniform> particles: Particles;
 @group(1) @binding(1) var<storage, read> emitters: array<Emitter>;
@@ -97,10 +98,11 @@ fn vs_particle(@builtin(vertex_index) vertex: u32,
     let position = particle.position;
     let velocity = particle.velocity;
     let size = particle.size;
-    let corners = array<vec2<f32>, 4>(
-        vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, 1.0),
+    let corners = array<vec2<f32>, 6>(
+        vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(-1.0, 1.0),
+        vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, -1.0), vec2<f32>(1.0, 1.0),
     );
-    let corner = corners[vertex % 4u];
+    let corner = corners[vertex % 6u];
     let middle = camera.inverse_view_projection * vec4<f32>(0.0, 0.0, 0.5, 1.0);
     let right = camera.inverse_view_projection * vec4<f32>(1.0, 0.0, 0.5, 1.0);
     let up = camera.inverse_view_projection * vec4<f32>(0.0, 1.0, 0.5, 1.0);
@@ -161,6 +163,18 @@ fn mist_noise(p: vec3<f32>) -> f32 {
     return mix(low, high, u.z);
 }
 
+fn particle_outputs(input: ParticleOutput, light: vec3<f32>, opacity: f32, seen: vec3<f32>)
+        -> Outputs {
+    var point: SurfacePoint;
+    point.world = seen;
+    point.distance = length(seen - camera.position.xyz);
+    point.opacity = opacity;
+    var shaded: Shaded;
+    shaded.linear = light;
+    shaded.opacity = opacity;
+    return covered_outputs(point, shaded, view_pixel(input.clip_position, vec4<f32>(0.0)));
+}
+
 fn outside(input: ParticleOutput) -> bool {
     return dot(input.corner, input.corner) >= 1.0;
 }
@@ -179,7 +193,7 @@ fn coverage(input: ParticleOutput) -> f32 {
 }
 
 @fragment
-fn fs_particle(input: ParticleOutput) -> TransparentTargets {
+fn fs_particle(input: ParticleOutput) -> Outputs {
     if outside(input) {
         discard;
     }
@@ -188,16 +202,15 @@ fn fs_particle(input: ParticleOutput) -> TransparentTargets {
         discard;
     }
     let eye = camera.position.xyz;
-    let distance = length(input.world - eye);
     let light = input.color.rgb * (sky_average(vec3<f32>(0.0, 1.0, 0.0)) * ambient()
         + sun_color() * (0.5 * input.sunlit));
     let view = normalize(input.world - eye);
     let fogged = atmospheric(light, eye, input.world, view).rgb;
-    return weighted_particle(fogged, alpha, distance);
+    return particle_outputs(input, fogged, alpha, input.world);
 }
 
 @fragment
-fn fs_particle_mist(input: ParticleOutput) -> TransparentTargets {
+fn fs_particle_mist(input: ParticleOutput) -> Outputs {
     if outside(input) {
         discard;
     }
@@ -237,7 +250,7 @@ fn fs_particle_mist(input: ParticleOutput) -> TransparentTargets {
     let around = sun_color() * (0.35 * saturate(sun.y)) + sky * 0.5;
     let light = input.color.rgb * (mix(around, sky, 0.5) + sunlight);
     let fogged = atmospheric(light, eye, closest, direction).rgb;
-    return weighted_particle(fogged, alpha, length(closest - eye));
+    return particle_outputs(input, fogged, alpha, closest);
 }
 
 fn added(input: ParticleOutput) -> vec3<f32> {
@@ -247,9 +260,15 @@ fn added(input: ParticleOutput) -> vec3<f32> {
 }
 
 @fragment
-fn fs_particle_add_post(input: ParticleOutput) -> @location(0) vec4<f32> {
+fn fs_particle_added(input: ParticleOutput) -> Outputs {
     if outside(input) {
         discard;
     }
-    return vec4<f32>(added(input), 0.0);
+    var point: SurfacePoint;
+    point.world = input.world;
+    point.distance = length(input.world - camera.position.xyz);
+    var shaded: Shaded;
+    shaded.linear = added(input);
+    shaded.opacity = 1.0;
+    return added_outputs(point, shaded, view_pixel(input.clip_position, vec4<f32>(0.0)));
 }

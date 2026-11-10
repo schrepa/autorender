@@ -211,14 +211,6 @@ impl From<ParticleEmitter> for AuthoredEmitter {
 }
 
 #[derive(Resource, Default)]
-pub struct Transparency;
-
-impl Slot for Transparency {
-    const NAME: &'static str = "transparency";
-    const WGSL: Option<&'static str> = Some(include_str!("places/transparency.wgsl"));
-}
-
-#[derive(Resource, Default)]
 pub struct ParticleFormula;
 
 impl Slot for ParticleFormula {

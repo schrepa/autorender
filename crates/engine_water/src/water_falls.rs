@@ -241,18 +241,17 @@ fn fall_jets(fall: &Fall, origin: Vec3, vertices: &mut Vec<FallVertex>, indices:
     }
 }
 
-pub(crate) fn fall_layout() -> wgpu::VertexBufferLayout<'static> {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
-        0 => Float32x3,
-        1 => Float32x3,
-        2 => Float32x4,
-        3 => Float32x2,
-        4 => Float32,
-        5 => Uint32,
-    ];
-    wgpu::VertexBufferLayout {
-        array_stride: size_of::<FallVertex>() as u64,
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &ATTRIBUTES,
-    }
-}
+const FALL_ATTRIBUTES: [wgpu::VertexAttribute; 6] = wgpu::vertex_attr_array![
+    0 => Float32x3,
+    1 => Float32x3,
+    2 => Float32x4,
+    3 => Float32x2,
+    4 => Float32,
+    5 => Uint32,
+];
+
+pub(crate) const FALL_LAYOUT: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
+    array_stride: size_of::<FallVertex>() as u64,
+    step_mode: wgpu::VertexStepMode::Vertex,
+    attributes: &FALL_ATTRIBUTES,
+};

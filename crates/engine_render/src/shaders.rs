@@ -32,6 +32,7 @@ shader_modules! {
     "engine::mapped" = "mapped.wgsl";
     "engine::surface" = "surface.wgsl";
     "engine::transparency" = "transparency.wgsl";
+    "engine::transparency_composite" = "transparency_composite.wgsl";
     "engine::mesh::vertex" = "meshes/vertex.wgsl";
     "engine::kinds" = "kinds.wgsl";
     "engine::post::pixel" = "post/pixel.wgsl";

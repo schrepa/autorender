@@ -519,8 +519,14 @@ struct WaterShade {
     flow: vec2<f32>,
 }
 
-fn water_covering(shade: WaterShade) -> vec4<f32> {
-    return vec4<f32>((shade.shaded.linear + shade.behind) * shade.fade, shade.fade);
+fn water_seen(pixel: vec2<f32>) -> vec3<f32> {
+    let last = vec2<i32>(textureDimensions(water_scene)) - 1;
+    return textureLoad(water_scene, min(vec2<i32>(pixel), last), 0).rgb;
+}
+
+fn water_covering(shade: WaterShade, seen: vec3<f32>) -> vec4<f32> {
+    return vec4<f32>((shade.shaded.linear + shade.behind) * shade.fade
+        + seen * (1.0 - shade.fade), 1.0);
 }
 
 const WATER_CAUSTIC_CONTRAST: f32 = 0.3;
@@ -687,7 +693,7 @@ fn fs_water(input: WaterOutput) -> Outputs {
     let previous = water_previous(input.relative, shade.flow, saturate(shade.coverage));
     var targets = outputs(shade.point, shade.shaded,
         view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
-    targets.color = water_covering(shade);
+    targets.color = water_covering(shade, water_seen(input.clip_position.xy));
     return targets;
 }
 

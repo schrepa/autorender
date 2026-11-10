@@ -9,8 +9,8 @@ mod part;
 mod water;
 
 use engine_core::{
-    Brick, Bricks, ComponentKind, Error, ErrorCode, GpuStruct, SceneComponents, Schedule, Source,
-    fields,
+    Attributes, Brick, Bricks, ComponentKind, Error, ErrorCode, GpuStruct, KindDecl, KindSkip,
+    SceneComponents, Schedule, Source, fields,
 };
 use engine_places_rendering::reflections::TraceDepths;
 use engine_render::{RenderBricks, SurfaceKind};
@@ -37,7 +37,34 @@ impl Brick for PondBrick {
             .generated(GENERATED)
             .surface_kind(SurfaceKind { name: "pond" })
             .join::<TraceDepths>((), Some(shaders::pond::trace_depth::MODULE))
-            .part::<part::PondGpu>();
+            .draw_kind(KindDecl {
+                kind: part::POND_KIND,
+                needs: Attributes::NONE,
+                skips: &[
+                    KindSkip {
+                        pass: "shadow",
+                        reason: "the pond surface casts no shadows",
+                    },
+                    KindSkip {
+                        pass: "probe",
+                        reason: "the pond surface stays out of probe captures",
+                    },
+                    KindSkip {
+                        pass: "color",
+                        reason: "the pond surface draws in its own pass, over the scene it covers",
+                    },
+                    KindSkip {
+                        pass: "prepass",
+                        reason: "the pond surface covers the scene behind it, so it fills no depth before it",
+                    },
+                    KindSkip {
+                        pass: "blended",
+                        reason: "the pond surface covers the scene behind it in its own pass",
+                    },
+                ],
+            })
+            .pass::<part::PondPass>()
+            .draws::<part::PondGpu>(part::POND_KIND, part::PondGpu::draw);
     }
 }
 
