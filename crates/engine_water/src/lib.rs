@@ -138,11 +138,11 @@ impl Brick for WaterBrick {
                 skips: &[
                     KindSkip {
                         pass: "shadow",
-                        reason: "the water surface cast no shadows",
+                        reason: "the water surface casts no shadows",
                     },
                     KindSkip {
                         pass: "probe",
-                        reason: "the water surface stay out of probe captures",
+                        reason: "the water surface stays out of probe captures",
                     },
                     KindSkip {
                         pass: "color",
