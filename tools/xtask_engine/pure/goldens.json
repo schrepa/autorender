@@ -474,6 +474,7 @@
           "TerrainShading",
           "TextAlign",
           "TextSettings",
+          "TransparencySettings",
           "Trigger",
           "UiAction",
           "UiAlign",
@@ -487,7 +488,6 @@
           "UiNode",
           "UiRoot",
           "UiSettings",
-          "VertexSkin",
           "ViewForm"
         ]
       },
@@ -630,6 +630,7 @@
           "text_component",
           "text_stats",
           "time_of_day",
+          "transparency",
           "ui",
           "ui_component",
           "ui_stats",
@@ -1307,7 +1308,7 @@
       "steepest": 0.016481399536132812,
       "tunnels": 1
     },
-    "bakes": "49c55d23be68e5d5",
+    "bakes": "77e0f1c592094e9f",
     "bounce": {
       "blocks": 1024,
       "detailed blocks": 474,
@@ -1331,7 +1332,7 @@
       ],
       "texels": 65536
     },
-    "pack": "6cc495bf310cb966",
+    "pack": "c3b4241700767314",
     "pack records": 46,
     "portals 0/0/0": "fb26e1b9f5bd9fd8",
     "portals 0/0/1": "29e88506dde27d87",

@@ -43,6 +43,7 @@ mod shared;
 mod sizes;
 pub mod slots;
 mod surface;
+mod transparency;
 mod uploads;
 
 mod core_slots;
@@ -107,6 +108,8 @@ pub fn level_region(view: &engine_core::ViewFacts, level: u32) -> (u32, u32) {
     .level_region(level)
 }
 
+pub use transparency::TransparencySettings;
+
 pub mod debug {
     use engine_core::gpu_bits;
 
@@ -127,40 +130,6 @@ engine_core::settings! {
     pub struct RenderSettings {
         pub readback_slots: u32 = 3 => at_least(1),
         pub readback_slot_bytes: Option<u64> = None => at_least(4),
-    }
-}
-
-engine_core::settings! {
-    #[section("transparency")]
-    #[check(sorted_weights)]
-    #[derive(Copy)]
-    #[serde(deny_unknown_fields)]
-    pub struct TransparencySettings {
-        pub near_distance: f32 = 5.0 => above(0.0),
-        pub far_distance: f32 = 200.0 => above(0.0),
-        pub least_weight: f32 = 0.01 => at_least(0.0),
-        pub most_weight: f32 = 3000.0 => above(0.0),
-    }
-}
-
-fn sorted_weights(settings: &TransparencySettings) -> Result<(), engine_core::InvalidSetting> {
-    if settings.least_weight <= settings.most_weight {
-        return Ok(());
-    }
-    let unsorted = engine_core::InvalidSetting::new("least_weight", engine_core::Expected::Sorted);
-    Err(unsorted
-        .got(settings.least_weight)
-        .nearest(settings.most_weight))
-}
-
-impl TransparencySettings {
-    pub fn weighting(&self) -> [f32; 4] {
-        [
-            self.near_distance,
-            self.far_distance,
-            self.least_weight,
-            self.most_weight,
-        ]
     }
 }
 

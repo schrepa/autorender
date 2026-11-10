@@ -58,9 +58,7 @@ impl NamedStream {
     }
 
     pub fn words(&self) -> impl Iterator<Item = [u8; 4]> + '_ {
-        self.bytes
-            .chunks_exact(4)
-            .map(|word| [word[0], word[1], word[2], word[3]])
+        self.bytes.as_chunks::<4>().0.iter().copied()
     }
 }
 
