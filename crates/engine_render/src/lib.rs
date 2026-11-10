@@ -63,8 +63,8 @@ pub use gpu_data::{
 };
 pub use kinds::{
     Channels, Form, FormColor, FormDepth, FormFragment, FormPass, FormSide, FormTarget,
-    FormTopology, FragmentPass, KindForm, OwnFragments, PassFragment, PerPass, RoleFragments,
-    Varyings,
+    FormTopology, FragmentPass, KindForm, OwnFaces, OwnFragments, PassFragment, PerPass,
+    RoleFragments, Varyings,
 };
 pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
 pub use materials::gpu_format as texture_format;
@@ -140,6 +140,7 @@ pub trait GpuPart: Sized + Send + Sync + 'static {
     const LAZY: bool = false;
     const TURNS_ON_IN_PLAY: bool = false;
     const LABELS: &'static [&'static str] = &[];
+    const MEMORY: &'static [&'static str] = &[];
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error>;
     fn prepare(&mut self, reads: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>);
     fn view(&mut self, _view: &engine_core::ViewFacts, _cx: &mut Prepare<'_, Self>) {}
@@ -158,6 +159,7 @@ pub trait RenderBricks {
         draw: fn(&P, &SceneDraw, &mut Draw<'_, P, Scene>) -> u32,
     ) -> &mut Self;
     fn view_target(&mut self, target: TargetDecl) -> &mut Self;
+    fn device_feature(&mut self, feature: wgpu::Features) -> &mut Self;
     fn generated(&mut self, wgsl: &'static [&'static str]) -> &mut Self;
     fn material_slot(&mut self, module: SlotModule) -> &mut Self;
     fn open_slot(&mut self, slot: OpenSlot) -> &mut Self;
@@ -222,6 +224,13 @@ impl RenderBricks for Bricks<'_> {
 
     fn view_target(&mut self, target: TargetDecl) -> &mut Self {
         self.record().render.push(Box::new(target));
+        self
+    }
+
+    fn device_feature(&mut self, feature: wgpu::Features) -> &mut Self {
+        self.record()
+            .render
+            .push(Box::new(registration::DeviceFeature(feature)));
         self
     }
 
@@ -331,12 +340,19 @@ pub struct SceneDraw {
     pub index: Option<u32>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LastFrame {
+    Unread,
+    Read,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct TargetDecl {
     pub name: TargetName,
     pub format: wgpu::TextureFormat,
     pub written: &'static [AttachPoint],
     pub module: Option<engine_core::Module>,
+    pub last_frame: LastFrame,
 }
 
 pub trait Scope<P> {
@@ -958,21 +974,19 @@ impl<P: GpuPart> Prepare<'_, P> {
             && self.core.assets.materials.group(material).is_some()
     }
 
-    pub fn read_target(&self, name: TargetName) -> bool {
+    pub fn last_frame_read(&self) -> bool {
         let machine = &self.core.machine;
-        let Some(target) = machine
+        let ran = &self.core.set().ran;
+        machine
             .outputs
             .iter()
-            .position(|output| output.name == name.name())
-            .and_then(|index| machine.ids.target(machine::Target::Output(index as u32)))
-        else {
-            return false;
-        };
-        self.core
-            .set()
-            .ran
-            .iter()
-            .any(|pass| machine.graph.reads(pass).contains(target.index()))
+            .enumerate()
+            .filter(|(_, output)| output.last_frame == LastFrame::Read)
+            .filter_map(|(index, _)| machine.ids.target(machine::Target::Output(index as u32)))
+            .any(|target| {
+                ran.iter()
+                    .any(|pass| machine.graph.reads(pass).contains(target.index()))
+            })
     }
 
     pub fn allocate(&mut self, texture: Texture<P>, size: wgpu::Extent3d, mips: u32) -> Allocation {

@@ -454,6 +454,7 @@ fn outputs(registry: &Registry, roots: &mut Vec<(String, String)>) -> Vec<Output
             format,
             layers: vec![engine_core::AttachPoint::Transparent],
             module: Some(crate::shared::TRANSPARENCY_MODULE.to_owned()),
+            last_frame: crate::LastFrame::Unread,
         });
     }
     for (_, record) in registry.iter() {
@@ -467,6 +468,7 @@ fn outputs(registry: &Registry, roots: &mut Vec<(String, String)>) -> Vec<Output
                 format: target.format,
                 layers: target.written.to_vec(),
                 module,
+                last_frame: target.last_frame,
             });
         }
     }
@@ -793,6 +795,7 @@ fn install_with(
                         lazy: part.lazy,
                         turns_on_in_play: part.turns_on_in_play,
                         labels: part.labels,
+                        memory: part.memory,
                         scope: part.scope,
                         install: part.install,
                     },
@@ -817,6 +820,7 @@ fn install_with(
             lazy: entry.record.lazy,
             turns_on_in_play: entry.record.turns_on_in_play,
             labels: entry.record.labels,
+            memory: entry.record.memory,
             owner: entry
                 .brick
                 .map_or(engine_registry::CORE_ROW, |_| entry.package),
@@ -962,6 +966,7 @@ impl Renderer {
     }
 
     pub fn install(&mut self, world: &mut World) -> Result<(), Vec<Error>> {
+        super::startup::refuse_lacking(world, self.core.device.features());
         let installed = install(&self.core.device, self.core.limits, world, self.edited())?;
         self.adopt_installed(installed, world);
         Ok(())
@@ -1064,7 +1069,8 @@ impl Renderer {
 
 #[doc(hidden)]
 pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
-    let (device, queue) = noop_device().map_err(|error| vec![error])?;
+    let asked = super::startup::asked_features(world);
+    let (device, queue) = noop_device(asked).map_err(|error| vec![error])?;
     let limits = device_limits(&device.limits(), device.features(), 0);
     let mut installed = install(&device, limits, world, std::collections::BTreeMap::new())?;
     let listed = listing(
@@ -1292,7 +1298,7 @@ pub(crate) fn reinstall(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn noop_device() -> Result<(wgpu::Device, wgpu::Queue), Error> {
+fn noop_device(asked: wgpu::Features) -> Result<(wgpu::Device, wgpu::Queue), Error> {
     let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
     descriptor.backends = wgpu::Backends::NOOP;
     descriptor.backend_options.noop.enable = true;
@@ -1303,6 +1309,7 @@ fn noop_device() -> Result<(wgpu::Device, wgpu::Queue), Error> {
             .map_err(|error| failed_with("$.adapter", error))?;
     let (device, queue) = crate::platform::ready(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("engine/noop-device"),
+        required_features: adapter.features() & asked,
         required_limits: super::startup::device_limits(&adapter.limits()),
         ..Default::default()
     }))
@@ -1312,6 +1319,6 @@ fn noop_device() -> Result<(wgpu::Device, wgpu::Queue), Error> {
 }
 
 #[cfg(target_arch = "wasm32")]
-fn noop_device() -> Result<(wgpu::Device, wgpu::Queue), Error> {
+fn noop_device(_asked: wgpu::Features) -> Result<(wgpu::Device, wgpu::Queue), Error> {
     Err(failed("$.device").expected(Expected::Supported))
 }

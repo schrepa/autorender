@@ -4,7 +4,7 @@ use engine_core::{
 };
 use engine_render::{AfterRead, Allocation, GpuPart, Prepare, UploadRange, listed_ranges};
 
-use crate::gpu::{Drawing, MeshesGpu, VIEW_FRAME_BYTES};
+use crate::gpu::{Drawing, INSTANCE_BUFFER_ROW, INSTANCE_STAGING_ROW, MeshesGpu, VIEW_FRAME_BYTES};
 use crate::layouts::{
     BatchData, CandidateData, CandidateState, DRAW_ARGS_BYTES, GROUP, LOD_LEVELS,
     PresentationFrame, UNWATCHED,
@@ -181,10 +181,10 @@ impl MeshesGpu {
         cx.count_upload(color_bytes);
         let color = size_of::<ColorData>() as u64;
         cx.memory(
-            "memory.render_staging_capacity_bytes",
+            INSTANCE_STAGING_ROW,
             (state.color_staging.capacity() * size_of::<ColorData>()) as u64,
         );
-        cx.memory("memory.gpu_instance_buffer_bytes", capacity * color);
+        cx.memory(INSTANCE_BUFFER_ROW, capacity * color);
     }
 
     fn prepare_presentation(

@@ -147,12 +147,12 @@ impl AppHost {
         build: impl FnOnce(&mut Engine) -> Result<()>,
     ) -> Result<Self> {
         let display_paced = target.on_display();
-        let starting = Renderer::start(target).await?;
         let engine = built(|| {
             let mut engine = crate::engine(bricks)?;
             build(&mut engine)?;
             Ok(engine)
         })?;
+        let starting = Renderer::start(target, engine.app.world()).await?;
         let renderer = Box::new(starting.finish().await?);
         let mut host = Self::with(engine, renderer, display_paced);
         host.claim_passes()?;

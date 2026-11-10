@@ -25,6 +25,7 @@ const VIEW_BYTES: u64 = 16;
 const POSE_BYTES: u64 = 48;
 const COMPOSED_BYTES: u64 = 112;
 const MIN_STORAGE_BYTES: u64 = 256;
+const PREVIOUS_POSE_ROW: &str = "memory.gpu_previous_pose_bytes";
 const NODE_LEVELS: usize = MAX_HIERARCHY_DEPTH + 1;
 const PYRAMID_LEVELS: usize = 16;
 const PYRAMID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
@@ -864,7 +865,7 @@ impl DrawnGpu {
         slots: u64,
         cx: &mut Prepare<'_, Self>,
     ) -> bool {
-        let kept = cx.read_target(TargetName::MOTION);
+        let kept = cx.last_frame_read();
         let bytes = slots * POSE_BYTES;
         let poses = cx.allocate_buffer(self.poses, bytes);
         let previous =
@@ -882,10 +883,7 @@ impl DrawnGpu {
             && generation.is_some()
             && self.motion_generation == generation;
         self.motion_generation = if kept { generation } else { None };
-        cx.memory(
-            "memory.gpu_previous_pose_bytes",
-            if kept { bytes } else { 0 },
-        );
+        cx.memory(PREVIOUS_POSE_ROW, if kept { bytes } else { 0 });
         if kept {
             engine_core::profile::counter("render.object_motion", f64::from(u8::from(motion)));
             cx.copy(
@@ -1060,6 +1058,7 @@ impl GpuPart for DrawnGpu {
         Res<'static, CullPlan>,
     );
     const NAME: &'static str = "drawn";
+    const MEMORY: &'static [&'static str] = &[PREVIOUS_POSE_ROW];
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         let drawn_at = |name: &'static str| var(DRAWN_MODULE, name);

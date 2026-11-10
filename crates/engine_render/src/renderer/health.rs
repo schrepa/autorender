@@ -220,6 +220,7 @@ impl Renderer {
                 self.recovering = Some(Box::pin(super::startup::open(
                     self.core.display.instance(),
                     self.core.display.power_preference(),
+                    super::startup::asked_features(world),
                 )));
                 self.change(Change::Recovering);
             }
@@ -248,6 +249,7 @@ impl Renderer {
                         for brick in std::mem::take(&mut self.lost_bricks) {
                             engine_registry::ask_on(world, brick);
                         }
+                        super::startup::refuse_lacking(world, self.core.device.features());
                         self.change(Change::Recovered);
                     }
                     Err(error) => self.change(Change::Failed(error)),

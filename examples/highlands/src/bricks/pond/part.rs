@@ -54,7 +54,7 @@ const POND_FRAGMENTS: OwnFragments = OwnFragments {
         ..RoleFragments::NONE
     },
     owned: RoleFragments::NONE,
-    cull: FaceCull::None,
+    faces: engine_render::OwnFaces::Culled(FaceCull::None),
 };
 
 const POND_FORM: KindForm = KindForm {

@@ -1,3 +1,4 @@
+mod build_scripts;
 mod draw_kinds;
 mod techniques;
 
@@ -189,6 +190,7 @@ struct Member {
     kind: Option<String>,
     engine_rules: Value,
     cdylib: bool,
+    build: Option<PathBuf>,
     dependencies: Vec<Dependency>,
 }
 
@@ -254,8 +256,9 @@ fn check(root: &Path, problems: &mut Vec<String>) -> Result<usize, String> {
     placed(&members, problems);
     implementors(&root, &members, problems)?;
     declarations(&root, &members, problems)?;
-    technique_free(&root, &members, problems)?;
+    technique_free(&root, &members, &folders, problems)?;
     draw_kind_free(&root, &members, problems)?;
+    build_scripts_inside(&root, &members, &folders, problems)?;
     for member in &members {
         check_member(&root, &workspace, member, &folders, problems)?;
     }
@@ -304,6 +307,19 @@ fn member(root: &Path, package: &Value) -> Member {
         .flatten()
         .flat_map(|target| target["crate_types"].as_array().into_iter().flatten())
         .any(|crate_type| crate_type == "cdylib");
+    let build = package["targets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|target| {
+            target["kind"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|kind| kind == "custom-build")
+        })
+        .and_then(|target| target["src_path"].as_str())
+        .map(|path| normal(Path::new(path)));
     Member {
         name: package["name"].as_str().unwrap_or_default().to_owned(),
         at: relative(root, &dir),
@@ -312,6 +328,7 @@ fn member(root: &Path, package: &Value) -> Member {
             .map(str::to_owned),
         engine_rules: package["metadata"]["engine"]["engine_rules"].clone(),
         cdylib,
+        build,
         dependencies: package["dependencies"]
             .as_array()
             .into_iter()
@@ -428,20 +445,98 @@ fn declarations(root: &Path, members: &[Member], problems: &mut Vec<String>) -> 
     Ok(())
 }
 
+fn core(member: &Member) -> bool {
+    member
+        .kind
+        .as_deref()
+        .is_some_and(|kind| techniques::FREE_KINDS.contains(&kind))
+}
+
+fn linked(dependency: &Dependency) -> bool {
+    dependency.table.rsplit('.').next() == Some("dependencies")
+}
+
+fn linked_by_core<'a>(
+    members: &'a [Member],
+    folders: &BTreeMap<&Path, &'a Member>,
+) -> BTreeSet<&'a str> {
+    let mut reached = BTreeSet::new();
+    let mut pending: Vec<&Member> = members.iter().filter(|member| core(member)).collect();
+    while let Some(member) = pending.pop() {
+        for dependency in member
+            .dependencies
+            .iter()
+            .filter(|dependency| linked(dependency))
+        {
+            let Some(target) = dependency
+                .path
+                .as_deref()
+                .and_then(|dir| folders.get(dir).copied())
+            else {
+                continue;
+            };
+            if !core(target) && reached.insert(target.name.as_str()) {
+                pending.push(target);
+            }
+        }
+    }
+    reached
+}
+
 fn technique_free(
     root: &Path,
     members: &[Member],
+    folders: &BTreeMap<&Path, &Member>,
     problems: &mut Vec<String>,
 ) -> Result<(), String> {
+    let linked = linked_by_core(members, folders);
     for member in members {
-        let free = member
-            .kind
-            .as_deref()
-            .is_some_and(|kind| techniques::FREE_KINDS.contains(&kind));
-        if free {
-            techniques::check(
+        let label = if core(member) {
+            member.label()
+        } else if linked.contains(member.name.as_str()) {
+            format!("{}, which the core links", member.label())
+        } else {
+            continue;
+        };
+        let mut found = Vec::new();
+        let source = member.dir.join("src");
+        if source.is_dir() {
+            techniques::files(&source, &mut found)?;
+        }
+        found.extend(member.build.iter().cloned());
+        techniques::check(&label, &found, |path| relative(root, path), problems)?;
+    }
+    Ok(())
+}
+
+fn build_scripts_inside(
+    root: &Path,
+    members: &[Member],
+    folders: &BTreeMap<&Path, &Member>,
+    problems: &mut Vec<String>,
+) -> Result<(), String> {
+    for member in members.iter().filter(|member| core(member)) {
+        for dependency in &member.dependencies {
+            let workspace = dependency
+                .path
+                .as_deref()
+                .and_then(|dir| folders.get(dir).copied());
+            if let Some(target) = workspace
+                && dependency.table.ends_with("build-dependencies")
+            {
+                problems.push(format!(
+                    "{}: {} {}: a core crate's build script reads no file outside its own crate, and the lint cannot see what {} reads",
+                    member.label(),
+                    dependency.table,
+                    dependency.key,
+                    target.name
+                ));
+            }
+        }
+        if let Some(script) = &member.build {
+            build_scripts::check(
                 &member.label(),
-                &member.dir.join("src"),
+                script,
                 |path| relative(root, path),
                 problems,
             )?;

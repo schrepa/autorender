@@ -26,7 +26,7 @@ pub struct MeshLevels {
 
 fn lod_record(input: &[u8]) -> RecordKey {
     record_key(
-        &crate::sources::LODBUILD,
+        &engine_lodbuild::SOURCE_DIGEST,
         MESH_LODS_NAME,
         &content_hash(input).to_le_bytes(),
     )

@@ -218,6 +218,7 @@ pub(crate) struct PartInfo {
     pub(crate) lazy: bool,
     pub(crate) turns_on_in_play: bool,
     pub(crate) labels: &'static [&'static str],
+    pub(crate) memory: &'static [&'static str],
     pub(crate) owner: &'static str,
     pub(crate) profile: u16,
 }

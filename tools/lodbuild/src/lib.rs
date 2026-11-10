@@ -3,6 +3,8 @@
     clippy::match_wildcard_for_single_variants
 )]
 
+include!(concat!(env!("OUT_DIR"), "/digest.rs"));
+
 mod chain;
 mod distance;
 mod lod;

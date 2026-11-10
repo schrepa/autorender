@@ -18,7 +18,7 @@ use engine_core::{
     Writes, every,
 };
 use engine_render::{
-    DEBUG_TARGETS, DebugModes, DebugShown, RenderBricks, TargetDecl, TargetName, wgpu,
+    DEBUG_TARGETS, DebugModes, DebugShown, LastFrame, RenderBricks, TargetDecl, TargetName, wgpu,
 };
 
 pub use settings::DebugView;
@@ -51,6 +51,7 @@ const fn shown_target(name: TargetName, format: wgpu::TextureFormat) -> TargetDe
         format,
         written: &[],
         module: None,
+        last_frame: LastFrame::Unread,
     }
 }
 

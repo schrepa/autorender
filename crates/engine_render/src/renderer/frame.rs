@@ -13,15 +13,6 @@ use crate::readback::{Arrival, Reader};
 
 const BATCHES: [&str; 3] = ["batch_0", "batch_1", "batch_2"];
 const OPAQUE_SCENE: &str = "opaque_scene";
-const MEMORY: [&str; 7] = [
-    "memory.gpu_previous_pose_bytes",
-    "memory.render_staging_capacity_bytes",
-    "memory.gpu_instance_buffer_bytes",
-    "memory.gpu_mesh_payload_bytes",
-    "memory.gpu_mesh_arena_bytes",
-    "memory.gpu_texture_payload_bytes",
-    "memory.gpu_texture_mip_bytes",
-];
 
 struct Viewed {
     view_projection: Mat4,
@@ -798,25 +789,26 @@ impl Renderer {
             engine_profile::counter("render.immediate_submissions", f64::from(immediate));
             engine_profile::counter("render.texture_mip_levels", f64::from(mip_levels));
             engine_profile::counter("render.camera_write_bytes", camera_bytes as f64);
-            for name in MEMORY {
-                let held = match name {
-                    "memory.render_staging_capacity_bytes" => run.assets.meshes.staging_bytes(),
-                    "memory.gpu_mesh_payload_bytes" => stats.resident_mesh_bytes,
-                    "memory.gpu_mesh_arena_bytes" => run.assets.meshes.capacity_bytes(),
-                    "memory.gpu_texture_payload_bytes" => stats.resident_texture_bytes,
-                    "memory.gpu_texture_mip_bytes" => mip_bytes,
-                    _ => 0,
-                };
-                let parts: u64 = run
-                    .tallies
-                    .uploads
-                    .memory
-                    .iter()
-                    .filter(|(known, _)| *known == name)
-                    .map(|(_, bytes)| *bytes)
-                    .sum();
-                engine_profile::counter(name, (held + parts) as f64);
+            let held = [
+                (
+                    "memory.geometry_staging_capacity_bytes",
+                    run.assets.meshes.staging_bytes(),
+                ),
+                ("memory.gpu_mesh_payload_bytes", stats.resident_mesh_bytes),
+                (
+                    "memory.gpu_mesh_arena_bytes",
+                    run.assets.meshes.capacity_bytes(),
+                ),
+                (
+                    "memory.gpu_texture_payload_bytes",
+                    stats.resident_texture_bytes,
+                ),
+                ("memory.gpu_texture_mip_bytes", mip_bytes),
+            ];
+            for (name, bytes) in held {
+                engine_profile::counter(name, bytes as f64);
             }
+            part_memory_counters(run);
         }
         Ok(stats)
     }
@@ -831,6 +823,30 @@ impl Renderer {
                 bits | 1_u128.checked_shl(at as u32).unwrap_or(0)
             });
         engine_core::Names { bits, names }
+    }
+}
+
+fn part_memory_counters(run: &crate::encode::Run) {
+    let reported = &run.tallies.uploads.memory;
+    let mut rows: Vec<&'static str> = Vec::new();
+    let declared = run
+        .machine
+        .declared
+        .parts
+        .iter()
+        .flat_map(|part| part.memory.iter().copied());
+    for name in declared.chain(reported.iter().map(|&(name, _)| name)) {
+        if !rows.contains(&name) {
+            rows.push(name);
+        }
+    }
+    for name in rows {
+        let bytes: u64 = reported
+            .iter()
+            .filter(|(known, _)| *known == name)
+            .map(|(_, bytes)| *bytes)
+            .sum();
+        engine_profile::counter(name, bytes as f64);
     }
 }
 

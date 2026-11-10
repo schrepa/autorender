@@ -479,8 +479,12 @@ pub fn record_missing(error: &Error) -> bool {
             == Some(MISSING_RECORD)
 }
 
-static LODBUILD: Source =
-    Source::generated("engine_lodbuild", false, crate::sources::LODBUILD, &[]);
+static LODBUILD: Source = Source::generated(
+    "engine_lodbuild",
+    false,
+    engine_lodbuild::SOURCE_DIGEST,
+    &[],
+);
 
 pub(crate) const MESH_LODS_NAME: &str = "engine::mesh_lods";
 

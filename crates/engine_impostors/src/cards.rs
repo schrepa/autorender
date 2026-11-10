@@ -37,7 +37,7 @@ const CARD_FRAGMENTS: OwnFragments = OwnFragments {
         shown: Some(cards::FS_DEBUG_CARD),
     },
     owned: RoleFragments::NONE,
-    cull: FaceCull::None,
+    faces: engine_render::OwnFaces::Culled(FaceCull::None),
 };
 
 const fn card_form(vertex: Entry) -> KindForm {

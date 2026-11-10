@@ -1219,7 +1219,6 @@ dependencies = [
  "engine_profile",
  "engine_registry",
  "engine_settings",
- "engine_sources",
  "engine_textures",
  "glam 0.30.9",
  "js-sys",
@@ -1545,6 +1544,7 @@ version = "0.1.0"
 dependencies = [
  "engine_codec",
  "engine_math",
+ "engine_sources",
  "glam 0.30.9",
 ]
 

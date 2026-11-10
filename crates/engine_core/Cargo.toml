@@ -36,9 +36,6 @@ wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
 web-sys.workspace = true
 
-[build-dependencies]
-engine_sources.workspace = true
-
 [lints]
 workspace = true
 

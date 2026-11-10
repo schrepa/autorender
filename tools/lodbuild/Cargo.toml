@@ -11,6 +11,9 @@ engine_codec.workspace = true
 engine_math.workspace = true
 glam.workspace = true
 
+[build-dependencies]
+engine_sources.workspace = true
+
 [lints]
 workspace = true
 

@@ -261,26 +261,16 @@ fn source_code(
     code
 }
 
-pub fn emit_of(named: &[(&str, &str)]) {
+pub fn emit_digest() {
     let manifest = PathBuf::from(var("CARGO_MANIFEST_DIR"));
     let out = PathBuf::from(var("OUT_DIR"));
-    let root = workspace_root(&manifest);
-    let workspace = read(&root.join("Cargo.toml"));
-    let mut code = String::new();
-    for &(constant, package) in named {
-        let path = workspace
-            .as_ref()
-            .and_then(|item| item.get("workspace")?.get("dependencies")?.get(package))
-            .and_then(|entry| entry.get("path"))
-            .and_then(Item::as_str)
-            .unwrap_or_else(|| panic!("the workspace names no path for {package}"));
-        let folder = normal(&root.join(path));
-        let hash = digest(package, &folder, &root, true, None);
-        code.push_str(&format!(
-            "pub(crate) const {constant}: [u8; 32] = {hash:?};\n"
-        ));
-    }
-    fs::write(out.join("sources.rs"), code).expect("OUT_DIR is writable");
+    let package = var("CARGO_PKG_NAME");
+    let hash = digest(&package, &manifest, &workspace_root(&manifest), true, None);
+    fs::write(
+        out.join("digest.rs"),
+        format!("pub const SOURCE_DIGEST: [u8; 32] = {hash:?};\n"),
+    )
+    .expect("OUT_DIR is writable");
 }
 
 fn sources(
