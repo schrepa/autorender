@@ -21,7 +21,10 @@ mod trace;
 mod world_trace;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Attributes, Brick, Bricks, Cook, CookList, JobKind, KindDecl, Schedule, Source};
+use engine_core::{
+    Attributes, BlendedPass, Brick, Bricks, ColorPass, Cook, CookList, JobKind, KindDecl, KindSkip,
+    PassName, Schedule, Source,
+};
 use engine_places_rendering::lighting::{Ambient, SunBlockers};
 use engine_places_rendering::reflections::{TraceDepths, TraceSource};
 use engine_places_rendering::sky::OpenSky;
@@ -100,7 +103,16 @@ impl Brick for TerrainShadingBrick {
             .draw_kind(KindDecl {
                 kind: terrain::TERRAIN,
                 needs: Attributes::NONE,
-                skips: &[],
+                skips: &[
+                    KindSkip {
+                        pass: ColorPass::NAME,
+                        reason: terrain::SHADED_ELSEWHERE,
+                    },
+                    KindSkip {
+                        pass: BlendedPass::NAME,
+                        reason: terrain::NEVER_BLENDS,
+                    },
+                ],
             })
             .draws::<TerrainGpu>(terrain::TERRAIN, TerrainGpu::draw);
     }

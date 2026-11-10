@@ -9,7 +9,7 @@ use engine_places_world::ground::{
 use engine_render::{Allocation, Prepare};
 
 use super::part::{Handles, TerrainGpu};
-use super::{DIRECTORY_AT, HOLE_WORDS, NO_HOLES, VIEWS};
+use super::{DIRECTORY_AT, HOLE_WORDS, NO_HOLES};
 use crate::gpu::{
     NOT_RESIDENT, TABLE_FADES, TABLE_NOW, TABLE_TERRAINS, TABLE_VIEWS, TERRAIN_WORDS,
     TerrainUniform, VIEW_WORDS, ViewUniform,
@@ -77,7 +77,7 @@ impl TerrainTables {
             .max(tiles.terrains.len().max(1) as u32 * TERRAIN_WORDS);
         self.views_room = self
             .views_room
-            .max(views.max(VIEWS as usize) as u32 * VIEW_WORDS);
+            .max(views.max(1) as u32 * VIEW_WORDS);
         self.layers_room = self.layers_room.max(atlas.capacity.max(1));
         for &(id, layer, upload) in &moves.uploads {
             if upload == Upload::Whole
