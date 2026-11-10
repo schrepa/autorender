@@ -1,10 +1,10 @@
 use bevy_ecs::prelude::*;
-use engine_core::{AttachPoint, DrawKind, Error, PassViews, ScenePass, TargetName};
+use engine_core::{DrawKind, Error, MaterialHandle, PassRole};
 use engine_open_world_kit::ground::PALETTE_ENTRIES;
 use engine_render::{
-    AfterRead, Allocation, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND, DEBUG_TARGETS,
-    DepthUse, Draw, DrawInput, Encode, GpuPart, Install, Lifetime, Pass, Pipeline, Prepare,
-    RenderPipeline, Scene, SceneDraw, Shape, wgpu,
+    AfterRead, Allocation, Bind, Buffer, ComputePipeline, Count, Draw, DrawInput, Encode, Form,
+    FormSide, FormTopology, GpuPart, Install, KindForm, Lifetime, Pass, Prepare, Scene,
+    SceneDraw, Shape, Varyings, wgpu,
 };
 
 pub(crate) const COVER: DrawKind = DrawKind("cover");
@@ -12,7 +12,9 @@ pub(crate) const COVER: DrawKind = DrawKind("cover");
 use crate::covers::CoverTable;
 use crate::growth::{BLADE_BYTES, BladeCounts, CoverPlan};
 use crate::layouts::{CoverFrame, CoverMaterial, CoverTerrain, Grow};
-use crate::shaders::cover::{debug, draw, faces::cover as face, grow};
+use crate::settings::GroundCover;
+use crate::shaders::cover::{draw, faces::cover as face, grow};
+use crate::surface::CoverSurface;
 
 const DRAW_ARGS: u64 = size_of::<wgpu::util::DrawIndirectArgs>() as u64;
 const COUNT_BYTES: u64 = 32;
@@ -21,11 +23,15 @@ const FRAME_BYTES: u64 = size_of::<CoverFrame>() as u64;
 const TERRAIN_BYTES: u64 = size_of::<CoverTerrain>() as u64;
 const MATERIAL_BYTES: u64 = PALETTE_ENTRIES as u64 * size_of::<CoverMaterial>() as u64;
 
-type ScenePipeline = (
-    &'static str,
-    Pipeline<CoverGpu, Scene>,
-    DrawInput<CoverGpu, Scene>,
-);
+const COVER_FORM: KindForm = KindForm {
+    kind: COVER,
+    placed: FormSide {
+        vertex: draw::VS_COVER,
+        streams: &[],
+    },
+    owned: None,
+    varyings: Varyings::ObjectExtra,
+};
 
 pub(crate) struct CoverGpu {
     grow: Pass<Self>,
@@ -38,7 +44,10 @@ pub(crate) struct CoverGpu {
     growing: ComputePipeline<Self>,
     stepping: ComputePipeline<Self>,
     finishing: ComputePipeline<Self>,
-    scenes: Vec<ScenePipeline>,
+    form: Form<Self>,
+    inputs: Vec<(&'static str, DrawInput<Self, Scene>)>,
+    material: Option<MaterialHandle>,
+    shadows: bool,
     cells: Vec<u32>,
     blade_bytes: u64,
     row_bytes: u64,
@@ -46,7 +55,12 @@ pub(crate) struct CoverGpu {
 }
 
 impl GpuPart for CoverGpu {
-    type Reads = (Res<'static, CoverPlan>, Res<'static, CoverTable>);
+    type Reads = (
+        Res<'static, CoverPlan>,
+        Res<'static, CoverTable>,
+        Res<'static, CoverSurface>,
+        Res<'static, GroundCover>,
+    );
     const NAME: &'static str = "ground_cover";
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
@@ -85,53 +99,18 @@ impl GpuPart for CoverGpu {
                 (grow::ARGS, Bind::Buffer(args)),
             ],
         )?;
-        let listed: Vec<ScenePass> = cx
+        let form = cx.form_shaped(
+            &COVER_FORM,
+            FormTopology::Strip,
+            &[
+                (draw::COVER_BLADES, Bind::Buffer(blades)),
+                (draw::COVER_FRAME, Bind::Buffer(frame)),
+            ],
+        )?;
+        let inputs = form
             .passes()
-            .listed()
-            .iter()
-            .filter(|listed| {
-                listed.bit.is_some()
-                    && cx.passes().takes(listed, COVER)
-                    && listed.pass.views != PassViews::Owned
-                    && listed.pass.at != AttachPoint::Transparent
-            })
-            .copied()
+            .map(|pass| (pass.scene.name(), cx.draw_input(pass.scene, args)))
             .collect();
-        let mut scenes = Vec::with_capacity(listed.len());
-        for listed in listed {
-            let scene = Scene::named(listed.name);
-            let writes = listed.pass.writes;
-            let (fragment, blend) = if writes.contains(DEBUG_TARGETS[0]) {
-                (Some(debug::FS_DEBUG_COVER), Some(DEBUG_BLEND))
-            } else if writes.contains(TargetName::COLOR) {
-                (Some(draw::FS_COVER), None)
-            } else {
-                (None, None)
-            };
-            let pipeline = cx.render_pipeline(
-                scene,
-                &RenderPipeline {
-                    vertex: draw::VS_COVER,
-                    fragment,
-                    vertices: &[],
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleStrip,
-                        cull_mode: None,
-                        ..Default::default()
-                    },
-                    depth: DepthUse::Write {
-                        bias: wgpu::DepthBiasState::default(),
-                    },
-                    blend,
-                    writes: wgpu::ColorWrites::ALL,
-                },
-                &[
-                    (draw::COVER_BLADES, Bind::Buffer(blades)),
-                    (draw::COVER_FRAME, Bind::Buffer(frame)),
-                ],
-            )?;
-            scenes.push((listed.name, pipeline, cx.draw_input(scene, args)));
-        }
         Ok(Self {
             grow: grow_pass,
             rows,
@@ -143,7 +122,10 @@ impl GpuPart for CoverGpu {
             growing,
             stepping,
             finishing,
-            scenes,
+            form,
+            inputs,
+            material: None,
+            shadows: false,
             cells: Vec::new(),
             blade_bytes: BLADE_BYTES,
             row_bytes: ROW_BYTES,
@@ -153,9 +135,11 @@ impl GpuPart for CoverGpu {
 
     fn prepare(
         &mut self,
-        (plan, table): SystemParamItem<'_, '_, Self::Reads>,
+        (plan, table, surface, settings): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
+        self.material = surface.material;
+        self.shadows = settings.shadows;
         if table.is_changed() {
             let terrains = size_of_val(table.terrains.as_slice()) as u64;
             let (Allocation::Fresh | Allocation::Kept) =
@@ -222,25 +206,37 @@ impl GpuPart for CoverGpu {
 
 impl CoverGpu {
     pub(crate) fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
-        if !self.drawn {
-            return 0;
+        if scene.role == PassRole::Blended {
+            return draw.skip("ground cover draws opaque");
         }
-        let Some((_, pipeline, indirect)) = self
-            .scenes
+        if scene.view.is_some() && !self.shadows {
+            return draw.skip("ground_cover.shadows is off");
+        }
+        if !self.drawn {
+            return draw.skip("no cover grows this frame");
+        }
+        let Some(material) = self.material else {
+            return draw.skip("cover material is not in the asset library");
+        };
+        let Some(pipeline) = draw.form(&self.form) else {
+            return draw.skip("pass has no cover pipeline");
+        };
+        let Some(&(_, args)) = self
+            .inputs
             .iter()
-            .find(|(name, _, _)| *name == scene.pass.name())
+            .find(|(name, _)| *name == scene.pass.name())
         else {
-            return 0;
+            return draw.skip("pass has no cover list");
         };
         for offset in [0, DRAW_ARGS] {
             draw.draw(
-                pipeline,
+                &pipeline,
                 Shape::Indirect {
                     vertices: &[],
                     indices: None,
-                    args: *indirect,
+                    args,
                     offset,
-                    material: None,
+                    material: Some(material),
                 },
             );
         }

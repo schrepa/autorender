@@ -61,7 +61,9 @@ pub use gpu_data::{
     jitter_clip, mip_levels, pack_color, pack_surface, pixel_angle, pixels_per_meter,
     pyramid_extents,
 };
-pub use kinds::{Form, FormPass, FormSide, KindForm, OwnFragments, RoleFragments, Varyings};
+pub use kinds::{
+    Form, FormPass, FormSide, FormTopology, KindForm, OwnFragments, RoleFragments, Varyings,
+};
 pub use uploads::{UploadRange, listed_ranges};
 pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
 pub use materials::gpu_format as texture_format;

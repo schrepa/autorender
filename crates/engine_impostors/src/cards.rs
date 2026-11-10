@@ -1,13 +1,11 @@
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParamItem;
-use engine_core::{
-    AttachPoint, CullPlan, DrawKind, Entry, Error, PassViews, ScenePass, TargetName, gpu_bits,
-};
+use engine_core::{AttachPoint, ColorPass, CullPlan, DrawKind, Entry, Error, gpu_bits};
 use engine_places_rendering::impostors::{ImpostorRecord, ImpostorRecords};
 use engine_render::{
-    Allocation, Attach, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND, DEBUG_TARGETS,
-    DepthUse, Draw, DrawInput, Encode, GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare,
-    RenderPipeline, Scene, SceneDraw, Scope, Shape, wgpu,
+    Allocation, Attach, Bind, Buffer, ComputePipeline, Count, Draw, DrawInput, Encode, FaceCull,
+    Form, FormSide, GpuPart, Install, KindForm, Lifetime, Own, OwnFragments, Pass, Pipeline,
+    Prepare, RoleFragments, Scene, SceneDraw, Shape, Varyings, wgpu,
 };
 
 use crate::meshes::MeshCards;
@@ -30,11 +28,32 @@ pub(crate) struct CardFrames {
     pub origin: u32,
 }
 
-type Placed = (
-    &'static str,
-    [Pipeline<CardGpu, Scene>; 2],
-    DrawInput<CardGpu, Scene>,
-);
+const CARD_FRAGMENTS: OwnFragments = OwnFragments {
+    placed: RoleFragments {
+        lit: Some(cards::FS_CARD),
+        depth: Some(cards::FS_CARD_DEPTH),
+        blended: None,
+        shown: Some(cards::FS_DEBUG_CARD),
+    },
+    owned: RoleFragments::NONE,
+    cull: FaceCull::None,
+};
+
+const fn card_form(vertex: Entry) -> KindForm {
+    KindForm {
+        kind: CARD,
+        placed: FormSide {
+            vertex,
+            streams: &[],
+        },
+        owned: None,
+        varyings: Varyings::Own(&CARD_FRAGMENTS),
+    }
+}
+
+const CARD_FORM: KindForm = card_form(cards::VS_CARD);
+const FADING_CARD_FORM: KindForm = card_form(cards::VS_FADING_CARD);
+const LATE_CARD_FORM: KindForm = card_form(cards::VS_LATE_CARD);
 
 pub(crate) struct CardGpu {
     counted: Pass<Self>,
@@ -47,73 +66,10 @@ pub(crate) struct CardGpu {
     count_late: ComputePipeline<Self>,
     late_pipeline: Pipeline<Self, Own>,
     late_input: DrawInput<Self, Own>,
-    scenes: Vec<Placed>,
+    placed: Form<Self>,
+    fading: Form<Self>,
+    inputs: Vec<(&'static str, DrawInput<Self, Scene>)>,
     drawn: bool,
-}
-
-fn card_pipeline<S: Scope<CardGpu>>(
-    cx: &mut Install<'_, CardGpu>,
-    scope: S,
-    (vertex, fragment, shown): (Entry, Entry, bool),
-    records: Buffer<CardGpu>,
-) -> Result<Pipeline<CardGpu, S::Tag>, Error> {
-    cx.render_pipeline(
-        scope,
-        &RenderPipeline {
-            vertex,
-            fragment: Some(fragment),
-            vertices: &[],
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                cull_mode: None,
-                ..Default::default()
-            },
-            depth: DepthUse::Write {
-                bias: wgpu::DepthBiasState::default(),
-            },
-            blend: shown.then_some(DEBUG_BLEND),
-            writes: wgpu::ColorWrites::ALL,
-        },
-        &[(cards::CARD_RECORDS, Bind::Buffer(records))],
-    )
-}
-
-fn install_scenes(
-    cx: &mut Install<'_, CardGpu>,
-    records: Buffer<CardGpu>,
-    args: Buffer<CardGpu>,
-) -> Result<Vec<Placed>, Error> {
-    let listed: Vec<ScenePass> = cx
-        .passes()
-        .listed()
-        .iter()
-        .filter(|listed| {
-            listed.bit.is_some()
-                && cx.passes().takes(listed, CARD)
-                && listed.pass.views != PassViews::Owned
-                && listed.pass.at != AttachPoint::Transparent
-        })
-        .copied()
-        .collect();
-    let mut scenes = Vec::with_capacity(listed.len());
-    for listed in listed {
-        let scene = Scene::named(listed.name);
-        let writes = listed.pass.writes;
-        let shown = writes.contains(DEBUG_TARGETS[0]);
-        let fragment = if shown {
-            cards::FS_DEBUG_CARD
-        } else if writes.contains(TargetName::COLOR) {
-            cards::FS_CARD
-        } else {
-            cards::FS_CARD_DEPTH
-        };
-        let pipelines = [
-            card_pipeline(cx, scene, (cards::VS_CARD, fragment, shown), records)?,
-            card_pipeline(cx, scene, (cards::VS_FADING_CARD, fragment, shown), records)?,
-        ];
-        scenes.push((listed.name, pipelines, cx.draw_input(scene, args)));
-    }
-    Ok(scenes)
 }
 
 impl GpuPart for CardGpu {
@@ -147,10 +103,15 @@ impl GpuPart for CardGpu {
             counts::COUNT_LATE_CARDS,
             &[(counts::LATE_CARD_ARGS, Bind::Buffer(late_args))],
         )?;
-        let late_pipeline =
-            card_pipeline(cx, late, (cards::VS_LATE_CARD, cards::FS_CARD, false), records)?;
+        let bound = [(cards::CARD_RECORDS, Bind::Buffer(records))];
+        let late_pipeline = cx.form_as::<ColorPass>(late, &LATE_CARD_FORM, &bound)?;
         let late_input = cx.draw_input(late, late_args);
-        let scenes = install_scenes(cx, records, args)?;
+        let placed = cx.form(&CARD_FORM, &bound)?;
+        let fading = cx.form(&FADING_CARD_FORM, &bound)?;
+        let inputs = placed
+            .passes()
+            .map(|pass| (pass.scene.name(), cx.draw_input(pass.scene, args)))
+            .collect();
         Ok(Self {
             counted,
             late_counted,
@@ -162,7 +123,9 @@ impl GpuPart for CardGpu {
             count_late,
             late_pipeline,
             late_input,
-            scenes,
+            placed,
+            fading,
+            inputs,
             drawn: false,
         })
     }
@@ -223,23 +186,30 @@ impl GpuPart for CardGpu {
 
 impl CardGpu {
     pub(crate) fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
-        if !self.drawn {
-            return 0;
+        if scene.view.is_some() {
+            return draw.skip("impostor cards are listed for the main view only");
         }
-        let Some((_, pipelines, args)) = self
-            .scenes
-            .iter()
-            .find(|(name, _, _)| *name == scene.pass.name())
+        if !self.drawn {
+            return draw.skip("no impostor is framed");
+        }
+        let (Some(placed), Some(fading)) = (draw.form(&self.placed), draw.form(&self.fading))
         else {
-            return 0;
+            return draw.skip("impostor cards draw opaque");
         };
-        for (pipeline, offset) in pipelines.iter().zip([0, DRAW_ARGS]) {
+        let Some(&(_, args)) = self
+            .inputs
+            .iter()
+            .find(|(name, _)| *name == scene.pass.name())
+        else {
+            return draw.skip("pass has no impostor card list");
+        };
+        for (pipeline, offset) in [(placed, 0), (fading, DRAW_ARGS)] {
             draw.draw(
-                pipeline,
+                &pipeline,
                 Shape::Indirect {
                     vertices: &[],
                     indices: None,
-                    args: *args,
+                    args,
                     offset,
                     material: None,
                 },
