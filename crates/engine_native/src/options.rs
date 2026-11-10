@@ -70,6 +70,7 @@ pub fn options() -> Vec<CommandOption> {
         CommandOption::taking("--cook", "FILE"),
         CommandOption::flag("--dev"),
         CommandOption::taking("--smoke", "NAME,...|all|list"),
+        CommandOption::taking("--pairs", "N"),
         CommandOption::flag("--schemas"),
         CommandOption::taking("--pure", "NAME,...|all|list"),
         CommandOption::taking("--dev-artifacts", "DIR").defaults_to(default_artifacts().display()),
@@ -247,6 +248,7 @@ pub struct HostOptions {
     pub dev: bool,
     pub dev_artifacts: Option<PathBuf>,
     pub smoke: Option<String>,
+    pub pairs: Option<u32>,
     pub schemas: bool,
     pub pure: Option<String>,
     pub cook: Option<PathBuf>,
@@ -276,6 +278,7 @@ impl Default for HostOptions {
             dev: false,
             dev_artifacts: None,
             smoke: None,
+            pairs: None,
             schemas: false,
             pure: None,
             cook: None,
@@ -406,6 +409,7 @@ impl HostOptions {
             }
             "--dev-artifacts" => self.dev_artifacts = Some(arguments.value(argument)?.into()),
             "--smoke" => self.smoke = Some(arguments.value(argument)?),
+            "--pairs" => self.pairs = Some(arguments.count(argument)?),
             "--schemas" => {
                 arguments.flag(argument)?;
                 self.schemas = true;
@@ -460,6 +464,11 @@ impl HostOptions {
         if self.smoke.is_some() && !cfg!(feature = "dev") {
             return Err(
                 Error::new(ErrorCode::InvalidArguments, "--smoke").expected(Expected::Supported)
+            );
+        }
+        if self.pairs.is_some() && !cfg!(feature = "dev") {
+            return Err(
+                Error::new(ErrorCode::InvalidArguments, "--pairs").expected(Expected::Supported)
             );
         }
         if self.schemas && !cfg!(feature = "dev") {

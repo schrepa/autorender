@@ -1,0 +1,40 @@
+[package]
+name = "walker_game"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "walker_game-native"
+path = "src/main.rs"
+
+[package.metadata.engine]
+kind = "game"
+native = "walker_game-native"
+
+[features]
+default = []
+dev = ["engine/dev", "engine_native/dev"]
+profiling = ["engine/profiling", "engine_native/profiling"]
+
+[build-dependencies]
+engine_sources.workspace = true
+
+[dependencies]
+engine.workspace = true
+engine_collision.workspace = true
+engine_core.workspace = true
+engine_ecs.workspace = true
+engine_navigation.workspace = true
+engine_places_simulation.workspace = true
+engine_smoke.workspace = true
+engine_solids.workspace = true
+engine_standard_rendering.workspace = true
+serde_json.workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+engine_native.workspace = true
+
+[lints]
+workspace = true

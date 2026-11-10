@@ -188,10 +188,12 @@ dependencies = [
  "engine_fly_camera",
  "engine_native",
  "engine_render",
+ "engine_smoke",
  "engine_sources",
  "engine_standard_rendering",
  "glam 0.30.9",
  "serde",
+ "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -287,6 +289,20 @@ dependencies = [
  "object",
  "rustc-demangle",
  "windows-link",
+]
+
+[[package]]
+name = "bare_game"
+version = "0.1.0"
+dependencies = [
+ "engine",
+ "engine_core",
+ "engine_ecs",
+ "engine_native",
+ "engine_render",
+ "engine_smoke",
+ "engine_sources",
+ "serde_json",
 ]
 
 [[package]]
@@ -1560,6 +1576,7 @@ dependencies = [
  "base64",
  "engine",
  "engine_core",
+ "engine_panic",
  "engine_profiler",
  "engine_registry",
  "engine_worker",
@@ -2360,6 +2377,21 @@ name = "fixedbitset"
 version = "0.5.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1d674e81391d1e1ab681a28d99df07927c6d4aa5b027d7da16ba32d1d21ecd99"
+
+[[package]]
+name = "flat_game"
+version = "0.1.0"
+dependencies = [
+ "engine",
+ "engine_core",
+ "engine_ecs",
+ "engine_native",
+ "engine_smoke",
+ "engine_sources",
+ "engine_sprites",
+ "engine_standard_rendering",
+ "serde_json",
+]
 
 [[package]]
 name = "flate2"
@@ -5236,6 +5268,24 @@ checksum = "29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b"
 dependencies = [
  "same-file",
  "winapi-util",
+]
+
+[[package]]
+name = "walker_game"
+version = "0.1.0"
+dependencies = [
+ "engine",
+ "engine_collision",
+ "engine_core",
+ "engine_ecs",
+ "engine_native",
+ "engine_navigation",
+ "engine_places_simulation",
+ "engine_smoke",
+ "engine_solids",
+ "engine_sources",
+ "engine_standard_rendering",
+ "serde_json",
 ]
 
 [[package]]

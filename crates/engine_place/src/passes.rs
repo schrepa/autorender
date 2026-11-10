@@ -332,6 +332,23 @@ pub struct ScenePass {
     pub bit: Option<PassBit>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(tag = "join", rename_all = "snake_case")]
+pub enum KindJoin {
+    Joins,
+    Skips { reason: &'static str },
+    NotTaken,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub struct KindCell {
+    pub kind: &'static str,
+    pub pass: &'static str,
+    pub brick: &'static str,
+    #[serde(flatten)]
+    pub join: KindJoin,
+}
+
 #[derive(Resource, Clone, Debug, Default)]
 pub struct ScenePasses {
     listed: Vec<ScenePass>,
@@ -403,6 +420,28 @@ impl ScenePasses {
 
     pub fn kind(&self, kind: DrawKind) -> Option<&KindDecl> {
         self.kinds.iter().find(|decl| decl.kind == kind)
+    }
+
+    pub fn kind_table(&self) -> Vec<KindCell> {
+        let mut cells = Vec::new();
+        for decl in &self.kinds {
+            for listed in self.listed.iter().filter(|listed| listed.bit.is_some()) {
+                let join = match decl.skip(listed.name) {
+                    Some(skip) => KindJoin::Skips {
+                        reason: skip.reason,
+                    },
+                    None if (listed.pass.takes)(decl) => KindJoin::Joins,
+                    None => KindJoin::NotTaken,
+                };
+                cells.push(KindCell {
+                    kind: decl.kind.name(),
+                    pass: listed.name,
+                    brick: listed.brick,
+                    join,
+                });
+            }
+        }
+        cells
     }
 
     pub fn takes(&self, listed: &ScenePass, kind: DrawKind) -> bool {

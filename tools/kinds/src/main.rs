@@ -1,3 +1,5 @@
+mod techniques;
+
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
@@ -251,6 +253,7 @@ fn check(root: &Path, problems: &mut Vec<String>) -> Result<usize, String> {
     placed(&members, problems);
     implementors(&root, &members, problems)?;
     declarations(&root, &members, problems)?;
+    technique_free(&root, &members, problems)?;
     for member in &members {
         check_member(&root, &workspace, member, &folders, problems)?;
     }
@@ -424,6 +427,28 @@ fn declarations(
                 member.label(),
                 relative(root, &file)
             ));
+        }
+    }
+    Ok(())
+}
+
+fn technique_free(
+    root: &Path,
+    members: &[Member],
+    problems: &mut Vec<String>,
+) -> Result<(), String> {
+    for member in members {
+        let free = member
+            .kind
+            .as_deref()
+            .is_some_and(|kind| techniques::FREE_KINDS.contains(&kind));
+        if free {
+            techniques::check(
+                &member.label(),
+                &member.dir.join("src"),
+                |path| relative(root, path),
+                problems,
+            )?;
         }
     }
     Ok(())

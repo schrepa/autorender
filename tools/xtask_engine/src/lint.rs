@@ -25,7 +25,12 @@ const LINT: &[Stage<Lint>] = &[
         name: "kinds",
         needs: &[],
         covers: |lint| {
-            lint.changes.affects(KINDS) || lint.changes.any(|path| path.ends_with("Cargo.toml"))
+            lint.changes.affects(KINDS)
+                || lint.changes.any(|path| path.ends_with("Cargo.toml"))
+                || engine_registry::CORE_CRATES
+                    .iter()
+                    .chain(engine_registry::CORE_INTERNAL_CRATES)
+                    .any(|name| lint.changes.affects(name))
         },
         run: |lint| run(&lint.root, "cargo", &["run", "-q", "--locked", "-p", KINDS]),
     },

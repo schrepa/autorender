@@ -14,6 +14,7 @@ path = "src/main.rs"
 
 [package.metadata.engine]
 kind = "game"
+native = "app_template-native"
 
 [features]
 default = []
@@ -29,9 +30,11 @@ engine_core.workspace = true
 engine_ecs.workspace = true
 engine_fly_camera.workspace = true
 engine_render.workspace = true
+engine_smoke.workspace = true
 engine_standard_rendering.workspace = true
 glam.workspace = true
 serde.workspace = true
+serde_json.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 engine_native.workspace = true
