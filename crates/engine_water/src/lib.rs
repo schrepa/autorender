@@ -122,7 +122,7 @@ impl Brick for WaterBrick {
             .join::<TraceDepths>((), Some(shaders::water::trace_depth::MODULE))
             .join::<CookList>(Cook::new(settled::cook), None)
             .material_slot(SlotModule {
-                slot: SurfaceSlot::Normal,
+                slot: SurfaceSlot::Normal.name(),
                 name: "ripples",
                 module: shaders::water::ripples::MODULE,
                 maps: &[],

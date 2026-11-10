@@ -171,7 +171,7 @@ fn mapped_slots(
             continue;
         };
         let reading = MAPPED_SLOTS.iter().filter(|(slot, read)| {
-            read.first() == Some(&name) && (masked || *slot != SurfaceSlot::Cutoff)
+            read.first() == Some(&name) && (masked || *slot != SurfaceSlot::Cutoff.name())
         });
         for (at, (slot, _)) in reading.enumerate() {
             let filled = if at == 0 {
@@ -182,7 +182,7 @@ fn mapped_slots(
             } else {
                 SceneSlot::Module(MAPPED.to_owned())
             };
-            slots.insert(slot.name().to_owned(), filled);
+            slots.insert((*slot).to_owned(), filled);
         }
     }
     (!slots.is_empty()).then_some(slots)

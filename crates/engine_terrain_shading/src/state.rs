@@ -4,13 +4,12 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
-    AssetLibrary, Cursor, DeviceLimits, Error, Feed, FrameId, FrameTime, Interest,
+    AssetLibrary, Cursor, DeviceLimits, DrawnArea, DrawnAreas, Error, Feed, FrameId, FrameTime, Interest,
     JobFailures, JobKind, Jobs, Readable, Readback, RecordExchange, RecordKey, Records,
     Settling, Since, Stamp, TextureHandle, TextureSet, TextureSource, TextureUsage, Views, codec,
     content_hash,
 };
 use engine_heightfield::tile::shaded_elsewhere;
-use engine_places_rendering::shadows::{ShadowChange, ShadowChanges};
 use engine_tiles::{Pyramid, TileKey};
 use engine_open_world_kit::ground::{
     GroundBake, GroundBakes, GroundBaking, GroundTiles, Heightfield, HeldTile, PALETTE_ENTRIES,
@@ -493,7 +492,7 @@ impl Atlas {
         &mut self,
         entry: &TerrainEntry,
         key: TileKey,
-        (missing, shadows): (&mut Vec<(TileId, Option<u32>)>, &mut ShadowChanges),
+        (missing, areas): (&mut Vec<(TileId, Option<u32>)>, &mut DrawnAreas),
     ) {
         let id = (entry.terrain, key);
         match (
@@ -504,7 +503,7 @@ impl Atlas {
                 self.unplaced.remove(&id);
             }
             (None, Some(held)) => {
-                shadows.push(ground_box(entry, key, (held.low, held.high)));
+                areas.push(ground_box(entry, key, (held.low, held.high)));
                 self.release(id);
             }
             (Some(_), None) => missing.push((id, None)),
@@ -522,7 +521,7 @@ impl Atlas {
                     engine_core::math::min(held.low, low),
                     engine_core::math::max(held.high, high),
                 );
-                shadows.push(ground_box(entry, key, (low, high)));
+                areas.push(ground_box(entry, key, (low, high)));
                 missing.push((id, self.slots.get(&id).copied()));
             }
         }
@@ -644,7 +643,7 @@ pub(crate) fn place_tiles(
     ),
     bakes: Res<Bakes>,
     mut atlas: ResMut<Atlas>,
-    (mut ground, mut shadows): (ResMut<GroundTiles>, ResMut<ShadowChanges>),
+    (mut ground, mut areas): (ResMut<GroundTiles>, ResMut<DrawnAreas>),
 ) {
     let atlas = &mut *atlas;
     atlas.now = time.real_elapsed as f32;
@@ -707,7 +706,7 @@ pub(crate) fn place_tiles(
         let keys = tile_keys(atlas, entry, entry.changes.since(&mut cursor));
         atlas.cursors.insert(entry.terrain, cursor);
         for key in keys {
-            atlas.follow_tile(entry, key, (&mut missing, &mut shadows));
+            atlas.follow_tile(entry, key, (&mut missing, &mut areas));
         }
     }
     if atlas.has_room() {
@@ -729,7 +728,7 @@ pub(crate) fn place_tiles(
         let program = programmed(entry, tile);
         let placed = atlas.place(id, tile, replaced, (shades, program, shading));
         if placed && replaced.is_none() {
-            shadows.push(ground_box(entry, id.1, heights_of(tile)));
+            areas.push(ground_box(entry, id.1, heights_of(tile)));
         }
     }
     for entry in tiles.terrains.iter() {
@@ -772,7 +771,7 @@ pub(crate) fn listed_tile(tiles: &[TileFace], key: TileKey) -> Option<&TileFace>
         .map(|at| &tiles[at])
 }
 
-fn ground_box(terrain: &TerrainEntry, key: TileKey, (low, high): (f32, f32)) -> ShadowChange {
+fn ground_box(terrain: &TerrainEntry, key: TileKey, (low, high): (f32, f32)) -> DrawnArea {
     let pyramid = terrain.pyramid;
     let level = u32::from(key.level);
     let corner = pyramid.tile_origin(key);
@@ -784,7 +783,7 @@ fn ground_box(terrain: &TerrainEntry, key: TileKey, (low, high): (f32, f32)) -> 
     } else {
         spacing
     };
-    ShadowChange::Box {
+    DrawnArea::Box {
         min: terrain.origin + Vec3::new(corner.x, low - skirt, corner.y),
         max: terrain.origin + Vec3::new(corner.x + size, high, corner.y + size),
         spacing: reach,

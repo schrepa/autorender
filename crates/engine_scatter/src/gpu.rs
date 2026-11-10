@@ -1052,6 +1052,7 @@ impl ScatterGpu {
                     Shape::Pulled {
                         vertices: 0..QUAD,
                         instances: cells.clone(),
+                        material: None,
                     },
                 );
                 draw.draw(
@@ -1061,6 +1062,7 @@ impl ScatterGpu {
                         indices: None,
                         args: pipelines.listed,
                         offset: 0,
+                        material: None,
                     },
                 );
             }
@@ -1070,6 +1072,7 @@ impl ScatterGpu {
                     Shape::Pulled {
                         vertices: 0..QUAD,
                         instances: cells.clone(),
+                        material: None,
                     },
                 );
             }

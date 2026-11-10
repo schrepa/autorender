@@ -268,6 +268,7 @@ impl GpuPart for ProbesGpu {
                     Shape::Pulled {
                         vertices: 0..3,
                         instances: job.stored..job.stored + 1,
+                        material: None,
                     },
                 );
             }
@@ -378,6 +379,7 @@ fn faces_pass(
         Shape::Pulled {
             vertices: 0..3,
             instances: item..item + 1,
+            material: None,
         },
     );
 }

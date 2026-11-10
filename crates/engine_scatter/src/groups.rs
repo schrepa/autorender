@@ -30,7 +30,7 @@ fn slot_color(material: &Material) -> SlotColor {
 }
 
 fn reach_of(material: &Material) -> f32 {
-    if material.slot(SurfaceSlot::Position) == Some(crate::WIND) {
+    if material.slot(SurfaceSlot::Position.name()) == Some(crate::WIND) {
         WIND_REACH
     } else {
         0.0

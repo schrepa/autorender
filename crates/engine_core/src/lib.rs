@@ -13,6 +13,7 @@ mod cook;
 mod cull;
 mod cursor;
 mod drawn;
+mod drawn_areas;
 mod entity_indices;
 mod folds;
 mod frame_timing;
@@ -61,6 +62,7 @@ pub use cull::{
     frustum_sees,
 };
 pub use cursor::*;
+pub use drawn_areas::{DrawnArea, DrawnAreas};
 pub use drawn::{
     DRAWN_PART, DrawnBatch, DrawnCensus, DrawnFlags,
     DrawnRecord, DrawnSettings, DrawnState, DrawnTable, PlanState, drawn_wgsl,

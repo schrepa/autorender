@@ -1,6 +1,9 @@
 use bevy_ecs::prelude::{Component, Resource};
 use engine_place::{DrawKind, MaterialHandle, MeshHandle, Slot};
 
+pub const MESH: DrawKind = DrawKind("mesh");
+pub const SKIN: DrawKind = DrawKind("skin");
+
 pub const LAST_LEVEL: u32 = 3;
 pub const DEBUG_LEVEL_AT: u32 = 8;
 pub const DEBUG_LEVEL_MASK: u32 = 15;

@@ -1,10 +1,11 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, DrawKind, Drawn, Error, Expected, Mesh, MeshHandle, MeshVertex,
+    AssetLibrary, Drawn, Error, Expected, Mesh, MeshHandle, MeshVertex,
     Spawner, Transform,
 };
 use engine_math::collections::HashMap;
 use engine_math::{clamp, max};
+use engine_places::meshes::MESH;
 use engine_places_world::splines::SplineMesh;
 use glam::Vec3;
 
@@ -122,7 +123,7 @@ pub(crate) fn build(
             chunks.meshes.push(handle);
             let child = spawner.spawn((
                 Transform::default(),
-                Drawn::new(DrawKind::MESH, handle, spline.material),
+                Drawn::new(MESH, handle, spline.material),
             ));
             chunks.entities.push(child);
         }

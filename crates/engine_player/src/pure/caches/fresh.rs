@@ -2,11 +2,11 @@ use engine::bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::glam::{Quat, Vec3};
 use engine_core::{
-    Camera, DrawKind, Drawn, Engine, GlobalTransforms, Listing, Material, MaterialHandle, Mesh,
+    Camera, Drawn, Engine, GlobalTransforms, Listing, Material, MaterialHandle, Mesh,
     MeshHandle, MeshVertex, Mover, MoverId, Operation, Pace, Parent, PureSession, Schedule,
     Transform, make_fresh, set_parent, set_parents,
 };
-use engine_meshes::{MeshesBrick, MeshesListing};
+use engine_meshes::{MESH, MeshesBrick, MeshesListing};
 
 use serde_json::{Value, json};
 
@@ -233,7 +233,7 @@ fn index<T: PartialEq>(handles: &[T], handle: T) -> usize {
 fn spawn(world: &mut World, assets: &Assets, authored: &Authored) -> Entity {
     let mut entity = world.spawn(authored.transform);
     if let Some((mesh, material)) = authored.mesh {
-        let mut drawn = Drawn::new(DrawKind::MESH, assets.meshes[mesh], assets.materials[material]);
+        let mut drawn = Drawn::new(MESH, assets.meshes[mesh], assets.materials[material]);
         drawn.values.tint = authored.tint;
         entity.insert(drawn);
     }
@@ -301,7 +301,7 @@ fn apply(
             match mesh {
                 Some((mesh, material)) => {
                     let mut drawn =
-                        Drawn::new(DrawKind::MESH, assets.meshes[mesh], assets.materials[material]);
+                        Drawn::new(MESH, assets.meshes[mesh], assets.materials[material]);
                     drawn.values.tint = tint;
                     held.insert(drawn);
                 }

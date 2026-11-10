@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::Resource;
-use engine_place::{Cursor, Feed, Since, Slot};
-use glam::{Mat4, Vec3};
+use engine_place::Slot;
+use glam::Mat4;
 
 pub const SHADOW_REGIONS: u32 = 7;
 pub const SHADOW_PASS: &str = "shadow";
@@ -101,34 +101,3 @@ impl Slot for CasterRoutes {
     const WGSL: Option<&'static str> = Some(include_str!("places/caster_routes.wgsl"));
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ShadowChange {
-    Box { min: Vec3, max: Vec3, spacing: f32 },
-    All,
-    Casters,
-}
-
-#[derive(Resource, Clone, Debug)]
-pub struct ShadowChanges {
-    feed: Feed<ShadowChange>,
-}
-
-impl Default for ShadowChanges {
-    fn default() -> Self {
-        Self { feed: Feed::new(1) }
-    }
-}
-
-impl ShadowChanges {
-    pub fn push(&mut self, change: ShadowChange) {
-        self.feed.push(change);
-    }
-
-    pub fn resize(&mut self, size: usize) {
-        self.feed.resize(size);
-    }
-
-    pub fn since<'a>(&'a self, cursor: &mut Cursor) -> Since<'a, ShadowChange> {
-        self.feed.since(cursor)
-    }
-}

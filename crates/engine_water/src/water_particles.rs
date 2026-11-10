@@ -713,6 +713,7 @@ impl ParticlesGpu {
                 indices: None,
                 args,
                 offset: DRAW_ARGS,
+                material: None,
             },
         );
     }

@@ -11,9 +11,6 @@ pub type NodeId = Entity;
 pub struct DrawKind(pub &'static str);
 
 impl DrawKind {
-    pub const MESH: Self = Self("mesh");
-    pub const SKIN: Self = Self("skin");
-
     pub const fn name(self) -> &'static str {
         self.0
     }

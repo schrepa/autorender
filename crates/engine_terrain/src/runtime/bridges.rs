@@ -3,9 +3,10 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, DrawKind, Drawn, Material, MaterialHandle, Mesh, MeshHandle, MeshVertex, Spawner,
+    AssetLibrary, Drawn, Material, MaterialHandle, Mesh, MeshHandle, MeshVertex, Spawner,
     Surface, Transform,
 };
+use engine_places::meshes::MESH;
 use engine_places_world::splines::SplineMesh;
 use glam::Vec3;
 
@@ -342,7 +343,7 @@ pub(crate) fn sync(
                         scale: Vec3::new(PIER_SIDE, high - low, PIER_SIDE),
                         ..Transform::IDENTITY
                     },
-                    Drawn::new(DrawKind::MESH, pier, material),
+                    Drawn::new(MESH, pier, material),
                 ));
                 entities.push(placed);
             }

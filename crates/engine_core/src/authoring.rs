@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    Call, Camera, Clear, ComponentKind, DrawKind, Drawn, DrawnProjection, DrawnTable, Error, ErrorCode,
+    Call, Camera, Clear, ComponentKind, Drawn, DrawnProjection, DrawnTable, Error, ErrorCode,
     Expected, GlobalTransforms, InstanceValues, Layers, List, MaterialHandle, MeshHandle, Mover,
     Node, Parent, PassMask, Placed, Placement, Rect, Rule, SceneComponents, SceneContext, SceneCx,
     SceneForm, ScenePasses, Setting, Target, TextureHandle, View, scene_component,
@@ -83,10 +83,17 @@ impl SceneForm for DrawnForm {
 
     fn insert(self, world: &mut World, entity: Entity) -> Result<(), Error> {
         let held = world.get::<Drawn>(entity).cloned();
+        let table = world.get_resource::<DrawnTable>();
         let kind = match &self.kind {
-            None => held.as_ref().map_or(DrawKind::MESH, |drawn| drawn.kind),
+            None => match held.as_ref().map(|drawn| drawn.kind).or_else(|| {
+                table
+                    .and_then(|table| table.kinds().first())
+                    .map(|declared| declared.kind)
+            }) {
+                Some(kind) => kind,
+                None => return Err(Error::new(ErrorCode::MissingField, "$.kind")),
+            },
             Some(name) => {
-                let table = world.get_resource::<DrawnTable>();
                 table
                     .and_then(|table| {
                         table

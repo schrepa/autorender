@@ -175,6 +175,7 @@ impl Haze {
             Shape::Pulled {
                 vertices: 0..3,
                 instances: 0..1,
+                material: None,
             },
         );
         0

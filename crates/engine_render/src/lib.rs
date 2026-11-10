@@ -66,7 +66,8 @@ pub use uploads::{UploadRange, listed_ranges};
 pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
 pub use materials::gpu_format as texture_format;
 pub use surface::{
-    DrawState, FaceCull, LightingModule, MaterialVariant, SlotModule, SurfaceKind, material_state,
+    DrawState, FaceCull, LightingModule, MaterialVariant, OpenSlot, SlotModule, SurfaceKind,
+    material_state,
 };
 #[doc(hidden)]
 pub use memory::GpuMemory;
@@ -151,6 +152,7 @@ pub trait RenderBricks {
     fn view_target(&mut self, target: TargetDecl) -> &mut Self;
     fn generated(&mut self, wgsl: &'static [&'static str]) -> &mut Self;
     fn material_slot(&mut self, module: SlotModule) -> &mut Self;
+    fn open_slot(&mut self, slot: OpenSlot) -> &mut Self;
     fn lighting_model(&mut self, module: LightingModule) -> &mut Self;
     fn surface_kind(&mut self, kind: SurfaceKind) -> &mut Self;
 }
@@ -222,7 +224,7 @@ impl RenderBricks for Bricks<'_> {
     }
 
     fn material_slot(&mut self, module: SlotModule) -> &mut Self {
-        if module.slot == engine_core::SurfaceSlot::Position {
+        if module.slot == engine_core::SurfaceSlot::Position.name() {
             self.record()
                 .render
                 .push(Box::new(engine_core::PositionReach {
@@ -231,6 +233,11 @@ impl RenderBricks for Bricks<'_> {
                 }));
         }
         self.record().render.push(Box::new(module));
+        self
+    }
+
+    fn open_slot(&mut self, slot: OpenSlot) -> &mut Self {
+        self.record().render.push(Box::new(slot));
         self
     }
 
@@ -442,6 +449,7 @@ pub enum Shape<'a, P, S> {
     Pulled {
         vertices: Range<u32>,
         instances: Range<u32>,
+        material: Option<MaterialHandle>,
     },
     Buffers {
         vertices: &'a [DrawInput<P, S>],
@@ -454,6 +462,7 @@ pub enum Shape<'a, P, S> {
         indices: Option<DrawInput<P, S>>,
         args: DrawInput<P, S>,
         offset: u64,
+        material: Option<MaterialHandle>,
     },
     IndirectAt {
         vertices: &'a [(DrawInput<P, S>, u64)],
@@ -1272,9 +1281,11 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
             Shape::Pulled {
                 vertices,
                 instances,
+                material,
             } => encode::RawShape::Pulled {
                 vertices,
                 instances,
+                material,
             },
             Shape::Buffers {
                 vertices,
@@ -1292,11 +1303,13 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
                 indices,
                 args,
                 offset,
+                material,
             } => encode::RawShape::Indirect {
                 vertices: inputs(vertices),
                 indices: indices.map(|input| input.0),
                 args: args.0,
                 offset,
+                material,
             },
             Shape::IndirectAt {
                 vertices,

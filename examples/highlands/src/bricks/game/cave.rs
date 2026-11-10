@@ -1,8 +1,9 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, DrawKind, Drawn, Interest, Jobs, MaterialHandle, Mesh, MeshHandle, RecordKey, Records,
+    AssetLibrary, Drawn, Interest, Jobs, MaterialHandle, Mesh, MeshHandle, RecordKey, Records,
     Spawner, Transform, math,
 };
+use engine_places::meshes::MESH;
 use engine_places_rendering::lights::{LightRegion, LocalLight};
 use engine_places_rendering::probes::{Interior, ReflectionProbe};
 use engine_open_world_kit::ground::TerrainTiles;
@@ -206,7 +207,7 @@ fn spawn_cave(
             translation: points[0],
             ..Transform::default()
         },
-        Drawn::new(DrawKind::MESH, mesh, rock.wall),
+        Drawn::new(MESH, mesh, rock.wall),
     ));
     let chamber = points[4] - inward * 6.0 + Vec3::Y * 2.0;
     spawner.spawn((
@@ -226,7 +227,7 @@ fn spawn_cave(
             .with_interior(Interior { sky: 1.0, sun: 1.0 }),
     ));
     for (transform, mesh) in framing {
-        spawner.spawn((transform, Drawn::new(DrawKind::MESH, mesh, rock.material)));
+        spawner.spawn((transform, Drawn::new(MESH, mesh, rock.material)));
     }
 }
 

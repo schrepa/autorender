@@ -321,6 +321,7 @@ impl GpuPart for UiGpu {
                 Shape::Pulled {
                     vertices: 0..6,
                     instances: range.clone(),
+                    material: None,
                 },
             );
         }

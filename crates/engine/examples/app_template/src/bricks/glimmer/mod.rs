@@ -109,7 +109,7 @@ impl Brick for GlimmerBrick {
             })
             .pass::<GlimmerPass>()
             .material_slot(SlotModule {
-                slot: SurfaceSlot::Emissive,
+                slot: SurfaceSlot::Emissive.name(),
                 name: "glimmer",
                 module: shaders::glimmer::glow::MODULE,
                 maps: &[EMISSIVE_MAP],
@@ -324,6 +324,7 @@ impl GlimmerGpu {
             Shape::Pulled {
                 vertices: 0..6,
                 instances: 0..count,
+                material: None,
             },
         );
         count

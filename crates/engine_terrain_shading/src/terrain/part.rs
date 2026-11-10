@@ -911,6 +911,7 @@ impl TerrainGpu {
                         indices: Some(self.inputs.meshlet),
                         args: self.inputs.args,
                         offset,
+                        material: None,
                     },
                 );
                 draws += 1;
@@ -933,6 +934,7 @@ impl TerrainGpu {
                 Shape::Pulled {
                     vertices: 0..3,
                     instances: index..index + 1,
+                    material: None,
                 },
             );
             draws += 1;
@@ -1024,6 +1026,7 @@ impl TerrainGpu {
                         indices: Some(meshlet),
                         args,
                         offset,
+                        material: None,
                     },
                 );
                 draws += 1;

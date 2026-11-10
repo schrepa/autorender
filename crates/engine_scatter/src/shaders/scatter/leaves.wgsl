@@ -2,12 +2,11 @@ import package::engine::shading::{LightInputs, SurfaceInput, SurfacePoint};
 import package::engine::mapped::base_color as mapped_base_color;
 import package::engine::mapped::cutoff as mapped_cutoff;
 import package::engine::mapped::mask_coverage;
-import package::engine::mapped::metalness as mapped_metalness;
 import package::engine::mapped::normal as mapped_normal;
-import package::engine::mapped::roughness as mapped_roughness;
 import package::engine::view::fade_noise;
 import package::face::foliage::foliage;
 import package::face::lighting::SURFACE_THIN;
+import package::scatter::grounded::{mapped_metalness, mapped_roughness};
 import package::scatter::grounding::{grounded_color, grounded_metalness, grounded_normal,
     grounded_roughness};
 import package::scatter::values::placed_values_of;

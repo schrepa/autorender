@@ -261,6 +261,7 @@ impl GpuPart for Composite {
             crate::Shape::Pulled {
                 vertices: 0..3,
                 instances: 0..1,
+                material: None,
             },
         );
         0

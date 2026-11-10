@@ -240,6 +240,7 @@ impl CoverGpu {
                     indices: None,
                     args: *indirect,
                     offset,
+                    material: None,
                 },
             );
         }

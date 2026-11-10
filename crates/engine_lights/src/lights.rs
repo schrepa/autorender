@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Cut, DrawKind, DrawnPoses, DrawnTable, Expected, GlobalTransforms, InvalidSetting, Mobility,
+    Cut, DrawnPoses, DrawnTable, Expected, GlobalTransforms, InvalidSetting, Mobility,
     Nearest, Rule, Views, fields, settings, stats,
 };
 use engine_places_rendering::lights::{
@@ -156,7 +156,7 @@ fn render_light(
 ) -> Option<RenderLight> {
     let slot = table
         .slot(entity)
-        .filter(|&slot| table.drawn(slot).is_some_and(|drawn| drawn.kind == DrawKind::MESH));
+        .filter(|&slot| table.drawn(slot).is_some_and(|drawn| drawn.geometry.is_some()));
     let model = match slot {
         Some(_) => None,
         None => Some(poses.drawn_pose(globals, entity)?),

@@ -18,7 +18,7 @@ use engine_core::{
     Attributes, BASE_COLOR_MAP, Brick, Bricks, KindDecl, METALLIC_ROUGHNESS_MAP, Module,
     NORMAL_MAP, OCCLUSION_MAP, Schedule, Source, SurfaceSlot,
 };
-use engine_places_rendering::lighting::Ambient;
+use engine_places_rendering::lighting::{Ambient, METALNESS, OCCLUSION, ROUGHNESS, TRANSMISSION};
 use engine_places_rendering::occlusion::OcclusionSource;
 use engine_open_world_kit::ground::{FarCover, Foliage, PlacedTiles};
 use engine_render::{RenderBricks, SlotModule};
@@ -30,11 +30,11 @@ pub use settings::{
 
 const SURFACE_MAPS: &[&str] = &[BASE_COLOR_MAP, NORMAL_MAP, METALLIC_ROUGHNESS_MAP];
 
-const GROUNDED: [SurfaceSlot; 4] = [
-    SurfaceSlot::BaseColor,
-    SurfaceSlot::Normal,
-    SurfaceSlot::Roughness,
-    SurfaceSlot::Metalness,
+const GROUNDED: [&str; 4] = [
+    SurfaceSlot::BaseColor.name(),
+    SurfaceSlot::Normal.name(),
+    ROUGHNESS,
+    METALNESS,
 ];
 
 pub(crate) const WIND: &str = "wind";
@@ -42,7 +42,7 @@ pub(crate) const WIND: &str = "wind";
 type Look = (
     &'static str,
     Module,
-    &'static [SurfaceSlot],
+    &'static [&'static str],
     &'static [&'static str],
     &'static [&'static str],
     f32,
@@ -61,14 +61,14 @@ const LOOKS: [Look; 4] = [
         "foliage",
         shaders::scatter::leaves::MODULE,
         &[
-            SurfaceSlot::BaseColor,
-            SurfaceSlot::Cutoff,
-            SurfaceSlot::Normal,
-            SurfaceSlot::Roughness,
-            SurfaceSlot::Metalness,
-            SurfaceSlot::Transmission,
-            SurfaceSlot::Kind,
-            SurfaceSlot::LightInputs,
+            SurfaceSlot::BaseColor.name(),
+            SurfaceSlot::Cutoff.name(),
+            SurfaceSlot::Normal.name(),
+            ROUGHNESS,
+            METALNESS,
+            TRANSMISSION,
+            SurfaceSlot::Kind.name(),
+            SurfaceSlot::LightInputs.name(),
         ],
         SURFACE_MAPS,
         &[],
@@ -77,7 +77,7 @@ const LOOKS: [Look; 4] = [
     (
         WIND,
         shaders::scatter::wind::MODULE,
-        &[SurfaceSlot::Position],
+        &[SurfaceSlot::Position.name()],
         &[],
         &[],
         layouts::WIND_REACH,
@@ -86,11 +86,11 @@ const LOOKS: [Look; 4] = [
         "world_mapped",
         shaders::scatter::world_mapped::MODULE,
         &[
-            SurfaceSlot::BaseColor,
-            SurfaceSlot::Normal,
-            SurfaceSlot::Roughness,
-            SurfaceSlot::Metalness,
-            SurfaceSlot::Occlusion,
+            SurfaceSlot::BaseColor.name(),
+            SurfaceSlot::Normal.name(),
+            ROUGHNESS,
+            METALNESS,
+            OCCLUSION,
         ],
         &[BASE_COLOR_MAP, NORMAL_MAP, METALLIC_ROUGHNESS_MAP, OCCLUSION_MAP],
         &[

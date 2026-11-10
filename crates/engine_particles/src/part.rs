@@ -262,6 +262,7 @@ impl ParticlesGpu {
                 Shape::Pulled {
                     vertices: 0..4,
                     instances,
+                    material: None,
                 },
             );
             drawn += 1;
@@ -392,6 +393,7 @@ impl GpuPart for ParticlesGpu {
                 Shape::Pulled {
                     vertices: 0..3,
                     instances: 0..1,
+                    material: None,
                 },
             );
         }

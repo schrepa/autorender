@@ -18,14 +18,12 @@ mod presentation;
 mod settings;
 mod uploads;
 
-use engine_core::{Attributes, Brick, Bricks, DrawKind, KindDecl, Schedule, Source};
+use engine_core::{Attributes, Brick, Bricks, KindDecl, Schedule, Source};
 use engine_places::meshes::Instances;
 use engine_render::RenderBricks;
 
+pub use engine_places::meshes::{MESH, SKIN};
 pub use settings::{CullingStats, DetailStats, MeshStats};
-
-pub const MESH: DrawKind = DrawKind::MESH;
-pub const SKIN: DrawKind = DrawKind::SKIN;
 
 const GENERATED: &[&str] = &[
     layouts::WGSL,

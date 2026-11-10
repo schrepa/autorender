@@ -7,6 +7,7 @@ use engine::{Error, ErrorCode, Expected};
 use engine_core::{
     BASE_COLOR_MAP, METALLIC_ROUGHNESS_MAP, NORMAL_MAP, OCCLUSION_MAP, RecordExchange,
 };
+use engine_places_rendering::lighting::{METALNESS, OCCLUSION, ROUGHNESS};
 use serde_json::Value;
 
 use crate::bricks::game::HighlandsControl;
@@ -46,12 +47,12 @@ const WALL_ROCK: &str = "highlands_wall_rock";
 const CAVE_WALL: &str = "highlands_cave_wall";
 
 const WORLD_MAPPED: &str = "world_mapped";
-const WORLD_MAPPED_SLOTS: [SurfaceSlot; 5] = [
-    SurfaceSlot::BaseColor,
-    SurfaceSlot::Normal,
-    SurfaceSlot::Roughness,
-    SurfaceSlot::Metalness,
-    SurfaceSlot::Occlusion,
+const WORLD_MAPPED_SLOTS: [&str; 5] = [
+    SurfaceSlot::BaseColor.name(),
+    SurfaceSlot::Normal.name(),
+    ROUGHNESS,
+    METALNESS,
+    OCCLUSION,
 ];
 const GROUNDING_HEIGHT: &str = "grounding_height";
 

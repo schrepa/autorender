@@ -1,14 +1,44 @@
 use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat3, Vec3};
 use engine_core::{
-    Cursor, DrawKind, DrawnFlags, DrawnTable, Events, GlobalTransforms, MaterialHandle,
-    MeshHandle, Mobility, PlanState, ScenePasses, Since,
+    Cursor, DrawnArea, DrawnAreas, DrawnFlags, DrawnTable, Events, Feed, GlobalTransforms,
+    MaterialHandle, MeshHandle, Mobility, PlanState, ScenePasses, Since,
 };
-use engine_places_rendering::shadows::{SHADOW_PASS, ShadowChange, ShadowChanges};
+use engine_places_rendering::shadows::SHADOW_PASS;
 
 use crate::ShadowSettings;
 
-const MESH: DrawKind = DrawKind::MESH;
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum ShadowChange {
+    Box { min: Vec3, max: Vec3, spacing: f32 },
+    All,
+    Casters,
+}
+
+#[derive(Resource, Clone, Debug)]
+pub(crate) struct ShadowChanges {
+    feed: Feed<ShadowChange>,
+}
+
+impl Default for ShadowChanges {
+    fn default() -> Self {
+        Self { feed: Feed::new(1) }
+    }
+}
+
+impl ShadowChanges {
+    fn push(&mut self, change: ShadowChange) {
+        self.feed.push(change);
+    }
+
+    fn resize(&mut self, size: usize) {
+        self.feed.resize(size);
+    }
+
+    pub(crate) fn since<'a>(&'a self, cursor: &mut Cursor) -> Since<'a, ShadowChange> {
+        self.feed.since(cursor)
+    }
+}
 
 type Group = (MeshHandle, Option<MaterialHandle>);
 
@@ -18,6 +48,7 @@ type Bounds = (Vec3, Vec3);
 pub(crate) struct HeldCasters {
     rows: Cursor,
     moves: Cursor,
+    areas: Cursor,
     generation: Option<u64>,
     groups: Vec<Group>,
     boxes: Vec<Option<Bounds>>,
@@ -31,7 +62,7 @@ fn caster_box(
 ) -> Option<Bounds> {
     let record = table.records().get(slot as usize)?;
     let drawn = table.drawn(slot)?;
-    let casts = drawn.kind == MESH
+    let casts = drawn.geometry.is_some()
         && record.passes & shadow != 0
         && !DrawnFlags::of(record).unbounded
         && record.mobility == Mobility::Static as u32 + 1;
@@ -52,14 +83,28 @@ fn groups(table: &DrawnTable) -> Vec<Group> {
     table
         .batches()
         .iter()
-        .filter(|batch| batch.kind == MESH)
         .filter_map(|batch| Some((batch.geometry?, batch.material)))
         .collect()
 }
 
+fn publish_areas(areas: &DrawnAreas, cursor: &mut Cursor, shadows: &mut ShadowChanges) {
+    match areas.since(cursor) {
+        Since::Same => {}
+        Since::Listed(listed) => {
+            for area in listed {
+                shadows.push(match *area {
+                    DrawnArea::Box { min, max, spacing } => ShadowChange::Box { min, max, spacing },
+                    DrawnArea::All => ShadowChange::All,
+                });
+            }
+        }
+        Since::All => shadows.push(ShadowChange::All),
+    }
+}
+
 pub(crate) fn publish_shadow_changes(
     (table, globals, passes): (Res<DrawnTable>, Res<GlobalTransforms>, Option<Res<ScenePasses>>),
-    settings: Res<ShadowSettings>,
+    (settings, areas): (Res<ShadowSettings>, Res<DrawnAreas>),
     mut held: Local<HeldCasters>,
     mut shadows: ResMut<ShadowChanges>,
 ) {
@@ -67,6 +112,7 @@ pub(crate) fn publish_shadow_changes(
         .bypass_change_detection()
         .resize(settings.changes as usize);
     let held = &mut *held;
+    publish_areas(&areas, &mut held.areas, &mut shadows);
     let shadow = passes
         .and_then(|passes| passes.bit(SHADOW_PASS))
         .map_or(0, |bit| bit.mask().word());
