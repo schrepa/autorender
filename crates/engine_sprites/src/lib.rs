@@ -11,10 +11,10 @@ use std::ops::Range;
 use bevy_ecs::prelude::*;
 use engine_core::{
     AlphaMode, Asset, AssetLibrary, AssetResidency, AssetUses, Attributes, BASE_COLOR_MAP, Brick,
-    Bricks, ComponentKind, Cull, DrawKind, Drawn, DrawnPoses, DrawnTable, Error, ErrorCode,
-    GlobalTransforms, KindDecl, KindSkip, LightingModel, MAPPED, Material, MaterialHandle,
-    PassRole, Refusals, Sampler, SceneComponents, Schedule, Source, Spawner, SurfaceSlot,
-    TextureHandle, TextureRef, gpu_struct,
+    Bricks, ComponentKind, Cull, DrawKind, Drawn, DrawnPoses, DrawnTable, DropReason, Error,
+    ErrorCode, GlobalTransforms, KindDecl, KindSkip, LightingModel, MAPPED, Material,
+    MaterialHandle, PassRole, Refusals, Sampler, SceneComponents, Schedule, Source, Spawner,
+    SurfaceSlot, TextureHandle, TextureRef, gpu_struct,
 };
 use engine_render::{
     Allocation, Bind, Buffer, Draw, Form, FormSide, GpuPart, Install, KindForm, Lifetime, Prepare,
@@ -114,15 +114,6 @@ enum SheetMaterial {
 #[derive(Resource, Default)]
 struct SheetMaterials {
     made: BTreeMap<TextureHandle, SheetMaterial>,
-}
-
-impl SheetMaterials {
-    fn material(&self, sheet: TextureHandle) -> Option<MaterialHandle> {
-        match self.made.get(&sheet)? {
-            SheetMaterial::Made(material) => Some(*material),
-            SheetMaterial::Refused(_) => None,
-        }
-    }
 }
 
 fn sheet_material(sheet: TextureHandle) -> Result<Material, Error> {
@@ -225,12 +216,19 @@ struct SpriteRun {
     instances: Range<u32>,
 }
 
+#[derive(Clone, Copy, Default)]
+struct SpriteRows {
+    listed: u32,
+    incomplete: u32,
+    waiting: u32,
+}
+
 struct SpritesGpu {
     form: Form<Self>,
     instances: Buffer<Self>,
     staged: Vec<SpriteInstance>,
     runs: Vec<SpriteRun>,
-    rows: u32,
+    rows: SpriteRows,
 }
 
 impl GpuPart for SpritesGpu {
@@ -256,7 +254,7 @@ impl GpuPart for SpritesGpu {
             instances,
             staged: Vec::new(),
             runs: Vec::new(),
-            rows: 0,
+            rows: SpriteRows::default(),
         })
     }
 
@@ -283,11 +281,16 @@ impl GpuPart for SpritesGpu {
 
 impl SpritesGpu {
     fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
+        draw.drop_rows(DropReason::RowIncomplete, self.rows.incomplete);
         if self.runs.is_empty() {
-            return if self.rows == 0 {
+            return if self.rows.listed == 0 {
+                draw.skip("no drawn row is a sprite")
+            } else if self.rows.waiting > 0 {
+                draw.skip("sprite materials are not resident yet")
+            } else if self.rows.incomplete > 0 {
                 0
             } else {
-                draw.skip("sprite materials are not resident yet")
+                draw.skip("no sprite row is placed")
             };
         }
         let Some(pipeline) = draw.form(&self.form) else {
@@ -319,21 +322,33 @@ fn stage(
     (globals, poses): (&GlobalTransforms, &DrawnPoses),
     (sheets, assets, residency): (&SheetMaterials, &AssetLibrary, &AssetResidency),
     (staged, runs): (&mut Vec<SpriteInstance>, &mut Vec<SpriteRun>),
-) -> u32 {
+) -> SpriteRows {
     staged.clear();
     runs.clear();
-    let mut rows = 0;
+    let mut rows = SpriteRows::default();
     let mut sorted: Vec<(bool, MaterialHandle, SpriteInstance)> = Vec::new();
     for (slot, entity, drawn) in table.rows(SPRITES) {
-        rows += 1;
-        let (Ok(sprite), Some(pose)) = (sprites.get(entity), poses.drawn_pose(globals, entity))
-        else {
+        rows.listed += 1;
+        let Ok(sprite) = sprites.get(entity) else {
+            rows.incomplete += 1;
             continue;
         };
-        let Some(material) = drawn.material.or_else(|| sheets.material(sprite.sheet)) else {
+        let material = match (drawn.material, sheets.made.get(&sprite.sheet)) {
+            (Some(material), _) | (None, Some(&SheetMaterial::Made(material))) => material,
+            (None, Some(SheetMaterial::Refused(_))) => {
+                rows.incomplete += 1;
+                continue;
+            }
+            (None, None) => {
+                rows.waiting += 1;
+                continue;
+            }
+        };
+        let Some(pose) = poses.drawn_pose(globals, entity) else {
             continue;
         };
         if !residency.material_resident(material) {
+            rows.waiting += 1;
             continue;
         }
         let blended = assets

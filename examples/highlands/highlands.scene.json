@@ -4633,7 +4633,7 @@
       "entities": [
         {
           "id": "post",
-          "drawn": {"mesh": "cube", "material": "wood"},
+          "drawn": {"kind": "mesh", "mesh": "cube", "material": "wood"},
           "transform": {
             "scale": [
               0.14,
@@ -4657,7 +4657,7 @@
             ],
             "intensity": 14.0
           },
-          "drawn": {"mesh": "cube", "material": "glow"},
+          "drawn": {"kind": "mesh", "mesh": "cube", "material": "glow"},
           "transform": {
             "scale": [
               0.3,

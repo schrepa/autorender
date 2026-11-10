@@ -16,10 +16,11 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::world::World;
 use engine_core::{
     AlphaMode, Asset, AssetLibrary, AssetResidency, AssetUses, AttachPoint, Attributes, Brick,
-    Bricks, ComponentKind, Cull, DrawKind, Drawn, DrawnPoses, DrawnTable, Error, ErrorCode,
-    GlobalTransforms, KindDecl, KindSkip, LightingModel, Material, MaterialHandle, PassName,
-    PassPurpose, PassRole, PassViews, Refusals, SceneComponents, SceneCx, SceneForm, Schedule,
-    SlotSet, Source, Spawner, SurfaceSlot, Views, Writes, gpu_struct, never, settings, stats,
+    Bricks, ComponentKind, Cull, DrawKind, Drawn, DrawnPoses, DrawnTable, DropReason, Error,
+    ErrorCode, GlobalTransforms, KindDecl, KindSkip, LightingModel, Material, MaterialHandle,
+    PassName, PassPurpose, PassRole, PassViews, Refusals, SceneComponents, SceneCx, SceneForm,
+    Schedule, SlotSet, Source, Spawner, SurfaceSlot, Views, Writes, gpu_struct, never, settings,
+    stats,
 };
 use engine_places_rendering::text::{DEFAULT_TEXT_SIZE, FontId, Glyph, Text, TextAlign};
 use engine_render::{
@@ -414,17 +415,21 @@ struct TextGpu {
     placed: Vec<Glyph>,
     staged: Vec<GlyphInstance>,
     worlds: Vec<WorldLabel>,
+    unlabeled: u32,
     placed_world: Vec<(u32, Glyph)>,
     labeled: Vec<LabelGlyph>,
 }
 
 impl TextGpu {
     fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
+        draw.drop_rows(DropReason::RowIncomplete, self.unlabeled);
         if self.labeled.is_empty() {
-            return if self.worlds.is_empty() {
+            return if !self.worlds.is_empty() {
+                draw.skip("labels place no glyphs")
+            } else if self.unlabeled > 0 {
                 0
             } else {
-                draw.skip("labels place no glyphs")
+                draw.skip("no drawn label is placed")
             };
         }
         if scene.role == PassRole::Blended {
@@ -453,9 +458,13 @@ impl TextGpu {
         (table, globals, poses): (&DrawnTable, &GlobalTransforms, &DrawnPoses),
     ) {
         self.worlds.clear();
+        self.unlabeled = 0;
         for (slot, entity, _) in table.rows(TEXT) {
-            let (Ok(_), Some(pose)) = (labels.get(entity), poses.drawn_pose(globals, entity))
-            else {
+            if labels.get(entity).is_err() {
+                self.unlabeled += 1;
+                continue;
+            }
+            let Some(pose) = poses.drawn_pose(globals, entity) else {
                 continue;
             };
             let previous = poses.previous_drawn_pose(globals, entity).unwrap_or(pose);
@@ -537,6 +546,7 @@ impl GpuPart for TextGpu {
             placed: Vec::new(),
             staged: Vec::new(),
             worlds: Vec::new(),
+            unlabeled: 0,
             placed_world: Vec::new(),
             labeled: Vec::new(),
         })
@@ -546,6 +556,7 @@ impl GpuPart for TextGpu {
         let ((labels, table, globals, poses), text, settings, views, (material, residency)) = reads;
         self.staged.clear();
         self.labeled.clear();
+        self.unlabeled = 0;
         self.material = material
             .made()
             .filter(|made| residency.material_resident(*made));

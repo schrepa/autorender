@@ -584,7 +584,7 @@ impl Run {
             .get(pipeline as usize)
             .ok_or(DropReason::UnknownPipeline)?;
         if built.skipped {
-            return Err(DropReason::PipelineSkipped);
+            return Err(DropReason::PipelineOverLimit);
         }
         if let Some(at) = built
             .ready

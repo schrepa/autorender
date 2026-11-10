@@ -10,20 +10,46 @@ pub enum DropReason {
     PassMismatch,
     UnfilledHoles,
     GeometryNotResident,
+    GeometryNotHeld,
+    GeometryWaiting,
+    GeometryFailed,
     MaterialNotResident,
     MaterialNotHeld,
     MaterialWaiting,
+    MaterialFailed,
     GeometryLacksStreams,
     NoRenderPass,
-    PipelineSkipped,
+    PipelineOverLimit,
     PipelineCompiling,
     PipelineRefused,
     MissingInput,
+    MissingBindGroup,
+    RowIncomplete,
 }
 
 impl DropReason {
     pub const fn faults(self) -> bool {
-        !matches!(self, Self::PipelineCompiling | Self::MaterialWaiting)
+        match self {
+            Self::UnknownPipeline
+            | Self::PassMismatch
+            | Self::UnfilledHoles
+            | Self::GeometryNotResident
+            | Self::GeometryNotHeld
+            | Self::MaterialNotResident
+            | Self::MaterialNotHeld
+            | Self::GeometryLacksStreams
+            | Self::NoRenderPass
+            | Self::PipelineRefused
+            | Self::MissingInput
+            | Self::MissingBindGroup => true,
+            Self::GeometryWaiting
+            | Self::GeometryFailed
+            | Self::MaterialWaiting
+            | Self::MaterialFailed
+            | Self::PipelineOverLimit
+            | Self::PipelineCompiling
+            | Self::RowIncomplete => false,
+        }
     }
 }
 

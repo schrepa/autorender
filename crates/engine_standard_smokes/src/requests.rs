@@ -66,7 +66,7 @@ pub fn grid(side: usize) -> Value {
         [0.9, 0.75, 0.25, 1.0],
     ];
     let mut entities = vec![json!({
-        "id": "ground", "drawn": {"mesh": "box", "material": "ground"},
+        "id": "ground", "drawn": {"kind": "mesh", "mesh": "box", "material": "ground"},
         "transform": { "translation": [0.0, -0.5, 0.0], "scale": [side as f64 * 6.0, 1.0, side as f64 * 6.0] },
     })];
     let middle = (side as f64 - 1.0) / 2.0;
@@ -76,6 +76,7 @@ pub fn grid(side: usize) -> Value {
         entities.push(json!({
             "id": format!("piece-{index}"),
             "drawn": {
+                "kind": "mesh",
                 "mesh": if index % 3 == 0 { "gem" } else { "box" },
                 "material": format!("paint-{}", index % paints.len()),
             },
@@ -88,7 +89,7 @@ pub fn grid(side: usize) -> Value {
         if index % 4 == 0 {
             entities.push(json!({
                 "id": format!("cap-{index}"), "parent": format!("piece-{index}"),
-                "drawn": { "mesh": "box", "material": format!("paint-{}", (index + 1) % paints.len()) },
+                "drawn": { "kind": "mesh", "mesh": "box", "material": format!("paint-{}", (index + 1) % paints.len()) },
                 "transform": { "translation": [0.0, 0.75, 0.0], "scale": [0.5, 0.5, 0.5] },
             }));
         }

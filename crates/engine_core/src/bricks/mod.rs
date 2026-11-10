@@ -460,10 +460,13 @@ impl Listing for BrickList {
     }
 
     fn without<B: Brick>(mut self) -> Self {
-        let (out, kept) = std::mem::take(&mut self.bricks)
+        let (mut out, kept) = std::mem::take(&mut self.bricks)
             .into_iter()
             .partition::<Vec<_>, _>(|listed| std::ptr::eq(listed.source, B::SOURCE));
         self.bricks = kept;
+        if out.is_empty() {
+            out.push(Listed::of::<B>());
+        }
         self.leave(out)
     }
 

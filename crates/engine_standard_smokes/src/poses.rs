@@ -12,8 +12,8 @@ fn fixture() -> Value {
         "materials": [{"id": "plain", "color": [0.6, 0.35, 0.25, 1]}],
         "meshes": [{"id": "box", "source": {"kind": "cube"}}],
         "entities": [
-            {"id": "player", "drawn": {"mesh": "box", "material": "plain"}, "transform": {"translation": [0, 0.5, 4]}},
-            {"id": "player-accessory", "parent": "player", "drawn": {"mesh": "box", "material": "plain"},
+            {"id": "player", "drawn": {"kind": "mesh", "mesh": "box", "material": "plain"}, "transform": {"translation": [0, 0.5, 4]}},
+            {"id": "player-accessory", "parent": "player", "drawn": {"kind": "mesh", "mesh": "box", "material": "plain"},
              "transform": {"translation": [0, 0.8, 0], "scale": [0.3, 0.3, 0.3]}},
             {"id": "camera", "transform": {"translation": [0, 9, 16], "rotation_degrees": [-26.5651, 0, 0]}, "node": {"clock": "real", "mobility": "moving"}, "camera": {"near": 0.1, "far": 500, "projection": {"Perspective": {"vertical_fov_radians": 0.9599311}}}, "view": {}},
         ],

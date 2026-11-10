@@ -123,6 +123,7 @@ fn import_primitive(
         uri: file.uri.clone(),
     };
     let drawn = serde_json::json!({
+        "kind": "mesh",
         "mesh": mesh_id,
         "material": format!("{id}.material{material_index}"),
     });
