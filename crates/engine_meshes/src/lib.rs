@@ -33,7 +33,6 @@ const GENERATED: &[&str] = &[
     <layouts::PresentationFrame as engine_core::GpuStruct>::WGSL,
     <layouts::CandidateData as engine_core::GpuStruct>::WGSL,
     <layouts::BatchData as engine_core::GpuStruct>::WGSL,
-    <layouts::BlendedView as engine_core::GpuStruct>::WGSL,
 ];
 
 pub use drawn::{MeshesListed, MeshesListing};

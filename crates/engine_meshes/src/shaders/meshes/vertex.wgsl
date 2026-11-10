@@ -1,8 +1,8 @@
-import package::engine::mesh::declarations::{AffinePose as PoseRows, drawn_slot_moved,
+import package::engine::geometry::declarations::{AffinePose as PoseRows, drawn_slot_moved,
     drawn_slot_slot};
 import package::engine::drawn::{GeometryExtra, GeometrySkin, GeometryVertex, INPUT_DRAW,
     INPUT_SLOT, drawn_clip, drawn_flags_own_projection, drawn_records};
-import package::engine::mesh::vertex::{pose_matrix, transform_vertex};
+import package::engine::geometry::vertex::{pose_matrix, transform_vertex};
 import package::engine::shading::PositionInput;
 import package::engine::slots::slot_position;
 import package::engine::view::{camera, detail_across, view_clip};

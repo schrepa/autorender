@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     AssetResidency, Cursor, DrawnTable, DrawnView, Error, GeometryStream, InstanceInput,
-    MaterialHandle, MeshHandle, PassBit, PassRole, Since, Views,
+    MaterialHandle, GeometryHandle, PassBit, PassRole, Since, Views,
 };
 use engine_places_rendering::impostors::IMPOSTOR_VERTICES;
 use engine_open_world_kit::ground::{GroundTiles, TerrainTiles};
@@ -162,7 +162,7 @@ struct MapPipelines {
 }
 
 struct Level {
-    mesh: MeshHandle,
+    mesh: GeometryHandle,
     material: Option<MaterialHandle>,
     group: u32,
     level: u32,

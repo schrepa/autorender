@@ -1,6 +1,6 @@
 import package::engine::materials::material_model;
-import package::engine::shading::{SurfaceInput, SurfacePoint, derived};
-import package::engine::slots::{open_slots, slot_base_color, slot_cutoff, slot_emissive,
+import package::engine::shading::{SurfaceInput, SurfacePoint};
+import package::engine::slots::{derived, open_slots, slot_base_color, slot_cutoff, slot_emissive,
     slot_kind, slot_light_inputs, slot_normal, slot_opacity};
 import package::engine::surfaces::SURFACE_SOLID;
 import package::engine::view::stable_normalize;
@@ -21,7 +21,6 @@ fn placed(input: SurfaceInput) -> SurfacePoint {
     point.distance = length(to_eye);
     point.view = stable_normalize(to_eye);
     point.kind = SURFACE_SOLID;
-    point.occlusion = 1.0;
     return point;
 }
 

@@ -4,7 +4,7 @@ use std::sync::Arc;
 use engine_core::collections::HashMap;
 use engine_core::math::max;
 use engine_core::{
-    Aabb, AssetLibrary, Authored, MeshHandle, SceneContext, SubScene, SubSceneEntity, Transform,
+    Aabb, AssetLibrary, Authored, GeometryHandle, SceneContext, SubScene, SubSceneEntity, Transform,
 };
 use engine_places_world::streaming::{StreamedAt, StreamedKey, StreamedKeys, Streams};
 use glam::{Mat4, Vec3};
@@ -43,8 +43,8 @@ pub(crate) fn content(
         return Content::default();
     };
     let keys: Vec<StreamedKey> = context.members::<StreamedKeys>().copied().collect();
-    let bounds = |mesh: MeshHandle| assets.mesh(mesh).map(|mesh| mesh.bounds());
-    let sizes = |mesh: MeshHandle| bounds(mesh).map_or(0.0, |bounds| size(&bounds));
+    let bounds = |mesh: GeometryHandle| assets.mesh(mesh).map(|mesh| mesh.bounds());
+    let sizes = |mesh: GeometryHandle| bounds(mesh).map_or(0.0, |bounds| size(&bounds));
     let reaching = Reaching {
         keys: &keys,
         bounds: &bounds,
@@ -58,8 +58,8 @@ pub(crate) fn content(
 
 struct Reaching<'a> {
     keys: &'a [StreamedKey],
-    bounds: &'a dyn Fn(MeshHandle) -> Option<Aabb>,
-    sizes: &'a dyn Fn(MeshHandle) -> f32,
+    bounds: &'a dyn Fn(GeometryHandle) -> Option<Aabb>,
+    sizes: &'a dyn Fn(GeometryHandle) -> f32,
 }
 
 fn size(bounds: &Aabb) -> f32 {

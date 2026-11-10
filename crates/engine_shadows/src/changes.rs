@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat3, Vec3};
 use engine_core::{
     Cursor, DrawnArea, DrawnAreas, DrawnFlags, DrawnTable, Events, Feed, GlobalTransforms,
-    MaterialHandle, MeshHandle, Mobility, PlanState, ScenePasses, Since,
+    MaterialHandle, GeometryHandle, Mobility, PlanState, ScenePasses, Since,
 };
 use engine_places_rendering::shadows::SHADOW_PASS;
 
@@ -40,7 +40,7 @@ impl ShadowChanges {
     }
 }
 
-type Group = (MeshHandle, Option<MaterialHandle>);
+type Group = (GeometryHandle, Option<MaterialHandle>);
 
 type Bounds = (Vec3, Vec3);
 

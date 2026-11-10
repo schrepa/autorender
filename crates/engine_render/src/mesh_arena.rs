@@ -4,7 +4,7 @@ use std::sync::LazyLock;
 use bevy_ecs::world::World;
 use engine_core::{
     ArenaShape, AssetLibrary, AssetResidency, Attribute, AttributeFormat, Cursor, GeometryStream,
-    Mesh, MeshHandle, MeshLods, MeshPlacement, MeshResidence, MeshStreams, ResidentMesh, Since,
+    Mesh, GeometryHandle, MeshLods, MeshPlacement, MeshResidence, MeshStreams, ResidentMesh, Since,
     math::clamp,
 };
 
@@ -329,7 +329,7 @@ fn with_levels(mesh: &Mesh, lods: Option<&MeshLods>) -> Vec<u32> {
 }
 
 pub struct GpuMeshes {
-    meshes: BTreeMap<MeshHandle, GpuMesh>,
+    meshes: BTreeMap<GeometryHandle, GpuMesh>,
     arena: MeshArena,
     staging: Vec<Vec<u8>>,
     placed: Cursor,
@@ -345,15 +345,15 @@ impl GpuMeshes {
         }
     }
 
-    pub fn get(&self, handle: MeshHandle) -> Option<&GpuMesh> {
+    pub fn get(&self, handle: GeometryHandle) -> Option<&GpuMesh> {
         self.meshes.get(&handle)
     }
 
-    pub fn contains(&self, handle: MeshHandle) -> bool {
+    pub fn contains(&self, handle: GeometryHandle) -> bool {
         self.meshes.contains_key(&handle)
     }
 
-    pub fn draw(&self, handle: MeshHandle) -> Option<MeshDraw<'_>> {
+    pub fn draw(&self, handle: GeometryHandle) -> Option<MeshDraw<'_>> {
         self.meshes.get(&handle)?.draw(&self.arena)
     }
 
@@ -379,7 +379,7 @@ impl GpuMeshes {
         let Some((vertices, indices)) = residency.capacities() else {
             return 0;
         };
-        let all: Vec<MeshHandle>;
+        let all: Vec<GeometryHandle>;
         let changed = match residency.placed().since(&mut self.placed) {
             Since::Same => return 0,
             Since::Listed(handles) => handles,
@@ -420,7 +420,7 @@ impl GpuMeshes {
         &mut self,
         device: &wgpu::Device,
         queue: &Queue,
-        (handle, resident): (MeshHandle, &ResidentMesh),
+        (handle, resident): (GeometryHandle, &ResidentMesh),
         source: &Mesh,
         lods: Option<&MeshLods>,
     ) -> u64 {

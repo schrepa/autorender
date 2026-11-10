@@ -2,7 +2,7 @@ use bevy_ecs::component::Component;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 use engine_assets::{
-    Asset, AssetLibrary, GeometryStream, MaterialHandle, Mesh, MeshHandle, MeshLods, TextureHandle,
+    Asset, AssetLibrary, GeometryStream, MaterialHandle, Mesh, GeometryHandle, MeshLods, TextureHandle,
 };
 
 use crate::{Census, Feed, Interest, Request, Requests};
@@ -348,7 +348,7 @@ enum Resolved {
 pub struct AssetResidency {
     wanted: Requests<Asset, Resident>,
     arena: Option<Arena>,
-    placed: Feed<MeshHandle>,
+    placed: Feed<GeometryHandle>,
     seen: Option<(u64, u64)>,
     revision: u64,
 }
@@ -380,15 +380,15 @@ impl AssetResidency {
         self.wanted.interests(&asset.into())
     }
 
-    pub fn resident(&self, mesh: MeshHandle) -> bool {
+    pub fn resident(&self, mesh: GeometryHandle) -> bool {
         self.mesh(mesh).is_some()
     }
 
-    pub fn placed(&self) -> &Feed<MeshHandle> {
+    pub fn placed(&self) -> &Feed<GeometryHandle> {
         &self.placed
     }
 
-    pub fn mesh(&self, mesh: MeshHandle) -> Option<&ResidentMesh> {
+    pub fn mesh(&self, mesh: GeometryHandle) -> Option<&ResidentMesh> {
         let Some(Request::Ready(Resident::Mesh(resident))) = self.wanted.get(&Asset::Mesh(mesh))
         else {
             return None;
@@ -415,7 +415,7 @@ impl AssetResidency {
     }
 
     #[doc(hidden)]
-    pub fn meshes(&self) -> impl Iterator<Item = (MeshHandle, &ResidentMesh)> + '_ {
+    pub fn meshes(&self) -> impl Iterator<Item = (GeometryHandle, &ResidentMesh)> + '_ {
         self.wanted
             .iter()
             .filter_map(|(asset, request)| {

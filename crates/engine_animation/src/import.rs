@@ -4,10 +4,11 @@ use std::sync::Arc;
 use engine_core::math::max;
 use engine_core::{
     AlphaMode, AssetLibrary, BASE_COLOR_MAP, Cull, EMISSIVE_MAP, Error, ErrorCode, Expected, Filter,
-    Material, MaterialHandle, Mesh, MeshHandle, MeshVertex, Sampler, Surface, Texture,
+    Material, MaterialHandle, Mesh, GeometryHandle, MeshVertex, Sampler, Texture,
     TextureHandle, TextureRef, UvTransform, VertexSkin, Wrap, decode_image,
 };
 use engine_places_rendering::animation::{Bound, Clip, Joint, JointKeys, Keys, Rig, RigPart};
+use engine_places_rendering::lighting::{METALNESS, ROUGHNESS};
 use glam::{Mat3, Mat4, Quat, Vec3};
 use gltf::animation::util::ReadOutputs;
 use gltf::animation::{Interpolation, Property};
@@ -16,7 +17,7 @@ use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 const WHOLE: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
 
 pub struct Model {
-    pub statics: Vec<(MeshHandle, MaterialHandle)>,
+    pub statics: Vec<(GeometryHandle, MaterialHandle)>,
     pub rig: Option<Arc<Rig>>,
 }
 
@@ -560,11 +561,9 @@ impl Library<'_> {
     fn build_material(&mut self, material: &gltf::Material<'_>) -> Result<Material, Error> {
         let pbr = material.pbr_metallic_roughness();
         let [red, green, blue, alpha] = pbr.base_color_factor();
-        let mut built = Material::new([red, green, blue, 1.0])?.with_surface(Surface {
-            roughness: pbr.roughness_factor(),
-            metalness: pbr.metallic_factor(),
-            emission: 0.0,
-        })?;
+        let mut built = Material::new([red, green, blue, 1.0])?
+            .with_surface(ROUGHNESS, pbr.roughness_factor())?
+            .with_surface(METALNESS, pbr.metallic_factor())?;
         match material.alpha_mode() {
             gltf::material::AlphaMode::Opaque => {}
             gltf::material::AlphaMode::Mask => {

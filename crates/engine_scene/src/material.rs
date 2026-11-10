@@ -9,8 +9,9 @@ use engine_core::{
 use engine_settings::{ErrorCode, Expected};
 use serde::{Deserialize, Serialize};
 
-use crate::SceneSurface;
 use crate::validation::{identifier, moved};
+
+const SURFACE_EMISSION: &str = "emission";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[cfg_attr(
@@ -34,13 +35,11 @@ pub struct SceneMaterial {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub color: Option<[f32; 4]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub surface: Option<SceneSurface>,
+    pub surface: Option<BTreeMap<String, f32>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opacity: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub normal_scale: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub occlusion_strength: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub emissive: Option<[f32; 3]>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -56,8 +55,6 @@ pub struct SceneMaterial {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub depth_bias: Option<SceneDepthBias>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub transmission: Option<f32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub slots: Option<BTreeMap<String, SceneSlot>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub values: Option<BTreeMap<String, f32>>,
@@ -71,10 +68,8 @@ fn state_material_rules(schema: &mut schemars::Schema) {
         ("color", Material::COLOR),
         ("opacity", Material::OPACITY),
         ("normal_scale", Material::NORMAL_SCALE),
-        ("occlusion_strength", Material::OCCLUSION_STRENGTH),
         ("emissive", Material::EMISSIVE),
         ("alpha_cutoff", Material::ALPHA_CUTOFF),
-        ("transmission", Material::TRANSMISSION),
     ] {
         engine_settings::state(schema, field, rule);
     }
@@ -294,7 +289,9 @@ impl SceneMaterial {
             }
         }
         let [red, green, blue, opacity] = material.color();
-        let surface = material.surface();
+        let surface = std::iter::once((SURFACE_EMISSION.to_owned(), material.emission()))
+            .chain(material.surface().iter().cloned())
+            .collect();
         let state = material.render_state();
         let (alpha_mode, alpha_cutoff) = match state.alpha {
             AlphaMode::Opaque => (SceneAlphaMode::Opaque, None),
@@ -306,14 +303,9 @@ impl SceneMaterial {
             id: id.into(),
             provided: None,
             color: Some([red, green, blue, 1.0]),
-            surface: Some(SceneSurface {
-                roughness: surface.roughness,
-                metalness: surface.metalness,
-                emission: surface.emission,
-            }),
+            surface: Some(surface),
             opacity: Some(opacity),
             normal_scale: Some(material.normal_scale()),
-            occlusion_strength: Some(material.occlusion_strength()),
             emissive: Some(material.emissive()),
             alpha_mode: Some(alpha_mode),
             alpha_cutoff,
@@ -328,7 +320,6 @@ impl SceneMaterial {
                 constant: state.bias.constant,
                 slope: state.bias.slope,
             }),
-            transmission: Some(material.transmission()),
             slots: (!fills.is_empty()).then(|| {
                 fills
                     .into_iter()
@@ -390,7 +381,6 @@ impl SceneMaterial {
             ("surface", self.surface.is_some()),
             ("opacity", self.opacity.is_some()),
             ("normal_scale", self.normal_scale.is_some()),
-            ("occlusion_strength", self.occlusion_strength.is_some()),
             ("emissive", self.emissive.is_some()),
             ("alpha_mode", self.alpha_mode.is_some()),
             ("alpha_cutoff", self.alpha_cutoff.is_some()),
@@ -398,7 +388,6 @@ impl SceneMaterial {
             ("depth_test", self.depth_test.is_some()),
             ("depth_write", self.depth_write.is_some()),
             ("depth_bias", self.depth_bias.is_some()),
-            ("transmission", self.transmission.is_some()),
             ("slots", self.slots.is_some()),
             ("values", self.values.is_some()),
             ("lighting", self.lighting.is_some()),
@@ -449,10 +438,14 @@ impl SceneMaterial {
                 .with_opacity(opacity)
                 .map_err(|error| failed(error, "opacity"))?;
         }
-        if let Some(surface) = self.surface {
-            material = material
-                .with_surface(surface.surface())
-                .map_err(|error| failed(error, "surface"))?;
+        for (name, value) in self.surface.iter().flatten() {
+            let field = format!("surface.{name}");
+            material = if name == SURFACE_EMISSION {
+                material.with_emission(*value)
+            } else {
+                material.with_surface(name.as_str(), *value)
+            }
+            .map_err(|error| failed(error, &field))?;
         }
         if let Some(emissive) = self.emissive {
             material = material
@@ -482,11 +475,6 @@ impl SceneMaterial {
         material = material
             .with_render_state(state)
             .map_err(|error| failed(error, "depth_bias"))?;
-        if let Some(transmission) = self.transmission {
-            material = material
-                .with_transmission(transmission)
-                .map_err(|error| failed(error, "transmission"))?;
-        }
         for (name, fill) in self.slots.iter().flatten() {
             material = material
                 .with_slot(name, fill.module())
@@ -508,11 +496,6 @@ impl SceneMaterial {
             material = material
                 .with_normal_scale(scale)
                 .map_err(|error| failed(error, "normal_scale"))?;
-        }
-        if let Some(strength) = self.occlusion_strength {
-            material = material
-                .with_occlusion_strength(strength)
-                .map_err(|error| failed(error, "occlusion_strength"))?;
         }
         let mut maps: Vec<PreparedMap> = Vec::new();
         for (slot, name, map) in self.maps() {

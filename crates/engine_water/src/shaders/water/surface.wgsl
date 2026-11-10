@@ -499,7 +499,7 @@ fn water_light(surface: WaterSurface, pixel: vec2<f32>) -> WaterLit {
     point.world_dx = surface.world_dx;
     point.world_dy = surface.world_dy;
     point.kind = SURFACE_WATER;
-    point.inputs.sun_blocked = 1.0;
+    point.inputs.direct_blocked = 1.0;
     point.inputs.added_light = mix(body + glint, foam, surface.foam);
     var lit: WaterLit;
     lit.point = point;

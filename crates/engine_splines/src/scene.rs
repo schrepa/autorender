@@ -1,4 +1,4 @@
-use engine_core::{Error, Expected, MaterialHandle, MeshHandle, parse_value};
+use engine_core::{Error, Expected, MaterialHandle, GeometryHandle, parse_value};
 use engine_places_world::splines::SplineMesh;
 use engine_places_world::streaming::StreamedAt;
 use serde::Serialize;
@@ -12,7 +12,7 @@ use crate::spline_mesh::MAX_SPLINE_POINTS;
 pub(crate) struct SceneSpline {
     #[schemars(length(min = 2, max = MAX_SPLINE_POINTS))]
     points: Vec<[f32; 3]>,
-    mesh: MeshHandle,
+    mesh: GeometryHandle,
     material: MaterialHandle,
 }
 

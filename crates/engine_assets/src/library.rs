@@ -28,7 +28,7 @@ struct Id {
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct MeshHandle(Id);
+pub struct GeometryHandle(Id);
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct MaterialHandle(Id);
@@ -38,13 +38,13 @@ pub struct TextureHandle(Id);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum Asset {
-    Mesh(MeshHandle),
+    Mesh(GeometryHandle),
     Material(MaterialHandle),
     Texture(TextureHandle),
 }
 
-impl From<MeshHandle> for Asset {
-    fn from(handle: MeshHandle) -> Self {
+impl From<GeometryHandle> for Asset {
+    fn from(handle: GeometryHandle) -> Self {
         Self::Mesh(handle)
     }
 }
@@ -61,7 +61,7 @@ impl From<TextureHandle> for Asset {
     }
 }
 
-impl MeshHandle {
+impl GeometryHandle {
     pub fn slot(self) -> usize {
         self.0.slot
     }
@@ -79,7 +79,7 @@ impl TextureHandle {
     }
 }
 
-impl engine_settings::Setting for MeshHandle {}
+impl engine_settings::Setting for GeometryHandle {}
 impl engine_settings::Setting for MaterialHandle {}
 impl engine_settings::Setting for TextureHandle {}
 
@@ -130,7 +130,7 @@ impl<H> SceneTable<H> {
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SceneAssets {
-    pub meshes: SceneTable<MeshHandle>,
+    pub meshes: SceneTable<GeometryHandle>,
     pub materials: SceneTable<MaterialHandle>,
     pub textures: SceneTable<TextureHandle>,
 }
@@ -256,7 +256,7 @@ macro_rules! scene_named {
     };
 }
 
-scene_named!(MeshHandle, meshes, "mesh");
+scene_named!(GeometryHandle, meshes, "mesh");
 scene_named!(MaterialHandle, materials, "material");
 scene_named!(TextureHandle, textures, "texture");
 
@@ -475,7 +475,7 @@ pub struct AssetLibrary {
     revision: u64,
     budget: AssetBudget,
     meshes: Storage<HeldMesh>,
-    awaiting_lods: Vec<MeshHandle>,
+    awaiting_lods: Vec<GeometryHandle>,
     materials: Storage<Material>,
     textures: Storage<Arc<Texture>>,
     resident_bytes: usize,
@@ -512,7 +512,7 @@ impl AssetLibrary {
         }
     }
 
-    pub fn insert_mesh(&mut self, mesh: Mesh) -> Result<MeshHandle, Error> {
+    pub fn insert_mesh(&mut self, mesh: Mesh) -> Result<GeometryHandle, Error> {
         if !self.meshes.has_capacity(self.budget.max_meshes) {
             return Err(full("$.meshes", self.budget.max_meshes));
         }
@@ -520,22 +520,22 @@ impl AssetLibrary {
         let held = HeldMesh::new(mesh);
         let awaits = held.awaits();
         let revision = self.bump();
-        let handle = MeshHandle(self.meshes.insert(self.id, held, revision));
+        let handle = GeometryHandle(self.meshes.insert(self.id, held, revision));
         if awaits {
             self.awaiting_lods.push(handle);
         }
         Ok(handle)
     }
 
-    pub fn reserve_mesh(&mut self) -> Result<MeshHandle, Error> {
+    pub fn reserve_mesh(&mut self) -> Result<GeometryHandle, Error> {
         if !self.meshes.has_capacity(self.budget.max_meshes) {
             return Err(full("$.meshes", self.budget.max_meshes));
         }
         let revision = self.bump();
-        Ok(MeshHandle(self.meshes.reserve(self.id, revision)))
+        Ok(GeometryHandle(self.meshes.reserve(self.id, revision)))
     }
 
-    pub fn fill_mesh(&mut self, handle: MeshHandle, mesh: Mesh) -> Result<(), Error> {
+    pub fn fill_mesh(&mut self, handle: GeometryHandle, mesh: Mesh) -> Result<(), Error> {
         if !self.meshes.holds(self.id, handle.0) || self.mesh(handle).is_some() {
             return Err(dead(ErrorCode::InvalidMesh, "$.mesh"));
         }
@@ -549,13 +549,13 @@ impl AssetLibrary {
         Ok(())
     }
 
-    pub fn take_awaiting_lods(&mut self) -> Vec<MeshHandle> {
+    pub fn take_awaiting_lods(&mut self) -> Vec<GeometryHandle> {
         std::mem::take(&mut self.awaiting_lods)
     }
 
     pub fn settle_lods(
         &mut self,
-        handle: MeshHandle,
+        handle: GeometryHandle,
         lods: Option<Arc<MeshLods>>,
     ) -> Result<(), Error> {
         let held = self
@@ -574,7 +574,7 @@ impl AssetLibrary {
         Ok(())
     }
 
-    pub fn mesh_lods(&self, handle: MeshHandle) -> Option<Option<&Arc<MeshLods>>> {
+    pub fn mesh_lods(&self, handle: GeometryHandle) -> Option<Option<&Arc<MeshLods>>> {
         match &self.meshes.get(self.id, handle.0)?.lods {
             Levels::Awaiting => None,
             Levels::Built(lods) => Some(Some(lods)),
@@ -652,7 +652,7 @@ impl AssetLibrary {
         Ok(())
     }
 
-    pub fn mesh(&self, handle: MeshHandle) -> Option<&Arc<Mesh>> {
+    pub fn mesh(&self, handle: GeometryHandle) -> Option<&Arc<Mesh>> {
         self.meshes.get(self.id, handle.0).map(|held| &held.mesh)
     }
 
@@ -676,7 +676,7 @@ impl AssetLibrary {
         self.textures.get(self.id, handle.0)
     }
 
-    pub fn remove_mesh(&mut self, handle: MeshHandle) -> bool {
+    pub fn remove_mesh(&mut self, handle: GeometryHandle) -> bool {
         let Some(mesh) = self.meshes.remove(self.id, handle.0) else {
             return false;
         };

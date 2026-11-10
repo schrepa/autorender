@@ -1,6 +1,6 @@
 import package::engine::drawn::{GeometryExtra, GeometryVertex, INPUT_DRAW, INPUT_SLOT};
-import package::engine::mesh::declarations::{AffinePose, faded_entry_fade, faded_slot_slot};
-import package::engine::mesh::vertex::{pose_matrix, transform_vertex};
+import package::engine::geometry::declarations::{AffinePose, faded_entry_fade, faded_slot_slot};
+import package::engine::geometry::vertex::{pose_matrix, transform_vertex};
 import package::engine::shading::PositionInput;
 import package::engine::slots::slot_position;
 import package::engine::view::{camera, detail_across, view_clip};

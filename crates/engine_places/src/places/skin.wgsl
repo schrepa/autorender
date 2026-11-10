@@ -1,4 +1,4 @@
-import package::engine::mesh::declarations::AffinePose;
+import package::engine::geometry::declarations::AffinePose;
 
 struct SkinPose {
     now: AffinePose,

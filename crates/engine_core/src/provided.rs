@@ -2,17 +2,17 @@ use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::Resource;
 
-use crate::{MaterialHandle, MeshHandle, TextureHandle};
+use crate::{MaterialHandle, GeometryHandle, TextureHandle};
 
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProvidedAssets {
-    meshes: BTreeMap<String, MeshHandle>,
+    meshes: BTreeMap<String, GeometryHandle>,
     textures: BTreeMap<String, TextureHandle>,
     materials: BTreeMap<String, MaterialHandle>,
 }
 
 impl ProvidedAssets {
-    pub fn provide_mesh(&mut self, name: impl Into<String>, mesh: MeshHandle) -> &mut Self {
+    pub fn provide_mesh(&mut self, name: impl Into<String>, mesh: GeometryHandle) -> &mut Self {
         self.meshes.insert(name.into(), mesh);
         self
     }
@@ -35,7 +35,7 @@ impl ProvidedAssets {
         self
     }
 
-    pub fn mesh(&self, name: &str) -> Option<MeshHandle> {
+    pub fn mesh(&self, name: &str) -> Option<GeometryHandle> {
         self.meshes.get(name).copied()
     }
 

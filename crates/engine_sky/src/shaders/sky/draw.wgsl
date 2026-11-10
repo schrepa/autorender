@@ -1,5 +1,6 @@
 import package::engine::color::{hash3, luminance};
-import package::engine::shading::{ViewPixel, flat, flat_point};
+import package::engine::shading::{ViewPixel, flat};
+import package::engine::slots::flat_point;
 import package::engine::view::{camera, stable_normalize};
 import package::face::sun::sun_direction;
 import package::face::tonemap::exposure;

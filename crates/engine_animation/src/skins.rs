@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, DrawnBounds, DrawnPoses, DrawnTable, Error, GlobalTransforms, Mesh, MeshHandle,
+    AssetLibrary, DrawnBounds, DrawnPoses, DrawnTable, Error, GlobalTransforms, Mesh, GeometryHandle,
     Spawner, gpu_struct,
 };
 use engine_places_rendering::animation::{Animator, Bound};
@@ -29,7 +29,7 @@ gpu_struct! {
     }
 }
 
-type ReachKey = (MeshHandle, Option<u64>, u64);
+type ReachKey = (GeometryHandle, Option<u64>, u64);
 
 struct Reach {
     key: ReachKey,

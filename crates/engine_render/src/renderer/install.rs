@@ -284,7 +284,9 @@ fn material_layout(
     roots: &mut Vec<(String, String)>,
     problems: &mut Vec<Error>,
 ) -> crate::surface::MaterialLayout {
-    use crate::surface::{LightingModule, MaterialLayout, OpenSlot, SlotModule, SurfaceKind};
+    use crate::surface::{
+        LightingModule, MaterialLayout, OpenSlot, SlotModule, SurfaceKind, SurfaceTerms,
+    };
     let mut slots = crate::surface::core_slots();
     for (declared, path) in &slots {
         roots.push((path.clone(), declared.slot.to_owned()));
@@ -302,6 +304,14 @@ fn material_layout(
         roots.push((path.to_owned(), name));
         open.push((*declared, path.to_owned()));
     }
+    let mut terms = Vec::new();
+    for (_, declared) in registry.render_entries::<SurfaceTerms>() {
+        linker.add_source(declared.derive.source());
+        let (path, name) =
+            crate::linker::path_of((declared.derive, crate::surface::DERIVE_ENTRY));
+        roots.push((path.to_owned(), name));
+        terms.push((*declared, path.to_owned()));
+    }
     let mut models = Vec::new();
     for (_, declared) in registry.render_entries::<LightingModule>() {
         linker.add_source(declared.module.source());
@@ -314,8 +324,9 @@ fn material_layout(
         .render_entries::<SurfaceKind>()
         .map(|(_, kind)| *kind)
         .collect();
-    let layout = MaterialLayout::of(&slots, &open, &models, &kinds, problems);
+    let layout = MaterialLayout::of(&slots, &open, &terms, &models, &kinds, problems);
     for (path, text) in [
+        (crate::surface::SHADING_MODULE, layout.shading_source()),
         (crate::surface::MATERIALS_MODULE, layout.materials_source()),
         (crate::surface::SLOTS_MODULE, layout.slots_source(true)),
         (crate::surface::SURFACES_MODULE, layout.surfaces_source()),

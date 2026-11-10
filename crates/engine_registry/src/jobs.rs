@@ -68,7 +68,7 @@ impl JobList {
     }
 
     pub fn find(&self, name: &str, source: &[u8; 32]) -> Option<JobKindRef> {
-        let index = self.names.binary_search_by(|probe| probe.cmp(&name)).ok()?;
+        let index = self.names.binary_search_by(|known| known.cmp(&name)).ok()?;
         (self.sources[index] == *source).then_some(self.kinds[index])
     }
 
@@ -81,7 +81,7 @@ impl JobList {
     }
 
     pub fn named(&self, name: &str) -> Option<JobRef> {
-        let index = self.names.binary_search_by(|probe| probe.cmp(&name)).ok()?;
+        let index = self.names.binary_search_by(|known| known.cmp(&name)).ok()?;
         Some(JobRef::named(self.names[index], self.sources[index]))
     }
 
@@ -128,7 +128,7 @@ impl JobListed {
 
     pub fn listed(&self, name: &str, source: &[u8; 32]) -> bool {
         self.names
-            .binary_search_by(|probe| probe.cmp(&name))
+            .binary_search_by(|known| known.cmp(&name))
             .is_ok_and(|index| self.sources[index] == *source)
     }
 }

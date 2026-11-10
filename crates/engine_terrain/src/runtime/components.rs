@@ -12,7 +12,7 @@ pub struct TerrainSurface {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlacementAsset {
-    pub mesh: MeshHandle,
+    pub mesh: GeometryHandle,
     pub material: MaterialHandle,
     pub collider: Option<PlacedCollider>,
 }

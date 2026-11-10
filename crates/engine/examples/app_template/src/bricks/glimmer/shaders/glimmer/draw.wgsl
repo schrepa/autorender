@@ -1,5 +1,6 @@
 import package::engine::drawn::drawn_shown;
-import package::engine::shading::{flat, flat_point};
+import package::engine::shading::flat;
+import package::engine::slots::flat_point;
 import package::engine::view::{camera, stable_normalize, view_clip, view_pixel};
 import package::generated::glimmer::GlimmerInstance;
 import package::generated::writes::{Outputs, outputs};

@@ -57,6 +57,6 @@ fn kind(input: SurfaceInput, point: SurfacePoint) -> u32 {
 
 fn light_inputs(input: SurfaceInput, point: SurfacePoint) -> LightInputs {
     var inputs = point.inputs;
-    inputs.sun_softness = leafiness(mapped_base_color(input, point));
+    inputs.direct_softness = leafiness(mapped_base_color(input, point));
     return inputs;
 }

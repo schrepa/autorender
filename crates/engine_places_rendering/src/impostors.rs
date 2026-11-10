@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::{Component, Resource};
-use engine_place::{GpuBits, MaterialHandle, MeshHandle, Slot, gpu_bits, gpu_struct};
+use engine_place::{GpuBits, MaterialHandle, GeometryHandle, Slot, gpu_bits, gpu_struct};
 
 pub const IMPOSTOR_VERTICES: u32 = 6;
 pub const DEBUG_CARD: u32 = 1 << 13;
@@ -45,9 +45,9 @@ impl ImpostorRecord {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ImpostorAsk {
-    pub mesh: MeshHandle,
+    pub mesh: GeometryHandle,
     pub material: Option<MaterialHandle>,
-    pub parts: Vec<(MeshHandle, MaterialHandle)>,
+    pub parts: Vec<(GeometryHandle, MaterialHandle)>,
 }
 
 #[derive(Component, Clone, Debug, PartialEq)]

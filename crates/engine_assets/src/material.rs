@@ -1,34 +1,10 @@
 use engine_codec::{Error, ErrorCode, Expected};
-use engine_settings::{InvalidSetting, Rule, Setting, fields};
+use engine_settings::{InvalidSetting, Rule, Setting};
 
 use crate::{ColorSpace, TextureHandle};
 
 fn invalid(setting: InvalidSetting) -> Error {
     setting.error(ErrorCode::InvalidMaterial, "$")
-}
-
-fn invalid_part(part: &'static str, setting: InvalidSetting) -> Error {
-    invalid(setting.within(part))
-}
-
-fields! {
-    unauthored;
-    #[derive(Debug, Clone, Copy, PartialEq)]
-    pub struct Surface {
-        pub roughness: f32 = Surface::MATTE.roughness => range(0.0, 1.0),
-        pub metalness: f32 = Surface::MATTE.metalness => range(0.0, 1.0),
-        pub emission: f32 = Surface::MATTE.emission => range(0.0, Surface::MAX_EMISSION),
-    }
-}
-
-impl Surface {
-    pub const MATTE: Self = Self {
-        roughness: 0.8,
-        metalness: 0.0,
-        emission: 0.0,
-    };
-
-    pub const MAX_EMISSION: f32 = 16.0;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
@@ -323,37 +299,29 @@ pub enum LightingModel {
 
 pub const MAPPED: &str = "mapped";
 pub const BASE_COLOR_MAP: &str = "base_color";
-pub const METALLIC_ROUGHNESS_MAP: &str = "metallic_roughness";
 pub const NORMAL_MAP: &str = "normal";
-pub const OCCLUSION_MAP: &str = "occlusion";
 pub const EMISSIVE_MAP: &str = "emissive";
-pub const MAPPED_MAPS: [(&str, ColorSpace); 5] = [
+pub const MAPPED_MAPS: [(&str, ColorSpace); 3] = [
     (BASE_COLOR_MAP, ColorSpace::Srgb),
-    (METALLIC_ROUGHNESS_MAP, ColorSpace::Linear),
     (NORMAL_MAP, ColorSpace::Linear),
-    (OCCLUSION_MAP, ColorSpace::Linear),
     (EMISSIVE_MAP, ColorSpace::Srgb),
 ];
-pub const MAPPED_SLOTS: [(&str, &[&str]); 8] = [
+pub const MAPPED_SLOTS: [(&str, &[&str]); 5] = [
     (SurfaceSlot::BaseColor.name(), &[BASE_COLOR_MAP]),
     (SurfaceSlot::Opacity.name(), &[BASE_COLOR_MAP]),
     (SurfaceSlot::Cutoff.name(), &[BASE_COLOR_MAP]),
     (SurfaceSlot::Normal.name(), &[NORMAL_MAP]),
-    ("roughness", &[METALLIC_ROUGHNESS_MAP]),
-    ("metalness", &[METALLIC_ROUGHNESS_MAP]),
     (SurfaceSlot::Emissive.name(), &[EMISSIVE_MAP, BASE_COLOR_MAP]),
-    ("occlusion", &[OCCLUSION_MAP]),
 ];
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Material {
     state: RenderState,
     color: [f32; 4],
-    surface: Surface,
+    emission: f32,
+    surface: Vec<(String, f32)>,
     normal_scale: f32,
-    occlusion_strength: f32,
     emissive: [f32; 3],
-    transmission: f32,
     maps: Vec<(String, TextureRef)>,
     slots: Vec<(String, String)>,
     values: Vec<(String, f32)>,
@@ -365,9 +333,10 @@ impl Material {
     pub const OPACITY: Rule = Rule::above_to(0.0, 1.0);
     pub const ALPHA_CUTOFF: Rule = Rule::at_least(0.0);
     pub const NORMAL_SCALE: Rule = Rule::finite();
-    pub const OCCLUSION_STRENGTH: Rule = Rule::range(0.0, 1.0);
     pub const EMISSIVE: Rule = Rule::at_least(0.0);
-    pub const TRANSMISSION: Rule = Rule::range(0.0, 1.0);
+    pub const MAX_EMISSION: f32 = 16.0;
+    pub const EMISSION: Rule = Rule::range(0.0, Self::MAX_EMISSION as f64);
+    pub const SURFACE: Rule = Rule::range(0.0, 1.0);
     pub const VALUE: Rule = Rule::finite();
 
     pub fn is_name(name: &str) -> bool {
@@ -384,11 +353,10 @@ impl Material {
         Ok(Self {
             state: RenderState::OPAQUE,
             color,
-            surface: Surface::MATTE,
+            emission: 0.0,
+            surface: Vec::new(),
             normal_scale: 1.0,
-            occlusion_strength: 1.0,
             emissive: [0.0; 3],
-            transmission: 0.0,
             maps: Vec::new(),
             slots: Vec::new(),
             values: Vec::new(),
@@ -447,11 +415,24 @@ impl Material {
         self.state.cull
     }
 
-    pub fn with_surface(mut self, surface: Surface) -> Result<Self, Error> {
-        surface
-            .validate()
-            .map_err(|setting| invalid_part("surface", setting))?;
-        self.surface = surface;
+    pub fn with_emission(mut self, emission: f32) -> Result<Self, Error> {
+        emission.check("emission", Self::EMISSION).map_err(invalid)?;
+        self.emission = emission;
+        Ok(self)
+    }
+
+    pub fn with_surface(mut self, name: impl Into<String>, value: f32) -> Result<Self, Error> {
+        let name = name.into();
+        if !is_identifier(&name) {
+            return Err(Error::new(ErrorCode::InvalidMaterial, "$.surface")
+                .expected(Expected::Id)
+                .got(name));
+        }
+        value.check("surface", Self::SURFACE).map_err(invalid)?;
+        match self.surface.iter_mut().find(|(known, _)| *known == name) {
+            Some((_, held)) => *held = value,
+            None => self.surface.push((name, value)),
+        }
         Ok(self)
     }
 
@@ -493,25 +474,9 @@ impl Material {
         Ok(self)
     }
 
-    pub fn with_occlusion_strength(mut self, strength: f32) -> Result<Self, Error> {
-        strength
-            .check("occlusion_strength", Self::OCCLUSION_STRENGTH)
-            .map_err(invalid)?;
-        self.occlusion_strength = strength;
-        Ok(self)
-    }
-
     pub fn with_emissive(mut self, color: [f32; 3]) -> Result<Self, Error> {
         color.check("emissive", Self::EMISSIVE).map_err(invalid)?;
         self.emissive = color;
-        Ok(self)
-    }
-
-    pub fn with_transmission(mut self, transmission: f32) -> Result<Self, Error> {
-        transmission
-            .check("transmission", Self::TRANSMISSION)
-            .map_err(invalid)?;
-        self.transmission = transmission;
         Ok(self)
     }
 
@@ -562,8 +527,19 @@ impl Material {
         self.color
     }
 
-    pub fn surface(&self) -> Surface {
+    pub fn emission(&self) -> f32 {
+        self.emission
+    }
+
+    pub fn surface(&self) -> &[(String, f32)] {
+        &self.surface
+    }
+
+    pub fn surface_value(&self, name: &str) -> Option<f32> {
         self.surface
+            .iter()
+            .find(|(known, _)| known == name)
+            .map(|(_, value)| *value)
     }
 
     pub fn map(&self, name: &str) -> Option<TextureRef> {
@@ -581,16 +557,8 @@ impl Material {
         self.normal_scale
     }
 
-    pub fn occlusion_strength(&self) -> f32 {
-        self.occlusion_strength
-    }
-
     pub fn emissive(&self) -> [f32; 3] {
         self.emissive
-    }
-
-    pub fn transmission(&self) -> f32 {
-        self.transmission
     }
 
     pub fn slots(&self) -> &[(String, String)] {
@@ -628,7 +596,6 @@ impl Material {
             && self.slots.is_empty()
             && self.values.is_empty()
             && self.emissive == [0.0; 3]
-            && self.transmission == 0.0
             && self.state == RenderState::OPAQUE
             && self.lighting == LightingModel::Lit;
         (!plain).then(|| MaterialBinding {
@@ -664,11 +631,9 @@ impl Material {
                 .collect(),
             factors: [
                 self.normal_scale,
-                self.occlusion_strength,
                 self.emissive[0],
                 self.emissive[1],
                 self.emissive[2],
-                self.transmission,
             ]
             .map(f32::to_bits),
             slots: self.slots.clone(),
@@ -689,7 +654,7 @@ type BoundState = ((u8, u32), bool, bool, Cull, (i32, u32));
 pub struct MaterialBinding {
     state: BoundState,
     maps: Vec<BoundMap>,
-    factors: [u32; 6],
+    factors: [u32; 4],
     slots: Vec<(String, String)>,
     values: Vec<(String, u32)>,
     lighting: LightingModel,

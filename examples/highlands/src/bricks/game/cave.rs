@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Background, Drawn, Jobs, Landed, MaterialHandle, Mesh, MeshHandle, Records,
+    AssetLibrary, Background, Drawn, Jobs, Landed, MaterialHandle, Mesh, GeometryHandle, Records,
     Spawner, Transform, math,
 };
 use engine_places::meshes::MESH;
@@ -32,16 +32,16 @@ pub(crate) struct Cave {
 
 struct Asked {
     work: Background<Mesh>,
-    mesh: MeshHandle,
+    mesh: GeometryHandle,
     points: [Vec3; CAVE_POINTS],
     inward: Vec3,
     rock: CaveRock,
-    framing: Vec<(Transform, MeshHandle)>,
+    framing: Vec<(Transform, GeometryHandle)>,
 }
 
 #[derive(Clone)]
 struct CaveRock {
-    boulders: Vec<MeshHandle>,
+    boulders: Vec<GeometryHandle>,
     material: MaterialHandle,
     wall: MaterialHandle,
 }
@@ -119,7 +119,7 @@ pub(crate) fn open(
         at(58.0, 0.0, fall * 18.0 + fall * 22.0),
     ];
     let facing = Quat::from_rotation_y(math::atan2(-uphill.x, -uphill.y));
-    let framing: Vec<(Transform, MeshHandle)> = [
+    let framing: Vec<(Transform, GeometryHandle)> = [
         (4.0, 0.0, 1.5, 10.0, 0),
         (-1.0, 10.0, -1.5, 7.0, 1),
         (-1.0, -10.0, -1.5, 7.0, 2),
@@ -203,9 +203,9 @@ fn arrive(
 
 fn spawn_cave(
     spawner: &mut Spawner<HighlandsBrick>,
-    mesh: MeshHandle,
+    mesh: GeometryHandle,
     (points, inward, low, high): (&[Vec3; CAVE_POINTS], Vec3, Vec3, Vec3),
-    (rock, framing): (&CaveRock, Vec<(Transform, MeshHandle)>),
+    (rock, framing): (&CaveRock, Vec<(Transform, GeometryHandle)>),
 ) {
     spawner.spawn((
         Transform {

@@ -2,11 +2,12 @@ use std::fmt::Write as _;
 
 use engine_core::{
     AlphaMode, BitValue, Error, ErrorCode, GpuBits, LightingModel, MAPPED, MAPPED_SLOTS, Material,
-    MaterialHandle, Module, SurfaceSlot, UvTransform, gpu_bits,
+    MaterialHandle, Module, Rule, Setting, SurfaceSlot, UvTransform, gpu_bits,
 };
 
 use crate::linker::{Declaration, Ty};
 
+pub const SHADING_MODULE: &str = "engine::shading";
 pub const MATERIALS_MODULE: &str = "engine::materials";
 pub const SLOTS_MODULE: &str = "engine::slots";
 pub const SURFACES_MODULE: &str = "engine::surfaces";
@@ -14,6 +15,7 @@ pub const MAPPED_MODULE: &str = "engine::mapped";
 pub const STANDARD_MODULE: &str = "engine::standard";
 pub const RECORD: &str = "material_record";
 pub const LIGHTING_ENTRY: &str = "lit";
+pub const DERIVE_ENTRY: &str = "derive";
 pub const MASK_MIP_SCALE: f32 = 0.25;
 
 #[gpu_bits]
@@ -203,22 +205,65 @@ pub struct LightingModule {
     pub module: Module,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MaterialValue {
+    pub name: &'static str,
+    pub standard: f32,
+    pub rule: Rule,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct OpenSlot {
     pub name: &'static str,
     pub returns: &'static str,
     pub standard: Module,
+    pub flat: &'static str,
+    pub values: &'static [MaterialValue],
 }
+
+#[derive(Clone, Copy, Debug)]
+pub struct SurfaceTerms {
+    pub fields: &'static [(&'static str, &'static str)],
+    pub derive: Module,
+}
+
+const POINT_FIELDS: [(&str, &str); 16] = [
+    ("base_color", "vec3<f32>"),
+    ("opacity", "f32"),
+    ("emissive", "vec3<f32>"),
+    ("normal", "vec3<f32>"),
+    ("normal_dx", "vec3<f32>"),
+    ("normal_dy", "vec3<f32>"),
+    ("geometric", "vec3<f32>"),
+    ("view", "vec3<f32>"),
+    ("n_v", "f32"),
+    ("world", "vec3<f32>"),
+    ("world_dx", "vec3<f32>"),
+    ("world_dy", "vec3<f32>"),
+    ("distance", "f32"),
+    ("kind", "u32"),
+    ("lighting", "u32"),
+    ("inputs", "LightInputs"),
+];
 
 type LaidSlot = (&'static str, &'static str, String, &'static [&'static str]);
 
-type LaidOpen = (&'static str, &'static str, String);
+type LaidOpen = (&'static str, &'static str, String, &'static str);
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct LaidValue {
+    name: &'static str,
+    standard: f32,
+    rule: Option<Rule>,
+}
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct MaterialLayout {
     maps: Vec<&'static str>,
-    values: Vec<&'static str>,
+    values: Vec<LaidValue>,
     open: Vec<LaidOpen>,
+    terms: Vec<(&'static str, &'static str)>,
+    derives: Vec<String>,
     slots: Vec<LaidSlot>,
     models: Vec<(&'static str, String)>,
     kinds: Vec<SurfaceKind>,
@@ -255,12 +300,29 @@ fn wrong_name(path: String, name: &str) -> Error {
 
 impl MaterialLayout {
     pub(crate) fn standard() -> Self {
-        Self::of(&core_slots(), &[], &[], &[], &mut Vec::new())
+        Self::of(&core_slots(), &[], &[], &[], &[], &mut Vec::new())
+    }
+
+    fn point_field(&self, name: &str) -> bool {
+        POINT_FIELDS.iter().any(|(known, _)| *known == name)
+            || self.open.iter().any(|(known, ..)| *known == name)
+            || self.terms.iter().any(|(known, _)| *known == name)
+    }
+
+    fn value(&mut self, name: &'static str, standard: f32, rule: Option<Rule>) {
+        if !self.values.iter().any(|known| known.name == name) {
+            self.values.push(LaidValue {
+                name,
+                standard,
+                rule,
+            });
+        }
     }
 
     pub(crate) fn of(
         slots: &[(SlotModule, String)],
         open: &[(OpenSlot, String)],
+        terms: &[(SurfaceTerms, String)],
         models: &[(LightingModule, String)],
         kinds: &[SurfaceKind],
         problems: &mut Vec<Error>,
@@ -269,12 +331,14 @@ impl MaterialLayout {
             maps: Vec::new(),
             values: Vec::new(),
             open: Vec::new(),
+            terms: Vec::new(),
+            derives: Vec::new(),
             slots: Vec::new(),
             models: Vec::new(),
             kinds: vec![SurfaceKind::SOLID],
         };
         for (declared, path) in open {
-            if layout.slot_index(declared.name).is_some() {
+            if layout.slot_index(declared.name).is_some() || layout.point_field(declared.name) {
                 problems.push(wrong_name(
                     format!("$.open_slots.{}", declared.name),
                     declared.name,
@@ -283,7 +347,20 @@ impl MaterialLayout {
             }
             layout
                 .open
-                .push((declared.name, declared.returns, path.clone()));
+                .push((declared.name, declared.returns, path.clone(), declared.flat));
+            for value in declared.values {
+                layout.value(value.name, value.standard, Some(value.rule));
+            }
+        }
+        for (declared, path) in terms {
+            for &(name, ty) in declared.fields {
+                if layout.slot_index(name).is_some() || layout.point_field(name) {
+                    problems.push(wrong_name(format!("$.surface_terms.{name}"), name));
+                    continue;
+                }
+                layout.terms.push((name, ty));
+            }
+            layout.derives.push(path.clone());
         }
         for (declared, path) in slots {
             if layout.slot_index(declared.slot).is_none() {
@@ -313,10 +390,8 @@ impl MaterialLayout {
                     layout.maps.push(map);
                 }
             }
-            for value in declared.values {
-                if !layout.values.contains(value) {
-                    layout.values.push(value);
-                }
+            for &value in declared.values {
+                layout.value(value, 0.0, None);
             }
             layout
                 .slots
@@ -353,14 +428,14 @@ impl MaterialLayout {
         SurfaceSlot::ALL
             .into_iter()
             .map(SurfaceSlot::name)
-            .chain(self.open.iter().map(|(name, _, _)| *name))
+            .chain(self.open.iter().map(|(name, ..)| *name))
     }
 
     fn slot_index(&self, slot: &str) -> Option<usize> {
         SurfaceSlot::named(slot).map(SurfaceSlot::index).or_else(|| {
             self.open
                 .iter()
-                .position(|(name, _, _)| *name == slot)
+                .position(|(name, ..)| *name == slot)
                 .map(|at| SurfaceSlot::ALL.len() + at)
         })
     }
@@ -461,7 +536,7 @@ impl MaterialLayout {
         let _ = writeln!(
             source,
             "const SURFACE_EMISSION: f32 = {:?};",
-            f64::from(engine_core::Surface::MAX_EMISSION)
+            f64::from(Material::MAX_EMISSION)
         );
         for (index, name) in self.slot_names().enumerate() {
             let _ = writeln!(source, "const SLOT_{}: u32 = {index}u;", upper(name));
@@ -469,11 +544,31 @@ impl MaterialLayout {
         for (index, name) in self.maps.iter().enumerate() {
             let _ = writeln!(source, "const MAP_{}: u32 = {index}u;", upper(name));
         }
-        for (index, name) in self.values.iter().enumerate() {
-            let _ = writeln!(source, "const VALUE_{}: u32 = {index}u;", upper(name));
+        for (index, value) in self.values.iter().enumerate() {
+            let _ = writeln!(source, "const VALUE_{}: u32 = {index}u;", upper(value.name));
         }
         material_functions(&mut source);
         source
+    }
+
+    fn point_functions(&self, imports: &mut String, body: &mut String) {
+        body.push_str(
+            "\nfn derived(point: SurfacePoint) -> SurfacePoint {\n    var result = point;\n    result.n_v = max(dot(point.normal, point.view), 1.0e-4);\n",
+        );
+        for (index, path) in self.derives.iter().enumerate() {
+            let id = index + 1;
+            let _ = writeln!(imports, "import package::{path}::{DERIVE_ENTRY} as derive_{id};");
+            let _ = writeln!(body, "    result = derive_{id}(result);");
+        }
+        body.push_str("    return result;\n}\n");
+        let _ = writeln!(imports, "import package::engine::surfaces::SURFACE_SOLID;");
+        body.push_str(
+            "\nfn flat_point(color: vec4<f32>) -> SurfacePoint {\n    var point: SurfacePoint;\n    point.base_color = color.rgb;\n    point.opacity = color.a;\n    point.normal = vec3<f32>(0.0, 0.0, 1.0);\n    point.geometric = point.normal;\n    point.view = point.normal;\n    point.kind = SURFACE_SOLID;\n",
+        );
+        for (name, _, _, flat) in &self.open {
+            let _ = writeln!(body, "    point.{name} = {flat};");
+        }
+        body.push_str("    return derived(point);\n}\n");
     }
 
     pub(crate) fn slots_source(&self, full: bool) -> String {
@@ -502,7 +597,7 @@ impl MaterialLayout {
                 (slot.name(), returns, params, args, STANDARD_MODULE)
             })
             .collect();
-        signed.extend(self.open.iter().map(|(name, returns, path)| {
+        signed.extend(self.open.iter().map(|(name, returns, path, _)| {
             (*name, *returns, surface, "input, point", path.as_str())
         }));
         for (name, returns, params, args, standard) in signed {
@@ -542,10 +637,11 @@ impl MaterialLayout {
         body.push_str(
             "\nfn open_slots(input: SurfaceInput, point: SurfacePoint) -> SurfacePoint {\n    var filled = point;\n",
         );
-        for (name, _, _) in &self.open {
+        for (name, ..) in &self.open {
             let _ = writeln!(body, "    filled.{name} = slot_{name}(input, filled);");
         }
         body.push_str("    return filled;\n}\n");
+        self.point_functions(&mut imports, &mut body);
         if full {
             let _ = writeln!(imports, "import package::face::lit::{LIGHTING_ENTRY};");
             body.push_str(
@@ -580,6 +676,22 @@ impl MaterialLayout {
         format!("{imports}{body}")
     }
 
+    pub(crate) fn shading_source(&self) -> String {
+        let mut source = String::from(include_str!("shading.wgsl"));
+        source.push_str("\nstruct SurfacePoint {\n");
+        let open = self.open.iter().map(|(name, returns, ..)| (*name, *returns));
+        for (name, ty) in POINT_FIELDS
+            .iter()
+            .copied()
+            .chain(open)
+            .chain(self.terms.iter().copied())
+        {
+            let _ = writeln!(source, "    {name}: {ty},");
+        }
+        source.push_str("}\n");
+        source
+    }
+
     pub(crate) fn surfaces_source(&self) -> String {
         let mut source = String::new();
         for (index, kind) in self.kinds.iter().enumerate() {
@@ -593,17 +705,9 @@ impl MaterialLayout {
         let mut problems = Vec::new();
         let mut words = vec![0_u32; self.record_bytes() / 4];
         let [r, g, b] = material.emissive();
-        words[..4].copy_from_slice(&[r, g, b, material.transmission()].map(f32::to_bits));
+        words[..4].copy_from_slice(&[r, g, b, 0.0].map(f32::to_bits));
         let (alpha, cutoff) = alpha_of(material.alpha_mode());
-        words[4..8].copy_from_slice(
-            &[
-                material.normal_scale(),
-                material.occlusion_strength(),
-                cutoff,
-                0.0,
-            ]
-            .map(f32::to_bits),
-        );
+        words[4..8].copy_from_slice(&[material.normal_scale(), 0.0, cutoff, 0.0].map(f32::to_bits));
         let model = self.model(material.lighting()).unwrap_or_else(|| {
             problems.push(
                 Error::new(ErrorCode::UnknownVariable, format!("{path}.lighting"))
@@ -652,17 +756,25 @@ impl MaterialLayout {
             );
         }
         let values_at = self.maps_at() + self.maps.len() * 8;
-        for (name, value) in material.values() {
-            if let Some(index) = self.values.iter().position(|known| known == name) {
-                words[values_at + index] = value.to_bits();
+        for (index, declared) in self.values.iter().enumerate() {
+            let value = material.value(declared.name).unwrap_or(declared.standard);
+            if let Some(rule) = declared.rule
+                && let Err(invalid) = value.check(declared.name, rule)
+            {
+                problems.push(invalid.error(ErrorCode::InvalidMaterial, &format!("{path}.values")));
             }
+            words[values_at + index] = value.to_bits();
         }
         (words, problems)
     }
 
     pub(crate) fn plain_record(&self) -> Vec<u32> {
         let mut words = vec![0_u32; self.record_bytes() / 4];
-        words[4..8].copy_from_slice(&[1.0_f32, 1.0, 0.5, 0.0].map(f32::to_bits));
+        words[4..8].copy_from_slice(&[1.0_f32, 0.0, 0.5, 0.0].map(f32::to_bits));
+        let values_at = self.maps_at() + self.maps.len() * 8;
+        for (index, declared) in self.values.iter().enumerate() {
+            words[values_at + index] = declared.standard.to_bits();
+        }
         words
     }
 
@@ -819,16 +931,8 @@ fn normal_scale() -> f32 {{
     return {RECORD}.params.x;
 }}
 
-fn occlusion_strength() -> f32 {{
-    return {RECORD}.params.y;
-}}
-
 fn emissive_factor() -> vec3<f32> {{
     return {RECORD}.emissive.rgb;
-}}
-
-fn transmission_factor() -> f32 {{
-    return {RECORD}.emissive.w;
 }}
 "
     );

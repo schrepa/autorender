@@ -3,7 +3,7 @@ use bevy_ecs::entity::Entity;
 use engine_assets::Attributes;
 use serde::{Deserialize, Serialize};
 
-use crate::{MaterialHandle, MeshHandle, PassMask};
+use crate::{MaterialHandle, GeometryHandle, PassMask};
 
 pub type NodeId = Entity;
 
@@ -100,7 +100,7 @@ pub struct DrawnBounds {
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Drawn {
     pub kind: DrawKind,
-    pub geometry: Option<MeshHandle>,
+    pub geometry: Option<GeometryHandle>,
     pub material: Option<MaterialHandle>,
     pub passes: Option<PassMask>,
     pub layers: Layers,
@@ -110,7 +110,7 @@ pub struct Drawn {
 }
 
 impl Drawn {
-    pub fn new(kind: DrawKind, geometry: MeshHandle, material: MaterialHandle) -> Self {
+    pub fn new(kind: DrawKind, geometry: GeometryHandle, material: MaterialHandle) -> Self {
         Self {
             geometry: Some(geometry),
             material: Some(material),
