@@ -127,8 +127,7 @@ pub(crate) struct Kept {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct ViewSlot {
-    pub pass: &'static str,
-    pub index: u32,
+    pub drawn: u32,
     pub frame_at: u32,
     pub ids_base: u64,
     pub args_base: u64,
@@ -400,10 +399,8 @@ pub(crate) struct FrameState {
 }
 
 impl FrameState {
-    pub(crate) fn view_slot(&self, pass: &str, view: Option<u32>) -> Option<&ViewSlot> {
-        let view = view?;
-        self.views
-            .iter()
-            .find(|slot| slot.pass == pass && slot.index == view)
+    pub(crate) fn view_slot(&self, drawn: Option<u32>) -> Option<&ViewSlot> {
+        let drawn = drawn?;
+        self.views.iter().find(|slot| slot.drawn == drawn)
     }
 }

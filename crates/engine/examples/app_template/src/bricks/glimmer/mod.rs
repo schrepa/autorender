@@ -13,9 +13,9 @@ use engine_core::{
     SurfaceSlot, Ticket, Transform, View, Writes, gpu_struct, settings, stats,
 };
 use engine_render::{
-    Allocation, Bind, Buffer, Draw, FaceCull, Form, FormDepth, FormSide, GpuPart, Install,
-    KindForm, Lifetime, LightingModule, PassFragment, Prepare, RenderBricks, Scene, SceneDraw,
-    Shape, SlotModule, Varyings,
+    Allocation, Bind, Buffer, Draw, FaceCull, Form, FormColor, FormDepth, FormFragment, FormSide,
+    FragmentPass, GpuPart, Install, KindForm, Lifetime, LightingModule, PassFragment, Prepare,
+    RenderBricks, Scene, SceneDraw, Shape, SlotModule, Varyings,
 };
 
 pub const GLIMMER: DrawKind = DrawKind("glimmer");
@@ -32,11 +32,14 @@ const FORM: KindForm = KindForm {
 };
 
 const RING: PassFragment = PassFragment {
-    scene: Scene::of::<GlimmerPass>(),
+    pass: FragmentPass::Scene(Scene::of::<GlimmerPass>()),
     side: Some(FormSide::pulled(shaders::glimmer::draw::VS_RING)),
-    fragment: shaders::glimmer::draw::FS_RING,
-    cull: FaceCull::None,
-    depth: FormDepth::Tested,
+    fragment: FormFragment::Entry {
+        entry: shaders::glimmer::draw::FS_RING,
+        cull: FaceCull::None,
+        depth: FormDepth::Tested,
+        color: FormColor::Written,
+    },
 };
 
 settings! {

@@ -9,10 +9,10 @@ use engine_core::{
 use engine_heightfield::Fall;
 use engine_open_world_kit::ground::{GroundTiles, Heightfield};
 use engine_render::{
-    Access, Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw,
-    DrawInput, Encode, FaceCull, Form, FormSide, GpuPart, Install, KindForm, Lifetime, Own,
-    OwnFragments, Pass, Pipeline, Prepare, RenderPipeline, RoleFragments, Scene, SceneDraw, Shape,
-    TargetName, Texture, Varyings, VertexLayout, wgpu,
+    Access, Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, Draw,
+    DrawInput, Encode, FaceCull, Form, FormColor, FormDepth, FormFragment, FormSide, FragmentPass,
+    GpuPart, Install, KindForm, Lifetime, OwnFragments, Pass, PassFragment, PerPass, Prepare,
+    RoleFragments, Scene, SceneDraw, Shape, TargetName, Texture, Varyings, VertexLayout, wgpu,
 };
 use glam::Vec3;
 
@@ -93,6 +93,35 @@ const FALL_FORM: KindForm = KindForm {
     varyings: Varyings::Own(&FALL_FRAGMENTS),
 };
 
+const FOAM_PASS: &str = "water_foam";
+
+const ADDED: wgpu::BlendComponent = wgpu::BlendComponent {
+    src_factor: wgpu::BlendFactor::One,
+    dst_factor: wgpu::BlendFactor::One,
+    operation: wgpu::BlendOperation::Add,
+};
+
+const FOAM_FORM: KindForm = KindForm {
+    kind: WATER_KIND,
+    placed: FormSide::pulled(crate::shaders::water::particles::VS_FOAM),
+    owned: None,
+    varyings: Varyings::Own(&OwnFragments::NONE),
+};
+
+const FOAM: PassFragment = PassFragment {
+    pass: FragmentPass::Own(FOAM_PASS),
+    side: None,
+    fragment: FormFragment::Entry {
+        entry: crate::shaders::water::particles::FS_FOAM,
+        cull: FaceCull::None,
+        depth: FormDepth::Ignored,
+        color: FormColor::Blended(wgpu::BlendState {
+            color: ADDED,
+            alpha: ADDED,
+        }),
+    },
+};
+
 pub(crate) fn copied<P>(bound: &Bind<P>) -> Bind<P> {
     match bound {
         Bind::Texture(texture) => Bind::Texture(*texture),
@@ -122,49 +151,12 @@ pub(crate) fn reached(
         .collect()
 }
 
-fn foam_pipeline(
-    cx: &mut Install<'_, WaterGpu>,
-    foam_pass: Pass<WaterGpu>,
-    foam_all: Vec<(Var, Bind<WaterGpu>)>,
-) -> Result<Pipeline<WaterGpu, Own>, Error> {
-    use crate::shaders::water::particles;
-    let primitive = wgpu::PrimitiveState {
-        topology: wgpu::PrimitiveTopology::TriangleList,
-        cull_mode: None,
-        ..Default::default()
-    };
-    let added = wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
-    };
-    let foam_bound = reached(cx, &[particles::VS_FOAM, particles::FS_FOAM], foam_all);
-    cx.render_pipeline(
-        foam_pass,
-        &RenderPipeline {
-            vertex: particles::VS_FOAM,
-            fragment: Some(particles::FS_FOAM),
-            vertices: &[],
-            primitive,
-            depth: DepthUse::None,
-            blend: Some(wgpu::BlendState {
-                color: added,
-                alpha: added,
-            }),
-            writes: wgpu::ColorWrites::ALL,
-        },
-        &foam_bound,
-    )
-}
-
 struct Leaves {
-    name: &'static str,
     leaves: DrawInput<WaterGpu, Scene>,
     pattern: DrawInput<WaterGpu, Scene>,
 }
 
 struct Sheets {
-    name: &'static str,
     vertices: DrawInput<WaterGpu, Scene>,
     indices: DrawInput<WaterGpu, Scene>,
 }
@@ -179,11 +171,11 @@ pub(crate) struct WaterGpu {
     count_leaves: Pass<Self>,
     foam_pass: Pass<Self>,
     counting: ComputePipeline<Self>,
-    foaming: Pipeline<Self, Own>,
+    foaming: Form<Self>,
     surface: Form<Self>,
     falls: Form<Self>,
-    leaves: Vec<Leaves>,
-    sheets: Vec<Sheets>,
+    leaves: PerPass<Leaves>,
+    sheets: PerPass<Sheets>,
     blocks: BlocksGpu,
     settle: SettleGpu,
     sim: SimGpu,
@@ -236,7 +228,7 @@ impl GpuPart for WaterGpu {
         let mut particles_gpu = ParticlesGpu::install(cx, sim.after(), &shared)?;
         let count_leaves = cx.pass("water_leaf_args").id();
         let foam_pass = cx
-            .pass("water_foam")
+            .pass(FOAM_PASS)
             .at(AttachPoint::Opaque)
             .after(particles_gpu.after())
             .color(foam_texture, Access::Clear)
@@ -270,25 +262,17 @@ impl GpuPart for WaterGpu {
             (surface::WATER_DEPTH, Bind::Target(TargetName::DEPTH)),
         ];
         foam_all.extend(particles_gpu.bound());
-        let foaming = foam_pipeline(cx, foam_pass, foam_all)?;
+        let foaming = cx.form_owning(&FOAM_FORM, &[FOAM], &foam_all)?;
         let surface_form = cx.form(&SURFACE_FORM, &behind())?;
         let fall_form = cx.form(&FALL_FORM, &behind())?;
-        let leaves = surface_form
-            .passes()
-            .map(|pass| Leaves {
-                name: pass.scene.name(),
-                leaves: cx.draw_input(pass.scene, leaf_args),
-                pattern: cx.draw_input(pass.scene, leaf_pattern),
-            })
-            .collect();
-        let sheets = fall_form
-            .passes()
-            .map(|pass| Sheets {
-                name: pass.scene.name(),
-                vertices: cx.draw_input(pass.scene, fall_vertices),
-                indices: cx.draw_input(pass.scene, fall_indices),
-            })
-            .collect();
+        let leaves = PerPass::of(surface_form.passes(), |pass| Leaves {
+            leaves: cx.draw_input(pass.scene, leaf_args),
+            pattern: cx.draw_input(pass.scene, leaf_pattern),
+        });
+        let sheets = PerPass::of(fall_form.passes(), |pass| Sheets {
+            vertices: cx.draw_input(pass.scene, fall_vertices),
+            indices: cx.draw_input(pass.scene, fall_indices),
+        });
         particles_gpu.foam_args = Some(cx.draw_input(foam_pass, particles_gpu.args()));
         Ok(Self {
             uniform,
@@ -422,13 +406,12 @@ impl GpuPart for WaterGpu {
 }
 
 impl WaterGpu {
-    pub(crate) fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
+    pub(crate) fn draw(&self, _: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
         if !self.drawn {
             return draw.skip("no water is drawn");
         }
-        let name = scene.pass.name();
         let mut draws = 0;
-        let leaves = self.leaves.iter().find(|leaves| leaves.name == name);
+        let leaves = draw.per_pass(&self.leaves);
         if let (Some(pipeline), Some(leaves)) = (draw.form(&self.surface), leaves) {
             draw.draw(
                 &pipeline,
@@ -442,7 +425,7 @@ impl WaterGpu {
             );
             draws += 1;
         }
-        let sheets = self.sheets.iter().find(|sheets| sheets.name == name);
+        let sheets = draw.per_pass(&self.sheets);
         if let (Some(pipeline), Some(sheets)) = (draw.form(&self.falls), sheets) {
             for (_, _, _, drawn, run) in &self.built {
                 if drawn.is_none() || run.is_empty() {

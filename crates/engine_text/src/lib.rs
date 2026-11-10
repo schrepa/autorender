@@ -23,9 +23,10 @@ use engine_core::{
 };
 use engine_places_rendering::text::{DEFAULT_TEXT_SIZE, FontId, Glyph, Text, TextAlign};
 use engine_render::{
-    Allocation, Attach, Bind, Buffer, DepthUse, Draw, Encode, Form, FormSide, GpuPart, Install,
-    KindForm, Lifetime, Own, Pass, Pipeline, Prepare, RenderBricks, RenderPipeline, Scene,
-    SceneDraw, Shape, SlotModule, Texture, Varyings, wgpu,
+    Allocation, Attach, Bind, Buffer, Draw, Encode, FaceCull, Form, FormColor, FormDepth,
+    FormFragment, FormSide, FragmentPass, GpuPart, Install, KindForm, Lifetime, OwnFragments, Pass,
+    PassFragment, Prepare, RenderBricks, Scene, SceneDraw, Shape, SlotModule, Texture, Varyings,
+    wgpu,
 };
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -40,6 +41,24 @@ pub const LABEL_PART: &str = "label";
 const GLYPH: &str = "glyph";
 
 const GLYPH_CUTOFF: f32 = 0.5;
+
+const SCREEN_FORM: KindForm = KindForm {
+    kind: TEXT,
+    placed: FormSide::pulled(shaders::text::draw::VS_TEXT),
+    owned: None,
+    varyings: Varyings::Own(&OwnFragments::NONE),
+};
+
+const SCREEN: PassFragment = PassFragment {
+    pass: FragmentPass::Own(TextPass::NAME),
+    side: None,
+    fragment: FormFragment::Entry {
+        entry: shaders::text::draw::FS_TEXT,
+        cull: FaceCull::None,
+        depth: FormDepth::Ignored,
+        color: FormColor::Blended(wgpu::BlendState::ALPHA_BLENDING),
+    },
+};
 
 const LABEL_FORM: KindForm = KindForm {
     kind: TEXT,
@@ -405,7 +424,7 @@ impl Brick for TextBrick {
 
 struct TextGpu {
     pass: Pass<Self>,
-    pipeline: Pipeline<Self, Own>,
+    screen: Form<Self>,
     form: Form<Self>,
     material: Option<MaterialHandle>,
     instances: Buffer<Self>,
@@ -512,23 +531,15 @@ impl GpuPart for TextGpu {
             .at(TextPass::PASS.at)
             .span(TextPass::NAME)
             .id();
-        let pipeline = cx.render_pipeline(
-            pass,
-            &RenderPipeline {
-                vertex: draw::VS_TEXT,
-                fragment: Some(draw::FS_TEXT),
-                vertices: &[],
-                primitive: wgpu::PrimitiveState::default(),
-                depth: DepthUse::None,
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                writes: wgpu::ColorWrites::ALL,
-            },
+        let screen = cx.form_owning(
+            &SCREEN_FORM,
+            &[SCREEN],
             &[(draw::INSTANCES, Bind::Buffer(instances))],
         )?;
         let form = cx.form(&LABEL_FORM, &[(label::LABELS, Bind::Buffer(labels))])?;
         Ok(Self {
             pass,
-            pipeline,
+            screen,
             form,
             material: None,
             instances,
@@ -626,8 +637,11 @@ impl GpuPart for TextGpu {
             return 0;
         }
         let mut draw = cx.render(Attach::Declared);
+        let Some(pipeline) = draw.form(&self.screen) else {
+            return 0;
+        };
         draw.draw(
-            &self.pipeline,
+            &pipeline,
             Shape::Pulled {
                 vertices: 0..6,
                 instances: 0..self.staged.len() as u32,

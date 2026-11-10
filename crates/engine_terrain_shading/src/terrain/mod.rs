@@ -3,7 +3,6 @@ use std::ops::Range;
 mod atlas;
 mod part;
 mod patches;
-mod pipelines;
 mod surface;
 mod tables;
 

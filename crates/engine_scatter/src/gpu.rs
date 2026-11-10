@@ -1,15 +1,16 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetResidency, Cursor, DrawnTable, DrawnView, Error, GeometryHandle, GeometryStream,
+    AssetResidency, Cursor, DrawnTable, DrawnView, Entry, Error, GeometryHandle, GeometryStream,
     InstanceInput, MaterialHandle, PassBit, PassRole, Since, Views,
 };
 use engine_open_world_kit::ground::{GroundTiles, TerrainTiles};
 use engine_places_rendering::impostors::IMPOSTOR_VERTICES;
 use engine_render::{
-    Access, AfterRead, Allocation, Attach, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw,
-    DrawInput, Encode, FaceCull, Form, FormSide, GpuPart, Install, KindForm, Lifetime, Own,
-    OwnFragments, Pass, Pipeline, Prepare, RenderPipeline, RoleFragments, Scene, SceneDraw, Shape,
-    Texture, Varyings, VertexLayout, wgpu,
+    Access, AfterRead, Allocation, Attach, Bind, Buffer, Channels, ComputePipeline, Count, Draw,
+    DrawInput, Encode, FaceCull, Form, FormColor, FormDepth, FormFragment, FormSide, FormTarget,
+    FragmentPass, GpuPart, Install, KindForm, Lifetime, Own, OwnFragments, Pass, PassFragment,
+    PerPass, Pipeline, Prepare, RoleFragments, Scene, SceneDraw, Shape, Texture, Varyings,
+    VertexLayout, wgpu,
 };
 use glam::Vec3;
 
@@ -177,11 +178,76 @@ const CASTER_FORM: KindForm = object_form(
 
 const LEFT_OUT: u32 = 0;
 
+const OCCUPANCY_PASS: &str = "occupancy";
+
+const MAP_CHANNELS: Channels = Channels {
+    red: true,
+    green: true,
+    blue: false,
+    alpha: true,
+};
+
+const SPLATTED: wgpu::BlendState = wgpu::BlendState {
+    color: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Max,
+    },
+    alpha: wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::OneMinusSrc,
+        operation: wgpu::BlendOperation::Add,
+    },
+};
+
+const MAP_WRITTEN: &[FormTarget] = &[FormTarget {
+    blend: None,
+    channels: MAP_CHANNELS,
+}];
+
+const MAP_SPLATTED: &[FormTarget] = &[FormTarget {
+    blend: Some(SPLATTED),
+    channels: MAP_CHANNELS,
+}];
+
+const fn map_form(vertex: Entry) -> KindForm {
+    KindForm {
+        kind: PLACED,
+        placed: FormSide::pulled(vertex),
+        owned: None,
+        varyings: Varyings::Own(&OwnFragments::NONE),
+    }
+}
+
+const fn map_fragment(entry: Entry, targets: &'static [FormTarget]) -> PassFragment {
+    PassFragment {
+        pass: FragmentPass::Own(OCCUPANCY_PASS),
+        side: None,
+        fragment: FormFragment::Entry {
+            entry,
+            cull: FaceCull::None,
+            depth: FormDepth::Ignored,
+            color: FormColor::Targets(targets),
+        },
+    }
+}
+
+const CLEAR_FORM: KindForm = map_form(crate::shaders::scatter::occupancy_maps::VS_CLEAR);
+const SPLAT_FORM: KindForm = map_form(crate::shaders::scatter::occupancy_maps::VS_SPLAT);
+const MEANS_FORM: KindForm = map_form(crate::shaders::scatter::occupancy_maps::VS_MEANS);
+
+const CLEAR: PassFragment =
+    map_fragment(crate::shaders::scatter::occupancy_maps::FS_CLEAR, MAP_WRITTEN);
+const SPLAT: PassFragment =
+    map_fragment(crate::shaders::scatter::occupancy_maps::FS_SPLAT, MAP_SPLATTED);
+const MEANS: PassFragment =
+    map_fragment(crate::shaders::scatter::occupancy_maps::FS_MEANS, MAP_WRITTEN);
+
 struct MapPipelines {
     select: ComputePipeline<ScatterGpu>,
-    clear: Pipeline<ScatterGpu, Own>,
-    splat: Pipeline<ScatterGpu, Own>,
-    means: Pipeline<ScatterGpu, Own>,
+    clear: Form<ScatterGpu>,
+    splat: Form<ScatterGpu>,
+    means: Form<ScatterGpu>,
     listed: DrawInput<ScatterGpu, Own>,
 }
 
@@ -303,7 +369,6 @@ struct Streams {
 }
 
 struct Joined {
-    name: &'static str,
     bit: PassBit,
     role: PassRole,
     owned: bool,
@@ -322,10 +387,14 @@ impl Joined {
 }
 
 fn listed_view(
-    joined: &[Joined],
+    joined: &PerPass<Option<Joined>>,
     (index, view): (usize, &DrawnView),
 ) -> Option<(Listed, CullView)> {
-    let mut taking = joined.iter().filter(|scene| scene.takes(view)).peekable();
+    let mut taking = joined
+        .rows()
+        .flatten()
+        .filter(|scene| scene.takes(view))
+        .peekable();
     taking.peek()?;
     let (casts, cards) = taking.fold((true, true), |(casts, cards), scene| {
         (casts && scene.role == PassRole::Depth, cards && scene.cards)
@@ -382,7 +451,7 @@ pub(crate) struct ScatterGpu {
     culling: ComputePipeline<Self>,
     maps: Vec<MapPipelines>,
     forms: Forms,
-    joined: Vec<Joined>,
+    joined: PerPass<Option<Joined>>,
     records_written: bool,
     held: Held,
 }
@@ -391,17 +460,6 @@ fn grow(held: &mut u64, bytes: u64, room: u64) {
     let size = bytes.next_power_of_two().min(room);
     if bytes > *held && size > *held {
         *held = size;
-    }
-}
-
-fn component(
-    dst_factor: wgpu::BlendFactor,
-    operation: wgpu::BlendOperation,
-) -> wgpu::BlendComponent {
-    wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor,
-        operation,
     }
 }
 
@@ -423,15 +481,6 @@ impl ScatterGpu {
         (occupancy, unfiner): (Texture<Self>, Texture<Self>),
     ) -> Result<MapPipelines, Error> {
         use crate::shaders::scatter::occupancy_maps as maps;
-        let target = |vertex, fragment| RenderPipeline {
-            vertex,
-            fragment: Some(fragment),
-            vertices: &[],
-            primitive: wgpu::PrimitiveState::default(),
-            depth: DepthUse::None,
-            blend: None,
-            writes: wgpu::ColorWrites::ALL,
-        };
         let finer = |texture: Texture<Self>, held: Texture<Self>| match map.checked_sub(1) {
             Some(finer) => Bind::Slice {
                 texture,
@@ -440,11 +489,6 @@ impl ScatterGpu {
             },
             None => Bind::Texture(held),
         };
-        let written = wgpu::ColorWrites::RED | wgpu::ColorWrites::GREEN | wgpu::ColorWrites::ALPHA;
-        let splatted = Some(wgpu::BlendState {
-            color: component(wgpu::BlendFactor::One, wgpu::BlendOperation::Max),
-            alpha: component(wgpu::BlendFactor::OneMinusSrc, wgpu::BlendOperation::Add),
-        });
         let select = cx.compute_pipeline(
             pass,
             maps::SELECT_COVERS,
@@ -457,16 +501,14 @@ impl ScatterGpu {
                 (maps::LISTED_DRAW, Bind::Buffer(listed_draw)),
             ],
         )?;
-        let clear = cx.render_pipeline_targets(
-            pass,
-            &target(maps::VS_CLEAR, maps::FS_CLEAR),
-            &[(None, written)],
+        let clear = cx.form_owning(
+            &CLEAR_FORM,
+            &[CLEAR],
             &[(maps::SPLAT, Bind::Buffer(splat))],
         )?;
-        let splat_pipeline = cx.render_pipeline_targets(
-            pass,
-            &target(maps::VS_SPLAT, maps::FS_SPLAT),
-            &[(splatted, written)],
+        let splat_pipeline = cx.form_owning(
+            &SPLAT_FORM,
+            &[SPLAT],
             &[
                 (maps::SPLAT, Bind::Buffer(splat)),
                 (maps::RECORDS, Bind::Buffer(records)),
@@ -475,10 +517,9 @@ impl ScatterGpu {
                 (maps::LISTED, Bind::Buffer(listed)),
             ],
         )?;
-        let means = cx.render_pipeline_targets(
-            pass,
-            &target(maps::VS_MEANS, maps::FS_MEANS),
-            &[(None, written)],
+        let means = cx.form_owning(
+            &MEANS_FORM,
+            &[MEANS],
             &[
                 (maps::SPLAT, Bind::Buffer(splat)),
                 (maps::FINER_MAP, finer(occupancy, unfiner)),
@@ -527,15 +568,11 @@ impl ScatterGpu {
         cx: &mut Install<'_, Self>,
         forms: &Forms,
         (ids, draws, records, cards, card_args): DrawBuffers,
-    ) -> Vec<Joined> {
-        let passes: Vec<engine_render::FormPass> = forms.plain.passes().collect();
-        let mut joined = Vec::with_capacity(passes.len());
-        for pass in passes {
+    ) -> PerPass<Option<Joined>> {
+        PerPass::of(forms.plain.passes(), |pass| {
             let scene = pass.scene;
             let name = scene.name();
-            let Some(bit) = cx.passes().bit(name) else {
-                continue;
-            };
+            let bit = cx.passes().bit(name)?;
             let streams = Streams {
                 ids: cx.draw_input(scene, ids),
                 args: cx.draw_input(scene, draws),
@@ -543,16 +580,14 @@ impl ScatterGpu {
                 cards: cx.draw_input(scene, cards),
                 card_args: cx.draw_input(scene, card_args),
             };
-            joined.push(Joined {
-                name,
+            Some(Joined {
                 bit,
                 role: pass.role,
                 owned: pass.owned,
                 cards: forms.cards.draws_in(name) || forms.casters.draws_in(name),
                 streams,
-            });
-        }
-        joined
+            })
+        })
     }
 
     fn list_draws(&mut self, state: &ScatterState, residency: &AssetResidency) {
@@ -958,11 +993,7 @@ impl ScatterGpu {
     }
 
     pub(crate) fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
-        let Some(joined) = self
-            .joined
-            .iter()
-            .find(|joined| joined.name == scene.pass.name())
-        else {
+        let Some(joined) = draw.per_pass(&self.joined).and_then(Option::as_ref) else {
             return draw.skip("pass has no placed pipelines");
         };
         if joined.role == PassRole::Blended {
@@ -1119,9 +1150,16 @@ impl ScatterGpu {
             }
             let layer = map as u32;
             let mut draw = cx.render(Attach::Colors(vec![(self.occupancy_map, layer)]));
+            let (Some(clear), Some(splat), Some(means)) = (
+                draw.form(&pipelines.clear),
+                draw.form(&pipelines.splat),
+                draw.form(&pipelines.means),
+            ) else {
+                continue;
+            };
             if redraw {
                 draw.draw(
-                    &pipelines.clear,
+                    &clear,
                     Shape::Pulled {
                         vertices: 0..QUAD,
                         instances: cells.clone(),
@@ -1129,7 +1167,7 @@ impl ScatterGpu {
                     },
                 );
                 draw.draw(
-                    &pipelines.splat,
+                    &splat,
                     Shape::Indirect {
                         vertices: &[],
                         indices: None,
@@ -1141,7 +1179,7 @@ impl ScatterGpu {
             }
             if average {
                 draw.draw(
-                    &pipelines.means,
+                    &means,
                     Shape::Pulled {
                         vertices: 0..QUAD,
                         instances: cells.clone(),
@@ -1200,7 +1238,7 @@ impl GpuPart for ScatterGpu {
         cx.frame(placed::PLACED_VALUES, Bind::Buffer(values))?;
         let scatter = cx.pass("scatter").id();
         let occupancy = cx
-            .pass("occupancy")
+            .pass(OCCUPANCY_PASS)
             .after(scatter)
             .color(occupancy_map, Access::Load)
             .id();

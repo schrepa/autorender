@@ -7,16 +7,16 @@ use engine_open_world_kit::water::Waterline;
 use engine_places_rendering::probes::ProbeCaptures;
 use engine_places_rendering::shadows::{CasterMap, KeptRefresh, Refresh, ShadowMaps};
 use engine_render::{
-    Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw,
-    DrawInput, Encode, FaceCull, Form, FormSide, GpuPart, Install, KindForm, Lifetime, Own,
-    OwnFragments, Pass, Pipeline, Prepare, RenderPipeline, RoleFragments, Sampler, Scene,
-    SceneDraw, Shape, Texture, Varyings, VertexLayout, pixels_per_meter, wgpu,
+    Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, Draw, DrawInput,
+    Encode, FaceCull, Form, FormColor, FormDepth, FormFragment, FormSide, FragmentPass, GpuPart,
+    Install, KindForm, Lifetime, Own, OwnFragments, Pass, PassFragment, PerPass, Pipeline,
+    Prepare, RoleFragments, Sampler, Scene, SceneDraw, Shape, Texture, Varyings, VertexLayout,
+    pixels_per_meter, wgpu,
 };
 use glam::{Mat4, Vec3};
 
 use super::atlas::TileAtlas;
 use super::patches::{PATCH_STREAM, PatchDraws, view_uniforms};
-use super::pipelines::surface_primitive;
 use super::surface::SurfaceTrees;
 use super::tables::TerrainTables;
 use super::{
@@ -92,8 +92,6 @@ struct Pipelines {
     begin: [ComputePipeline<TerrainGpu>; SURFACE_SLOTS],
     decide: [ComputePipeline<TerrainGpu>; SURFACE_SLOTS],
     apply: [ComputePipeline<TerrainGpu>; SURFACE_SLOTS],
-    ids: [Pipeline<TerrainGpu, Own>; 2],
-    resolve: [Pipeline<TerrainGpu, Own>; 2],
 }
 
 struct Inputs {
@@ -164,7 +162,51 @@ const fn seen_form(fragments: &'static OwnFragments) -> KindForm {
 
 const SEEN_FORM: KindForm = seen_form(&SEEN_FRAGMENTS);
 const SEEN_HOLES_FORM: KindForm = seen_form(&SEEN_HOLES_FRAGMENTS);
-const SEEN_ROLES: [PassRole; 2] = [PassRole::Lit, PassRole::Shown];
+
+const IDS_PASS: &str = "terrain_ids";
+const RESOLVE_PASS: &str = "terrain_resolve";
+
+const fn ids_fragment(entry: Entry) -> PassFragment {
+    PassFragment {
+        pass: FragmentPass::Own(IDS_PASS),
+        side: None,
+        fragment: FormFragment::Entry {
+            entry,
+            cull: FaceCull::Back,
+            depth: FormDepth::Written,
+            color: FormColor::Written,
+        },
+    }
+}
+
+const IDS: PassFragment = ids_fragment(crate::shaders::terrain_shading::draw::FS_TERRAIN_IDS);
+const IDS_HOLES: PassFragment =
+    ids_fragment(crate::shaders::terrain_shading::draw::FS_TERRAIN_IDS_HOLES);
+
+const RESOLVE_FORM: KindForm = KindForm {
+    kind: TERRAIN,
+    placed: FormSide::pulled(crate::shaders::terrain_shading::draw::VS_TERRAIN_RESOLVE),
+    owned: None,
+    varyings: Varyings::Own(&OwnFragments::NONE),
+};
+
+const fn resolve_fragment(entry: Entry) -> PassFragment {
+    PassFragment {
+        pass: FragmentPass::Own(RESOLVE_PASS),
+        side: None,
+        fragment: FormFragment::Entry {
+            entry,
+            cull: FaceCull::None,
+            depth: FormDepth::Overwritten,
+            color: FormColor::Written,
+        },
+    }
+}
+
+const RESOLVE_POST: PassFragment =
+    resolve_fragment(crate::shaders::terrain_shading::draw::FS_TERRAIN_RESOLVE_POST);
+const RESOLVE_TEMPORAL: PassFragment =
+    resolve_fragment(crate::shaders::terrain_shading::draw::FS_TERRAIN_RESOLVE_TEMPORAL);
 
 const NO_FORM: &str = "terrain has no form in this pass";
 const NO_TILES: &str = "no terrain tile is resident";
@@ -196,8 +238,9 @@ pub(crate) struct TerrainGpu {
     inputs: Inputs,
     form: Form<TerrainGpu>,
     seen: [Form<TerrainGpu>; 2],
+    resolves: [Form<TerrainGpu>; 2],
     holed: HoledState,
-    joined: Vec<(&'static str, Joined)>,
+    joined: PerPass<Joined>,
     atlas: TileAtlas,
     tables: TerrainTables,
     surface: SurfaceTrees,
@@ -379,13 +422,13 @@ impl GpuPart for TerrainGpu {
             .span("bounce")
             .id();
         let ids_pass = cx
-            .pass("terrain_ids")
+            .pass(IDS_PASS)
             .label("engine/terrain-ids")
             .at(AttachPoint::Opaque)
             .color(h.ids, engine_render::Access::Clear)
             .id();
         let resolve_pass = cx
-            .pass("terrain_resolve")
+            .pass(RESOLVE_PASS)
             .label("engine/terrain-resolve")
             .at(AttachPoint::Opaque)
             .after(ids_pass)
@@ -469,75 +512,32 @@ impl GpuPart for TerrainGpu {
             let bound = reached(cx, subdivision::SUBDIVIDE_APPLY, slot_binds(slot));
             applies.push(cx.compute_pipeline(subdivide, subdivision::SUBDIVIDE_APPLY, &bound)?);
         }
-        let surface = |fragment: Entry, front_face: wgpu::FrontFace| -> RenderPipeline<'static> {
-            RenderPipeline {
-                vertex: draw::VS_TERRAIN,
-                fragment: Some(fragment),
-                vertices: &[],
-                primitive: surface_primitive(front_face),
-                depth: DepthUse::Write {
-                    bias: wgpu::DepthBiasState::default(),
-                },
-                blend: None,
-                writes: wgpu::ColorWrites::ALL,
-            }
-        };
-        let ccw = wgpu::FrontFace::Ccw;
-        let ids = [
-            cx.render_pipeline(ids_pass, &surface(draw::FS_TERRAIN_IDS, ccw), &[])?,
-            cx.render_pipeline(ids_pass, &surface(draw::FS_TERRAIN_IDS_HOLES, ccw), &[])?,
-        ];
-        let resolve = |fragment| RenderPipeline {
-            vertex: draw::VS_TERRAIN_RESOLVE,
-            fragment: Some(fragment),
-            vertices: &[],
-            primitive: wgpu::PrimitiveState::default(),
-            depth: DepthUse::Overwrite,
-            blend: None,
-            writes: wgpu::ColorWrites::ALL,
-        };
         let resolve_bound = [(draw::TERRAIN_IDS_TEXTURE, Bind::Texture(h.ids))];
         let resolves = [
-            cx.render_pipeline(
-                resolve_pass,
-                &resolve(draw::FS_TERRAIN_RESOLVE_POST),
-                &resolve_bound,
-            )?,
-            cx.render_pipeline(
-                resolve_pass,
-                &resolve(draw::FS_TERRAIN_RESOLVE_TEMPORAL),
-                &resolve_bound,
-            )?,
+            cx.form_owning(&RESOLVE_FORM, &[RESOLVE_POST], &resolve_bound)?,
+            cx.form_owning(&RESOLVE_FORM, &[RESOLVE_TEMPORAL], &resolve_bound)?,
         ];
         let form = cx.form_for(&TERRAIN_FORM, &[PassRole::Depth], &[])?;
         let seen = [
-            cx.form_for(&SEEN_FORM, &SEEN_ROLES, &[])?,
-            cx.form_for(&SEEN_HOLES_FORM, &SEEN_ROLES, &[])?,
+            cx.form_owning(&SEEN_FORM, &[IDS], &[])?,
+            cx.form_owning(&SEEN_HOLES_FORM, &[IDS_HOLES], &[])?,
         ];
-        let scenes: Vec<(Scene, PassRole, bool)> = form
-            .passes()
-            .map(|pass| (pass.scene, pass.role, pass.owned))
-            .collect();
-        let mut joined = Vec::with_capacity(scenes.len());
-        for (scene, role, owned) in scenes {
-            let made = match (role, owned) {
-                (PassRole::Depth, true) => Joined::Casters {
-                    patches: cx.draw_input(scene, h.patches),
-                    grid: cx.draw_input(scene, h.grid),
-                },
-                (PassRole::Depth, false) => Joined::Ground {
-                    args: cx.draw_input(scene, h.args),
-                    meshlet: cx.draw_input(scene, h.meshlet),
-                },
-                (PassRole::Lit, true) | (PassRole::Shown, _) => Joined::Seen {
-                    args: cx.draw_input(scene, h.args),
-                    meshlet: cx.draw_input(scene, h.meshlet),
-                },
-                (PassRole::Lit, false) => Joined::Elsewhere(SHADED_ELSEWHERE),
-                (PassRole::Blended, _) => Joined::Elsewhere(NEVER_BLENDS),
-            };
-            joined.push((scene.name(), made));
-        }
+        let joined = PerPass::of(form.passes(), |pass| match (pass.role, pass.owned) {
+            (PassRole::Depth, true) => Joined::Casters {
+                patches: cx.draw_input(pass.scene, h.patches),
+                grid: cx.draw_input(pass.scene, h.grid),
+            },
+            (PassRole::Depth, false) => Joined::Ground {
+                args: cx.draw_input(pass.scene, h.args),
+                meshlet: cx.draw_input(pass.scene, h.meshlet),
+            },
+            (PassRole::Lit, true) | (PassRole::Shown, _) => Joined::Seen {
+                args: cx.draw_input(pass.scene, h.args),
+                meshlet: cx.draw_input(pass.scene, h.meshlet),
+            },
+            (PassRole::Lit, false) => Joined::Elsewhere(SHADED_ELSEWHERE),
+            (PassRole::Blended, _) => Joined::Elsewhere(NEVER_BLENDS),
+        });
         let inputs = Inputs {
             args: cx.draw_input(ids_pass, h.args),
             meshlet: cx.draw_input(ids_pass, h.meshlet),
@@ -575,12 +575,11 @@ impl GpuPart for TerrainGpu {
                 begin: to_array(begins),
                 decide: to_array(decides),
                 apply: to_array(applies),
-                ids,
-                resolve: resolves,
             },
             inputs,
             form,
             seen,
+            resolves,
             holed: HoledState::Unmade,
             joined,
             atlas: TileAtlas::default(),
@@ -899,6 +898,9 @@ impl TerrainGpu {
     fn draw_ids(&self, draw: &mut Draw<'_, Self, Own>) -> u32 {
         let mut draws = 0;
         for holes in [false, true] {
+            let Some(pipeline) = draw.form(&self.seen[usize::from(holes)]) else {
+                continue;
+            };
             for terrain in self
                 .frame
                 .terrains
@@ -909,7 +911,7 @@ impl TerrainGpu {
                     continue;
                 };
                 draw.draw(
-                    &self.pipelines.ids[usize::from(holes)],
+                    &pipeline,
                     Shape::Indirect {
                         vertices: &[],
                         indices: Some(self.inputs.meshlet),
@@ -925,7 +927,9 @@ impl TerrainGpu {
     }
 
     fn draw_resolve(&self, draw: &mut Draw<'_, Self, Own>) -> u32 {
-        let pipeline = &self.pipelines.resolve[usize::from(self.temporal)];
+        let Some(pipeline) = draw.form(&self.resolves[usize::from(self.temporal)]) else {
+            return 0;
+        };
         let mut draws = 0;
         for terrain in &self.frame.terrains {
             let Some(rect) = terrain.scissor(self.render) else {
@@ -934,7 +938,7 @@ impl TerrainGpu {
             draw.scissor(rect);
             let index = terrain.terrain as u32;
             draw.draw(
-                pipeline,
+                &pipeline,
                 Shape::Pulled {
                     vertices: 0..3,
                     instances: index..index + 1,
@@ -948,11 +952,7 @@ impl TerrainGpu {
     }
 
     pub(crate) fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
-        let Some((_, joined)) = self
-            .joined
-            .iter()
-            .find(|(name, _)| *name == scene.pass.name())
-        else {
+        let Some(joined) = draw.per_pass(&self.joined) else {
             return draw.skip(NO_FORM);
         };
         match joined {
