@@ -16,11 +16,17 @@ fn scene() -> Value {
     json!({
         "id": "flat", "revision": 1,
         "textures": [{"id": "sheet", "width": 2, "height": 2, "rgba8": WHITE_SHEET}],
-        "materials": [],
+        "materials": [{
+            "id": "glass", "color": [0.4, 0.7, 1.0, 0.5], "alpha_mode": "blend",
+            "cull": "none", "lighting": "unlit",
+        }],
         "meshes": [],
         "entities": [
             {"id": "sprite", "sprite": {"sheet": "sheet", "rect": [0.0, 0.0, 1.0, 1.0], "tint": [1.0, 0.5, 0.2, 1.0]},
              "transform": {"translation": [0.0, 0.0, 0.0], "scale": [2.0, 2.0, 2.0]}},
+            {"id": "pane", "sprite": {"sheet": "sheet", "rect": [0.0, 0.0, 1.0, 1.0], "tint": [1.0, 1.0, 1.0, 1.0]},
+             "drawn": {"kind": SPRITES.name(), "material": "glass"},
+             "transform": {"translation": [2.5, 0.0, 1.0], "scale": [1.5, 1.5, 1.5]}},
             {"id": "label", "text": {"text": "Flat", "size": 32.0}},
             {"id": "camera", "transform": {"translation": [0.0, 0.0, 10.0]},
              "node": {"clock": "real", "mobility": "moving"},

@@ -211,23 +211,30 @@ pub fn counted_in_joined_passes(
             if cell["kind"] != kind {
                 continue;
             }
-            let drew = cell["state"] == "drew";
             let replaces = counted
                 .get(pass)
-                .is_none_or(|held: &Value| drew && held["state"] != "drew");
+                .is_none_or(|held| drew(cell) && !drew(held));
             if replaces {
                 counted.insert(pass.to_owned(), cell.clone());
             }
         }
     }
-    let missing: Vec<&String> = joined
+    let undrawn: Vec<Value> = joined
         .iter()
-        .filter(|pass| ran.contains(pass) && !counted.contains_key(pass.as_str()))
+        .filter(|pass| ran.contains(pass))
+        .filter_map(|pass| {
+            let cell = counted.get(pass.as_str());
+            (!cell.is_some_and(drew)).then(|| json!({ "pass": pass, "cell": cell }))
+        })
         .collect();
     smoke_eq!(
-        json!(missing),
+        json!(undrawn),
         json!([]),
-        "kind_counted_in_every_joined_pass"
+        "kind_drew_in_every_joined_pass"
     );
     Ok(counted)
+}
+
+fn drew(cell: &Value) -> bool {
+    cell["state"]["state"] == "drew"
 }
