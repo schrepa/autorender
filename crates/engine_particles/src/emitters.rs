@@ -1,10 +1,9 @@
-use std::collections::BTreeSet;
-
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
-    Allowed, Clock, Cut, Drawn, DrawnPoses, DrawnTable, Expected, FrameTime, GlobalTransforms,
-    InvalidSetting, Nearest, Rule, Spawner, Views, fields, gpu_struct, settings, stats,
+    Allowed, Clock, Cut, Drawn, DrawnPoses, DrawnTable, Error, ErrorCode, Expected, FrameTime,
+    GlobalTransforms, InvalidSetting, Nearest, Refusals, Rule, Views, fields, gpu_struct, settings,
+    stats,
 };
 use engine_places_rendering::particles::{
     MAX_EMITTER_PARTICLES, MAX_SPREAD_DEGREES, ParticleBlend, ParticleBursts, ParticleEmitter,
@@ -12,7 +11,7 @@ use engine_places_rendering::particles::{
 };
 use glam::{Mat4, Quat, Vec3};
 
-use crate::{PARTICLES, ParticlesBrick};
+use crate::PARTICLES;
 
 engine_core::gpu_consts! {
     pub(crate) const NO_SLOT: u32 = u32::MAX;
@@ -336,8 +335,7 @@ impl Gather {
         self.emissions
             .retain(|entity, _| emitters.contains(*entity) && globals.drawn(*entity));
         let mut wanted = 0_u64;
-        for (slot, _, drawn) in table.rows(PARTICLES) {
-            let entity = drawn.node;
+        for (slot, entity, _) in table.rows(PARTICLES) {
             let Ok(emitter) = emitters.get(entity) else {
                 continue;
             };
@@ -422,25 +420,31 @@ impl Gather {
     }
 }
 
-#[derive(Component)]
-pub(crate) struct EmitterRow;
+pub const EMITTER_PART: &str = "particles";
 
-pub(crate) fn keep_rows(
-    emitters: Query<Entity, With<ParticleEmitter>>,
-    rows: Query<(Entity, &Drawn), With<EmitterRow>>,
-    mut spawner: Spawner<ParticlesBrick>,
+type JudgedEmitters = (
+    With<ParticleEmitter>,
+    Or<(Added<ParticleEmitter>, Changed<Drawn>)>,
+);
+
+pub(crate) fn judge_emitters(
+    emitters: Query<(Entity, &Drawn), JudgedEmitters>,
+    mut refusals: ResMut<Refusals>,
 ) {
-    let mut held = BTreeSet::new();
-    for (row, drawn) in &rows {
-        if !emitters.contains(drawn.node) || !held.insert(drawn.node) {
-            spawner.despawn(row);
-        }
+    for (entity, drawn) in &emitters {
+        let verdict = if drawn.kind == PARTICLES {
+            Ok(())
+        } else {
+            Err(Error::new(ErrorCode::UsageConflict, "$.particles")
+                .got(drawn.kind.name())
+                .nearest(PARTICLES.name()))
+        };
+        refusals.judge(entity, EMITTER_PART, verdict);
     }
-    for emitter in &emitters {
-        if !held.contains(&emitter) {
-            spawner.spawn((EmitterRow, Drawn::procedural(PARTICLES, emitter)));
-        }
-    }
+}
+
+pub(crate) fn forget_emitter(In(entity): In<Entity>, mut refusals: ResMut<Refusals>) {
+    refusals.accept(entity, EMITTER_PART);
 }
 
 fn closest(point: Vec3, eyes: &[Vec3]) -> f32 {

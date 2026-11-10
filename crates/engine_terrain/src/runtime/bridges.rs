@@ -336,12 +336,14 @@ pub(crate) fn sync(
                     continue;
                 }
                 meshes.push(pier);
-                let placed = spawner.spawn(Transform {
-                    translation: origin + Vec3::new(top.x, 0.5 * (high + low), top.z),
-                    scale: Vec3::new(PIER_SIDE, high - low, PIER_SIDE),
-                    ..Transform::IDENTITY
-                });
-                spawner.insert(placed, Drawn::new(DrawKind::MESH, pier, material, placed));
+                let placed = spawner.spawn((
+                    Transform {
+                        translation: origin + Vec3::new(top.x, 0.5 * (high + low), top.z),
+                        scale: Vec3::new(PIER_SIDE, high - low, PIER_SIDE),
+                        ..Transform::IDENTITY
+                    },
+                    Drawn::new(DrawKind::MESH, pier, material),
+                ));
                 entities.push(placed);
             }
         }

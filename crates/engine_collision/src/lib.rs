@@ -19,6 +19,7 @@ mod views;
 mod world;
 
 pub use types::{CollisionConfig, CollisionLimits, CollisionStats, Count};
+pub use world::COLLIDER_PART;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, ComponentKind, ErrorCode, SceneComponents, Schedule, Source};

@@ -41,32 +41,22 @@ pub fn build(engine: &mut Engine) -> engine::Result<Template> {
             assets.insert_material(Material::new([0.9, 0.5, 0.2, 1.0])?)?,
         )
     };
-    let spawned = world.spawn((
+    world.spawn((
         Transform {
             translation: Vec3::new(0.0, -0.5, 0.0),
             scale: Vec3::new(20.0, 1.0, 20.0),
             ..Transform::default()
         },
-    )).id();
-    world.entity_mut(spawned).insert(Drawn::new(
-        DrawKind::MESH,
-        mesh,
-        ground,
-        spawned,
+        Drawn::new(DrawKind::MESH, mesh, ground),
     ));
-    let spawned = world.spawn((
+    world.spawn((
         Transform {
             translation: Vec3::new(0.0, 1.0, 0.0),
             scale: Vec3::splat(2.0),
             ..Transform::default()
         },
         Turning,
-    )).id();
-    world.entity_mut(spawned).insert(Drawn::new(
-        DrawKind::MESH,
-        mesh,
-        block,
-        spawned,
+        Drawn::new(DrawKind::MESH, mesh, block),
     ));
     let camera = world
         .spawn((

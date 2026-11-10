@@ -567,7 +567,6 @@ impl WholeFrames {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Hit {
     pub drawn: Entity,
-    pub node: Entity,
     pub distance: f32,
 }
 
@@ -605,7 +604,7 @@ impl Picking<'_, '_> {
             if !drawn.layers.overlaps(layers) {
                 continue;
             }
-            let Some(pose) = self.poses.drawn_pose(&self.globals, drawn.node) else {
+            let Some(pose) = self.poses.drawn_pose(&self.globals, owner) else {
                 continue;
             };
             let inverse = pose.inverse();
@@ -619,7 +618,6 @@ impl Picking<'_, '_> {
             if let Some(distance) = slab(origin, direction, low, high) {
                 hits.push(Hit {
                     drawn: owner,
-                    node: drawn.node,
                     distance,
                 });
             }

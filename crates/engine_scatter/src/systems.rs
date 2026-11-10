@@ -495,14 +495,14 @@ pub(crate) fn publish_assets(
             }
         }
         Err(_) => {
-            let entity = spawner.spawn((
+            spawner.spawn((
                 Placements,
                 Transform::default(),
                 state.uses.clone(),
                 asks,
                 ImpostorRecords::default(),
+                Drawn::procedural(PLACED),
             ));
-            spawner.insert(entity, Drawn::procedural(PLACED, entity));
         }
     }
 }

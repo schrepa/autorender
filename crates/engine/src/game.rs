@@ -13,7 +13,9 @@ pub(crate) fn listed(list: BrickList) -> crate::Result<Engine> {
     crate::pacing::register(&mut engine);
     engine
         .operation::<SceneLookControl>()
-        .operation::<SceneMaterialControl>();
+        .operation::<SceneMaterialControl>()
+        .core_operation(engine_scene::spawn_operation())
+        .core_operation(engine_scene::remove_operation());
     let unwired = wgpu::Limits {
         max_texture_array_layers: 0,
         ..wgpu::Limits::default()

@@ -279,12 +279,12 @@ impl GpuPart for GlimmerGpu {
         cx: &mut Prepare<'_, Self>,
     ) {
         self.staged.clear();
-        for (slot, _, thing) in table.rows(GLIMMER) {
-            let Some(pose) = poses.drawn_pose(&globals, thing.node) else {
+        for (slot, entity, thing) in table.rows(GLIMMER) {
+            let Some(pose) = poses.drawn_pose(&globals, entity) else {
                 continue;
             };
             let previous = poses
-                .previous_drawn_pose(&globals, thing.node)
+                .previous_drawn_pose(&globals, entity)
                 .unwrap_or(pose);
             let size = thing.values.floats.first().copied().unwrap_or(settings.size);
             let [red, green, blue, alpha] = thing.values.tint;

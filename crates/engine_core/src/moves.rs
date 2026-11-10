@@ -6,7 +6,7 @@ use bevy_ecs::component::{Component, ComponentId};
 use bevy_ecs::entity::Entity;
 use bevy_ecs::lifecycle::{Add, Remove};
 use bevy_ecs::observer::On;
-use bevy_ecs::prelude::{Commands, Query, Res, ResMut, With, Without};
+use bevy_ecs::prelude::{Commands, Query, Res, ResMut, Without};
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{SystemParam, SystemParamItem};
 use bevy_ecs::world::World;
@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use crate::hierarchy::tracking::Invalidation;
 use crate::{
     ApplyAt, Ask, Asked, Brick, Error, ErrorCode, Expected, FixedTime, FrameTime,
-    GlobalTransforms, Moment, Mover, MoverId, Operation, Pace, SceneIds, Transform,
+    GlobalTransforms, Moment, Mover, MoverId, Operation, Pace, Refusals, SceneIds, Transform,
     edit_transform,
 };
 
@@ -279,14 +279,40 @@ pub(crate) enum NodeKind {
     Moving { track: fn(&mut World) -> ComponentId },
 }
 
+pub const MOVER_PART: &str = "mover";
+
 pub(crate) fn claim<C: Component>(world: &mut World, mover: Mover) {
-    world.add_observer(
-        move |add: On<Add, C>, held: Query<(), With<Mover>>, mut commands: Commands| {
-            if !held.contains(add.entity) {
-                commands.entity(add.entity).try_insert_if_new(mover);
+    world.add_observer(move |add: On<Add, C>, mut commands: Commands| {
+        let node = add.entity;
+        commands.queue(move |world: &mut World| claimed(world, node, mover));
+    });
+    world.add_observer(move |remove: On<Remove, C>, mut refusals: ResMut<Refusals>| {
+        refusals.accept(remove.entity, MOVER_PART);
+    });
+}
+
+fn claimed(world: &mut World, node: Entity, mover: Mover) {
+    let holder = match world.get_entity(node) {
+        Ok(held) => held.get::<Mover>().copied(),
+        Err(_) => return,
+    };
+    match holder {
+        None => {
+            world.entity_mut(node).insert(mover);
+        }
+        Some(holder) if holder.by == mover.by => {}
+        Some(holder) => {
+            if let Some(mut refusals) = world.get_resource_mut::<Refusals>() {
+                refusals.refuse(
+                    node,
+                    MOVER_PART,
+                    Error::new(ErrorCode::UsageConflict, "$.mover")
+                        .got(mover.by)
+                        .nearest(holder.by),
+                );
             }
-        },
-    );
+        }
+    }
 }
 
 pub(crate) fn moving<C: Component>(world: &mut World) -> ComponentId {

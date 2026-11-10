@@ -1,11 +1,13 @@
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use bevy_ecs::prelude::{Component, Resource};
-use engine_place::Slot;
+use engine_place::{DrawKind, Drawn, Slot};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 pub const MAX_EMITTER_PARTICLES: u32 = 1 << 24;
+
+pub const PARTICLES: DrawKind = DrawKind("particles");
 
 pub const MAX_SPREAD_DEGREES: f32 = 180.0;
 
@@ -78,6 +80,7 @@ impl Default for ParticleLook {
 }
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[require(Drawn = Drawn::procedural(PARTICLES))]
 #[serde(from = "AuthoredEmitter", into = "AuthoredEmitter")]
 pub struct ParticleEmitter {
     pub rate: f32,

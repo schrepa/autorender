@@ -169,8 +169,8 @@ fn label_schema() -> Value {
 pub struct WorldText(pub Label);
 
 impl WorldText {
-    pub fn bundle(self, node: Entity) -> (Label, Drawn) {
-        (self.0, Drawn::procedural(TEXT, node))
+    pub fn bundle(self) -> (Label, Drawn) {
+        (self.0, Drawn::procedural(TEXT))
     }
 }
 
@@ -183,12 +183,11 @@ impl SceneForm for WorldText {
 
     fn insert(self, world: &mut World, entity: Entity) -> Result<(), Error> {
         let held = world.get::<Drawn>(entity).cloned();
-        let (label, row) = self.bundle(entity);
+        let (label, row) = self.bundle();
         let drawn = held.map_or(row, |held| Drawn {
             kind: TEXT,
             geometry: None,
             material: None,
-            node: entity,
             ..held
         });
         world.entity_mut(entity).insert((label, drawn));
@@ -325,12 +324,11 @@ impl TextGpu {
         (table, globals, poses): (&DrawnTable, &GlobalTransforms, &DrawnPoses),
     ) {
         self.worlds.clear();
-        for (slot, entity, drawn) in table.rows(TEXT) {
-            let (Ok(_), Some(pose)) = (labels.get(entity), poses.drawn_pose(globals, drawn.node))
-            else {
+        for (slot, entity, _) in table.rows(TEXT) {
+            let (Ok(_), Some(pose)) = (labels.get(entity), poses.drawn_pose(globals, entity)) else {
                 continue;
             };
-            let previous = poses.previous_drawn_pose(globals, drawn.node).unwrap_or(pose);
+            let previous = poses.previous_drawn_pose(globals, entity).unwrap_or(pose);
             self.worlds.push(WorldLabel {
                 entity,
                 slot,

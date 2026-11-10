@@ -34,10 +34,20 @@ impl GateId {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(tag = "because", rename_all = "snake_case")]
+pub enum Off {
+    Unstarted,
+    Condition,
+    Parent,
+    Needs { brick: &'static str },
+    Cleared,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BrickState {
-    Off,
+    Off(Off),
     On,
     Faulted(Error),
 }
@@ -70,7 +80,7 @@ impl BrickStates {
         let gates = parents.len();
         let count = roots.len();
         Self {
-            states: vec![BrickState::Off; gates],
+            states: vec![BrickState::Off(Off::Unstarted); gates],
             parents,
             bricks,
             roots,
@@ -152,7 +162,7 @@ impl BrickStates {
     pub fn faults(&self) -> impl Iterator<Item = (BrickId, &Error)> + '_ {
         self.iter().filter_map(|(brick, state)| match state {
             BrickState::Faulted(error) => Some((brick, error)),
-            BrickState::Off | BrickState::On => None,
+            BrickState::Off(_) | BrickState::On => None,
         })
     }
 
@@ -184,6 +194,12 @@ impl BrickStates {
         if let Some(held) = self.states.get_mut(gate.index()) {
             *held = state;
             self.generation = self.generation.wrapping_add(1);
+        }
+    }
+
+    fn explain(&mut self, gate: GateId, off: Off) {
+        if let Some(BrickState::Off(held)) = self.states.get_mut(gate.index()) {
+            *held = off;
         }
     }
 
@@ -224,7 +240,7 @@ pub fn ask_on(world: &mut World, brick: BrickId) {
         .get_resource::<BrickStates>()
         .and_then(|states| states.root(brick).filter(|root| states.faulted(*root)));
     if let Some(root) = root {
-        turn(world, root, BrickState::Off);
+        turn(world, root, BrickState::Off(Off::Cleared));
     }
 }
 
@@ -237,18 +253,22 @@ pub(crate) fn turn(world: &mut World, gate: GateId, to: BrickState) {
         return;
     };
     match (from, to) {
-        (BrickState::Off, BrickState::On) => turn_on(world, gate),
-        (BrickState::On, to @ (BrickState::Off | BrickState::Faulted(_))) => {
+        (BrickState::Off(_), BrickState::On) => turn_on(world, gate),
+        (BrickState::On, to @ (BrickState::Off(_) | BrickState::Faulted(_))) => {
             turn_off(world, gate, to);
         }
-        (BrickState::Off, to @ BrickState::Faulted(_))
-        | (BrickState::Faulted(_), to @ BrickState::Off) => {
+        (BrickState::Off(_), to @ BrickState::Faulted(_))
+        | (BrickState::Faulted(_), to @ BrickState::Off(_)) => {
             if let Some(mut states) = world.get_resource_mut::<BrickStates>() {
                 states.set(gate, to);
             }
         }
-        (BrickState::Off, BrickState::Off)
-        | (BrickState::On, BrickState::On)
+        (BrickState::Off(_), BrickState::Off(off)) => {
+            if let Some(mut states) = world.get_resource_mut::<BrickStates>() {
+                states.explain(gate, off);
+            }
+        }
+        (BrickState::On, BrickState::On)
         | (BrickState::Faulted(_), BrickState::On | BrickState::Faulted(_)) => {}
     }
 }
@@ -340,14 +360,17 @@ fn turn_off(world: &mut World, gate: GateId, to: BrickState) {
         states.set(gate, to);
     }
     for child in children {
-        turn(world, child, BrickState::Off);
+        turn(world, child, BrickState::Off(Off::Parent));
     }
+    let needed = Off::Needs {
+        brick: package(world, brick),
+    };
     for dependent in dependents {
         let root = world
             .get_resource::<BrickStates>()
             .and_then(|states| states.root(dependent));
         if let Some(root) = root {
-            turn(world, root, BrickState::Off);
+            turn(world, root, BrickState::Off(needed));
         }
     }
     let work = turning(world, brick, gate);
@@ -395,13 +418,15 @@ impl GateDriver {
             };
             for index in (0..want.len()).rev() {
                 let gate = GateId(index as u32);
-                if !want[index] && state_of(world, gate).is_some_and(|state| state.on()) {
-                    turn(world, gate, BrickState::Off);
+                let turnable = state_of(world, gate)
+                    .is_some_and(|state| matches!(state, BrickState::On | BrickState::Off(_)));
+                if let (Err(off), true) = (want[index], turnable) {
+                    turn(world, gate, BrickState::Off(off));
                 }
             }
             for (index, wanted) in want.iter().enumerate() {
                 let gate = GateId(index as u32);
-                if *wanted && matches!(state_of(world, gate), Some(BrickState::Off)) {
+                if wanted.is_ok() && matches!(state_of(world, gate), Some(BrickState::Off(_))) {
                     turn(world, gate, BrickState::On);
                 }
             }
@@ -411,32 +436,49 @@ impl GateDriver {
         }
     }
 
-    fn wanted(&mut self, world: &mut World) -> Option<Vec<bool>> {
+    fn wanted(&mut self, world: &mut World) -> Option<Vec<Result<(), Off>>> {
         let count = self.conditions.len();
-        let mut want = vec![false; count];
+        let mut want: Vec<Result<(), Off>> = vec![Err(Off::Unstarted); count];
         for index in 0..count {
             let gate = GateId(index as u32);
             let (brick, parent, faulted, lacking) = {
                 let states = world.get_resource::<BrickStates>()?;
                 let brick = states.brick(gate)?;
                 let parent = states.parent(gate);
-                let lacking = parent.is_none()
-                    && states.needs(brick).iter().any(|need| !states.brick_on(*need));
+                let lacking = parent
+                    .is_none()
+                    .then(|| {
+                        states
+                            .needs(brick)
+                            .iter()
+                            .copied()
+                            .find(|need| !states.brick_on(*need))
+                    })
+                    .flatten();
                 (brick, parent, states.faulted(gate), lacking)
             };
-            if faulted || parent.is_some_and(|parent| !want[parent.index()]) {
+            if faulted {
+                continue;
+            }
+            if parent.is_some_and(|parent| want[parent.index()].is_err()) {
+                want[index] = Err(Off::Parent);
                 continue;
             }
             want[index] = match self.conditions[index].as_mut() {
-                None => true,
+                None => Ok(()),
                 Some(condition) => match condition.run_readonly((), world) {
-                    Ok(on) => on,
-                    Err(_) if lacking => false,
-                    Err(error) => {
-                        let refused = refused(world, brick, &error);
-                        fault(world, brick, refused);
-                        false
-                    }
+                    Ok(true) => Ok(()),
+                    Ok(false) => Err(Off::Condition),
+                    Err(error) => match lacking {
+                        Some(need) => Err(Off::Needs {
+                            brick: package(world, need),
+                        }),
+                        None => {
+                            let refused = refused(world, brick, &error);
+                            fault(world, brick, refused);
+                            Err(Off::Condition)
+                        }
+                    },
                 },
             };
         }
@@ -445,13 +487,15 @@ impl GateDriver {
             let mut dropped = false;
             for (brick, root) in states.roots.iter().enumerate() {
                 let needs = states.needs.get(brick).map_or(&[][..], Vec::as_slice);
-                let lacking = needs.iter().any(|need| {
+                let lacking = needs.iter().copied().find(|need| {
                     states
                         .root(*need)
-                        .is_none_or(|need| !want[need.index()])
+                        .is_none_or(|need| want[need.index()].is_err())
                 });
-                if want[root.index()] && lacking {
-                    want[root.index()] = false;
+                if let (Ok(()), Some(need)) = (want[root.index()], lacking) {
+                    want[root.index()] = Err(Off::Needs {
+                        brick: package(world, need),
+                    });
                     dropped = true;
                 }
             }
@@ -461,9 +505,10 @@ impl GateDriver {
         }
         for index in 0..count {
             if let Some(parent) = states.parent(GateId(index as u32))
-                && !want[parent.index()]
+                && want[parent.index()].is_err()
+                && want[index].is_ok()
             {
-                want[index] = false;
+                want[index] = Err(Off::Parent);
             }
         }
         Some(want)
@@ -484,6 +529,13 @@ fn generation(world: &World) -> u64 {
 
 fn state_of(world: &World, gate: GateId) -> Option<&BrickState> {
     world.get_resource::<BrickStates>()?.gate_state(gate)
+}
+
+fn package(world: &World, brick: BrickId) -> &'static str {
+    world
+        .get_resource::<Registry>()
+        .and_then(|registry| registry.record(brick))
+        .map_or("", |record| record.package)
 }
 
 fn refused(world: &World, brick: BrickId, error: &RunSystemError) -> Error {

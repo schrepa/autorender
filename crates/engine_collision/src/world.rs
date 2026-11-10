@@ -6,7 +6,8 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemChangeTick;
 use engine_core::profile::{Aggregate, span};
 use engine_core::{
-    Cursor, Error, Events, Feed, FixedTime, FrameTime, GlobalTransforms, Section, Since, Transform,
+    Cursor, Error, Events, Feed, FixedTime, FrameTime, GlobalTransforms, Refusals, Section, Since,
+    Transform,
 };
 use engine_math::collections::HashMap;
 use engine_places::queries::{CastFilter, CastHit, CastShape, SceneQueries, SceneQuery};
@@ -35,12 +36,13 @@ type Sources = &'static SolidSource;
 fn read(
     globals: &GlobalTransforms,
     (entity, collider, local): (Entity, &Collider, bool),
-) -> Option<AffineShape> {
-    if !local {
-        return None;
-    }
-    let matrix = globals.get(entity)?.matrix()?;
-    AffineShape::new(collider.shape(), matrix).ok()
+) -> Result<AffineShape, Fault> {
+    let matrix = globals
+        .get(entity)
+        .filter(|_| local)
+        .and_then(|global| global.matrix())
+        .ok_or(Fault::InvalidTransform)?;
+    AffineShape::new(collider.shape(), matrix)
 }
 
 #[derive(Clone, Copy)]
@@ -70,7 +72,7 @@ impl Synced {
     fn of(valid: bool, report: &CollisionReport) -> Self {
         if !valid {
             Self::Incomplete(Fault::InvalidConfig)
-        } else if report.invalid_colliders > 0 || report.overflow_colliders > 0 {
+        } else if report.overflow_colliders > 0 {
             Self::Incomplete(Fault::IncompleteWorld)
         } else {
             Self::Complete
@@ -100,6 +102,8 @@ pub struct CollisionWorld {
     report: CollisionReport,
     synced: Synced,
     sources: Vec<Arc<SolidField>>,
+    invalid: Vec<(Entity, Fault)>,
+    judged: Vec<(Entity, Fault)>,
     pub(crate) sensors: SensorEvents,
 }
 
@@ -212,6 +216,7 @@ impl CollisionWorld {
         self.report.invalid_colliders = 0;
         self.report.overflow_colliders = count.saturating_sub(limit);
         let held = std::mem::take(&mut self.held);
+        self.invalid.clear();
         self.held.reserve(admitted);
         let entries = Arc::make_mut(&mut self.entries);
         entries.clear();
@@ -225,7 +230,12 @@ impl CollisionWorld {
             .filter(|&(entity, ..)| globals.active(entity));
         for data in active.take(limit) {
             let (entity, collider, _) = data;
-            let slot = read(globals, data)
+            let affine = read(globals, data);
+            if let Err(fault) = affine {
+                self.invalid.push((entity, fault));
+            }
+            let slot = affine
+                .ok()
                 .filter(|_| configuration_valid)
                 .map(|affine| {
                     self.bounds.push(affine.bounds);
@@ -273,7 +283,7 @@ impl CollisionWorld {
             let Ok(data) = colliders.get(entity) else {
                 return false;
             };
-            match (slot, read(globals, data)) {
+            match (slot, read(globals, data).ok()) {
                 (Some(slot), Some(affine)) => {
                     let slot = slot as usize;
                     Arc::make_mut(&mut self.entries)[slot].affine = affine;
@@ -832,6 +842,7 @@ pub(crate) fn sync(
     (frame, tick): (Res<FrameTime>, Res<FixedTime>),
     mut collision: ResMut<Collision>,
     (mut stats, mut queries): (ResMut<CollisionStats>, ResMut<SceneQueries>),
+    mut refusals: ResMut<Refusals>,
 ) {
     let world = installed(&mut collision);
     world.refresh(
@@ -842,6 +853,28 @@ pub(crate) fn sync(
     );
     stats.set_if_neq(world.stats());
     queries.0 = Arc::new(world.sweep());
+    world.judge(&mut refusals);
+}
+
+pub const COLLIDER_PART: &str = "collider";
+
+impl CollisionWorld {
+    fn judge(&mut self, refusals: &mut Refusals) {
+        self.invalid.sort_unstable_by_key(|&(entity, _)| entity);
+        if self.invalid == self.judged {
+            return;
+        }
+        let invalid = &self.invalid;
+        refusals.keep_part(COLLIDER_PART, |entity| {
+            invalid
+                .binary_search_by_key(&entity, |&(found, _)| found)
+                .is_ok()
+        });
+        for &(entity, fault) in invalid {
+            refusals.refuse(entity, COLLIDER_PART, fault.error().at("$.collider"));
+        }
+        self.judged.clone_from(&self.invalid);
+    }
 }
 
 #[derive(SystemParam)]

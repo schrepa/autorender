@@ -237,7 +237,7 @@ fn spawn(
             ))
         })
         .collect();
-    let parents = rig
+    let parents: Vec<(Entity, Option<Entity>)> = rig
         .joints
         .iter()
         .zip(&joints)
@@ -249,19 +249,22 @@ fn spawn(
             (node, Some(parent))
         })
         .collect();
-    spawner.set_parents(parents);
-    let parts = rig
+    let parts: Vec<Entity> = rig
         .parts
         .iter()
         .map(|part| {
-            spawner.spawn(Drawn::new(
-                DrawKind::SKIN,
-                part.mesh,
-                part.material,
-                animator_node,
+            spawner.spawn((
+                Transform::IDENTITY,
+                Drawn::new(DrawKind::SKIN, part.mesh, part.material),
             ))
         })
         .collect();
+    spawner.set_parents(
+        parents
+            .into_iter()
+            .chain(parts.iter().map(|&part| (part, Some(animator_node))))
+            .collect(),
+    );
     Skeleton {
         rig: Arc::clone(rig),
         joints,

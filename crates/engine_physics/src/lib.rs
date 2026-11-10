@@ -17,6 +17,7 @@ mod views;
 mod world;
 
 pub use settings::{Physics, PhysicsStats};
+pub use world::BODY_PART;
 
 use bevy_ecs::prelude::*;
 use engine_core::{

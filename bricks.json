@@ -1,0 +1,3363 @@
+{
+  "bricks": [
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_places_rendering",
+        "engine_render"
+      ],
+      "fills": [
+        "ambient_occlusion"
+      ],
+      "jobs": [],
+      "joins": [],
+      "name": "engine_ambient_occlusion",
+      "operations": [],
+      "parts": [
+        {
+          "part": "ambient_occlusion",
+          "passes": [
+            "ambient_occlusion",
+            "effects_filter"
+          ]
+        }
+      ],
+      "piece": {
+        "name": "AmbientPiece",
+        "size": 32
+      },
+      "resources": [
+        "engine_ambient_occlusion::settings::AmbientOcclusion",
+        "engine_ambient_occlusion::settings::AmbientOcclusionStats",
+        "engine_ambient_occlusion::AmbientPiece"
+      ],
+      "settings": [
+        {
+          "key": "ambient_occlusion",
+          "type": "engine_ambient_occlusion::settings::AmbientOcclusion"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "ambient_occlusion_stats",
+          "type": "engine_ambient_occlusion::settings::AmbientOcclusionStats"
+        }
+      ],
+      "type": "engine_ambient_occlusion::AmbientOcclusionBrick",
+      "version": "f58041da65f707eff521e2a254289ed828ef5a34bcd4da1ce82a659be02e9325"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_places_rendering"
+      ],
+      "fills": [
+        "sounds"
+      ],
+      "jobs": [],
+      "joins": [
+        "scene_components"
+      ],
+      "name": "engine_audio",
+      "operations": [
+        {
+          "control": true,
+          "name": "audio_device"
+        },
+        {
+          "control": false,
+          "name": "audio_voices"
+        }
+      ],
+      "parts": [],
+      "piece": null,
+      "resources": [
+        "engine_audio::settings::Audio",
+        "engine_audio::settings::AudioStats",
+        "engine_audio::mixer::Mixer"
+      ],
+      "settings": [
+        {
+          "key": "audio",
+          "type": "engine_audio::settings::Audio"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "audio_stats",
+          "type": "engine_audio::settings::AudioStats"
+        }
+      ],
+      "type": "engine_audio::AudioBrick",
+      "version": "36179c710c3e74f5e7d085aba71945af33b704787e33f567b56ea294fe050d1a"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_math",
+        "engine_places_rendering",
+        "engine_render"
+      ],
+      "fills": [
+        "exposure"
+      ],
+      "jobs": [],
+      "joins": [],
+      "name": "engine_auto_exposure",
+      "operations": [],
+      "parts": [
+        {
+          "part": "exposure",
+          "passes": [
+            "exposure"
+          ]
+        }
+      ],
+      "piece": null,
+      "resources": [
+        "engine_auto_exposure::settings::AutoExposure",
+        "engine_auto_exposure::settings::ExposureStats",
+        "engine_auto_exposure::ExposureFeedback"
+      ],
+      "settings": [
+        {
+          "key": "auto_exposure",
+          "type": "engine_auto_exposure::settings::AutoExposure"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "exposure_stats",
+          "type": "engine_auto_exposure::settings::ExposureStats"
+        }
+      ],
+      "type": "engine_auto_exposure::AutoExposureBrick",
+      "version": "26f546a65cbf796c4c01add7d279cb8a4b7ab6aecc7d92bc640ea9f97eb44966"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_render"
+      ],
+      "fills": [],
+      "jobs": [],
+      "joins": [],
+      "name": "engine_bloom",
+      "operations": [],
+      "parts": [
+        {
+          "part": "bloom",
+          "passes": [
+            "bloom"
+          ]
+        }
+      ],
+      "piece": {
+        "name": "BloomPiece",
+        "size": 32
+      },
+      "resources": [
+        "engine_bloom::settings::Bloom",
+        "engine_bloom::settings::BloomStats",
+        "engine_bloom::BloomPiece"
+      ],
+      "settings": [
+        {
+          "key": "bloom",
+          "type": "engine_bloom::settings::Bloom"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "bloom_stats",
+          "type": "engine_bloom::settings::BloomStats"
+        }
+      ],
+      "type": "engine_bloom::BloomBrick",
+      "version": "dae38c75b2ce143fbe8a0cef665fa0094a67cd752d3e56513f51b4b812296619"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_math",
+        "engine_places",
+        "engine_places_simulation"
+      ],
+      "fills": [
+        "collision",
+        "scene_queries"
+      ],
+      "jobs": [],
+      "joins": [
+        "scene_components"
+      ],
+      "name": "engine_collision",
+      "operations": [
+        {
+          "control": false,
+          "name": "raycast"
+        },
+        {
+          "control": false,
+          "name": "overlap"
+        },
+        {
+          "control": false,
+          "name": "shape_cast"
+        },
+        {
+          "control": false,
+          "name": "collision_events"
+        },
+        {
+          "control": false,
+          "name": "terrain_sweep"
+        },
+        {
+          "control": false,
+          "name": "collider"
+        }
+      ],
+      "parts": [],
+      "piece": null,
+      "resources": [
+        "engine_collision::types::CollisionConfig",
+        "engine_collision::types::CollisionStats"
+      ],
+      "settings": [
+        {
+          "key": "collision",
+          "type": "engine_collision::types::CollisionConfig"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "collision_stats",
+          "type": "engine_collision::types::CollisionStats"
+        }
+      ],
+      "type": "engine_collision::CollisionBrick",
+      "version": "f2a52c9cf0898a055bae079b044279ca5aa149e8de5220df41dafbac31e3b841"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_places",
+        "engine_places_rendering",
+        "engine_render"
+      ],
+      "fills": [
+        "debug"
+      ],
+      "jobs": [],
+      "joins": [
+        "debug_modes",
+        "debug_modes",
+        "debug_modes",
+        "debug_modes",
+        "debug_modes"
+      ],
+      "name": "engine_debug_view",
+      "operations": [
+        {
+          "control": true,
+          "name": "probe_pixel"
+        },
+        {
+          "control": false,
+          "name": "probed_pixel"
+        }
+      ],
+      "parts": [
+        {
+          "part": "debug_view_overlay",
+          "passes": [
+            "debug_view_overlay"
+          ]
+        },
+        {
+          "part": "debug_view",
+          "passes": [
+            "debug_view_probe"
+          ]
+        }
+      ],
+      "piece": {
+        "name": "DebugViewPiece",
+        "size": 32
+      },
+      "resources": [
+        "engine_debug_view::settings::DebugView",
+        "engine_debug_view::probe::Probe",
+        "engine_debug_view::modes::Whole",
+        "engine_debug_view::gpu::DebugViewPiece",
+        "engine_debug_view::probe::ProbeSteps"
+      ],
+      "settings": [
+        {
+          "key": "debug_view",
+          "type": "engine_debug_view::settings::DebugView"
+        }
+      ],
+      "smokes": [],
+      "stats": [],
+      "type": "engine_debug_view::DebugViewBrick",
+      "version": "796ddcfe258f65066961ec86a025d9685ab691a7def741a663e0aebbc8285be9"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_render"
+      ],
+      "fills": [],
+      "jobs": [],
+      "joins": [],
+      "name": "engine_dither",
+      "operations": [],
+      "parts": [],
+      "piece": null,
+      "resources": [
+        "engine_dither::Dither"
+      ],
+      "settings": [
+        {
+          "key": "dither",
+          "type": "engine_dither::Dither"
+        }
+      ],
+      "smokes": [],
+      "stats": [],
+      "type": "engine_dither::DitherBrick",
+      "version": "04ed348fec4d352675523d1ba369e77a1e2db00da9342952afc5029b4b1f4608"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs"
+      ],
+      "fills": [
+        "render_scale"
+      ],
+      "jobs": [],
+      "joins": [],
+      "name": "engine_dynamic_resolution",
+      "operations": [],
+      "parts": [],
+      "piece": null,
+      "resources": [
+        "engine_dynamic_resolution::DynamicResolution",
+        "engine_dynamic_resolution::DynamicResolutionStats",
+        "engine_dynamic_resolution::DynamicScale"
+      ],
+      "settings": [
+        {
+          "key": "dynamic_resolution",
+          "type": "engine_dynamic_resolution::DynamicResolution"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "dynamic_resolution_stats",
+          "type": "engine_dynamic_resolution::DynamicResolutionStats"
+        }
+      ],
+      "type": "engine_dynamic_resolution::DynamicResolutionBrick",
+      "version": "3a86523d4c05dfd3910b2835de05fc910c71a60ab797ffc973569ba0288a224f"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_math",
+        "engine_places_rendering",
+        "engine_places_world",
+        "engine_render"
+      ],
+      "fills": [
+        "cover"
+      ],
+      "jobs": [],
+      "joins": [
+        "far_cover"
+      ],
+      "name": "engine_ground_cover",
+      "operations": [],
+      "parts": [
+        {
+          "part": "ground_cover",
+          "passes": [
+            "ground_cover"
+          ]
+        }
+      ],
+      "piece": null,
+      "resources": [
+        "engine_ground_cover::settings::GroundCover",
+        "engine_ground_cover::settings::GroundCoverStats",
+        "engine_ground_cover::covers::CoverTable",
+        "engine_ground_cover::growth::CoverPlan",
+        "engine_ground_cover::growth::BladeCounts"
+      ],
+      "settings": [
+        {
+          "key": "ground_cover",
+          "type": "engine_ground_cover::settings::GroundCover"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "ground_cover_stats",
+          "type": "engine_ground_cover::settings::GroundCoverStats"
+        }
+      ],
+      "type": "engine_ground_cover::GroundCoverBrick",
+      "version": "791e053f3b8c2d0eefcf81f303d52c28bb9ca11aedb7ae25f1710fde6c3ac0f8"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_places_simulation"
+      ],
+      "fills": [],
+      "jobs": [],
+      "joins": [
+        "scene_components"
+      ],
+      "name": "engine_grounding",
+      "operations": [],
+      "parts": [],
+      "piece": null,
+      "resources": [
+        "engine_grounding::Grounding"
+      ],
+      "settings": [
+        {
+          "key": "grounding",
+          "type": "engine_grounding::Grounding"
+        }
+      ],
+      "smokes": [],
+      "stats": [],
+      "type": "engine_grounding::GroundingBrick",
+      "version": "b6230538e936bdae7df03aa0c58a4f91bfad8eb0e40779792360777a15a7220f"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_places",
+        "engine_places_rendering",
+        "engine_render"
+      ],
+      "fills": [
+        "impostors"
+      ],
+      "jobs": [
+        "impostors::bake",
+        "impostors::assembly"
+      ],
+      "joins": [
+        "cooks"
+      ],
+      "name": "engine_impostors",
+      "operations": [],
+      "parts": [
+        {
+          "part": "impostors",
+          "passes": [
+            "impostor_shade",
+            "impostor_bake"
+          ]
+        },
+        {
+          "part": "mesh_cards",
+          "passes": [
+            "mesh_cards",
+            "mesh_cards_late",
+            "mesh_cards_occluded"
+          ]
+        }
+      ],
+      "piece": {
+        "name": "ImpostorPiece",
+        "size": 16
+      },
+      "resources": [
+        "engine_impostors::settings::ImpostorSettings",
+        "engine_impostors::settings::ImpostorStats",
+        "engine_impostors::books::ImpostorBooks",
+        "engine_impostors::part::BakeReads",
+        "engine_impostors::books::ImpostorPiece"
+      ],
+      "settings": [
+        {
+          "key": "impostors",
+          "type": "engine_impostors::settings::ImpostorSettings"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "impostors_stats",
+          "type": "engine_impostors::settings::ImpostorStats"
+        }
+      ],
+      "type": "engine_impostors::ImpostorsBrick",
+      "version": "3efb9d37fbcd8ad5d45480b22f4a00d2fec1410d851e5f33d84b8dfca4614647"
+    },
+    {
+      "dependencies": [
+        "engine_codec",
+        "engine_core",
+        "engine_ecs",
+        "engine_heightfield",
+        "engine_math",
+        "engine_places_world"
+      ],
+      "fills": [],
+      "jobs": [],
+      "joins": [
+        "terrain_layers"
+      ],
+      "name": "engine_layer_erosion",
+      "operations": [],
+      "parts": [],
+      "piece": null,
+      "resources": [],
+      "settings": [],
+      "smokes": [],
+      "stats": [],
+      "type": "engine_layer_erosion::LayerErosionBrick",
+      "version": "e5ca329c2fd2613d386aa963a4b48d031c9296b58c8bfb73cfa478190722358d"
+    },
+    {
+      "dependencies": [
+        "engine_codec",
+        "engine_command_line",
+        "engine_core",
+        "engine_ecs",
+        "engine_heightfield",
+        "engine_math",
+        "engine_places_world"
+      ],
+      "fills": [],
+      "jobs": [],
+      "joins": [
+        "terrain_layers"
+      ],
+      "name": "engine_layer_heightmap",
+      "operations": [],
+      "parts": [],
+      "piece": null,
+      "resources": [],
+      "settings": [],
+      "smokes": [],
+      "stats": [],
+      "type": "engine_layer_heightmap::LayerHeightmapBrick",
+      "version": "371745df6e721e4a5a6f53a869d94b764f6e7250c98e3b630707f0e35345505d"
+    },
+    {
+      "dependencies": [
+        "engine_codec",
+        "engine_core",
+        "engine_ecs",
+        "engine_heightfield",
+        "engine_math",
+        "engine_places_world"
+      ],
+      "fills": [],
+      "jobs": [],
+      "joins": [
+        "terrain_layers",
+        "terrain_layers"
+      ],
+      "name": "engine_layer_hydrology",
+      "operations": [],
+      "parts": [],
+      "piece": null,
+      "resources": [],
+      "settings": [],
+      "smokes": [],
+      "stats": [],
+      "type": "engine_layer_hydrology::LayerHydrologyBrick",
+      "version": "5f5b41d80dba424927a1c504019595612fe136c6b7a546a15c91d5c05ffab561"
+    },
+    {
+      "dependencies": [
+        "engine_codec",
+        "engine_core",
+        "engine_ecs",
+        "engine_heightfield",
+        "engine_math",
+        "engine_places_world"
+      ],
+      "fills": [],
+      "jobs": [],
+      "joins": [
+        "terrain_layers"
+      ],
+      "name": "engine_layer_noise",
+      "operations": [],
+      "parts": [],
+      "piece": null,
+      "resources": [],
+      "settings": [],
+      "smokes": [],
+      "stats": [],
+      "type": "engine_layer_noise::LayerNoiseBrick",
+      "version": "38fd775f23c9b95c7fe02e3ccf28cbb22c2aa8f3a4a349946f81b3a4c750c695"
+    },
+    {
+      "dependencies": [
+        "engine_codec",
+        "engine_core",
+        "engine_ecs",
+        "engine_heightfield",
+        "engine_math",
+        "engine_places_world"
+      ],
+      "fills": [],
+      "jobs": [],
+      "joins": [
+        "terrain_layers"
+      ],
+      "name": "engine_layer_paths",
+      "operations": [],
+      "parts": [],
+      "piece": null,
+      "resources": [],
+      "settings": [],
+      "smokes": [],
+      "stats": [],
+      "type": "engine_layer_paths::LayerPathsBrick",
+      "version": "810ab99c159ef993f091ad56a964da719607534c13fc4a33ce185f4b162f9b33"
+    },
+    {
+      "dependencies": [
+        "engine_codec",
+        "engine_core",
+        "engine_ecs",
+        "engine_heightfield",
+        "engine_math",
+        "engine_places_world"
+      ],
+      "fills": [],
+      "jobs": [],
+      "joins": [
+        "terrain_layers",
+        "terrain_layers"
+      ],
+      "name": "engine_layer_relief",
+      "operations": [],
+      "parts": [],
+      "piece": null,
+      "resources": [],
+      "settings": [],
+      "smokes": [],
+      "stats": [],
+      "type": "engine_layer_relief::LayerReliefBrick",
+      "version": "cb333c3b6ebf480d889f5aa868b33c7ec381655c6fc068a76b940991a4dc35e5"
+    },
+    {
+      "dependencies": [
+        "engine_codec",
+        "engine_core",
+        "engine_ecs",
+        "engine_heightfield",
+        "engine_math",
+        "engine_places_world"
+      ],
+      "fills": [],
+      "jobs": [],
+      "joins": [
+        "terrain_layers"
+      ],
+      "name": "engine_layer_stamps",
+      "operations": [],
+      "parts": [],
+      "piece": null,
+      "resources": [],
+      "settings": [],
+      "smokes": [],
+      "stats": [],
+      "type": "engine_layer_stamps::LayerStampsBrick",
+      "version": "f6d7bc5d3eb475fcbe58a1848e856880d850d1619fd96a8905a1c51ea62e76ee"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_math",
+        "engine_places_rendering",
+        "engine_render"
+      ],
+      "fills": [
+        "lighting",
+        "lit"
+      ],
+      "jobs": [],
+      "joins": [],
+      "name": "engine_lighting",
+      "operations": [],
+      "parts": [],
+      "piece": {
+        "name": "LightingPiece",
+        "size": 48
+      },
+      "resources": [
+        "engine_lighting::light::SurfaceLight",
+        "engine_lighting::highlights::Highlights",
+        "engine_lighting::LightingPiece"
+      ],
+      "settings": [
+        {
+          "key": "surface_light",
+          "type": "engine_lighting::light::SurfaceLight"
+        },
+        {
+          "key": "highlights",
+          "type": "engine_lighting::highlights::Highlights"
+        }
+      ],
+      "smokes": [],
+      "stats": [],
+      "type": "engine_lighting::LightingModelBrick",
+      "version": "683a1a24bfd1a6a15e557f8acb48e50966a6d958bd8a23face5a398d76fc28b4"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_math",
+        "engine_places",
+        "engine_places_rendering",
+        "engine_render"
+      ],
+      "fills": [
+        "lights"
+      ],
+      "jobs": [],
+      "joins": [
+        "scene_components"
+      ],
+      "name": "engine_lights",
+      "operations": [],
+      "parts": [
+        {
+          "part": "lights",
+          "passes": [
+            "lights"
+          ]
+        }
+      ],
+      "piece": null,
+      "resources": [
+        "engine_lights::lights::LocalLightSettings",
+        "engine_lights::lights::LightStats",
+        "engine_lights::lights::LightGather",
+        "engine_lights::lights::LightList",
+        "engine_lights::part::LightTotals"
+      ],
+      "settings": [
+        {
+          "key": "local_lights",
+          "type": "engine_lights::lights::LocalLightSettings"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "local_light_stats",
+          "type": "engine_lights::lights::LightStats"
+        }
+      ],
+      "type": "engine_lights::LightsBrick",
+      "version": "04db494628b81ac9879a708cb98f85f0eb6ca6c71927886d25a82dc3f773d905"
+    },
+    {
+      "dependencies": [
+        "engine_codec",
+        "engine_core",
+        "engine_ecs",
+        "engine_places",
+        "engine_render"
+      ],
+      "fills": [
+        "instances"
+      ],
+      "jobs": [],
+      "joins": [],
+      "name": "engine_meshes",
+      "operations": [
+        {
+          "control": false,
+          "name": "mesh_drawn"
+        },
+        {
+          "control": false,
+          "name": "meshes_listing"
+        }
+      ],
+      "parts": [
+        {
+          "part": "engine_meshes::gpu::MeshesGpu",
+          "passes": [
+            "presentation",
+            "view_cull",
+            "occlusion_lists",
+            "occluded",
+            "blended_sort"
+          ]
+        }
+      ],
+      "piece": null,
+      "resources": [
+        "engine_meshes::settings::MeshStats",
+        "engine_meshes::presentation::PresentationTotals",
+        "engine_meshes::drawn::WatchedSlot"
+      ],
+      "settings": [],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "meshes_stats",
+          "type": "engine_meshes::settings::MeshStats"
+        }
+      ],
+      "type": "engine_meshes::MeshesBrick",
+      "version": "4b30de012db802bb218162e0b3e7f4f8a99ceb7564c863958ade4721cfb5764e"
+    },
+    {
+      "dependencies": [
+        "engine_codec",
+        "engine_core",
+        "engine_ecs",
+        "engine_math",
+        "engine_places_simulation"
+      ],
+      "fills": [],
+      "jobs": [
+        "navigation::walk_ground",
+        "navigation::portals"
+      ],
+      "joins": [
+        "scene_components",
+        "cooks"
+      ],
+      "name": "engine_navigation",
+      "operations": [
+        {
+          "control": true,
+          "name": "nav_go"
+        },
+        {
+          "control": false,
+          "name": "nav_path"
+        },
+        {
+          "control": false,
+          "name": "nav_agent"
+        },
+        {
+          "control": false,
+          "name": "nav_agents"
+        }
+      ],
+      "parts": [],
+      "piece": null,
+      "resources": [
+        "engine_navigation::agents::Navigation",
+        "engine_navigation::agents::NavAgents",
+        "engine_navigation::agents::NavStats"
+      ],
+      "settings": [
+        {
+          "key": "navigation",
+          "type": "engine_navigation::agents::Navigation"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "navigation_stats",
+          "type": "engine_navigation::agents::NavStats"
+        }
+      ],
+      "type": "engine_navigation::NavigationBrick",
+      "version": "b955a7af24ca4f69b68af0d28d042d4eb93e6034c03a81cff1bd006429bd6fe7"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_places_rendering",
+        "engine_render"
+      ],
+      "fills": [
+        "transparency",
+        "particle_bursts"
+      ],
+      "jobs": [],
+      "joins": [
+        "scene_components"
+      ],
+      "name": "engine_particles",
+      "operations": [],
+      "parts": [
+        {
+          "part": "engine_particles::part::ParticlesGpu",
+          "passes": [
+            "transparent",
+            "transparent_composite"
+          ]
+        }
+      ],
+      "piece": null,
+      "resources": [
+        "engine_particles::emitters::ParticleSettings",
+        "engine_particles::emitters::ParticleStats",
+        "engine_particles::emitters::Gather",
+        "engine_particles::emitters::Packed"
+      ],
+      "settings": [
+        {
+          "key": "particles",
+          "type": "engine_particles::emitters::ParticleSettings"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "particle_stats",
+          "type": "engine_particles::emitters::ParticleStats"
+        }
+      ],
+      "type": "engine_particles::ParticlesBrick",
+      "version": "367b16d0747a80257cfd0e729c5c0c579b5b41ac18378bf8f34fc475828d0fda"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_math",
+        "engine_places_simulation"
+      ],
+      "fills": [
+        "water_obstacles",
+        "body_ask"
+      ],
+      "jobs": [],
+      "joins": [
+        "scene_components",
+        "scene_components"
+      ],
+      "name": "engine_physics",
+      "operations": [
+        {
+          "control": false,
+          "name": "physics_body"
+        },
+        {
+          "control": true,
+          "name": "body_ask"
+        }
+      ],
+      "parts": [],
+      "piece": null,
+      "resources": [
+        "engine_physics::settings::Physics",
+        "engine_physics::settings::PhysicsStats",
+        "engine_physics::world::PhysicsWorld"
+      ],
+      "settings": [
+        {
+          "key": "physics",
+          "type": "engine_physics::settings::Physics"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "physics_stats",
+          "type": "engine_physics::settings::PhysicsStats"
+        }
+      ],
+      "type": "engine_physics::PhysicsBrick",
+      "version": "a347b980ac775e365d1fcea0ad42ec0e8e001b5231f12989aef240bc8b417362"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_render"
+      ],
+      "fills": [],
+      "jobs": [],
+      "joins": [],
+      "name": "engine_prepass",
+      "operations": [],
+      "parts": [],
+      "piece": null,
+      "resources": [],
+      "settings": [],
+      "smokes": [],
+      "stats": [],
+      "type": "engine_prepass::PrepassBrick",
+      "version": "f537c2b93a3749d4588f1840185e4c0b032c9180d9cc54581dd8eadd07e5a43b"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_math",
+        "engine_places_rendering",
+        "engine_render"
+      ],
+      "fills": [
+        "probe_captures"
+      ],
+      "jobs": [],
+      "joins": [
+        "scene_components",
+        "ambient",
+        "interior"
+      ],
+      "name": "engine_probes",
+      "operations": [],
+      "parts": [
+        {
+          "part": "engine_probes::captures::ProbesGpu",
+          "passes": [
+            "probe",
+            "probe_light",
+            "probe_filter",
+            "probe_prefilter"
+          ]
+        }
+      ],
+      "piece": null,
+      "resources": [
+        "engine_probes::ReflectionProbeSettings",
+        "engine_probes::ReflectionProbeStats",
+        "engine_probes::gather::ProbeList",
+        "engine_probes::probes::ProbeState",
+        "engine_probes::probes::ProbeWords",
+        "engine_probes::probes::ProbeAcks"
+      ],
+      "settings": [
+        {
+          "key": "reflection_probes",
+          "type": "engine_probes::ReflectionProbeSettings"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "reflection_probes_stats",
+          "type": "engine_probes::ReflectionProbeStats"
+        }
+      ],
+      "type": "engine_probes::ReflectionProbesBrick",
+      "version": "3794f99c1151cff0ef72f8145a8c177a9d819e404354bcdf26557ff1afa59b35"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_places_rendering",
+        "engine_render"
+      ],
+      "fills": [],
+      "jobs": [],
+      "joins": [
+        "trace_readers"
+      ],
+      "name": "engine_reflections",
+      "operations": [],
+      "parts": [
+        {
+          "part": "reflections",
+          "passes": [
+            "nearest_depth",
+            "scene_levels",
+            "reflections",
+            "reflections_blend"
+          ]
+        }
+      ],
+      "piece": {
+        "name": "ReflectionsPiece",
+        "size": 48
+      },
+      "resources": [
+        "engine_reflections::settings::Reflections",
+        "engine_reflections::settings::ReflectionsStats",
+        "engine_reflections::gpu::ReflectionsPiece"
+      ],
+      "settings": [
+        {
+          "key": "reflections",
+          "type": "engine_reflections::settings::Reflections"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "reflections_stats",
+          "type": "engine_reflections::settings::ReflectionsStats"
+        }
+      ],
+      "type": "engine_reflections::ReflectionsBrick",
+      "version": "9c2c429728d1db8ea454472ec391624935cc272d995b75326cdc8de0bf074879"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_heightfield",
+        "engine_math",
+        "engine_places",
+        "engine_places_rendering",
+        "engine_places_simulation",
+        "engine_places_world",
+        "engine_render"
+      ],
+      "fills": [
+        "foliage",
+        "placed_tiles",
+        "occlusion_source"
+      ],
+      "jobs": [],
+      "joins": [
+        "ambient",
+        "far_cover"
+      ],
+      "name": "engine_scatter",
+      "operations": [],
+      "parts": [
+        {
+          "part": "engine_scatter::gpu::ScatterGpu",
+          "passes": [
+            "scatter",
+            "occupancy"
+          ]
+        }
+      ],
+      "piece": {
+        "name": "CanopyPiece",
+        "size": 112
+      },
+      "resources": [
+        "engine_scatter::settings::ScatterSettings",
+        "engine_scatter::settings::FoliageSettings",
+        "engine_scatter::settings::OccupancySettings",
+        "engine_scatter::settings::ScatterStats",
+        "engine_scatter::systems::ScatterState",
+        "engine_scatter::systems::ScatterFeedback",
+        "engine_scatter::occupancy::OccupancyWindows",
+        "engine_scatter::far_cover::FarCoverTable",
+        "engine_scatter::layouts::CanopyPiece"
+      ],
+      "settings": [
+        {
+          "key": "scatter",
+          "type": "engine_scatter::settings::ScatterSettings"
+        },
+        {
+          "key": "foliage",
+          "type": "engine_scatter::settings::FoliageSettings"
+        },
+        {
+          "key": "occupancy",
+          "type": "engine_scatter::settings::OccupancySettings"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "scatter_stats",
+          "type": "engine_scatter::settings::ScatterStats"
+        }
+      ],
+      "type": "engine_scatter::ScatterBrick",
+      "version": "c61385c81afc72af13b5fb90634370d97737440fdd9df2bdf4fc04496caa284b"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_places_rendering"
+      ],
+      "fills": [
+        "screens",
+        "screen_change"
+      ],
+      "jobs": [],
+      "joins": [
+        "scene_components",
+        "pause"
+      ],
+      "name": "engine_screens",
+      "operations": [
+        {
+          "control": true,
+          "name": "screen"
+        },
+        {
+          "control": false,
+          "name": "screens"
+        },
+        {
+          "control": true,
+          "name": "level"
+        },
+        {
+          "control": false,
+          "name": "level_progress"
+        }
+      ],
+      "parts": [],
+      "piece": null,
+      "resources": [],
+      "settings": [],
+      "smokes": [],
+      "stats": [],
+      "type": "engine_screens::ScreensBrick",
+      "version": "b17c0a25a7e38cc9d32cb7d0be00bfddd6491574fbb09eb5a94dcc646c42b054"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_places_rendering",
+        "engine_render"
+      ],
+      "fills": [
+        "shadows",
+        "caster_routes",
+        "sky_visibility"
+      ],
+      "jobs": [],
+      "joins": [
+        "sun_blockers",
+        "debug_modes",
+        "debug_modes"
+      ],
+      "name": "engine_shadows",
+      "operations": [
+        {
+          "control": false,
+          "name": "inspect_shadow_tile"
+        }
+      ],
+      "parts": [
+        {
+          "part": "shadows",
+          "passes": [
+            "shadow",
+            "shadow_marks",
+            "sky_occlusion"
+          ]
+        }
+      ],
+      "piece": {
+        "name": "ShadowPiece",
+        "size": 160
+      },
+      "resources": [
+        "engine_shadows::settings::ShadowSettings",
+        "engine_shadows::settings::SkyOcclusion",
+        "engine_shadows::settings::ShadowStats",
+        "engine_shadows::plan::ShadowFeedback",
+        "engine_shadows::plan::ShadowDrawn",
+        "engine_shadows::plan::ShadowPlan",
+        "engine_shadows::gpu_layouts::ShadowPiece"
+      ],
+      "settings": [
+        {
+          "key": "shadows",
+          "type": "engine_shadows::settings::ShadowSettings"
+        },
+        {
+          "key": "sky_occlusion",
+          "type": "engine_shadows::settings::SkyOcclusion"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "shadow_stats",
+          "type": "engine_shadows::settings::ShadowStats"
+        }
+      ],
+      "type": "engine_shadows::ShadowsBrick",
+      "version": "3dbdd2031308c3780a81bd2be336d358589986299dc207126ec24d7ab8246ec6"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_math",
+        "engine_places_rendering",
+        "engine_render"
+      ],
+      "fills": [
+        "sky",
+        "sky_cloud_shadows"
+      ],
+      "jobs": [
+        "sky::sky_tables",
+        "sky::cloud_noise"
+      ],
+      "joins": [
+        "sun_blockers",
+        "ambient"
+      ],
+      "name": "engine_sky",
+      "operations": [],
+      "parts": [
+        {
+          "part": "sky",
+          "passes": [
+            "sky_dome",
+            "sky",
+            "sky_environment",
+            "cloud_light",
+            "clouds",
+            "cloud_shadows",
+            "cloud_shadow_copy",
+            "cloud_march",
+            "cloud_composite",
+            "sky_derived_piece",
+            "sky_derived_clouds",
+            "sky_derived_view_clouds",
+            "haze",
+            "haze_filter"
+          ]
+        }
+      ],
+      "piece": null,
+      "resources": [
+        "engine_sky::settings::Clouds",
+        "engine_sky::settings::Sky",
+        "engine_sky::settings::Haze",
+        "engine_sky::settings::NightSky",
+        "engine_sky::views::StaticTablesView",
+        "engine_sky::views::CloudStats",
+        "engine_sky::views::SkyStats",
+        "engine_sky::views::HazeStats",
+        "engine_sky::views::SkyLightLevel",
+        "engine_sky::tables::StaticTables",
+        "engine_sky::sky::SkyPlan",
+        "engine_sky::clouds::CloudSteps",
+        "engine_sky::haze::HazeSteps",
+        "engine_sky::environment::EnvironmentSteps"
+      ],
+      "settings": [
+        {
+          "key": "clouds",
+          "type": "engine_sky::settings::Clouds"
+        },
+        {
+          "key": "sky",
+          "type": "engine_sky::settings::Sky"
+        },
+        {
+          "key": "haze",
+          "type": "engine_sky::settings::Haze"
+        },
+        {
+          "key": "night_sky",
+          "type": "engine_sky::settings::NightSky"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "static_tables",
+          "type": "engine_sky::views::StaticTablesView"
+        },
+        {
+          "key": "cloud_stats",
+          "type": "engine_sky::views::CloudStats"
+        },
+        {
+          "key": "sky_stats",
+          "type": "engine_sky::views::SkyStats"
+        },
+        {
+          "key": "haze_stats",
+          "type": "engine_sky::views::HazeStats"
+        }
+      ],
+      "type": "engine_sky::SkyBrick",
+      "version": "524b8f0e12d183b85a0762a79aa20d82f026f76b385f40ec6da127353d688f7f"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_math",
+        "engine_places_world"
+      ],
+      "fills": [],
+      "jobs": [],
+      "joins": [
+        "scene_components",
+        "streamed_keys"
+      ],
+      "name": "engine_splines",
+      "operations": [
+        {
+          "control": false,
+          "name": "spline_mesh"
+        }
+      ],
+      "parts": [],
+      "piece": null,
+      "resources": [
+        "engine_splines::spline_mesh::SplineBuilds"
+      ],
+      "settings": [],
+      "smokes": [],
+      "stats": [],
+      "type": "engine_splines::SplinesBrick",
+      "version": "53bfefc3d8fea30c9f1fa0ab2cba6a9050db0529a41a21045f0601376aeaae8c"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_places_rendering"
+      ],
+      "fills": [
+        "sun"
+      ],
+      "jobs": [],
+      "joins": [],
+      "name": "engine_sun",
+      "operations": [],
+      "parts": [],
+      "piece": {
+        "name": "Sun",
+        "size": 16
+      },
+      "resources": [
+        "engine_sun::light::Sunlight",
+        "engine_places_rendering::sun::Sun"
+      ],
+      "settings": [
+        {
+          "key": "sun",
+          "type": "engine_sun::light::Sunlight"
+        }
+      ],
+      "smokes": [],
+      "stats": [],
+      "type": "engine_sun::SunBrick",
+      "version": "a7d55d005f6b7bef6484258d660934b0db9e2bc5be4ac75f2e1900f3a136a60d"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_render"
+      ],
+      "fills": [
+        "resolve",
+        "jitter"
+      ],
+      "jobs": [],
+      "joins": [],
+      "name": "engine_taa",
+      "operations": [],
+      "parts": [
+        {
+          "part": "engine_taa::resolve::ResolveGpu",
+          "passes": [
+            "temporal_resolve"
+          ]
+        }
+      ],
+      "piece": {
+        "name": "TaaPiece",
+        "size": 16
+      },
+      "resources": [
+        "engine_taa::antialiasing::TemporalAntialiasing",
+        "engine_taa::antialiasing::TemporalAntialiasingStats",
+        "engine_taa::temporal::TaaPiece",
+        "engine_taa::temporal::TaaSettling"
+      ],
+      "settings": [
+        {
+          "key": "temporal_antialiasing",
+          "type": "engine_taa::antialiasing::TemporalAntialiasing"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "temporal_antialiasing_stats",
+          "type": "engine_taa::antialiasing::TemporalAntialiasingStats"
+        }
+      ],
+      "type": "engine_taa::TaaBrick",
+      "version": "3fceb356d773e20a8fe2a841e71a177f3ebf4abb0378ca56c44fadb45fac7b9b"
+    },
+    {
+      "dependencies": [
+        "engine_codec",
+        "engine_core",
+        "engine_ecs",
+        "engine_heightfield",
+        "engine_math",
+        "engine_places_simulation",
+        "engine_places_world",
+        "engine_render"
+      ],
+      "fills": [
+        "ground",
+        "terrain_tiles",
+        "hydrology",
+        "ground_surface"
+      ],
+      "jobs": [
+        "terrain::tile",
+        "terrain::bake",
+        "terrain::ground_grid"
+      ],
+      "joins": [
+        "scene_components",
+        "scene_components",
+        "streamed_keys",
+        "scene_path_sources",
+        "terrain_layers",
+        "cooks"
+      ],
+      "name": "engine_terrain",
+      "operations": [
+        {
+          "control": true,
+          "name": "terrain_edit"
+        },
+        {
+          "control": true,
+          "name": "terrain_undo"
+        },
+        {
+          "control": true,
+          "name": "terrain_redo"
+        },
+        {
+          "control": true,
+          "name": "terrain_river"
+        },
+        {
+          "control": false,
+          "name": "terrain_height"
+        },
+        {
+          "control": false,
+          "name": "terrain_route"
+        },
+        {
+          "control": false,
+          "name": "terrain_view"
+        },
+        {
+          "control": false,
+          "name": "terrain_layer_sweep"
+        },
+        {
+          "control": false,
+          "name": "terrain_listing"
+        }
+      ],
+      "parts": [
+        {
+          "part": "engine_terrain::runtime::programs::SurfaceProgramGpu",
+          "passes": []
+        }
+      ],
+      "piece": null,
+      "resources": [
+        "engine_terrain::runtime::settings::TerrainSettings",
+        "engine_terrain::runtime::stats::TerrainStats",
+        "engine_terrain::runtime::residency::Terrains",
+        "engine_terrain::runtime::programs::SurfacePrograms",
+        "engine_terrain::runtime::bridges::TerrainBridges",
+        "engine_terrain::runtime::edits::TerrainRedo"
+      ],
+      "settings": [
+        {
+          "key": "terrain",
+          "type": "engine_terrain::runtime::settings::TerrainSettings"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "terrain_stats",
+          "type": "engine_terrain::runtime::stats::TerrainStats"
+        }
+      ],
+      "type": "engine_terrain::runtime::brick::TerrainBrick",
+      "version": "e393d84be3566d49269ee88692a742e57afe88a1c3e0e2f0fbcdd3432d2f6257"
+    },
+    {
+      "dependencies": [
+        "engine_codec",
+        "engine_core",
+        "engine_ecs",
+        "engine_heightfield",
+        "engine_math",
+        "engine_places_rendering",
+        "engine_places_simulation",
+        "engine_places_world",
+        "engine_render"
+      ],
+      "fills": [
+        "heightfield",
+        "ground_tiles",
+        "ground_baking",
+        "trace_source",
+        "horizons",
+        "open_sky",
+        "bounce"
+      ],
+      "jobs": [
+        "terrain_shading::bounce",
+        "terrain_shading::lighting",
+        "terrain_shading::macro_colors",
+        "terrain_shading::shading"
+      ],
+      "joins": [
+        "trace_depths",
+        "cooks",
+        "sun_blockers",
+        "ambient",
+        "debug_modes",
+        "debug_modes",
+        "debug_modes",
+        "debug_modes"
+      ],
+      "name": "engine_terrain_shading",
+      "operations": [],
+      "parts": [
+        {
+          "part": "terrain",
+          "passes": [
+            "tile_normals",
+            "tile_control",
+            "tile_peaks",
+            "tile_ancestors",
+            "clear_surface_counters",
+            "subdivision_begin",
+            "subdivision_args",
+            "terrain_subdivision",
+            "bounce",
+            "terrain_ids",
+            "terrain_resolve"
+          ]
+        },
+        {
+          "part": "terrain_trace",
+          "passes": [
+            "trace_canopy"
+          ]
+        }
+      ],
+      "piece": {
+        "name": "HorizonsPiece",
+        "size": 6192
+      },
+      "resources": [
+        "engine_terrain_shading::settings::TerrainShading",
+        "engine_terrain_shading::settings::TerrainShadingStats",
+        "engine_terrain_shading::state::Bakes",
+        "engine_terrain_shading::state::Atlas",
+        "engine_terrain_shading::state::SurfaceTotals",
+        "engine_terrain_shading::state::PartStats",
+        "engine_terrain_shading::state::RecordsSettling",
+        "engine_terrain_shading::gpu::HorizonsPiece"
+      ],
+      "settings": [
+        {
+          "key": "terrain_shading",
+          "type": "engine_terrain_shading::settings::TerrainShading"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "terrain_shading_stats",
+          "type": "engine_terrain_shading::settings::TerrainShadingStats"
+        }
+      ],
+      "type": "engine_terrain_shading::TerrainShadingBrick",
+      "version": "30d54dc8c5b910a03f6a546ca19b6bd352121bcab14691775d8f3f1e1e394673"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_places_rendering",
+        "engine_render"
+      ],
+      "fills": [
+        "text"
+      ],
+      "jobs": [],
+      "joins": [
+        "scene_components",
+        "scene_components"
+      ],
+      "name": "engine_text",
+      "operations": [
+        {
+          "control": false,
+          "name": "text_measure"
+        },
+        {
+          "control": false,
+          "name": "text_runs"
+        }
+      ],
+      "parts": [
+        {
+          "part": "engine_text::TextGpu",
+          "passes": [
+            "text"
+          ]
+        }
+      ],
+      "piece": null,
+      "resources": [
+        "engine_text::TextSettings",
+        "engine_text::TextStats"
+      ],
+      "settings": [
+        {
+          "key": "text",
+          "type": "engine_text::TextSettings"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "text_stats",
+          "type": "engine_text::TextStats"
+        }
+      ],
+      "type": "engine_text::TextBrick",
+      "version": "ac48d136068978f9fd214126d09ecc4dddb8f451603140c8e5d5b65e37ef8bf7"
+    },
+    {
+      "dependencies": [
+        "engine_codec",
+        "engine_core",
+        "engine_ecs",
+        "engine_math"
+      ],
+      "fills": [],
+      "jobs": [
+        "engine::texture_cook"
+      ],
+      "joins": [
+        "texture_jobs",
+        "cooks"
+      ],
+      "name": "engine_texture_cook",
+      "operations": [],
+      "parts": [],
+      "piece": null,
+      "resources": [],
+      "settings": [],
+      "smokes": [],
+      "stats": [],
+      "type": "engine_texture_cook::brick::TextureCook",
+      "version": "0cd7424aa8a87f86c2d2f076919779fbb03dc743be575ca6f278286ef7285dad"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_math",
+        "engine_places_rendering"
+      ],
+      "fills": [
+        "sun_path"
+      ],
+      "jobs": [],
+      "joins": [
+        "sun_clocks"
+      ],
+      "name": "engine_time_of_day",
+      "operations": [],
+      "parts": [],
+      "piece": null,
+      "resources": [
+        "engine_time_of_day::TimeOfDay",
+        "engine_time_of_day::DayTime"
+      ],
+      "settings": [
+        {
+          "key": "time_of_day",
+          "type": "engine_time_of_day::TimeOfDay"
+        }
+      ],
+      "smokes": [],
+      "stats": [],
+      "type": "engine_time_of_day::TimeOfDayBrick",
+      "version": "3e0a25e833a0a2a9bd553b6fbc21b812af9e67fd5c1c57647301bf5dbd51b6d4"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_math",
+        "engine_places_rendering",
+        "engine_render"
+      ],
+      "fills": [
+        "tonemap"
+      ],
+      "jobs": [],
+      "joins": [],
+      "name": "engine_tonemap",
+      "operations": [],
+      "parts": [],
+      "piece": {
+        "name": "Display",
+        "size": 64
+      },
+      "resources": [
+        "engine_tonemap::tonemap::Grading",
+        "engine_places_rendering::tonemap::Display"
+      ],
+      "settings": [
+        {
+          "key": "grading",
+          "type": "engine_tonemap::tonemap::Grading"
+        }
+      ],
+      "smokes": [],
+      "stats": [],
+      "type": "engine_tonemap::TonemapBrick",
+      "version": "845f072d8fb60086a51e6b5ffd51bf5daa90b1b52f7e0cd1a562b77afb5dd7f5"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_places_rendering",
+        "engine_render"
+      ],
+      "fills": [
+        "ui_values",
+        "ui_events"
+      ],
+      "jobs": [],
+      "joins": [
+        "verbs",
+        "verbs",
+        "verbs",
+        "verbs",
+        "verbs",
+        "verbs",
+        "scene_components"
+      ],
+      "name": "engine_ui",
+      "operations": [
+        {
+          "control": true,
+          "name": "ui_press"
+        },
+        {
+          "control": false,
+          "name": "ui_tree"
+        }
+      ],
+      "parts": [
+        {
+          "part": "engine_ui::gpu::UiGpu",
+          "passes": [
+            "ui"
+          ]
+        }
+      ],
+      "piece": null,
+      "resources": [
+        "engine_ui::UiSettings",
+        "engine_ui::UiStats",
+        "engine_ui::tree::UiState"
+      ],
+      "settings": [
+        {
+          "key": "ui",
+          "type": "engine_ui::UiSettings"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "ui_stats",
+          "type": "engine_ui::UiStats"
+        }
+      ],
+      "type": "engine_ui::UiBrick",
+      "version": "72e0b77dc4ab890c62d3e1ee78415bb35fecd23c617ec261b9d3cb278de36c67"
+    },
+    {
+      "dependencies": [
+        "engine_codec",
+        "engine_core",
+        "engine_ecs",
+        "engine_heightfield",
+        "engine_math",
+        "engine_places_rendering",
+        "engine_places_simulation",
+        "engine_places_world",
+        "engine_render"
+      ],
+      "fills": [
+        "water",
+        "eye_medium"
+      ],
+      "jobs": [
+        "water::tile",
+        "water::part",
+        "water::steadied",
+        "water::settled",
+        "water::drawn",
+        "water::rewater",
+        "water::reach"
+      ],
+      "joins": [
+        "trace_depths",
+        "cooks",
+        "debug_modes",
+        "debug_modes",
+        "debug_modes",
+        "debug_modes",
+        "debug_modes",
+        "debug_modes",
+        "debug_modes",
+        "debug_modes",
+        "debug_modes"
+      ],
+      "name": "engine_water",
+      "operations": [
+        {
+          "control": false,
+          "name": "water_pools"
+        }
+      ],
+      "parts": [
+        {
+          "part": "water",
+          "passes": [
+            "water_settle_raise",
+            "water_settle",
+            "water_sim",
+            "water_particles",
+            "water_particles_args",
+            "water_particles_scan",
+            "water_particles_draw_args",
+            "water_particles_splat",
+            "water_leaf_args",
+            "water_foam"
+          ]
+        }
+      ],
+      "piece": {
+        "name": "WaterPiece",
+        "size": 16
+      },
+      "resources": [
+        "engine_water::settings::Water",
+        "engine_water::WaterStats",
+        "engine_water::state::WaterState",
+        "engine_water::water_settle::SettleFeedback",
+        "engine_water::water_particles::ParticleTallies",
+        "engine_water::water_sim::LiveSteps",
+        "engine_water::gpu::WaterPiece"
+      ],
+      "settings": [
+        {
+          "key": "water",
+          "type": "engine_water::settings::Water"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "water_stats",
+          "type": "engine_water::WaterStats"
+        }
+      ],
+      "type": "engine_water::WaterBrick",
+      "version": "6bbdc2e1353f55f6aeb105754f471112b8e20e4a259d637063fb342cb403acd6"
+    },
+    {
+      "dependencies": [
+        "engine_core",
+        "engine_ecs",
+        "engine_places_rendering",
+        "engine_places_simulation",
+        "engine_render"
+      ],
+      "fills": [
+        "wind",
+        "view_wind"
+      ],
+      "jobs": [],
+      "joins": [],
+      "name": "engine_wind",
+      "operations": [],
+      "parts": [],
+      "piece": {
+        "name": "ViewWind",
+        "size": 16
+      },
+      "resources": [
+        "engine_wind::WindSettings",
+        "engine_places_rendering::wind::ViewWind"
+      ],
+      "settings": [
+        {
+          "key": "wind",
+          "type": "engine_wind::WindSettings"
+        }
+      ],
+      "smokes": [],
+      "stats": [],
+      "type": "engine_wind::WindBrick",
+      "version": "6b925f1676d0c2b9e0498d913008db155d14246e977c9d109fae6a011198440f"
+    },
+    {
+      "dependencies": [
+        "engine_codec",
+        "engine_core",
+        "engine_ecs",
+        "engine_heightfield",
+        "engine_places_rendering",
+        "engine_places_simulation",
+        "engine_places_world"
+      ],
+      "fills": [],
+      "jobs": [],
+      "joins": [
+        "streamed_keys",
+        "streamed_keys",
+        "streamed_keys"
+      ],
+      "name": "engine_world_streaming",
+      "operations": [
+        {
+          "control": true,
+          "name": "world_changes"
+        },
+        {
+          "control": false,
+          "name": "world_cells"
+        },
+        {
+          "control": false,
+          "name": "world_removals"
+        },
+        {
+          "control": false,
+          "name": "streamed_id"
+        }
+      ],
+      "parts": [],
+      "piece": null,
+      "resources": [
+        "engine_world_streaming::WorldStreaming",
+        "engine_world_streaming::scene::StreamedScene",
+        "engine_world_streaming::CellStats",
+        "engine_world_streaming::WorldCells",
+        "engine_world_streaming::WorldChanges"
+      ],
+      "settings": [
+        {
+          "key": "world_streaming",
+          "type": "engine_world_streaming::WorldStreaming"
+        },
+        {
+          "key": "streamed",
+          "type": "engine_world_streaming::scene::StreamedScene"
+        }
+      ],
+      "smokes": [],
+      "stats": [
+        {
+          "key": "world_streaming_stats",
+          "type": "engine_world_streaming::CellStats"
+        }
+      ],
+      "type": "engine_world_streaming::WorldStreamingBrick",
+      "version": "e1053dc270158019c4cf88616790f910e60ebe9d24e70b4734bbe004b0695d09"
+    }
+  ],
+  "frame": {
+    "frame_variants": 57,
+    "layouts": 141,
+    "pieces": [
+      {
+        "brick": "engine_ambient_occlusion",
+        "name": "AmbientPiece",
+        "offset": 0,
+        "size": 32
+      },
+      {
+        "brick": "engine_bloom",
+        "name": "BloomPiece",
+        "offset": 32,
+        "size": 32
+      },
+      {
+        "brick": "engine_debug_view",
+        "name": "DebugViewPiece",
+        "offset": 64,
+        "size": 32
+      },
+      {
+        "brick": "engine_impostors",
+        "name": "ImpostorPiece",
+        "offset": 96,
+        "size": 16
+      },
+      {
+        "brick": "engine_lighting",
+        "name": "LightingPiece",
+        "offset": 112,
+        "size": 48
+      },
+      {
+        "brick": "engine_reflections",
+        "name": "ReflectionsPiece",
+        "offset": 160,
+        "size": 48
+      },
+      {
+        "brick": "engine_scatter",
+        "name": "CanopyPiece",
+        "offset": 208,
+        "size": 112
+      },
+      {
+        "brick": "engine_shadows",
+        "name": "ShadowPiece",
+        "offset": 320,
+        "size": 160
+      },
+      {
+        "brick": "engine_sun",
+        "name": "Sun",
+        "offset": 480,
+        "size": 16
+      },
+      {
+        "brick": "engine_taa",
+        "name": "TaaPiece",
+        "offset": 496,
+        "size": 16
+      },
+      {
+        "brick": "engine_terrain_shading",
+        "name": "HorizonsPiece",
+        "offset": 512,
+        "size": 6192
+      },
+      {
+        "brick": "engine_tonemap",
+        "name": "Display",
+        "offset": 6704,
+        "size": 64
+      },
+      {
+        "brick": "engine_water",
+        "name": "WaterPiece",
+        "offset": 6768,
+        "size": 16
+      },
+      {
+        "brick": "engine_wind",
+        "name": "ViewWind",
+        "offset": 6784,
+        "size": 16
+      }
+    ],
+    "size": 6800
+  },
+  "left_out": [],
+  "ownership": [],
+  "places": [
+    {
+      "contract": true,
+      "filler": null,
+      "kind": "list",
+      "members": [
+        "engine_probes",
+        "engine_scatter",
+        "engine_sky",
+        "engine_terrain_shading"
+      ],
+      "name": "ambient",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_ambient_occlusion",
+      "kind": "slot",
+      "members": [],
+      "name": "ambient_occlusion",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "slot",
+      "members": [],
+      "name": "animate",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "animator",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "ledger",
+      "members": [],
+      "name": "asset_library",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "attachment",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_physics",
+      "kind": "slot",
+      "members": [],
+      "name": "body_ask",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "body_push",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_terrain_shading",
+      "kind": "slot",
+      "members": [],
+      "name": "bounce",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "camera",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_shadows",
+      "kind": "slot",
+      "members": [],
+      "name": "caster_routes",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "collider",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_collision",
+      "kind": "slot",
+      "members": [],
+      "name": "collision",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "list",
+      "members": [],
+      "name": "contexts",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "list",
+      "members": [
+        "engine_impostors",
+        "engine_navigation",
+        "engine_terrain",
+        "engine_terrain_shading",
+        "engine_texture_cook",
+        "engine_water"
+      ],
+      "name": "cooks",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_ground_cover",
+      "kind": "slot",
+      "members": [],
+      "name": "cover",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "list",
+      "members": [],
+      "name": "cursor",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_debug_view",
+      "kind": "slot",
+      "members": [],
+      "name": "debug",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": null,
+      "kind": "list",
+      "members": [
+        "engine_debug_view",
+        "engine_shadows",
+        "engine_terrain_shading",
+        "engine_water"
+      ],
+      "name": "debug_modes",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "drawn",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_auto_exposure",
+      "kind": "slot",
+      "members": [],
+      "name": "exposure",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_water",
+      "kind": "slot",
+      "members": [],
+      "name": "eye_medium",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": null,
+      "kind": "list",
+      "members": [
+        "engine_ground_cover",
+        "engine_scatter"
+      ],
+      "name": "far_cover",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_scatter",
+      "kind": "slot",
+      "members": [],
+      "name": "foliage",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "ledger",
+      "members": [],
+      "name": "frame_budget",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_terrain",
+      "kind": "slot",
+      "members": [],
+      "name": "ground",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_terrain_shading",
+      "kind": "slot",
+      "members": [],
+      "name": "ground_baking",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_terrain",
+      "kind": "slot",
+      "members": [],
+      "name": "ground_surface",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_terrain_shading",
+      "kind": "slot",
+      "members": [],
+      "name": "ground_tiles",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "grounded",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "grounded_at",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "core",
+      "kind": "slot",
+      "members": [],
+      "name": "hand_over",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_terrain_shading",
+      "kind": "slot",
+      "members": [],
+      "name": "heightfield",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_terrain_shading",
+      "kind": "slot",
+      "members": [],
+      "name": "horizons",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_terrain",
+      "kind": "slot",
+      "members": [],
+      "name": "hydrology",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "impostor_asks",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "impostor_records",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_impostors",
+      "kind": "slot",
+      "members": [],
+      "name": "impostors",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_meshes",
+      "kind": "slot",
+      "members": [],
+      "name": "instances",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": null,
+      "kind": "list",
+      "members": [
+        "engine_probes"
+      ],
+      "name": "interior",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_taa",
+      "kind": "slot",
+      "members": [],
+      "name": "jitter",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "last_levels",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "level_batches",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_lighting",
+      "kind": "slot",
+      "members": [],
+      "name": "lighting",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_lights",
+      "kind": "slot",
+      "members": [],
+      "name": "lights",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_lighting",
+      "kind": "slot",
+      "members": [],
+      "name": "lit",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "local_light",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "nav_agent",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "nav_walk",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_scatter",
+      "kind": "slot",
+      "members": [],
+      "name": "occlusion_source",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_terrain_shading",
+      "kind": "slot",
+      "members": [],
+      "name": "open_sky",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "owned_views",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_particles",
+      "kind": "slot",
+      "members": [],
+      "name": "particle_bursts",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "particle_emitter",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": null,
+      "kind": "slot",
+      "members": [],
+      "name": "particle_formula",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "list",
+      "members": [
+        "engine_screens"
+      ],
+      "name": "pause",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_scatter",
+      "kind": "slot",
+      "members": [],
+      "name": "placed_tiles",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_probes",
+      "kind": "slot",
+      "members": [],
+      "name": "probe_captures",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "ledger",
+      "members": [],
+      "name": "readiness",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "ledger",
+      "members": [],
+      "name": "record_exchange",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "reflection_probe",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_dynamic_resolution",
+      "kind": "slot",
+      "members": [],
+      "name": "render_scale",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_taa",
+      "kind": "slot",
+      "members": [],
+      "name": "resolve",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "rigid_body",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "list",
+      "members": [
+        "engine_audio",
+        "engine_collision",
+        "engine_grounding",
+        "engine_lights",
+        "engine_navigation",
+        "engine_particles",
+        "engine_physics",
+        "engine_probes",
+        "engine_screens",
+        "engine_splines",
+        "engine_terrain",
+        "engine_text",
+        "engine_ui"
+      ],
+      "name": "scene_components",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "list",
+      "members": [
+        "engine_terrain"
+      ],
+      "name": "scene_path_sources",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_collision",
+      "kind": "slot",
+      "members": [],
+      "name": "scene_queries",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "screen",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_screens",
+      "kind": "slot",
+      "members": [],
+      "name": "screen_change",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_screens",
+      "kind": "slot",
+      "members": [],
+      "name": "screens",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "ledger",
+      "members": [],
+      "name": "shadow_changes",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_shadows",
+      "kind": "slot",
+      "members": [],
+      "name": "shadows",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": null,
+      "kind": "slot",
+      "members": [],
+      "name": "skin",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_sky",
+      "kind": "slot",
+      "members": [],
+      "name": "sky",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_sky",
+      "kind": "slot",
+      "members": [],
+      "name": "sky_cloud_shadows",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_shadows",
+      "kind": "slot",
+      "members": [],
+      "name": "sky_visibility",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "solid_source",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "sound_source",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_audio",
+      "kind": "slot",
+      "members": [],
+      "name": "sounds",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "spline_mesh",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "list",
+      "members": [
+        "engine_splines",
+        "engine_terrain",
+        "engine_world_streaming"
+      ],
+      "name": "streamed_keys",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "streaming_focus",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_sun",
+      "kind": "slot",
+      "members": [],
+      "name": "sun",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": null,
+      "kind": "list",
+      "members": [
+        "engine_shadows",
+        "engine_sky",
+        "engine_terrain_shading"
+      ],
+      "name": "sun_blockers",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "list",
+      "members": [
+        "engine_time_of_day"
+      ],
+      "name": "sun_clocks",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_time_of_day",
+      "kind": "slot",
+      "members": [],
+      "name": "sun_path",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "core",
+      "kind": "slot",
+      "members": [],
+      "name": "teleport",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "list",
+      "members": [
+        "engine_layer_erosion",
+        "engine_layer_heightmap",
+        "engine_layer_hydrology",
+        "engine_layer_noise",
+        "engine_layer_paths",
+        "engine_layer_relief",
+        "engine_layer_stamps",
+        "engine_terrain"
+      ],
+      "name": "terrain_layers",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_terrain",
+      "kind": "slot",
+      "members": [],
+      "name": "terrain_tiles",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_text",
+      "kind": "slot",
+      "members": [],
+      "name": "text",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "list",
+      "members": [
+        "engine_texture_cook"
+      ],
+      "name": "texture_jobs",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_tonemap",
+      "kind": "slot",
+      "members": [],
+      "name": "tonemap",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": null,
+      "kind": "list",
+      "members": [
+        "engine_terrain_shading",
+        "engine_water"
+      ],
+      "name": "trace_depths",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "list",
+      "members": [
+        "engine_reflections"
+      ],
+      "name": "trace_readers",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_terrain_shading",
+      "kind": "slot",
+      "members": [],
+      "name": "trace_source",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_particles",
+      "kind": "slot",
+      "members": [],
+      "name": "transparency",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "ui",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_ui",
+      "kind": "slot",
+      "members": [],
+      "name": "ui_events",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_ui",
+      "kind": "slot",
+      "members": [],
+      "name": "ui_values",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "list",
+      "members": [
+        "engine_ui"
+      ],
+      "name": "verbs",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "view",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "core",
+      "kind": "slot",
+      "members": [],
+      "name": "view_cut",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_wind",
+      "kind": "slot",
+      "members": [],
+      "name": "view_wind",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": true,
+      "filler": "engine_water",
+      "kind": "slot",
+      "members": [],
+      "name": "water",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "water_body",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_physics",
+      "kind": "slot",
+      "members": [],
+      "name": "water_obstacles",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": null,
+      "kind": "list",
+      "members": [],
+      "name": "whole_frames",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "filler": "engine_wind",
+      "kind": "slot",
+      "members": [],
+      "name": "wind",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    }
+  ]
+}
