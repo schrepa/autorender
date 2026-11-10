@@ -15,6 +15,7 @@ const READ_BACK: &str = "target/cook";
 const PLAYER: &str = "crates/engine_player";
 
 const CHECK_FRAMES: &str = "600";
+const CHECK_SIZE: &str = "640x360";
 
 const USAGE: &str = "usage: cargo xtask cook [--project DIR] [PATH.scene.json...] \
                      --limit-ms MS | --check [--sample N]";
@@ -123,8 +124,18 @@ pub fn cook(root: &Path, options: &[String]) -> Result<(), Failure> {
         Some(limit) => {
             for pack in &packs {
                 let file = pack.file();
-                let arguments =
-                    pack.arguments(&["--packs", COOKED, "--cook", &file, "--limit-ms", &limit]);
+                let arguments = pack.arguments(&[
+                    "--packs",
+                    COOKED,
+                    "--cook",
+                    &file,
+                    "--offscreen",
+                    CHECK_FRAMES,
+                    "--size",
+                    CHECK_SIZE,
+                    "--limit-ms",
+                    &limit,
+                ]);
                 run(root, &pack.program, &arguments)?;
             }
         }
@@ -338,7 +349,7 @@ fn run_on_pack(
         "--offscreen",
         CHECK_FRAMES,
         "--size",
-        "640x360",
+        CHECK_SIZE,
         "--jobcache",
         &cache,
     ];

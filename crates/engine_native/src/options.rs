@@ -516,7 +516,10 @@ impl HostOptions {
             return Err(excludes(other));
         }
         if self.cook.is_some()
-            && let Some(other) = other
+            && let Some(other) = others
+                .iter()
+                .find(|(option, given)| *given && *option != "--offscreen")
+                .map(|(option, _)| *option)
         {
             return Err(excludes(other));
         }
@@ -712,6 +715,7 @@ impl HostOptions {
         self.settings.apply(game.host_mut())?;
         let read = game.jobs_mut().packed();
         let (mut frame, mut said) = (0_u32, Instant::now());
+        let (after, mut played) = (self.offscreen.unwrap_or(0), 0_u32);
         loop {
             game.host_mut().cook();
             game.frame(f64::from(frame) * 1000.0 / 60.0)?;
@@ -722,8 +726,11 @@ impl HostOptions {
                     "failed": readiness.failed,
                 })));
             }
-            if readiness.settled() {
+            if readiness.settled() && played >= after {
                 break;
+            }
+            if readiness.settled() {
+                played += 1;
             }
             if started.elapsed() >= Duration::from_millis(limit) {
                 return Err(Error::new(ErrorCode::CommandTimeout, "--limit-ms")
