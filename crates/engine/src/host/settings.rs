@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::World;
-use engine_core::{Error, ErrorCode, SceneContext};
+use engine_core::{Engine, Error, ErrorCode, SceneContext, Section};
 use engine_registry::SettingsEntry;
 use engine_settings::Expected;
 use serde_json::Value;
@@ -36,8 +36,6 @@ pub const SETTINGS: &[Setting] = &[JOB_CLOCK];
 pub struct HostSettings {
     pub job_clock: Option<JobClock>,
     pub overlay: Vec<(String, Value)>,
-    #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
-    pub source: Option<std::path::PathBuf>,
 }
 
 impl HostSettings {
@@ -59,10 +57,6 @@ impl HostSettings {
     pub fn apply<G: Game>(&self, host: &mut GameHost<G>) -> Result<(), Error> {
         if let Some(clock) = self.job_clock {
             host.set_job_clock(clock);
-        }
-        #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
-        if let Some(path) = &self.source {
-            host.watch_source(path);
         }
         host.set_settings(&self.overlay)
             .map_err(|error| error.within(OVERLAY))
@@ -140,6 +134,53 @@ fn replaces(key: &str, held: &str) -> bool {
     held
         .strip_prefix(key)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
+}
+
+pub struct Settings<'w, S> {
+    world: &'w mut World,
+    section: std::marker::PhantomData<fn() -> S>,
+}
+
+impl<S: Section> Settings<'_, S> {
+    pub fn get(&self) -> S {
+        self.world.get_resource::<S>().cloned().unwrap_or_default()
+    }
+
+    pub fn set(self, change: impl FnOnce(&mut S)) -> Result<(), Error> {
+        let entry = changed_section(self.world, change)?;
+        apply_settings(self.world, &[entry])
+    }
+}
+
+pub trait TypedSettings {
+    fn section<S: Section>(&mut self) -> Settings<'_, S>;
+}
+
+impl TypedSettings for World {
+    fn section<S: Section>(&mut self) -> Settings<'_, S> {
+        Settings {
+            world: self,
+            section: std::marker::PhantomData,
+        }
+    }
+}
+
+impl TypedSettings for Engine {
+    fn section<S: Section>(&mut self) -> Settings<'_, S> {
+        self.app.world_mut().section()
+    }
+}
+
+pub fn changed_section<S: Section>(
+    world: &World,
+    change: impl FnOnce(&mut S),
+) -> Result<(String, Value), Error> {
+    let mut section = world.get_resource::<S>().cloned().unwrap_or_default();
+    change(&mut section);
+    let value = serde_json::to_value(&section).map_err(|error| {
+        Error::new(ErrorCode::InvalidValue, format!("$.{}", S::KEY)).got(error.to_string())
+    })?;
+    Ok((S::KEY.to_owned(), value))
 }
 
 pub fn has_setting(world: &World, key: &str) -> bool {

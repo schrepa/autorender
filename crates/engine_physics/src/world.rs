@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bevy_ecs::prelude::*;
 use engine_core::{
     Applies, Error, ErrorCode, Filled, FixedTime, GlobalTransforms, Moves, Parent, Refusals,
@@ -8,6 +10,7 @@ use engine_places_simulation::physics::{
 };
 use engine_places_simulation::water::{WaterBody, WaterObstacle};
 use engine_places_simulation::wind::Wind;
+use engine_solids::{SolidField, SolidSource};
 use glam::{Quat, Vec3};
 use rapier3d::prelude as rp;
 
@@ -66,6 +69,7 @@ struct Surroundings<'a> {
     time: &'a FixedTime,
     wind: Option<&'a Wind>,
     collision: &'a dyn Collide,
+    grounds: &'a [Arc<SolidField>],
     waters: &'a [&'a WaterBody],
 }
 
@@ -290,7 +294,7 @@ impl PhysicsWorld {
         let dropped = apply(&self.bodies, solver, asks);
         let reach = reach(&self.bodies, solver);
         let bodies = &self.bodies;
-        self.statics.sync(solver, around.collision, reach, |entity| {
+        self.statics.sync(solver, (around.collision, around.grounds), reach, |entity| {
             bodies
                 .binary_search_by_key(&entity, |body| body.entity)
                 .is_ok()
@@ -489,7 +493,7 @@ fn write(bodies: &mut [Body], solver: &Solver, moves: &mut Moves<'_, '_, Physics
 pub(crate) fn step(
     (settings, time, globals): (Res<Physics>, Res<FixedTime>, Res<GlobalTransforms>),
     (wind, wind_on): (Res<Wind>, Filled<Wind>),
-    collision: Res<Collision>,
+    (collision, sources): (Res<Collision>, Query<&SolidSource>),
     waters: Query<&WaterBody>,
     bodies: Query<BodyQuery>,
     mut moves: Moves<PhysicsBrick>,
@@ -526,11 +530,16 @@ pub(crate) fn step(
         return;
     }
     let waters = sorted(waters.iter());
+    let grounds: Vec<Arc<SolidField>> = sources
+        .iter()
+        .map(|source| Arc::clone(&source.field))
+        .collect();
     let around = Surroundings {
         settings: &settings,
         time: &time,
         wind: wind_on.on().then_some(&*wind),
         collision: &*collision.0,
+        grounds: &grounds,
         waters: &waters,
     };
     physics.tick((wanted, asks), &around, &mut moves, &pushes);

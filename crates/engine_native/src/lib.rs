@@ -28,14 +28,14 @@ pub use engine_profiler::{Pix, RenderDoc};
 pub use job_cache::JobStore;
 pub use jobs::{CacheOptions, JobOptions, JobPool, Written};
 pub use offscreen::{Frames, Offscreen, PixRecord, ProfileRecord, Record, Recorded};
-pub use options::{Argument, Arguments, HostOptions, Vendor, options, parameters};
+pub use options::{
+    Argument, Arguments, HostOptions, StartScene, Vendor, open_scene, options, parameters,
+};
 pub use window::{Measure, Window, WindowReport, run};
 
-pub fn main<G: engine::Game, E: Into<engine::Error>>(
-    title: &str,
+pub fn main<G: engine::Game>(
+    game: engine::GameEntry<G>,
     arguments: impl Iterator<Item = String>,
-    bricks: impl Fn(engine::BrickList) -> engine::BrickList,
-    build: impl Fn(&mut engine::Engine) -> Result<G, E>,
 ) -> ExitCode {
     let arguments: Vec<String> = arguments.collect();
     if let Some(help) = engine::command_line::help(&arguments, &options()) {
@@ -46,9 +46,9 @@ pub fn main<G: engine::Game, E: Into<engine::Error>>(
         Ok(options) => {
             #[cfg(feature = "dev")]
             if let Some(names) = &options.smoke {
-                return smoke::of_game(&options, names, &bricks, &build);
+                return smoke::of_game(&options, names, game);
             }
-            exit(options.run(title, bricks, build))
+            exit(options.run(game))
         }
         Err(error) => {
             let record = serde_json::json!({"event": "arguments_rejected", "error": error});

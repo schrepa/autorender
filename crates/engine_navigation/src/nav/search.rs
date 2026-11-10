@@ -18,7 +18,7 @@ pub struct WalkSearch {
     pub(super) stepper: Stepper,
     ends: [Vec2; 2],
     pub(super) tiles: Option<[TileKey; 2]>,
-    obstacles: BTreeMap<TileKey, Vec<GroundObstacle>>,
+    obstacles: BTreeMap<TileKey, Vec<WalkObstacle>>,
     clearance: f32,
     stands: BTreeMap<TileKey, Arc<[bool]>>,
     stage: Stage,
@@ -55,7 +55,7 @@ impl WalkSearch {
     pub fn new(
         pyramid: &Pyramid,
         (from, to): (Vec2, Vec2),
-        obstacles: Vec<GroundObstacle>,
+        obstacles: Vec<WalkObstacle>,
         options: &NavOptions,
     ) -> Self {
         let gait = options.gait(pyramid);
@@ -321,14 +321,14 @@ fn line_tiles(pyramid: &Pyramid, level: u32, (from, to): (Vec2, Vec2)) -> Vec<Ti
 }
 
 fn bin(
-    obstacles: Vec<GroundObstacle>,
+    obstacles: Vec<WalkObstacle>,
     radius: f32,
     pyramid: &Pyramid,
     level: u32,
-) -> BTreeMap<TileKey, Vec<GroundObstacle>> {
+) -> BTreeMap<TileKey, Vec<WalkObstacle>> {
     let (size, spacing) = (pyramid.tile_size(level), pyramid.spacing(level));
     let [columns, rows] = pyramid.tiles(level);
-    let mut bins: BTreeMap<TileKey, Vec<GroundObstacle>> = BTreeMap::new();
+    let mut bins: BTreeMap<TileKey, Vec<WalkObstacle>> = BTreeMap::new();
     for obstacle in obstacles {
         let (center, reach) = center_and_reach(&obstacle, radius);
         if !(reach.is_finite() && center.is_finite()) {
@@ -354,10 +354,10 @@ fn bin(
     bins
 }
 
-fn center_and_reach(obstacle: &GroundObstacle, clearance: f32) -> (Vec2, Vec2) {
+fn center_and_reach(obstacle: &WalkObstacle, clearance: f32) -> (Vec2, Vec2) {
     match *obstacle {
-        GroundObstacle::Circle { center, radius } => (center, Vec2::splat(radius + clearance)),
-        GroundObstacle::Box {
+        WalkObstacle::Circle { center, radius } => (center, Vec2::splat(radius + clearance)),
+        WalkObstacle::Box {
             center,
             half_extents,
             unit_axis,
@@ -372,10 +372,10 @@ fn center_and_reach(obstacle: &GroundObstacle, clearance: f32) -> (Vec2, Vec2) {
     }
 }
 
-fn blocks(obstacle: &GroundObstacle, at: Vec2, clearance: f32) -> bool {
+fn blocks(obstacle: &WalkObstacle, at: Vec2, clearance: f32) -> bool {
     match *obstacle {
-        GroundObstacle::Circle { center, radius } => at.distance(center) <= radius + clearance,
-        GroundObstacle::Box {
+        WalkObstacle::Circle { center, radius } => at.distance(center) <= radius + clearance,
+        WalkObstacle::Box {
             center,
             half_extents,
             unit_axis,

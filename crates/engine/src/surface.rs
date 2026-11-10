@@ -58,25 +58,76 @@ macro_rules! __game_surface {
 
 #[macro_export]
 macro_rules! game {
-    ($vis:vis struct $name:ident($game:ty), $title:literal, $bricks:path, $build:path) => {
-        $crate::export_game!($vis struct $name($game););
+    (
+        $vis:vis struct $name:ident($game:ty), $title:literal, $bricks:path
+        $(, build = $build:path)? $(, scene = $scene:literal)? $(,)?
+    ) => {
+        include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
-        $crate::__worker::export_worker!($bricks);
+        pub struct GameBrick;
 
-        #[cfg(target_arch = "wasm32")]
-        #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
-        impl $name {
-            pub async fn create(
-                canvas: $crate::__private::web_sys::HtmlCanvasElement,
-            ) -> Result<$name, $crate::__private::JsValue> {
-                Self::launch(canvas, $bricks, $build).await
+        impl $crate::Brick for GameBrick {
+            const SOURCE: &'static $crate::Source = &SOURCE;
+            const SMOKES: &'static [$crate::Smoke] = <$game as $crate::Game>::SMOKES;
+
+            fn register(bricks: &mut $crate::Bricks<'_>) {
+                <$game as $crate::Game>::register(bricks);
             }
         }
 
+        #[doc(hidden)]
+        pub fn __game_bricks(list: $crate::BrickList) -> $crate::BrickList {
+            <$crate::BrickList as $crate::Listing>::with::<GameBrick>($bricks(list))
+        }
+
+        pub const GAME: $crate::GameEntry<$game> = $crate::GameEntry {
+            title: $title,
+            folder: env!("CARGO_MANIFEST_DIR"),
+            bricks: __game_bricks,
+            build: $crate::__game_build!($game $(, $build)?),
+            scene: $crate::__game_scene!($($scene)?),
+        };
+
+        $crate::__worker::export_worker!(__game_bricks);
+
+        $crate::__game_surface!(__export_game { $vis $name $game });
+
         #[cfg(not(target_arch = "wasm32"))]
         pub fn native(arguments: impl Iterator<Item = String>) -> ::std::process::ExitCode {
-            ::engine_native::main($title, arguments, $bricks, $build)
+            ::engine_native::main(GAME, arguments)
         }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __game_build {
+    ($game:ty) => {
+        $crate::game::default_build::<$game>
+    };
+    ($game:ty, $build:path) => {
+        $build
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __game_scene {
+    () => {
+        ::core::option::Option::None
+    };
+    ($scene:literal) => {
+        ::core::option::Option::Some($crate::DefaultScene {
+            path: concat!(env!("CARGO_MANIFEST_DIR"), "/", $scene),
+            text: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/", $scene)),
+        })
+    };
+}
+
+#[macro_export]
+macro_rules! brick {
+    ($name:ident) => {
+        include!(concat!(env!("OUT_DIR"), "/bricks/", stringify!($name), ".rs"));
     };
 }
 
@@ -98,33 +149,12 @@ macro_rules! game_main {
     };
 }
 
-#[macro_export]
-macro_rules! export_game {
-    ($(#[$meta:meta])* $vis:vis struct $name:ident($game:ty);) => {
-        $crate::__game_surface!(__export_game { $(#[$meta])* $vis $name $game [] });
-    };
-    ($(#[$meta:meta])* $vis:vis struct $name:ident($game:ty) with $bricks:path;) => {
-        $crate::__game_surface!(__export_game { $(#[$meta])* $vis $name $game [$bricks] });
-    };
-}
-
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __listed {
-    () => {
-        ::core::option::Option::None
-    };
-    ($bricks:path) => {
-        ::core::option::Option::Some($bricks as fn($crate::BrickList) -> $crate::BrickList)
-    };
-}
-
 #[cfg(target_arch = "wasm32")]
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __export_game {
     (
-        { $(#[$meta:meta])* $vis:vis $name:ident $game:ty [$($bricks:path)?] }
+        { $vis:vis $name:ident $game:ty }
         always_mut { $( fn $am:ident($($am_arg:ident: $am_ty:ty),*) $(-> $am_ret:ty $(as $am_json:ty)?)?; )* }
         always_ref { $( fn $ar:ident($($ar_arg:ident: $ar_ty:ty),*) $(-> $ar_ret:ty $(as $ar_json:ty)?)?; )* }
         dev_mut { $( fn $dm:ident($($dm_arg:ident: $dm_ty:ty),*) $(-> $dm_ret:ty $(as $dm_json:ty)?)?; )* }
@@ -173,7 +203,7 @@ macro_rules! __export_game {
             #[wasm_bindgen(constructor)]
             pub fn new(source: &str) -> Result<PageSceneLoad, $crate::__private::JsValue> {
                 Ok(Self {
-                    load: $crate::browser::SceneLoading::new(source, $crate::__listed!($($bricks)?))?,
+                    load: $crate::browser::SceneLoading::new(source, __game_bricks)?,
                 })
             }
 
@@ -208,7 +238,6 @@ macro_rules! __export_game {
             }
         }
 
-        $(#[$meta])*
         #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
         $vis struct $name {
             host: $crate::browser::PageHost<$game>,
@@ -233,17 +262,36 @@ macro_rules! __export_game {
                 $crate::profiling::TrackingAllocator::new(::std::alloc::System);
         }
 
+        #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
         impl $name {
-            pub async fn launch<E: Into<$crate::Error>>(
+            pub async fn create(
                 canvas: $crate::__private::web_sys::HtmlCanvasElement,
-                bricks: impl FnOnce($crate::BrickList) -> $crate::BrickList,
-                build: impl FnOnce(&mut $crate::Engine) -> Result<$game, E>,
-            ) -> Result<Self, $crate::__private::JsValue> {
+                query: &str,
+                scene: Option<String>,
+                files: Option<SceneFileSet>,
+                game_files: Option<SceneFileSet>,
+            ) -> Result<$name, $crate::__private::JsValue> {
                 Ok(Self {
-                    host: $crate::browser::PageHost::launch(canvas, bricks, build).await?,
+                    host: $crate::browser::PageHost::start(
+                        canvas,
+                        GAME,
+                        query,
+                        scene.map(|source| (source, files.map(|set| set.files).unwrap_or_default())),
+                        game_files.map(|set| set.files).unwrap_or_default(),
+                    )
+                    .await?,
                 })
             }
 
+            pub fn files() -> Vec<String> {
+                <$game as $crate::Game>::FILES
+                    .iter()
+                    .map(|file| (*file).to_owned())
+                    .collect()
+            }
+        }
+
+        impl $name {
             pub fn host(&self) -> &$crate::GameHost<$game> {
                 &self.host
             }

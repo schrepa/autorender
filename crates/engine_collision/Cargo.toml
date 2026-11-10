@@ -16,6 +16,7 @@ parry3d.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+engine_solids.workspace = true
 
 [build-dependencies]
 engine_sources.workspace = true

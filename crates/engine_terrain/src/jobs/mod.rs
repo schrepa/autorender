@@ -1,17 +1,12 @@
 use std::sync::Arc;
 
-use engine_codec::{self as codec, Reader, Writer, record};
+use engine_codec::{self as codec, Reader, Writer};
 use engine_core::{Error, ErrorCode, Expected, Job, JobCx, JobKind, RecordKey};
-use engine_heightfield::grid::{Pyramid, TILE_QUADS, TILE_SAMPLES, TILE_STRIDE, TileKey};
+use engine_heightfield::grid::{Pyramid, TileKey};
 use engine_heightfield::layer::LayerKind;
-use engine_heightfield::path::lay_decks;
-use engine_heightfield::tile::{
-    Generator, Recipe, TerrainRecipe, Tile, TileJob, shaded_elsewhere, stamped,
-};
-use engine_heightfield::{INVALID_TERRAIN, Layers, Stamp, reaches};
-use engine_places_simulation::ground::GroundGrid;
-use engine_places_world::terrain::TerrainLayers;
-use glam::Vec2;
+use engine_heightfield::tile::{Generator, Recipe, TerrainRecipe, Tile, TileJob, shaded_elsewhere};
+use engine_heightfield::{INVALID_TERRAIN, Layers};
+use engine_open_world_kit::terrain::TerrainLayers;
 
 pub mod bake;
 pub mod expr_layer;
@@ -20,7 +15,6 @@ include!(concat!(env!("OUT_DIR"), "/jobs.rs"));
 
 pub static TILE_BUILD: JobKind = JobKind::new("terrain::tile", &SOURCE, start_tile);
 pub static BAKE: JobKind = JobKind::new("terrain::bake", &SOURCE, start_bake);
-pub static GROUND_GRID: JobKind = JobKind::new("terrain::ground_grid", &SOURCE, start_grid);
 
 pub fn share_stack(layers: &Layers) -> Arc<[u8]> {
     let mut writer = Writer::new();
@@ -74,27 +68,6 @@ fn baked_bytes(layers: &Layers) -> Vec<u8> {
     writer.into_bytes()
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct GroundIdentity {
-    pub stack: [u8; 32],
-    pub pyramid: Pyramid,
-    pub edits: Vec<Stamp>,
-}
-
-record!(GroundIdentity {
-    stack,
-    pyramid,
-    edits,
-});
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct GridJob {
-    pub identity: GroundIdentity,
-    pub key: TileKey,
-}
-
-record!(GridJob { identity, key });
-
 fn kinds(cx: &JobCx<'_>) -> Vec<&'static LayerKind> {
     cx.members::<TerrainLayers>().copied().collect()
 }
@@ -102,19 +75,6 @@ fn kinds(cx: &JobCx<'_>) -> Vec<&'static LayerKind> {
 fn shared<'c>(cx: &'c JobCx<'_>, key: [u8; 32], path: &str) -> Result<&'c [u8], Error> {
     cx.share(RecordKey::from_hash(key)).ok_or_else(|| {
         Error::new(ErrorCode::UnknownReference, path).got(RecordKey::from_hash(key).hex())
-    })
-}
-
-fn stack(
-    cx: &JobCx<'_>,
-    key: [u8; 32],
-    kinds: &[&'static LayerKind],
-) -> Result<Arc<Layers>, Error> {
-    cx.held(key, || {
-        let mut reader = Reader::new(shared(cx, key, "$.stack")?);
-        let layers = Layers::read(&mut reader, kinds)?;
-        reader.finish()?;
-        Ok(layers)
     })
 }
 
@@ -178,105 +138,6 @@ impl Job for Baking {
         let (layers, pyramid) = &*self.0;
         Ok(Some(baked_bytes(&bake::bake_all(layers, pyramid))))
     }
-}
-
-fn start_grid(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
-    let mut reader = Reader::new(input);
-    let GridJob { identity, key } = reader.get()?;
-    reader.finish()?;
-    if !identity.pyramid.contains(key) {
-        return Err(outside(key));
-    }
-    let kinds = kinds(cx);
-    let layers = stack(cx, identity.stack, &kinds)?;
-    let reaching: Vec<Stamp> = identity
-        .edits
-        .iter()
-        .copied()
-        .filter(|stamp| reaches(stamp, &identity.pyramid, key))
-        .collect();
-    let layers = stamped(&layers, &reaching, &kinds)?;
-    Ok(Box::new(Gridding(Some(Box::new((layers, identity.pyramid, key))))))
-}
-
-struct Gridding(Option<Box<(Arc<Layers>, Pyramid, TileKey)>>);
-
-impl Job for Gridding {
-    fn step(&mut self, _: u64, _: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
-        let Some(held) = self.0.take() else {
-            return Err(Error::new(ErrorCode::InvalidValue, "$.step"));
-        };
-        let (layers, pyramid, key) = *held;
-        let mut whole = u64::MAX;
-        let tile = Generator::new(layers.clone(), &pyramid, key)
-            .advance(&mut whole)
-            .ok_or_else(invalid_heights)?;
-        let tile: Tile = codec::decode(&codec::encode(&tile))?;
-        Ok(Some(codec::encode(&ground_grid(&tile, &layers, &pyramid))))
-    }
-}
-
-fn ground_grid(tile: &Tile, layers: &Layers, pyramid: &Pyramid) -> GroundGrid {
-    let side = TILE_SAMPLES as usize;
-    let key = tile.key();
-    let spacing = pyramid.spacing(u32::from(key.level));
-    let stride = TILE_STRIDE as usize;
-    let stored = |x: usize, z: usize| (z + 1) * stride + x + 1;
-    let mut heights = vec![0.0; side * side].into_boxed_slice();
-    for z in 0..side {
-        for x in 0..side {
-            heights[z * side + x] = tile.heights()[stored(x, z)];
-        }
-    }
-    let first = pyramid.first_sample(key);
-    lay_decks(&layers.bridges(), first, spacing, &mut heights);
-    GroundGrid {
-        key,
-        spacing,
-        heights,
-        holes: holes(layers, first, spacing),
-        water: tile_surfaces(tile),
-    }
-}
-
-fn tile_surfaces(tile: &Tile) -> Option<Box<[f32]>> {
-    let side = TILE_SAMPLES as usize;
-    let stride = TILE_STRIDE as usize;
-    let stored = |x: usize, z: usize| (z + 1) * stride + x + 1;
-    let surfaces = tile.water_surfaces()?;
-    let mut water = vec![f32::NAN; side * side].into_boxed_slice();
-    for z in 0..side {
-        for x in 0..side {
-            water[z * side + x] = surfaces[stored(x, z)];
-        }
-    }
-    Some(water)
-}
-
-fn position(sample: [i64; 2], spacing: f32) -> Vec2 {
-    Vec2::new(sample[0] as f32, sample[1] as f32) * spacing
-}
-
-fn holes(layers: &Layers, first: [i64; 2], spacing: f32) -> Option<Box<[u64]>> {
-    let side = TILE_SAMPLES as usize;
-    let quads = TILE_QUADS as i64;
-    let last = [first[0] + quads, first[1] + quads];
-    if !layers.holes_reach(position(first, spacing), position(last, spacing)) {
-        return None;
-    }
-    let mut bits = vec![0_u64; (side * side).div_ceil(64)];
-    let mut any = false;
-    for z in 0..side {
-        for x in 0..side {
-            let point = position([first[0] + x as i64, first[1] + z as i64], spacing);
-            if layers.hole_at(point.x, point.y) {
-                let index = z * side + x;
-                bits[index / 64] |= 1 << (index % 64);
-                any = true;
-            }
-        }
-    }
-    any.then(|| bits.into_boxed_slice())
 }
 
 pub(crate) fn invalid_heights() -> Error {

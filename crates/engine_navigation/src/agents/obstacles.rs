@@ -1,13 +1,13 @@
 use bevy_ecs::prelude::*;
 use engine_core::GlobalTransforms;
 use engine_math::max;
-use engine_places_simulation::ground::GroundObstacle;
 use engine_places_simulation::physics::{
     Collider, ColliderShape, CollisionLayers, QueryFilter, SensorFilter,
 };
 use glam::{Mat3, Mat4, Vec2, Vec3};
 
 use super::Navigation;
+use crate::WalkObstacle;
 
 #[derive(SystemParam)]
 pub struct ObstacleColliders<'w, 's> {
@@ -17,7 +17,7 @@ pub struct ObstacleColliders<'w, 's> {
 }
 
 impl ObstacleColliders<'_, '_> {
-    pub(super) fn read(&self, corner: Vec2) -> Vec<GroundObstacle> {
+    pub(super) fn read(&self, corner: Vec2) -> Vec<WalkObstacle> {
         let filter = QueryFilter {
             layers: CollisionLayers::new(u32::MAX, self.settings.obstacle_layers),
             sensors: SensorFilter::Exclude,
@@ -38,7 +38,7 @@ fn flat(direction: Vec3) -> Vec2 {
     Vec2::new(direction.x, direction.z)
 }
 
-fn obstacle(shape: ColliderShape, world: Mat4, corner: Vec2) -> GroundObstacle {
+fn obstacle(shape: ColliderShape, world: Mat4, corner: Vec2) -> WalkObstacle {
     let basis = Mat3::from_mat4(world);
     let center = flat(world.w_axis.truncate()) - corner;
     match shape {
@@ -47,7 +47,7 @@ fn obstacle(shape: ColliderShape, world: Mat4, corner: Vec2) -> GroundObstacle {
                 max(basis.x_axis.length(), basis.y_axis.length()),
                 basis.z_axis.length(),
             );
-            GroundObstacle::Circle {
+            WalkObstacle::Circle {
                 center,
                 radius: radius * widest,
             }
@@ -70,7 +70,7 @@ fn obstacle(shape: ColliderShape, world: Mat4, corner: Vec2) -> GroundObstacle {
             let half_extents = arms.iter().fold(Vec2::ZERO, |sum, arm| {
                 sum + Vec2::new(arm.dot(unit_axis).abs(), arm.dot(side).abs())
             });
-            GroundObstacle::Box {
+            WalkObstacle::Box {
                 center,
                 half_extents,
                 unit_axis,

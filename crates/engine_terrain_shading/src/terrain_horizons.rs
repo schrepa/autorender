@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use engine_core::Error;
-use engine_places_world::ground::{TerrainEntry, TerrainTiles};
+use engine_open_world_kit::ground::{TerrainEntry, TerrainTiles};
 use engine_render::{Allocation, Install, Lifetime, Prepare, Texture, wgpu};
 
 use crate::gpu::{HORIZON_RECORD_VECTORS, HORIZON_RECORDS};

@@ -1,11 +1,10 @@
-include!(concat!(env!("OUT_DIR"), "/bricks/turning.rs"));
+engine::brick!(turning);
 
-use bevy_ecs::prelude::*;
-use engine_core::{Brick, Bricks, FixedTime, Moves, Pace, Schedule, Source};
-use glam::Quat;
+use engine::prelude::*;
 
-#[derive(Component)]
-pub struct Turning;
+#[derive(Component, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Turning {}
 
 pub struct TurningBrick;
 
@@ -14,6 +13,7 @@ impl Brick for TurningBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
+            .join::<SceneComponents>(ComponentKind::of::<Turning>("turning"), None)
             .moves::<Turning>(Pace::Tick)
             .systems(Schedule::FixedSimulation, turn);
     }

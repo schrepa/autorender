@@ -3,8 +3,11 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use engine::command_line::CommandOption;
-use engine::host::{HostSettings, JobRef, OVERLAY, SETTINGS};
-use engine::{BrickList, Engine, Error, ErrorCode, Expected, Game, GpuPreference};
+use engine::host::{HostSettings, JobRef, OVERLAY, SETTINGS, SceneLoad};
+use engine::scene::{SceneFiles, SceneKinds};
+use engine::{
+    BrickList, Engine, Error, ErrorCode, Expected, Game, GameEntry, GameHost, GpuPreference,
+};
 use serde_json::json;
 
 use crate::{
@@ -14,7 +17,9 @@ use crate::{
 
 const MIB: u64 = 1024 * 1024;
 
-const DEV_PARAMETERS: [&str; 6] = ["size", "gpu", "workers", "jobcache", "counters", "vendor"];
+const DEV_PARAMETERS: [&str; 9] = [
+    "size", "gpu", "workers", "jobcache", "counters", "vendor", "scene", "assets", "without",
+];
 
 const NSIGHT_SETTLE_MS: u64 = 20_000;
 
@@ -35,6 +40,9 @@ pub fn options() -> Vec<CommandOption> {
         CacheOptions::Keep { budget } => (budget / MIB).to_string(),
     };
     let mut options = vec![
+        CommandOption::taking("--scene", "PATH"),
+        CommandOption::taking("--assets", "DIR"),
+        CommandOption::taking("--without", "BRICK,..."),
         CommandOption::taking("--size", "WxH").in_unit("px"),
         CommandOption::taking("--gpu", "discrete|integrated").defaults_to(gpu),
         CommandOption::taking("--workers", "N|off").defaults_to(defaults.jobs.workers),
@@ -181,8 +189,47 @@ pub enum Vendor {
     Nsight,
 }
 
+#[derive(Clone, Debug, Default)]
+pub enum StartScene {
+    #[default]
+    Empty,
+    File(PathBuf),
+    Declared(&'static str),
+}
+
+pub fn open_scene<G: Game>(
+    host: &mut GameHost<G>,
+    scene: &StartScene,
+    environment: Option<&str>,
+) -> engine::Result<()> {
+    let kinds = SceneKinds::of(host.engine().app.world());
+    match scene {
+        StartScene::Empty => {}
+        StartScene::Declared(text) => {
+            let files = SceneLoad::new(text, &kinds).and_then(SceneLoad::finish)?;
+            host.open_scene(text, &files)?;
+        }
+        StartScene::File(path) => {
+            let source = std::fs::read_to_string(path)
+                .map_err(|error| crate::file_error("--scene", path, &error))?;
+            let files = crate::files::scene_files(path, &source, &kinds)?;
+            host.open_scene(&source, &files)?;
+            #[cfg(feature = "dev")]
+            host.watch_source(path);
+        }
+    }
+    if let Some(environment) = environment {
+        let world = host.engine_mut().app.world_mut();
+        engine::scene::show_look(world, environment, "--environment")?;
+    }
+    Ok(())
+}
+
 #[derive(Clone, Debug)]
 pub struct HostOptions {
+    pub scene: Option<PathBuf>,
+    pub assets: Option<PathBuf>,
+    pub without: String,
     pub size: Option<(u32, u32)>,
     pub gpu: GpuPreference,
     pub jobs: JobOptions,
@@ -209,6 +256,9 @@ pub struct HostOptions {
 impl Default for HostOptions {
     fn default() -> Self {
         Self {
+            scene: None,
+            assets: None,
+            without: String::new(),
             size: None,
             gpu: GpuPreference::HighPerformance,
             jobs: JobOptions::default(),
@@ -280,6 +330,9 @@ impl HostOptions {
     pub fn take(&mut self, argument: &Argument, arguments: &mut Arguments) -> Result<bool, Error> {
         let name = argument.name.as_str();
         match name {
+            "--scene" => self.scene = Some(arguments.value(argument)?.into()),
+            "--assets" => self.assets = Some(arguments.value(argument)?.into()),
+            "--without" => self.without = arguments.value(argument)?,
             "--size" => {
                 let size = arguments.value(argument)?;
                 let parsed = size
@@ -467,53 +520,54 @@ impl HostOptions {
         }
     }
 
-    pub fn run<G: Game, E: Into<engine::Error>>(
-        &self,
-        title: &str,
-        bricks: impl FnOnce(BrickList) -> BrickList,
-        build: impl FnOnce(&mut Engine) -> Result<G, E>,
-    ) -> engine::Result<()> {
+    pub fn run<G: Game>(&self, game: GameEntry<G>) -> engine::Result<()> {
+        let options = self.for_game(&game);
+        let bricks = options.listed(&game)?;
         #[cfg(feature = "dev")]
-        if self.schemas {
-            return engine::tooling::print_schemas(bricks).map_err(|problems| {
+        if options.schemas {
+            return engine::tooling::print_schemas(move |_| bricks).map_err(|problems| {
                 Error::new(ErrorCode::InvalidArguments, "--schemas").got(problems)
             });
         }
         #[cfg(feature = "dev")]
-        if let Some(names) = &self.pure {
-            return crate::pure::run(names, bricks);
+        if let Some(names) = &options.pure {
+            return crate::pure::run(names, move |_| bricks);
         }
-        let build = move |engine: &mut Engine| self.shown(engine, build);
-        self.start_tools()?;
+        let scene = options.start_scene(&game);
+        let files = options.game_files::<G>();
+        let build = |engine: &mut Engine| engine::game::built(&game, engine, files);
+        options.start_tools()?;
         #[cfg(feature = "profiling")]
-        if let (Some(Vendor::Nsight), Some(folder)) = (self.vendor, &self.vendor_dir) {
-            return self.run_nsight(folder);
+        if let (Some(Vendor::Nsight), Some(folder)) = (options.vendor, &options.vendor_dir) {
+            return options.run_nsight(folder);
         }
-        if self.dev {
+        if options.dev {
             #[cfg(feature = "dev")]
-            return self.session(bricks, build)?.run();
+            return options.session(move |_| bricks, build, &scene)?.run();
         }
-        if let Some(pack) = &self.cook {
-            return self.run_cook(pack, bricks, build);
+        if let Some(pack) = &options.cook {
+            return options.run_cook(pack, move |_| bricks, build, &scene);
         }
-        match self.offscreen {
-            Some(frames) => self.run_offscreen(frames, bricks, build),
+        match options.offscreen {
+            Some(frames) => options.run_offscreen(frames, move |_| bricks, build, &scene),
             None => {
                 let report = crate::run(
                     Window {
-                        size: self.size,
-                        gpu: self.gpu,
-                        jobs: self.jobs.clone(),
-                        vsync: self.vsync,
-                        settings: self.settings.clone(),
-                        measure: (self.vendor == Some(Vendor::Nsight)).then_some(Measure {
+                        size: options.size,
+                        gpu: options.gpu,
+                        jobs: options.jobs.clone(),
+                        vsync: options.vsync,
+                        settings: options.settings.clone(),
+                        scene,
+                        environment: options.environment.clone(),
+                        measure: (options.vendor == Some(Vendor::Nsight)).then_some(Measure {
                             settle: Duration::from_millis(NSIGHT_SETTLE_MS),
                             frames: NSIGHT_FRAMES,
                         }),
-                        profile: self.sample_to.clone(),
-                        ..Window::new(title)
+                        profile: options.sample_to.clone(),
+                        ..Window::new(game.title)
                     },
-                    bricks,
+                    move |_| bricks,
                     build,
                 )?;
                 if let Some(report) = report {
@@ -524,27 +578,44 @@ impl HostOptions {
         }
     }
 
-    #[cfg(feature = "dev")]
-    pub fn dev_session<G: Game, E: Into<engine::Error>>(
-        &self,
-        bricks: impl FnOnce(BrickList) -> BrickList,
-        build: impl FnOnce(&mut Engine) -> Result<G, E>,
-    ) -> engine::Result<crate::dev::DevSession<G>> {
-        self.start_tools()?;
-        self.session(bricks, move |engine: &mut Engine| self.shown(engine, build))
+    pub(crate) fn for_game<G>(&self, game: &GameEntry<G>) -> Self {
+        let mut options = self.clone();
+        let assets = self.assets.clone().unwrap_or_else(|| default_assets(game.folder));
+        if options.jobs.packs.is_none() {
+            options.jobs.packs = Some(assets.join("cooked"));
+        }
+        options.assets = Some(assets);
+        options
     }
 
-    fn shown<G: Game, E: Into<engine::Error>>(
-        &self,
-        engine: &mut Engine,
-        build: impl FnOnce(&mut Engine) -> Result<G, E>,
-    ) -> engine::Result<G> {
-        let game = build(engine).map_err(Into::<engine::Error>::into)?;
-        let world = engine.app.world_mut();
-        if let Some(environment) = &self.environment {
-            engine::scene::show_look(world, environment, "--environment")?;
+    pub fn listed<G>(&self, game: &GameEntry<G>) -> engine::Result<BrickList> {
+        engine::game::without((game.bricks)(BrickList::default()), &self.without, "--without")
+    }
+
+    fn start_scene<G>(&self, game: &GameEntry<G>) -> StartScene {
+        if let Some(path) = &self.scene {
+            return StartScene::File(path.clone());
         }
-        Ok(game)
+        match game.scene {
+            Some(scene) if cfg!(feature = "dev") && Path::new(scene.path).is_file() => {
+                StartScene::File(scene.path.into())
+            }
+            Some(scene) => StartScene::Declared(scene.text),
+            None => StartScene::Empty,
+        }
+    }
+
+    fn game_files<G: Game>(&self) -> SceneFiles {
+        let mut files = SceneFiles::default();
+        let Some(folder) = &self.assets else {
+            return files;
+        };
+        for name in G::FILES {
+            if let Ok(bytes) = std::fs::read(folder.join(name)) {
+                files.add_buffer(name, bytes);
+            }
+        }
+        files
     }
 
     #[cfg(feature = "dev")]
@@ -552,10 +623,12 @@ impl HostOptions {
         &self,
         bricks: impl FnOnce(BrickList) -> BrickList,
         build: impl FnOnce(&mut Engine) -> Result<G, E>,
+        scene: &StartScene,
     ) -> engine::Result<crate::dev::DevSession<G>> {
         let size = self.size.unwrap_or((1280, 720));
         let pix = self.loads_pix().then(Pix::load).flatten();
         let mut game = Offscreen::launch(size, self.gpu, &self.jobs, bricks, build)?;
+        open_scene(game.host_mut(), scene, self.environment.as_deref())?;
         self.settings.apply(game.host_mut())?;
         let artifacts = self.dev_artifacts.clone().unwrap_or_else(default_artifacts);
         Ok(crate::dev::DevSession::new(game, artifacts)
@@ -587,6 +660,7 @@ impl HostOptions {
         path: &Path,
         bricks: impl FnOnce(BrickList) -> BrickList,
         build: impl FnOnce(&mut Engine) -> Result<G, E>,
+        scene: &StartScene,
     ) -> engine::Result<()> {
         let limit = self.limit_ms.ok_or_else(|| {
             Error::new(ErrorCode::InvalidArguments, "--limit-ms").expected(Expected::Present)
@@ -598,6 +672,7 @@ impl HostOptions {
             jobs.workers = std::thread::available_parallelism().map_or(1, usize::from);
         }
         let mut game = Offscreen::launch_with(size, self.gpu, jobs.pool(true), bricks, build)?;
+        open_scene(game.host_mut(), scene, self.environment.as_deref())?;
         self.settings.apply(game.host_mut())?;
         let read = game.jobs_mut().packed();
         let (mut frame, mut said) = (0_u32, Instant::now());
@@ -659,6 +734,7 @@ impl HostOptions {
         frames: u32,
         bricks: impl FnOnce(BrickList) -> BrickList,
         build: impl FnOnce(&mut Engine) -> Result<G, E>,
+        scene: &StartScene,
     ) -> engine::Result<()> {
         let size = self.size.unwrap_or((1280, 720));
         let pix = self.loads_pix().then(Pix::load).flatten();
@@ -668,6 +744,7 @@ impl HostOptions {
             engine_profiler::sample_heap_from_launch();
         }
         let mut game = Offscreen::launch(size, self.gpu, &self.jobs, bricks, build)?;
+        open_scene(game.host_mut(), scene, self.environment.as_deref())?;
         self.settings.apply(game.host_mut())?;
         game.prepare(0.0)?;
         let prepared_ms = started.elapsed().as_secs_f64() * 1000.0;
@@ -752,6 +829,20 @@ impl HostOptions {
         println!("{trace:#}");
         Ok(())
     }
+}
+
+fn default_assets(folder: &str) -> PathBuf {
+    std::env::current_exe()
+        .ok()
+        .and_then(|program| Some(program.parent()?.join("assets")))
+        .filter(|assets| assets.is_dir())
+        .or_else(|| {
+            Path::new(folder)
+                .ancestors()
+                .map(|parent| parent.join("web/public"))
+                .find(|assets| assets.is_dir())
+        })
+        .unwrap_or_else(|| Path::new(folder).join("assets"))
 }
 
 pub(crate) fn program() -> String {

@@ -11,10 +11,11 @@ pub(crate) use part::TerrainGpu;
 pub(crate) use surface::meshlet_indices;
 
 pub(crate) const TERRAIN: engine_core::DrawKind = engine_core::DrawKind("terrain");
+pub(crate) const SHADED_ELSEWHERE: &str = "terrain shades its colour in its own resolve pass";
+pub(crate) const NEVER_BLENDS: &str = "terrain is opaque ground and never blends";
 
 const LAYER_SIZE: u32 = crate::jobs::gpu::TILE_STRIDE;
 const SLOT: u64 = 256;
-const VIEWS: u64 = 7;
 const SURFACE_SLOTS: usize = 8;
 const TILE_MAPS_FORMAT: engine_render::wgpu::TextureFormat =
     engine_render::wgpu::TextureFormat::R32Uint;

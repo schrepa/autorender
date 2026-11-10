@@ -1,11 +1,6 @@
-#[cfg(target_arch = "wasm32")]
-mod browser;
 mod game;
 mod jobs;
 mod land;
-#[cfg(not(target_arch = "wasm32"))]
-pub mod native;
-mod options;
 mod records;
 mod scene;
 
@@ -14,14 +9,10 @@ pub mod bricks {
     pub mod pond;
 }
 
-include!(concat!(env!("OUT_DIR"), "/brick.rs"));
-
 use engine_core::Listing;
 use engine_fly_camera::FlyCameraBrick;
 
 pub use game::Highlands;
-pub use land::RockMaps;
-pub use options::{Options, controls, parameters};
 
 pub fn bricks<L: Listing>(list: L) -> L {
     engine_standard::everything(list)
@@ -30,10 +21,13 @@ pub fn bricks<L: Listing>(list: L) -> L {
         .with::<bricks::game::HighlandsBrick>()
 }
 
-engine_worker::export_worker!(bricks);
+#[cfg(feature = "dev")]
+mod smokes;
 
-engine::__if_dev! {
-    mod smokes;
-
-    pub use smokes::smokes;
-}
+engine::game!(
+    pub struct HighlandsGame(Highlands),
+    "Highlands",
+    bricks,
+    build = Highlands::build,
+    scene = "highlands.scene.json"
+);

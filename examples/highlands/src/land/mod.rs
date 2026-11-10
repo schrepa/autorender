@@ -15,16 +15,6 @@ use crate::records;
 
 pub type RockMaps = HashMap<String, Image>;
 
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) const ROCK_FILES: [&str; 6] = [
-    "boulder_albedo.ktx2",
-    "boulder_normal.ktx2",
-    "boulder_orm.ktx2",
-    "cliff_albedo.ktx2",
-    "cliff_normal.ktx2",
-    "cliff_orm.ktx2",
-];
-
 const BOULDER_SCAN_TILING: f32 = 1.8;
 const WALL_SCAN_TILING: f32 = 2.5;
 

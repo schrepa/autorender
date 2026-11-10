@@ -1,13 +1,18 @@
+#![deny(
+    clippy::wildcard_enum_match_arm,
+    clippy::match_wildcard_for_single_variants
+)]
+
+extern crate engine_ecs as bevy_ecs;
+
 use std::sync::{Arc, OnceLock};
 
 use bevy_ecs::prelude::{Component, Entity};
 use engine_math::max;
-use glam::{Mat3, Mat4, Vec2, Vec3};
+use engine_places_simulation::physics::{ColliderShape, CollisionRay};
+use glam::{Mat3, Mat4, Vec3};
 use parry3d::shape::{HeightField, HeightFieldCellStatus};
 use parry3d::utils::Array2;
-
-use crate::ground::{TILE_QUADS, TILE_SAMPLES, TileKey};
-use crate::physics::{ColliderShape, CollisionRay};
 
 pub trait FieldSamples: Send + Sync + 'static {
     fn height(&self, x: i32, z: i32) -> f32;
@@ -17,10 +22,10 @@ pub trait FieldSamples: Send + Sync + 'static {
 
 pub struct FieldTile {
     pub owner: Entity,
-    pub key: TileKey,
     pub center: Vec3,
     pub min: Vec3,
     pub max: Vec3,
+    quads: u32,
     spacing: f32,
     samples: Box<dyn FieldSamples>,
     shape: OnceLock<Arc<HeightField>>,
@@ -29,24 +34,18 @@ pub struct FieldTile {
 impl FieldTile {
     pub fn new(
         owner: Entity,
-        key: TileKey,
-        origin: Vec3,
-        spacing: f32,
+        corner: Vec3,
+        (quads, spacing): (u32, f32),
         [low, high]: [f32; 2],
         samples: Box<dyn FieldSamples>,
     ) -> Self {
-        let size = TILE_QUADS as f32 * spacing;
-        let corner = Vec3::new(
-            origin.x + f32::from(key.x) * size,
-            origin.y,
-            origin.z + f32::from(key.z) * size,
-        );
+        let size = quads as f32 * spacing;
         Self {
             owner,
-            key,
             center: corner + Vec3::new(size * 0.5, 0.0, size * 0.5),
-            min: Vec3::new(corner.x, origin.y + low, corner.z),
-            max: Vec3::new(corner.x + size, origin.y + high, corner.z + size),
+            min: Vec3::new(corner.x, corner.y + low, corner.z),
+            max: Vec3::new(corner.x + size, corner.y + high, corner.z + size),
+            quads,
             spacing,
             samples,
             shape: OnceLock::new(),
@@ -64,25 +63,21 @@ impl FieldTile {
         self.shape.get_or_init(|| Arc::new(self.build()))
     }
 
-    pub fn holds(&self, at: Vec2) -> bool {
-        at.x >= self.min.x && at.x <= self.max.x && at.y >= self.min.z && at.y <= self.max.z
-    }
-
     fn build(&self) -> HeightField {
-        let samples = TILE_SAMPLES as usize;
+        let samples = self.quads as usize + 1;
         let mut heights = Vec::with_capacity(samples * samples);
         for x in 0..samples as i32 {
             for z in 0..samples as i32 {
                 heights.push(self.samples.height(x, z));
             }
         }
-        let size = TILE_QUADS as f32 * self.spacing;
+        let size = self.quads as f32 * self.spacing;
         let mut shape = HeightField::new(
             Array2::new(samples, samples, heights),
             Vec3::new(size, 1.0, size),
         );
-        for z in 0..TILE_QUADS {
-            for x in 0..TILE_QUADS {
+        for z in 0..self.quads {
+            for x in 0..self.quads {
                 if self.samples.hole(x, z) {
                     shape.set_cell_status(
                         z as usize,
@@ -282,6 +277,10 @@ impl Bvh {
         self.nodes.len()
     }
 
+    pub fn bounds(&self) -> Option<Bounds> {
+        self.nodes.first().map(|root| root.bounds)
+    }
+
     pub fn bytes(&self) -> usize {
         self.nodes.capacity() * size_of::<Node>()
             + (self.indices.capacity() + self.leaves.capacity()) * size_of::<usize>()
@@ -424,6 +423,10 @@ impl SolidTree {
         &self.solids
     }
 
+    pub fn bounds(&self) -> Option<Bounds> {
+        self.bvh.bounds()
+    }
+
     pub fn query<'a>(
         &'a self,
         test: impl Fn(Bounds) -> bool + 'a,
@@ -436,18 +439,10 @@ impl SolidTree {
 pub struct SolidField {
     pub fields: Vec<Arc<FieldTile>>,
     pub solids: Arc<SolidTree>,
-    pub areas: Vec<(Vec2, Vec2)>,
 }
 
-impl SolidField {
-    pub fn holds(&self, at: Vec2) -> bool {
-        self.fields.iter().any(|field| field.holds(at))
-            || self
-                .areas
-                .iter()
-                .any(|&(low, high)| at.cmpge(low).all() && at.cmple(high).all())
-    }
-}
+pub const PLACES: &[engine_place::PlaceDecl] =
+    &[engine_place::PlaceDecl::component::<SolidSource>("solid_source")];
 
 #[derive(Component, Clone, Default)]
 pub struct SolidSource {

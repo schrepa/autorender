@@ -1,9 +1,7 @@
 use engine_places_simulation::physics::ColliderShape;
-use engine_places_simulation::solids::{
-    FieldSamples, FieldTile, SolidField, SolidSource, SolidTree, WorldSolid,
-};
+use engine_solids::{FieldSamples, FieldTile, SolidField, SolidSource, SolidTree, WorldSolid};
 use engine_core::{Cursor, Since};
-use engine_places_world::ground::TileChange;
+use engine_open_world_kit::ground::TileChange;
 use glam::Quat;
 
 use super::*;
@@ -216,11 +214,14 @@ impl Published {
                     .find(|(old, _)| Arc::ptr_eq(old, tile))
                     .map_or_else(
                         || {
+                            let key = tile.key();
+                            let size = TILE_QUADS as f32 * tile.spacing();
+                            let corner = state.terrain.origin
+                                + Vec3::new(f32::from(key.x) * size, 0.0, f32::from(key.z) * size);
                             Arc::new(FieldTile::new(
                                 state.entity,
-                                tile.key(),
-                                state.terrain.origin,
-                                tile.spacing(),
+                                corner,
+                                (TILE_QUADS, tile.spacing()),
                                 tile.bounds(),
                                 Box::new(TileSamples(Arc::clone(tile))),
                             ))
@@ -240,7 +241,6 @@ impl Published {
                 .map(|(_, field)| Arc::clone(field))
                 .collect(),
             solids: Arc::new(SolidTree::new(solids)),
-            areas: Vec::new(),
         }))
     }
 }

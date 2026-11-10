@@ -5,7 +5,7 @@ use engine_core::{
 };
 use engine_places_rendering::lights::{LightRegion, LocalLight};
 use engine_places_rendering::probes::{Interior, ReflectionProbe};
-use engine_places_world::ground::TerrainTiles;
+use engine_open_world_kit::ground::TerrainTiles;
 use glam::{Quat, Vec2, Vec3};
 
 use crate::bricks::game::HighlandsBrick;

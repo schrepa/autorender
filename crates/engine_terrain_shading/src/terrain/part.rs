@@ -1,26 +1,25 @@
 use bevy_ecs::prelude::*;
-use engine_core::{
-    AssetLibrary, Cursor, DeviceLimits, Error, PassViews, ScenePass, ScenePasses, TargetName,
-    Views,
-};
-use engine_places_rendering::probes::{MIRRORED, ProbeCaptures};
+use engine_core::{AssetLibrary, Cursor, DeviceLimits, Entry, Error, PassRole, Views};
+use engine_places_rendering::probes::ProbeCaptures;
 use engine_places_rendering::shadows::{CasterMap, KeptRefresh, Refresh, ShadowMaps};
-use engine_places_world::ground::{Cover, GroundTiles, TerrainTiles};
-use engine_places_world::water::Waterline;
+use engine_open_world_kit::ground::{Cover, GroundTiles, TerrainTiles};
+use engine_open_world_kit::water::Waterline;
 use engine_render::{
-    Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND,
-    DEBUG_TARGETS, DepthUse, Draw, DrawInput, Encode,
-    GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Sampler,
-    Scene, SceneDraw, Shape, Texture, VertexLayout, pixels_per_meter, wgpu,
+    Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND, DepthUse,
+    Draw, DrawInput, Encode, Form, FormSide, GpuPart, Install, KindForm, Lifetime, Own, Pass,
+    Pipeline, Prepare, RenderPipeline, Sampler, Scene, SceneDraw, Shape, Texture, Varyings,
+    VertexLayout, pixels_per_meter, wgpu,
 };
 use glam::{Mat4, Vec3};
 
 use super::atlas::TileAtlas;
-use super::patches::{PatchDraws, patch_layout, view_uniforms};
-use super::pipelines::{CASTER_BIAS, surface_primitive};
+use super::patches::{PATCH_STREAM, PatchDraws, view_uniforms};
+use super::pipelines::surface_primitive;
 use super::surface::SurfaceTrees;
 use super::tables::TerrainTables;
-use super::{IDS_FORMAT, SURFACE_SLOTS, TERRAIN, TerrainFrame, reached};
+use super::{
+    IDS_FORMAT, NEVER_BLENDS, SHADED_ELSEWHERE, SURFACE_SLOTS, TERRAIN, TerrainFrame, reached,
+};
 use crate::gpu::{HEIGHT_FORMAT, SURFACE_ERROR_MIPS};
 use crate::settings::TerrainShading;
 use crate::state::{
@@ -100,22 +99,66 @@ struct Inputs {
     subdivision_args: DrawInput<TerrainGpu, Own>,
 }
 
+const CASTER_STREAMS: &[VertexLayout] = &[PATCH_STREAM];
+
+const TERRAIN_FORM: KindForm = KindForm {
+    kind: TERRAIN,
+    placed: FormSide {
+        vertex: crate::shaders::terrain_shading::draw::VS_TERRAIN,
+        streams: &[],
+    },
+    owned: Some(FormSide {
+        vertex: crate::shaders::terrain_shading::shadow::VS_TERRAIN_SHADOW,
+        streams: CASTER_STREAMS,
+    }),
+    varyings: Varyings::Surface,
+};
+
+const NO_FORM: &str = "terrain has no form in this pass";
+const NO_TILES: &str = "no terrain tile is resident";
+const NOT_LAID_OUT: &str = "no terrain is laid out this frame";
+const NO_PATCHES: &str = "no terrain patch is laid out for this view";
+
+type Wound = [[Pipeline<TerrainGpu, Scene>; 2]; 2];
+
 enum Joined {
-    Surface {
-        shown: fn(&TerrainGpu) -> bool,
-        pipelines: [Pipeline<TerrainGpu, Scene>; 2],
+    Ground {
+        holes: Pipeline<TerrainGpu, Scene>,
         args: DrawInput<TerrainGpu, Scene>,
         meshlet: DrawInput<TerrainGpu, Scene>,
     },
     Casters {
-        pipeline: Pipeline<TerrainGpu, Scene>,
         patches: DrawInput<TerrainGpu, Scene>,
         grid: DrawInput<TerrainGpu, Scene>,
     },
+    Private {
+        shown: fn(&TerrainGpu) -> bool,
+        pipelines: Wound,
+        args: DrawInput<TerrainGpu, Scene>,
+        meshlet: DrawInput<TerrainGpu, Scene>,
+    },
+    Elsewhere(&'static str),
 }
 
-fn joins(passes: &ScenePasses, listed: &ScenePass) -> bool {
-    listed.bit.is_some() && passes.takes(listed, TERRAIN)
+fn wound(
+    cx: &mut Install<'_, TerrainGpu>,
+    (scene, owned): (Scene, bool),
+    made: &impl Fn(Entry, wgpu::FrontFace) -> RenderPipeline<'static>,
+    [plain, holes]: [Entry; 2],
+) -> Result<Wound, Error> {
+    let mut pair = |front: wgpu::FrontFace| -> Result<[Pipeline<TerrainGpu, Scene>; 2], Error> {
+        Ok([
+            cx.render_pipeline(scene, &made(plain, front), &[])?,
+            cx.render_pipeline(scene, &made(holes, front), &[])?,
+        ])
+    };
+    let ccw = pair(wgpu::FrontFace::Ccw)?;
+    let mirrored = if owned {
+        pair(wgpu::FrontFace::Cw)?
+    } else {
+        ccw
+    };
+    Ok([ccw, mirrored])
 }
 
 pub(crate) struct TerrainGpu {
@@ -123,6 +166,7 @@ pub(crate) struct TerrainGpu {
     passes: Passes,
     pipelines: Pipelines,
     inputs: Inputs,
+    form: Form<TerrainGpu>,
     joined: Vec<(&'static str, Joined)>,
     atlas: TileAtlas,
     tables: TerrainTables,
@@ -173,7 +217,7 @@ impl GpuPart for TerrainGpu {
     )]
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use crate::shaders::terrain_shading::{
-            ancestors, control, debug, draw, faces, field, horizons, normals, peaks, shadow, sky,
+            ancestors, control, debug, draw, faces, field, horizons, normals, peaks, sky,
             subdivision, surface, tables,
         };
         let handles = Handles {
@@ -391,16 +435,18 @@ impl GpuPart for TerrainGpu {
             let bound = reached(cx, subdivision::SUBDIVIDE_APPLY, slot_binds(slot));
             applies.push(cx.compute_pipeline(subdivide, subdivision::SUBDIVIDE_APPLY, &bound)?);
         }
-        let surface = |fragment, front_face| RenderPipeline {
-            vertex: draw::VS_TERRAIN,
-            fragment: Some(fragment),
-            vertices: &[],
-            primitive: surface_primitive(front_face),
-            depth: DepthUse::Write {
-                bias: wgpu::DepthBiasState::default(),
-            },
-            blend: None,
-            writes: wgpu::ColorWrites::ALL,
+        let surface = |fragment: Entry, front_face: wgpu::FrontFace| -> RenderPipeline<'static> {
+            RenderPipeline {
+                vertex: draw::VS_TERRAIN,
+                fragment: Some(fragment),
+                vertices: &[],
+                primitive: surface_primitive(front_face),
+                depth: DepthUse::Write {
+                    bias: wgpu::DepthBiasState::default(),
+                },
+                blend: None,
+                writes: wgpu::ColorWrites::ALL,
+            }
         };
         let ccw = wgpu::FrontFace::Ccw;
         let ids = [
@@ -433,101 +479,59 @@ impl GpuPart for TerrainGpu {
                 &resolve_bound,
             )?,
         ];
-        let mirrored = if MIRRORED {
-            wgpu::FrontFace::Cw
-        } else {
-            wgpu::FrontFace::Ccw
+        let debug_surface = |fragment: Entry, face: wgpu::FrontFace| -> RenderPipeline<'static> {
+            RenderPipeline {
+                blend: Some(DEBUG_BLEND),
+                ..surface(fragment, face)
+            }
         };
-        let listed: Vec<ScenePass> = cx
+        let form = cx.form(&TERRAIN_FORM, &[])?;
+        let scenes: Vec<(Scene, PassRole, bool)> = form
             .passes()
-            .listed()
-            .iter()
-            .filter(|listed| joins(cx.passes(), listed))
-            .copied()
+            .map(|pass| (pass.scene, pass.role, pass.owned))
             .collect();
-        let mut joined = Vec::with_capacity(listed.len());
-        for listed in listed {
-            let scene = Scene::named(listed.name);
-            let lit = listed
-                .pass
-                .writes
-                .targets()
-                .iter()
-                .any(|target| *target != TargetName::DEPTH);
-            let shows = listed.pass.writes.contains(DEBUG_TARGETS[0]);
-            let owned = listed.pass.views == PassViews::Owned;
-            let made = if !owned && shows {
-                let debug_surface = |fragment| RenderPipeline {
-                    blend: Some(DEBUG_BLEND),
-                    ..surface(fragment, ccw)
-                };
-                Joined::Surface {
-                    shown: |terrain| terrain.drawn,
-                    pipelines: [
-                        cx.render_pipeline(scene, &debug_surface(debug::FS_DEBUG_TERRAIN), &[])?,
-                        cx.render_pipeline(
-                            scene,
-                            &debug_surface(debug::FS_DEBUG_TERRAIN_HOLES),
-                            &[],
-                        )?,
-                    ],
-                    args: cx.draw_input(scene, h.args),
-                    meshlet: cx.draw_input(scene, h.meshlet),
-                }
-            } else if !owned && !lit && listed.pass.at != AttachPoint::Transparent {
-                let unlit = |fragment| RenderPipeline {
-                    fragment,
-                    ..surface(draw::FS_TERRAIN_DEPTH_HOLES, ccw)
-                };
-                Joined::Surface {
-                    shown: |terrain| terrain.deferred,
-                    pipelines: [
-                        cx.render_pipeline(scene, &unlit(None), &[])?,
-                        cx.render_pipeline(scene, &unlit(Some(draw::FS_TERRAIN_DEPTH_HOLES)), &[])?,
-                    ],
-                    args: cx.draw_input(scene, h.args),
-                    meshlet: cx.draw_input(scene, h.meshlet),
-                }
-            } else if owned && lit {
-                Joined::Surface {
-                    shown: |_| true,
-                    pipelines: [
-                        cx.render_pipeline(
-                            scene,
-                            &surface(draw::FS_TERRAIN_PROBE, mirrored),
-                            &[],
-                        )?,
-                        cx.render_pipeline(
-                            scene,
-                            &surface(draw::FS_TERRAIN_PROBE_HOLES, mirrored),
-                            &[],
-                        )?,
-                    ],
-                    args: cx.draw_input(scene, h.args),
-                    meshlet: cx.draw_input(scene, h.meshlet),
-                }
-            } else if owned {
-                Joined::Casters {
-                    pipeline: cx.render_pipeline(
-                        scene,
-                        &RenderPipeline {
-                            vertex: shadow::VS_TERRAIN_SHADOW,
-                            fragment: None,
-                            vertices: &[VertexLayout::Buffer(patch_layout())],
-                            primitive: wgpu::PrimitiveState::default(),
-                            depth: DepthUse::Write { bias: CASTER_BIAS },
-                            blend: None,
-                            writes: wgpu::ColorWrites::empty(),
-                        },
-                        &[],
-                    )?,
+        let mut joined = Vec::with_capacity(scenes.len());
+        for (scene, role, owned) in scenes {
+            let made = match (role, owned) {
+                (PassRole::Depth, true) => Joined::Casters {
                     patches: cx.draw_input(scene, h.patches),
                     grid: cx.draw_input(scene, h.grid),
-                }
-            } else {
-                continue;
+                },
+                (PassRole::Depth, false) => Joined::Ground {
+                    holes: cx.render_pipeline(
+                        scene,
+                        &surface(draw::FS_TERRAIN_DEPTH_HOLES, ccw),
+                        &[],
+                    )?,
+                    args: cx.draw_input(scene, h.args),
+                    meshlet: cx.draw_input(scene, h.meshlet),
+                },
+                (PassRole::Lit, true) => Joined::Private {
+                    shown: |_| true,
+                    pipelines: wound(
+                        cx,
+                        (scene, owned),
+                        &surface,
+                        [draw::FS_TERRAIN_PROBE, draw::FS_TERRAIN_PROBE_HOLES],
+                    )?,
+                    args: cx.draw_input(scene, h.args),
+                    meshlet: cx.draw_input(scene, h.meshlet),
+                },
+                (PassRole::Shown, _) => Joined::Private {
+                    shown: |terrain| terrain.drawn,
+                    pipelines: wound(
+                        cx,
+                        (scene, owned),
+                        &debug_surface,
+                        [debug::FS_DEBUG_TERRAIN, debug::FS_DEBUG_TERRAIN_HOLES],
+                    )?,
+                    args: cx.draw_input(scene, h.args),
+                    meshlet: cx.draw_input(scene, h.meshlet),
+                },
+                (PassRole::Lit, false) => Joined::Elsewhere(SHADED_ELSEWHERE),
+                (PassRole::Blended, _) => Joined::Elsewhere(NEVER_BLENDS),
             };
-            joined.push((listed.name, made));
+            joined.push((scene.name(), made));
         }
         let inputs = Inputs {
             args: cx.draw_input(ids_pass, h.args),
@@ -570,6 +574,7 @@ impl GpuPart for TerrainGpu {
                 resolve: resolves,
             },
             inputs,
+            form,
             joined,
             atlas: TileAtlas::default(),
             tables: TerrainTables::default(),
@@ -942,36 +947,34 @@ impl TerrainGpu {
             .iter()
             .find(|(name, _)| *name == scene.pass.name())
         else {
-            return 0;
+            return draw.skip(NO_FORM);
         };
         match joined {
-            Joined::Surface {
-                shown,
-                pipelines,
+            Joined::Ground {
+                holes,
                 args,
                 meshlet,
             } => {
-                if !shown(self) {
-                    return 0;
-                }
-                self.draw_surface(draw, pipelines, (*args, *meshlet))
+                let Some(plain) = draw.form(&self.form) else {
+                    return draw.skip(NO_FORM);
+                };
+                self.draw_surface(draw, &[plain, *holes], (*args, *meshlet))
             }
-            Joined::Casters {
-                pipeline,
-                patches,
-                grid,
-            } => {
+            Joined::Casters { patches, grid } => {
                 if !self.drawn {
-                    return 0;
+                    return draw.skip(NO_TILES);
                 }
                 let Some(range) = scene
                     .view
                     .and_then(|region| self.frame.map_records(region as usize))
                 else {
-                    return 0;
+                    return draw.skip(NO_PATCHES);
+                };
+                let Some(pipeline) = draw.form(&self.form) else {
+                    return draw.skip(NO_FORM);
                 };
                 draw.draw(
-                    pipeline,
+                    &pipeline,
                     Shape::Buffers {
                         vertices: &[*patches],
                         indices: Some(*grid),
@@ -981,6 +984,19 @@ impl TerrainGpu {
                 );
                 1
             }
+            Joined::Private {
+                shown,
+                pipelines,
+                args,
+                meshlet,
+            } => {
+                if !shown(self) {
+                    return draw.skip(NO_TILES);
+                }
+                let pipelines = &pipelines[usize::from(scene.mirrored)];
+                self.draw_surface(draw, pipelines, (*args, *meshlet))
+            }
+            Joined::Elsewhere(reason) => draw.skip(reason),
         }
     }
 
@@ -1012,6 +1028,9 @@ impl TerrainGpu {
                 );
                 draws += 1;
             }
+        }
+        if draws == 0 {
+            return draw.skip(NOT_LAID_OUT);
         }
         draws
     }

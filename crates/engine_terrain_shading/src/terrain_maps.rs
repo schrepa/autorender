@@ -4,7 +4,7 @@ use engine_core::{
     AssetLibrary, ColorSpace, Error, METALLIC_ROUGHNESS_MAP, OCCLUSION_MAP, Texture,
     TextureFormat, TextureHandle,
 };
-use engine_places_world::ground::{SurfaceMaps, TerrainTiles};
+use engine_open_world_kit::ground::{SurfaceMaps, TerrainTiles};
 use engine_render::{Allocation, Install, Lifetime, Prepare, Sampler, wgpu};
 
 use crate::terrain::TerrainGpu;

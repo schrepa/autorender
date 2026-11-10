@@ -1,0 +1,73 @@
+{
+  "id": "template",
+  "revision": 1,
+  "environment": {
+    "dynamic_resolution": {
+      "enabled": true
+    }
+  },
+  "materials": [
+    {
+      "id": "ground",
+      "color": [0.35, 0.4, 0.45, 1.0]
+    },
+    {
+      "id": "block",
+      "color": [0.9, 0.5, 0.2, 1.0]
+    }
+  ],
+  "meshes": [
+    {
+      "id": "cube",
+      "source": {
+        "kind": "cube"
+      }
+    }
+  ],
+  "entities": [
+    {
+      "id": "ground",
+      "drawn": {
+        "mesh": "cube",
+        "material": "ground"
+      },
+      "transform": {
+        "translation": [0.0, -0.5, 0.0],
+        "scale": [20.0, 1.0, 20.0]
+      }
+    },
+    {
+      "id": "block",
+      "drawn": {
+        "mesh": "cube",
+        "material": "block"
+      },
+      "turning": {},
+      "transform": {
+        "translation": [0.0, 1.0, 0.0],
+        "scale": [2.0, 2.0, 2.0]
+      }
+    },
+    {
+      "id": "camera",
+      "camera": {
+        "near": 0.1,
+        "far": 500.0,
+        "projection": {
+          "Perspective": {
+            "vertical_fov_radians": 0.9599311
+          }
+        }
+      },
+      "node": {
+        "clock": "real",
+        "mobility": "moving"
+      },
+      "transform": {
+        "translation": [24.0, 19.0, 28.0],
+        "rotation_degrees": [-34.1597, 35.3467, 21.4334]
+      },
+      "view": {}
+    }
+  ]
+}

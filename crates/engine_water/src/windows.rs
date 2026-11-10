@@ -6,7 +6,7 @@ use engine_core::{DeviceLimits, RecordKey, Since, Views};
 use engine_heightfield::TileKey;
 use engine_heightfield::tile::{TILE_STRIDE, on_triangle, tile_cell};
 use engine_places_simulation::water::WaterObstacle;
-use engine_places_world::ground::TerrainTiles;
+use engine_open_world_kit::ground::TerrainTiles;
 use glam::{Vec2, Vec3};
 
 use crate::gpu::{SETUP_SOLID_ENTRIES, SIM_TOUCHES};

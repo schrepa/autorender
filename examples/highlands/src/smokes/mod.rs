@@ -1,23 +1,14 @@
 mod torrent;
 
-use engine::BrickList;
-use engine::smokes::{Smoke, SmokeEntry};
+use engine::smokes::Smoke;
 use engine_core::SmokeSession;
 use engine_smoke::{Checked, control};
 use serde_json::json;
 
-const GAME: &str = "highlands";
-
-const SMOKES: [Smoke; 1] = [Smoke {
+pub(crate) const SMOKES: [Smoke; 1] = [Smoke {
     name: "highlands_torrent",
     run: torrent::run,
 }];
-
-pub fn smokes(bricks: &BrickList) -> engine::Result<Vec<SmokeEntry>> {
-    let mut smokes = engine::smokes::registered(bricks)?;
-    smokes.extend(SMOKES.iter().map(|smoke| SmokeEntry::of(GAME, smoke)));
-    Ok(smokes)
-}
 
 fn open(session: &mut dyn SmokeSession) -> Checked<()> {
     session.source(crate::scene::SCENE);

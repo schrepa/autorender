@@ -21,7 +21,7 @@ use engine_heightfield::layer::{
 use engine_heightfield::{
     GivenRiver, HydrologyBake, INVALID_TERRAIN, Layers, MISSING_LAYER, Pyramid, TileHeights,
 };
-use engine_places_world::terrain::TerrainLayers;
+use engine_open_world_kit::terrain::TerrainLayers;
 use glam::Vec2;
 use serde::Serialize;
 use serde_json::Value;

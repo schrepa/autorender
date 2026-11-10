@@ -5,7 +5,7 @@ use bevy_ecs::prelude::Entity;
 use engine_places_simulation::physics::{
     CollisionLayers, CollisionRay, QueryFilter, RayHit, SensorFilter, ShapeCastOptions, ShapeHit,
 };
-use engine_places_simulation::solids::{Bounds, FieldTile, SolidField};
+use engine_solids::{Bounds, FieldTile, SolidField};
 use glam::Vec3;
 use parry3d::{
     bounding_volume::Aabb,
@@ -29,10 +29,6 @@ fn accepts(filter: QueryFilter, entity: Entity) -> bool {
     filter.exclude != Some(entity)
         && filter.layers.interacts(CollisionLayers::default())
         && filter.sensors != SensorFilter::Only
-}
-
-pub(crate) fn owners(sources: &[Arc<SolidField>]) -> impl Iterator<Item = Entity> + '_ {
-    tiles(sources).map(|field| field.owner)
 }
 
 pub(crate) fn ray(

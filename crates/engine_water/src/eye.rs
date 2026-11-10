@@ -40,6 +40,7 @@ fn surface_under(ground: &Ground, bodies: &Query<&WaterBody>, eye: Vec3) -> Opti
     }
     ground
         .point(Vec2::new(eye.x, eye.z))
-        .solid()
+        .ready()
+        .flatten()
         .map(|ground| ground.height)
 }

@@ -13,7 +13,6 @@ mod queries;
 mod results;
 mod scene;
 mod terrain;
-mod terrain_sweep;
 mod types;
 mod views;
 mod world;
@@ -29,6 +28,7 @@ use engine_places_simulation::physics::{
     COLLISION_INVALID_TRANSFORM, COLLISION_NUMERICAL_FAILURE, COLLISION_PAIR_BUDGET,
     COLLISION_RESULT_BUDGET, Collider, Collision, INVALID_COLLIDER, INVALID_COLLIDER_TRANSFORM,
 };
+use engine_places_simulation::ground::Ground;
 use engine_places::queries::SceneQueries;
 
 const ERRORS: &[ErrorCode] = &[
@@ -58,6 +58,7 @@ impl Brick for CollisionBrick {
             .stats::<CollisionStats>()
             .errors(ERRORS)
             .fill::<Collision>(None)
+            .fill::<Ground>(None)
             .fill::<SceneQueries>(None)
             .join::<SceneComponents>(
                 ComponentKind::of::<Collider>("collider")
@@ -78,7 +79,6 @@ impl Brick for CollisionBrick {
             .operation::<queries::OverlapQuery>()
             .operation::<queries::ShapeCastQuery>()
             .observation::<queries::CollisionEventsQuery>()
-            .operation::<terrain_sweep::TerrainSweepQuery>()
             .operation::<views::ColliderQuery>();
     }
 }

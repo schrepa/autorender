@@ -12,8 +12,8 @@ use engine_heightfield::{
 };
 use engine_places_simulation::ground::GroundRead;
 use engine_places_simulation::water::{WaterBody, WaterQuery, WaterSample};
-use engine_places_world::ground::{TerrainEntry, TerrainTiles, TileFace};
-use engine_places_world::water::{WaterTileErrors, Waterline};
+use engine_open_world_kit::ground::{TerrainEntry, TerrainTiles, TileFace};
+use engine_open_world_kit::water::{WaterTileErrors, Waterline};
 use glam::{Vec2, Vec3};
 
 use crate::drawn::draw_input;
