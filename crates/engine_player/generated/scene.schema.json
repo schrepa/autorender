@@ -4046,6 +4046,16 @@
             }
           ]
         },
+        "transparency": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TransparencySettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "ui": {
           "anyOf": [
             {
@@ -7085,16 +7095,6 @@
           "minItems": 3,
           "type": "array"
         },
-        "skin": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/VertexSkin"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "uv": {
           "items": {
             "format": "float",
@@ -7667,6 +7667,36 @@
           "maximum": 2000000,
           "minimum": 1,
           "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "TransparencySettings": {
+      "additionalProperties": false,
+      "properties": {
+        "far_distance": {
+          "default": 200.0,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "least_weight": {
+          "default": 0.009999999776482582,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "most_weight": {
+          "default": 3000.0,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "type": "number"
+        },
+        "near_distance": {
+          "default": 5.0,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "type": "number"
         }
       },
       "type": "object"
@@ -8295,35 +8325,6 @@
           "type": "number"
         }
       },
-      "type": "object"
-    },
-    "VertexSkin": {
-      "additionalProperties": false,
-      "properties": {
-        "joints": {
-          "items": {
-            "format": "uint32",
-            "minimum": 0,
-            "type": "integer"
-          },
-          "maxItems": 4,
-          "minItems": 4,
-          "type": "array"
-        },
-        "weights": {
-          "items": {
-            "format": "float",
-            "type": "number"
-          },
-          "maxItems": 4,
-          "minItems": 4,
-          "type": "array"
-        }
-      },
-      "required": [
-        "joints",
-        "weights"
-      ],
       "type": "object"
     },
     "ViewForm": {

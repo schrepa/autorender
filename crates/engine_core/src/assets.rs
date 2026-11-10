@@ -206,12 +206,7 @@ impl Arena {
         at as u32
     }
 
-    fn insert(
-        &mut self,
-        class: u32,
-        vertex_count: u32,
-        index_count: u32,
-    ) -> Option<MeshPlacement> {
+    fn insert(&mut self, class: u32, vertex_count: u32, index_count: u32) -> Option<MeshPlacement> {
         let limit = self.shape.limit;
         let first_index = match self.indices.allocate(index_count) {
             Some(start) => start,

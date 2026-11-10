@@ -264,6 +264,15 @@ export interface ProfiledBrick {
   heap_peak_bytes?: number | null;
 }
 
+export interface Refusal {
+  allowed?: string[];
+  expected?: string | null;
+  got?: string | null;
+  nearest?: string | null;
+  path: string;
+  reason: string;
+}
+
 export interface RenderResult {
   rendered: boolean;
 }
@@ -288,6 +297,7 @@ export interface StatusResult {
   inspectors: number;
   limits: StatusLimits;
   presentation: PresentationState;
+  unmet: Refusal[];
   world_entities: number;
 }
 

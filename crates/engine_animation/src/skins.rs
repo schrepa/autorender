@@ -68,7 +68,11 @@ fn rows_of(matrix: Mat4) -> JointRows {
 }
 
 fn reach_of(palette: &[Bound], mesh: &Mesh) -> Option<Vec<f32>> {
-    let joints: Vec<u32> = mesh.stream(JOINTS)?.words().map(u32::from_le_bytes).collect();
+    let joints: Vec<u32> = mesh
+        .stream(JOINTS)?
+        .words()
+        .map(u32::from_le_bytes)
+        .collect();
     let weights: Vec<f32> = mesh
         .stream(WEIGHTS)?
         .words()

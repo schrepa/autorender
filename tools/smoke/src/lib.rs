@@ -227,11 +227,7 @@ pub fn counted_in_joined_passes(
             (!cell.is_some_and(drew)).then(|| json!({ "pass": pass, "cell": cell }))
         })
         .collect();
-    smoke_eq!(
-        json!(undrawn),
-        json!([]),
-        "kind_drew_in_every_joined_pass"
-    );
+    smoke_eq!(json!(undrawn), json!([]), "kind_drew_in_every_joined_pass");
     Ok(counted)
 }
 

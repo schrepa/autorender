@@ -263,7 +263,9 @@ impl GpuPart for GlimmerGpu {
     ) {
         let mut placed: Vec<(MaterialHandle, GlimmerInstance)> = Vec::new();
         for (slot, entity, thing) in table.rows(GLIMMER) {
-            let held = thing.material.filter(|made| residency.material_resident(*made));
+            let held = thing
+                .material
+                .filter(|made| residency.material_resident(*made));
             let (Some(pose), Some(material)) = (poses.drawn_pose(&globals, entity), held) else {
                 continue;
             };

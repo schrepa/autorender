@@ -367,9 +367,8 @@ impl<P: GpuPart> Install<'_, P> {
             .filter(|listed| listed.bit.is_some() && self.core.passes.takes(listed, form.kind))
             .copied()
             .collect();
-        let joined = |own: &&PassFragment| {
-            listed.iter().any(|listed| listed.name == own.scene.name())
-        };
+        let joined =
+            |own: &&PassFragment| listed.iter().any(|listed| listed.name == own.scene.name());
         if let Some(stray) = owns.iter().find(|own| !joined(own)) {
             let path = format!("forms.{}.owns", form.kind.0);
             return Err(Error::new(ErrorCode::PassMismatch, path).got(stray.scene.name()));

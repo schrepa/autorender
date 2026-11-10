@@ -50,9 +50,14 @@ gpu_consts! {
     pub const GROUP: u32 = 64;
     pub const ARGS_GROUP: u32 = 64;
     pub const UNWATCHED: u32 = u32::MAX;
-    pub const JOINTS_AT: u32 = engine_core::FIRST_NAMED_LOCATION;
-    pub const WEIGHTS_AT: u32 = engine_core::FIRST_NAMED_LOCATION + 1;
+    pub const JOINTS_AT: u32 = 9;
+    pub const WEIGHTS_AT: u32 = 10;
 }
+
+const _: () = assert!(
+    JOINTS_AT == engine_core::FIRST_NAMED_LOCATION && WEIGHTS_AT == JOINTS_AT + 1,
+    "skin_streams_follow_the_instance_inputs"
+);
 
 const _: () = assert!(
     LOD_FADED == <LodFade as GpuBits>::FIELDS[2].mask(),

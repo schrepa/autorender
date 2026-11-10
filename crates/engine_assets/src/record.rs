@@ -58,9 +58,7 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     let extras = flags != 0;
     let named_bytes: usize = named.iter().map(|stream| stream.bytes().len()).sum();
     let mut bytes = Vec::with_capacity(
-        16 + vertices.len() * (32 + if extras { 24 } else { 0 })
-            + named_bytes
-            + indices.len() * 4,
+        16 + vertices.len() * (32 + if extras { 24 } else { 0 }) + named_bytes + indices.len() * 4,
     );
     bytes.extend_from_slice(if extras {
         &MESH_BUFFER_EXTRAS_MAGIC
@@ -255,9 +253,8 @@ impl MeshBuffer {
             Self::named_table(bytes, header, path)?
         };
         let (vertex_count, index_count) = (vertex_count as usize, index_count as usize);
-        let floats = 8
-            + if flags & COLORS != 0 { 4 } else { 0 }
-            + if flags & UV1 != 0 { 2 } else { 0 };
+        let floats =
+            8 + if flags & COLORS != 0 { 4 } else { 0 } + if flags & UV1 != 0 { 2 } else { 0 };
         let named_width: usize = named.iter().map(|&(_, format)| width(format)).sum();
         let expected = vertex_count
             .checked_mul(floats * 4 + named_width)

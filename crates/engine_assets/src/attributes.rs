@@ -194,8 +194,7 @@ impl InstanceInput {
     }
 }
 
-pub const FIRST_NAMED_LOCATION: u32 =
-    Attribute::ALL.len() as u32 + InstanceInput::ALL.len() as u32;
+pub const FIRST_NAMED_LOCATION: u32 = Attribute::ALL.len() as u32 + InstanceInput::ALL.len() as u32;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Attributes(u8);

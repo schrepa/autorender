@@ -233,9 +233,7 @@ impl Mesh {
                 .got(value));
         }
         self.streams.retain(|held| held.name != stream.name);
-        let at = self
-            .streams
-            .partition_point(|held| held.name < stream.name);
+        let at = self.streams.partition_point(|held| held.name < stream.name);
         self.streams.insert(at, stream);
         self.identity = OnceLock::new();
         Ok(self)
