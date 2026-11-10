@@ -31,10 +31,12 @@ const FORM: KindForm = KindForm {
     placed: FormSide {
         vertex: shaders::sprites::draw::VS_SPRITE,
         streams: &[],
+        depth_bias: FormSide::UNBIASED,
     },
     owned: Some(FormSide {
         vertex: shaders::sprites::draw::VS_SPRITE_VIEW,
         streams: &[],
+        depth_bias: FormSide::UNBIASED,
     }),
     varyings: Varyings::SurfaceExtra,
 };

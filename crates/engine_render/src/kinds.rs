@@ -1,6 +1,8 @@
 use std::marker::PhantomData;
 
-use engine_core::{DrawKind, Entry, Error, ErrorCode, PassName, PassRole, PassViews, Var};
+use engine_core::{
+    DepthBias, DrawKind, Entry, Error, ErrorCode, PassName, PassRole, PassViews, Var,
+};
 
 use crate::install::{Faces, FragmentUse, Program, RenderDecl, Scoped};
 use crate::{
@@ -73,6 +75,14 @@ impl FormTopology {
 pub struct FormSide {
     pub vertex: Entry,
     pub streams: &'static [VertexLayout],
+    pub depth_bias: DepthBias,
+}
+
+impl FormSide {
+    pub const UNBIASED: DepthBias = DepthBias {
+        constant: 0,
+        slope: 0.0,
+    };
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -234,8 +244,8 @@ fn kind_program(
             PassRole::Blended => DepthUse::Test,
             PassRole::Lit | PassRole::Depth | PassRole::Shown => DepthUse::Write {
                 bias: wgpu::DepthBiasState {
-                    constant: 0,
-                    slope_scale: 0.0,
+                    constant: side.depth_bias.constant,
+                    slope_scale: side.depth_bias.slope,
                     clamp: 0.0,
                 },
             },

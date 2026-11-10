@@ -92,7 +92,7 @@ const fn object_form(
 ) -> KindForm {
     KindForm {
         kind: PLACED,
-        placed: FormSide { vertex, streams },
+        placed: FormSide { vertex, streams, depth_bias: FormSide::UNBIASED },
         owned: None,
         varyings,
     }

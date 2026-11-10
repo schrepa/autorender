@@ -76,6 +76,7 @@ const SURFACE_FORM: KindForm = KindForm {
     placed: FormSide {
         vertex: crate::shaders::water::surface::VS_WATER,
         streams: &[],
+        depth_bias: FormSide::UNBIASED,
     },
     owned: None,
     varyings: Varyings::Own(&SURFACE_FRAGMENTS),
@@ -86,6 +87,7 @@ const FALL_FORM: KindForm = KindForm {
     placed: FormSide {
         vertex: crate::shaders::water::falls::VS_FALL_TEMPORAL,
         streams: FALL_STREAMS,
+        depth_bias: FormSide::UNBIASED,
     },
     owned: None,
     varyings: Varyings::Own(&FALL_FRAGMENTS),

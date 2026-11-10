@@ -133,10 +133,12 @@ const PLAIN_FORM: KindForm = KindForm {
     placed: FormSide {
         vertex: vertex::VS_MESH,
         streams: MESH_STREAMS,
+        depth_bias: FormSide::UNBIASED,
     },
     owned: Some(FormSide {
         vertex: vertex::VS_VIEW,
         streams: VIEW_STREAMS,
+        depth_bias: FormSide::UNBIASED,
     }),
     varyings: Varyings::Surface,
 };
@@ -146,10 +148,12 @@ const EXTENDED_FORM: KindForm = KindForm {
     placed: FormSide {
         vertex: vertex::VS_MESH_EXTENDED,
         streams: EXTENDED_STREAMS,
+        depth_bias: FormSide::UNBIASED,
     },
     owned: Some(FormSide {
         vertex: vertex::VS_VIEW_EXTENDED,
         streams: EXTENDED_VIEW_STREAMS,
+        depth_bias: FormSide::UNBIASED,
     }),
     varyings: Varyings::SurfaceExtra,
 };
@@ -159,10 +163,12 @@ const SKIN_FORM: KindForm = KindForm {
     placed: FormSide {
         vertex: vertex::VS_SKIN,
         streams: SKIN_STREAMS,
+        depth_bias: FormSide::UNBIASED,
     },
     owned: Some(FormSide {
         vertex: vertex::VS_SKIN_VIEW,
         streams: SKIN_VIEW_STREAMS,
+        depth_bias: FormSide::UNBIASED,
     }),
     varyings: Varyings::SurfaceExtra,
 };

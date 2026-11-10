@@ -35,6 +35,7 @@ const fn particle_form(fragments: &'static OwnFragments) -> KindForm {
         placed: FormSide {
             vertex: draw::VS_PARTICLE,
             streams: &[],
+            depth_bias: FormSide::UNBIASED,
         },
         owned: None,
         varyings: Varyings::Own(fragments),

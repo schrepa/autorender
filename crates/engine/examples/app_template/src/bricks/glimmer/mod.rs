@@ -35,10 +35,12 @@ const FORM: KindForm = KindForm {
     placed: FormSide {
         vertex: shaders::glimmer::draw::VS_GLIMMER,
         streams: &[],
+        depth_bias: FormSide::UNBIASED,
     },
     owned: Some(FormSide {
         vertex: shaders::glimmer::draw::VS_GLIMMER_VIEW,
         streams: &[],
+        depth_bias: FormSide::UNBIASED,
     }),
     varyings: Varyings::SurfaceExtra,
 };

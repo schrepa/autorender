@@ -46,10 +46,12 @@ const LABEL_FORM: KindForm = KindForm {
     placed: FormSide {
         vertex: shaders::text::label::VS_LABEL,
         streams: &[],
+        depth_bias: FormSide::UNBIASED,
     },
     owned: Some(FormSide {
         vertex: shaders::text::label::VS_LABEL_VIEW,
         streams: &[],
+        depth_bias: FormSide::UNBIASED,
     }),
     varyings: Varyings::SurfaceExtra,
 };
