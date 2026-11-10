@@ -2,7 +2,7 @@ use std::collections::BTreeSet;
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
-use engine_core::{Call, Lands, Rows, shaped_by};
+use engine_core::{Call, Lands, Rows};
 use engine_core::{Error, ErrorCode, Expected, SceneContext, set_parents};
 use engine_registry::{OperationEntry, OperationScene};
 use serde::{Deserialize, Serialize};
@@ -17,11 +17,33 @@ pub const SPAWN: &str = "spawn";
 pub const REMOVE: &str = "remove";
 
 pub fn spawn_operation() -> OperationEntry {
-    OperationEntry::of(Call::exclusive::<SpawnRequest, Rows<Placed>>(
-        SPAWN,
-        (true, Lands::Now),
-        run_spawn,
-    ))
+    OperationEntry::of(
+        Call::exclusive::<SpawnRequest, Rows<Placed>>(SPAWN, (true, Lands::Now), run_spawn)
+            .request_in(spawn_request),
+    )
+}
+
+fn spawn_request(world: &World) -> Value {
+    let mut schema = engine_core::schema_of::<SpawnRequest>();
+    if let Some(object) = schema
+        .get_mut("$defs")
+        .and_then(|definitions| definitions.get_mut(SPAWNED))
+        .and_then(Value::as_object_mut)
+    {
+        if let Some(properties) = object
+            .get_mut("properties")
+            .and_then(Value::as_object_mut)
+        {
+            for kind in engine_core::scene_components(world) {
+                properties.insert(
+                    kind.key().to_owned(),
+                    engine_core::authored_component(kind.key()),
+                );
+            }
+        }
+        object.insert("additionalProperties".to_owned(), Value::Bool(false));
+    }
+    schema
 }
 
 pub fn remove_operation() -> OperationEntry {
@@ -39,9 +61,11 @@ struct Placed {
 
 struct Described;
 
+const SPAWNED: &str = "SpawnedObject";
+
 impl schemars::JsonSchema for Described {
     fn schema_name() -> std::borrow::Cow<'static, str> {
-        "SpawnedObject".into()
+        SPAWNED.into()
     }
 
     fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
@@ -49,7 +73,7 @@ impl schemars::JsonSchema for Described {
         if let Some(Value::Array(required)) = schema.get_mut("required") {
             required.retain(|field| field != "id");
         }
-        shaped_by(schema, "component")
+        schema
     }
 }
 

@@ -13,7 +13,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::members::{add_member, drop_members, each_member, init_members};
+use crate::members::{MembersOf, add_member, drop_members, each_member, init_members};
 use crate::registry::MemberEach;
 use crate::state::{GateId, Scope};
 
@@ -88,6 +88,7 @@ pub struct JoinEntry {
     pub scope: Scope,
     pub wgsl: Option<Box<dyn Any + Send + Sync>>,
     pub(crate) member: Option<Box<dyn Any + Send + Sync>>,
+    pub(crate) members: TypeId,
     pub(crate) add: MemberAdd,
     pub(crate) init: fn(&mut World),
     pub(crate) each: MemberEach,
@@ -106,6 +107,7 @@ impl JoinEntry {
             scope,
             wgsl,
             member: Some(Box::new(member)),
+            members: TypeId::of::<MembersOf<L>>(),
             add: add_member::<L>,
             init: init_members::<L>,
             each: each_member::<L>,
@@ -314,12 +316,12 @@ impl OperationEntry {
         self.call.access(world)
     }
 
-    pub fn request_schema(&self) -> Value {
-        self.call.request_schema()
+    pub fn request_schema(&self, world: &World) -> Value {
+        self.call.request_schema(world)
     }
 
-    pub fn reply_schema(&self) -> Value {
-        self.call.reply_schema()
+    pub fn reply_schema(&self, world: &World) -> Value {
+        self.call.reply_schema(world)
     }
 }
 

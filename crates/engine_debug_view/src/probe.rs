@@ -181,13 +181,14 @@ impl Readable for Probe {
     }
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, schemars::JsonSchema)]
 struct PixelProbe {
     pixel: [u32; 2],
     kind: Option<&'static str>,
     card: bool,
     level: u32,
     fading: bool,
+    #[schemars(with = "Option<std::collections::BTreeMap<String, bool>>")]
     passes: Option<Value>,
     object: Option<u32>,
     detail: Option<u32>,
@@ -311,12 +312,52 @@ pub(crate) struct ProbedRequest {}
 #[derive(Serialize, schemars::JsonSchema)]
 pub(crate) struct ProbedReply {
     probing: bool,
-    #[schemars(schema_with = "probed_fields")]
     probe: Option<Value>,
 }
 
-fn probed_fields(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    engine_core::shaped_by(generator.subschema_for::<Option<Value>>(), "debug_modes")
+fn probed_schema(world: &World) -> Value {
+    let mut definitions = serde_json::Map::new();
+    let mut probe =
+        engine_core::embedded(engine_core::schema_of::<PixelProbe>(), &mut definitions);
+    if let Some(fields) = probe.as_object_mut() {
+        fields.insert("additionalProperties".to_owned(), Value::Bool(false));
+    }
+    if let Some(properties) = probe.get_mut("properties").and_then(Value::as_object_mut) {
+        for mode in engine_core::members_in::<DebugModes>(world) {
+            let decoded = engine_core::embedded((mode.fields)(), &mut definitions);
+            for (name, field) in decoded
+                .get("properties")
+                .and_then(Value::as_object)
+                .into_iter()
+                .flatten()
+            {
+                properties
+                    .entry(name.clone())
+                    .or_insert_with(|| field.clone());
+            }
+        }
+        properties.insert(
+            "entity".to_owned(),
+            json!({ "anyOf": [{
+                "type": "object",
+                "properties": {
+                    "id": { "type": "string" },
+                    "scene": { "type": "string" },
+                    "name": { "type": "string" },
+                },
+                "required": ["id", "scene", "name"],
+                "additionalProperties": false,
+            }, { "type": "null" }] }),
+        );
+    }
+    let mut reply = engine_core::schema_of::<ProbedReply>();
+    if let Some(properties) = reply.get_mut("properties").and_then(Value::as_object_mut) {
+        properties.insert(
+            "probe".to_owned(),
+            json!({ "anyOf": [probe, { "type": "null" }] }),
+        );
+    }
+    engine_core::rooted(reply, definitions)
 }
 
 pub(crate) struct ProbedPixel;
@@ -334,6 +375,10 @@ impl Operation for ProbedPixel {
     );
     type Request = ProbedRequest;
     type Reply = ProbedReply;
+
+    fn reply_schema(world: &World) -> Value {
+        probed_schema(world)
+    }
 
     fn run(
         (probe, modes, (table, passes), ids): SystemParamItem<'_, '_, Self::Params>,

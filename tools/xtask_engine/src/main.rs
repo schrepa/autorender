@@ -72,17 +72,15 @@ fn execute() -> Result<(), Failure> {
     if task == "shaders" {
         return Ok(shader_report::run(&root, &options)?);
     }
+    if task == "generate" {
+        return Ok(authoring::generate(&root, &options)?);
+    }
     if let Some(argument) = options.first() {
         return Err(
             format!("unexpected argument {argument:?}; run `cargo xtask help` for usage").into(),
         );
     }
-    Ok(match task.as_str() {
-        "generate" => authoring::write_generated(&root),
-        _ => Err(format!(
-            "unknown command {task:?}; run `cargo xtask help` for usage"
-        )),
-    }?)
+    Err(format!("unknown command {task:?}; run `cargo xtask help` for usage").into())
 }
 
 fn commands() -> Vec<Command> {
@@ -145,7 +143,7 @@ fn authoring_commands() -> Vec<Command> {
                 CommandOption::flag("--as-prefab"),
             ],
         ),
-        Command::new("generate", []),
+        Command::new("generate", [CommandOption::flag("--check")]),
         Command::new(
             "new app",
             [CommandOption::taking("--project", "DIR").required()],

@@ -33,7 +33,7 @@ pub use jobs::{
     RecordParity, Shares,
 };
 pub use members::MembersOf;
-pub use needs::{Read, ReadKind};
+pub use needs::{PlaceUses, Read, ReadKind};
 pub use owners::{Shared, ValueKind};
 pub use record::{BrickRecord, PlainSystems, RecordExt, SectionRule};
 pub use registry::{

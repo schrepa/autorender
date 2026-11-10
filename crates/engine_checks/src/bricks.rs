@@ -1,15 +1,8 @@
-use std::any::TypeId;
-use std::collections::BTreeMap;
-
-use bevy_ecs::query::ComponentAccessKind;
-use bevy_ecs::schedule::graph::Direction;
-use bevy_ecs::schedule::{NodeId, ScheduleGraph, Schedules, SystemKey, SystemSet, SystemSetKey};
-use bevy_ecs::system::System;
 use bevy_ecs::world::World;
 use engine::Engine;
 use engine_core::{BrickList, PlaceDecl, ScenePasses, Smoke};
 use engine_place::PlaceKind;
-use engine_registry::{BrickRecord, BrickSet, ReadKind, Registry};
+use engine_registry::{BrickRecord, ReadKind, Registry};
 use engine_render::Installation;
 use serde_json::{Value, json};
 
@@ -17,14 +10,6 @@ use crate::install::List;
 use crate::{Package, Repository};
 
 pub const FILE: &str = "bricks.json";
-
-type Scheduled = Vec<(&'static str, String)>;
-
-#[derive(Default)]
-struct Uses {
-    writers: Scheduled,
-    readers: Scheduled,
-}
 
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
@@ -53,91 +38,10 @@ fn registry(world: &World) -> Result<&Registry, String> {
         .ok_or_else(|| "the engine holds no brick registry".to_owned())
 }
 
-fn uses(world: &mut World, packages: &[&'static str], places: &[TypeId]) -> BTreeMap<TypeId, Uses> {
-    let labels: Vec<_> = world
-        .resource::<Schedules>()
-        .iter()
-        .map(|(_, schedule)| schedule.label())
-        .collect();
-    let mut uses: BTreeMap<TypeId, Uses> = BTreeMap::new();
-    for label in labels {
-        let Some(mut schedule) = world.resource_mut::<Schedules>().remove(label) else {
-            continue;
-        };
-        let named = format!("{label:?}");
-        let graph = schedule.graph_mut();
-        for &package in packages {
-            let Some(set) = graph.system_sets.get_key(BrickSet(package).intern()) else {
-                continue;
-            };
-            for key in systems_under(graph, set) {
-                let Some(system) = graph.systems.get_mut(key) else {
-                    continue;
-                };
-                let access = system.initialize(world);
-                let Ok(kinds) = access.combined_access().try_iter_access() else {
-                    continue;
-                };
-                for kind in kinds {
-                    let Some(type_id) = world
-                        .components()
-                        .get_info(*kind.index())
-                        .and_then(|info| info.type_id())
-                        .filter(|type_id| places.contains(type_id))
-                    else {
-                        continue;
-                    };
-                    let used = uses.entry(type_id).or_default();
-                    let side = match kind {
-                        ComponentAccessKind::Exclusive(_) => &mut used.writers,
-                        ComponentAccessKind::Shared(_) | ComponentAccessKind::Archetypal(_) => {
-                            &mut used.readers
-                        }
-                    };
-                    if !side
-                        .iter()
-                        .any(|(brick, at)| *brick == package && *at == named)
-                    {
-                        side.push((package, named.clone()));
-                    }
-                }
-            }
-        }
-        world.resource_mut::<Schedules>().insert(schedule);
-    }
-    uses
-}
-
-fn systems_under(graph: &ScheduleGraph, set: SystemSetKey) -> Vec<SystemKey> {
-    let hierarchy = graph.hierarchy();
-    let mut stack = vec![NodeId::Set(set)];
-    let mut seen: Vec<NodeId> = Vec::new();
-    let mut systems: Vec<SystemKey> = Vec::new();
-    while let Some(node) = stack.pop() {
-        for child in hierarchy.neighbors_directed(node, Direction::Outgoing) {
-            if seen.contains(&child) {
-                continue;
-            }
-            seen.push(child);
-            match child {
-                NodeId::System(system) => systems.push(system),
-                NodeId::Set(_) => stack.push(child),
-            }
-        }
-    }
-    systems
-}
-
 fn smokes(smokes: &[Smoke]) -> Vec<Value> {
     smokes
         .iter()
         .map(|smoke| json!({ "name": smoke.name }))
-        .collect()
-}
-
-fn scheduled(used: &Scheduled) -> Vec<Value> {
-    used.iter()
-        .map(|(brick, schedule)| json!({ "brick": brick, "schedule": schedule }))
         .collect()
 }
 
@@ -209,12 +113,12 @@ fn record(
     })
 }
 
-fn places(registry: &Registry, uses: &BTreeMap<TypeId, Uses>) -> Vec<Value> {
+fn places(registry: &Registry) -> Vec<Value> {
     registry
         .catalog()
         .iter()
         .map(|decl| {
-            let used = uses.get(&decl.type_id());
+            let used = registry.place_uses(decl);
             json!({
                 "name": decl.name(),
                 "kind": kind(decl),
@@ -222,8 +126,8 @@ fn places(registry: &Registry, uses: &BTreeMap<TypeId, Uses>) -> Vec<Value> {
                 "members": registry.members(decl.type_id()).collect::<Vec<_>>(),
                 "contract": decl.wgsl().is_some(),
                 "smokes": smokes(decl.smokes()),
-                "writers": used.map(|used| scheduled(&used.writers)),
-                "readers": used.map(|used| scheduled(&used.readers)),
+                "writers": used.writers,
+                "readers": used.readers,
                 "face_readers": registry
                     .reads()
                     .iter()
@@ -259,18 +163,7 @@ pub fn bricks_json(
     engine: &mut Engine,
 ) -> Result<String, String> {
     let installed = crate::install::noop(engine)?;
-    let world = engine.app.world_mut();
-    let (packages, places) = {
-        let registry = registry(world)?;
-        let packages: Vec<&'static str> = registry.names().collect();
-        let places: Vec<TypeId> = registry
-            .catalog()
-            .iter()
-            .map(|decl| decl.type_id())
-            .collect();
-        (packages, places)
-    };
-    let uses = uses(world, &packages, &places);
+    let world = engine.app.world();
     let kind_passes = world
         .get_resource::<ScenePasses>()
         .map(ScenePasses::kind_table)
@@ -284,7 +177,7 @@ pub fn bricks_json(
         .collect();
     let text = serde_json::to_string_pretty(&json!({
         "bricks": bricks,
-        "places": self::places(registry, &uses),
+        "places": self::places(registry),
         "left_out": registry.left_out(),
         "unmet": registry.unmet(),
         "kind_passes": kind_passes,

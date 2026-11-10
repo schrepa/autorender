@@ -10,7 +10,7 @@ use engine_core::{
     JobExchange, MaterialHandle, Mover, Pace, Parent, PresentationState, Refusal, TextureHandle,
     Transform,
 };
-use engine_registry::{BrickRecord, OperationEntry, OperationScene, Registry};
+use engine_registry::{BrickRecord, OperationScene, Registry};
 use engine_scene::{SceneEntity, SceneInstance, SceneMaterial, TextureOrigin};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -240,7 +240,7 @@ impl DevTools {
 fn verb_schema(world: &World, verb: Verb) -> Value {
     world.get_resource::<Registry>().map_or_else(
         || json!({ "type": "object" }),
-        |registry| crate::schemas::verb_schema(registry, verb),
+        |registry| crate::schemas::verb_schema(world, registry, verb),
     )
 }
 
@@ -628,7 +628,7 @@ impl DevTools {
             at: registered.map(|operation| source_line(operation.at)),
             shows: shows.filter(|shows| !shows.is_empty()),
             args: operation_args(&verb_schema(world, verb), name),
-            reply: registered.map(OperationEntry::reply_schema),
+            reply: registered.map(|operation| operation.reply_schema(world)),
         })
     }
 

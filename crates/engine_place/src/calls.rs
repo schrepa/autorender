@@ -10,13 +10,15 @@ use bevy_ecs::world::World;
 use engine_codec::Allowed;
 use engine_settings::{Error, ErrorCode, Expected};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::Value;
+use serde_json::{Map, Value};
 
 use crate::feeds::{Feed, StoreId};
 
 pub const RESERVED_REPLY_KEYS: [&str; 4] = ["observation", "paused", "source", "rendering"];
 
-pub const SHAPED_BY: &str = "x-shaped-by";
+pub const SCENE_SCHEMA: &str = "scene.schema.json";
+
+pub const AUTHORED_COMPONENTS: &str = "/$defs/SceneObject/properties";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -157,9 +159,19 @@ pub trait Operation: Send + Sync + 'static {
         params: SystemParamItem<'_, '_, Self::Params>,
         request: Self::Request,
     ) -> Result<Self::Reply, Error>;
+
+    fn request_schema(_: &World) -> Value {
+        schema_of::<Self::Request>()
+    }
+
+    fn reply_schema(_: &World) -> Value {
+        schema_of::<Self::Reply>()
+    }
 }
 
 pub type NamedRun = fn(&mut World, Value) -> Result<Value, Error>;
+
+pub type SchemaIn = fn(&World) -> Value;
 
 #[derive(Clone, Copy)]
 pub struct Call {
@@ -169,8 +181,8 @@ pub struct Call {
     operation: fn() -> TypeId,
     run: NamedRun,
     access: fn(&mut World) -> FilteredAccessSet,
-    request: fn() -> Value,
-    reply: fn() -> Value,
+    request: SchemaIn,
+    reply: SchemaIn,
 }
 
 impl Call {
@@ -182,8 +194,8 @@ impl Call {
             operation: TypeId::of::<O>,
             run: run_named::<O>,
             access: access_of::<O::Params>,
-            request: schema_of::<O::Request>,
-            reply: schema_of::<O::Reply>,
+            request: O::request_schema,
+            reply: O::reply_schema,
         }
     }
 
@@ -203,9 +215,14 @@ impl Call {
             operation: TypeId::of::<Request>,
             run,
             access: access_of::<()>,
-            request: schema_of::<Request>,
-            reply: schema_of::<Reply>,
+            request: schema_in::<Request>,
+            reply: schema_in::<Reply>,
         }
+    }
+
+    #[must_use]
+    pub const fn request_in(self, request: SchemaIn) -> Self {
+        Self { request, ..self }
     }
 
     #[must_use]
@@ -228,17 +245,86 @@ impl Call {
         (self.access)(world)
     }
 
-    pub fn request_schema(&self) -> Value {
-        (self.request)()
+    pub fn request_schema(&self, world: &World) -> Value {
+        (self.request)(world)
     }
 
-    pub fn reply_schema(&self) -> Value {
-        (self.reply)()
+    pub fn reply_schema(&self, world: &World) -> Value {
+        (self.reply)(world)
     }
 }
 
 pub fn schema_of<T: schemars::JsonSchema>() -> Value {
     schemars::schema_for!(T).to_value()
+}
+
+fn schema_in<T: schemars::JsonSchema>(_: &World) -> Value {
+    schema_of::<T>()
+}
+
+pub fn authored_component(key: &str) -> Value {
+    serde_json::json!({ "$ref": format!("{SCENE_SCHEMA}#{AUTHORED_COMPONENTS}/{key}") })
+}
+
+pub fn scene_references(schema: &Value) -> Vec<String> {
+    let mut found = Vec::new();
+    references_at(schema, &mut found);
+    found
+}
+
+fn references_at(schema: &Value, found: &mut Vec<String>) {
+    match schema {
+        Value::Object(fields) => {
+            for (key, value) in fields {
+                let pointer = value
+                    .as_str()
+                    .filter(|_| key == "$ref")
+                    .and_then(|target| target.strip_prefix(SCENE_SCHEMA))
+                    .and_then(|rest| rest.strip_prefix('#'));
+                match pointer {
+                    Some(pointer) => found.push(pointer.to_owned()),
+                    None => references_at(value, found),
+                }
+            }
+        }
+        Value::Array(values) => {
+            for value in values {
+                references_at(value, found);
+            }
+        }
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
+    }
+}
+
+pub fn embedded(mut schema: Value, definitions: &mut Map<String, Value>) -> Value {
+    if let Some(fields) = schema.as_object_mut() {
+        fields.remove("$schema");
+        if let Some(Value::Object(theirs)) = fields.remove("$defs") {
+            for (name, definition) in theirs {
+                definitions.entry(name).or_insert(definition);
+            }
+        }
+    }
+    schema
+}
+
+pub fn rooted(mut schema: Value, definitions: Map<String, Value>) -> Value {
+    if definitions.is_empty() {
+        return schema;
+    }
+    if let Some(fields) = schema.as_object_mut() {
+        match fields.get_mut("$defs") {
+            Some(Value::Object(held)) => {
+                for (name, definition) in definitions {
+                    held.entry(name).or_insert(definition);
+                }
+            }
+            Some(_) | None => {
+                fields.insert("$defs".to_owned(), Value::Object(definitions));
+            }
+        }
+    }
+    schema
 }
 
 pub fn open_schema(schema: &Value) -> bool {
@@ -273,9 +359,6 @@ fn open_at(schema: &Value, at: &str, found: &mut Vec<String>) {
             return;
         }
     };
-    if fields.contains_key(SHAPED_BY) {
-        return;
-    }
     if open_schema(schema) {
         found.push(at.to_owned());
         return;
@@ -298,11 +381,6 @@ fn open_at(schema: &Value, at: &str, found: &mut Vec<String>) {
             _ => {}
         }
     }
-}
-
-pub fn shaped_by(mut schema: schemars::Schema, by: &str) -> schemars::Schema {
-    schema.insert(SHAPED_BY.to_owned(), Value::String(by.to_owned()));
-    schema
 }
 
 pub fn access_of<P: SystemParam + 'static>(world: &mut World) -> FilteredAccessSet {
@@ -370,12 +448,7 @@ pub struct EventPage {
     pub first: u64,
     pub next: u64,
     pub missed: u64,
-    #[schemars(schema_with = "event_rows")]
     pub rows: Vec<Value>,
-}
-
-fn event_rows(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    shaped_by(generator.subschema_for::<Vec<Value>>(), "event")
 }
 
 pub type ReadEvents = fn(&World, &dyn EntityIds, u64) -> Result<EventPage, Error>;

@@ -31,6 +31,7 @@ pub(crate) fn member(name: &'static str) -> DebugMode {
     DebugMode {
         name,
         decode: no_fields,
+        fields: no_field_schema,
     }
 }
 
@@ -40,6 +41,10 @@ pub(crate) fn name(mode: &DebugMode) -> &'static str {
 
 fn no_fields(_: Option<DrawKind>, _: [u32; 4], _: [f32; 4]) -> Value {
     Value::Null
+}
+
+fn no_field_schema() -> Value {
+    serde_json::json!({ "type": "null" })
 }
 
 fn named_mode(view: &DebugView, modes: &Joined<'_, DebugModes>) -> Option<Drawn> {

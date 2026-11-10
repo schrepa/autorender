@@ -239,7 +239,7 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
         &["check", "-p", &name, "--target", WASM_TARGET],
     )?;
     run(root, "cargo", &["run", "-q", "-p", "kinds"])?;
-    crate::authoring::write_generated(root)?;
+    crate::authoring::generate(root, &[])?;
     println!(
         "{}",
         json!({

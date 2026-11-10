@@ -52,6 +52,7 @@ impl Slot for DebugShown {
 pub struct DebugMode {
     pub name: &'static str,
     pub decode: fn(kind: Option<DrawKind>, ids: [u32; 4], color: [f32; 4]) -> serde_json::Value,
+    pub fields: fn() -> serde_json::Value,
 }
 
 pub struct DebugModes;

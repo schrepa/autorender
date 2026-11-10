@@ -28,9 +28,10 @@ use serde_json::Value;
 pub use asks::{Applied, AppliedView, ApplyAt, Ask, Asked, AskedView, Moment, PendingView};
 pub use budget::{BudgetUse, FrameBudget};
 pub use calls::{
-    Call, Each, EntityIds, Event, EventDecl, EventPage, Lands, NamedRun, Operation,
-    RESERVED_REPLY_KEYS, Raises, ReadEvents, Refusal, Rows, SHAPED_BY, access_of, answer,
-    missing_events, open_parts, open_schema, page_of, schema_of, shaped_by,
+    AUTHORED_COMPONENTS, Call, Each, EntityIds, Event, EventDecl, EventPage, Lands, NamedRun,
+    Operation, RESERVED_REPLY_KEYS, Raises, ReadEvents, Refusal, Rows, SCENE_SCHEMA, SchemaIn,
+    access_of, answer, authored_component, embedded, missing_events, open_parts, open_schema,
+    page_of, rooted, scene_references, schema_of,
 };
 pub use drawn::{
     DrawKind, Drawn, DrawnBounds, DrawnProjection, InstanceValues, KindDecl, KindSkip, Layers,

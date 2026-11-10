@@ -18,7 +18,11 @@ pub(crate) const MODES: [(&str, u32); 2] = [
 ];
 
 pub(crate) fn member(name: &'static str) -> DebugMode {
-    DebugMode { name, decode: sun }
+    DebugMode {
+        name,
+        decode: sun,
+        fields: engine_core::schema_of::<SunProbe>,
+    }
 }
 
 pub(crate) fn shown(shown: DebugShown) -> u32 {
@@ -28,7 +32,7 @@ pub(crate) fn shown(shown: DebugShown) -> u32 {
     MODES.get(shown.local as usize).map_or(0, |(_, code)| *code)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum SunLookup {
     None,
@@ -37,7 +41,7 @@ enum SunLookup {
     Beyond,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 struct SunProbe {
     sun: SunLookup,
     sun_index: u32,

@@ -132,6 +132,13 @@ impl Operation for TerrainInspect {
     type Request = Self;
     type Reply = TerrainView;
 
+    fn reply_schema(world: &World) -> Value {
+        crate::scene::closed_layers(
+            engine_core::schema_of::<TerrainView>(),
+            &engine_core::SceneCx::of(world),
+        )
+    }
+
     fn run(
         (terrains, scenes, ids): SystemParamItem<'_, '_, Self::Params>,
         request: Self,

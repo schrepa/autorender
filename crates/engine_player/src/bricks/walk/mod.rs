@@ -57,7 +57,10 @@ impl Brick for PlayerWalkBrick {
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .stats::<PlayerWalkStats>()
-            .join::<SceneComponents>(ComponentKind::of::<Walker>("walker"), None)
+            .join::<SceneComponents>(
+                ComponentKind::of::<Walker>("walker").schema(walker_schema),
+                None,
+            )
             .join::<Verbs>(MOVE, None)
             .resource::<Walking>()
             .moves::<Walker>(Pace::Tick)
@@ -66,6 +69,10 @@ impl Brick for PlayerWalkBrick {
 }
 
 const WORLD_LAYER: u32 = 1;
+
+fn walker_schema() -> serde_json::Value {
+    serde_json::json!({ "title": "Walker", "type": "object", "additionalProperties": false })
+}
 
 fn steered(
     input: &Input,

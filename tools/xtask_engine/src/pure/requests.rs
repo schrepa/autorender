@@ -15,6 +15,8 @@ use super::Observations;
 const FIXTURES: &str = "tools/xtask_engine/pure/requests.json";
 const SCENES: &str = "tools/xtask_engine/pure/scenes.json";
 const AUTHORING: &str = "target/pure/requests";
+const WALK_ROUNDS: u32 = 60;
+const WALK_TICKS: u32 = 30;
 
 const BRIDGE: &str = "the agent bridge and its sessions answer it (web/scripts/agent*.mjs)";
 const PAGE: &str = "the page answers it (web/src/engine/dev.ts and the benchmark it runs)";
@@ -119,10 +121,6 @@ const UNREACHED: &[(&str, &str)] = &[
     ),
     ("missing_runtime_identity", BRIDGE),
     ("module_outside_brick", APP_BUILD),
-    (
-        "nav_steps_not_taken",
-        "navigation records it when a walking agent's step is not applied by the next tick (crates/engine_navigation); requests run no ticks with agents, and the walker_without_grounding_is_refused smoke reaches it",
-    ),
     ("not_inherited", CHECKS),
     ("origin_rejected", BRIDGE),
     (
@@ -220,6 +218,7 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
             ),
             "register" => register(refusal),
             "authoring" => authoring(root, refusal)?,
+            "walk" => walked(refusal)?,
             _ => match (refusal["engine"].as_str(), refusal["scene"].as_str()) {
                 (Some("bare"), _) => query(&tools, &mut bare, None, &source),
                 (Some("without assets"), _) => {
@@ -372,6 +371,30 @@ fn control(
         Control::Operation(call) => call.apply(engine, scene).err(),
         Control::Host(_) => None,
     }
+}
+
+fn walked(refusal: &Value) -> Result<Option<Error>, String> {
+    let mut engine = engine_with_features()?;
+    let scene = instantiate(&mut engine, &refusal["document"].to_string())?;
+    let id = refusal["entity"].as_str().unwrap_or_default();
+    let entity = scene
+        .entity(id)
+        .ok_or_else(|| format!("the walk refusal's scene holds no entity {id}"))?;
+    let part = refusal["part"].as_str().unwrap_or_default();
+    for _ in 0..WALK_ROUNDS {
+        engine
+            .step_fixed(WALK_TICKS)
+            .map_err(|error| error.to_string())?;
+        let refused = engine
+            .app
+            .world()
+            .get_resource::<engine_core::Refusals>()
+            .and_then(|refusals| refusals.reason(entity, part).cloned());
+        if refused.is_some() {
+            return Ok(refused);
+        }
+    }
+    Ok(None)
 }
 
 fn register(refusal: &Value) -> Option<Error> {

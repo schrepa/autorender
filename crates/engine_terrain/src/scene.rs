@@ -37,7 +37,6 @@ pub struct SceneTerrain {
     #[schemars(range(min = crate::Pyramid::MIN_SPACING, max = crate::Pyramid::MAX_SPACING))]
     pub spacing: Option<f32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    #[schemars(schema_with = "layer_shapes")]
     pub layers: Vec<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<SceneTerrainSurface>,
@@ -50,10 +49,6 @@ pub struct SceneTerrain {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = crate::MAX_GIVEN_RIVERS))]
     pub rivers: Vec<SceneTerrainRiver>,
-}
-
-fn layer_shapes(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    engine_core::shaped_by(generator.subschema_for::<Vec<Value>>(), "terrain_layer")
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
@@ -840,6 +835,28 @@ fn terrain_schema(cx: &SceneCx<'_>) -> Value {
     fields.insert("$defs".to_owned(), Value::Object(definitions));
     schema
 }
+
+pub(crate) fn closed_layers(mut schema: Value, cx: &SceneCx<'_>) -> Value {
+    let Some(fields) = schema.as_object_mut() else {
+        return schema;
+    };
+    let mut definitions = match fields.remove("$defs") {
+        Some(Value::Object(definitions)) => definitions,
+        Some(_) | None => serde_json::Map::new(),
+    };
+    let layers = layer_list_schema(&listed(cx), &mut definitions);
+    if let Some(properties) = definitions
+        .get_mut(TERRAIN_DEFINITION)
+        .and_then(|terrain| terrain.get_mut("properties"))
+        .and_then(Value::as_object_mut)
+    {
+        properties.insert("layers".to_owned(), layers);
+    }
+    fields.insert("$defs".to_owned(), Value::Object(definitions));
+    schema
+}
+
+const TERRAIN_DEFINITION: &str = "SceneTerrain";
 
 const PREFETCH: &str = "prefetch";
 
