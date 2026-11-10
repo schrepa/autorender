@@ -209,6 +209,7 @@ fn brick_answer(world: &World, brick: &str) -> Result<BrickWhy, Error> {
     let problems: Vec<Refusal> = registry
         .problems()
         .iter()
+        .chain(registry.unmet())
         .filter(|problem| problem.path.starts_with(&prefix))
         .map(Refusal::of)
         .collect();

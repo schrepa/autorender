@@ -125,6 +125,16 @@ pub(crate) struct AppHost {
     attribution: attribution::Attribution,
 }
 
+fn log_unmet(engine: &Engine) {
+    for error in engine.unmet() {
+        let record = serde_json::json!({"event": "unmet", "error": error});
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::warn_1(&wasm_bindgen::JsValue::from_str(&record.to_string()));
+        #[cfg(not(target_arch = "wasm32"))]
+        eprintln!("{record}");
+    }
+}
+
 #[inline(never)]
 fn built(build: impl FnOnce() -> Result<Engine>) -> Result<Engine> {
     build()
@@ -146,6 +156,7 @@ impl AppHost {
         let renderer = Box::new(starting.finish().await?);
         let mut host = Self::with(engine, renderer, display_paced);
         host.claim_passes()?;
+        log_unmet(&host.engine);
         Ok(host)
     }
 

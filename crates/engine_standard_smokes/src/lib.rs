@@ -9,6 +9,7 @@ mod calls;
 mod empty;
 mod ground;
 mod image;
+mod partners;
 mod poses;
 pub mod requests;
 
@@ -38,6 +39,10 @@ impl Brick for StandardSmokesBrick {
         Smoke {
             name: "empty_scene_settles",
             run: empty::run,
+        },
+        Smoke {
+            name: "missing_partners_are_reported",
+            run: partners::run,
         },
     ];
 

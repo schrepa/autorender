@@ -630,15 +630,19 @@ pub(crate) fn install(
         .get_resource::<engine_core::FoldOrder>()
         .map(|order| crate::shared::unknown_steps(&built.applied, order))
         .unwrap_or_default();
-    if let Some(mut registry) = world.get_resource_mut::<Registry>() {
-        for problem in &built.machine.over_limit {
-            registry.report(problem.clone());
-        }
-        crate::needs::report(&built.machine, &scenes, &mut registry);
-        for error in unknown {
-            registry.report_unmet(error);
-        }
-    }
+    let needing = world
+        .get_resource_mut::<Registry>()
+        .map(|mut registry| {
+            for problem in &built.machine.over_limit {
+                registry.report(problem.clone());
+            }
+            for error in unknown {
+                registry.report_unmet(error);
+            }
+            crate::needs::report(&built.machine, &scenes, &mut registry)
+        })
+        .unwrap_or_default();
+    engine_registry::hold_unmet(world, needing);
     Ok(built)
 }
 

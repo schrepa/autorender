@@ -1,4 +1,4 @@
-use engine_core::PresentationState;
+use engine_core::{PresentationState, Refusal};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -52,6 +52,7 @@ pub struct StatusResult {
     pub inspectors: usize,
     pub culling_enabled: bool,
     pub features: Option<Vec<&'static str>>,
+    pub unmet: Vec<Refusal>,
     pub presentation: PresentationState,
     pub fixed_delta_seconds: Option<f32>,
     pub limits: StatusLimits,

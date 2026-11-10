@@ -1153,15 +1153,17 @@ impl Registry {
                     providers: filler.into_iter().collect(),
                 });
             }
-            if filler.is_none() && !readers.is_empty() {
-                unmet.push(
-                    Error::new(
-                        ErrorCode::PlaceNotFilled,
-                        format!("$.places.{}", decl.name()),
-                    )
-                    .got(&readers)
-                    .nearest(self.could_provide(decl.name())),
-                );
+            if filler.is_none() {
+                for &reader in &readers {
+                    unmet.push(
+                        Error::new(
+                            ErrorCode::PlaceNotFilled,
+                            format!("$.bricks.{reader}.reads.{}", decl.name()),
+                        )
+                        .expected(Expected::Present)
+                        .nearest(self.could_provide(decl.name())),
+                    );
+                }
             }
         }
         (reads, unmet)

@@ -7,7 +7,8 @@ use std::{collections::BTreeMap, io::Write};
 use bevy_ecs::prelude::{Component, Entity, Resource, World};
 use engine_core::{
     AssetLibrary, Drawn, Engine, FixedTime, FrameTime, GeometryHandle, GlobalTransforms,
-    JobExchange, MaterialHandle, Mover, Pace, Parent, PresentationState, TextureHandle, Transform,
+    JobExchange, MaterialHandle, Mover, Pace, Parent, PresentationState, Refusal, TextureHandle,
+    Transform,
 };
 use engine_registry::{BrickRecord, OperationEntry, OperationScene, Registry};
 use engine_scene::{SceneEntity, SceneInstance, SceneMaterial, TextureOrigin};
@@ -487,6 +488,7 @@ impl DevTools {
             inspectors: self.all_inspectors(&bricks).count(),
             culling_enabled: frustum_culling(world),
             features: registry.map(|registry| registry.names().collect()),
+            unmet: engine.unmet().iter().map(Refusal::of).collect(),
             presentation: *engine.presentation(),
             fixed_delta_seconds: world
                 .get_resource::<FixedTime>()

@@ -563,6 +563,13 @@ impl Engine {
         self.app.world().resource::<Readiness>()
     }
 
+    pub fn unmet(&self) -> &[Error] {
+        self.app
+            .world()
+            .get_resource::<Registry>()
+            .map_or(&[], Registry::unmet)
+    }
+
     pub fn budget(&self) -> &FrameBudget {
         self.app.world().resource::<FrameBudget>()
     }
