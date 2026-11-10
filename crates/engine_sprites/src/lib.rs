@@ -1,29 +1,43 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
-mod flat;
-
+use std::collections::BTreeMap;
 use std::ops::Range;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asset, AssetResidency, AssetUses, AttachPoint, Attributes, Brick, Bricks, ComponentKind,
-    DrawKind, Drawn, DrawnPoses, DrawnTable, Error, ErrorCode, GlobalTransforms, KindDecl, KindSkip,
-    PassViews, Refusals,
-    SceneComponents, ScenePass, Schedule, Source, Spawner, TargetName, TextureHandle, ViewFacts,
-    gpu_struct,
+    AlphaMode, Asset, AssetLibrary, AssetResidency, AssetUses, Attributes, BASE_COLOR_MAP, Brick,
+    Bricks, ComponentKind, Cull, DrawKind, Drawn, DrawnPoses, DrawnTable, Error, ErrorCode,
+    GlobalTransforms, KindDecl, KindSkip, LightingModel, MAPPED, Material, MaterialHandle,
+    PassRole, Refusals, Sampler, SceneComponents, Schedule, Source, Spawner, SurfaceSlot,
+    TextureHandle, TextureRef, gpu_struct,
 };
 use engine_render::{
-    Allocation, Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, Pipeline, Prepare,
-    RenderBricks, RenderPipeline, Scene, SceneDraw, Shape, wgpu,
+    Allocation, Bind, Buffer, Draw, Form, FormSide, GpuPart, Install, KindForm, Lifetime, Prepare,
+    RenderBricks, Scene, SceneDraw, Shape, Varyings,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-pub use flat::{DARK, LIGHT};
-
 pub const SPRITES: DrawKind = DrawKind("sprites");
 
+pub const SPRITE_PART: &str = "sprite";
+
+const SHEET_CUTOFF: f32 = 0.5;
+
 const GENERATED: &[&str] = &[<SpriteInstance as engine_core::GpuStruct>::WGSL];
+
+const FORM: KindForm = KindForm {
+    kind: SPRITES,
+    placed: FormSide {
+        vertex: shaders::sprites::draw::VS_SPRITE,
+        streams: &[],
+    },
+    owned: Some(FormSide {
+        vertex: shaders::sprites::draw::VS_SPRITE_VIEW,
+        streams: &[],
+    }),
+    varyings: Varyings::SurfaceExtra,
+};
 
 #[derive(
     Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema,
@@ -56,11 +70,11 @@ impl Brick for SpritesBrick {
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .join::<SceneComponents>(
-                ComponentKind::of::<Sprite>("sprite")
-                    .schema(sprite_schema),
+                ComponentKind::of::<Sprite>("sprite").schema(sprite_schema),
                 None,
             )
-            .systems(Schedule::ViewSync, (judge_sprites, publish_sheets))
+            .resource::<SheetMaterials>()
+            .systems(Schedule::ViewSync, publish_sheets)
             .on_remove::<Sprite, _>(forget_sprite)
             .generated(GENERATED)
             .draw_kind(KindDecl {
@@ -84,23 +98,52 @@ impl Brick for SpritesBrick {
 #[derive(Component)]
 struct Sheets;
 
-pub const SPRITE_PART: &str = "sprite";
+enum SheetMaterial {
+    Made(MaterialHandle),
+    Refused(Error),
+}
 
-type ChangedSprites = (With<Sprite>, Or<(Added<Sprite>, Changed<Drawn>)>);
+#[derive(Resource, Default)]
+struct SheetMaterials {
+    made: BTreeMap<TextureHandle, SheetMaterial>,
+}
 
-fn judge_sprites(
-    sprites: Query<(Entity, &Drawn), ChangedSprites>,
-    mut refusals: ResMut<Refusals>,
-) {
-    for (entity, drawn) in &sprites {
-        let verdict = if drawn.kind == SPRITES {
-            Ok(())
-        } else {
-            Err(Error::new(ErrorCode::UsageConflict, "$.sprite")
-                .got(drawn.kind.name())
-                .nearest(SPRITES.name()))
-        };
-        refusals.judge(entity, SPRITE_PART, verdict);
+impl SheetMaterials {
+    fn material(&self, sheet: TextureHandle) -> Option<MaterialHandle> {
+        match self.made.get(&sheet)? {
+            SheetMaterial::Made(material) => Some(*material),
+            SheetMaterial::Refused(_) => None,
+        }
+    }
+}
+
+fn sheet_material(sheet: TextureHandle) -> Result<Material, Error> {
+    Ok(Material::new([1.0; 4])?
+        .with_map(
+            BASE_COLOR_MAP,
+            TextureRef::new(sheet).with_sampler(Sampler::NEAREST),
+        )?
+        .with_slot(SurfaceSlot::BaseColor.name(), MAPPED)?
+        .with_slot(SurfaceSlot::Opacity.name(), MAPPED)?
+        .with_alpha_mode(AlphaMode::Mask {
+            cutoff: SHEET_CUTOFF,
+        })?
+        .with_cull(Cull::None)
+        .with_lighting(LightingModel::Unlit))
+}
+
+fn sprite_verdict(drawn: &Drawn, sprite: &Sprite, sheets: &SheetMaterials) -> Result<(), Error> {
+    if drawn.kind != SPRITES {
+        return Err(Error::new(ErrorCode::UsageConflict, "$.sprite")
+            .got(drawn.kind.name())
+            .nearest(SPRITES.name()));
+    }
+    if drawn.material.is_some() {
+        return Ok(());
+    }
+    match sheets.made.get(&sprite.sheet) {
+        Some(SheetMaterial::Refused(error)) => Err(error.clone()),
+        Some(SheetMaterial::Made(_)) | None => Ok(()),
     }
 }
 
@@ -109,189 +152,211 @@ fn forget_sprite(In(entity): In<Entity>, mut refusals: ResMut<Refusals>) {
 }
 
 fn publish_sheets(
-    sprites: Query<(Entity, &Sprite)>,
-    globals: Res<GlobalTransforms>,
-    residency: Res<AssetResidency>,
+    sprites: Query<(Entity, &Sprite, &Drawn)>,
+    (globals, residency): (Res<GlobalTransforms>, Res<AssetResidency>),
+    mut assets: ResMut<AssetLibrary>,
+    mut sheets: ResMut<SheetMaterials>,
+    mut refusals: ResMut<Refusals>,
     own: Query<(Entity, &AssetUses), With<Sheets>>,
     mut spawner: Spawner<SpritesBrick>,
 ) {
-    let mut wanted: Vec<Asset> = sprites
+    let mut wanted: Vec<TextureHandle> = sprites
         .iter()
-        .filter(|(entity, _)| globals.pose(*entity).is_some())
-        .map(|(_, sprite)| Asset::Texture(sprite.sheet))
+        .filter(|(entity, _, drawn)| drawn.material.is_none() && globals.pose(*entity).is_some())
+        .map(|(_, sprite, _)| sprite.sheet)
         .collect();
     wanted.sort_unstable();
     wanted.dedup();
+    sheets.made.retain(|sheet, held| {
+        let made = match &*held {
+            SheetMaterial::Made(material) => Some(*material),
+            SheetMaterial::Refused(_) => None,
+        };
+        let live = made.is_none_or(|material| assets.material(material).is_some());
+        let kept = live && wanted.binary_search(sheet).is_ok();
+        if let (false, Some(material)) = (kept, made) {
+            assets.remove_material(material);
+        }
+        kept
+    });
+    for &sheet in &wanted {
+        sheets.made.entry(sheet).or_insert_with(|| {
+            match sheet_material(sheet).and_then(|material| assets.insert_material(material)) {
+                Ok(material) => SheetMaterial::Made(material),
+                Err(error) => SheetMaterial::Refused(error),
+            }
+        });
+    }
+    for (entity, sprite, drawn) in &sprites {
+        refusals.judge(entity, SPRITE_PART, sprite_verdict(drawn, sprite, &sheets));
+    }
+    let mut held: Vec<Asset> = sheets
+        .made
+        .values()
+        .filter_map(|made| match made {
+            SheetMaterial::Made(material) => Some(Asset::Material(*material)),
+            SheetMaterial::Refused(_) => None,
+        })
+        .collect();
+    held.sort_unstable();
     match own.single() {
-        Ok((entity, held)) => {
-            if held.assets() != wanted.as_slice() {
-                spawner.insert(entity, AssetUses::new(&residency, wanted));
+        Ok((entity, uses)) => {
+            if uses.assets() != held.as_slice() {
+                spawner.insert(entity, AssetUses::new(&residency, held));
             }
         }
         Err(_) => {
-            spawner.spawn((Sheets, AssetUses::new(&residency, wanted)));
+            spawner.spawn((Sheets, AssetUses::new(&residency, held)));
         }
     }
 }
 
-struct SpritesGpu {
-    flat: flat::Flat,
-    pipelines: Vec<(&'static str, Pipeline<Self, Scene>)>,
-    instances: Buffer<Self>,
-    staged: Vec<SpriteInstance>,
-    runs: Vec<(TextureHandle, Range<u32>)>,
-    drawn: Vec<(&'static str, Pipeline<Self, Scene>, Range<u32>)>,
+struct SpriteRun {
+    material: MaterialHandle,
+    blended: bool,
+    instances: Range<u32>,
 }
 
-fn drawn_in(cx: &Install<'_, SpritesGpu>) -> Vec<ScenePass> {
-    cx.passes()
-        .listed()
-        .iter()
-        .filter(|listed| {
-            listed.bit.is_some()
-                && cx.passes().takes(listed, SPRITES)
-                && listed.pass.views != PassViews::Owned
-                && listed.pass.at != AttachPoint::Transparent
-        })
-        .copied()
-        .collect()
+struct SpritesGpu {
+    form: Form<Self>,
+    instances: Buffer<Self>,
+    staged: Vec<SpriteInstance>,
+    runs: Vec<SpriteRun>,
+    rows: u32,
 }
 
 impl GpuPart for SpritesGpu {
     type Reads = (
         (Query<'static, 'static, &'static Sprite>, Res<'static, DrawnTable>),
         (Res<'static, GlobalTransforms>, Res<'static, DrawnPoses>),
+        (
+            Res<'static, SheetMaterials>,
+            Res<'static, AssetLibrary>,
+            Res<'static, AssetResidency>,
+        ),
     );
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use shaders::sprites::draw;
-        let listed = drawn_in(cx);
-        let flat = flat::Flat::install(cx, &listed)?;
         let instances = cx.buffer("instances", Lifetime::Kept);
-        let sampler = cx.sampler(engine_core::Sampler::NEAREST);
-        let mut pipelines = Vec::with_capacity(listed.len());
-        for listed in listed
-            .iter()
-            .filter(|listed| listed.pass.writes.contains(TargetName::COLOR))
-        {
-            let pipeline = cx.render_pipeline(
-                Scene::named(listed.name),
-                &RenderPipeline {
-                    vertex: draw::VS_SPRITE,
-                    fragment: Some(draw::FS_SPRITE),
-                    vertices: &[],
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth: DepthUse::None,
-                    blend: None,
-                    writes: wgpu::ColorWrites::ALL,
-                },
-                &[
-                    (draw::INSTANCES, Bind::Buffer(instances)),
-                    (draw::SHEET, Bind::Asset),
-                    (draw::SHEET_SAMPLER, Bind::Sampler(sampler)),
-                ],
-            )?;
-            pipelines.push((listed.name, pipeline));
-        }
+        let form = cx.form(&FORM, &[(draw::INSTANCES, Bind::Buffer(instances))])?;
         Ok(Self {
-            flat,
-            pipelines,
+            form,
             instances,
             staged: Vec::new(),
             runs: Vec::new(),
-            drawn: Vec::new(),
+            rows: 0,
         })
     }
 
     fn prepare(
         &mut self,
-        ((sprites, table), (globals, poses)): SystemParamItem<'_, '_, Self::Reads>,
+        ((sprites, table), (globals, poses), (sheets, assets, residency)): SystemParamItem<
+            '_,
+            '_,
+            Self::Reads,
+        >,
         cx: &mut Prepare<'_, Self>,
     ) {
-        self.flat.prepare(cx);
-        stage(
+        self.rows = stage(
             (&sprites, &table),
             (&globals, &poses),
-            &mut self.staged,
-            &mut self.runs,
+            (&sheets, &assets, &residency),
+            (&mut self.staged, &mut self.runs),
         );
         let bytes = std::mem::size_of_val(self.staged.as_slice()) as u64;
         let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.instances, bytes);
         cx.write(self.instances, 0, &self.staged);
-        self.drawn.clear();
-        for (name, pipeline) in &self.pipelines {
-            for (sheet, range) in &self.runs {
-                self.drawn
-                    .push((*name, cx.fill(pipeline, &[*sheet]), range.clone()));
-            }
-        }
-    }
-
-    fn view(&mut self, view: &ViewFacts, _cx: &mut Prepare<'_, Self>) {
-        self.flat.view(view);
     }
 }
 
 impl SpritesGpu {
     fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
-        let name = scene.pass.name();
+        if self.runs.is_empty() {
+            return if self.rows == 0 {
+                0
+            } else {
+                draw.skip("sprite materials are not resident yet")
+            };
+        }
+        let Some(pipeline) = draw.form(&self.form) else {
+            return draw.skip("pass has no sprite form");
+        };
+        let blended = scene.role == PassRole::Blended;
         let mut drawn = 0;
-        for (_, pipeline, range) in self.drawn.iter().filter(|(pass, _, _)| *pass == name) {
+        for run in self.runs.iter().filter(|run| run.blended == blended) {
             draw.draw(
-                pipeline,
+                &pipeline,
                 Shape::Pulled {
                     vertices: 0..6,
-                    instances: range.clone(),
-                    material: None,
+                    instances: run.instances.clone(),
+                    material: Some(run.material),
                 },
             );
             drawn += 1;
         }
-        drawn + self.flat.draw(name, draw)
+        match (drawn, blended) {
+            (0, true) => draw.skip("no sprite material blends"),
+            (0, false) => draw.skip("every sprite material blends"),
+            _ => drawn,
+        }
     }
 }
 
 fn stage(
     (sprites, table): (&Query<&'static Sprite>, &DrawnTable),
     (globals, poses): (&GlobalTransforms, &DrawnPoses),
-    staged: &mut Vec<SpriteInstance>,
-    runs: &mut Vec<(TextureHandle, Range<u32>)>,
-) {
+    (sheets, assets, residency): (&SheetMaterials, &AssetLibrary, &AssetResidency),
+    (staged, runs): (&mut Vec<SpriteInstance>, &mut Vec<SpriteRun>),
+) -> u32 {
     staged.clear();
     runs.clear();
-    let mut sorted: Vec<(TextureHandle, SpriteInstance)> = table
-        .rows(SPRITES)
-        .filter_map(|(slot, entity, _)| {
-            let sprite = sprites.get(entity).ok()?;
-            let pose = poses.drawn_pose(globals, entity)?;
-            let place = [
-                pose.w_axis.x,
-                pose.w_axis.y,
-                pose.w_axis.z,
-                pose.x_axis.truncate().length(),
-            ];
-            Some((
-                sprite.sheet,
-                SpriteInstance {
-                    place,
-                    rect: sprite.rect,
-                    tint: sprite.tint,
-                    drawn: [slot, 0, 0, 0],
-                },
-            ))
-        })
-        .collect();
-    sorted.sort_by_key(|(sheet, _)| *sheet);
-    for (sheet, instance) in sorted {
+    let mut rows = 0;
+    let mut sorted: Vec<(bool, MaterialHandle, SpriteInstance)> = Vec::new();
+    for (slot, entity, drawn) in table.rows(SPRITES) {
+        rows += 1;
+        let (Ok(sprite), Some(pose)) = (sprites.get(entity), poses.drawn_pose(globals, entity))
+        else {
+            continue;
+        };
+        let Some(material) = drawn.material.or_else(|| sheets.material(sprite.sheet)) else {
+            continue;
+        };
+        if !residency.material_resident(material) {
+            continue;
+        }
+        let blended = assets
+            .material(material)
+            .is_some_and(|held| held.alpha_mode().blended());
+        let place = [
+            pose.w_axis.x,
+            pose.w_axis.y,
+            pose.w_axis.z,
+            pose.x_axis.truncate().length(),
+        ];
+        sorted.push((
+            blended,
+            material,
+            SpriteInstance {
+                place,
+                rect: sprite.rect,
+                tint: sprite.tint,
+                drawn: [slot, 0, 0, 0],
+            },
+        ));
+    }
+    sorted.sort_by_key(|(blended, material, _)| (*blended, *material));
+    for (blended, material, instance) in sorted {
         let at = staged.len() as u32;
         staged.push(instance);
-        let extends = runs.last().is_some_and(|(last, _)| *last == sheet);
-        if extends {
-            if let Some((_, range)) = runs.last_mut() {
-                range.end = at + 1;
-            }
-        } else {
-            runs.push((sheet, at..at + 1));
+        match runs.last_mut() {
+            Some(run) if run.material == material => run.instances.end = at + 1,
+            Some(_) | None => runs.push(SpriteRun {
+                material,
+                blended,
+                instances: at..at + 1,
+            }),
         }
     }
+    rows
 }
