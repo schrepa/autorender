@@ -1,10 +1,11 @@
+use std::fmt::Write as _;
 use std::marker::PhantomData;
 
 use engine_core::{
-    DepthBias, DrawKind, DropReason, Entry, Error, ErrorCode, PassRole, PassViews, Var,
+    DepthBias, DrawKind, DropReason, Entry, Error, ErrorCode, Module, PassRole, PassViews, Var,
 };
 
-use crate::install::{Faces, FragmentUse, Program, RenderDecl, Scoped};
+use crate::install::{Faces, FragmentUse, InstallCore, Program, RenderDecl, Scoped};
 use crate::{
     Bind, DEBUG_BLEND, DepthUse, Draw, FaceCull, GpuPart, Install, Own, Pipeline, Scene,
     VertexLayout, bound_list,
@@ -14,6 +15,13 @@ pub(crate) const KINDS_MODULE: &str = "engine::kinds";
 
 const MATERIAL_FACES: Faces = Faces::Material(FragmentUse::Always);
 
+pub(crate) const SURFACED_MODULE: &str = "generated::surfaced";
+
+const SURFACED_IMPORTS: [&str; 2] = [
+    "import package::engine::slots::shade;",
+    "import package::generated::writes::{Outputs, blended_outputs, outputs};",
+];
+
 #[derive(Clone, Copy, Debug)]
 pub enum Varyings {
     Surface,
@@ -21,6 +29,21 @@ pub enum Varyings {
     Object,
     ObjectExtra,
     Own(&'static OwnFragments),
+    Surfaced(&'static KindSurface),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct KindSurface {
+    pub module: Module,
+    pub varyings: &'static str,
+    pub point: &'static str,
+    pub own: OwnFragments,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct SurfacedEntries {
+    lit: Entry,
+    blended: Entry,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -363,27 +386,52 @@ fn fragment_use(role: PassRole) -> FragmentUse {
     }
 }
 
-fn fragment_of(role: PassRole, varyings: Varyings, views: PassViews) -> Option<Fragment> {
+fn own_faces(own: &OwnFragments) -> (Faces, Option<wgpu::Face>) {
+    match own.faces {
+        OwnFaces::Culled(cull) => (Faces::Declared, cull.face()),
+        OwnFaces::Material => (MATERIAL_FACES, Some(wgpu::Face::Back)),
+    }
+}
+
+fn own_fragment(own: &OwnFragments, role: PassRole, views: PassViews) -> Option<Fragment> {
+    let side = match views {
+        PassViews::Owned => &own.owned,
+        PassViews::Every | PassViews::Main => &own.placed,
+    };
+    let (faces, cull) = own_faces(own);
+    side.of(role).map(|entry| Fragment { entry, faces, cull })
+}
+
+fn surfaced_fragment(
+    own: &OwnFragments,
+    role: PassRole,
+    surfaced: Option<SurfacedEntries>,
+) -> Option<Fragment> {
+    let surfaced = surfaced?;
+    let entry = match role {
+        PassRole::Lit => surfaced.lit,
+        PassRole::Blended => surfaced.blended,
+        PassRole::Depth | PassRole::Shown => return None,
+    };
+    let (faces, cull) = own_faces(own);
+    Some(Fragment { entry, faces, cull })
+}
+
+fn fragment_of(
+    role: PassRole,
+    varyings: Varyings,
+    views: PassViews,
+    surfaced: Option<SurfacedEntries>,
+) -> Option<Fragment> {
     let name = match varyings {
         Varyings::Surface => generic_name(role, false),
         Varyings::SurfaceExtra => generic_name(role, true),
         Varyings::Object => object_name(role, false),
         Varyings::ObjectExtra => object_name(role, true),
-        Varyings::Own(own) => {
-            let side = match views {
-                PassViews::Owned => &own.owned,
-                PassViews::Every | PassViews::Main => &own.placed,
-            };
-            let (faces, culled) = match own.faces {
-                OwnFaces::Culled(cull) => (Faces::Declared, cull.face()),
-                OwnFaces::Material => (MATERIAL_FACES, Some(wgpu::Face::Back)),
-            };
-            let entry = side.of(role)?;
-            return Some(Fragment {
-                entry,
-                faces,
-                cull: culled,
-            });
+        Varyings::Own(own) => return own_fragment(own, role, views),
+        Varyings::Surfaced(surface) => {
+            return own_fragment(&surface.own, role, views)
+                .or_else(|| surfaced_fragment(&surface.own, role, surfaced));
         }
     };
     Some(Fragment {
@@ -424,8 +472,9 @@ fn kind_program(
     (varyings, side): (Varyings, FormSide),
     (role, views): (PassRole, PassViews),
     (mirrored, topology): (bool, FormTopology),
+    surfaced: Option<SurfacedEntries>,
 ) -> Option<Program> {
-    let fragment = fragment_of(role, varyings, views)?;
+    let fragment = fragment_of(role, varyings, views, surfaced)?;
     let writes = match (role, views) {
         (PassRole::Depth, PassViews::Owned) => wgpu::ColorWrites::empty(),
         (PassRole::Depth, PassViews::Every | PassViews::Main)
@@ -452,7 +501,7 @@ fn kind_program(
 }
 
 fn pass_program(
-    form: &KindForm,
+    (form, surfaced): (&KindForm, Option<SurfacedEntries>),
     own: &PassFragment,
     views: PassViews,
     (mirrored, topology): (bool, FormTopology),
@@ -460,7 +509,12 @@ fn pass_program(
     let side = own.side.unwrap_or_else(|| form.side(views));
     let (entry, cull, depth, color) = match own.fragment {
         FormFragment::Role(role) => {
-            return kind_program((form.varyings, side), (role, views), (mirrored, topology));
+            return kind_program(
+                (form.varyings, side),
+                (role, views),
+                (mirrored, topology),
+                surfaced,
+            );
         }
         FormFragment::Entry {
             entry,
@@ -523,6 +577,7 @@ impl<P: GpuPart> Install<'_, P> {
         bound: &[(Var, Bind<P>)],
     ) -> Result<Form<P>, Error> {
         let bound = bound_list(bound, &self.core.outputs)?;
+        let surfaced = self.surfaced(form)?;
         let listed: Vec<engine_core::ScenePass> = self
             .core
             .passes
@@ -545,7 +600,9 @@ impl<P: GpuPart> Install<'_, P> {
                     if passes.iter().any(|known| known.pass == pass) {
                         return Err(Error::new(ErrorCode::NameTwice, path).got(name));
                     }
-                    let Some(program) = pass_program(form, own, views, (false, topology)) else {
+                    let Some(program) =
+                        pass_program((form, surfaced), own, views, (false, topology))
+                    else {
                         return Err(Error::new(ErrorCode::PassMismatch, path).got(name));
                     };
                     let reached = self.reached(&program, &bound);
@@ -567,11 +624,12 @@ impl<P: GpuPart> Install<'_, P> {
                 .find(|own| own.pass.scene() == Some(listed.name));
             let built = own.is_some() || roles.contains(&facts.0);
             let program_of = |mirrored: bool| match own {
-                Some(own) => pass_program(form, own, facts.1, (mirrored, topology)),
+                Some(own) => pass_program((form, surfaced), own, facts.1, (mirrored, topology)),
                 None => kind_program(
                     (form.varyings, form.side(facts.1)),
                     facts,
                     (mirrored, topology),
+                    surfaced,
                 ),
             };
             let plain = match program_of(false).filter(|_| built) {
@@ -604,6 +662,19 @@ impl<P: GpuPart> Install<'_, P> {
             owns: passes,
             part: PhantomData,
         })
+    }
+
+    fn surfaced(&mut self, form: &KindForm) -> Result<Option<SurfacedEntries>, Error> {
+        match form.varyings {
+            Varyings::Surfaced(surface) => {
+                surfaced_entries(self.core, form.kind, surface).map(Some)
+            }
+            Varyings::Surface
+            | Varyings::SurfaceExtra
+            | Varyings::Object
+            | Varyings::ObjectExtra
+            | Varyings::Own(_) => Ok(None),
+        }
     }
 
     fn own_pass(&self, name: &'static str, path: &str) -> Result<(u32, PassViews), Error> {
@@ -641,6 +712,76 @@ impl<P: GpuPart> Install<'_, P> {
             .cloned()
             .collect()
     }
+}
+
+fn surfaced_name(path: &str, item: &str) -> String {
+    format!("{}_{item}", path.replace("::", "_"))
+}
+
+fn surfaced_entry(name: String) -> Entry {
+    Entry::generated(
+        crate::shaders::core_module(SURFACED_MODULE),
+        Box::leak(name.into_boxed_str()),
+    )
+}
+
+fn surfaced_entries(
+    core: &mut InstallCore,
+    kind: DrawKind,
+    surface: &KindSurface,
+) -> Result<SurfacedEntries, Error> {
+    let at = format!("forms.{}.surface", kind.0);
+    let package = surface.module.source().package();
+    if package != core.package {
+        return Err(Error::new(ErrorCode::ForeignAccess, at).got(package));
+    }
+    let linker = &mut core.linker;
+    linker.add_source(surface.module.source());
+    let (path, point) = crate::linker::path_of((surface.module, surface.point));
+    if !linker.defines(path, &point) {
+        return Err(Error::new(ErrorCode::UnknownModule, at).got(surface.point));
+    }
+    let varyings = surfaced_name(path, surface.varyings);
+    let shape = format!("surfaced_varyings_{varyings}");
+    let named = surfaced_name(path, &point);
+    let made = format!("surfaced_point_{named}");
+    let lit = format!("fs_surfaced_lit_{named}");
+    let blended = format!("fs_surfaced_blended_{named}");
+    let held = linker.text(SURFACED_MODULE).unwrap_or_default().to_owned();
+    let imports = SURFACED_IMPORTS.map(str::to_owned);
+    let wanted = [
+        format!("import package::{path}::{} as {shape};", surface.varyings),
+        format!("import package::{path}::{point} as {made};"),
+    ];
+    let mut text = String::new();
+    for line in imports.iter().chain(&wanted) {
+        if !held.contains(line.as_str()) {
+            let _ = writeln!(text, "{line}");
+        }
+    }
+    text.push_str(&held);
+    for (entry, written) in [(&lit, "outputs"), (&blended, "blended_outputs")] {
+        if !linker.defines(SURFACED_MODULE, entry) {
+            let _ = writeln!(text, "\n@fragment");
+            let _ = writeln!(text, "fn {entry}(input: {shape}) -> Outputs {{");
+            let _ = writeln!(text, "    let seen = {made}(input);");
+            let _ = writeln!(text, "    let shaded = shade(seen.point, seen.pixel);");
+            let _ = writeln!(text, "    return {written}(seen.point, shaded, seen.at);");
+            let _ = writeln!(text, "}}");
+        }
+    }
+    if text != held {
+        linker.add_generated(
+            SURFACED_MODULE.to_owned(),
+            crate::linker::CORE_PACKAGE,
+            text,
+        );
+    }
+    linker.keep(path, &point);
+    Ok(SurfacedEntries {
+        lit: surfaced_entry(lit),
+        blended: surfaced_entry(blended),
+    })
 }
 
 impl<P: GpuPart> Draw<'_, P, Scene> {

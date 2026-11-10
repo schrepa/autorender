@@ -139,6 +139,7 @@ pub(crate) struct Linker {
     composed: BTreeMap<(String, String, String), Arc<Composed>>,
     numbered: bool,
     edited: BTreeMap<String, String>,
+    kept: Vec<(String, String)>,
 }
 
 pub(crate) fn path_of(var_or_entry: (engine_core::Module, &str)) -> (&'static str, String) {
@@ -649,6 +650,13 @@ impl Linker {
             .is_some_and(|module| module.package == CORE_PACKAGE)
     }
 
+    pub(crate) fn keep(&mut self, path: &str, name: &str) {
+        let kept = (path.to_owned(), name.to_owned());
+        if !self.kept.contains(&kept) {
+            self.kept.push(kept);
+        }
+    }
+
     pub(crate) fn defines(&self, path: &str, function: &str) -> bool {
         self.module(path)
             .is_some_and(|module| defines_function(&module.text, function))
@@ -700,7 +708,12 @@ impl Linker {
                     .map(|name| (module.path.clone(), name))
             })
             .collect();
-        let roots: Vec<(String, String)> = roots.iter().cloned().chain(entries).collect();
+        let roots: Vec<(String, String)> = roots
+            .iter()
+            .chain(&self.kept)
+            .cloned()
+            .chain(entries)
+            .collect();
         for (module, name) in &roots {
             if mentioned(&texts, module, name) || !self.defines(module, name) {
                 continue;

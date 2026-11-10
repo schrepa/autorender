@@ -11,6 +11,7 @@ mod empty;
 mod far_ground;
 mod ground;
 mod image;
+mod lit_pass;
 mod movers;
 mod partners;
 mod poses;
@@ -18,6 +19,7 @@ pub mod requests;
 mod unpaused;
 
 use engine_core::{Brick, Bricks, Smoke, Source};
+use engine_render::RenderBricks;
 
 pub struct StandardSmokesBrick;
 
@@ -84,7 +86,18 @@ impl Brick for StandardSmokesBrick {
             run: unpaused::run,
             without: &[],
         },
+        Smoke {
+            name: "terrain_draws_in_a_foreign_lit_pass",
+            run: lit_pass::run,
+            without: &[],
+        },
     ];
 
-    fn register(_: &mut Bricks<'_>) {}
+    fn register(bricks: &mut Bricks<'_>) {
+        bricks
+            .settings::<lit_pass::ForeignLit>()
+            .within(lit_pass::foreign_lit_on, |bricks| {
+                bricks.pass::<lit_pass::ForeignLitPass>();
+            });
+    }
 }

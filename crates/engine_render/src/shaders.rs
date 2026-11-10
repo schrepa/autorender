@@ -13,6 +13,7 @@ macro_rules! shader_modules {
             crate::shared::generated(crate::drawn::DRAWN_MODULE),
             crate::shared::generated(crate::drawn::DRAWN_CULL_MODULE),
             crate::shared::generated(crate::drawn::DRAWN_FADES_MODULE),
+            crate::shared::generated(crate::kinds::SURFACED_MODULE),
             crate::shared::generated(crate::shared::WRITES_MODULE),
             crate::shared::generated(crate::shared::APPLIED_MODULE),
             crate::shared::generated(crate::shared::COMPOSITE_MODULE),
