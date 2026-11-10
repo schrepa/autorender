@@ -24,7 +24,7 @@ mod world_trace;
 use bevy_ecs::prelude::*;
 use engine_core::{
     Attributes, BlendedPass, Brick, Bricks, ColorPass, Cook, CookList, JobKind, KindDecl, KindSkip,
-    PassName, Schedule, Source,
+    Schedule, Source,
 };
 use engine_open_world_kit::ground::{Bounce, GroundBaking, GroundTiles, Heightfield, Horizons};
 use engine_places_rendering::lighting::{Ambient, SunBlockers};
@@ -37,6 +37,11 @@ pub use jobs::shading::TileShading;
 pub use settings::{MAX_BOUNCE_LEVELS, TerrainShading, TerrainShadingStats};
 
 use terrain::TerrainGpu;
+
+const SKIPS: &[KindSkip] = &[
+    KindSkip::pass::<ColorPass>(terrain::SHADED_ELSEWHERE),
+    KindSkip::pass::<BlendedPass>(terrain::NEVER_BLENDS),
+];
 
 pub struct TerrainShadingBrick;
 
@@ -107,16 +112,7 @@ impl Brick for TerrainShadingBrick {
                 kind: terrain::TERRAIN,
                 needs: Attributes::NONE,
                 streams: &[],
-                skips: &[
-                    KindSkip {
-                        pass: ColorPass::NAME,
-                        reason: terrain::SHADED_ELSEWHERE,
-                    },
-                    KindSkip {
-                        pass: BlendedPass::NAME,
-                        reason: terrain::NEVER_BLENDS,
-                    },
-                ],
+                skips: SKIPS,
             })
             .draws::<TerrainGpu>(terrain::TERRAIN, TerrainGpu::draw);
         bricks.material_slot(holes::SLOT_MODULE);

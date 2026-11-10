@@ -4,6 +4,7 @@
 )]
 
 use engine::prelude::*;
+use engine_particles::ParticlesBrick;
 
 mod smokes;
 
@@ -15,7 +16,7 @@ impl Game for Flat {
 }
 
 pub fn bricks<L: Listing>(list: L) -> L {
-    engine_standard_rendering::two_d(list)
+    engine_standard_rendering::two_d(list).with::<ParticlesBrick>()
 }
 
 engine::game!(pub struct FlatGame(Flat), "Flat", bricks);

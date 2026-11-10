@@ -24,8 +24,13 @@ fn dropped_state(run: &Run, kind: DrawKind, pass: &'static str) -> Option<KindPa
     most.map(|(reason, _)| KindPassState::Dropped { reason, draws })
 }
 
-fn state_of(run: &Run, decl: &engine_core::KindDecl, pass: &'static str) -> Option<KindPassState> {
-    if let Some(skip) = decl.skip(pass) {
+fn state_of(
+    run: &Run,
+    decl: &engine_core::KindDecl,
+    scene: &engine_core::ScenePass,
+) -> Option<KindPassState> {
+    let pass = scene.name;
+    if let Some(skip) = decl.skip(pass, &scene.pass) {
         return Some(KindPassState::Skipped {
             reason: skip.reason,
         });
@@ -138,7 +143,7 @@ pub(super) fn kind_passes(run: &mut Run, world: &World) -> Vec<KindPass> {
             if !(scene.pass.takes)(decl) {
                 continue;
             }
-            let Some(state) = state_of(run, decl, scene.name) else {
+            let Some(state) = state_of(run, decl, scene) else {
                 continue;
             };
             listed.push(KindPass {

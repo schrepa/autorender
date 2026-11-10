@@ -35,8 +35,8 @@ mod windows;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Attributes, Brick, Bricks, Cook, CookList, Cut, JobKind, KindDecl, KindSkip, Schedule, Source,
-    SurfaceSlot, stats,
+    Attributes, Brick, Bricks, ColorPass, Cook, CookList, Cut, JobKind, KindDecl, KindSkip,
+    PassRole, PassViews, Schedule, Source, SurfaceSlot, stats,
 };
 use engine_open_world_kit::ground::Heightfield;
 use engine_open_world_kit::water::Waterline;
@@ -93,6 +93,27 @@ stats! {
     }
 }
 
+const SKIPS: &[KindSkip] = &[
+    KindSkip::role(
+        PassRole::Depth,
+        PassViews::Owned,
+        "the water surface casts no shadows",
+    ),
+    KindSkip::role(
+        PassRole::Lit,
+        PassViews::Owned,
+        "the water surface stays out of probe captures",
+    ),
+    KindSkip::pass::<ColorPass>(
+        "the water surface draws in its own pass, after the scene it refracts",
+    ),
+    KindSkip::role(
+        PassRole::Depth,
+        PassViews::Main,
+        "the water surface refracts the scene behind it, so it fills no depth before it",
+    ),
+];
+
 pub struct WaterBrick;
 
 impl Brick for WaterBrick {
@@ -136,24 +157,7 @@ impl Brick for WaterBrick {
                 kind: water::WATER_KIND,
                 needs: Attributes::NONE,
                 streams: &[],
-                skips: &[
-                    KindSkip {
-                        pass: "shadow",
-                        reason: "the water surface casts no shadows",
-                    },
-                    KindSkip {
-                        pass: "probe",
-                        reason: "the water surface stays out of probe captures",
-                    },
-                    KindSkip {
-                        pass: "color",
-                        reason: "the water surface draws in its own pass, after the scene it refracts",
-                    },
-                    KindSkip {
-                        pass: "prepass",
-                        reason: "the water surface refracts the scene behind it, so it fills no depth before it",
-                    },
-                ],
+                skips: SKIPS,
             })
             .pass::<water::WaterPass>()
             .draws::<water::WaterGpu>(water::WATER_KIND, water::WaterGpu::draw);

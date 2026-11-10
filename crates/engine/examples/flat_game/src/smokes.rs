@@ -1,13 +1,17 @@
-use engine_core::{ColorPass, PassName, Smoke, SmokeFailure, SmokeSession, smoke_check};
-use engine_smoke::{above, control, counted_in_joined_passes, number, render, settled};
+use engine_core::{
+    Brick, ColorPass, PassName, Smoke, SmokeFailure, SmokeSession, smoke_check, smoke_eq,
+};
+use engine_particles::{PARTICLES, ParticlesBrick};
+use engine_smoke::{above, control, counted_in_joined_passes, number, query, render, settled};
 use engine_sprites::SPRITES;
+use engine_standard_rendering::{ReflectionProbesBrick, ShadowsBrick, SpritesBrick, TextBrick};
 use serde_json::{Value, json};
 
 const FRAMES: u32 = 8;
 
 const WHITE_SHEET: &str = "/////////////////////w==";
 
-pub(crate) const SMOKES: [Smoke; 2] = [
+pub(crate) const SMOKES: [Smoke; 3] = [
     Smoke {
         name: "sprite_and_label_draw",
         run,
@@ -16,6 +20,11 @@ pub(crate) const SMOKES: [Smoke; 2] = [
     Smoke {
         name: "flat_game_starts_clean",
         run: engine_smoke::starts_clean,
+        without: &[],
+    },
+    Smoke {
+        name: "kinds_draw_without_shadows_and_probes",
+        run: without_shadows_and_probes,
         without: &[],
     },
 ];
@@ -44,6 +53,69 @@ fn scene() -> Value {
     })
 }
 
+fn with_sparks() -> Value {
+    let mut document = scene();
+    if let Some(entities) = document["entities"].as_array_mut() {
+        entities.push(json!({
+            "id": "sparks", "particles": {},
+            "transform": {"translation": [-2.5, 0.0, 0.0]},
+        }));
+    }
+    document
+}
+
+fn package<B: Brick>() -> &'static str {
+    B::SOURCE.package()
+}
+
+fn listed(status: &Value, brick: &str) -> bool {
+    status["features"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|name| name == brick)
+}
+
+fn label_glyphs(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
+    let text = render(session)?["bricks"]["text_stats"].take();
+    smoke_check!(
+        number(&text["glyphs_drawn"]) > 0.0,
+        "label_draws",
+        text,
+        json!({ "glyphs_drawn": above(0) })
+    );
+    Ok(())
+}
+
+fn without_shadows_and_probes(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
+    session.source(&with_sparks().to_string());
+    control(session, "pause", json!({}))?;
+    settled(session)?;
+    let status = query(session, "status", json!({}))?;
+    smoke_eq!(
+        json!({
+            "sprites": listed(&status, package::<SpritesBrick>()),
+            "text": listed(&status, package::<TextBrick>()),
+            "particles": listed(&status, package::<ParticlesBrick>()),
+            "shadows": listed(&status, package::<ShadowsBrick>()),
+            "probes": listed(&status, package::<ReflectionProbesBrick>()),
+        }),
+        json!({
+            "sprites": true, "text": true, "particles": true, "shadows": false, "probes": false,
+        }),
+        "the_list_has_sprites_text_and_particles_without_shadows_and_probes"
+    );
+    smoke_eq!(
+        status["unmet"],
+        json!([]),
+        "the_list_starts_with_no_unmet_need"
+    );
+    for kind in [SPRITES, PARTICLES] {
+        counted_in_joined_passes(session, kind.name(), FRAMES)?;
+    }
+    label_glyphs(session)
+}
+
 fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     session.source(&scene().to_string());
     control(session, "pause", json!({}))?;
@@ -56,12 +128,5 @@ fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         color,
         json!({ "state": "drew", "draws": above(0) })
     );
-    let text = render(session)?["bricks"]["text_stats"].take();
-    smoke_check!(
-        number(&text["glyphs_drawn"]) > 0.0,
-        "label_draws",
-        text,
-        json!({ "glyphs_drawn": above(0) })
-    );
-    Ok(())
+    label_glyphs(session)
 }

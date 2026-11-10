@@ -2393,6 +2393,7 @@ dependencies = [
  "engine_core",
  "engine_ecs",
  "engine_native",
+ "engine_particles",
  "engine_smoke",
  "engine_sources",
  "engine_sprites",

@@ -9,8 +9,8 @@ mod part;
 mod water;
 
 use engine_core::{
-    Attributes, Brick, Bricks, ComponentKind, Error, ErrorCode, GpuStruct, KindDecl, KindSkip,
-    SceneComponents, Schedule, Source, fields,
+    Attributes, BlendedPass, Brick, Bricks, ColorPass, ComponentKind, Error, ErrorCode, GpuStruct,
+    KindDecl, KindSkip, PassRole, PassViews, SceneComponents, Schedule, Source, fields,
 };
 use engine_places_rendering::reflections::TraceDepths;
 use engine_render::{RenderBricks, SurfaceKind};
@@ -19,6 +19,30 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 const GENERATED: &[&str] = &[part::WGSL, <part::PondShape as GpuStruct>::WGSL];
+
+const SKIPS: &[KindSkip] = &[
+    KindSkip::role(
+        PassRole::Depth,
+        PassViews::Owned,
+        "the pond surface casts no shadows",
+    ),
+    KindSkip::role(
+        PassRole::Lit,
+        PassViews::Owned,
+        "the pond surface stays out of probe captures",
+    ),
+    KindSkip::pass::<ColorPass>(
+        "the pond surface draws in its own pass, over the scene it covers",
+    ),
+    KindSkip::role(
+        PassRole::Depth,
+        PassViews::Main,
+        "the pond surface covers the scene behind it, so it fills no depth before it",
+    ),
+    KindSkip::pass::<BlendedPass>(
+        "the pond surface covers the scene behind it in its own pass",
+    ),
+];
 
 pub struct PondBrick;
 
@@ -41,28 +65,7 @@ impl Brick for PondBrick {
                 kind: part::POND_KIND,
                 needs: Attributes::NONE,
                 streams: &[],
-                skips: &[
-                    KindSkip {
-                        pass: "shadow",
-                        reason: "the pond surface casts no shadows",
-                    },
-                    KindSkip {
-                        pass: "probe",
-                        reason: "the pond surface stays out of probe captures",
-                    },
-                    KindSkip {
-                        pass: "color",
-                        reason: "the pond surface draws in its own pass, over the scene it covers",
-                    },
-                    KindSkip {
-                        pass: "prepass",
-                        reason: "the pond surface covers the scene behind it, so it fills no depth before it",
-                    },
-                    KindSkip {
-                        pass: "blended",
-                        reason: "the pond surface covers the scene behind it in its own pass",
-                    },
-                ],
+                skips: SKIPS,
             })
             .pass::<part::PondPass>()
             .draws::<part::PondGpu>(part::POND_KIND, part::PondGpu::draw);

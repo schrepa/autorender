@@ -13,11 +13,19 @@ mod settings;
 mod surface;
 
 use bevy_ecs::prelude::Res;
-use engine_core::{Attributes, Brick, Bricks, KindDecl, KindSkip, Schedule, Source};
+use engine_core::{
+    Attributes, Brick, Bricks, KindDecl, KindSkip, PassRole, PassViews, Schedule, Source,
+};
 use engine_open_world_kit::ground::{Cover, FarCover};
 use engine_render::RenderBricks;
 
 pub use settings::{CoverLook, GroundCover, GroundCoverStats};
+
+const SKIPS: &[KindSkip] = &[KindSkip::role(
+    PassRole::Lit,
+    PassViews::Owned,
+    "ground cover grows around the main camera only",
+)];
 
 pub struct GroundCoverBrick;
 
@@ -49,10 +57,7 @@ impl Brick for GroundCoverBrick {
                 kind: part::COVER,
                 needs: Attributes::NONE,
                 streams: &[],
-                skips: &[KindSkip {
-                    pass: "probe",
-                    reason: "ground cover grows around the main camera only",
-                }],
+                skips: SKIPS,
             })
             .draws::<part::CoverGpu>(part::COVER, part::CoverGpu::draw);
         for module in surface::slot_modules() {
