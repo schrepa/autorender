@@ -9,7 +9,6 @@ const WORDS: &[&str] = &[
     "probe",
     "roughness",
     "metalness",
-    "mesh",
     "skin",
     "terrain",
     "water",
@@ -18,15 +17,15 @@ const WORDS: &[&str] = &[
 const ENDINGS: &[&str] = &["", "s", "es", "ed", "ing", "ned", "ning"];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-enum Token {
+pub(crate) enum Token {
     Word(String),
     Text(String),
     Mark(char),
 }
 
-struct Located {
-    token: Token,
-    line: usize,
+pub(crate) struct Located {
+    pub(crate) token: Token,
+    pub(crate) line: usize,
 }
 
 struct Named<'a> {
@@ -162,7 +161,7 @@ fn tick(chars: &[char], at: usize) -> usize {
     }
 }
 
-fn tokens(source: &str) -> Vec<Located> {
+pub(crate) fn tokens(source: &str) -> Vec<Located> {
     let chars: Vec<char> = source.chars().collect();
     let mut found = Vec::new();
     let mut line = 1;
@@ -215,20 +214,20 @@ fn tokens(source: &str) -> Vec<Located> {
     found
 }
 
-fn word(tokens: &[Located], at: usize) -> Option<&str> {
+pub(crate) fn word(tokens: &[Located], at: usize) -> Option<&str> {
     match &tokens.get(at)?.token {
         Token::Word(word) => Some(word),
         Token::Text(_) | Token::Mark(_) => None,
     }
 }
 
-fn mark(tokens: &[Located], at: usize, wanted: char) -> bool {
+pub(crate) fn mark(tokens: &[Located], at: usize, wanted: char) -> bool {
     tokens
         .get(at)
         .is_some_and(|located| located.token == Token::Mark(wanted))
 }
 
-fn depth_change(token: &Token) -> isize {
+pub(crate) fn depth_change(token: &Token) -> isize {
     match token {
         Token::Mark('{' | '(' | '[') => 1,
         Token::Mark('}' | ')' | ']') => -1,
@@ -379,7 +378,7 @@ fn wgsl_names(tokens: &[Located]) -> Vec<Named<'_>> {
         .collect()
 }
 
-fn files(folder: &Path, found: &mut Vec<PathBuf>) -> Result<(), String> {
+pub(crate) fn files(folder: &Path, found: &mut Vec<PathBuf>) -> Result<(), String> {
     let fail = |error: std::io::Error| format!("{}: {error}", folder.display());
     let mut paths = fs::read_dir(folder)
         .map_err(fail)?

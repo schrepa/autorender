@@ -1,3 +1,4 @@
+mod draw_kinds;
 mod techniques;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -254,6 +255,7 @@ fn check(root: &Path, problems: &mut Vec<String>) -> Result<usize, String> {
     implementors(&root, &members, problems)?;
     declarations(&root, &members, problems)?;
     technique_free(&root, &members, problems)?;
+    draw_kind_free(&root, &members, problems)?;
     for member in &members {
         check_member(&root, &workspace, member, &folders, problems)?;
     }
@@ -438,6 +440,28 @@ fn technique_free(
             .is_some_and(|kind| techniques::FREE_KINDS.contains(&kind));
         if free {
             techniques::check(
+                &member.label(),
+                &member.dir.join("src"),
+                |path| relative(root, path),
+                problems,
+            )?;
+        }
+    }
+    Ok(())
+}
+
+fn draw_kind_free(
+    root: &Path,
+    members: &[Member],
+    problems: &mut Vec<String>,
+) -> Result<(), String> {
+    for member in members {
+        let free = member
+            .kind
+            .as_deref()
+            .is_some_and(|kind| techniques::FREE_KINDS.contains(&kind));
+        if free {
+            draw_kinds::check(
                 &member.label(),
                 &member.dir.join("src"),
                 |path| relative(root, path),
