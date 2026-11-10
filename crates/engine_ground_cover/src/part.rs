@@ -28,6 +28,7 @@ const COVER_FORM: KindForm = KindForm {
     placed: FormSide {
         vertex: draw::VS_COVER,
         streams: &[],
+        depth_bias: FormSide::UNBIASED,
     },
     owned: None,
     varyings: Varyings::ObjectExtra,

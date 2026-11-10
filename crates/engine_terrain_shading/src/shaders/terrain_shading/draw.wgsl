@@ -20,6 +20,8 @@ import package::terrain_shading::faces::ground_tiles::{DETAIL_EDGE_ON, detail_re
     detail_span};
 import package::terrain_shading::faces::heightfield::{surface_vertex, terrain, terrain_index, terrain_level_height, terrain_view, use_terrain};
 import package::terrain_shading::field::spread_slopes;
+import package::terrain_shading::holes::terrain_holed;
+import package::generated::kinds::KIND_TERRAIN;
 import package::terrain_shading::sky::terrain_sky_map;
 import package::terrain_shading::surface::{surface_leaf, surface_relative, terrain_true_height};
 import package::terrain_shading::tables::{table_fades, terrain_tables};
@@ -118,31 +120,8 @@ fn terrain_output(leaf: u32, vertex: u32, index: u32) -> TerrainOutput {
 }
 
 fn terrain_holes_test(cell: vec2<f32>, holes: bool) {
-    if !holes {
-        return;
-    }
-    let base = terrain.directory.x;
-    let levels = terrain.directory.y;
-    for (var index = 0u; index < levels; index++) {
-        let header = base + index * 4u;
-        let samples = max(cell / f32(1u << index), vec2<f32>(0.0));
-        let tiles = vec2<u32>(terrain_tables[header + 1u], terrain_tables[header + 2u]);
-        let tile = min(vec2<u32>(samples / 256.0), tiles - vec2<u32>(1u));
-        let layer = terrain_tables[terrain_tables[header] + tile.y * tiles.x + tile.x];
-        if layer == 0xffffffffu {
-            continue;
-        }
-        let holes = terrain_tables[terrain.surface.y + layer];
-        if holes == 0xffffffffu {
-            return;
-        }
-        let at = vec2<u32>(clamp(floor(samples - vec2<f32>(tile * 256u)), vec2<f32>(0.0),
-            vec2<f32>(256.0)));
-        let bit = at.y * 257u + at.x;
-        if (terrain_tables[holes + bit / 32u] & (1u << (bit % 32u))) != 0u {
-            discard;
-        }
-        return;
+    if holes && terrain_holed(terrain, cell) {
+        discard;
     }
 }
 
@@ -152,6 +131,31 @@ fn vs_terrain(@builtin(instance_index) leaf: u32, @builtin(vertex_index) vertex:
     let index = vertex / SURFACE_VERTEX_STRIDE;
     use_terrain(index);
     return terrain_output(leaf, vertex % SURFACE_VERTEX_STRIDE, index);
+}
+
+struct TerrainSurfaceOutput {
+    @invariant @builtin(position) clip_position: vec4<f32>,
+    @location(0) normal_u: vec4<f32>,
+    @location(1) world_v: vec4<f32>,
+    @location(2) @interpolate(flat) material: vec4<u32>,
+    @location(3) previous: vec3<f32>,
+    @location(6) @interpolate(flat) object: vec4<u32>,
+}
+
+@vertex
+fn vs_terrain_surface(@builtin(instance_index) leaf: u32, @builtin(vertex_index) vertex: u32)
+        -> TerrainSurfaceOutput {
+    let index = vertex / SURFACE_VERTEX_STRIDE;
+    use_terrain(index);
+    let drawn = terrain_output(leaf, vertex % SURFACE_VERTEX_STRIDE, index);
+    var output: TerrainSurfaceOutput;
+    output.clip_position = drawn.clip_position;
+    output.normal_u = vec4<f32>(0.0, 1.0, 0.0, drawn.cell.x);
+    output.world_v = vec4<f32>(eye_world(drawn.relative.xyz), drawn.cell.y);
+    output.material = vec4<u32>(0xffffffffu, 0xffffffffu, 0u, 0u);
+    output.previous = drawn.clip_position.xyw;
+    output.object = vec4<u32>(0u, index, 0u, KIND_TERRAIN);
+    return output;
 }
 
 fn terrain_detail(p: vec2<f32>, size: f32, resolved: f32) -> f32 {
@@ -1366,12 +1370,6 @@ fn fs_terrain_ids(input: TerrainOutput) -> @location(0) vec2<u32> {
 @fragment
 fn fs_terrain_ids_holes(input: TerrainOutput) -> @location(0) vec2<u32> {
     return terrain_ids(input, true);
-}
-
-@fragment
-fn fs_terrain_depth_holes(input: TerrainOutput) {
-    use_terrain(input.terrain);
-    terrain_holes_test(input.cell, true);
 }
 
 fn terrain_relative_at(pixel: vec2<f32>, depth: f32, size: vec2<f32>) -> vec3<f32> {

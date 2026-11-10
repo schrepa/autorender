@@ -7,6 +7,7 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod debug;
 mod gpu;
+mod holes;
 pub mod jobs;
 mod settings;
 mod shadings;
@@ -60,6 +61,7 @@ impl Brick for TerrainShadingBrick {
             .resource::<state::SurfaceTotals>()
             .resource::<state::PartStats>()
             .resource::<state::RecordsSettling>()
+            .resource::<holes::HoledGround>()
             .piece::<HorizonsPiece>()
             .generated(debug::GENERATED)
             .generated(gpu::GENERATED)
@@ -96,6 +98,7 @@ impl Brick for TerrainShadingBrick {
                     state::publish_piece,
                     state::publish_heightfield,
                     state::count,
+                    holes::hold_material,
                 ),
             )
             .part::<TerrainGpu>()
@@ -115,6 +118,7 @@ impl Brick for TerrainShadingBrick {
                 ],
             })
             .draws::<TerrainGpu>(terrain::TERRAIN, TerrainGpu::draw);
+        bricks.material_slot(holes::SLOT_MODULE);
     }
 }
 

@@ -45,6 +45,7 @@ const fn card_form(vertex: Entry) -> KindForm {
         placed: FormSide {
             vertex,
             streams: &[],
+            depth_bias: FormSide::UNBIASED,
         },
         owned: None,
         varyings: Varyings::Own(&CARD_FRAGMENTS),

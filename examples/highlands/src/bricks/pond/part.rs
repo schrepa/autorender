@@ -62,6 +62,7 @@ const POND_FORM: KindForm = KindForm {
     placed: FormSide {
         vertex: surface::VS_POND,
         streams: &[],
+        depth_bias: FormSide::UNBIASED,
     },
     owned: None,
     varyings: Varyings::Own(&POND_FRAGMENTS),
