@@ -1,5 +1,5 @@
 use crate::app_host::{AppHost, Focus};
-use crate::game::Game;
+use crate::game::{Arrival, Game, LoadedScene};
 use crate::host::{
     DeviceGatherer, FrameLoop, FramePhase, HostPause, InputSource, JobId, JobOrder, JobScheduler,
     LevelLoad, LevelStep,
@@ -13,7 +13,8 @@ use engine_scene::SceneFiles;
 
 pub struct GameHost<G: Game> {
     app: AppHost,
-    game: G,
+    game: std::marker::PhantomData<fn() -> G>,
+    scene: LoadedScene,
     input: DeviceGatherer,
     frames: FrameLoop,
     jobs: JobScheduler,
@@ -37,28 +38,22 @@ impl<G: Game> GameHost<G> {
         build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> crate::Result<Self> {
         engine_panic::install();
-        let mut game = None;
         let app = AppHost::launch(target, bricks, |engine| {
-            game = Some(build(engine).map_err(Into::into)?);
+            let game = build(engine).map_err(Into::into)?;
+            engine.app.world_mut().insert_resource(game);
             Ok(())
         })
         .await?;
-        let game = game.expect("game_built");
-        #[cfg(feature = "dev")]
-        let development = {
-            let mut development = crate::dev_host::DevHost::default();
-            G::inspectors(&mut crate::game::Inspectors::new(&mut development.tools));
-            development
-        };
         Ok(Self {
             app,
-            game,
+            game: std::marker::PhantomData,
+            scene: LoadedScene::default(),
             input: DeviceGatherer::default(),
             frames: FrameLoop::default(),
             jobs: JobScheduler::default(),
             level: LevelLoad::default(),
             #[cfg(feature = "dev")]
-            development,
+            development: crate::dev_host::DevHost::default(),
             #[cfg(feature = "dev")]
             dev_pending: None,
             #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
@@ -87,18 +82,18 @@ impl<G: Game> GameHost<G> {
     }
 
     pub fn game(&self) -> &G {
-        &self.game
+        self.app.engine().app.world().resource::<G>()
     }
 
-    pub fn game_mut(&mut self) -> &mut G {
-        &mut self.game
+    pub fn scene(&self) -> &LoadedScene {
+        &self.scene
     }
 
-    pub fn parts_mut(&mut self) -> (&mut Engine, &mut G) {
-        (self.app.engine_mut(), &mut self.game)
-    }
-
-    pub fn replace_engine(&mut self, engine: Engine) {
+    pub fn replace_engine(&mut self, mut engine: Engine) {
+        if let Some(game) = self.app.engine_mut().app.world_mut().remove_resource::<G>() {
+            engine.app.world_mut().insert_resource(game);
+        }
+        self.scene = LoadedScene::default();
         self.app.replace_engine(engine);
         self.suspend();
     }
@@ -173,7 +168,6 @@ impl<G: Game> GameHost<G> {
         self.app.follow_focus(source);
         let input = self.frame_input(source);
         self.app.accept(input);
-        self.game.before_frame(self.app.engine_mut());
         let framed = self.app.frame(timestamp, width, height);
         self.apply_cursor();
         framed
@@ -254,8 +248,9 @@ impl<G: Game> GameHost<G> {
     }
 
     pub fn prepare_pipelines(&mut self) -> bool {
-        let game = &self.game;
-        self.app.prepare_pipelines(|engine| game.content(engine))
+        let scene = &self.scene;
+        self.app
+            .prepare_pipelines(|engine| G::content(engine, scene))
     }
 
     pub fn set_preparation(&mut self, enabled: bool) {
@@ -445,18 +440,42 @@ impl<G: Game> GameHost<G> {
     }
 
     pub fn reset_camera(&mut self) {
-        self.game.reset_camera(self.app.engine_mut());
+        G::reset_camera(self.app.engine_mut(), &self.scene);
         self.suspend();
     }
 
+    pub fn open_scene(&mut self, source: &str, files: &SceneFiles) -> crate::Result<()> {
+        let document = engine_scene::SceneDocument::from_json(source)?;
+        self.arrive(&document, files, Arrival::Opening)
+    }
+
     pub fn reload_scene(&mut self, source: &str, files: &SceneFiles) -> crate::Result<()> {
-        self.game
-            .reload_scene(self.app.engine_mut(), source, files)?;
+        let document = engine_scene::SceneDocument::from_json(source)?;
+        self.arrive(&document, files, Arrival::Reload)
+    }
+
+    fn arrive(
+        &mut self,
+        document: &engine_scene::SceneDocument,
+        files: &SceneFiles,
+        arrival: Arrival,
+    ) -> crate::Result<()> {
+        let instance = G::load_scene(self.app.engine_mut(), document, files, arrival)?;
+        self.scene
+            .replace(self.app.engine_mut().app.world_mut(), instance);
         self.app.replay_settings()?;
         self.app.reloaded();
         self.suspend();
         self.level_built();
         Ok(())
+    }
+
+    pub fn change_settings<S: engine_core::Section>(
+        &mut self,
+        change: impl FnOnce(&mut S),
+    ) -> crate::Result<()> {
+        let entry = crate::host::changed_section(self.app.engine().app.world(), change)?;
+        self.app.set_settings(&[entry])
     }
 
     pub fn set_setting(&mut self, key: &str, value: serde_json::Value) -> crate::Result<()> {
@@ -617,14 +636,8 @@ impl<G: Game> GameHost<G> {
         size: (u32, u32),
         paused: bool,
     ) -> crate::dev_host::Handled {
-        if self
-            .development
-            .submits_frame(self.app.engine().app.world(), request, paused)
-        {
-            self.game.before_frame(self.app.engine_mut());
-        }
         self.development
-            .command(&mut self.app, self.game.scene(), request, size, paused)
+            .command(&mut self.app, self.scene.instance(), request, size, paused)
     }
 
     pub(crate) fn dev_run(
@@ -633,17 +646,8 @@ impl<G: Game> GameHost<G> {
         size: (u32, u32),
         paused: bool,
     ) -> serde_json::Value {
-        if let crate::dev_host::Call::Control(name, args) = &call
-            && self.development.submits(
-                self.app.engine().app.world(),
-                (*name, args.clone()),
-                paused,
-            )
-        {
-            self.game.before_frame(self.app.engine_mut());
-        }
         self.development
-            .call(&mut self.app, self.game.scene(), call, size, paused)
+            .call(&mut self.app, self.scene.instance(), call, size, paused)
     }
 
     pub(crate) fn dev_reload(
@@ -656,28 +660,28 @@ impl<G: Game> GameHost<G> {
         let none = SceneFiles::default();
         let files = files.unwrap_or(&none);
         let result = reload_checked(
-            &mut self.game,
-            self.app.engine_mut(),
+            self.scene.instance(),
+            self.app.engine(),
             source,
             (expected_revision, revision),
-            files,
         )
-        .and_then(|()| self.app.replay_settings());
+        .and_then(|document| self.arrive(&document, files, Arrival::Reload));
         match result {
             Ok(()) => {
-                self.app.reloaded();
-                self.suspend();
-                let skipped = self.game.scene().map(|scene| scene.skipped().to_vec());
+                let skipped = self
+                    .scene
+                    .instance()
+                    .map(|scene| scene.skipped().to_vec());
                 let mut reloaded = serde_json::json!({"reloaded": true});
                 if let Some(skipped) = skipped.filter(|skipped| !skipped.is_empty()) {
                     reloaded["skipped"] = serde_json::json!(skipped);
                 }
                 self.development
-                    .result(&mut self.app, self.game.scene(), reloaded)
+                    .result(&mut self.app, self.scene.instance(), reloaded)
             }
             Err(error) => self
                 .development
-                .refusal(&mut self.app, self.game.scene(), &error),
+                .refusal(&mut self.app, self.scene.instance(), &error),
         }
     }
 }
@@ -706,17 +710,16 @@ impl<G: Game> GameHost<G> {
 }
 
 #[cfg(feature = "dev")]
-pub(crate) fn reload_checked<G: Game>(
-    game: &mut G,
-    engine: &mut Engine,
+fn reload_checked(
+    scene: Option<&engine_scene::SceneInstance>,
+    engine: &Engine,
     source: &str,
     (expected_revision, revision): (&str, &str),
-    files: &SceneFiles,
-) -> crate::Result<()> {
+) -> crate::Result<engine_scene::SceneDocument> {
     use engine_core::{Error, ErrorCode};
     use engine_scene::{SceneDocument, SceneKinds};
     use engine_settings::Expected;
-    let Some(scene) = game.scene() else {
+    let Some(scene) = scene else {
         return Err(Error::new(ErrorCode::UnsupportedCommand, "$.name").got("reload"));
     };
     let (Ok(expected), Ok(target)) = (expected_revision.parse::<u64>(), revision.parse::<u64>())
@@ -742,5 +745,5 @@ pub(crate) fn reload_checked<G: Game>(
                 "revision": document.revision.to_string(),
             })));
     }
-    game.reload_scene(engine, source, files)
+    Ok(document)
 }

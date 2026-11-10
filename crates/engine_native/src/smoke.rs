@@ -3,7 +3,7 @@ use std::process::ExitCode;
 
 use engine::bricks::BrickList;
 use engine::smokes::{Build, LIST, SmokeEntry, SmokeHost, SmokeRecord, listed};
-use engine::{Engine, Game};
+use engine::{Engine, Game, GameEntry};
 use serde_json::{Value, json};
 
 use crate::dev::DevSession;
@@ -11,15 +11,12 @@ use crate::{HostOptions, Offscreen};
 
 const SIZE: (u32, u32) = (960, 540);
 
-pub type Attach<'a, G> = &'a dyn Fn(DevSession<G>) -> DevSession<G>;
-
 pub fn run<G: Game>(
     options: &HostOptions,
     names: &str,
     entries: &[SmokeEntry],
     bricks: &BrickList,
     build: Build<'_, G>,
-    attach: Attach<'_, G>,
 ) -> ExitCode {
     if names == LIST {
         for entry in entries {
@@ -36,7 +33,10 @@ pub fn run<G: Game>(
         .expected(engine::Expected::Present)));
     };
     let ran = pollster::block_on(engine::smokes::run(
-        &mut Native { options, attach },
+        &mut Native {
+            options,
+            game: std::marker::PhantomData,
+        },
         names,
         limit_ms as f64,
         entries,
@@ -54,24 +54,24 @@ pub fn run<G: Game>(
     }
 }
 
-pub fn of_game<G: Game, E: Into<engine::Error>>(
-    options: &HostOptions,
-    names: &str,
-    bricks: &dyn Fn(BrickList) -> BrickList,
-    build: &dyn Fn(&mut Engine) -> Result<G, E>,
-) -> ExitCode {
-    let list = bricks(BrickList::default());
+pub fn of_game<G: Game>(options: &HostOptions, names: &str, game: GameEntry<G>) -> ExitCode {
+    let options = &options.for_game(&game);
+    let list = match options.listed(&game) {
+        Ok(list) => list,
+        Err(error) => return crate::exit(Err(error)),
+    };
     let entries = match engine::smokes::registered(&list) {
         Ok(entries) => entries,
         Err(error) => return crate::exit(Err(error)),
     };
-    let build = |_: Option<&str>, engine: &mut Engine| build(engine).map_err(Into::into);
-    run::<G>(options, names, &entries, &list, &build, &|session| session)
+    let build =
+        |engine: &mut Engine| engine::game::built(&game, engine, engine::scene::SceneFiles::default());
+    run::<G>(options, names, &entries, &list, &build)
 }
 
 struct Native<'a, G: Game> {
     options: &'a HostOptions,
-    attach: Attach<'a, G>,
+    game: std::marker::PhantomData<fn() -> G>,
 }
 
 impl<G: Game> Native<'_, G> {
@@ -82,10 +82,10 @@ impl<G: Game> Native<'_, G> {
             self.options.gpu,
             &self.options.jobs,
             move |_| bricks,
-            |engine| build(None, engine),
+            build,
         )?;
         self.options.settings.apply(game.host_mut())?;
-        Ok((self.attach)(DevSession::new(game, self.artifacts())))
+        Ok(DevSession::new(game, self.artifacts()))
     }
 
     fn artifacts(&self) -> PathBuf {

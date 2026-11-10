@@ -16,7 +16,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[doc(hidden)]
 pub mod surface;
-pub use game::{Game, Inspectors, engine};
+pub use game::{Arrival, DefaultScene, Game, GameEntry, GameFiles, LoadedScene, engine};
 #[cfg(not(target_arch = "wasm32"))]
 pub use surface::runtime_typescript;
 #[cfg(not(target_arch = "wasm32"))]
@@ -32,7 +32,8 @@ mod games {
     pub use crate::resolution::Resolution;
     pub use engine_core::{
         Aabb, AlphaMode, AssetBudget, AssetLibrary, Attribute,
-        Attributes, BrickList, Camera, Clear, ColorSpace, CursorAsk, Hit,
+        Attributes, Brick, BrickList, Bricks, Camera, Clear, ColorSpace, ComponentKind, CursorAsk,
+        Hit, Operation, SceneComponents, Schedule, Section, Smoke, Source, Spawner,
         Binding, BindingSource, Button, ContextAsk, Contexts, Devices, Input, InputSettings,
         MouseButton, PadButton, Player, Stick, TouchPhase, Trigger, Verb, VerbId, VerbShape, Verbs,
         Picking, Ray, Rect, Target, View, ViewCut, ViewFacts, ViewHistory, Views,
@@ -146,9 +147,17 @@ macro_rules! __if_profiling {
 
 pub mod prelude {
     pub use crate::games::*;
-    pub use crate::{Game, Inspectors};
+    pub use crate::host::TypedSettings;
+    pub use crate::{Arrival, Game, GameFiles, LoadedScene};
+    pub use engine_core::{
+        AttachPoint, GpuStruct, Pass, PassName, PassViews, ScenePass, SlotSet, TargetName, Writes,
+        gpu_struct, settings, stats,
+    };
+    pub use engine_render::{
+        Allocation, Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, Pipeline, Prepare,
+        RenderBricks, RenderPipeline, SceneDraw, Shape, wgpu,
+    };
     pub use bevy_ecs::{
-        self,
         bundle::Bundle,
         change_detection::{DetectChanges, DetectChangesMut, Mut, Ref},
         component::Component,
@@ -161,8 +170,8 @@ pub mod prelude {
         query::{Added, AnyOf, Changed, Has, Or, QueryState, With, Without},
         resource::Resource,
         schedule::{
-            ApplyDeferred, IntoScheduleConfigs, IntoSystemSet, Schedule, Schedules,
-            SystemCondition, SystemSet, common_conditions::*,
+            ApplyDeferred, IntoScheduleConfigs, IntoSystemSet, Schedules, SystemCondition,
+            SystemSet, common_conditions::*,
         },
         system::{
             Command, Commands, EntityCommand, EntityCommands, In, IntoSystem, Local, ParamSet,
