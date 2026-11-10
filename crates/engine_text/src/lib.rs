@@ -16,9 +16,9 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::world::World;
 use engine_core::{
     AttachPoint, Attributes, Brick, Bricks, ComponentKind, DrawKind, Drawn, DrawnPoses, DrawnTable,
-    Error, ErrorCode, GlobalTransforms, KindDecl, PassName, PassViews, SceneComponents, SceneCx,
-    SceneForm, ScenePass, Schedule, SlotSet, Source, TargetName, Views, Writes, gpu_struct, never,
-    settings, stats,
+    Error, ErrorCode, GlobalTransforms, KindDecl, KindSkip, PassName, PassPurpose, PassViews,
+    SceneComponents, SceneCx, SceneForm, ScenePass, Schedule, SlotSet, Source, TargetName, Views,
+    Writes, gpu_struct, never, settings, stats,
 };
 use engine_places_rendering::text::{DEFAULT_TEXT_SIZE, FontId, Glyph, Text, TextAlign};
 use engine_render::{
@@ -96,6 +96,7 @@ impl PassName for TextPass {
         reads: SlotSet::NONE,
         views: PassViews::Main,
         at: AttachPoint::Overlay,
+        purpose: PassPurpose::Scene,
         takes: never,
     };
 }
@@ -266,10 +267,17 @@ impl Brick for TextBrick {
             .pass::<TextPass>()
             .draw_kind(KindDecl {
                 kind: TEXT,
-                vertex: shaders::text::draw::VS_LABEL.name(),
                 needs: Attributes::NONE,
-                casts_shadows: false,
-                seen_by_probes: false,
+                skips: &[
+                    KindSkip {
+                        pass: "shadow",
+                        reason: "labels cast no shadows",
+                    },
+                    KindSkip {
+                        pass: "probe",
+                        reason: "labels stay out of probe captures",
+                    },
+                ],
             })
             .draws::<TextGpu>(TEXT, TextGpu::draw);
     }
@@ -394,7 +402,7 @@ impl GpuPart for TextGpu {
             .iter()
             .filter(|listed| {
                 listed.bit.is_some()
-                    && cx.passes().takes(&listed.pass, TEXT)
+                    && cx.passes().takes(listed, TEXT)
                     && listed.pass.views != PassViews::Owned
                     && listed.pass.at != AttachPoint::Transparent
             })

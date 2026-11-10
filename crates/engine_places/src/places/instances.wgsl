@@ -1,5 +1,3 @@
-import package::engine::shading::{Shaded, SurfacePoint};
-
 struct AffinePose {
     row_0: vec4<f32>,
     row_1: vec4<f32>,
@@ -9,21 +7,6 @@ struct AffinePose {
 struct SlotColor {
     color: vec2<u32>,
     surface: u32,
-}
-
-struct SlotFragment {
-    color: vec4<f32>,
-    normal: vec3<f32>,
-    world: vec3<f32>,
-    uv: vec2<f32>,
-    uv1: vec2<f32>,
-    material: vec4<u32>,
-    pixel: vec2<f32>,
-}
-
-struct SlotShaded {
-    point: SurfacePoint,
-    shaded: Shaded,
 }
 
 fn instance_pose(slot: u32) -> AffinePose {

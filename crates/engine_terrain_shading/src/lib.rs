@@ -99,10 +99,8 @@ impl Brick for TerrainShadingBrick {
             .part::<trace::TraceGpu>()
             .draw_kind(KindDecl {
                 kind: terrain::TERRAIN,
-                vertex: shaders::terrain_shading::draw::VS_TERRAIN.name(),
                 needs: Attributes::NONE,
-                casts_shadows: true,
-                seen_by_probes: true,
+                skips: &[],
             })
             .draws::<TerrainGpu>(terrain::TERRAIN, TerrainGpu::draw);
     }

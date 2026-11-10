@@ -75,7 +75,7 @@ impl KindDraw {
             kind,
             call: Arc::new(move |part: &dyn Any, scene: &SceneDraw, raw: &mut RawDraw<'_>| {
                 match part.downcast_ref::<P>() {
-                    Some(part) => draw(part, scene, &mut Draw::retyped(raw)),
+                    Some(part) => draw(part, scene, &mut Draw::retyped(raw, scene.mirrored)),
                     None => 0,
                 }
             }),
@@ -91,10 +91,11 @@ pub(crate) struct KindMember {
 }
 
 impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
-    pub(crate) fn retyped<'r>(raw: &'r mut RawDraw<'_>) -> Draw<'r, P, S> {
+    pub(crate) fn retyped<'r>(raw: &'r mut RawDraw<'_>, mirrored: bool) -> Draw<'r, P, S> {
         Draw {
             raw: raw.reborrow(),
             view: None,
+            mirrored,
             part: PhantomData,
         }
     }

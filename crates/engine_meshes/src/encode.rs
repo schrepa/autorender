@@ -97,7 +97,12 @@ impl MeshesGpu {
         [false, true]
             .into_iter()
             .map(|skinned| {
-                self.draw_meshes(&mut draw, &occluded.streams, &occluded.lit, (PHASE_TWO, skinned))
+                self.draw_meshes(
+                    &mut draw,
+                    &occluded.streams,
+                    &occluded.pipelines,
+                    (PHASE_TWO, skinned),
+                )
             })
             .sum::<u32>()
     }

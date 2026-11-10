@@ -284,6 +284,7 @@ impl Renderer {
             ..Queued::default()
         };
         run.tallies.part_draws.fill(0);
+        run.tallies.kinds.start_frame();
         run.region = region.upscales().then(|| region.render.pixels());
         run.frames.asked = world
             .get_resource::<FrameTime>()
@@ -734,6 +735,7 @@ impl Renderer {
                     .map(|(_, mesh)| mesh.byte_len())
                     .sum()
             });
+        let kind_passes = super::kind_passes::kind_passes(run, world);
         let stats = RenderStats {
             draw_calls: run.tallies.drawn,
             upload_bytes: camera_bytes + run.tallies.uploads.counted + mesh_bytes + texture_bytes,
@@ -748,6 +750,8 @@ impl Renderer {
             render_passes,
             linked: self.linked,
             readback_overflows: run.reading.list.overflows(),
+            kind_passes,
+            kind_problems: run.tallies.kinds.problems.clone(),
             ..RenderStats::default()
         };
         let immediate = self.core.queue.take_immediate();
@@ -940,6 +944,7 @@ fn owned_draws(
             clear: view.clear,
             passes: view.passes,
             draws: view.draws,
+            mirrored: view.view_projection.determinant() < 0.0,
         });
         cameras.push(owned_camera(view, seconds));
     }

@@ -78,9 +78,9 @@ pub use engine_place::{
     Clock, ColorPass, PositionReach,
     Cursor, DrawKind, Drawn, DrawnBounds, DrawnProjection, Error, ErrorCode, Events,
     Feed, FeedView, FrameBudget, GpuStruct, InstanceValues, Interest, JobRef,
-    KindDecl, Layers, Level, LevelView, List, MaterialHandle, MeshHandle, Mobility, Moment,
-    Mover, MoverId, Node, NodeId, NodeWord, Pace, Pass, PassBit, PassCull, PassEntry,
-    PassMask, PassName, PassRaster, PassViews, PlaceDecl, Progress, Readiness, Request, Requests, Ring,
+    KindDecl, KindSkip, Layers, Level, LevelView, List, MaterialHandle, MeshHandle, Mobility,
+    Moment, Mover, MoverId, Node, NodeId, NodeWord, Pace, Pass, PassBit, PassCull, PassEntry,
+    PassMask, PassName, PassPurpose, PassRaster, PassRole, PassViews, PlaceDecl, Progress, Readiness, Request, Requests, Ring,
     ScenePass, ScenePasses, Since, Slot, SlotSet, Smoke,
     SmokeFailure, SmokeSession,
     Settling, Stamp, StoreId, TargetName, TextureHandle, Ticket, Writes, every, gpu_consts,
@@ -107,7 +107,7 @@ pub use nearest::Nearest;
 pub use presentation::*;
 pub use provided::*;
 pub use records::*;
-pub use render_stats::{LinkedStats, Names, RenderStats};
+pub use render_stats::{KindPass, KindPassState, LinkedStats, Names, RenderStats};
 pub use scene::*;
 pub use engine_place::{
     BitField, BitValue, FrameId, GpuBits, Readable, Readback, decode_bits, gpu_bits,

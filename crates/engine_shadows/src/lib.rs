@@ -20,8 +20,8 @@ mod sky;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AttachPoint, Brick, Bricks, KindDecl, Pass, PassCull, PassName, PassRaster, PassViews,
-    Schedule, SlotSet, Source, Writes,
+    AttachPoint, Brick, Bricks, Pass, PassCull, PassName, PassPurpose, PassRaster, PassViews,
+    Schedule, SlotSet, Source, Writes, every,
 };
 use engine_places_rendering::lighting::SunBlockers;
 use engine_places_rendering::sky::SkyVisibility;
@@ -39,7 +39,8 @@ impl PassName for ShadowPass {
         reads: SlotSet::MASK,
         views: PassViews::Owned,
         at: AttachPoint::Depth,
-        takes: casts,
+        purpose: PassPurpose::Scene,
+        takes: every,
     };
     const RASTER: PassRaster = PassRaster {
         bias: 1,
@@ -47,10 +48,6 @@ impl PassName for ShadowPass {
         clamp_near: true,
         cull: PassCull::None,
     };
-}
-
-fn casts(kind: &KindDecl) -> bool {
-    kind.casts_shadows
 }
 
 pub struct ShadowsBrick;

@@ -10,8 +10,8 @@ mod settings;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AttachPoint, Brick, Bricks, Pass, PassName, PassViews, Schedule, SlotSet, Source, Writes,
-    gpu_struct, never,
+    AttachPoint, Brick, Bricks, Pass, PassName, PassPurpose, PassViews, Schedule, SlotSet, Source,
+    Writes, gpu_struct, never,
 };
 use engine_render::RenderBricks;
 
@@ -26,6 +26,7 @@ impl PassName for BloomPass {
         reads: SlotSet::NONE,
         views: PassViews::Main,
         at: AttachPoint::Post,
+        purpose: PassPurpose::Scene,
         takes: never,
     };
 }

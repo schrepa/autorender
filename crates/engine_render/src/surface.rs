@@ -53,6 +53,34 @@ impl DrawState {
     };
 }
 
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize,
+)]
+pub enum FaceCull {
+    #[default]
+    Back,
+    Front,
+    None,
+}
+
+impl FaceCull {
+    pub(crate) fn of(cull: engine_core::Cull) -> Self {
+        match cull {
+            engine_core::Cull::Back => Self::Back,
+            engine_core::Cull::Front => Self::Front,
+            engine_core::Cull::None => Self::None,
+        }
+    }
+
+    pub(crate) fn face(self) -> Option<wgpu::Face> {
+        match self {
+            Self::Back => Some(wgpu::Face::Back),
+            Self::Front => Some(wgpu::Face::Front),
+            Self::None => None,
+        }
+    }
+}
+
 const SLOT_BITS: u32 = 4;
 const SLOTS_PER_WORD: usize = (u32::BITS / SLOT_BITS) as usize;
 
@@ -63,6 +91,7 @@ pub struct MaterialVariant {
     pub maps: u32,
     pub model: u32,
     pub slots: [u32; 2],
+    pub cull: FaceCull,
 }
 
 impl MaterialVariant {
@@ -72,6 +101,7 @@ impl MaterialVariant {
         maps: 0,
         model: 0,
         slots: [0, 0],
+        cull: FaceCull::Back,
     };
 
     pub fn draw(self) -> DrawState {
@@ -100,14 +130,14 @@ impl MaterialVariant {
         ]
     }
 
-    pub(crate) fn keyed(self, used: [bool; 5], styled: bool) -> Option<Self> {
+    pub(crate) fn keyed(self, used: [bool; 5], styled: bool, faced: bool) -> Option<Self> {
         let [stated, mapped, modeled, low, high] = used;
-        if !used.contains(&true) && !styled {
+        if !used.contains(&true) && !styled && !faced {
             return None;
         }
         let draw = self.draw();
         let state = DrawState {
-            alpha_test: stated && draw.alpha_test,
+            alpha_test: (stated || faced) && draw.alpha_test,
             fixed: stated && draw.fixed,
             alpha: if stated || styled {
                 draw.alpha
@@ -126,6 +156,7 @@ impl MaterialVariant {
                 if low { self.slots[0] } else { 0 },
                 if high { self.slots[1] } else { 0 },
             ],
+            cull: if faced { self.cull } else { FaceCull::Back },
         })
     }
 
@@ -600,6 +631,7 @@ impl MaterialLayout {
             maps: if fixed { maps } else { 0 },
             model: if fixed { words[8] } else { 0 },
             slots,
+            cull: FaceCull::of(state.cull),
         }
     }
 }

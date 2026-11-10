@@ -13,8 +13,8 @@ mod scene;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Attributes, Brick, Bricks, ComponentKind, DrawKind, GpuStruct, KindDecl, SceneComponents,
-    Schedule, Source,
+    Attributes, Brick, Bricks, ComponentKind, DrawKind, GpuStruct, KindDecl, KindSkip,
+    SceneComponents, Schedule, Source,
 };
 use engine_places_rendering::particles::{ParticleBursts, ParticleEmitter, Transparency};
 use engine_render::RenderBricks;
@@ -58,10 +58,17 @@ impl Brick for ParticlesBrick {
             .generated(GENERATED)
             .draw_kind(KindDecl {
                 kind: PARTICLES,
-                vertex: shaders::particles::draw::VS_PARTICLE.name(),
                 needs: Attributes::NONE,
-                casts_shadows: false,
-                seen_by_probes: false,
+                skips: &[
+                    KindSkip {
+                        pass: "shadow",
+                        reason: "particles cast no shadows",
+                    },
+                    KindSkip {
+                        pass: "probe",
+                        reason: "particles stay out of probe captures",
+                    },
+                ],
             })
             .pass::<part::WeightedPass>()
             .pass::<part::CompositePass>()

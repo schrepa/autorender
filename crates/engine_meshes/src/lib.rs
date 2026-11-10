@@ -58,17 +58,13 @@ impl Brick for MeshesBrick {
             .generated(GENERATED)
             .draw_kind(KindDecl {
                 kind: MESH,
-                vertex: shaders::meshes::vertex::VS_MESH.name(),
                 needs: Attributes::BASE,
-                casts_shadows: true,
-                seen_by_probes: true,
+                skips: &[],
             })
             .draw_kind(KindDecl {
                 kind: SKIN,
-                vertex: shaders::meshes::vertex::VS_SKIN.name(),
                 needs: Attributes::SKINNED,
-                casts_shadows: true,
-                seen_by_probes: true,
+                skips: &[],
             })
             .draws::<gpu::MeshesGpu>(MESH, gpu::MeshesGpu::draw)
             .draws::<gpu::MeshesGpu>(SKIN, gpu::MeshesGpu::draw_skins);

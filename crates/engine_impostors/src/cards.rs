@@ -89,7 +89,7 @@ fn install_scenes(
         .iter()
         .filter(|listed| {
             listed.bit.is_some()
-                && cx.passes().takes(&listed.pass, CARD)
+                && cx.passes().takes(listed, CARD)
                 && listed.pass.views != PassViews::Owned
                 && listed.pass.at != AttachPoint::Transparent
         })

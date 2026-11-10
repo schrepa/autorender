@@ -490,9 +490,11 @@ impl MeshesGpu {
             let Some(pass) = view.owner else {
                 continue;
             };
-            let drawn = self.scenes.iter().filter(|scene| scene.name == pass).any(|scene| {
-                matches!(scene.drawing, Drawing::Views { .. })
-            });
+            let drawn = self
+                .scenes
+                .iter()
+                .filter(|scene| scene.name == pass)
+                .any(|scene| matches!(scene.drawing, Drawing::Views(_)));
             if !drawn || !view.draws {
                 continue;
             }
@@ -527,7 +529,6 @@ impl MeshesGpu {
                     ids_base: ids,
                     args_base: args,
                     detailed,
-                    mirrored: view.view_projection.determinant() < 0.0,
                 });
                 frames.push(uniform);
                 ids += id_words;

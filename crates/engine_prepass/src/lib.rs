@@ -6,7 +6,8 @@
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 use engine_core::{
-    AttachPoint, Brick, Bricks, Pass, PassName, PassViews, SlotSet, Source, Writes, every,
+    AttachPoint, Brick, Bricks, Pass, PassName, PassPurpose, PassViews, SlotSet, Source, Writes,
+    every,
 };
 use engine_render::RenderBricks;
 
@@ -19,6 +20,7 @@ impl PassName for PrepassPass {
         reads: SlotSet::MASK,
         views: PassViews::Main,
         at: AttachPoint::Depth,
+        purpose: PassPurpose::Scene,
         takes: every,
     };
 }

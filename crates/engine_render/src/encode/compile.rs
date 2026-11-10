@@ -1,7 +1,7 @@
 use super::making::{Created, Finished};
 use super::run::Pipelines;
 use super::*;
-use crate::install::RenderDecl;
+use crate::install::{Faces, FragmentUse, RenderDecl};
 use crate::machine::{BuiltPipeline, Stage, cover_location};
 
 fn stage_switches(switches: &[(u32, bool)], stages: &[Stage]) -> Vec<(u32, bool)> {
@@ -266,6 +266,8 @@ struct Shape<'f> {
     material: Vec<(&'static str, f64)>,
     styling: Option<crate::surface::MaterialVariant>,
     raster: engine_core::PassRaster,
+    fragment: Option<engine_core::Entry>,
+    faces: Option<crate::surface::FaceCull>,
 }
 
 type StageJob = (wgpu::ShaderModule, &'static str, Vec<(String, f64)>);
@@ -703,9 +705,6 @@ impl Compiler<'_> {
         let Program::Render(desc) = &built.decl.program else {
             return None;
         };
-        if built.skipped || (desc.fragment.is_none() && formats.iter().any(Option::is_some)) {
-            return None;
-        }
         let switches = stage_switches(&self.pipelines.switches, &built.stages);
         let used = variant.map_or([false; 5], |variant| {
             variant.constants().map(|offered| {
@@ -717,10 +716,22 @@ impl Compiler<'_> {
         });
         let specialized = used.contains(&true);
         let styled = !plain && !desc.writes.is_empty();
-        let bits = variant.and_then(|variant| variant.keyed(used, styled));
+        let faced = desc.faces != Faces::Declared;
+        let bits = variant.and_then(|variant| variant.keyed(used, styled, faced));
+        let fragment = match desc.faces {
+            Faces::Declared | Faces::Material(FragmentUse::Always) => desc.fragment,
+            Faces::Material(FragmentUse::Masked) => desc
+                .fragment
+                .filter(|_| bits.is_some_and(|bits| bits.draw().alpha_test)),
+        };
+        if built.skipped || (fragment.is_none() && formats.iter().any(Option::is_some)) {
+            return None;
+        }
+        let faces = faced.then(|| bits.map_or(crate::surface::FaceCull::Back, |bits| bits.cull));
         let raster = raster_of(self.machine, pipeline);
         let mut hasher = DefaultHasher::new();
         (formats, depth, plain, main, &switches, bits).hash(&mut hasher);
+        (fragment.is_some(), faces).hash(&mut hasher);
         (raster.bias, raster.slope.to_bits(), raster.clamp_near, raster.cull).hash(&mut hasher);
         let key = hasher.finish();
         let program = built.program_key;
@@ -737,6 +748,8 @@ impl Compiler<'_> {
                 material: material_constants(bits.filter(|_| specialized), raster.clamp_near),
                 styling: bits.filter(|_| styled),
                 raster,
+                fragment,
+                faces,
             };
             let job = self.render_job(pipeline, shape)?;
             let noted = (!self.machine.makes_records(pipeline)).then(|| {
@@ -775,9 +788,9 @@ impl Compiler<'_> {
         };
         let mut constants =
             stage_constants(&built.stages, &shape.switches, &shape.material).into_iter();
-        let fragment_stage = desc.fragment.and_then(|_| built.stages.get(1));
+        let fragment_stage = shape.fragment.and_then(|_| built.stages.get(1));
         let written = fragment_stage
-            .zip(desc.fragment)
+            .zip(shape.fragment)
             .and_then(|(stage, entry)| fragment_locations(&stage.composed.text, entry.name()));
         let blended = shape
             .styling
@@ -801,7 +814,7 @@ impl Compiler<'_> {
             .first()?
             .shader(self.device, &mut machine.shaders);
         let fragment = fragment_stage
-            .zip(desc.fragment)
+            .zip(shape.fragment)
             .map(|(stage, entry)| (stage.shader(self.device, &mut machine.shaders), entry.name()));
         let vertex_constants = constants.next().unwrap_or_default();
         let fragment_constants = constants.next().unwrap_or_default();
@@ -811,7 +824,7 @@ impl Compiler<'_> {
             layout: built.layout.clone(),
             vertex: (vertex, desc.vertex.name(), vertex_constants),
             buffers: vertex_layouts(&desc.vertices),
-            primitive: culled(desc.primitive, shape.raster.cull),
+            primitive: culled(faced(desc.primitive, shape.faces), shape.raster.cull),
             depth_stencil: depth_state(shape.depth, desc.depth, shape.styling, shape.raster),
             samples: desc.samples,
             fragment: fragment.map(|(module, entry)| (module, entry, fragment_constants)),
@@ -1186,6 +1199,19 @@ fn raster_of(machine: &Machine, pipeline: u32) -> engine_core::PassRaster {
                 .find(|scene| scene.name == name)
         })
         .map_or(engine_core::PassRaster::PLAIN, |scene| scene.raster)
+}
+
+fn faced(
+    primitive: wgpu::PrimitiveState,
+    faces: Option<crate::surface::FaceCull>,
+) -> wgpu::PrimitiveState {
+    match faces {
+        Some(cull) => wgpu::PrimitiveState {
+            cull_mode: cull.face(),
+            ..primitive
+        },
+        None => primitive,
+    }
 }
 
 fn culled(primitive: wgpu::PrimitiveState, cull: engine_core::PassCull) -> wgpu::PrimitiveState {

@@ -36,6 +36,7 @@ impl crate::GpuPart for Mipmaps {
                 writes: wgpu::ColorWrites::ALL,
                 targets: None,
                 samples: 1,
+                faces: crate::install::Faces::Declared,
             }),
             vec![
                 (Var::generated(module, "source"), Bound::Asset),

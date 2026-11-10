@@ -12,7 +12,7 @@ mod part;
 mod settings;
 
 use bevy_ecs::prelude::Res;
-use engine_core::{Attributes, Brick, Bricks, KindDecl, Schedule, Source};
+use engine_core::{Attributes, Brick, Bricks, KindDecl, KindSkip, Schedule, Source};
 use engine_places_world::ground::{Cover, FarCover};
 use engine_render::RenderBricks;
 
@@ -40,10 +40,17 @@ impl Brick for GroundCoverBrick {
             .generated(layouts::GENERATED)
             .draw_kind(KindDecl {
                 kind: part::COVER,
-                vertex: shaders::cover::draw::VS_COVER.name(),
                 needs: Attributes::NONE,
-                casts_shadows: false,
-                seen_by_probes: false,
+                skips: &[
+                    KindSkip {
+                        pass: "shadow",
+                        reason: "ground cover cast no shadows",
+                    },
+                    KindSkip {
+                        pass: "probe",
+                        reason: "ground cover stay out of probe captures",
+                    },
+                ],
             })
             .draws::<part::CoverGpu>(part::COVER, part::CoverGpu::draw);
     }

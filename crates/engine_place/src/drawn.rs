@@ -19,13 +19,27 @@ impl DrawKind {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct KindSkip {
+    pub pass: &'static str,
+    pub reason: &'static str,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct KindDecl {
     pub kind: DrawKind,
-    pub vertex: &'static str,
     pub needs: Attributes,
-    pub casts_shadows: bool,
-    pub seen_by_probes: bool,
+    pub skips: &'static [KindSkip],
+}
+
+impl KindDecl {
+    pub fn skip(&self, pass: &str) -> Option<&KindSkip> {
+        self.skips.iter().find(|skip| skip.pass == pass)
+    }
+
+    pub fn joins(&self, name: &str, pass: &crate::Pass) -> bool {
+        (pass.takes)(self) && self.skip(name).is_none()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

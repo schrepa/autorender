@@ -15,8 +15,8 @@ use std::mem::offset_of;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AttachPoint, Brick, Bricks, GpuStruct, Pass, PassName, PassViews, Readable, Readback,
-    Schedule, Settling, SlotSet, Source, Writes, never,
+    AttachPoint, Brick, Bricks, GpuStruct, Pass, PassName, PassPurpose, PassViews, Readable,
+    Readback, Schedule, Settling, SlotSet, Source, Writes, never,
 };
 use engine_places_rendering::exposure::Exposure;
 use engine_render::RenderBricks;
@@ -36,6 +36,7 @@ impl PassName for ExposurePass {
         reads: SlotSet::NONE,
         views: PassViews::Main,
         at: AttachPoint::Display,
+        purpose: PassPurpose::Scene,
         takes: never,
     };
 }

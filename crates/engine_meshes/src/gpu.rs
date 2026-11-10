@@ -1,14 +1,13 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, AssetResidency, CullPlan, Detail, DeviceLimits, DrawnTable, Entry, Error,
-    FrameTime, GeometryStream, GlobalTransforms, InstanceInput, PassViews, ScenePass, Views,
+    AssetLibrary, AssetResidency, ColorPass, CullPlan, Detail, DeviceLimits, DrawnTable, Error,
+    FrameTime, GeometryStream, GlobalTransforms, InstanceInput, PassRole, Views,
 };
 use engine_places::meshes::LastLevels;
 use engine_render::{
-    AttachPoint, Bind, Buffer, ComputePipeline, DEBUG_BLEND, DEBUG_TARGETS, DepthUse,
-    DrawInput, Encode, GpuPart,
-    Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Scene, Scope,
-    TargetName, VertexLayout, wgpu,
+    AttachPoint, Bind, Buffer, ComputePipeline, DrawInput, Encode, Form, FormSide, GpuPart,
+    Install, KindForm, Lifetime, Own, Pass, Pipeline, Prepare, Scene, Scope, Varyings,
+    VertexLayout, wgpu,
 };
 
 use crate::assets::MeshAssets;
@@ -17,7 +16,7 @@ use crate::drawn::WatchedSlot;
 use crate::layouts::PresentationFrame;
 use crate::order::BatchLook;
 use crate::presentation::{FrameState, PresentationTotals};
-use crate::shaders::meshes::{blended, debug, forward, presentation, vertex};
+use crate::shaders::meshes::{blended, presentation, vertex};
 use crate::{MESH, SKIN};
 
 pub(crate) const VIEW_FRAME_BYTES: u64 = 512;
@@ -124,59 +123,60 @@ pub(crate) struct Computes {
     pub view_cull: ComputePipeline<MeshesGpu>,
 }
 
-pub(crate) struct Looked<P> {
-    pub looks: Vec<P>,
+pub(crate) struct Forms<P> {
+    pub plain: P,
+    pub extended: P,
+    pub skin: P,
 }
 
-impl<P> Looked<P> {
+impl<P> Forms<P> {
     pub(crate) fn of(&self, look: BatchLook) -> &P {
-        let index = if look.skinned {
-            PLAIN_LOOKS | usize::from(look.masked) << 1 | usize::from(look.double_sided)
-        } else {
-            usize::from(look.masked) << 2
-                | usize::from(look.double_sided) << 1
-                | usize::from(look.extended)
-        };
-        &self.looks[index]
-    }
-}
-
-const PLAIN_LOOKS: usize = 8;
-const LOOKS: usize = 12;
-
-fn look_of(index: usize) -> BatchLook {
-    if index < PLAIN_LOOKS {
-        BatchLook {
-            masked: index & 4 != 0,
-            double_sided: index & 2 != 0,
-            extended: index & 1 != 0,
-            skinned: false,
-        }
-    } else {
-        BatchLook {
-            masked: index & 2 != 0,
-            double_sided: index & 1 != 0,
-            extended: true,
-            skinned: true,
+        match (look.skinned, look.extended) {
+            (true, _) => &self.skin,
+            (false, true) => &self.extended,
+            (false, false) => &self.plain,
         }
     }
 }
 
-fn vertex_of(look: BatchLook) -> (Entry, &'static [VertexLayout]) {
-    match (look.skinned, look.extended) {
-        (true, _) => (vertex::VS_SKIN, SKIN_STREAMS),
-        (false, true) => (vertex::VS_MESH_EXTENDED, EXTENDED_STREAMS),
-        (false, false) => (vertex::VS_MESH, MESH_STREAMS),
-    }
-}
+const PLAIN_FORM: KindForm = KindForm {
+    kind: MESH,
+    placed: FormSide {
+        vertex: vertex::VS_MESH,
+        streams: MESH_STREAMS,
+    },
+    owned: Some(FormSide {
+        vertex: vertex::VS_VIEW,
+        streams: VIEW_STREAMS,
+    }),
+    varyings: Varyings::Surface,
+};
 
-fn view_vertex_of(look: BatchLook) -> (Entry, &'static [VertexLayout]) {
-    match (look.skinned, look.extended) {
-        (true, _) => (vertex::VS_SKIN_VIEW, SKIN_VIEW_STREAMS),
-        (false, true) => (vertex::VS_VIEW_EXTENDED, EXTENDED_VIEW_STREAMS),
-        (false, false) => (vertex::VS_VIEW, VIEW_STREAMS),
-    }
-}
+const EXTENDED_FORM: KindForm = KindForm {
+    kind: MESH,
+    placed: FormSide {
+        vertex: vertex::VS_MESH_EXTENDED,
+        streams: EXTENDED_STREAMS,
+    },
+    owned: Some(FormSide {
+        vertex: vertex::VS_VIEW_EXTENDED,
+        streams: EXTENDED_VIEW_STREAMS,
+    }),
+    varyings: Varyings::SurfaceExtra,
+};
+
+const SKIN_FORM: KindForm = KindForm {
+    kind: SKIN,
+    placed: FormSide {
+        vertex: vertex::VS_SKIN,
+        streams: SKIN_STREAMS,
+    },
+    owned: Some(FormSide {
+        vertex: vertex::VS_SKIN_VIEW,
+        streams: SKIN_VIEW_STREAMS,
+    }),
+    varyings: Varyings::SurfaceExtra,
+};
 
 pub(crate) struct Streams<S> {
     pub ids: DrawInput<MeshesGpu, S>,
@@ -196,27 +196,20 @@ pub(crate) struct BlendedStreams {
 }
 
 pub(crate) enum Drawing {
-    Placed {
-        looks: Looked<Pipeline<MeshesGpu, Scene>>,
-        streams: Streams<Scene>,
-    },
-    Views {
-        looks: [Looked<Pipeline<MeshesGpu, Scene>>; 2],
-        streams: ViewStreams,
-    },
-    Blended {
-        looks: Looked<Pipeline<MeshesGpu, Scene>>,
-        streams: BlendedStreams,
-    },
+    Placed(Streams<Scene>),
+    Views(ViewStreams),
+    Blended(BlendedStreams),
 }
 
-pub(crate) struct ScenePipelines {
+pub(crate) struct SceneStreams {
     pub name: &'static str,
     pub drawing: Drawing,
 }
 
+pub(crate) type OwnPipelines = Forms<Option<Pipeline<MeshesGpu, Own>>>;
+
 pub(crate) struct Occluded {
-    pub lit: Looked<Pipeline<MeshesGpu, Own>>,
+    pub pipelines: OwnPipelines,
     pub streams: Streams<Own>,
 }
 
@@ -226,7 +219,8 @@ pub(crate) struct MeshesGpu {
     pub presented: Presented,
     pub computes: Computes,
     pub sorted: Sorted,
-    pub scenes: Vec<ScenePipelines>,
+    pub forms: Forms<Form<MeshesGpu>>,
+    pub scenes: Vec<SceneStreams>,
     pub occluded: Occluded,
     pub state: FrameState,
 }
@@ -261,7 +255,12 @@ impl GpuPart for MeshesGpu {
         let passes = install_passes(cx);
         let computes = install_computes(cx, &passes, &presented)?;
         let sorted = install_sorted(cx, passes.blended, &presented)?;
-        let scenes = install_scenes(cx, &instances, &presented, &sorted)?;
+        let forms = Forms {
+            plain: cx.form(&PLAIN_FORM, &[])?,
+            extended: cx.form(&EXTENDED_FORM, &[])?,
+            skin: cx.form(&SKIN_FORM, &[])?,
+        };
+        let scenes = install_scenes(cx, &forms, (&instances, &presented, &sorted));
         let occluded = install_occluded(cx, passes.occluded, &instances, &presented)?;
         Ok(Self {
             passes,
@@ -269,6 +268,7 @@ impl GpuPart for MeshesGpu {
             presented,
             computes,
             sorted,
+            forms,
             scenes,
             occluded,
             state: FrameState::default(),
@@ -597,153 +597,6 @@ fn install_computes(
     })
 }
 
-fn mesh_pipeline(
-    (vertex, fragment): (engine_core::Entry, engine_core::Entry),
-    (vertices, double_sided, mirrored): (&'static [VertexLayout], bool, bool),
-    depth: DepthUse,
-    writes: wgpu::ColorWrites,
-) -> RenderPipeline<'static> {
-    RenderPipeline {
-        vertex,
-        fragment: Some(fragment),
-        vertices,
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            front_face: if mirrored {
-                wgpu::FrontFace::Cw
-            } else {
-                wgpu::FrontFace::Ccw
-            },
-            cull_mode: (!double_sided).then_some(wgpu::Face::Back),
-            ..Default::default()
-        },
-        depth,
-        blend: None,
-        writes,
-    }
-}
-
-const WRITE: DepthUse = DepthUse::Write {
-    bias: wgpu::DepthBiasState {
-        constant: 0,
-        slope_scale: 0.0,
-        clamp: 0.0,
-    },
-};
-
-fn unlit_looks(
-    cx: &mut Install<'_, MeshesGpu>,
-    scene: Scene,
-) -> Result<Looked<Pipeline<MeshesGpu, Scene>>, Error> {
-    let mut looks = Vec::with_capacity(LOOKS);
-    for index in 0..LOOKS {
-        let look = look_of(index);
-        let (vertex, streams) = vertex_of(look);
-        let masked_depth = if look.extended {
-            forward::FS_MASKED_DEPTH_EXTENDED
-        } else {
-            forward::FS_MASKED_DEPTH
-        };
-        let mut pipeline = mesh_pipeline(
-            (vertex, masked_depth),
-            (streams, look.double_sided, false),
-            WRITE,
-            wgpu::ColorWrites::ALL,
-        );
-        if !look.masked {
-            pipeline.fragment = None;
-        }
-        looks.push(cx.render_pipeline(scene, &pipeline, &[])?);
-    }
-    Ok(Looked { looks })
-}
-
-fn lit_looks<S: Scope<MeshesGpu> + Copy>(
-    cx: &mut Install<'_, MeshesGpu>,
-    scope: S,
-    shown: bool,
-) -> Result<Looked<Pipeline<MeshesGpu, S::Tag>>, Error> {
-    let mut looks = Vec::with_capacity(LOOKS);
-    for index in 0..LOOKS {
-        let look = look_of(index);
-        let (vertex, streams) = vertex_of(look);
-        let (lit, debugged) = match (look.skinned, look.extended) {
-            (true, _) => (forward::FS_MESH_EXTENDED, debug::FS_DEBUG_SKIN),
-            (false, true) => (forward::FS_MESH_EXTENDED, debug::FS_DEBUG_MESH_EXTENDED),
-            (false, false) => (forward::FS_MESH, debug::FS_DEBUG_MESH),
-        };
-        let mut pipeline = mesh_pipeline(
-            (vertex, if shown { debugged } else { lit }),
-            (streams, look.double_sided, false),
-            WRITE,
-            wgpu::ColorWrites::ALL,
-        );
-        pipeline.blend = shown.then_some(DEBUG_BLEND);
-        looks.push(cx.render_pipeline(scope, &pipeline, &[])?);
-    }
-    Ok(Looked { looks })
-}
-
-fn blended_looks(
-    cx: &mut Install<'_, MeshesGpu>,
-    scene: Scene,
-) -> Result<Looked<Pipeline<MeshesGpu, Scene>>, Error> {
-    let mut looks = Vec::with_capacity(LOOKS);
-    for index in 0..LOOKS {
-        let look = look_of(index);
-        let (vertex, streams) = vertex_of(look);
-        let shown = if look.extended {
-            forward::FS_MESH_EXTENDED_BLENDED
-        } else {
-            forward::FS_MESH_BLENDED
-        };
-        looks.push(cx.render_pipeline(
-            scene,
-            &mesh_pipeline(
-                (vertex, shown),
-                (streams, look.double_sided, false),
-                WRITE,
-                wgpu::ColorWrites::ALL,
-            ),
-            &[],
-        )?);
-    }
-    Ok(Looked { looks })
-}
-
-fn view_looks(
-    cx: &mut Install<'_, MeshesGpu>,
-    scene: Scene,
-    (mirrored, lit): (bool, bool),
-) -> Result<Looked<Pipeline<MeshesGpu, Scene>>, Error> {
-    let mut looks = Vec::with_capacity(LOOKS);
-    for index in 0..LOOKS {
-        let look = look_of(index);
-        let (vertex, streams) = view_vertex_of(look);
-        let (shown, depth) = if look.extended {
-            (forward::FS_MESH_EXTENDED, forward::FS_MASKED_DEPTH_EXTENDED)
-        } else {
-            (forward::FS_MESH, forward::FS_MASKED_DEPTH)
-        };
-        let writes = if lit {
-            wgpu::ColorWrites::ALL
-        } else {
-            wgpu::ColorWrites::empty()
-        };
-        let mut pipeline = mesh_pipeline(
-            (vertex, if lit { shown } else { depth }),
-            (streams, look.double_sided, mirrored),
-            WRITE,
-            writes,
-        );
-        if !lit && !look.masked {
-            pipeline.fragment = None;
-        }
-        looks.push(cx.render_pipeline(scene, &pipeline, &[])?);
-    }
-    Ok(Looked { looks })
-}
-
 fn streams<S: Scope<MeshesGpu> + Copy>(
     cx: &mut Install<'_, MeshesGpu>,
     scope: S,
@@ -759,66 +612,36 @@ fn streams<S: Scope<MeshesGpu> + Copy>(
 
 fn install_scenes(
     cx: &mut Install<'_, MeshesGpu>,
-    instances: &Instances,
-    presented: &Presented,
-    sorted: &Sorted,
-) -> Result<Vec<ScenePipelines>, Error> {
-    let listed: Vec<ScenePass> = cx
-        .passes()
-        .listed()
-        .iter()
-        .filter(|listed| {
-            listed.bit.is_some()
-                && (cx.passes().takes(&listed.pass, MESH) || cx.passes().takes(&listed.pass, SKIN))
-        })
-        .copied()
-        .collect();
-    let mut scenes = Vec::with_capacity(listed.len());
-    for listed in listed {
-        let scene = Scene::named(listed.name);
-        let lit = listed
-            .pass
-            .writes
-            .targets()
-            .iter()
-            .any(|target| *target != TargetName::DEPTH);
-        let shown = listed.pass.writes.contains(DEBUG_TARGETS[0]);
-        let drawing = if listed.pass.at == AttachPoint::Transparent {
-            Drawing::Blended {
-                looks: blended_looks(cx, scene)?,
-                streams: BlendedStreams {
-                    ids: cx.draw_input(scene, sorted.ids),
-                    args: cx.draw_input(scene, sorted.args),
-                    records: cx.draw_input(scene, instances.records),
-                },
-            }
-        } else if listed.pass.views == PassViews::Owned {
-            Drawing::Views {
-                looks: [
-                    view_looks(cx, scene, (false, lit))?,
-                    view_looks(cx, scene, (true, lit))?,
-                ],
-                streams: ViewStreams {
+    forms: &Forms<Form<MeshesGpu>>,
+    (instances, presented, sorted): (&Instances, &Presented, &Sorted),
+) -> Vec<SceneStreams> {
+    let mut scenes: Vec<SceneStreams> = Vec::new();
+    let passes = forms.plain.passes().chain(forms.skin.passes());
+    for pass in passes {
+        let name = pass.scene.name();
+        if scenes.iter().any(|known| known.name == name) {
+            continue;
+        }
+        let scene = pass.scene;
+        let drawing = match (pass.role, pass.owned) {
+            (PassRole::Blended, true | false) => Drawing::Blended(BlendedStreams {
+                ids: cx.draw_input(scene, sorted.ids),
+                args: cx.draw_input(scene, sorted.args),
+                records: cx.draw_input(scene, instances.records),
+            }),
+            (PassRole::Lit | PassRole::Depth | PassRole::Shown, true) => {
+                Drawing::Views(ViewStreams {
                     ids: cx.draw_input(scene, presented.view_visible),
                     args: cx.draw_input(scene, presented.view_draws),
-                },
+                })
             }
-        } else {
-            Drawing::Placed {
-                looks: if lit || shown {
-                    lit_looks(cx, scene, shown)?
-                } else {
-                    unlit_looks(cx, scene)?
-                },
-                streams: streams(cx, scene, (instances, presented), 0),
+            (PassRole::Lit | PassRole::Depth | PassRole::Shown, false) => {
+                Drawing::Placed(streams(cx, scene, (instances, presented), 0))
             }
         };
-        scenes.push(ScenePipelines {
-            name: listed.name,
-            drawing,
-        });
+        scenes.push(SceneStreams { name, drawing });
     }
-    Ok(scenes)
+    scenes
 }
 
 fn install_occluded(
@@ -828,7 +651,11 @@ fn install_occluded(
     presented: &Presented,
 ) -> Result<Occluded, Error> {
     Ok(Occluded {
-        lit: lit_looks(cx, pass, false)?,
+        pipelines: Forms {
+            plain: Some(cx.form_as::<ColorPass>(pass, &PLAIN_FORM, &[])?),
+            extended: Some(cx.form_as::<ColorPass>(pass, &EXTENDED_FORM, &[])?),
+            skin: Some(cx.form_as::<ColorPass>(pass, &SKIN_FORM, &[])?),
+        },
         streams: streams(cx, pass, (instances, presented), 1),
     })
 }

@@ -14,8 +14,8 @@ mod settings;
 
 use bevy_ecs::prelude::Res;
 use engine_core::{
-    AttachPoint, Brick, Bricks, Pass, PassName, PassViews, Schedule, SlotSet, Source, Writes,
-    every,
+    AttachPoint, Brick, Bricks, Pass, PassName, PassPurpose, PassViews, Schedule, SlotSet, Source,
+    Writes, every,
 };
 use engine_render::{
     DEBUG_TARGETS, DebugModes, DebugShown, RenderBricks, TargetDecl, TargetName, wgpu,
@@ -40,6 +40,7 @@ impl PassName for DebugViewPass {
         reads: SlotSet::ALL,
         views: PassViews::Main,
         at: AttachPoint::Opaque,
+        purpose: PassPurpose::Debug,
         takes: every,
     };
 }

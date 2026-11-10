@@ -573,7 +573,7 @@ impl ScatterGpu {
             .listed()
             .iter()
             .filter(|listed| listed.pass.at != AttachPoint::Transparent)
-            .filter(|listed| cx.passes().takes(&listed.pass, PLACED))
+            .filter(|listed| cx.passes().takes(listed, PLACED))
             .copied()
             .collect();
         let mut joined = Vec::with_capacity(listed.len());

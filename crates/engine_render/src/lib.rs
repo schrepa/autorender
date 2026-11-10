@@ -13,7 +13,7 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::system::SystemParamItem;
 use engine_core::{
     Bricks, DrawKind, Entry, Error, List, MaterialHandle, MeshHandle, PassBit, PassEntry, PassName,
-    Read, Readable, Readback, Slot, SlotSet, TextureHandle, Var, Writes, gpu_struct,
+    PassRole, Read, Readable, Readback, Slot, TextureHandle, Var, gpu_struct,
 };
 use engine_registry::RecordExt;
 
@@ -31,6 +31,7 @@ mod gpu_calls;
 mod gpu_data;
 mod graph;
 mod install;
+mod kinds;
 mod linker;
 mod machine;
 mod pieces;
@@ -59,11 +60,12 @@ pub use gpu_data::{
     jitter_clip, mip_levels, pack_color, pack_surface, pixel_angle, pixels_per_meter,
     pyramid_extents,
 };
+pub use kinds::{Form, FormPass, FormSide, KindForm, Varyings};
 pub use uploads::{UploadRange, listed_ranges};
 pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
 pub use materials::gpu_format as texture_format;
 pub use surface::{
-    DrawState, LightingModule, MaterialVariant, SlotModule, SurfaceKind, material_state,
+    DrawState, FaceCull, LightingModule, MaterialVariant, SlotModule, SurfaceKind, material_state,
 };
 #[doc(hidden)]
 pub use memory::GpuMemory;
@@ -301,10 +303,9 @@ impl Scene {
 pub struct SceneDraw {
     pub pass: Scene,
     pub bit: Option<PassBit>,
-    pub at: AttachPoint,
-    pub reads: SlotSet,
-    pub writes: Writes,
+    pub role: PassRole,
     pub view: Option<u32>,
+    pub mirrored: bool,
     pub index: Option<u32>,
 }
 
@@ -695,6 +696,7 @@ impl<P: GpuPart> Install<'_, P> {
             writes: desc.writes,
             targets,
             samples: 1,
+            faces: install::Faces::Declared,
         });
         let bound = bound_list(bound, &self.core.outputs)?;
         let pipeline = self.core.pipeline(scoped(scope), program, bound)?;
@@ -1170,6 +1172,7 @@ impl<P: GpuPart> Encode<'_, P> {
         Draw {
             raw: RawDraw::new(&mut *self.core, part, self.timer),
             view: None,
+            mirrored: false,
             part: PhantomData,
         }
     }
@@ -1201,6 +1204,7 @@ impl<P: GpuPart> Encode<'_, P> {
         Some(Draw {
             raw: RawDraw::new(&mut *self.core, part, self.timer),
             view: Some(view),
+            mirrored: view.mirrored,
             part: PhantomData,
         })
     }
@@ -1228,6 +1232,7 @@ impl<P: GpuPart> Encode<'_, P> {
 pub struct Draw<'e, P, S> {
     raw: RawDraw<'e>,
     view: Option<encode::OwnedDraw>,
+    mirrored: bool,
     part: PhantomData<fn() -> (P, S)>,
 }
 
@@ -1383,14 +1388,20 @@ impl<P: GpuPart> Draw<'_, P, Own> {
             return 0;
         };
         let members = run.scene_members();
+        run.tallies.kinds.scened(scene.pass.0);
         let encoding = self.raw.part();
         let mut drawn = 0;
         for member in members.iter() {
+            let kind = member.kind.kind;
             if member.part == encoding {
                 let run = self.raw.run();
                 run.point = Some(scene.pass.0);
-                drawn += (member.call)(own, &scene, &mut self.raw.member(member.part));
-                self.raw.run().point = None;
+                run.tallies.kinds.drawing = Some(kind);
+                let count = (member.call)(own, &scene, &mut self.raw.member(member.part));
+                let run = self.raw.run();
+                run.tallies.kinds.drew(kind, scene.pass.0, count);
+                run.point = None;
+                drawn += count;
                 continue;
             }
             let run = self.raw.run();
@@ -1398,10 +1409,13 @@ impl<P: GpuPart> Draw<'_, P, Own> {
                 continue;
             };
             run.point = Some(scene.pass.0);
-            drawn += (member.call)(held.part(), &scene, &mut self.raw.member(member.part));
+            run.tallies.kinds.drawing = Some(kind);
+            let count = (member.call)(held.part(), &scene, &mut self.raw.member(member.part));
             let run = self.raw.run();
+            run.tallies.kinds.drew(kind, scene.pass.0, count);
             run.point = None;
             run.give_member(member.part, held);
+            drawn += count;
         }
         drawn
     }

@@ -7,8 +7,8 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 use bevy_ecs::prelude::Res;
 use engine_core::{
-    AttachPoint, Brick, Bricks, Pass, PassName, PassViews, SlotSet, Source, Writes, never,
-    settings,
+    AttachPoint, Brick, Bricks, Pass, PassName, PassPurpose, PassViews, SlotSet, Source, Writes,
+    never, settings,
 };
 use engine_render::RenderBricks;
 
@@ -31,6 +31,7 @@ impl PassName for DitherPass {
         reads: SlotSet::NONE,
         views: PassViews::Every,
         at: AttachPoint::Display,
+        purpose: PassPurpose::Scene,
         takes: never,
     };
 }
