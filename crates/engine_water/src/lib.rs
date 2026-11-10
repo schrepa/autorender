@@ -38,10 +38,10 @@ use engine_core::{
     Attributes, Brick, Bricks, Cook, CookList, Cut, JobKind, KindDecl, KindSkip, Schedule, Source,
     SurfaceSlot, stats,
 };
-use engine_places_rendering::reflections::TraceDepths;
-use engine_places_rendering::sky::EyeMedium;
 use engine_open_world_kit::ground::Heightfield;
 use engine_open_world_kit::water::Waterline;
+use engine_places_rendering::reflections::TraceDepths;
+use engine_places_rendering::sky::EyeMedium;
 use engine_render::{DebugModes, DebugShown, RenderBricks, SlotModule, SurfaceKind};
 
 pub(crate) use engine_heightfield::TileKey;

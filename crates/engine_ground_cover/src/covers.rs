@@ -77,7 +77,10 @@ impl CoverTable {
             if self.materials.len() < end {
                 self.materials.resize(end, CoverMaterial::default());
             }
-            for (held, material) in self.materials[base as usize..end].iter_mut().zip(surface.iter()) {
+            for (held, material) in self.materials[base as usize..end]
+                .iter_mut()
+                .zip(surface.iter())
+            {
                 *held = looks
                     .get(&*material.name)
                     .map_or(CoverMaterial::default(), cover_material);

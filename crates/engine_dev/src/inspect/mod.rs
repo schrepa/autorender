@@ -6,8 +6,8 @@ use std::{collections::BTreeMap, io::Write};
 
 use bevy_ecs::prelude::{Component, Entity, Resource, World};
 use engine_core::{
-    AssetLibrary, Drawn, Engine, FixedTime, FrameTime, GlobalTransforms, JobExchange,
-    MaterialHandle, GeometryHandle, Mover, Pace, Parent, PresentationState, TextureHandle, Transform,
+    AssetLibrary, Drawn, Engine, FixedTime, FrameTime, GeometryHandle, GlobalTransforms,
+    JobExchange, MaterialHandle, Mover, Pace, Parent, PresentationState, TextureHandle, Transform,
 };
 use engine_registry::{BrickRecord, OperationEntry, OperationScene, Registry};
 use engine_scene::{SceneEntity, SceneInstance, SceneMaterial, TextureOrigin};

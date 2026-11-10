@@ -76,13 +76,15 @@ pub(crate) fn body_schema() -> Value {
 impl BodyProblem {
     pub(crate) fn error(&self) -> Error {
         match self {
-            Self::NoCollider => Error::new(ErrorCode::MissingComponent, "$.collider")
-                .expected(Expected::Present),
+            Self::NoCollider => {
+                Error::new(ErrorCode::MissingComponent, "$.collider").expected(Expected::Present)
+            }
             Self::NotRoot => {
                 Error::new(crate::INVALID_RIGID_BODY, "$.parent").expected(Expected::Absent)
             }
-            Self::NoTransform => Error::new(ErrorCode::MissingComponent, "$.transform")
-                .expected(Expected::Present),
+            Self::NoTransform => {
+                Error::new(ErrorCode::MissingComponent, "$.transform").expected(Expected::Present)
+            }
             Self::BadScale => Error::new(ErrorCode::InvalidValue, "$.transform.scale"),
             Self::BadValue(field) => {
                 Error::new(ErrorCode::InvalidValue, format!("$.rigid_body.{field}"))

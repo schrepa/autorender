@@ -315,13 +315,14 @@ impl<P: GpuPart> Install<'_, P> {
                 }
                 None => None,
             };
-            let mirrored = match kind_program(form, facts, (true, topology)).filter(|_| built && owned) {
-                Some(program) => {
-                    let reached = self.reached(&program, &bound);
-                    Some(self.core.pipeline(scope, program, reached)?)
-                }
-                None => None,
-            };
+            let mirrored =
+                match kind_program(form, facts, (true, topology)).filter(|_| built && owned) {
+                    Some(program) => {
+                        let reached = self.reached(&program, &bound);
+                        Some(self.core.pipeline(scope, program, reached)?)
+                    }
+                    None => None,
+                };
             scenes.push(FormScene {
                 pass: FormPass {
                     scene: Scene::named(listed.name),

@@ -66,9 +66,7 @@ struct Record {
 impl Record {
     fn share(&self, whole: bool) -> Option<RecordKey> {
         if whole {
-            self.whole
-                .as_ref()
-                .map(|_| settled_share(self.made.record))
+            self.whole.as_ref().map(|_| settled_share(self.made.record))
         } else {
             Some(summary_share(self.made.record))
         }
@@ -1201,7 +1199,9 @@ pub(crate) fn request_settle(
     mut jobs: Jobs,
     mut state: ResMut<WaterState>,
 ) {
-    let eye = views.main().map_or(glam::Vec3::ZERO, |main| main.detail_eye);
+    let eye = views
+        .main()
+        .map_or(glam::Vec3::ZERO, |main| main.detail_eye);
     let state = &mut *state;
     state.everything.settle(time.real_elapsed);
     let asked: Vec<(Entity, Ticket)> = state
@@ -1229,9 +1229,8 @@ pub(crate) fn request_settle(
             terrain.settled.stir(true);
         }
         let watering = !terrain.surroundings;
-        let cooks = state.everything.interests(&terrain.entity) > 0
-            && watering
-            && terrain.recipe.is_some();
+        let cooks =
+            state.everything.interests(&terrain.entity) > 0 && watering && terrain.recipe.is_some();
         if terrain.settled.cooking != cooks {
             terrain.settled.cooking = cooks;
             terrain.settled.stir(true);

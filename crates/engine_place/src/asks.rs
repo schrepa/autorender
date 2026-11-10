@@ -4,8 +4,7 @@ use serde::Serialize;
 
 use crate::{EntityIds, Slot};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[derive(schemars::JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum ApplyAt {
     TickEnd,
@@ -23,8 +22,7 @@ pub trait Ask: Send + Sync + 'static {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
-#[derive(schemars::JsonSchema)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 pub struct Moment {
     pub tick: u64,
     pub frame: u64,

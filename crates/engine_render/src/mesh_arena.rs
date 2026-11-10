@@ -3,8 +3,8 @@ use std::sync::LazyLock;
 
 use bevy_ecs::world::World;
 use engine_core::{
-    ArenaShape, AssetLibrary, AssetResidency, Attribute, AttributeFormat, Cursor, GeometryStream,
-    Mesh, GeometryHandle, MeshLods, MeshPlacement, MeshResidence, MeshStreams, ResidentMesh, Since,
+    ArenaShape, AssetLibrary, AssetResidency, Attribute, AttributeFormat, Cursor, GeometryHandle,
+    GeometryStream, Mesh, MeshLods, MeshPlacement, MeshResidence, MeshStreams, ResidentMesh, Since,
     math::clamp,
 };
 
@@ -386,7 +386,8 @@ impl GpuMeshes {
             Since::All => {
                 self.meshes.retain(|&handle, mesh| {
                     residency.mesh(handle).is_some_and(|resident| {
-                        (resident.placement(), resident.revision()) == (mesh.placement, mesh.revision)
+                        (resident.placement(), resident.revision())
+                            == (mesh.placement, mesh.revision)
                     })
                 });
                 all = residency.meshes().map(|(handle, _)| handle).collect();
@@ -401,9 +402,9 @@ impl GpuMeshes {
                 .meshes
                 .get(&handle)
                 .map(|mesh| (mesh.placement, mesh.revision));
-            if resident
-                .is_some_and(|resident| current == Some((resident.placement(), resident.revision())))
-            {
+            if resident.is_some_and(|resident| {
+                current == Some((resident.placement(), resident.revision()))
+            }) {
                 continue;
             }
             self.meshes.remove(&handle);
@@ -425,7 +426,8 @@ impl GpuMeshes {
         lods: Option<&MeshLods>,
     ) -> u64 {
         let streams = resident.streams().streams();
-        self.staging.resize_with(streams.len().max(self.staging.len()), Vec::new);
+        self.staging
+            .resize_with(streams.len().max(self.staging.len()), Vec::new);
         for (&stream, bytes) in streams.iter().zip(&mut self.staging) {
             stream_bytes(source, stream, bytes);
         }

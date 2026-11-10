@@ -25,8 +25,7 @@ const INPUT_MAGIC: &[u8; 4] = b"ELDI";
 
 impl MeshLods {
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut bytes =
-            Vec::with_capacity(12 + self.levels.len() * 12 + self.indices.len() * 4);
+        let mut bytes = Vec::with_capacity(12 + self.levels.len() * 12 + self.indices.len() * 4);
         bytes.extend_from_slice(LODS_MAGIC);
         for count in [self.levels.len(), self.indices.len()] {
             bytes.extend_from_slice(&(count as u32).to_le_bytes());

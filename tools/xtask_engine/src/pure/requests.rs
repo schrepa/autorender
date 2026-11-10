@@ -192,7 +192,10 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         .app
         .world()
         .get_resource::<engine_registry::Registry>()
-        .map_or_else(|| ErrorCode::NAMES.to_vec(), engine_registry::Registry::error_codes);
+        .map_or_else(
+            || ErrorCode::NAMES.to_vec(),
+            engine_registry::Registry::error_codes,
+        );
     let scene = instantiate(&mut engine, &components)?;
     let mut bare = Engine::default();
     let mut other = engine_with_features()?;
@@ -267,7 +270,10 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     }
     observed.check(
         UNREACHED.windows(2).all(|pair| pair[0].0 < pair[1].0),
-        || "UNREACHED (tools/xtask_engine/src/pure/requests.rs) must be sorted and unique".to_owned(),
+        || {
+            "UNREACHED (tools/xtask_engine/src/pure/requests.rs) must be sorted and unique"
+                .to_owned()
+        },
     );
     for &code in &codes {
         let unreached = UNREACHED.iter().any(|(listed, _)| *listed == code);

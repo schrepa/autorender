@@ -161,9 +161,7 @@ impl Attributes {
         .with(Attribute::Position)
         .with(Attribute::Normal)
         .with(Attribute::Uv0);
-    pub const SKINNED: Self = Self::BASE
-        .with(Attribute::Joints)
-        .with(Attribute::Weights);
+    pub const SKINNED: Self = Self::BASE.with(Attribute::Joints).with(Attribute::Weights);
     pub const POSITION: Self = Self::NONE.with(Attribute::Position);
 
     #[must_use]

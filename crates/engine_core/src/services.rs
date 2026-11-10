@@ -633,7 +633,10 @@ impl SceneContext {
     }
 
     pub fn members<L: List>(&self) -> impl Iterator<Item = &L::Member> + '_ {
-        self.list.as_deref().into_iter().flat_map(JobList::members::<L>)
+        self.list
+            .as_deref()
+            .into_iter()
+            .flat_map(JobList::members::<L>)
     }
 }
 

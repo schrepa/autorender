@@ -56,8 +56,7 @@ pub(crate) struct Applied {
     pub(crate) scope: Scope,
 }
 
-pub(crate) type KindCall =
-    Arc<dyn Fn(&dyn Any, &SceneDraw, &mut RawDraw<'_>) -> u32 + Send + Sync>;
+pub(crate) type KindCall = Arc<dyn Fn(&dyn Any, &SceneDraw, &mut RawDraw<'_>) -> u32 + Send + Sync>;
 
 pub(crate) struct KindDraw {
     pub(crate) part: TypeId,
@@ -73,12 +72,14 @@ impl KindDraw {
         Self {
             part: TypeId::of::<P>(),
             kind,
-            call: Arc::new(move |part: &dyn Any, scene: &SceneDraw, raw: &mut RawDraw<'_>| {
-                match part.downcast_ref::<P>() {
+            call: Arc::new(
+                move |part: &dyn Any, scene: &SceneDraw, raw: &mut RawDraw<'_>| match part
+                    .downcast_ref::<P>()
+                {
                     Some(part) => draw(part, scene, &mut Draw::retyped(raw, scene.mirrored)),
                     None => 0,
-                }
-            }),
+                },
+            ),
         }
     }
 }

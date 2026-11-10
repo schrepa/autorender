@@ -31,7 +31,8 @@ pub(crate) struct Opened {
     features: wgpu::Features,
 }
 
-pub(super) type Opening = std::pin::Pin<Box<dyn std::future::Future<Output = Result<Opened, Error>>>>;
+pub(super) type Opening =
+    std::pin::Pin<Box<dyn std::future::Future<Output = Result<Opened, Error>>>>;
 
 fn features_of(adapter: &wgpu::Adapter) -> wgpu::Features {
     let compression = adapter.features()

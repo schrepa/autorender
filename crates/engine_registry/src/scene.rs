@@ -69,8 +69,7 @@ impl OperationScene {
     }
 
     pub fn install(&mut self, authored: &SceneEntity, entity: Entity) {
-        if authored.scene_id == self.id
-            && self.entities.get(&authored.authored_id) != Some(&entity)
+        if authored.scene_id == self.id && self.entities.get(&authored.authored_id) != Some(&entity)
         {
             self.installed.insert(authored.authored_id.clone(), entity);
         }

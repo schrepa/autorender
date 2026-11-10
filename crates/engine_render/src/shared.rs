@@ -44,11 +44,7 @@ pub(crate) struct AppliedModule {
     pub(crate) stage: Stage,
 }
 
-pub(crate) fn stage_of(
-    at: AttachPoint,
-    module: &str,
-    text: &str,
-) -> Result<Stage, Error> {
+pub(crate) fn stage_of(at: AttachPoint, module: &str, text: &str) -> Result<Stage, Error> {
     let path = format!("$.applied.{module}");
     let contract = crate::places::contract(text)
         .map_err(|error| Error::new(ErrorCode::ShaderLink, path.clone()).got(error))?;
@@ -111,7 +107,10 @@ pub(crate) fn ordered(
     sorted
 }
 
-pub(crate) fn unknown_steps(applied: &[AppliedModule], order: &engine_core::FoldOrder) -> Vec<Error> {
+pub(crate) fn unknown_steps(
+    applied: &[AppliedModule],
+    order: &engine_core::FoldOrder,
+) -> Vec<Error> {
     let mut unknown = Vec::new();
     for (stage, field) in FOLDS {
         let known: Vec<&'static str> = applied
@@ -422,8 +421,14 @@ pub(crate) fn pass_module(colored: bool, written: &[&OutputDecl]) -> (String, St
         );
         let _ = writeln!(copied, "    out.{name} = written.{name};");
         if let Some(module) = &output.module {
-            let _ = writeln!(imports, "import package::{module}::{name} as written_{location};");
-            let _ = writeln!(filled, "    written.{name} = written_{location}(point, shaded, at);");
+            let _ = writeln!(
+                imports,
+                "import package::{module}::{name} as written_{location};"
+            );
+            let _ = writeln!(
+                filled,
+                "    written.{name} = written_{location}(point, shaded, at);"
+            );
         }
     }
     let text = format!(

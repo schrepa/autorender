@@ -3,7 +3,7 @@ use bevy_ecs::entity::Entity;
 use engine_assets::Attributes;
 use serde::{Deserialize, Serialize};
 
-use crate::{MaterialHandle, GeometryHandle, PassMask};
+use crate::{GeometryHandle, MaterialHandle, PassMask};
 
 pub type NodeId = Entity;
 

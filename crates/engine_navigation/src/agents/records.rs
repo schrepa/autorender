@@ -142,10 +142,7 @@ enum Found<T> {
 
 impl WalkRecords {
     pub(super) fn held(&self) -> (u32, u32) {
-        (
-            self.grounds.held.len() as u32,
-            self.portals.census().ready,
-        )
+        (self.grounds.held.len() as u32, self.portals.census().ready)
     }
 
     pub(super) fn refresh(&mut self, seen: (u64, WalkArea)) {
@@ -175,9 +172,7 @@ impl WalkRecords {
                     continue;
                 }
                 Landed::Ready(_) => None,
-                Landed::Failed(error) => {
-                    Some(format!("{PORTALS_NAME}: {}", worker_message(error)))
-                }
+                Landed::Failed(error) => Some(format!("{PORTALS_NAME}: {}", worker_message(error))),
             };
             let Flight { input, work } = flight;
             let made = match failed {
@@ -200,12 +195,9 @@ impl WalkRecords {
         if let Some(ground) = running.held.grounds.get(&key) {
             return Some(Arc::clone(ground));
         }
-        let ground = self.grounds.sample(
-            key,
-            (&running.area, floors),
-            samples,
-            self.kept_grounds,
-        )?;
+        let ground =
+            self.grounds
+                .sample(key, (&running.area, floors), samples, self.kept_grounds)?;
         running.held.grounds.insert(key, Arc::clone(&ground));
         Some(ground)
     }
@@ -355,11 +347,7 @@ fn walk_portals(key: TileKey, bytes: &[u8]) -> Result<TilePortals, Error> {
     let portals = portals_output(bytes)?;
     let held = portals.key();
     if held != key {
-        return Err(engine_codec::invalid("$.key").got([
-            u16::from(held.level),
-            held.x,
-            held.z,
-        ]));
+        return Err(engine_codec::invalid("$.key").got([u16::from(held.level), held.x, held.z]));
     }
     Ok(portals)
 }

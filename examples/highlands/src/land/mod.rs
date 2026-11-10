@@ -242,7 +242,9 @@ fn scanned(
         .and_then(|material| material.with_surface(ROUGHNESS, 1.0))
         .and_then(|material| material.with_mapped(BASE_COLOR_MAP, TextureRef::new(textures[0])))
         .and_then(|material| material.with_mapped(NORMAL_MAP, TextureRef::new(textures[1])))
-        .and_then(|material| material.with_map(METALLIC_ROUGHNESS_MAP, TextureRef::new(textures[2])))
+        .and_then(|material| {
+            material.with_map(METALLIC_ROUGHNESS_MAP, TextureRef::new(textures[2]))
+        })
         .and_then(|material| material.with_map(OCCLUSION_MAP, TextureRef::new(textures[2])))
         .and_then(|material| world_mapped(material, tiling, top))
         .map(Some)
@@ -260,7 +262,9 @@ fn in_terrain_rock(
         .and_then(|material| material.with_mapped(BASE_COLOR_MAP, TextureRef::new(textures[0])))
         .and_then(|material| material.with_mapped(NORMAL_MAP, TextureRef::new(textures[1])))
         .and_then(|material| material.with_normal_scale(0.8))
-        .and_then(|material| material.with_map(METALLIC_ROUGHNESS_MAP, TextureRef::new(textures[2])))
+        .and_then(|material| {
+            material.with_map(METALLIC_ROUGHNESS_MAP, TextureRef::new(textures[2]))
+        })
         .and_then(|material| material.with_map(OCCLUSION_MAP, TextureRef::new(textures[2])))
         .and_then(|material| world_mapped(material, tiling, top))
 }

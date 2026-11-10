@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::{Component, Resource};
-use engine_place::{DrawKind, MaterialHandle, GeometryHandle, Slot};
+use engine_place::{DrawKind, GeometryHandle, MaterialHandle, Slot};
 
 pub const MESH: DrawKind = DrawKind("mesh");
 pub const SKIN: DrawKind = DrawKind("skin");

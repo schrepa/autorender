@@ -5,14 +5,14 @@ use engine_codec::closest;
 use engine_core::__private::schemars::{JsonSchema, Schema};
 use engine_core::{
     ComponentKind, Error, ErrorCode, Expected, InvalidSetting, MAX_HIERARCHY_DEPTH as MAX_DEPTH,
-    MAX_ID_BYTES, Placed, Placement, Rule, SceneContext, Section, Setting, Transform,
-    fields, is_id, math, parse_value_at, state, valid_global_matrix,
+    MAX_ID_BYTES, Placed, Placement, Rule, SceneContext, Section, Setting, Transform, fields,
+    is_id, math, parse_value_at, state, valid_global_matrix,
 };
 use engine_heightfield::layer::LayerKind;
-use engine_places_simulation::ground::Grounded;
 use engine_open_world_kit::paths::{ScenePath, ScenePathSources, ScenePaths};
-use engine_places_world::streaming::{StreamedKey, StreamedKeys, Streams};
 use engine_open_world_kit::terrain::TerrainLayers;
+use engine_places_simulation::ground::Grounded;
+use engine_places_world::streaming::{StreamedKey, StreamedKeys, Streams};
 use glam::{EulerRot, Mat4, Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;

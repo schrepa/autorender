@@ -7,8 +7,8 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::world::{World, WorldId};
 use engine_assets::SceneAssets;
 use engine_core::{
-    AssetLibrary, Error, MaterialHandle, GeometryHandle, ProvidedAssets, SceneContext, TextureHandle,
-    Transform, propagate_transforms, set_parents,
+    AssetLibrary, Error, GeometryHandle, MaterialHandle, ProvidedAssets, SceneContext,
+    TextureHandle, Transform, propagate_transforms, set_parents,
 };
 use engine_registry::{OperationScene, SceneEntity, SettingsEntry};
 use serde_json::Value;
@@ -311,13 +311,8 @@ impl SceneDocument {
             .map(|(expanded, &entity)| (expanded.source.id.clone(), entity))
             .collect();
         let entities = Arc::new(entities);
-        let context = crate::loading::context(
-            self,
-            table,
-            entities.clone(),
-            &kinds,
-            Some(files.buffers()),
-        );
+        let context =
+            crate::loading::context(self, table, entities.clone(), &kinds, Some(files.buffers()));
         let landed = self
             .land(world, (&prepared, &kinds), &context, &spawned)
             .and_then(|()| {
@@ -524,8 +519,7 @@ struct Replaced {
 impl Replaced {
     fn of(world: &World) -> Self {
         let context = world.get_resource::<SceneContext>().cloned();
-        let sections =
-            crate::loading::within(context.as_ref(), || crate::environment::held(world));
+        let sections = crate::loading::within(context.as_ref(), || crate::environment::held(world));
         Self {
             context,
             looks: world.get_resource::<crate::SceneLooks>().cloned(),

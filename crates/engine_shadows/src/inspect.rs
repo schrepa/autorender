@@ -1,8 +1,8 @@
+use crate::plan::ShadowPlan;
+use crate::shadow_fit::TileState;
 use bevy_ecs::prelude::*;
 use engine_core::glam::Vec3;
 use engine_core::{Error, Operation};
-use crate::plan::ShadowPlan;
-use crate::shadow_fit::TileState;
 
 pub(crate) struct InspectShadowTile;
 

@@ -639,4 +639,3 @@ macro_rules! tagged {
         }
     };
 }
-

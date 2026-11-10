@@ -8,10 +8,12 @@ use crate::gpu::{DEBUG_SPAN_STEPS, Shown, WaterProbeDetail, WaterProbeState};
 use crate::jobs::gpu::{WATER_SPAN_LEAST, WATER_SPAN_MOST};
 
 pub(crate) fn modes() -> impl Iterator<Item = DebugMode> {
-    <Shown as BitValue>::VALUES.iter().map(|&(_, name)| DebugMode {
-        name,
-        decode: probe,
-    })
+    <Shown as BitValue>::VALUES
+        .iter()
+        .map(|&(_, name)| DebugMode {
+            name,
+            decode: probe,
+        })
 }
 
 pub(crate) fn shown(local: u32) -> u32 {

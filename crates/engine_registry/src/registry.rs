@@ -631,7 +631,8 @@ impl Registry {
     }
 
     pub(crate) fn turning(&self, brick: BrickId, gate: GateId) -> Turning {
-        let (Some(record), Some(&base)) = (self.record(brick), self.bases.get(brick.index())) else {
+        let (Some(record), Some(&base)) = (self.record(brick), self.bases.get(brick.index()))
+        else {
             return Turning::default();
         };
         let scope = Scope(gate.0.saturating_sub(base));
@@ -657,7 +658,11 @@ impl Registry {
         let mut turning = Turning {
             slots,
             joins,
-            private: self.private(brick).iter().map(|&(_, reset)| reset).collect(),
+            private: self
+                .private(brick)
+                .iter()
+                .map(|&(_, reset)| reset)
+                .collect(),
             spawned: Some(record.spawned),
             despawn: self.despawn,
             ..Turning::default()
@@ -1102,8 +1107,11 @@ impl Registry {
                 ValueKind::Component => "components",
             };
             self.problems.push(
-                Error::new(ErrorCode::WrittenTwice, format!("$.{kind}.{}", shared.value))
-                    .got(&shared.bricks),
+                Error::new(
+                    ErrorCode::WrittenTwice,
+                    format!("$.{kind}.{}", shared.value),
+                )
+                .got(&shared.bricks),
             );
         }
         self.owners = held.shared;
@@ -1147,9 +1155,12 @@ impl Registry {
             }
             if filler.is_none() && !readers.is_empty() {
                 unmet.push(
-                    Error::new(ErrorCode::PlaceNotFilled, format!("$.places.{}", decl.name()))
-                        .got(&readers)
-                        .nearest(self.could_provide(decl.name())),
+                    Error::new(
+                        ErrorCode::PlaceNotFilled,
+                        format!("$.places.{}", decl.name()),
+                    )
+                    .got(&readers)
+                    .nearest(self.could_provide(decl.name())),
                 );
             }
         }

@@ -628,9 +628,11 @@ impl AssetLibrary {
         self.reserve_bytes(texture.byte_len())?;
         self.texture_bytes += texture.byte_len();
         let revision = self.bump();
-        Ok(TextureHandle(
-            self.textures.insert(self.id, Arc::new(texture), revision),
-        ))
+        Ok(TextureHandle(self.textures.insert(
+            self.id,
+            Arc::new(texture),
+            revision,
+        )))
     }
 
     pub fn reserve_texture(&mut self) -> Result<TextureHandle, Error> {
@@ -648,7 +650,8 @@ impl AssetLibrary {
         self.reserve_bytes(texture.byte_len())?;
         self.texture_bytes += texture.byte_len();
         let revision = self.bump();
-        self.textures.fill(self.id, handle.0, Arc::new(texture), revision);
+        self.textures
+            .fill(self.id, handle.0, Arc::new(texture), revision);
         Ok(())
     }
 

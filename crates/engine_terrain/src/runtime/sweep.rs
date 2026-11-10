@@ -47,11 +47,7 @@ impl Operation for TerrainSweepQuery {
             coordinate(request.center[1], "$.center[1]")?,
         );
         let half_extent = within(request.half_extent, SWEEP_EXTENT, "$.half_extent")?;
-        within(
-            f64::from(request.samples),
-            SWEEP_SAMPLES,
-            "$.samples",
-        )?;
+        within(f64::from(request.samples), SWEEP_SAMPLES, "$.samples")?;
         sweep(
             &terrains,
             collides.on().then_some(&*collision),

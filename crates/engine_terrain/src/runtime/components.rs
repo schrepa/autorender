@@ -1,5 +1,7 @@
 use super::*;
-use engine_heightfield::tile::{MacroCauses, Ramp, Remap, SteepLayer, setting_error, terrain_error};
+use engine_heightfield::tile::{
+    MacroCauses, Ramp, Remap, SteepLayer, setting_error, terrain_error,
+};
 use engine_solids::SolidSource;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -317,10 +319,7 @@ impl Terrain {
 
     pub fn validate(&self) -> Result<(), InvalidSetting> {
         if !self.origin.is_finite() {
-            return Err(InvalidSetting::new(
-                "origin",
-                engine_core::Expected::Finite,
-            ));
+            return Err(InvalidSetting::new("origin", engine_core::Expected::Finite));
         }
         self.surface
             .validate()

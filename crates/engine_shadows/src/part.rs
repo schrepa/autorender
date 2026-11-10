@@ -305,7 +305,9 @@ impl GpuPart for ShadowsGpu {
         if self.composed > 0 {
             self.drawing = Some((layout, plan.drawn_bytes(SKIPPED)));
         }
-        let size = views.main().map_or(engine_core::glam::UVec2::ZERO, |main| main.render);
+        let size = views
+            .main()
+            .map_or(engine_core::glam::UVec2::ZERO, |main| main.render);
         self.marked = (plan.mask_words != 0 && size.x != 0 && size.y != 0).then_some([
             size.x.div_ceil(MARK_GROUP),
             size.y.div_ceil(MARK_GROUP),

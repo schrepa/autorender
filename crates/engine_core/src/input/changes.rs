@@ -59,20 +59,30 @@ impl Raises<InputChange> for InputChanges {
     }
 }
 
-fn edges<B: Ord + Clone>(buttons: &Buttons<B>, change: impl Fn(B, bool) -> InputChange) -> Vec<InputChange> {
+fn edges<B: Ord + Clone>(
+    buttons: &Buttons<B>,
+    change: impl Fn(B, bool) -> InputChange,
+) -> Vec<InputChange> {
     buttons
         .pressed
         .iter()
         .map(|button| change(button.clone(), true))
-        .chain(buttons.released.iter().map(|button| change(button.clone(), false)))
+        .chain(
+            buttons
+                .released
+                .iter()
+                .map(|button| change(button.clone(), false)),
+        )
         .collect()
 }
 
 fn changes(before: Option<&Devices>, after: &Devices) -> Vec<InputChange> {
-    let mut changed = edges(&after.keyboard, |code, down| InputChange::Key { code, down });
-    changed.extend(edges(&after.mouse.buttons, |button, down| InputChange::Mouse {
-        button,
+    let mut changed = edges(&after.keyboard, |code, down| InputChange::Key {
+        code,
         down,
+    });
+    changed.extend(edges(&after.mouse.buttons, |button, down| {
+        InputChange::Mouse { button, down }
     }));
     for pad in &after.pads {
         let index = pad.index;
@@ -88,7 +98,10 @@ fn changes(before: Option<&Devices>, after: &Devices) -> Vec<InputChange> {
     });
     if moved {
         changed.push(InputChange::Pointer {
-            position: after.mouse.position_pixels.map(|position| position.to_array()),
+            position: after
+                .mouse
+                .position_pixels
+                .map(|position| position.to_array()),
             inside: after.mouse.inside,
         });
     }

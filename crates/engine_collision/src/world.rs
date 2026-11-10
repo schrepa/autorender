@@ -255,18 +255,15 @@ impl CollisionWorld {
             if let Err(fault) = affine {
                 self.invalid.push((entity, fault));
             }
-            let slot = affine
-                .ok()
-                .filter(|_| configuration_valid)
-                .map(|affine| {
-                    self.bounds.push(affine.bounds);
-                    entries.push(Entry {
-                        entity,
-                        collider: *collider,
-                        affine,
-                    });
-                    (entries.len() - 1) as u32
+            let slot = affine.ok().filter(|_| configuration_valid).map(|affine| {
+                self.bounds.push(affine.bounds);
+                entries.push(Entry {
+                    entity,
+                    collider: *collider,
+                    affine,
                 });
+                (entries.len() - 1) as u32
+            });
             if slot.is_none() {
                 self.report.invalid_colliders += 1;
             }
@@ -276,8 +273,7 @@ impl CollisionWorld {
         same_leaves &= held.len() == self.held.len();
         {
             let _profile = span("collision", "bvh_update");
-            Arc::make_mut(&mut self.bvh)
-                .update(&self.bounds, same_leaves);
+            Arc::make_mut(&mut self.bvh).update(&self.bounds, same_leaves);
         }
         self.report.active_colliders = self.entries.len();
         self.report.bvh_nodes = self.bvh.node_count();
@@ -472,9 +468,7 @@ impl Collide for CollisionWorld {
             self.bvh
                 .query(move |node| node.overlaps(bounds))
                 .map(|index| self.entries[index])
-                .filter(|entry| {
-                    !entry.collider.is_sensor() && entry.affine.bounds.overlaps(bounds)
-                })
+                .filter(|entry| !entry.collider.is_sensor() && entry.affine.bounds.overlaps(bounds))
                 .map(|entry| ColliderSolid {
                     entity: entry.entity,
                     layers: entry.collider.layers(),
@@ -680,7 +674,11 @@ impl SceneQuery for Solids {
         cast(
             (&self.bvh, &self.entries, &self.sources),
             (self.limit, self.ready),
-            (shape, Mat4::from_rotation_translation(rotation, from), along),
+            (
+                shape,
+                Mat4::from_rotation_translation(rotation, from),
+                along,
+            ),
             filter,
             options,
         )
@@ -740,7 +738,9 @@ impl GroundQuery for Solids {
             return GroundRead::Ready(None);
         };
         let (top, bottom) = (span.max.y + 1.0, span.min.y - 1.0);
-        let from = probe.below.map_or(top, |below| engine_math::min(below, top));
+        let from = probe
+            .below
+            .map_or(top, |below| engine_math::min(below, top));
         let outside = probe.at.x < span.min.x
             || probe.at.x > span.max.x
             || probe.at.y < span.min.z

@@ -372,7 +372,11 @@ fn shared_imports(imports: &mut String, module: &str, contract: &Contract, fille
         .chain(contract.shared.iter().map(|answer| answer.name.as_str()))
         .collect();
     if !names.is_empty() {
-        let _ = writeln!(imports, "import package::{module}::{{{}}};", names.join(", "));
+        let _ = writeln!(
+            imports,
+            "import package::{module}::{{{}}};",
+            names.join(", ")
+        );
     }
     let Some(filler) = filler else {
         return;
@@ -384,7 +388,12 @@ fn shared_imports(imports: &mut String, module: &str, contract: &Contract, fille
         .filter(|&name| filled(name))
         .collect();
     if !own.is_empty() {
-        let _ = writeln!(imports, "import package::{}::{{{}}};", filler.module, own.join(", "));
+        let _ = writeln!(
+            imports,
+            "import package::{}::{{{}}};",
+            filler.module,
+            own.join(", ")
+        );
     }
 }
 
@@ -394,12 +403,28 @@ fn switch(body: &mut String, id: u32) -> String {
     name
 }
 
-fn switched(imports: &mut String, body: &mut String, place: &str, filler: &Fed, contract: &Contract) {
+fn switched(
+    imports: &mut String,
+    body: &mut String,
+    place: &str,
+    filler: &Fed,
+    contract: &Contract,
+) {
     let own = |answer: &&Answer| !answer.constant || filler.implements.contains(&answer.name);
     let Some(id) = filler.switch else {
-        let names: Vec<&str> = contract.answers.iter().filter(own).map(|answer| answer.name.as_str()).collect();
+        let names: Vec<&str> = contract
+            .answers
+            .iter()
+            .filter(own)
+            .map(|answer| answer.name.as_str())
+            .collect();
         if !names.is_empty() {
-            let _ = writeln!(imports, "import package::{}::{{{}}};", filler.module, names.join(", "));
+            let _ = writeln!(
+                imports,
+                "import package::{}::{{{}}};",
+                filler.module,
+                names.join(", ")
+            );
         }
         let taken: Vec<&str> = contract
             .answers
@@ -408,7 +433,12 @@ fn switched(imports: &mut String, body: &mut String, place: &str, filler: &Fed, 
             .map(|answer| answer.name.as_str())
             .collect();
         if !taken.is_empty() {
-            let _ = writeln!(imports, "import package::{}::{{{}}};", place_module(place), taken.join(", "));
+            let _ = writeln!(
+                imports,
+                "import package::{}::{{{}}};",
+                place_module(place),
+                taken.join(", ")
+            );
         }
         return;
     };
@@ -419,13 +449,21 @@ fn switched(imports: &mut String, body: &mut String, place: &str, filler: &Fed, 
             let _ = writeln!(imports, "import package::{}::{name};", place_module(place));
             continue;
         }
-        let _ = writeln!(imports, "import package::{}::{name} as answer_{name};", filler.module);
+        let _ = writeln!(
+            imports,
+            "import package::{}::{name} as answer_{name};",
+            filler.module
+        );
         if answer.constant {
             let ty = answer.returns.as_deref().unwrap_or_default();
             let _ = writeln!(body, "const {name}: {ty} = answer_{name};");
             continue;
         }
-        let _ = writeln!(imports, "import package::{}::{name} as nobody_{name};", place_module(place));
+        let _ = writeln!(
+            imports,
+            "import package::{}::{name} as nobody_{name};",
+            place_module(place)
+        );
         let arguments = answer.arguments();
         let _ = match &answer.returns {
             Some(_) => writeln!(
@@ -460,7 +498,11 @@ fn folds(imports: &mut String, body: &mut String, contract: &Contract, members: 
             .filter(|(_, member)| member.implements.contains(name))
             .collect();
         for (index, member) in &fed {
-            let _ = writeln!(imports, "import package::{}::{name} as {name}_{index};", member.module);
+            let _ = writeln!(
+                imports,
+                "import package::{}::{name} as {name}_{index};",
+                member.module
+            );
         }
         let rest: String = answer
             .parameters
@@ -473,7 +515,10 @@ fn folds(imports: &mut String, body: &mut String, contract: &Contract, members: 
         for (index, _) in &fed {
             match ons.iter().find(|(member, _)| member == index) {
                 Some((_, on)) => {
-                    let _ = writeln!(body, "    if {on} {{\n        folded = {name}_{index}(folded{rest});\n    }}");
+                    let _ = writeln!(
+                        body,
+                        "    if {on} {{\n        folded = {name}_{index}(folded{rest});\n    }}"
+                    );
                 }
                 None => {
                     let _ = writeln!(body, "    folded = {name}_{index}(folded{rest});");
@@ -501,9 +546,17 @@ pub fn face_source(place: &str, contract: &Contract, answered: &Answered) -> Str
                 let _ = writeln!(imports, "{import}");
             }
             shared_imports(&mut imports, &module, contract, None);
-            let names: Vec<&str> = contract.answers.iter().map(|answer| answer.name.as_str()).collect();
+            let names: Vec<&str> = contract
+                .answers
+                .iter()
+                .map(|answer| answer.name.as_str())
+                .collect();
             if !names.is_empty() {
-                let _ = writeln!(imports, "import package::{module}::{{{}}};", names.join(", "));
+                let _ = writeln!(
+                    imports,
+                    "import package::{module}::{{{}}};",
+                    names.join(", ")
+                );
             }
         }
         Answered::Members(members) => {
@@ -518,7 +571,11 @@ pub fn face_source(place: &str, contract: &Contract, answered: &Answered) -> Str
                 .map(|answer| answer.name.as_str())
                 .collect();
             if !constants.is_empty() {
-                let _ = writeln!(imports, "import package::{module}::{{{}}};", constants.join(", "));
+                let _ = writeln!(
+                    imports,
+                    "import package::{module}::{{{}}};",
+                    constants.join(", ")
+                );
             }
             folds(&mut imports, &mut body, contract, members);
         }
@@ -526,7 +583,12 @@ pub fn face_source(place: &str, contract: &Contract, answered: &Answered) -> Str
     format!("{imports}{body}")
 }
 
-pub fn checked(name: &str, source: &str, kind: PlaceKind, core: &dyn Fn(&str) -> bool) -> Result<Contract, Error> {
+pub fn checked(
+    name: &str,
+    source: &str,
+    kind: PlaceKind,
+    core: &dyn Fn(&str) -> bool,
+) -> Result<Contract, Error> {
     let path = format!("$.places.{name}");
     let problems = contract_problems(source, kind, core);
     if !problems.is_empty() {

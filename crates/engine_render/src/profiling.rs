@@ -100,7 +100,7 @@ mod capture {
     use serde_json::{Value, json};
 
     use super::{Draw, Span};
-    use crate::readback::{Arrival, Keep, Reader, Readbacks};
+    use crate::readback::{Arrival, Keep, Readbacks, Reader};
 
     const SLOTS: usize = 3;
     const SAMPLE_LIMIT: usize = 4_096;
@@ -184,8 +184,9 @@ mod capture {
         };
         let stamp = |query: usize| word(query * 8);
         let draw_stamp = |query: usize| word(DRAW_STAMPS_AT as usize + query * 8);
-        let statistic =
-            |draw: usize, counter: usize| word(DRAW_STATISTICS_AT as usize + draw * 24 + counter * 8);
+        let statistic = |draw: usize, counter: usize| {
+            word(DRAW_STATISTICS_AT as usize + draw * 24 + counter * 8)
+        };
         (
             (0..spans)
                 .map(|span| (stamp(2 * span), stamp(2 * span + 1)))

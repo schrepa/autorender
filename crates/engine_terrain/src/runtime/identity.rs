@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
+use super::content_hash;
 use super::{Terrain, TerrainEdit, TerrainSurface};
 use crate::Stamp;
-use super::content_hash;
 use engine_core::RecordKey;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

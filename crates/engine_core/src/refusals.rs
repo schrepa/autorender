@@ -102,12 +102,14 @@ impl Refusals {
 }
 
 pub(crate) fn prune(world: &mut World) {
-    let dead: Vec<Entity> = world.get_resource::<Refusals>().map_or_else(Vec::new, |refusals| {
-        refusals
-            .entities()
-            .filter(|&entity| !world.entities().contains(entity))
-            .collect()
-    });
+    let dead: Vec<Entity> = world
+        .get_resource::<Refusals>()
+        .map_or_else(Vec::new, |refusals| {
+            refusals
+                .entities()
+                .filter(|&entity| !world.entities().contains(entity))
+                .collect()
+        });
     if dead.is_empty() {
         return;
     }

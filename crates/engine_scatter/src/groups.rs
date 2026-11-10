@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::Entity;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, GpuBits, Material, MaterialHandle, Mesh, GeometryHandle,
-    ResidentMesh, SurfaceSlot, TextureHandle,
+    AlphaMode, AssetLibrary, AssetResidency, GeometryHandle, GpuBits, Material, MaterialHandle,
+    Mesh, ResidentMesh, SurfaceSlot, TextureHandle,
 };
-use engine_math::collections::HashMap;
 use engine_heightfield::tile::Placed;
-use engine_places_rendering::impostors::{ImpostorAsk, ImpostorRecord};
-use engine_places::surface::SurfaceValues;
+use engine_math::collections::HashMap;
 use engine_open_world_kit::ground::PlacedAsset;
+use engine_places::surface::SurfaceValues;
+use engine_places_rendering::impostors::{ImpostorAsk, ImpostorRecord};
 use engine_render::{pack_color, pack_surface};
 use glam::Vec3;
 
@@ -25,7 +25,14 @@ pub(crate) const GROUNDING_HEIGHT: &str = "grounding_height";
 fn slot_color(material: &Material) -> SlotColor {
     SlotColor {
         color: pack_color(material.color()),
-        surface: pack_surface(SurfaceValues::read(|name| material.surface_value(name), |name| material.value(name)).units(), material.emission()),
+        surface: pack_surface(
+            SurfaceValues::read(
+                |name| material.surface_value(name),
+                |name| material.value(name),
+            )
+            .units(),
+            material.emission(),
+        ),
         pad: 0,
     }
 }
@@ -75,7 +82,12 @@ type Range3 = (u32, u32, i32);
 
 type PartLevels = (Vec<Range3>, Vec<GeometryHandle>);
 
-type Levels = (Vec<Range3>, Vec<GeometryHandle>, [f32; LEVELS as usize - 1], u32);
+type Levels = (
+    Vec<Range3>,
+    Vec<GeometryHandle>,
+    [f32; LEVELS as usize - 1],
+    u32,
+);
 
 #[derive(Clone, Copy)]
 pub(crate) struct ResolvedMesh<'a> {

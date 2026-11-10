@@ -12,8 +12,7 @@ pub(crate) fn cook(world: &World, asks: &mut CookAsks<'_>) {
         return;
     };
     for state in &terrains.entries {
-        if state.terrain.validate().is_err() || (state.around.is_some() && !settings.surroundings)
-        {
+        if state.terrain.validate().is_err() || (state.around.is_some() && !settings.surroundings) {
             continue;
         }
         if state.bake.baking() {

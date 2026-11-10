@@ -77,7 +77,12 @@ impl MipGenerator {
             return 0;
         };
         let made = compiler
-            .compile_now(pipeline, (&[Some(texture.format())], None), (false, false), None)
+            .compile_now(
+                pipeline,
+                (&[Some(texture.format())], None),
+                (false, false),
+                None,
+            )
             .map(|(_, made)| made);
         let (Some(made), Some(layout)) = (made, compiler.group_layout(pipeline, GROUP)) else {
             return 0;

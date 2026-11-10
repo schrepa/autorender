@@ -2,7 +2,7 @@ use std::cell::Cell;
 
 use super::*;
 use crate::gpu_data::clamped_extent;
-use crate::readback::{Arrival, Keep, Reader, Readbacks};
+use crate::readback::{Arrival, Keep, Readbacks, Reader};
 use crate::targets::{FrameRegion, FrameSize};
 use engine_core::{Expected, FrameId};
 

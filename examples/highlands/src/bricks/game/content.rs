@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Background, Error, Hold, JobKind, Jobs, Landed, Mesh, GeometryHandle, ProvidedAssets,
-    RecordExchange, Records, Requests, URGENT_JOBS, job_priority,
+    AssetLibrary, Background, Error, GeometryHandle, Hold, JobKind, Jobs, Landed, Mesh,
+    ProvidedAssets, RecordExchange, Records, Requests, URGENT_JOBS, job_priority,
 };
 use glam::Vec3;
 
@@ -30,7 +30,9 @@ impl Content {
         input: &[u8],
     ) -> Result<GeometryHandle, Error> {
         let handle = assets.reserve_mesh()?;
-        let work = jobs.fetch(kind, input, self.priority(), |bytes| Mesh::from_record(&bytes));
+        let work = jobs.fetch(kind, input, self.priority(), |bytes| {
+            Mesh::from_record(&bytes)
+        });
         self.asked.push((work, handle, kind));
         self.hold(handle);
         Ok(handle)
@@ -40,7 +42,12 @@ impl Content {
         self.filling.push(self.fills.ask(mesh).into());
     }
 
-    pub(crate) fn filled(&mut self, kind: &JobKind, mesh: GeometryHandle, filled: Result<(), Error>) {
+    pub(crate) fn filled(
+        &mut self,
+        kind: &JobKind,
+        mesh: GeometryHandle,
+        filled: Result<(), Error>,
+    ) {
         if let Err(error) = &filled {
             self.failed(kind, error);
         }

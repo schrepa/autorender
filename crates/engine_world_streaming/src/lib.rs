@@ -191,11 +191,7 @@ impl Cell {
     }
 
     fn waiting(&self, items: &Items) -> bool {
-        self.loaded()
-            && self
-                .items
-                .iter()
-                .any(|index| items.ticket(index).is_some())
+        self.loaded() && self.items.iter().any(|index| items.ticket(index).is_some())
     }
 
     fn spawned(&self, items: &Items) -> u32 {
@@ -378,8 +374,11 @@ impl WorldCells {
                 match cell.load {
                     Load::Loaded { .. } if leaving => cell.load = Load::Unloaded,
                     Load::Unloaded if coming => {
-                        let asked: Vec<Hold> =
-                            cell.items.iter().map(|&item| spawns.ask(item).into()).collect();
+                        let asked: Vec<Hold> = cell
+                            .items
+                            .iter()
+                            .map(|&item| spawns.ask(item).into())
+                            .collect();
                         cell.load = Load::Loaded { _held: asked };
                     }
                     Load::Loaded { .. } | Load::Unloaded => {}

@@ -26,7 +26,6 @@ impl HydrologyState {
     }
 }
 
-
 fn with_edits(
     base: Arc<Layers>,
     edits: &[TerrainEdit],
@@ -291,8 +290,8 @@ impl TerrainState {
     }
 
     pub(super) fn programmed(&self) -> Option<&Arc<SurfaceData>> {
-        let drawn = self.materials == TileMaterials::Program
-            || self.store.holds(TileMaterials::Program);
+        let drawn =
+            self.materials == TileMaterials::Program || self.store.holds(TileMaterials::Program);
         self.surface
             .as_ref()
             .and_then(|(_, data)| data.as_ref())

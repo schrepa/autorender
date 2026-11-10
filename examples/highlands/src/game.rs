@@ -1,6 +1,6 @@
+use engine::Error;
 use engine::prelude::*;
 use engine::scene::SceneFiles;
-use engine::Error;
 use engine_fly_camera::FlyCamera;
 use serde_json::json;
 

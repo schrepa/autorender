@@ -141,7 +141,8 @@ impl MaterialStore {
             return (0, 0);
         }
         self.textures.retain(|handle, gpu| {
-            residency.texture_resident(*handle) && library.revision_of(*handle) == Some(gpu.revision)
+            residency.texture_resident(*handle)
+                && library.revision_of(*handle) == Some(gpu.revision)
         });
         let textures = &self.textures;
         let count = self.materials.len();
@@ -173,7 +174,9 @@ impl MaterialStore {
                 if self.textures.contains_key(&texture) {
                     continue;
                 }
-                let source = library.texture(texture).expect("material_textures_validated");
+                let source = library
+                    .texture(texture)
+                    .expect("material_textures_validated");
                 let revision = library.revision_of(texture).unwrap_or_default();
                 let gpu = create_texture(
                     device,

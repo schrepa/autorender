@@ -203,8 +203,9 @@ impl RecordExchange {
                 self.records.ready(&key, ticket, ());
             }
             Err(error) => {
-                let error = Error::new(ErrorCode::InvalidRecord, format!("$.records.{}", key.hex()))
-                    .got(error);
+                let error =
+                    Error::new(ErrorCode::InvalidRecord, format!("$.records.{}", key.hex()))
+                        .got(error);
                 self.records.fail(&key, ticket, error);
                 self.failed.extend(held);
             }
@@ -424,7 +425,9 @@ pub(crate) fn exchange(world: &mut World) {
     }
     waiting.append(&mut records.asking);
     records.asking = waiting;
-    let RecordExchange { asking, batches, .. } = &mut *records;
+    let RecordExchange {
+        asking, batches, ..
+    } = &mut *records;
     batches.retain(|batch| {
         asking.iter().any(
             |request| matches!(request.make, Make::Texture { batch: id, .. } if id == batch.id),

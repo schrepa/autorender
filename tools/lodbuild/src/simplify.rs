@@ -1,7 +1,7 @@
 use std::ops::{BitOr, BitOrAssign};
 
-use engine_math::{max, min};
 use engine_codec::{Error, ErrorCode};
+use engine_math::{max, min};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct SimplifyOptions {

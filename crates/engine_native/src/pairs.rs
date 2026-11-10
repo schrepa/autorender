@@ -21,8 +21,13 @@ enum Outcome {
     Ran,
     Stopped(Value),
     Panicked(String),
-    Hung { limit_ms: u64 },
-    Unnamed { status: Option<i32>, said: Vec<String> },
+    Hung {
+        limit_ms: u64,
+    },
+    Unnamed {
+        status: Option<i32>,
+        said: Vec<String>,
+    },
 }
 
 impl Outcome {

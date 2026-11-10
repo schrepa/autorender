@@ -181,8 +181,14 @@ fn follow(
     let reach = reaches(&cursor);
     let pointer = interact::Pointer::of(&devices, reach);
     if state.verbs.is_none() {
-        let [Some(up), Some(down), Some(left), Some(right), Some(accept), Some(back)] =
-            interact::VERBS.map(|verb| input.find(verb.name))
+        let [
+            Some(up),
+            Some(down),
+            Some(left),
+            Some(right),
+            Some(accept),
+            Some(back),
+        ] = interact::VERBS.map(|verb| input.find(verb.name))
         else {
             return;
         };

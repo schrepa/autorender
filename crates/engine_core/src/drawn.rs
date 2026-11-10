@@ -14,9 +14,9 @@ use engine_registry::Registry;
 
 use crate::math::sin_cos;
 use crate::{
-    AssetResidency, Cursor, DeviceLimits, DrawKind, Drawn, DrawnBounds, Error, ErrorCode,
-    Expected, Feed, GlobalTransforms, GpuBits, GpuStruct, Interest, KindDecl, MaterialHandle,
-    GeometryHandle, PassMask, PositionReach, Refusals, Request, Revision, ScenePasses, Since, Transform,
+    AssetResidency, Cursor, DeviceLimits, DrawKind, Drawn, DrawnBounds, Error, ErrorCode, Expected,
+    Feed, GeometryHandle, GlobalTransforms, GpuBits, GpuStruct, Interest, KindDecl, MaterialHandle,
+    PassMask, PositionReach, Refusals, Request, Revision, ScenePasses, Since, Transform,
     gpu_struct, settings,
 };
 
@@ -245,7 +245,9 @@ impl DrawnTable {
     }
 
     pub fn states(&self) -> impl Iterator<Item = (Entity, &DrawnState)> + '_ {
-        self.held.iter().map(|(&entity, held)| (entity, &held.state))
+        self.held
+            .iter()
+            .map(|(&entity, held)| (entity, &held.state))
     }
 
     pub fn census(&self, kind: DrawKind) -> DrawnCensus {
@@ -607,10 +609,13 @@ impl DrawnTable {
             .material
             .and_then(|material| cx.library.material(material))
             .map_or(0.0, |material| self.reach(material));
-        let ([low_x, low_y, low_z], [high_x, high_y, high_z]) = bounds.map_or(
-            ([0.0; 3], [0.0; 3]),
-            |(low, high)| (low.map(|value| value - reach), high.map(|value| value + reach)),
-        );
+        let ([low_x, low_y, low_z], [high_x, high_y, high_z]) =
+            bounds.map_or(([0.0; 3], [0.0; 3]), |(low, high)| {
+                (
+                    low.map(|value| value - reach),
+                    high.map(|value| value + reach),
+                )
+            });
         let passes = drawn.passes.unwrap_or_else(|| {
             cx.passes
                 .map_or(PassMask::NONE, |passes| passes.defaults(drawn.kind))
@@ -684,7 +689,12 @@ impl DrawnTable {
                 });
                 let (order, kind, geometry, _) = batch_key(&held.drawn);
                 Some((
-                    (order, kind, geometry, material.map(|material| material.slot())),
+                    (
+                        order,
+                        kind,
+                        geometry,
+                        material.map(|material| material.slot()),
+                    ),
                     material,
                 ))
             })
@@ -734,9 +744,10 @@ impl DrawnTable {
 fn refused_of(state: &DrawnState) -> Option<&Error> {
     match state {
         DrawnState::Refused(reason) => Some(reason),
-        DrawnState::Drawn { .. } | DrawnState::Hidden | DrawnState::Unplaced | DrawnState::Waiting => {
-            None
-        }
+        DrawnState::Drawn { .. }
+        | DrawnState::Hidden
+        | DrawnState::Unplaced
+        | DrawnState::Waiting => None,
     }
 }
 

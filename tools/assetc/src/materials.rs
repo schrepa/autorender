@@ -176,9 +176,12 @@ fn mapped_slots(
         let Some(map) = map else {
             continue;
         };
-        let reading = MAPPED_SLOTS.iter().chain(&GLTF_SLOTS).filter(|(slot, read)| {
-            read.first() == Some(&name) && (masked || *slot != SurfaceSlot::Cutoff.name())
-        });
+        let reading = MAPPED_SLOTS
+            .iter()
+            .chain(&GLTF_SLOTS)
+            .filter(|(slot, read)| {
+                read.first() == Some(&name) && (masked || *slot != SurfaceSlot::Cutoff.name())
+            });
         for (at, (slot, _)) in reading.enumerate() {
             let filled = if at == 0 {
                 SceneSlot::Filled(SceneSlotFill {

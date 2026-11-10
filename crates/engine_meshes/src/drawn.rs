@@ -166,7 +166,10 @@ impl Operation for MeshesListing {
             .filter(|(_, drawn)| drawn.kind == MESH)
             .map(|(entity, drawn)| {
                 let material = drawn.material.and_then(|handle| assets.material(handle));
-                let surface = SurfaceValues::read(|name| material.and_then(|material| material.surface_value(name)), |name| material.and_then(|material| material.value(name)));
+                let surface = SurfaceValues::read(
+                    |name| material.and_then(|material| material.surface_value(name)),
+                    |name| material.and_then(|material| material.value(name)),
+                );
                 let model = globals
                     .get(entity)
                     .and_then(|global| global.matrix())

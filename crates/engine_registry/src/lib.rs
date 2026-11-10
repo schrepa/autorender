@@ -46,6 +46,6 @@ pub use scene::{
 pub use services::FrameFacts;
 pub use state::{
     BRICK_STATE_EVENT, BrickChange, BrickChangeRow, BrickState, BrickStateView, BrickStateWord,
-    BrickStates,
-    Despawn, GateDriver, GateFn, GateId, Off, Scope, ask_on, brick_changes, fault, fault_of,
+    BrickStates, Despawn, GateDriver, GateFn, GateId, Off, Scope, ask_on, brick_changes, fault,
+    fault_of,
 };

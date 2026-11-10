@@ -154,12 +154,10 @@ impl DevTools {
                     kind: InspectorKind::Resource,
                     has: Box::new(move |world, _| section.present(world)),
                     read: Box::new(move |world, _, _| {
-                        section
-                            .present(world)
-                            .then(|| {
-                                in_scene(world, || section.current(world))
-                                    .unwrap_or_else(|error| json!({ "unreadable": error }))
-                            })
+                        section.present(world).then(|| {
+                            in_scene(world, || section.current(world))
+                                .unwrap_or_else(|error| json!({ "unreadable": error }))
+                        })
                     }),
                     brick: Some(section.brick),
                 },

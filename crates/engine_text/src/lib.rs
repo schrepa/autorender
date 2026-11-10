@@ -198,7 +198,9 @@ impl WorldText {
 }
 
 fn in_world(world: &World, entity: Entity) -> bool {
-    world.get::<Drawn>(entity).is_some_and(|drawn| drawn.kind == TEXT)
+    world
+        .get::<Drawn>(entity)
+        .is_some_and(|drawn| drawn.kind == TEXT)
 }
 
 impl SceneForm for WorldText {
@@ -451,7 +453,8 @@ impl TextGpu {
     ) {
         self.worlds.clear();
         for (slot, entity, _) in table.rows(TEXT) {
-            let (Ok(_), Some(pose)) = (labels.get(entity), poses.drawn_pose(globals, entity)) else {
+            let (Ok(_), Some(pose)) = (labels.get(entity), poses.drawn_pose(globals, entity))
+            else {
                 continue;
             };
             let previous = poses.previous_drawn_pose(globals, entity).unwrap_or(pose);
@@ -538,11 +541,7 @@ impl GpuPart for TextGpu {
         })
     }
 
-    fn prepare(
-        &mut self,
-        reads: SystemParamItem<'_, '_, Self::Reads>,
-        cx: &mut Prepare<'_, Self>,
-    ) {
+    fn prepare(&mut self, reads: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>) {
         let ((labels, table, globals, poses), text, settings, views, (material, residency)) = reads;
         self.staged.clear();
         self.labeled.clear();
@@ -560,25 +559,22 @@ impl GpuPart for TextGpu {
                 drawn.is_none_or(|drawn| drawn.kind != TEXT) && globals.drawn(entity)
             })
             .map(|(_, label, _)| (label, Placed::Screen));
-        let worlds = self
-            .worlds
-            .iter()
-            .enumerate()
-            .filter_map(|(index, world)| {
-                let (_, label, _) = labels.get(world.entity).ok()?;
-                Some((label, Placed::World(index as u32)))
-            });
+        let worlds = self.worlds.iter().enumerate().filter_map(|(index, world)| {
+            let (_, label, _) = labels.get(world.entity).ok()?;
+            Some((label, Placed::World(index as u32)))
+        });
         let shown = state.frame(
             screen.chain(worlds),
             &settings,
             views.frame(),
             (&mut self.placed, &mut self.placed_world),
         );
-        self.staged.extend(self.placed.iter().map(|glyph| GlyphInstance {
-            place: glyph.place,
-            rect: glyph.texel,
-            color: glyph.color,
-        }));
+        self.staged
+            .extend(self.placed.iter().map(|glyph| GlyphInstance {
+                place: glyph.place,
+                rect: glyph.texel,
+                color: glyph.color,
+            }));
         self.stage_worlds();
         let mut uploads = state.take_uploads();
         if shown == 0 && uploads.is_empty() {

@@ -5,8 +5,8 @@ use engine_core::math::{max, min, sin_cos};
 use engine_core::{DeviceLimits, RecordKey, Since, Views};
 use engine_heightfield::TileKey;
 use engine_heightfield::tile::{TILE_STRIDE, on_triangle, tile_cell};
-use engine_places_simulation::water::WaterObstacle;
 use engine_open_world_kit::ground::TerrainTiles;
+use engine_places_simulation::water::WaterObstacle;
 use glam::{Vec2, Vec3};
 
 use crate::gpu::{SETUP_SOLID_ENTRIES, SIM_TOUCHES};
@@ -205,7 +205,9 @@ pub(crate) fn place_water_windows(
         .map(|entry| entry.terrain);
     let main = views.main();
     let height = main.map_or(0, |main| main.size().y);
-    let fov = main.and_then(|main| main.lens.vertical_fov()).unwrap_or(0.0);
+    let fov = main
+        .and_then(|main| main.lens.vertical_fov())
+        .unwrap_or(0.0);
     let eye = main.map_or(Vec3::ZERO, |main| main.detail_eye);
     for terrain in &mut state.terrains {
         let settled = terrain

@@ -22,8 +22,8 @@ pub use surface::runtime_typescript;
 #[cfg(not(target_arch = "wasm32"))]
 pub mod tooling;
 
-pub use engine_core::collections;
 pub use engine_command_line as command_line;
+pub use engine_core::collections;
 pub use engine_core::smoke_eq;
 
 mod games {
@@ -31,25 +31,20 @@ mod games {
     pub use crate::pacing::Pacing;
     pub use crate::resolution::Resolution;
     pub use engine_core::{
-        Aabb, AlphaMode, AssetBudget, AssetLibrary, Attribute,
-        Attributes, Brick, BrickList, Bricks, Camera, Clear, ColorSpace, ComponentKind, CursorAsk,
-        Hit, Operation, SceneComponents, Schedule, Section, Smoke, Source, Spawner,
-        Binding, BindingSource, Button, ContextAsk, Contexts, Devices, Input, InputSettings,
-        MouseButton, PadButton, Player, Stick, TouchPhase, Trigger, Verb, VerbId, VerbShape, Verbs,
-        Picking, Ray, Rect, Target, View, ViewCut, ViewFacts, ViewHistory, Views,
-        main_camera, place_camera,
-        CursorMode, CursorRequests, DrawKind, Drawn, DrawnProjection, DrawnState, DrawnTable,
-        InstanceValues, KindDecl, KindSkip, Layers,
-        Engine, EngineConfig,
-        Filter, FixedTime, FrameLimits, FrameTime, GlobalTransform, GlobalTransforms,
-        Asks, Clock, Compare, Cull, DepthBias, HandOver, LightingModel, Listing,
-        MakeTextures, RenderState, SurfaceSlot,
-        Material, Mobility, Mover, MoverId, Moves, Node, NodeWord, Pace, Teleport,
-        MaterialHandle, Mesh, GeometryHandle, MeshVertex, Parent,
-        Pause, PauseReason, Poses, Projection, ProvidedAssets, Sampler,
-        Texture, TextureHandle, TextureRef, TextureSet, TextureSource, TextureUsage,
-        Transform, UvTransform, Wrap, make_fresh, math,
-        set_parent, set_parents, Span, TimeScale,
+        Aabb, AlphaMode, Asks, AssetBudget, AssetLibrary, Attribute, Attributes, Binding,
+        BindingSource, Brick, BrickList, Bricks, Button, Camera, Clear, Clock, ColorSpace, Compare,
+        ComponentKind, ContextAsk, Contexts, Cull, CursorAsk, CursorMode, CursorRequests,
+        DepthBias, Devices, DrawKind, Drawn, DrawnProjection, DrawnState, DrawnTable, Engine,
+        EngineConfig, Filter, FixedTime, FrameLimits, FrameTime, GeometryHandle, GlobalTransform,
+        GlobalTransforms, HandOver, Hit, Input, InputSettings, InstanceValues, KindDecl, KindSkip,
+        Layers, LightingModel, Listing, MakeTextures, Material, MaterialHandle, Mesh, MeshVertex,
+        Mobility, MouseButton, Mover, MoverId, Moves, Node, NodeWord, Operation, Pace, PadButton,
+        Parent, Pause, PauseReason, Picking, Player, Poses, Projection, ProvidedAssets, Ray, Rect,
+        RenderState, Sampler, SceneComponents, Schedule, Section, Smoke, Source, Span, Spawner,
+        Stick, SurfaceSlot, Target, Teleport, Texture, TextureHandle, TextureRef, TextureSet,
+        TextureSource, TextureUsage, TimeScale, TouchPhase, Transform, Trigger, UvTransform, Verb,
+        VerbId, VerbShape, Verbs, View, ViewCut, ViewFacts, ViewHistory, Views, Wrap, main_camera,
+        make_fresh, math, place_camera, set_parent, set_parents,
     };
 }
 pub use games::*;
@@ -86,14 +81,14 @@ mod dev_host;
 mod game_host;
 mod pacing;
 mod resolution;
+#[cfg(feature = "profiling")]
+pub use app_host::{PROFILE_DURATION_MS, PROFILE_EVENTS};
 pub use engine_render::{AdapterInfo, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
 pub use engine_render::{
     GpuPreference, NativeWindow, keep_pipeline_cache_in, start_native_instances_with,
 };
 pub use game_host::GameHost;
-#[cfg(feature = "profiling")]
-pub use app_host::{PROFILE_DURATION_MS, PROFILE_EVENTS};
 
 pub fn scene_kinds(
     bricks: impl FnOnce(BrickList) -> BrickList,
@@ -149,14 +144,6 @@ pub mod prelude {
     pub use crate::games::*;
     pub use crate::host::TypedSettings;
     pub use crate::{Arrival, Game, GameFiles, LoadedScene};
-    pub use engine_core::{
-        AttachPoint, GpuStruct, Pass, PassName, PassViews, ScenePass, SlotSet, TargetName, Writes,
-        gpu_struct, settings, stats,
-    };
-    pub use engine_render::{
-        Allocation, Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, Pipeline, Prepare,
-        RenderBricks, RenderPipeline, SceneDraw, Shape, wgpu,
-    };
     pub use bevy_ecs::{
         bundle::Bundle,
         change_detection::{DetectChanges, DetectChangesMut, Mut, Ref},
@@ -178,6 +165,14 @@ pub mod prelude {
             Populated, Query, Res, ResMut, Single, System, SystemParam,
         },
         world::{EntityMut, EntityRef, EntityWorldMut, FromWorld, World},
+    };
+    pub use engine_core::{
+        AttachPoint, GpuStruct, Pass, PassName, PassViews, ScenePass, SlotSet, TargetName, Writes,
+        gpu_struct, settings, stats,
+    };
+    pub use engine_render::{
+        Allocation, Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, Pipeline, Prepare,
+        RenderBricks, RenderPipeline, SceneDraw, Shape, wgpu,
     };
     pub use engine_scene::{SceneDocument, SceneEntity, SceneInstance};
     pub use glam::{Mat4, Quat, Vec2, Vec3, Vec4};

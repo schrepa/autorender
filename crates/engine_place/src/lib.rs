@@ -36,25 +36,20 @@ pub use drawn::{
     DrawKind, Drawn, DrawnBounds, DrawnProjection, InstanceValues, KindDecl, KindSkip, Layers,
     NodeId, PositionReach,
 };
-pub use engine_assets::{MaterialHandle, GeometryHandle, TextureHandle};
+pub use engine_assets::{GeometryHandle, MaterialHandle, TextureHandle};
 pub use engine_settings::{Error, ErrorCode};
 pub use engine_smoke::{SmokeFailure, SmokeSession, ask, smoke_check, smoke_eq};
 pub use feeds::{Cursor, Events, Feed, FeedView, Ring, Since, StoreId};
+pub use level::{Level, LevelView};
 pub use nodes::{Clock, Mobility, Mover, MoverId, Node, NodeWord, Pace};
 pub use passes::{
-    AttachPoint, BlendedPass, CORE_BRICK, ColorPass, KindCell, KindJoin, Pass,
-    PassBit, PassCull, PassEntry, PassMask, PassName, PassPurpose, PassRaster, PassRole, PassViews,
-    ScenePass, ScenePasses,
-    SlotSet,
-    TargetName, Writes,
-    every, never, wgsl_name,
+    AttachPoint, BlendedPass, CORE_BRICK, ColorPass, KindCell, KindJoin, Pass, PassBit, PassCull,
+    PassEntry, PassMask, PassName, PassPurpose, PassRaster, PassRole, PassViews, ScenePass,
+    ScenePasses, SlotSet, TargetName, Writes, every, never, wgsl_name,
 };
 pub use readback::{FrameId, Readable, Readback};
 pub use readiness::{Awaits, CORE_ROW, Readiness, Unsettled};
-pub use requests::{
-    Board, Census, Hold, Interest, Progress, Request, Requests, Settling, Ticket,
-};
-pub use level::{Level, LevelView};
+pub use requests::{Board, Census, Hold, Interest, Progress, Request, Requests, Settling, Ticket};
 pub use views::{
     Clear, Jitter, OwnedView, OwnedViews, Rect, Target, View, ViewCut, ViewHistory, ViewJitter,
     ViewLayer,
@@ -231,7 +226,9 @@ fn insert_resource<R: Resource + Default>(world: &mut World) {
 }
 
 fn view_asked<A: Ask>(world: &World, ids: &dyn EntityIds) -> Option<AskedView> {
-    world.get_resource::<Asked<A>>().map(|asked| asked.view(ids))
+    world
+        .get_resource::<Asked<A>>()
+        .map(|asked| asked.view(ids))
 }
 
 fn insert_component<C: Component>(world: &mut World) {

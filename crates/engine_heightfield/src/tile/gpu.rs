@@ -45,30 +45,12 @@ pub const MAX_MATERIALS: u32 = 64;
 
 pub mod op {
     pub use super::{
-        OP_CONSTANT as CONSTANT,
-        OP_HEIGHT as HEIGHT,
-        OP_GRADIENT as GRADIENT,
-        OP_CURVATURE as CURVATURE,
-        OP_FLOW as FLOW,
-        OP_WETNESS as WETNESS,
-        OP_LAKE as LAKE,
-        OP_RIVER as RIVER,
-        OP_PATH as PATH,
-        OP_NOISE as NOISE,
-        OP_MULTIPLY as MULTIPLY,
-        OP_ADD as ADD,
-        OP_MIN as MIN,
-        OP_MAX as MAX,
-        OP_INVERT as INVERT,
-        OP_REMAP as REMAP,
-        OP_GRAIN as GRAIN,
-        OP_POWER as POWER,
-        OP_FLOOD as FLOOD,
-        OP_WORN as WORN,
-        OP_DEPOSIT as DEPOSIT,
-        OP_FACING as FACING,
-        OP_VALUE as VALUE,
-        OP_END as END,
+        OP_ADD as ADD, OP_CONSTANT as CONSTANT, OP_CURVATURE as CURVATURE, OP_DEPOSIT as DEPOSIT,
+        OP_END as END, OP_FACING as FACING, OP_FLOOD as FLOOD, OP_FLOW as FLOW,
+        OP_GRADIENT as GRADIENT, OP_GRAIN as GRAIN, OP_HEIGHT as HEIGHT, OP_INVERT as INVERT,
+        OP_LAKE as LAKE, OP_MAX as MAX, OP_MIN as MIN, OP_MULTIPLY as MULTIPLY, OP_NOISE as NOISE,
+        OP_PATH as PATH, OP_POWER as POWER, OP_REMAP as REMAP, OP_RIVER as RIVER,
+        OP_VALUE as VALUE, OP_WETNESS as WETNESS, OP_WORN as WORN,
     };
 }
 

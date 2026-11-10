@@ -196,7 +196,11 @@ fn tree(list: ExpandedList, context: &SceneContext, reaching: &Reaching<'_>) -> 
     }
 }
 
-fn prepared(entity: ExpandedObject, transform: Transform, context: &SceneContext) -> SubSceneEntity {
+fn prepared(
+    entity: ExpandedObject,
+    transform: Transform,
+    context: &SceneContext,
+) -> SubSceneEntity {
     let source = entity.source;
     let components = source
         .authored()

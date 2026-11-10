@@ -18,10 +18,12 @@ use engine_core::{
     Attributes, BASE_COLOR_MAP, Brick, Bricks, KindDecl, Module, NORMAL_MAP, Schedule, Source,
     SurfaceSlot,
 };
-use engine_places_rendering::lighting::{Ambient};
-use engine_places::surface::{METALLIC_ROUGHNESS_MAP, METALNESS, OCCLUSION, OCCLUSION_MAP, ROUGHNESS, TRANSMISSION};
-use engine_places_rendering::occlusion::OcclusionSource;
 use engine_open_world_kit::ground::{FarCover, Foliage, PlacedTiles};
+use engine_places::surface::{
+    METALLIC_ROUGHNESS_MAP, METALNESS, OCCLUSION, OCCLUSION_MAP, ROUGHNESS, TRANSMISSION,
+};
+use engine_places_rendering::lighting::Ambient;
+use engine_places_rendering::occlusion::OcclusionSource;
 use engine_render::{RenderBricks, SlotModule};
 
 pub use settings::{
@@ -93,7 +95,12 @@ const LOOKS: [Look; 4] = [
             METALNESS,
             OCCLUSION,
         ],
-        &[BASE_COLOR_MAP, NORMAL_MAP, METALLIC_ROUGHNESS_MAP, OCCLUSION_MAP],
+        &[
+            BASE_COLOR_MAP,
+            NORMAL_MAP,
+            METALLIC_ROUGHNESS_MAP,
+            OCCLUSION_MAP,
+        ],
         &[
             "world_tiling",
             "top_red",

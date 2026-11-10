@@ -10,10 +10,10 @@ use engine_heightfield::tile::{Solid, TileJob};
 use engine_heightfield::{
     ErrorPyramid, Fall, HydrologyBake, Layers, Pyramid, Rivers, Stamp, TileKey, reaches,
 };
-use engine_places_simulation::ground::GroundRead;
-use engine_places_simulation::water::{WaterBody, WaterQuery, WaterSample};
 use engine_open_world_kit::ground::{TerrainEntry, TerrainTiles, TileFace};
 use engine_open_world_kit::water::{WaterTileErrors, Waterline};
+use engine_places_simulation::ground::GroundRead;
+use engine_places_simulation::water::{WaterBody, WaterQuery, WaterSample};
 use glam::{Vec2, Vec3};
 
 use crate::drawn::{DrawnWork, draw_input, start_drawing};
@@ -547,11 +547,7 @@ pub(crate) fn follow(
         let local = Vec2::new(eye.x - entry.origin.x, eye.z - entry.origin.z);
         terrain.take_faces(entry);
         terrain.follow_faces(&mut jobs, local);
-        terrain.take_bases(
-            (&records, &budget),
-            (&mut state.failures, &mut jobs),
-            frame,
-        );
+        terrain.take_bases((&records, &budget), (&mut state.failures, &mut jobs), frame);
         state.terrains.push(terrain);
     }
     state.dropped = !before.is_empty();

@@ -7,8 +7,8 @@ use wgpu::ShaderStages;
 
 use crate::frame_group::{Class, FrameVariable, Reach};
 use crate::graph::{
-    Access as GraphAccess, Clear, Declared as GraphPass, FAR, Life, PassEntry, PassId,
-    BLACK, ResourceEntry, ResourceId, StaticGraph, TRANSPARENT,
+    Access as GraphAccess, BLACK, Clear, Declared as GraphPass, FAR, Life, PassEntry, PassId,
+    ResourceEntry, ResourceId, StaticGraph, TRANSPARENT,
 };
 use crate::install::{
     Bound, Copied, Declared, PassDecl, PipelineDecl, Program, Scoped, ViewTarget, Work,
@@ -844,7 +844,9 @@ impl Machine {
             let variant = plan.of_pipeline.get(index).copied().unwrap_or(0);
             let frame_key = frame_keys.get(variant as usize).map_or("", String::as_str);
             let material_shown = if material { material_key.as_str() } else { "" };
-            layout_key.push_str(&format!("frame {variant} {frame_key} material {material_shown}"));
+            layout_key.push_str(&format!(
+                "frame {variant} {frame_key} material {material_shown}"
+            ));
             let top = groups
                 .last()
                 .map_or(0, |group| group.index)
@@ -1089,7 +1091,9 @@ pub(crate) fn output_location(
     pass: &PassDecl,
     name: engine_core::TargetName,
 ) -> Option<usize> {
-    let output = outputs.iter().position(|output| output.name == name.name())?;
+    let output = outputs
+        .iter()
+        .position(|output| output.name == name.name())?;
     pass_set(outputs, pass)
         .iter()
         .position(|(target, ..)| *target == Target::Output(output as u32))
@@ -1102,7 +1106,10 @@ fn set_formats(outputs: &[OutputDecl], pass: &PassDecl, layer: AttachPoint) -> V
     let mut set = vec![(Target::Scene, SCENE_FORMAT, Clear::Color(BLACK))];
     for (index, output) in outputs.iter().enumerate() {
         if output.layers.contains(&layer)
-            || named.targets().iter().any(|name| name.name() == output.name)
+            || named
+                .targets()
+                .iter()
+                .any(|name| name.name() == output.name)
         {
             set.push((
                 Target::Output(index as u32),
@@ -1370,7 +1377,9 @@ fn graph_of(
             0,
             (canvas, GraphAccess::Draw(Clear::Color(crate::graph::BLACK))),
         );
-        passes[at].after.extend(screens.iter().chain(&overlays).copied());
+        passes[at]
+            .after
+            .extend(screens.iter().chain(&overlays).copied());
         overlays.push(PassId::new(at));
     }
     for &(layer, view) in &copied {

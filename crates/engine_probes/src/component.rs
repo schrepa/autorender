@@ -53,6 +53,5 @@ pub(crate) fn check(probe: &ReflectionProbe, path: &str) -> Result<(), Error> {
 }
 
 pub(crate) fn schema() -> Value {
-    serde_json::to_value(schemars::schema_for!(SceneReflectionProbe))
-        .unwrap_or(Value::Null)
+    serde_json::to_value(schemars::schema_for!(SceneReflectionProbe)).unwrap_or(Value::Null)
 }

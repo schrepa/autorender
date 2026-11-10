@@ -1,9 +1,9 @@
 use engine_core::GpuBits;
 use engine_heightfield::tile::shaded_elsewhere;
-use engine_places_rendering::probes::ProbeCaptures;
-use engine_tiles::TileKey;
 use engine_open_world_kit::ground::{TerrainEntry, TerrainTiles, TileFace};
+use engine_places_rendering::probes::ProbeCaptures;
 use engine_render::{Allocation, Prepare, wgpu};
+use engine_tiles::TileKey;
 use glam::{DVec3, Mat4, Vec2, Vec3, Vec4};
 
 use super::part::{Handles, TerrainGpu, TerrainViews};

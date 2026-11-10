@@ -2,7 +2,8 @@ use bevy_ecs::component::Component;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 use engine_assets::{
-    Asset, AssetLibrary, GeometryStream, MaterialHandle, Mesh, GeometryHandle, MeshLods, TextureHandle,
+    Asset, AssetLibrary, GeometryHandle, GeometryStream, MaterialHandle, Mesh, MeshLods,
+    TextureHandle,
 };
 
 use crate::{Census, Feed, Interest, Request, Requests};
@@ -416,45 +417,39 @@ impl AssetResidency {
 
     #[doc(hidden)]
     pub fn meshes(&self) -> impl Iterator<Item = (GeometryHandle, &ResidentMesh)> + '_ {
-        self.wanted
-            .iter()
-            .filter_map(|(asset, request)| {
-                if let (Asset::Mesh(handle), Request::Ready(Resident::Mesh(mesh))) = (asset, request) {
-                    Some((*handle, mesh))
-                } else {
-                    None
-                }
-            })
+        self.wanted.iter().filter_map(|(asset, request)| {
+            if let (Asset::Mesh(handle), Request::Ready(Resident::Mesh(mesh))) = (asset, request) {
+                Some((*handle, mesh))
+            } else {
+                None
+            }
+        })
     }
 
     #[doc(hidden)]
     pub fn materials(&self) -> impl Iterator<Item = (MaterialHandle, u64)> + '_ {
-        self.wanted
-            .iter()
-            .filter_map(|(asset, request)| {
-                if let (Asset::Material(handle), Request::Ready(Resident::Material { revision, .. })) =
-                    (asset, request)
-                {
-                    Some((*handle, *revision))
-                } else {
-                    None
-                }
-            })
+        self.wanted.iter().filter_map(|(asset, request)| {
+            if let (Asset::Material(handle), Request::Ready(Resident::Material { revision, .. })) =
+                (asset, request)
+            {
+                Some((*handle, *revision))
+            } else {
+                None
+            }
+        })
     }
 
     #[doc(hidden)]
     pub fn textures(&self) -> impl Iterator<Item = TextureHandle> + '_ {
-        self.wanted
-            .iter()
-            .filter_map(|(asset, request)| {
-                if let (Asset::Texture(handle), Request::Ready(Resident::Texture { .. })) =
-                    (asset, request)
-                {
-                    Some(*handle)
-                } else {
-                    None
-                }
-            })
+        self.wanted.iter().filter_map(|(asset, request)| {
+            if let (Asset::Texture(handle), Request::Ready(Resident::Texture { .. })) =
+                (asset, request)
+            {
+                Some(*handle)
+            } else {
+                None
+            }
+        })
     }
 
     #[doc(hidden)]
@@ -469,7 +464,8 @@ impl AssetResidency {
 
     fn release(&mut self, asset: Asset, request: &Request<Resident>) {
         if let (Asset::Mesh(handle), Request::Ready(Resident::Mesh(mesh))) = (asset, request) {
-            if let (MeshResidence::Arena(placement), Some(arena)) = (mesh.placement, self.arena.as_mut())
+            if let (MeshResidence::Arena(placement), Some(arena)) =
+                (mesh.placement, self.arena.as_mut())
             {
                 arena.remove(placement);
             }
@@ -583,7 +579,10 @@ impl AssetResidency {
     }
 
     fn unplace(&mut self) {
-        let placed: Vec<Asset> = self.meshes().map(|(handle, _)| Asset::Mesh(handle)).collect();
+        let placed: Vec<Asset> = self
+            .meshes()
+            .map(|(handle, _)| Asset::Mesh(handle))
+            .collect();
         for asset in placed {
             self.wanted.ask_again(&asset);
         }

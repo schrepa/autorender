@@ -471,7 +471,12 @@ fn missing_record(path: &str) -> Error {
 
 pub fn record_missing(error: &Error) -> bool {
     error.code == ErrorCode::InvalidRecord
-        && error.detail.got.as_ref().and_then(serde_json::Value::as_str) == Some(MISSING_RECORD)
+        && error
+            .detail
+            .got
+            .as_ref()
+            .and_then(serde_json::Value::as_str)
+            == Some(MISSING_RECORD)
 }
 
 static LODBUILD: Source =
@@ -745,7 +750,8 @@ impl JobExchange {
         parity: RecordParity,
     ) {
         if self.hosted {
-            self.sent.push(JobMessage::Keep(record, kind, bytes, parity));
+            self.sent
+                .push(JobMessage::Keep(record, kind, bytes, parity));
         }
     }
 
@@ -788,7 +794,8 @@ impl JobExchange {
             shared,
             reads,
         });
-        self.sent.push(JobMessage::Share(JobShare::Set { key, bytes }));
+        self.sent
+            .push(JobMessage::Share(JobShare::Set { key, bytes }));
     }
 
     fn drop_share(&mut self, key: RecordKey) {
@@ -1059,7 +1066,9 @@ impl JobExchange {
             return;
         };
         let (name, asked, then) = (
-            kind.as_ref().map_or("records", |kind| kind.name()).to_owned(),
+            kind.as_ref()
+                .map_or("records", |kind| kind.name())
+                .to_owned(),
             *asked,
             then.take(),
         );

@@ -83,9 +83,12 @@ impl Brick for SkyBrick {
             .fill::<SkyLight>(Some(shaders::sky::faces::sky::MODULE))
             .join::<SunBlockers>((), Some(shaders::sky::blockers::MODULE))
             .join::<Ambient>((), Some(shaders::sky::ambient::MODULE))
-            .within(|clouds: Res<Clouds>| clouds.enabled, |bricks| {
-                bricks.fill::<CloudShadows>(Some(shaders::sky::faces::cloud_shadows::MODULE));
-            })
+            .within(
+                |clouds: Res<Clouds>| clouds.enabled,
+                |bricks| {
+                    bricks.fill::<CloudShadows>(Some(shaders::sky::faces::cloud_shadows::MODULE));
+                },
+            )
             .within(
                 |haze: Res<Haze>| haze.enabled,
                 |bricks| {

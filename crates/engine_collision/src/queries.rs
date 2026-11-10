@@ -1,5 +1,5 @@
-use bevy_ecs::prelude::*;
 use crate::bounds::{self, MAX_SCAN_ENTITIES, default_limit};
+use bevy_ecs::prelude::*;
 use engine_core::rule::range;
 use engine_core::{Error, ErrorCode, Expected, Operation, Rule, SceneIds, Setting, stated};
 use engine_places_simulation::physics::{

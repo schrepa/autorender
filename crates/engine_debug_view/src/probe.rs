@@ -121,9 +121,8 @@ impl Probe {
         };
         let canvas = word(bytes, CANVAS_ORDER);
         let drawn = kind.is_some();
-        let table = table.filter(|table| {
-            kind.is_some() && table.drawn(object).map(|drawn| drawn.kind) == kind
-        });
+        let table = table
+            .filter(|table| kind.is_some() && table.drawn(object).map(|drawn| drawn.kind) == kind);
         let entity = table.and_then(|table| table.owner(object));
         let membership = table
             .and_then(|table| table.records().get(object as usize))
@@ -327,7 +326,10 @@ impl Operation for ProbedPixel {
     type Params = (
         Res<'static, Probe>,
         Joined<'static, DebugModes>,
-        (Option<Res<'static, DrawnTable>>, Option<Res<'static, ScenePasses>>),
+        (
+            Option<Res<'static, DrawnTable>>,
+            Option<Res<'static, ScenePasses>>,
+        ),
         SceneIds<'static, 'static>,
     );
     type Request = ProbedRequest;
@@ -337,9 +339,9 @@ impl Operation for ProbedPixel {
         (probe, modes, (table, passes), ids): SystemParamItem<'_, '_, Self::Params>,
         _: ProbedRequest,
     ) -> Result<ProbedReply, Error> {
-        let result = probe.read().map(|bytes| {
-            probe.result(bytes, &modes, (table.as_deref(), passes.as_deref()), &ids)
-        });
+        let result = probe
+            .read()
+            .map(|bytes| probe.result(bytes, &modes, (table.as_deref(), passes.as_deref()), &ids));
         Ok(ProbedReply {
             probing: probe.probing(),
             probe: result,

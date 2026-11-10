@@ -87,7 +87,10 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
     let mut files = game_schemas(root)?;
     files.extend([
         ("web/src/generated/clients.json".to_owned(), clients),
-        ("web/src/generated/protocol.json".to_owned(), protocol + "\n"),
+        (
+            "web/src/generated/protocol.json".to_owned(),
+            protocol + "\n",
+        ),
         (
             "web/src/generated/stats.ts".to_owned(),
             engine::tooling::declarations(&engine::stats::frame_stats_schema(), "FrameStats")

@@ -234,7 +234,10 @@ struct SpritesGpu {
 
 impl GpuPart for SpritesGpu {
     type Reads = (
-        (Query<'static, 'static, &'static Sprite>, Res<'static, DrawnTable>),
+        (
+            Query<'static, 'static, &'static Sprite>,
+            Res<'static, DrawnTable>,
+        ),
         (Res<'static, GlobalTransforms>, Res<'static, DrawnPoses>),
         (
             Res<'static, SheetMaterials>,

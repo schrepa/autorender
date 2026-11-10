@@ -85,10 +85,7 @@ impl GpuPart for CardGpu {
         let args = cx.buffer("mesh_card_args", Lifetime::Kept);
         let late_args = cx.buffer("mesh_card_late_args", Lifetime::Kept);
         let counted = cx.pass("mesh_cards").id();
-        let late_counted = cx
-            .pass("mesh_cards_late")
-            .at(AttachPoint::LateOpaque)
-            .id();
+        let late_counted = cx.pass("mesh_cards_late").at(AttachPoint::LateOpaque).id();
         let late = cx
             .pass("mesh_cards_occluded")
             .at(AttachPoint::LateOpaque)

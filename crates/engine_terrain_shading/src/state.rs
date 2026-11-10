@@ -10,12 +10,12 @@ use engine_core::{
     codec, content_hash,
 };
 use engine_heightfield::tile::shaded_elsewhere;
-use engine_tiles::{Pyramid, TileKey};
 use engine_open_world_kit::ground::{
     GroundBake, GroundBakes, GroundBaking, GroundTiles, Heightfield, HeldTile, PALETTE_ENTRIES,
     TerrainEntry, TerrainTiles, TileChange, TileFace, TileMaterials,
 };
 use engine_render::DebugShown;
+use engine_tiles::{Pyramid, TileKey};
 use glam::{Vec2, Vec3};
 
 use crate::gpu::{HORIZON_RECORDS, HorizonsPiece};
@@ -643,6 +643,23 @@ fn tile_keys(atlas: &Atlas, entry: &TerrainEntry, since: Since<'_, TileChange>) 
     keys
 }
 
+impl Atlas {
+    fn keep_listed(&mut self, listed: impl Fn(&Entity) -> bool) {
+        let mut gone: Vec<TileId> = self
+            .placed
+            .keys()
+            .filter(|(terrain, _)| !listed(terrain))
+            .copied()
+            .collect();
+        gone.sort_unstable();
+        for id in gone {
+            self.release(id);
+        }
+        self.unplaced.retain(|(terrain, _)| listed(terrain));
+        self.cursors.retain(|terrain, _| listed(terrain));
+    }
+}
+
 pub(crate) fn place_tiles(
     (tiles, limits, time, settings): (
         Res<TerrainTiles>,
@@ -697,21 +714,14 @@ pub(crate) fn place_tiles(
     }
     atlas.capacity = capacity;
     let listed = |terrain: &Entity| tiles.terrains.iter().any(|entry| entry.terrain == *terrain);
-    let mut gone: Vec<TileId> = atlas
-        .placed
-        .keys()
-        .filter(|(terrain, _)| !listed(terrain))
-        .copied()
-        .collect();
-    gone.sort_unstable();
-    for id in gone {
-        atlas.release(id);
-    }
-    atlas.unplaced.retain(|(terrain, _)| listed(terrain));
-    atlas.cursors.retain(|terrain, _| listed(terrain));
+    atlas.keep_listed(listed);
     let mut missing: Vec<(TileId, Option<u32>)> = Vec::new();
     for entry in tiles.terrains.iter() {
-        let mut cursor = atlas.cursors.get(&entry.terrain).copied().unwrap_or_default();
+        let mut cursor = atlas
+            .cursors
+            .get(&entry.terrain)
+            .copied()
+            .unwrap_or_default();
         let keys = tile_keys(atlas, entry, entry.changes.since(&mut cursor));
         atlas.cursors.insert(entry.terrain, cursor);
         for key in keys {
@@ -1014,7 +1024,9 @@ pub(crate) fn publish_piece(
             &bakes,
             &slots,
             (
-                views.main().map_or(glam::Vec3::ZERO, |main| main.detail_eye),
+                views
+                    .main()
+                    .map_or(glam::Vec3::ZERO, |main| main.detail_eye),
                 &settings,
             ),
             limits.storage_room,
@@ -1116,7 +1128,6 @@ impl Readable for PartStats {
         }
     }
 }
-
 
 pub(crate) fn publish_heightfield(
     settings: Res<TerrainShading>,

@@ -43,12 +43,7 @@ impl Brick for HighlandsBrick {
             .operation::<control::HighlandsControl>()
             .systems(
                 Schedule::Presentation,
-                (
-                    content::arrive,
-                    views::watch,
-                    cave::open,
-                    content::publish,
-                ),
+                (content::arrive, views::watch, cave::open, content::publish),
             )
             .systems(Schedule::WorldSync, views::look);
     }

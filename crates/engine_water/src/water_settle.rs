@@ -837,9 +837,16 @@ pub(crate) fn plan_settles(
             .map(|&(_, index)| index)
     };
     let feedback = &mut *feedback;
-    let live: Vec<Entity> = state.terrains.iter().map(|terrain| terrain.entity).collect();
+    let live: Vec<Entity> = state
+        .terrains
+        .iter()
+        .map(|terrain| terrain.entity)
+        .collect();
     feedback.evict(&live);
-    let cooking = state.terrains.iter().any(|terrain| terrain.settled.cooking());
+    let cooking = state
+        .terrains
+        .iter()
+        .any(|terrain| terrain.settled.cooking());
     feedback.prepare((cooking, limits.storage_room), &index_of);
     for (input, made) in std::mem::take(&mut feedback.made) {
         if let Ok(bytes) = &made {

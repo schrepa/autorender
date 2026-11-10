@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asks, Binding, BindingSource, Button, Clock, Contexts, CursorMode, CursorRequests,
-    FrameTime, GlobalTransforms, HandOver, Hold, Input, MouseButton, Mover,
-    Moves, Pace, Player, Stick, Trigger, Verb, VerbId, VerbShape, Views, mover_of,
+    Asks, Binding, BindingSource, Button, Clock, Contexts, CursorMode, CursorRequests, FrameTime,
+    GlobalTransforms, HandOver, Hold, Input, MouseButton, Mover, Moves, Pace, Player, Stick,
+    Trigger, Verb, VerbId, VerbShape, Views, mover_of,
 };
 use engine_math::{atan2, clamp};
 use glam::{Quat, Vec2, Vec3};
@@ -69,7 +69,9 @@ pub(crate) const LOOK: Verb = Verb {
 pub(crate) const TURN: Verb = Verb {
     name: "fly_camera.turn",
     shape: VerbShape::Value2,
-    bindings: &[Binding::new("fly_camera.turn", BindingSource::Stick(Stick::Right)).dead_zone(0.15)],
+    bindings: &[
+        Binding::new("fly_camera.turn", BindingSource::Stick(Stick::Right)).dead_zone(0.15),
+    ],
 };
 
 pub(crate) struct Controls {

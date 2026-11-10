@@ -70,4 +70,3 @@ fn missing(uri: &str, path: &str) -> Error {
         .expected(Expected::File)
         .got(uri)
 }
-

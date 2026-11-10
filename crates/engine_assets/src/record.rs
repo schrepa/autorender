@@ -172,7 +172,9 @@ impl MeshBuffer {
         let flags = if extras {
             match word(12) {
                 Some(flags) if flags != 0 && flags & !FLAGS == 0 => flags,
-                flags @ (Some(_) | None) => return Err(invalid().at_most(u64::from(FLAGS)).got(flags)),
+                flags @ (Some(_) | None) => {
+                    return Err(invalid().at_most(u64::from(FLAGS)).got(flags));
+                }
             }
         } else {
             0

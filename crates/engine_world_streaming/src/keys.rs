@@ -41,5 +41,6 @@ fn particles(value: &Value, at: &StreamedAt<'_>) -> f32 {
 }
 
 fn probe(value: &Value, at: &StreamedAt<'_>) -> f32 {
-    parse_value::<ReflectionProbe>(value.clone()).map_or(at.from, |probe| at.from + probe.extent.length())
+    parse_value::<ReflectionProbe>(value.clone())
+        .map_or(at.from, |probe| at.from + probe.extent.length())
 }

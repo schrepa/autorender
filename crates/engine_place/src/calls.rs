@@ -100,9 +100,7 @@ impl<T> Each<T> {
     pub fn of(index: usize, list: &str, result: Result<T, Error>) -> Self {
         match result {
             Ok(done) => Self::Done(done),
-            Err(error) => Self::Refused(Refusal::of(
-                &error.within(&format!("$.{list}[{index}]")),
-            )),
+            Err(error) => Self::Refused(Refusal::of(&error.within(&format!("$.{list}[{index}]")))),
         }
     }
 
@@ -267,7 +265,11 @@ fn open_at(schema: &Value, at: &str, found: &mut Vec<String>) {
             return;
         }
         Value::Object(fields) => fields,
-        Value::Null | Value::Bool(false) | Value::Number(_) | Value::String(_) | Value::Array(_) => {
+        Value::Null
+        | Value::Bool(false)
+        | Value::Number(_)
+        | Value::String(_)
+        | Value::Array(_) => {
             return;
         }
     };
@@ -405,12 +407,7 @@ impl EventDecl {
         }
     }
 
-    pub fn read(
-        &self,
-        world: &World,
-        ids: &dyn EntityIds,
-        after: u64,
-    ) -> Result<EventPage, Error> {
+    pub fn read(&self, world: &World, ids: &dyn EntityIds, after: u64) -> Result<EventPage, Error> {
         (self.read)(world, ids, after)
     }
 
@@ -430,8 +427,7 @@ pub fn page_of<T, Row: Serialize>(
         .zip(first..)
         .map(|(entry, at)| {
             serde_json::to_value(row(entry)).map_err(|error| {
-                Error::new(ErrorCode::InvalidValue, format!("$.rows[{at}]"))
-                    .got(error.to_string())
+                Error::new(ErrorCode::InvalidValue, format!("$.rows[{at}]")).got(error.to_string())
             })
         })
         .collect::<Result<Vec<Value>, Error>>()?;

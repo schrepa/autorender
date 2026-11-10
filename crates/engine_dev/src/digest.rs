@@ -94,8 +94,13 @@ fn mesh_bytes(mesh: &Mesh) -> Vec<u8> {
 }
 
 fn texture_bytes(texture: &Texture) -> Vec<u8> {
-    let mut bytes = format!("{}x{} {:?}", texture.width(), texture.height(), texture.format())
-        .into_bytes();
+    let mut bytes = format!(
+        "{}x{} {:?}",
+        texture.width(),
+        texture.height(),
+        texture.format()
+    )
+    .into_bytes();
     for level in texture.levels() {
         bytes.extend_from_slice(level);
     }

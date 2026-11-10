@@ -35,7 +35,11 @@ impl Declared {
 
 impl GlobalTransforms {
     pub(super) fn declare(&mut self, world: &mut World, rebuilt: bool) -> bool {
-        if !world.resource::<tracking::Invalidation>().touched.is_empty() {
+        if !world
+            .resource::<tracking::Invalidation>()
+            .touched
+            .is_empty()
+        {
             let mut invalidation = world.resource_mut::<tracking::Invalidation>();
             std::mem::swap(&mut self.touched, &mut invalidation.touched);
         }

@@ -35,7 +35,10 @@ impl GpuPart for BloomGpu {
     const LABELS: &'static [&'static str] = &["engine/bloom"];
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        let format = if cx.features().contains(wgpu::Features::RG11B10UFLOAT_RENDERABLE) {
+        let format = if cx
+            .features()
+            .contains(wgpu::Features::RG11B10UFLOAT_RENDERABLE)
+        {
             wgpu::TextureFormat::Rg11b10Ufloat
         } else {
             wgpu::TextureFormat::Rgba16Float

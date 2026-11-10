@@ -11,11 +11,12 @@ use serde_json::json;
 
 mod changes;
 
-pub use changes::{InputChange, InputChanges};
 use changes::raise_changes;
+pub use changes::{InputChange, InputChanges};
 
 use crate::{
-    Error, ErrorCode, Hold, Interest, InvalidSetting, List, Operation, Requests, Rule, Section, Setting, Ticket, settings,
+    Error, ErrorCode, Hold, Interest, InvalidSetting, List, Operation, Requests, Rule, Section,
+    Setting, Ticket, settings,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
@@ -402,14 +403,14 @@ settings! {
 
 fn check_settings(settings: &InputSettings) -> Result<(), InvalidSetting> {
     if settings.players.len() > usize::from(u8::MAX) {
-        return Err(InvalidSetting::broken(
-            "players",
-            Rule::count(0.0, f64::from(u8::MAX)),
-        )
-        .got(settings.players.len()));
+        return Err(
+            InvalidSetting::broken("players", Rule::count(0.0, f64::from(u8::MAX)))
+                .got(settings.players.len()),
+        );
     }
     for (index, binding) in settings.bindings.iter().enumerate() {
-        check_binding(binding).map_err(|invalid| invalid.within("bindings").indexed("bindings", index))?;
+        check_binding(binding)
+            .map_err(|invalid| invalid.within("bindings").indexed("bindings", index))?;
     }
     Ok(())
 }
@@ -638,13 +639,12 @@ impl List for Contexts {
 }
 
 impl Contexts {
-    pub fn ask(
-        &mut self,
-        by: &'static str,
-        context: &'static str,
-        blocks: bool,
-    ) -> Hold {
-        let interest = self.requests.ask(ContextAsk { by, context, blocks });
+    pub fn ask(&mut self, by: &'static str, context: &'static str, blocks: bool) -> Hold {
+        let interest = self.requests.ask(ContextAsk {
+            by,
+            context,
+            blocks,
+        });
         stamp(&mut self.requests);
         interest.into()
     }
@@ -756,7 +756,12 @@ impl Edges {
         self.pressed.is_empty() && self.released.is_empty() && self.sums.is_empty()
     }
 
-    fn add(&mut self, pressed: &BTreeSet<u32>, released: &BTreeSet<u32>, sums: &BTreeMap<u32, Vec2>) {
+    fn add(
+        &mut self,
+        pressed: &BTreeSet<u32>,
+        released: &BTreeSet<u32>,
+        sums: &BTreeMap<u32, Vec2>,
+    ) {
         self.pressed.extend(pressed.iter().copied());
         self.released.extend(released.iter().copied());
         for (&slot, &sum) in sums {
@@ -869,8 +874,12 @@ impl Resolved {
         match shape {
             VerbShape::Button if self.held.contains(&slot) => Vec2::X,
             VerbShape::Button => Vec2::ZERO,
-            VerbShape::Value | VerbShape::Value2 => self.values.get(&slot).copied().unwrap_or_default(),
-            VerbShape::Delta | VerbShape::Delta2 => self.sums.get(&slot).copied().unwrap_or_default(),
+            VerbShape::Value | VerbShape::Value2 => {
+                self.values.get(&slot).copied().unwrap_or_default()
+            }
+            VerbShape::Delta | VerbShape::Delta2 => {
+                self.sums.get(&slot).copied().unwrap_or_default()
+            }
         }
     }
 }
@@ -945,7 +954,10 @@ fn rows<'a>(declared: &[Verb], settings: &'a InputSettings) -> Vec<Row<'a>> {
                 shape: verb.shape,
                 binding,
                 game: from_game,
-                context: binding.context.as_deref().unwrap_or_else(|| owner(verb.name)),
+                context: binding
+                    .context
+                    .as_deref()
+                    .unwrap_or_else(|| owner(verb.name)),
             });
         }
     }
@@ -1065,7 +1077,9 @@ fn read(
                 .sum(),
             dead_zone,
         ),
-        BindingSource::Wheel if owned.keyboard_mouse => zoned(devices.mouse.wheel_notches, dead_zone),
+        BindingSource::Wheel if owned.keyboard_mouse => {
+            zoned(devices.mouse.wheel_notches, dead_zone)
+        }
         BindingSource::MouseMotion | BindingSource::TouchMotion | BindingSource::Wheel => {
             Vec2::ZERO
         }
@@ -1124,7 +1138,10 @@ fn resolve(
                 let claim = (part, row.binding.modifier.clone());
                 let best = winners.entry(claim.clone()).or_insert(rank);
                 *best = (*best).max(rank);
-                claims.entry((row.context, claim)).or_default().insert(row.verb);
+                claims
+                    .entry((row.context, claim))
+                    .or_default()
+                    .insert(row.verb);
             }
         }
         for ((context, (source, modifier)), verbs) in claims {
@@ -1265,9 +1282,13 @@ impl Input {
             Some(VerbShape::Value | VerbShape::Value2) => {
                 self.readings.values.get(&slot).copied().unwrap_or_default()
             }
-            Some(VerbShape::Delta | VerbShape::Delta2) => {
-                self.readings.shown.sums.get(&slot).copied().unwrap_or_default()
-            }
+            Some(VerbShape::Delta | VerbShape::Delta2) => self
+                .readings
+                .shown
+                .sums
+                .get(&slot)
+                .copied()
+                .unwrap_or_default(),
         }
     }
 
@@ -1336,7 +1357,11 @@ impl Input {
                     name: verb.name,
                     shape: verb.shape,
                     readings: (1..=count)
-                        .map(|player| resolved.reading(slot(id, Player(player)), verb.shape).to_array())
+                        .map(|player| {
+                            resolved
+                                .reading(slot(id, Player(player)), verb.shape)
+                                .to_array()
+                        })
                         .collect(),
                 }
             })
@@ -1351,7 +1376,8 @@ impl Input {
     }
 
     fn report(&mut self, conflicts: BTreeSet<Conflict>) {
-        self.raised.retain(|conflict, _| conflicts.contains(conflict));
+        self.raised
+            .retain(|conflict, _| conflicts.contains(conflict));
         for conflict in &conflicts {
             if self.raised.contains_key(conflict) {
                 continue;
@@ -1435,8 +1461,14 @@ impl Operation for Rebind {
     ) -> Result<RebindReply, Error> {
         let mut next = settings.clone();
         next.bindings.retain(|binding| {
-            !request.reset.iter().any(|verb| verb.as_str() == &*binding.verb)
-                && !request.bindings.iter().any(|bound| bound.verb == binding.verb)
+            !request
+                .reset
+                .iter()
+                .any(|verb| verb.as_str() == &*binding.verb)
+                && !request
+                    .bindings
+                    .iter()
+                    .any(|bound| bound.verb == binding.verb)
         });
         next.bindings.extend(request.bindings);
         next.check()?;

@@ -99,12 +99,15 @@ impl<G: Game> PageHost<G> {
     ) -> Result<Self, JsValue> {
         let parameters = web_sys::UrlSearchParams::new_with_str(query)?;
         let without = parameters.get("without").unwrap_or_default();
-        let bricks = crate::game::without((game.bricks)(BrickList::default()), &without, "?without")
-            .map_err(js)?;
+        let bricks =
+            crate::game::without((game.bricks)(BrickList::default()), &without, "?without")
+                .map_err(js)?;
         let target = engine_render::RenderTarget::Canvas(canvas);
-        let mut host = GameHost::launch(target, move |_| bricks, |engine| {
-            crate::game::built(&game, engine, files)
-        })
+        let mut host = GameHost::launch(
+            target,
+            move |_| bricks,
+            |engine| crate::game::built(&game, engine, files),
+        )
         .await
         .map_err(js)?;
         match scene {

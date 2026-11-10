@@ -64,8 +64,9 @@ pub fn of_game<G: Game>(options: &HostOptions, names: &str, game: GameEntry<G>) 
         Ok(entries) => entries,
         Err(error) => return crate::exit(Err(error)),
     };
-    let build =
-        |engine: &mut Engine| engine::game::built(&game, engine, engine::scene::SceneFiles::default());
+    let build = |engine: &mut Engine| {
+        engine::game::built(&game, engine, engine::scene::SceneFiles::default())
+    };
     run::<G>(options, names, &entries, &list, &build)
 }
 

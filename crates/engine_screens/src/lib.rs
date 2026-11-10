@@ -8,8 +8,7 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 use bevy_ecs::prelude::*;
 use engine_core::{
     Applies, Asked, Brick, Bricks, ComponentKind, Error, ErrorCode, Lands, Level, LevelView,
-    Operation,
-    Pause, PauseReason, SceneComponents, Schedule, Source,
+    Operation, Pause, PauseReason, SceneComponents, Schedule, Source,
 };
 use engine_places_rendering::screens::{Screen, ScreenAsk, Screens};
 use serde::{Deserialize, Serialize};
@@ -25,8 +24,7 @@ impl Brick for ScreensBrick {
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .join::<SceneComponents>(
-                ComponentKind::of::<Screen>("screen")
-                    .schema(screen_schema),
+                ComponentKind::of::<Screen>("screen").schema(screen_schema),
                 None,
             )
             .join::<Pause>(SCREEN, None)
@@ -199,10 +197,7 @@ impl Operation for LevelState {
     type Request = NoRequest;
     type Reply = LevelView;
 
-    fn run(
-        level: SystemParamItem<'_, '_, Self::Params>,
-        _: NoRequest,
-    ) -> Result<LevelView, Error> {
+    fn run(level: SystemParamItem<'_, '_, Self::Params>, _: NoRequest) -> Result<LevelView, Error> {
         Ok(level.view())
     }
 }

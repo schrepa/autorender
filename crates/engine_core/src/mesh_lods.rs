@@ -34,7 +34,9 @@ fn lod_record(input: &[u8]) -> RecordKey {
 
 pub(crate) fn settle(world: &mut World) {
     let mut awaiting = world.resource_mut::<AssetLibrary>().take_awaiting_lods();
-    let building = world.get_resource::<Detail>().is_none_or(|detail| detail.enabled);
+    let building = world
+        .get_resource::<Detail>()
+        .is_none_or(|detail| detail.enabled);
     let mut orders = Vec::new();
     world.resource_scope(|world, mut levels: Mut<MeshLevels>| {
         let levels = &mut *levels;
@@ -98,8 +100,12 @@ pub(crate) fn settle(world: &mut World) {
                 let _ = assets.settle_lods(handle, None);
             }
         }
-        levels.ended.retain(|&(handle, _)| assets.mesh(handle).is_some());
-        levels.skipped.retain(|&handle| assets.mesh(handle).is_some());
+        levels
+            .ended
+            .retain(|&(handle, _)| assets.mesh(handle).is_some());
+        levels
+            .skipped
+            .retain(|&handle| assets.mesh(handle).is_some());
     });
     if !orders.is_empty() {
         let batch = JobBatch { owner: 0, run: 0 };

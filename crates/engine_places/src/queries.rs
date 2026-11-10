@@ -34,8 +34,13 @@ pub struct CastHit {
 }
 
 pub trait SceneQuery: Send + Sync + 'static {
-    fn cast(&self, shape: CastShape, from: Vec3, along: Vec3, filter: CastFilter)
-    -> Option<CastHit>;
+    fn cast(
+        &self,
+        shape: CastShape,
+        from: Vec3,
+        along: Vec3,
+        filter: CastFilter,
+    ) -> Option<CastHit>;
 }
 
 struct Empty;

@@ -355,10 +355,8 @@ pub struct ScenePasses {
     kinds: Vec<KindDecl>,
 }
 
-pub const CORE_PASSES: [PassEntry; 2] = [
-    PassEntry::of::<ColorPass>(),
-    PassEntry::of::<BlendedPass>(),
-];
+pub const CORE_PASSES: [PassEntry; 2] =
+    [PassEntry::of::<ColorPass>(), PassEntry::of::<BlendedPass>()];
 
 pub const CORE_BRICK: &str = "engine_render";
 
@@ -396,7 +394,8 @@ impl ScenePasses {
                 next += 1;
                 Some(PassBit((next - 1) as u8))
             } else {
-                problems.push(Error::new(ErrorCode::OutOfRange, format!("{path}.bit")).got(PASS_BITS));
+                problems
+                    .push(Error::new(ErrorCode::OutOfRange, format!("{path}.bit")).got(PASS_BITS));
                 None
             };
             listed.push(ScenePass {
@@ -498,7 +497,9 @@ impl ScenePasses {
                     .filter(|listed| listed.bit.is_some())
                     .map(|listed| listed.name)
                     .collect();
-                return Err(Error::new(ErrorCode::UnknownField, at).got(name).variants(known));
+                return Err(Error::new(ErrorCode::UnknownField, at)
+                    .got(name)
+                    .variants(known));
             };
             let Value::Bool(on) = on else {
                 return Err(Error::new(ErrorCode::InvalidType, at).got(on.clone()));

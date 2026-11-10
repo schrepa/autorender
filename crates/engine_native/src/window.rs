@@ -13,10 +13,10 @@ use winit::window::WindowId;
 
 use crate::host_error;
 use crate::input::Input;
-use crate::options::StartScene;
 use crate::jobs::{JobOptions, JobPool};
 #[cfg(feature = "profiling")]
 use crate::live::LiveProfile;
+use crate::options::StartScene;
 
 #[derive(Clone, Debug)]
 pub struct Window {

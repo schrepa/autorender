@@ -5,7 +5,7 @@ use engine_core::glam::Vec3;
 use engine_core::{
     Camera, Cursor, Cut, DeviceLimits, FrameBudget, FrameTime, GpuBits, Mobility, Mover, Moves,
     Node, OwnedView, OwnedViews, Pace, PartDraws, PassName, Readable, Readback, Readiness,
-    Settling, Since, Views, Spawner, Transform, gpu_bits, mover_of,
+    Settling, Since, Spawner, Transform, Views, gpu_bits, mover_of,
 };
 use engine_places_rendering::shadows::{CasterMap, Refresh, Region as MapView, ShadowMaps};
 use engine_places_rendering::sun::Sun;
@@ -319,14 +319,20 @@ fn place_cameras(
         {
             transform.translation = eye;
         }
-        let origin = moves.local(node).map_or(eye, |transform| transform.translation);
+        let origin = moves
+            .local(node)
+            .map_or(eye, |transform| transform.translation);
         if let Ok(mut lens) = lenses.get_mut(node) {
             lens.set_if_neq(Camera::fitted(placed.clip, origin));
         }
     }
 }
 
-fn scene_views(maps: &ShadowMaps, placed: &[Placed], (cameras, eye): (&[Entity], Vec3)) -> OwnedViews {
+fn scene_views(
+    maps: &ShadowMaps,
+    placed: &[Placed],
+    (cameras, eye): (&[Entity], Vec3),
+) -> OwnedViews {
     let views = maps
         .regions
         .iter()
@@ -410,7 +416,11 @@ pub(crate) fn plan_shadows(
             maps.on = false;
             maps.regions.clear();
         }
-        publish_views(scene_views(&maps, &[], (&[], eye)), &mut published, &mut spawner);
+        publish_views(
+            scene_views(&maps, &[], (&[], eye)),
+            &mut published,
+            &mut spawner,
+        );
         return;
     }
     let room = (limits.max_texture_dimension_2d, limits.storage_room);

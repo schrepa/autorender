@@ -6,8 +6,8 @@ use bevy_ecs::prelude::*;
 use engine_core::math::clamp;
 use engine_core::{
     Background, EntityIds, Error, ErrorCode, Event, Feed, FeedSettings, Files, FrameTime,
-    GlobalTransforms, Interest, Landed, Pause, Poses, Raises, Refusals, Request, Requests, SceneIds,
-    Spawner, Ticket, Views,
+    GlobalTransforms, Interest, Landed, Pause, Poses, Raises, Refusals, Request, Requests,
+    SceneIds, Spawner, Ticket, Views,
 };
 use engine_places_rendering::audio::{
     Bus, OneShot, SoundHandle, SoundOrder, SoundSource, Sounds, VoiceHandle,
@@ -413,8 +413,7 @@ impl Mixer {
                 self.sounds.ready(&key, ticket, decoded);
             }
             Err(failure) => {
-                let error =
-                    Error::new(AUDIO_FAILED, "$.audio.sounds").got(failure.clone());
+                let error = Error::new(AUDIO_FAILED, "$.audio.sounds").got(failure.clone());
                 if self.sounds.fail(&key, ticket, error) {
                     self.fail(failure);
                 }
@@ -677,7 +676,11 @@ impl Mixer {
         let forward = (-listener.z_axis.truncate())
             .try_normalize()
             .unwrap_or(Vec3::NEG_Z);
-        let up = listener.y_axis.truncate().try_normalize().unwrap_or(Vec3::Y);
+        let up = listener
+            .y_axis
+            .truncate()
+            .try_normalize()
+            .unwrap_or(Vec3::Y);
         self.backend.listen(eye, forward, up);
         for voice in &mut self.voices {
             if !voice.started() || voice.play.radius.is_none() {
@@ -708,12 +711,7 @@ impl Mixer {
 
 pub(crate) fn mix(
     (settings, time, feeds): (Res<Audio>, Res<FrameTime>, Res<FeedSettings>),
-    (views, poses, globals, pause): (
-        Res<Views>,
-        Poses,
-        Res<GlobalTransforms>,
-        Option<Res<Pause>>,
-    ),
+    (views, poses, globals, pause): (Res<Views>, Poses, Res<GlobalTransforms>, Option<Res<Pause>>),
     (sounds, mut files): (Res<Sounds>, ResMut<Files>),
     sources: Query<(Entity, Ref<SoundSource>)>,
     (mut stats, mut mixer, mut spawner, mut ends): (
@@ -779,7 +777,10 @@ pub(crate) fn mix(
     }
     ends.raised.resize(feeds.events as usize);
     mixer.advance(&mut ends);
-    mixer.hear(views.main().and_then(|main| poses.drawn_pose(main.camera)), &globals);
+    mixer.hear(
+        views.main().and_then(|main| poses.drawn_pose(main.camera)),
+        &globals,
+    );
     mixer.sounds.settle(time.real_elapsed);
     mixer.publish(&mut stats);
     if was != Device::Failed && mixer.device == Device::Failed {

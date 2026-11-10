@@ -2,12 +2,12 @@ use bevy_ecs::prelude::*;
 use bytemuck::Zeroable;
 use engine_core::math::{clamp, max};
 use engine_core::{Cut, DeviceLimits, Error, FrameTime, Readable, Readback, ViewFacts, Views};
-use engine_places_simulation::wind::Wind;
 use engine_open_world_kit::ground::{GroundTiles, TerrainTiles};
+use engine_places_simulation::wind::Wind;
 use engine_render::{
     AfterRead, Allocation, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, Draw,
-    DrawInput, Encode, Install, Lifetime, Own, Pass, Pipeline, Prepare, Sampler, Shape,
-    Texture, wgpu,
+    DrawInput, Encode, Install, Lifetime, Own, Pass, Pipeline, Prepare, Sampler, Shape, Texture,
+    wgpu,
 };
 use glam::{UVec2, Vec2, Vec3};
 

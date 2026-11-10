@@ -50,7 +50,9 @@ mod unmeasured {
 #[cfg(any(feature = "dev", feature = "profiling"))]
 mod measured {
     use engine_profile::MAX_BRICKS;
-    use engine_registry::{BrickCost, BrickCosts, CORE_ROW, GPU_IDLE_ROW, Registry, UNATTRIBUTED_ROW};
+    use engine_registry::{
+        BrickCost, BrickCosts, CORE_ROW, GPU_IDLE_ROW, Registry, UNATTRIBUTED_ROW,
+    };
 
     use super::AppHost;
     use crate::app_host::now_ms;

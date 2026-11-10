@@ -32,4 +32,3 @@ fn tile_span(pyramid: &Pyramid, key: TileKey) -> (Vec2, Vec2) {
     let first = Vec2::new(f32::from(key.x), f32::from(key.z)) * size - Vec2::splat(2.0 * spacing);
     (first, first + Vec2::splat(size + 4.0 * spacing))
 }
-

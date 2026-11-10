@@ -142,7 +142,11 @@ pub fn pose_admitted(m: Mat4) -> bool {
     if !(finite(m.x_axis) && finite(m.y_axis) && finite(m.z_axis) && finite(m.w_axis)) {
         return false;
     }
-    let (x, y, z) = (m.x_axis.truncate(), m.y_axis.truncate(), m.z_axis.truncate());
+    let (x, y, z) = (
+        m.x_axis.truncate(),
+        m.y_axis.truncate(),
+        m.z_axis.truncate(),
+    );
     let scale = max(largest(x), max(largest(y), largest(z)));
     let determinant = x.dot(y.cross(z));
     (bounds::MIN_LINEAR_SCALE..=bounds::COEFFICIENT_LIMIT).contains(&scale)
@@ -398,8 +402,7 @@ impl DrawnPoses {
     }
 
     pub fn span(&self, globals: &GlobalTransforms, node: Entity) -> Option<Span> {
-        self.index_of(globals, node)
-            .map(|index| self.spans[index])
+        self.index_of(globals, node).map(|index| self.spans[index])
     }
 
     pub fn fresh_at(&self, globals: &GlobalTransforms, node: Entity) -> Option<u64> {
@@ -820,7 +823,10 @@ impl DrawnPoses {
             composed: blend || parent_composed || moved,
             parent_composed,
         };
-        let info = [parent.map_or(NO_PARENT, |parent| parent as u32), word.pack()];
+        let info = [
+            parent.map_or(NO_PARENT, |parent| parent as u32),
+            word.pack(),
+        ];
         if self.info[index] != info {
             self.info[index] = info;
             self.changes.push(index as u32);
@@ -850,7 +856,12 @@ impl DrawnPoses {
         buckets.resize_with(MAX_HIERARCHY_DEPTH + 1, Vec::new);
         let seeds = listed.iter().chain(&self.composed).chain(&self.touched);
         for &index in seeds {
-            enqueue((&mut self.marks, mark), &mut buckets, globals, index as usize);
+            enqueue(
+                (&mut self.marks, mark),
+                &mut buckets,
+                globals,
+                index as usize,
+            );
         }
         let mut composed = std::mem::take(&mut self.spare);
         composed.clear();
@@ -992,8 +1003,12 @@ pub fn make_fresh(world: &mut World, nodes: &[Entity]) {
 }
 
 pub(crate) fn capture(world: &mut World) {
-    let tick = world.get_resource::<FixedTime>().map_or(0, |time| time.tick);
-    let frame = world.get_resource::<FrameTime>().map_or(0, |time| time.frame);
+    let tick = world
+        .get_resource::<FixedTime>()
+        .map_or(0, |time| time.tick);
+    let frame = world
+        .get_resource::<FrameTime>()
+        .map_or(0, |time| time.frame);
     world.resource_scope(|world, mut poses: Mut<DrawnPoses>| {
         let world: &World = world;
         poses.frame = frame;

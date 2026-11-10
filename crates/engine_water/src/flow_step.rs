@@ -32,7 +32,11 @@ pub(crate) fn step(
         if terrain.surroundings {
             continue;
         }
-        let Some(rivers) = terrain.rivers().filter(|rivers| !rivers.is_empty()).cloned() else {
+        let Some(rivers) = terrain
+            .rivers()
+            .filter(|rivers| !rivers.is_empty())
+            .cloned()
+        else {
             terrain.flow = None;
             continue;
         };

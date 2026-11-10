@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     Asks, Binding, BindingSource, Button, Clock, Contexts, CursorMode, CursorRequests, Error,
-    ErrorCode, FrameTime, GlobalTransforms, HandOver, Hold, Input, MouseButton, Mover, Moves, Operation, Pace, Player, Poses, Rule, Setting, Stick, Verb, VerbId,
-    VerbShape, Views, mover_of,
+    ErrorCode, FrameTime, GlobalTransforms, HandOver, Hold, Input, MouseButton, Mover, Moves,
+    Operation, Pace, Player, Poses, Rule, Setting, Stick, Verb, VerbId, VerbShape, Views, mover_of,
 };
 use engine_math::{atan2, clamp, exp, max, min, sin, sin_cos};
 use engine_places::queries::{CastFilter, CastShape, SceneQueries};
@@ -295,10 +295,7 @@ impl Operation for CameraShake {
     type Request = Self;
     type Reply = Self;
 
-    fn run(
-        mut shake: SystemParamItem<'_, '_, Self::Params>,
-        request: Self,
-    ) -> Result<Self, Error> {
+    fn run(mut shake: SystemParamItem<'_, '_, Self::Params>, request: Self) -> Result<Self, Error> {
         request
             .strength
             .check("strength", STRENGTH)

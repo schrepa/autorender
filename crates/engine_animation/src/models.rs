@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Background, Drawn, Error, Files, Landed, Refusals, SceneCx, Spawner,
-    Transform, valid_uri,
+    AssetLibrary, Background, Drawn, Error, Files, Landed, Refusals, SceneCx, Spawner, Transform,
+    valid_uri,
 };
 use engine_places_rendering::animation::{Animator, Model, Start};
 use serde_json::Value;
@@ -43,8 +43,15 @@ pub(crate) fn model_files(model: &Model) -> Vec<String> {
     vec![model.file.clone()]
 }
 
-pub(crate) fn prepare_model(mut model: Model, cx: &SceneCx<'_>, path: &str) -> Result<Model, Error> {
-    model.bytes = cx.buffer(&model.file, &format!("{path}.file")).ok().flatten();
+pub(crate) fn prepare_model(
+    mut model: Model,
+    cx: &SceneCx<'_>,
+    path: &str,
+) -> Result<Model, Error> {
+    model.bytes = cx
+        .buffer(&model.file, &format!("{path}.file"))
+        .ok()
+        .flatten();
     Ok(model)
 }
 
@@ -109,7 +116,10 @@ pub(crate) fn load_models(
     mut refusals: ResMut<Refusals>,
     mut spawner: Spawner<AnimationBrick>,
 ) {
-    let ModelLoads { models: held, shared } = &mut *loads;
+    let ModelLoads {
+        models: held,
+        shared,
+    } = &mut *loads;
     for (entity, model) in &models {
         if !model.is_changed() && held.contains_key(&entity) {
             continue;

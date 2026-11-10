@@ -65,8 +65,7 @@ impl Brick for AnimationBrick {
                 None,
             )
             .join::<SceneComponents>(
-                ComponentKind::of::<Attachment>("attachment")
-                    .schema(scene::attachment_schema),
+                ComponentKind::of::<Attachment>("attachment").schema(scene::attachment_schema),
                 None,
             )
             .join::<SceneComponents>(

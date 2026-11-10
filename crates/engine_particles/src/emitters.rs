@@ -174,9 +174,7 @@ impl Emission {
         let stop = if seen { now } else { f32::MIN };
         match (held, emitting) {
             (None, true) => None,
-            (None, false) | (Some(Self::Resumed { .. }), false) => {
-                Some(Self::Stopped { at: stop })
-            }
+            (None, false) | (Some(Self::Resumed { .. }), false) => Some(Self::Stopped { at: stop }),
             (Some(Self::Stopped { at }), true) => Some(Self::Resumed {
                 stopped: at,
                 at: now,
@@ -469,7 +467,11 @@ pub(crate) fn gather_emitters(
     mut packed: ResMut<Packed>,
 ) {
     let gather = &mut *gather;
-    let eyes: Vec<Vec3> = views.listed().iter().map(|facts| facts.detail_eye).collect();
+    let eyes: Vec<Vec3> = views
+        .listed()
+        .iter()
+        .map(|facts| facts.detail_eye)
+        .collect();
     gather.fill(
         &settings,
         (&emitters, &table),

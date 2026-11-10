@@ -266,8 +266,15 @@ pub struct StaticGraph {
 
 #[derive(Clone, Copy, Debug)]
 enum Tie {
-    Read { writer: usize, reader: usize },
-    Write { first: usize, second: usize, resource: usize },
+    Read {
+        writer: usize,
+        reader: usize,
+    },
+    Write {
+        first: usize,
+        second: usize,
+        resource: usize,
+    },
 }
 
 fn refused(code: ErrorCode, path: String) -> Error {
@@ -319,9 +326,8 @@ fn nodes_of(passes: Vec<Declared>, width: usize, views: &Bits) -> (Vec<Node>, Ve
             depth: declared.depth,
             composes: false,
         };
-        node.composes = !node.entry.shared
-            && node.entry.blends
-            && !node.outputs().intersect(views).is_empty();
+        node.composes =
+            !node.entry.shared && node.entry.blends && !node.outputs().intersect(views).is_empty();
         nodes.push(node);
     }
     (nodes, after)
@@ -366,8 +372,7 @@ fn passes_before(
                                 reader: late,
                             });
                         }
-                    } else if reader.entry.layer.is_none() || writer.key(early) < reader.key(late)
-                    {
+                    } else if reader.entry.layer.is_none() || writer.key(early) < reader.key(late) {
                         before[late].insert(early);
                     } else if reads.contains(resource) {
                         before[early].insert(late);
@@ -404,9 +409,9 @@ fn passes_before(
                 && !reader.entry.shared
                 && reader.entry.layer.is_some()
                 && reader.entry.layer == writer.entry.layer
-                && writer
-                    .attachments()
-                    .any(|(resource, _)| views.contains(resource.index()) && inputs.contains(resource.index()))
+                && writer.attachments().any(|(resource, _)| {
+                    views.contains(resource.index()) && inputs.contains(resource.index())
+                })
             {
                 before[late].insert(early);
             }
@@ -788,12 +793,9 @@ impl StaticGraph {
                 written.insert(index);
             }
         }
-        let planned_writes = kept
-            .iter()
-            .flatten()
-            .fold(ready.clone(), |all, planned| {
-                all.union(&self.nodes[planned.pass.index()].outputs())
-            });
+        let planned_writes = kept.iter().flatten().fold(ready.clone(), |all, planned| {
+            all.union(&self.nodes[planned.pass.index()].outputs())
+        });
         let mut passes = Vec::new();
         for mut planned in kept.into_iter().flatten() {
             let node = &self.nodes[planned.pass.index()];
@@ -804,8 +806,9 @@ impl StaticGraph {
                 .without(reported)
                 .iter()
                 .find(|&resource| {
-                    let unwritten = matches!(self.resources[resource].life, Life::Frame | Life::Output)
-                        && !planned_writes.contains(resource);
+                    let unwritten =
+                        matches!(self.resources[resource].life, Life::Frame | Life::Output)
+                            && !planned_writes.contains(resource);
                     let elsewhere = self
                         .nodes
                         .iter()
@@ -856,9 +859,10 @@ impl PlanCache {
         (runs, outputs, ready): (&Bits, &Bits, &Bits),
         most: usize,
     ) -> Result<std::sync::Arc<Plan>, Error> {
-        let found = self.plans.iter().position(|(known, read, held, _)| {
-            known == runs && read == outputs && held == ready
-        });
+        let found = self
+            .plans
+            .iter()
+            .position(|(known, read, held, _)| known == runs && read == outputs && held == ready);
         let index = match found {
             Some(index) => index,
             None => {

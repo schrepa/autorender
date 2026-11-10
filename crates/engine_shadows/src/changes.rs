@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::glam::{Mat3, Vec3};
 use engine_core::{
-    Cursor, DrawnArea, DrawnAreas, DrawnFlags, DrawnTable, Events, Feed, GlobalTransforms,
-    MaterialHandle, GeometryHandle, Mobility, PlanState, ScenePasses, Since,
+    Cursor, DrawnArea, DrawnAreas, DrawnFlags, DrawnTable, Events, Feed, GeometryHandle,
+    GlobalTransforms, MaterialHandle, Mobility, PlanState, ScenePasses, Since,
 };
 use engine_places_rendering::shadows::SHADOW_PASS;
 
@@ -75,7 +75,8 @@ fn caster_box(
     let center = matrix.transform_point3((low + high) * 0.5);
     let half = (high - low) * 0.5;
     let axes = Mat3::from_mat4(matrix);
-    let reach = axes.x_axis.abs() * half.x + axes.y_axis.abs() * half.y + axes.z_axis.abs() * half.z;
+    let reach =
+        axes.x_axis.abs() * half.x + axes.y_axis.abs() * half.y + axes.z_axis.abs() * half.z;
     Some((center - reach, center + reach))
 }
 
@@ -103,7 +104,11 @@ fn publish_areas(areas: &DrawnAreas, cursor: &mut Cursor, shadows: &mut ShadowCh
 }
 
 pub(crate) fn publish_shadow_changes(
-    (table, globals, passes): (Res<DrawnTable>, Res<GlobalTransforms>, Option<Res<ScenePasses>>),
+    (table, globals, passes): (
+        Res<DrawnTable>,
+        Res<GlobalTransforms>,
+        Option<Res<ScenePasses>>,
+    ),
     (settings, areas): (Res<ShadowSettings>, Res<DrawnAreas>),
     mut held: Local<HeldCasters>,
     mut shadows: ResMut<ShadowChanges>,

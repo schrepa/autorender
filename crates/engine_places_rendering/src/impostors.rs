@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::{Component, Resource};
-use engine_place::{GpuBits, MaterialHandle, GeometryHandle, Slot, gpu_bits, gpu_struct};
+use engine_place::{GeometryHandle, GpuBits, MaterialHandle, Slot, gpu_bits, gpu_struct};
 
 pub const IMPOSTOR_VERTICES: u32 = 6;
 pub const DEBUG_CARD: u32 = 1 << 13;

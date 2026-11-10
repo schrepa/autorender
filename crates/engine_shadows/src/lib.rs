@@ -24,8 +24,8 @@ use engine_core::{
     Schedule, SlotSet, Source, Writes, every,
 };
 use engine_places_rendering::lighting::SunBlockers;
-use engine_places_rendering::sky::SkyVisibility;
 use engine_places_rendering::shadows::{CasterRoutes, SHADOW_PASS, ShadowMaps};
+use engine_places_rendering::sky::SkyVisibility;
 use engine_render::{DebugModes, RenderBricks};
 
 pub use settings::{ShadowSettings, ShadowStats, SkyOcclusion};

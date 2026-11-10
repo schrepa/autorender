@@ -1,7 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Drawn, Error, Expected, Mesh, GeometryHandle, MeshVertex,
-    Spawner, Transform,
+    AssetLibrary, Drawn, Error, Expected, GeometryHandle, Mesh, MeshVertex, Spawner, Transform,
 };
 use engine_math::collections::HashMap;
 use engine_math::{clamp, max};

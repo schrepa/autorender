@@ -13,9 +13,9 @@ use engine_core::{
     Writes, gpu_struct, settings, stats,
 };
 use engine_render::{
-    Allocation, Bind, Buffer, DepthUse, Draw, Form, FormSide, GpuPart, Install, KindForm,
-    LightingModule, Lifetime, Pipeline, Prepare, RenderBricks, RenderPipeline, Scene, SceneDraw,
-    Shape, SlotModule, Varyings, wgpu,
+    Allocation, Bind, Buffer, DepthUse, Draw, Form, FormSide, GpuPart, Install, KindForm, Lifetime,
+    LightingModule, Pipeline, Prepare, RenderBricks, RenderPipeline, Scene, SceneDraw, Shape,
+    SlotModule, Varyings, wgpu,
 };
 
 pub const GLIMMER: DrawKind = DrawKind("glimmer");
@@ -374,10 +374,13 @@ impl GpuPart for GlimmerGpu {
             let Some(pose) = poses.drawn_pose(&globals, entity) else {
                 continue;
             };
-            let previous = poses
-                .previous_drawn_pose(&globals, entity)
-                .unwrap_or(pose);
-            let size = thing.values.floats.first().copied().unwrap_or(settings.size);
+            let previous = poses.previous_drawn_pose(&globals, entity).unwrap_or(pose);
+            let size = thing
+                .values
+                .floats
+                .first()
+                .copied()
+                .unwrap_or(settings.size);
             let [red, green, blue, alpha] = thing.values.tint;
             let [glow_red, glow_green, glow_blue] = thing.values.emission;
             self.staged.push(GlimmerInstance {

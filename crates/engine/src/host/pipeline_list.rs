@@ -71,7 +71,11 @@ impl PipelineList {
             return;
         };
         if let Some(registry) = engine.app.world().get_resource::<Registry>() {
-            for brick in registry.bricks().iter().filter(|brick| !brick.render.is_empty()) {
+            for brick in registry
+                .bricks()
+                .iter()
+                .filter(|brick| !brick.render.is_empty())
+            {
                 identity.extend(brick.package.bytes());
                 identity.push(0);
                 identity.extend(brick.source());

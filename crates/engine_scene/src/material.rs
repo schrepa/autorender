@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use bevy_ecs::system::{Res, ResMut, SystemParamItem};
 use engine_core::{
     AlphaMode, AssetLibrary, ColorSpace, Cull, DepthBias, Error, Filter, LightingModel, MAPPED,
-    MAPPED_MAPS, MAPPED_SLOTS, Material, Operation, Sampler, SceneContext,
-    TextureHandle, TextureRef, UvTransform, Wrap,
+    MAPPED_MAPS, MAPPED_SLOTS, Material, Operation, Sampler, SceneContext, TextureHandle,
+    TextureRef, UvTransform, Wrap,
 };
 use engine_settings::{ErrorCode, Expected};
 use serde::{Deserialize, Serialize};
@@ -650,12 +650,16 @@ impl Operation for SceneMaterialControl {
         let Some(context) = context else {
             return Err(unknown(Vec::new()));
         };
-        let handle = context
-            .assets
-            .materials
-            .get(id)
-            .copied()
-            .ok_or_else(|| unknown(context.assets.materials.keys().map(String::as_str).collect()))?;
+        let handle = context.assets.materials.get(id).copied().ok_or_else(|| {
+            unknown(
+                context
+                    .assets
+                    .materials
+                    .keys()
+                    .map(String::as_str)
+                    .collect(),
+            )
+        })?;
         let textures = &context.assets.textures;
         for (field, texture) in request.material.texture_ids() {
             if !textures.contains_key(texture) {

@@ -310,22 +310,9 @@ impl Run {
         let (frame_groups, own_groups) = fresh_groups(&machine);
         let holders = Holders::of(&machine);
         let view_holders = holders.of_view(&machine);
-        let (passes, main) = views::view_passes(&machine);
         let mut stale = stale_holders(&machine);
         stale.retain(|holder| !view_holders.contains(holder));
-        let first = views::ViewSet::new(
-            &device,
-            &machine,
-            bevy_ecs::entity::Entity::PLACEHOLDER,
-            &view_holders,
-        );
-        let sets = views::Sets {
-            list: vec![first],
-            at: 0,
-            holders: view_holders,
-            passes,
-            main,
-        };
+        let sets = first_sets(&device, &machine, view_holders);
         let pass_decls = machine
             .declared
             .passes
@@ -333,7 +320,11 @@ impl Run {
             .map(|pass| Arc::new(pass.clone()))
             .collect();
         let pass_sets = pass_sets_of(&machine);
-        let live = machine.outputs.iter().map(crate::machine::layered).collect();
+        let live = machine
+            .outputs
+            .iter()
+            .map(crate::machine::layered)
+            .collect();
         Self {
             device,
             queue,
@@ -365,16 +356,7 @@ impl Run {
                 dimensions,
                 samplers,
             },
-            canvas: Canvas {
-                view: None,
-                texture: None,
-                surface: wgpu::TextureFormat::Bgra8Unorm,
-                format: wgpu::TextureFormat::Bgra8Unorm,
-                rect: None,
-                load: false,
-                carried: false,
-                clear: crate::graph::BLACK,
-            },
+            canvas: Canvas::fresh(),
             uniforms: Uniforms {
                 cameras: vec![bytemuck::Zeroable::zeroed()],
                 camera,
@@ -404,6 +386,42 @@ impl Run {
                 slots: 3,
                 ..Reading::default()
             },
+        }
+    }
+}
+
+fn first_sets(
+    device: &wgpu::Device,
+    machine: &Machine,
+    holders: std::collections::BTreeSet<super::Holder>,
+) -> views::Sets {
+    let (passes, main) = views::view_passes(machine);
+    let first = views::ViewSet::new(
+        device,
+        machine,
+        bevy_ecs::entity::Entity::PLACEHOLDER,
+        &holders,
+    );
+    views::Sets {
+        list: vec![first],
+        at: 0,
+        holders,
+        passes,
+        main,
+    }
+}
+
+impl Canvas {
+    fn fresh() -> Self {
+        Self {
+            view: None,
+            texture: None,
+            surface: wgpu::TextureFormat::Bgra8Unorm,
+            format: wgpu::TextureFormat::Bgra8Unorm,
+            rect: None,
+            load: false,
+            carried: false,
+            clear: crate::graph::BLACK,
         }
     }
 }

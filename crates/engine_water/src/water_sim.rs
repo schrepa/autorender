@@ -6,8 +6,8 @@ use bevy_ecs::prelude::*;
 use bytemuck::Zeroable;
 use engine_core::{Cut, Error, FrameTime, GpuBits, Readable, Readback, RecordKey, Views};
 use engine_heightfield::TileKey;
-use engine_places_simulation::water::{WaterObstacle, WaterObstacles};
 use engine_open_world_kit::ground::{GroundBaking, GroundTiles, TerrainTiles};
+use engine_places_simulation::water::{WaterObstacle, WaterObstacles};
 use engine_render::{Allocation, ComputePipeline, Count, Encode, Install, Pass, Prepare};
 use glam::{Mat3, Vec2, Vec3};
 
@@ -365,12 +365,15 @@ impl LiveSim {
     }
 
     pub(crate) fn cells(&self) -> Option<(Cut, [u32; 3])> {
-        self.window.as_ref().filter(|window| window.ready).map(|window| {
-            (
-                Cut::of(window.asked, window.cells),
-                [window.placed - window.cells, window.whole, window.waiting],
-            )
-        })
+        self.window
+            .as_ref()
+            .filter(|window| window.ready)
+            .map(|window| {
+                (
+                    Cut::of(window.asked, window.cells),
+                    [window.placed - window.cells, window.whole, window.waiting],
+                )
+            })
     }
 
     pub(crate) fn touches(&self) -> [u32; 2] {
@@ -915,7 +918,10 @@ impl SimGpu {
             if listed {
                 self.pending.clear();
             }
-            let bytes = counts.iter().flat_map(|count| count.to_le_bytes()).collect();
+            let bytes = counts
+                .iter()
+                .flat_map(|count| count.to_le_bytes())
+                .collect();
             cx.deliver::<LiveSteps>(0, bytes);
         }
         let (Some((layout, shape)), Some(rooms), Some(clock)) =

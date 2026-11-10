@@ -75,10 +75,7 @@ impl ExtraRules for PlacementLayer {
             ));
         }
         if self.scale[0] > self.scale[1] {
-            return Err(InvalidSetting::new(
-                "scale",
-                engine_codec::Expected::Sorted,
-            ));
+            return Err(InvalidSetting::new("scale", engine_codec::Expected::Sorted));
         }
         if self.assets.iter().map(|choice| choice.weight).sum::<f32>() <= 0.0 {
             return Err(InvalidSetting::new(
@@ -689,8 +686,7 @@ pub(crate) fn place_row(
                 }
                 let held = &mut controls[row * stride + column];
                 if *held == u32::MAX {
-                    *held =
-                        super::gpu::sample_control(tile, (stack, rules), (column, row)).pack();
+                    *held = super::gpu::sample_control(tile, (stack, rules), (column, row)).pack();
                 }
                 Control::unpack(*held).unwrap_or_default()
             }

@@ -23,7 +23,10 @@ pub(crate) fn delivered<R: Readable>(world: &mut World, tag: u32, read: Readback
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Reader {
-    Part { part: u32, tag: u32 },
+    Part {
+        part: u32,
+        tag: u32,
+    },
     FrameTimer,
     #[cfg_attr(
         not(feature = "profiling"),

@@ -1,7 +1,9 @@
 use bevy_ecs::prelude::*;
 use engine_core::{DeviceLimits, Error, Joined};
+use engine_open_world_kit::ground::{
+    Cover, GroundTiles, PALETTE_ENTRIES, PlacedTiles, TerrainTiles,
+};
 use engine_places_rendering::reflections::TraceReaders;
-use engine_open_world_kit::ground::{Cover, GroundTiles, PALETTE_ENTRIES, PlacedTiles, TerrainTiles};
 use engine_render::{
     Bind, Buffer, ComputePipeline, Count, Encode, GpuPart, Install, Lifetime, Pass, Prepare,
 };
@@ -95,7 +97,11 @@ impl GpuPart for TraceGpu {
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
         if pass == self.canopy {
-            let groups = [PALETTE_ENTRIES.div_ceil(CANOPY_GROUP), self.world.terrains(), 1];
+            let groups = [
+                PALETTE_ENTRIES.div_ceil(CANOPY_GROUP),
+                self.world.terrains(),
+                1,
+            ];
             cx.dispatch(&self.canopies, Count::Groups(groups));
         }
         0

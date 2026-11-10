@@ -70,7 +70,12 @@ fn remaining(walk: &NavWalk, position: Vec3) -> f32 {
 
 fn agent_view(
     ids: &SceneIds,
-    (agent, walk, at, mover): (&NavAgent, Option<&NavWalk>, Option<&Transform>, Option<&Mover>),
+    (agent, walk, at, mover): (
+        &NavAgent,
+        Option<&NavWalk>,
+        Option<&Transform>,
+        Option<&Mover>,
+    ),
 ) -> NavAgentView {
     let agent = *agent;
     let still = NavWalk::default();
@@ -292,7 +297,11 @@ impl Operation for NavPathQuery {
     ) -> Result<NavPathResult, Error> {
         let floors = Floors::new(&ground, waters.iter(), settings.floor_layers);
         walk(
-            ((&*settings, &floors, &colliders), filled.listed(), &*records),
+            (
+                (&*settings, &floors, &colliders),
+                filled.listed(),
+                &*records,
+            ),
             (&mut *navigation, &mut jobs),
             request,
         )

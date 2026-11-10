@@ -1,13 +1,13 @@
 use std::sync::Arc;
 
-use engine_core::{GpuBits, Stamp};
 use engine_core::collections::HashMap;
+use engine_core::{GpuBits, Stamp};
 use engine_heightfield::ErrorPyramid;
 use engine_heightfield::tile::shaded_elsewhere;
-use engine_tiles::TileKey;
 use engine_open_world_kit::ground::{TerrainEntry, TerrainTiles, TileFace};
 use engine_open_world_kit::water::Waterline;
 use engine_render::{Allocation, Buffer, ComputePipeline, Count, Encode, Prepare, Texture, wgpu};
+use engine_tiles::TileKey;
 use glam::Vec2;
 
 use super::LAYER_SIZE;
@@ -240,7 +240,11 @@ impl TileAtlas {
         self.controls = self.control_jobs.len() as u32;
     }
 
-    fn rederive(&mut self, (tiles, atlas, bakes): (&TerrainTiles, &Atlas, &Bakes), placed: &[TileId]) {
+    fn rederive(
+        &mut self,
+        (tiles, atlas, bakes): (&TerrainTiles, &Atlas, &Bakes),
+        placed: &[TileId],
+    ) {
         if placed.is_empty() {
             return;
         }
@@ -273,10 +277,18 @@ impl TileAtlas {
             let held = bakes.of(terrain);
             if shaded_elsewhere(key.level, entry.surroundings) {
                 if held.and_then(|held| held.shading(tile)).is_none() {
-                    self.control_ancestors
-                        .push(ancestor_job(atlas, (entry, held), (layer, key), true));
-                    self.normal_ancestors
-                        .push(ancestor_job(atlas, (entry, held), (layer, key), false));
+                    self.control_ancestors.push(ancestor_job(
+                        atlas,
+                        (entry, held),
+                        (layer, key),
+                        true,
+                    ));
+                    self.normal_ancestors.push(ancestor_job(
+                        atlas,
+                        (entry, held),
+                        (layer, key),
+                        false,
+                    ));
                 }
             } else if tile.control.is_none() && !programmed(entry, tile) {
                 self.control_ancestors

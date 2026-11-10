@@ -5,11 +5,10 @@ use glam::{Mat4, UVec2, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AssetLibrary, Camera, Clear, ColorSpace, Detail, Drawn, DrawnFlags, DrawnPoses, DrawnTable, Error,
-    ErrorCode, FrameFacts, FrameId, FrameTime, GlobalTransforms, Hold, Jitter, Layers, List,
-    Mobility, Operation, OwnedView, OwnedViews, PassBit, PassMask, PassViews, Requests,
-    Refusal, SceneIds, ScenePasses, Target, View, ViewCut, ViewHistory, ViewJitter, ViewLayer,
-    take_asks,
+    AssetLibrary, Camera, Clear, ColorSpace, Detail, Drawn, DrawnFlags, DrawnPoses, DrawnTable,
+    Error, ErrorCode, FrameFacts, FrameId, FrameTime, GlobalTransforms, Hold, Jitter, Layers, List,
+    Mobility, Operation, OwnedView, OwnedViews, PassBit, PassMask, PassViews, Refusal, Requests,
+    SceneIds, ScenePasses, Target, View, ViewCut, ViewHistory, ViewJitter, ViewLayer, take_asks,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -300,10 +299,42 @@ fn history_of(
 fn found(world: &World) -> Vec<(Entity, View)> {
     let mut found: Vec<(Entity, View)> = world
         .try_query::<(Entity, &View)>()
-        .map(|mut views| views.iter(world).map(|(entity, view)| (entity, *view)).collect())
+        .map(|mut views| {
+            views
+                .iter(world)
+                .map(|(entity, view)| (entity, *view))
+                .collect()
+        })
         .unwrap_or_default();
     found.sort_by_key(|(entity, view)| (!view.target.surface(), view.order, *entity));
     found
+}
+
+type Placed = (Camera, (Vec3, Vec3, Vec3), UVec2);
+
+fn placed(world: &World, entity: Entity, view: &View, facts: FrameFacts) -> Result<Placed, Error> {
+    let lens = world
+        .get::<Camera>(view.camera)
+        .copied()
+        .ok_or_else(|| refuse(entity, "camera", ErrorCode::MissingComponent))?;
+    lens.check()
+        .map_err(|error| error.within(&format!("$.views.{}.lens", entity.to_bits())))?;
+    view.viewport
+        .check(&format!("$.views.{}.viewport", entity.to_bits()))?;
+    let pose = world
+        .get_resource::<GlobalTransforms>()
+        .zip(world.get_resource::<DrawnPoses>())
+        .and_then(|(globals, poses)| poses.drawn_pose(globals, view.camera));
+    let placed = pose
+        .and_then(eye_of)
+        .ok_or_else(|| refuse(entity, "camera", ErrorCode::InvalidCamera))?;
+    let size = target_size(
+        world.get_resource::<AssetLibrary>(),
+        view.target,
+        facts.display_size,
+    )
+    .ok_or_else(|| refuse(entity, "target", ErrorCode::InvalidTexture))?;
+    Ok((lens, placed, size))
 }
 
 pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
@@ -311,7 +342,11 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
         .into_iter()
         .map(|cut| cut.view)
         .collect();
-    let frame = FrameId(world.get_resource::<FrameTime>().map_or(0, |time| time.frame));
+    let frame = FrameId(
+        world
+            .get_resource::<FrameTime>()
+            .map_or(0, |time| time.frame),
+    );
     let found = found(world);
     let (held, frozen) = world
         .get_resource::<Views>()
@@ -321,7 +356,6 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
         world.get_resource::<GlobalTransforms>(),
         world.get_resource::<DrawnPoses>(),
     );
-    let assets = world.get_resource::<AssetLibrary>();
     let given: Vec<ViewJitter> = world
         .get_resource::<Jitter>()
         .map(|jitter| jitter.views.clone())
@@ -330,29 +364,12 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
     let mut refused = Vec::new();
     let mut kept = Vec::with_capacity(found.len());
     for (entity, view) in found {
-        let Some(lens) = world.get::<Camera>(view.camera).copied() else {
-            refused.push((entity, refuse(entity, "camera", ErrorCode::MissingComponent)));
-            continue;
-        };
-        if let Err(error) = lens.check() {
-            refused.push((entity, error.within(&format!("$.views.{}.lens", entity.to_bits()))));
-            continue;
-        }
-        let path = format!("$.views.{}.viewport", entity.to_bits());
-        if let Err(error) = view.viewport.check(&path) {
-            refused.push((entity, error));
-            continue;
-        }
-        let pose = globals
-            .zip(poses)
-            .and_then(|(globals, poses)| poses.drawn_pose(globals, view.camera));
-        let Some((eye, forward, up)) = pose.and_then(eye_of) else {
-            refused.push((entity, refuse(entity, "camera", ErrorCode::InvalidCamera)));
-            continue;
-        };
-        let Some(size) = target_size(assets, view.target, facts.display_size) else {
-            refused.push((entity, refuse(entity, "target", ErrorCode::InvalidTexture)));
-            continue;
+        let (lens, (eye, forward, up), size) = match placed(world, entity, &view, facts) {
+            Ok(placed) => placed,
+            Err(error) => {
+                refused.push((entity, error));
+                continue;
+            }
         };
         let pixels = view.viewport.pixels((size.x, size.y));
         let render = rendered(pixels, view.target, facts);

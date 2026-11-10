@@ -415,7 +415,9 @@ pub fn check(
         let text =
             fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
         let located = tokens(&text);
-        let wgsl = path.extension().is_some_and(|extension| extension == "wgsl");
+        let wgsl = path
+            .extension()
+            .is_some_and(|extension| extension == "wgsl");
         let names = if wgsl {
             wgsl_names(&located)
         } else {

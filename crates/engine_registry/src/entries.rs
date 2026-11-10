@@ -6,7 +6,8 @@ use bevy_ecs::query::FilteredAccessSet;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 use engine_place::{
-    Call, Error, ErrorCode, EventDecl, EventPage, GpuStruct, Lands, List, Operation, PlaceDecl, Slot,
+    Call, Error, ErrorCode, EventDecl, EventPage, GpuStruct, Lands, List, Operation, PlaceDecl,
+    Slot,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -443,8 +444,10 @@ fn written_of<T: Resource + Default + Serialize>(world: &World) -> Result<Value,
         None => serde_json::to_value(T::default()),
     };
     written.map_err(|error| {
-        Error::new(ErrorCode::InvalidValue, "$")
-            .got(format!("{} cannot be written here: {error}", std::any::type_name::<T>()))
+        Error::new(ErrorCode::InvalidValue, "$").got(format!(
+            "{} cannot be written here: {error}",
+            std::any::type_name::<T>()
+        ))
     })
 }
 

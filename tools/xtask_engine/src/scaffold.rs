@@ -395,8 +395,8 @@ fn brick_arguments(options: &[String]) -> Result<BrickArguments, String> {
         })
         .to_string());
     }
-    let named_options = std::iter::once(("NAME", name.as_str()))
-        .chain(place.map(|place| ("--place", place)));
+    let named_options =
+        std::iter::once(("NAME", name.as_str())).chain(place.map(|place| ("--place", place)));
     for (path, given) in named_options {
         if !lowercase_words(given, '_') {
             return Err(json!({
@@ -636,8 +636,8 @@ fn registered(
 }
 
 fn edited(path: &Path, edit: impl FnOnce(&str) -> String) -> Result<(), String> {
-    let text =
-        fs::read_to_string(path).map_err(|error| format!("cannot read {}: {error}", path.display()))?;
+    let text = fs::read_to_string(path)
+        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
     let crlf = text.contains("\r\n");
     let mut changed = edit(&text.replace("\r\n", "\n"));
     if crlf {

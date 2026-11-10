@@ -56,6 +56,7 @@ pub mod profile {
 
 pub use assets::*;
 pub use authoring::{DrawnForm, ViewForm, core_components};
+pub use background::{Background, Delivers, Landed, Taken};
 pub use bevy_app::App;
 pub use bricks::*;
 pub use clock::*;
@@ -65,46 +66,49 @@ pub use cull::{
     frustum_sees,
 };
 pub use cursor::*;
-pub use drawn_areas::{DrawnArea, DrawnAreas};
 pub use drawn::{
-    DRAWN_PART, DrawnBatch, DrawnCensus, DrawnFlags,
-    DrawnRecord, DrawnSettings, DrawnState, DrawnTable, PlanState, drawn_wgsl,
+    DRAWN_PART, DrawnBatch, DrawnCensus, DrawnFlags, DrawnRecord, DrawnSettings, DrawnState,
+    DrawnTable, PlanState, drawn_wgsl,
 };
+pub use drawn_areas::{DrawnArea, DrawnAreas};
 pub use engine_assets::{
-    Aabb, AlphaMode, Asset, AssetBudget, AssetLibrary, Attribute, Attributes, GeometryStream,
-    AttributeFormat, InstanceInput, VertexSkin,
-    ColorSpace, Compare, Cull, DepthBias, Filter, LightingModel, LodInput,
-    LodLevel, Material, MaterialBinding, Mesh,
-    MeshLods, MeshVertex, BASE_COLOR_MAP, EMISSIVE_MAP, MAPPED, MAPPED_MAPS, MAPPED_SLOTS,
-    NORMAL_MAP, RenderState, Sampler, SurfaceSlot, Texture, TextureFormat, TextureRef, UvTransform, Wrap, attributes_wgsl,
-    lod_input,
+    Aabb, AlphaMode, Asset, AssetBudget, AssetLibrary, Attribute, AttributeFormat, Attributes,
+    BASE_COLOR_MAP, ColorSpace, Compare, Cull, DepthBias, EMISSIVE_MAP, Filter, GeometryStream,
+    InstanceInput, LightingModel, LodInput, LodLevel, MAPPED, MAPPED_MAPS, MAPPED_SLOTS, Material,
+    MaterialBinding, Mesh, MeshLods, MeshVertex, NORMAL_MAP, RenderState, Sampler, SurfaceSlot,
+    Texture, TextureFormat, TextureRef, UvTransform, VertexSkin, Wrap, attributes_wgsl, lod_input,
 };
-pub use engine_textures::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
 pub use engine_place::{
     Applied, ApplyAt, Ask, Asked, AttachPoint, Awaits, BlendedPass, Board, BudgetUse, Census,
-    Clock, ColorPass, PositionReach,
-    Cursor, DrawKind, Drawn, DrawnBounds, DrawnProjection, Error, ErrorCode, Events,
-    Feed, FeedView, FrameBudget, GpuStruct, Hold, InstanceValues, Interest, JobRef,
-    KindCell, KindDecl, KindJoin, KindSkip, Layers, Level, LevelView, List, MaterialHandle, GeometryHandle, Mobility,
-    Moment, Mover, MoverId, Node, NodeId, NodeWord, Pace, Pass, PassBit, PassCull, PassEntry,
-    PassMask, PassName, PassPurpose, PassRaster, PassRole, PassViews, PlaceDecl, Progress, Readiness, Request, Requests, Ring,
-    ScenePass, ScenePasses, Since, Slot, SlotSet, Smoke,
-    SmokeFailure, SmokeSession,
-    Settling, Stamp, StoreId, TargetName, TextureHandle, Ticket, Unsettled, Writes, every,
-    gpu_consts,
-    never,
-    smoke_check, smoke_eq,
+    Clock, ColorPass, Cursor, DrawKind, Drawn, DrawnBounds, DrawnProjection, Error, ErrorCode,
+    Events, Feed, FeedView, FrameBudget, GeometryHandle, GpuStruct, Hold, InstanceValues, Interest,
+    JobRef, KindCell, KindDecl, KindJoin, KindSkip, Layers, Level, LevelView, List, MaterialHandle,
+    Mobility, Moment, Mover, MoverId, Node, NodeId, NodeWord, Pace, Pass, PassBit, PassCull,
+    PassEntry, PassMask, PassName, PassPurpose, PassRaster, PassRole, PassViews, PlaceDecl,
+    PositionReach, Progress, Readiness, Request, Requests, Ring, ScenePass, ScenePasses, Settling,
+    Since, Slot, SlotSet, Smoke, SmokeFailure, SmokeSession, Stamp, StoreId, TargetName,
+    TextureHandle, Ticket, Unsettled, Writes, every, gpu_consts, never, smoke_check, smoke_eq,
+};
+pub use engine_place::{
+    AppliedView, AskedView, Call, Each, EntityIds, Event, EventDecl, EventPage, Lands, Operation,
+    PendingView, RESERVED_REPLY_KEYS, Raises, ReadEvents, Refusal, Rows, SHAPED_BY, missing_events,
+    open_parts, open_schema, page_of, shaped_by,
+};
+pub use engine_place::{
+    BitField, BitValue, FrameId, GpuBits, Readable, Readback, decode_bits, gpu_bits,
 };
 pub use engine_place::{
     Clear, Jitter, OwnedView, OwnedViews, Rect, Target, View, ViewCut, ViewHistory, ViewJitter,
     ViewLayer,
 };
+pub use engine_registry::SceneNames;
+pub use engine_registry::call;
 pub use engine_registry::{AuthoredId, FrameFacts, RecordParity, fault_of};
 pub use engine_settings::{
     Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, fields,
     is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
 };
-pub use background::{Background, Delivers, Landed, Taken};
+pub use engine_textures::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
 pub use files::Files;
 pub use folds::FoldOrder;
 pub use frame_timing::{FrameTiming, GpuFrameTime, RenderScale};
@@ -114,7 +118,9 @@ pub use input::*;
 pub use jobs::*;
 pub use loads::{Load, Loaded, Loads};
 pub use mesh_lods::MeshLevels;
-pub use moves::{Applies, Asks, HandOver, MOVER_PART, Moves, Teleport, mover_of, send_ask, take_asks};
+pub use moves::{
+    Applies, Asks, HandOver, MOVER_PART, Moves, Teleport, mover_of, send_ask, take_asks,
+};
 pub use nearest::Nearest;
 pub use presentation::*;
 pub use provided::*;
@@ -125,23 +131,13 @@ pub use render_stats::{
 };
 pub use scene::*;
 pub use schedules::{RunPace, RunPoint};
-pub use engine_place::{
-    BitField, BitValue, FrameId, GpuBits, Readable, Readback, decode_bits, gpu_bits,
-};
-pub use engine_place::{
-    AppliedView, AskedView, Call, Each, EntityIds, Event, EventDecl, EventPage, Lands, Operation,
-    PendingView, RESERVED_REPLY_KEYS, Raises, ReadEvents, Refusal, Rows, SHAPED_BY,
-    missing_events, open_parts, open_schema, page_of, shaped_by,
-};
-pub use engine_registry::SceneNames;
-pub use engine_registry::call;
 pub use section::{Cut, EventsQuery, Section};
-pub use shared::{FeedSettings, FrameBudgetSettings};
 pub use services::{
-    Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, PartDraws, Placed,
-    Placement, Prepared, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneForm,
-    SceneIds, SubScene, SubSceneEntity, WorkClock, scene_component, scene_components,
+    Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, PartDraws, Placed, Placement,
+    Prepared, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneForm, SceneIds, SubScene,
+    SubSceneEntity, WorkClock, scene_component, scene_components,
 };
+pub use shared::{FeedSettings, FrameBudgetSettings};
 pub use source::{Entry, Module, ShaderText, Source, Var};
 pub use statistics::{Distribution, median};
 pub use ticks::ScanClock;

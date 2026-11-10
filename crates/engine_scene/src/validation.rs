@@ -163,7 +163,11 @@ impl SceneDocument {
             }
         }
         let mut spaces: BTreeMap<&str, ColorSpace> = BTreeMap::new();
-        for (id, space) in self.materials.iter().flat_map(|material| material.map_spaces()) {
+        for (id, space) in self
+            .materials
+            .iter()
+            .flat_map(|material| material.map_spaces())
+        {
             let held = spaces.entry(id).or_insert(space);
             if space == ColorSpace::Srgb {
                 *held = ColorSpace::Srgb;
@@ -174,10 +178,7 @@ impl SceneDocument {
             .iter()
             .enumerate()
             .map(|(index, texture)| {
-                let space = spaces
-                    .get(texture.id.as_str())
-                    .copied()
-                    .unwrap_or_default();
+                let space = spaces.get(texture.id.as_str()).copied().unwrap_or_default();
                 texture
                     .texture(&format!("$.textures[{index}]"), files)
                     .map(|made| made.with_color_space(space))

@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use engine_core::{AssetLibrary, ColorSpace, Error, Texture, TextureFormat, TextureHandle};
-use engine_places::surface::{METALLIC_ROUGHNESS_MAP, OCCLUSION_MAP, SurfaceValues};
 use engine_open_world_kit::ground::{SurfaceMaps, TerrainTiles};
+use engine_places::surface::{METALLIC_ROUGHNESS_MAP, OCCLUSION_MAP, SurfaceValues};
 use engine_render::{Allocation, Install, Lifetime, Prepare, Sampler, wgpu};
 
 use crate::terrain::TerrainGpu;
@@ -20,15 +20,30 @@ type LayerKey = [Option<TextureHandle>; 3];
 const DEFAULTS: [[u8; 4]; 3] = [[255; 4], [128, 128, 255, 255], [255, 255, 255, 128]];
 
 const BC7_DEFAULTS: [[u8; 16]; 3] = [
-    [0x20, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x03, 0, 0, 0, 0, 0, 0, 0],
-    [0x20, 0xc0, 0x1f, 0xf0, 0xf7, 0xff, 0xff, 0xff, 0xaf, 0xaa, 0xaa, 0xaa, 0, 0, 0, 0],
-    [0x20, 0xff, 0xff, 0xff, 0xff, 0xff, 0x03, 0x02, 0x02, 0, 0, 0, 0, 0, 0, 0],
+    [
+        0x20, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x03, 0, 0, 0, 0, 0, 0, 0,
+    ],
+    [
+        0x20, 0xc0, 0x1f, 0xf0, 0xf7, 0xff, 0xff, 0xff, 0xaf, 0xaa, 0xaa, 0xaa, 0, 0, 0, 0,
+    ],
+    [
+        0x20, 0xff, 0xff, 0xff, 0xff, 0xff, 0x03, 0x02, 0x02, 0, 0, 0, 0, 0, 0, 0,
+    ],
 ];
 
 const ASTC_DEFAULTS: [[u8; 16]; 3] = [
-    [0xfc, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff],
-    [0xfc, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x80, 0x80, 0x80, 0x80, 0xff, 0xff, 0xff, 0xff],
-    [0xfc, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x80, 0x80],
+    [
+        0xfc, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+        0xff,
+    ],
+    [
+        0xfc, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x80, 0x80, 0x80, 0x80, 0xff, 0xff, 0xff,
+        0xff,
+    ],
+    [
+        0xfc, 0xfd, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x80,
+        0x80,
+    ],
 ];
 
 pub(crate) struct TerrainMaps {
@@ -113,7 +128,10 @@ impl TerrainMaps {
     pub(crate) fn material(maps: &SurfaceMaps, assets: &AssetLibrary) -> Option<MapMaterial> {
         let material = assets.material(maps.material)?;
         let color = material.color();
-        let surface = SurfaceValues::read(|name| material.surface_value(name), |name| material.value(name));
+        let surface = SurfaceValues::read(
+            |name| material.surface_value(name),
+            |name| material.value(name),
+        );
         let packed = material.map(OCCLUSION_MAP).map(|map| map.texture)
             == material.map(METALLIC_ROUGHNESS_MAP).map(|map| map.texture);
         Some(MapMaterial {
@@ -239,8 +257,7 @@ fn write_array(
     for (layer, maps) in kept.iter().enumerate() {
         let layer = layer as u32;
         let places = [(0, layer), (1, 2 * layer), (1, 2 * layer + 1)];
-        for (default, (source, (held, at))) in
-            textures(maps, assets).iter().zip(places).enumerate()
+        for (default, (source, (held, at))) in textures(maps, assets).iter().zip(places).enumerate()
         {
             if held != array {
                 continue;
@@ -268,7 +285,8 @@ fn shape_of(maps: &SurfaceMaps, assets: &AssetLibrary, features: wgpu::Features)
         };
         let array = usize::from(index > 0);
         let format = texture.format();
-        let sampled = features.contains(engine_render::texture_format(format, array_space(array)).1);
+        let sampled =
+            features.contains(engine_render::texture_format(format, array_space(array)).1);
         let chained = texture.has_mips() || (levels == 1 && !format.is_compressed());
         if (texture.width(), texture.height()) != size
             || texture.levels().len() != levels

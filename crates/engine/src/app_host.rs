@@ -6,8 +6,8 @@ use engine_registry::Registry;
 use engine_render::{RenderTarget, Renderer};
 
 use crate::frame_stats::{FrameStats, ResolutionStats};
-use crate::host::policy::FRAME_INTERVAL_MS;
 use crate::host::InputSource;
+use crate::host::policy::FRAME_INTERVAL_MS;
 use crate::pacing::Pacing;
 use crate::resolution::Resolution;
 use crate::{Error, Result};

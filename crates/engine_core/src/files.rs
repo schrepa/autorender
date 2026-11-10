@@ -30,7 +30,9 @@ impl Files {
         path: &str,
         decode: impl FnOnce(&[u8]) -> Result<T, Error> + Send + Sync + 'static,
     ) -> Background<T, String> {
-        Background::asked(self.requests.ask(path.to_owned()), move |bytes| decode(&bytes[..]))
+        Background::asked(self.requests.ask(path.to_owned()), move |bytes| {
+            decode(&bytes[..])
+        })
     }
 
     pub fn census(&self) -> crate::Census {
@@ -77,7 +79,11 @@ pub(crate) fn read_files(world: &mut World) {
         .collect();
     for (path, ticket) in fresh {
         files.requests.set_work(&path, Reading);
-        start(joined(&files.root, &path), (path, ticket), Arc::clone(&files.landing));
+        start(
+            joined(&files.root, &path),
+            (path, ticket),
+            Arc::clone(&files.landing),
+        );
     }
 }
 
@@ -122,13 +128,13 @@ async fn fetched(at: &str) -> Result<Vec<u8>, String> {
     let response = JsFuture::from(window.fetch_with_str(at))
         .await
         .map_err(|error| format!("{error:?}"))?;
-    let response: web_sys::Response = response
-        .dyn_into()
-        .map_err(|error| format!("{error:?}"))?;
+    let response: web_sys::Response = response.dyn_into().map_err(|error| format!("{error:?}"))?;
     if !response.ok() {
         return Err(format!("status {}", response.status()));
     }
-    let buffer = response.array_buffer().map_err(|error| format!("{error:?}"))?;
+    let buffer = response
+        .array_buffer()
+        .map_err(|error| format!("{error:?}"))?;
     let buffer = JsFuture::from(buffer)
         .await
         .map_err(|error| format!("{error:?}"))?;

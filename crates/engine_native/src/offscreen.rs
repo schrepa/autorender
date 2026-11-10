@@ -284,8 +284,8 @@ impl<G: Game> Offscreen<G> {
     }
 
     fn pace(&self, began: Instant) {
-        let interval = Duration::try_from_secs_f64(self.host.refresh_interval() / 1000.0)
-            .unwrap_or_default();
+        let interval =
+            Duration::try_from_secs_f64(self.host.refresh_interval() / 1000.0).unwrap_or_default();
         if let Some(rest) = interval.checked_sub(began.elapsed()) {
             std::thread::sleep(rest);
         }

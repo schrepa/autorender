@@ -28,7 +28,11 @@ impl MeshesGpu {
             Count::Groups([self.state.groups.batch_count.div_ceil(ARGS_GROUP), 1, 1]),
             offsets,
         );
-        cx.dispatch_at(&compaction.scatter, Count::Groups([scan_groups, 1, 1]), offsets);
+        cx.dispatch_at(
+            &compaction.scatter,
+            Count::Groups([scan_groups, 1, 1]),
+            offsets,
+        );
     }
 
     fn encode_presentation(&self, cx: &mut Encode<'_, Self>) {

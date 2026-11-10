@@ -48,9 +48,7 @@ impl SceneEnvironment {
     }
 
     pub fn value(&self, key: &str) -> Option<&Value> {
-        self.sections
-            .get(key)
-            .filter(|value| !value.is_null())
+        self.sections.get(key).filter(|value| !value.is_null())
     }
 
     pub fn check(&self, world: &World, path: &str) -> Result<(), Error> {

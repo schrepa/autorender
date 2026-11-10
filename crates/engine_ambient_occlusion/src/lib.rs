@@ -48,12 +48,7 @@ fn publish_piece(
     mut piece: ResMut<AmbientPiece>,
 ) {
     piece.set_if_neq(AmbientPiece {
-        occlusion: [
-            ambient.radius,
-            ambient.intensity,
-            0.0,
-            1.0,
-        ],
+        occlusion: [ambient.radius, ambient.intensity, 0.0, 1.0],
         canopy: [source.texel_share, 0.0, 0.0, 0.0],
     });
 }

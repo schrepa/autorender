@@ -7,10 +7,10 @@ use engine_core::collections::{HashMap, HashSet};
 use engine_core::glam::Vec3;
 use engine_core::{
     AlphaMode, AssetLibrary, AssetResidency, Background, Census, CookAsks, Cull, Detail,
-    DeviceLimits, Error, ErrorCode, Feed, Filter, FrameBudget, FrameTime, GpuBits, Hold, IDLE_JOBS,
-    Job, JobCx, JobKind, Jobs, Landed, LightingModel, Material, MaterialHandle, GeometryHandle,
-    Records, Request, Requests, Settling, TextureRef, VIEW_JOBS, WorkClock, Wrap,
-    content_hash, gpu_struct, job_priority,
+    DeviceLimits, Error, ErrorCode, Feed, Filter, FrameBudget, FrameTime, GeometryHandle, GpuBits,
+    Hold, IDLE_JOBS, Job, JobCx, JobKind, Jobs, Landed, LightingModel, Material, MaterialHandle,
+    Records, Request, Requests, Settling, TextureRef, VIEW_JOBS, WorkClock, Wrap, content_hash,
+    gpu_struct, job_priority,
 };
 use engine_places_rendering::impostors::{
     ImpostorAsk, ImpostorAsks, ImpostorFlags, ImpostorRecord, ImpostorRecords, Impostors,
@@ -676,7 +676,9 @@ impl Book {
             .map(|supply| (supply.identity, supply.since));
         let Some((identity, since)) = asked else {
             let identity = identity(self.shape.facing(key.2), bake.content);
-            let fetch = cx.jobs.look(&BAKE, &identity, job_priority(VIEW_JOBS, 0), Ok);
+            let fetch = cx
+                .jobs
+                .look(&BAKE, &identity, job_priority(VIEW_JOBS, 0), Ok);
             let supply = Supply {
                 material: bake.material.clone(),
                 identity,
@@ -767,7 +769,12 @@ impl Book {
 
     fn resident(&mut self, key: ImpostorKey, bake: &Bake, (layer, thin): (u32, bool)) {
         let emissive = bake.material.as_ref().map_or([0.0; 3], Material::emissive);
-        let record = record_of(bake.bounds, layer, (emissive, thin), self.shape.facing(key.2));
+        let record = record_of(
+            bake.bounds,
+            layer,
+            (emissive, thin),
+            self.shape.facing(key.2),
+        );
         self.baked.insert(
             key,
             Baked {
@@ -839,7 +846,9 @@ impl Book {
         let waiting = self
             .supplies
             .values()
-            .filter(|supply| !matches!(self.answers.get(&supply.identity), Some(Request::Failed(_))))
+            .filter(|supply| {
+                !matches!(self.answers.get(&supply.identity), Some(Request::Failed(_)))
+            })
             .count();
         (waiting + self.baking.len()) as u64
     }
@@ -1127,8 +1136,7 @@ fn settle_books(
         return Vec::new();
     }
     let created = held.is_none();
-    let book =
-        held.get_or_insert_with(|| Book::new(AtlasShape::of(frame.pixels), &device));
+    let book = held.get_or_insert_with(|| Book::new(AtlasShape::of(frame.pixels), &device));
     if created {
         let shape = book.shape;
         book.push(&mut cx, AtlasWork::Reset { shape });

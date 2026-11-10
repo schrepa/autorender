@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Cut, DrawnPoses, DrawnTable, Expected, GlobalTransforms, InvalidSetting, Mobility,
-    Nearest, Rule, Views, fields, settings, stats,
+    Cut, DrawnPoses, DrawnTable, Expected, GlobalTransforms, InvalidSetting, Mobility, Nearest,
+    Rule, Views, fields, settings, stats,
 };
 use engine_places_rendering::lights::{
     LightRegion, LocalLight, MAX_LIGHT_RANGE, MAX_SPOT_DEGREES, MIN_SPOT_DEGREES,
@@ -154,9 +154,11 @@ fn render_light(
     settings: &LocalLightSettings,
     (table, globals, poses): (&DrawnTable, &GlobalTransforms, &DrawnPoses),
 ) -> Option<RenderLight> {
-    let slot = table
-        .slot(entity)
-        .filter(|&slot| table.drawn(slot).is_some_and(|drawn| drawn.geometry.is_some()));
+    let slot = table.slot(entity).filter(|&slot| {
+        table
+            .drawn(slot)
+            .is_some_and(|drawn| drawn.geometry.is_some())
+    });
     let model = match slot {
         Some(_) => None,
         None => Some(poses.drawn_pose(globals, entity)?),

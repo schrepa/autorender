@@ -126,7 +126,9 @@ fn listed(program: &str, arguments: &[&str]) -> Result<String, String> {
         .args(arguments)
         .stdin(Stdio::null())
         .output()
-        .map_err(|error| format!("cannot run {program} to find who listens on the port: {error}"))?;
+        .map_err(|error| {
+            format!("cannot run {program} to find who listens on the port: {error}")
+        })?;
     Ok(String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
@@ -139,8 +141,7 @@ fn listeners(port: u16) -> Result<BTreeSet<u32>, String> {
             let fields: Vec<&str> = line.split_whitespace().collect();
             let local = fields.get(1)?;
             let pid = fields.last()?.parse::<u32>().ok()?;
-            (fields.first() == Some(&"TCP") && local.ends_with(&suffix) && pid != 0)
-                .then_some(pid)
+            (fields.first() == Some(&"TCP") && local.ends_with(&suffix) && pid != 0).then_some(pid)
         })
         .collect())
 }

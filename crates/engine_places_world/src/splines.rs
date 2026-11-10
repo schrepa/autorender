@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::Component;
-use engine_place::{MaterialHandle, GeometryHandle};
+use engine_place::{GeometryHandle, MaterialHandle};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 

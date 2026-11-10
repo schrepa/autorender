@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use engine_core::{DeviceLimits, DrawnTable, MaterialHandle, GeometryHandle, PlanState};
+use engine_core::{DeviceLimits, DrawnTable, GeometryHandle, MaterialHandle, PlanState};
 use engine_render::slots::DRAWN_SLOTS;
 
 use crate::uploads::PoseData;

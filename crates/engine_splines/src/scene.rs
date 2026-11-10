@@ -1,4 +1,4 @@
-use engine_core::{Error, Expected, MaterialHandle, GeometryHandle, parse_value};
+use engine_core::{Error, Expected, GeometryHandle, MaterialHandle, parse_value};
 use engine_places_world::splines::SplineMesh;
 use engine_places_world::streaming::StreamedAt;
 use serde::Serialize;
@@ -29,12 +29,10 @@ impl From<&SplineMesh> for SceneSpline {
 impl SceneSpline {
     fn validate(&self, path: &str) -> Result<(), Error> {
         if !(2..=MAX_SPLINE_POINTS).contains(&self.points.len()) {
-            return Err(
-                Error::new(INVALID_SPLINE, format!("{path}.points"))
-                    .expected(Expected::Array)
-                    .range(2.0, MAX_SPLINE_POINTS as f64)
-                    .got(self.points.len()),
-            );
+            return Err(Error::new(INVALID_SPLINE, format!("{path}.points"))
+                .expected(Expected::Array)
+                .range(2.0, MAX_SPLINE_POINTS as f64)
+                .got(self.points.len()));
         }
         if let Some(index) = self.points.iter().position(|point| {
             !point

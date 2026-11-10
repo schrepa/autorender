@@ -47,12 +47,10 @@ impl ColliderShape {
         {
             Ok(())
         } else {
-            Err(
-                Error::new(COLLISION_INVALID_SHAPE, "$.collision").range(
-                    f64::from(MIN_COLLIDER_EXTENT),
-                    f64::from(MAX_COLLIDER_EXTENT),
-                ),
-            )
+            Err(Error::new(COLLISION_INVALID_SHAPE, "$.collision").range(
+                f64::from(MIN_COLLIDER_EXTENT),
+                f64::from(MAX_COLLIDER_EXTENT),
+            ))
         }
     }
 }

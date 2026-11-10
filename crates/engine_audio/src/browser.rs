@@ -265,7 +265,12 @@ impl Backend {
         PAGE.with_borrow_mut(|page| std::mem::take(&mut page.arrived))
     }
 
-    pub(crate) fn start(&mut self, voice: u32, sound: &Decoded, play: &Start) -> Result<(), String> {
+    pub(crate) fn start(
+        &mut self,
+        voice: u32,
+        sound: &Decoded,
+        play: &Start,
+    ) -> Result<(), String> {
         PAGE.with_borrow_mut(|page| page.start(voice, sound, play))
             .map_err(|failure| text(&failure))
     }
@@ -285,11 +290,7 @@ impl Backend {
     }
 
     pub(crate) fn finished(&self, voice: u32) -> bool {
-        PAGE.with_borrow(|page| {
-            page.voices
-                .get(&voice)
-                .is_none_or(|voice| voice.ended)
-        })
+        PAGE.with_borrow(|page| page.voices.get(&voice).is_none_or(|voice| voice.ended))
     }
 
     pub(crate) fn set_voice(&mut self, voice: u32, volume: f32, pitch: f32) {

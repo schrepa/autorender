@@ -70,7 +70,11 @@ pub fn dev(root: &Path, arguments: &[String]) -> Result<(), String> {
             json!({"event": "changed", "files": listed, "rebuild": rebuild})
         );
         if !rebuild {
-            post(port, "/_engine/scene", &json!({"files": changed}).to_string())?;
+            post(
+                port,
+                "/_engine/scene",
+                &json!({"files": changed}).to_string(),
+            )?;
             println!("{}", json!({"event": "scene_sent"}));
         } else if build(root, game) {
             post(port, "/_engine/reload", "")?;

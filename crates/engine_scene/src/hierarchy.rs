@@ -50,7 +50,12 @@ impl SceneDocument {
 
     pub(crate) fn expand(&self, kinds: &SceneKinds) -> Result<ExpandedScene, Error> {
         let (prefab_ids, prefabs) = self.validate_prefabs(kinds)?;
-        expand_list(&listed(&self.entities, "$.entities"), &prefab_ids, &prefabs, kinds)
+        expand_list(
+            &listed(&self.entities, "$.entities"),
+            &prefab_ids,
+            &prefabs,
+            kinds,
+        )
     }
 
     fn validate_prefabs(&self, kinds: &SceneKinds) -> Result<(BTreeSet<&str>, Prefabs<'_>), Error> {

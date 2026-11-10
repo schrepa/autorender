@@ -433,15 +433,17 @@ fn turn_on(world: &mut World, gate: GateId) {
 }
 
 fn turn_off(world: &mut World, gate: GateId, to: BrickState) {
-    let Some((brick, children, dependents)) = world.get_resource::<BrickStates>().and_then(|states| {
-        let brick = states.brick(gate)?;
-        let dependents = if states.root(brick) == Some(gate) {
-            states.dependents(brick)
-        } else {
-            Vec::new()
-        };
-        Some((brick, states.children(gate), dependents))
-    }) else {
+    let Some((brick, children, dependents)) =
+        world.get_resource::<BrickStates>().and_then(|states| {
+            let brick = states.brick(gate)?;
+            let dependents = if states.root(brick) == Some(gate) {
+                states.dependents(brick)
+            } else {
+                Vec::new()
+            };
+            Some((brick, states.children(gate), dependents))
+        })
+    else {
         return;
     };
     if let Some(mut states) = world.get_resource_mut::<BrickStates>() {

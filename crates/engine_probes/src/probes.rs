@@ -626,7 +626,9 @@ fn place_cameras(
         {
             transform.translation = center;
         }
-        let origin = moves.local(node).map_or(center, |transform| transform.translation);
+        let origin = moves
+            .local(node)
+            .map_or(center, |transform| transform.translation);
         if let Ok(mut lens) = lenses.get_mut(node) {
             lens.set_if_neq(Camera::fitted(clip, origin));
         }

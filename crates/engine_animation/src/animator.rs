@@ -273,7 +273,12 @@ pub(crate) fn advance(
         if !globals.active(entity) || clock_of(&globals, entity) != Clock::Game {
             continue;
         }
-        step_ending(entity, &mut animator, time.delta_seconds, (&mut *ends, &*feeds));
+        step_ending(
+            entity,
+            &mut animator,
+            time.delta_seconds,
+            (&mut *ends, &*feeds),
+        );
         pose(&animator, skeletons.get(&entity), scratch, &mut moves);
     }
 }
@@ -295,7 +300,12 @@ pub(crate) fn advance_real(
         if !globals.active(entity) || clock_of(&globals, entity) != Clock::Real {
             continue;
         }
-        step_ending(entity, &mut animator, frame.real_seconds as f32, (&mut *ends, &*feeds));
+        step_ending(
+            entity,
+            &mut animator,
+            frame.real_seconds as f32,
+            (&mut *ends, &*feeds),
+        );
         pose(&animator, skeletons.get(&entity), scratch, &mut moves);
     }
 }

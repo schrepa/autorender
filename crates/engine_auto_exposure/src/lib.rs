@@ -25,7 +25,11 @@ use crate::gpu_layouts::{ExposureState, ExposureUniform};
 
 pub use settings::{AutoExposure, ExposureStats};
 
-const GENERATED: &[&str] = &[gpu_layouts::WGSL, ExposureUniform::WGSL, ExposureState::WGSL];
+const GENERATED: &[&str] = &[
+    gpu_layouts::WGSL,
+    ExposureUniform::WGSL,
+    ExposureState::WGSL,
+];
 
 pub(crate) struct ExposurePass;
 

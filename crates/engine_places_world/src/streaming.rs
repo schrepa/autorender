@@ -1,11 +1,20 @@
 use bevy_ecs::prelude::Component;
-use engine_place::{ErrorCode, List, GeometryHandle};
+use engine_place::{ErrorCode, GeometryHandle, List};
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 #[derive(
-    Component, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+    Component,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
 )]
 #[serde(deny_unknown_fields)]
 pub struct StreamingFocus {}

@@ -12,7 +12,8 @@ impl Run {
             return false;
         }
         if self
-            .planning.labelled
+            .planning
+            .labelled
             .is_some_and(|known| self.same_group(known, pass))
         {
             self.end_render();
@@ -57,7 +58,8 @@ impl Run {
             return;
         };
         self.end_render();
-        if let (Some(span), Some(encoder)) = (self.encode_span(timer, name), self.recording.encoder())
+        if let (Some(span), Some(encoder)) =
+            (self.encode_span(timer, name), self.recording.encoder())
         {
             span.mark(encoder, false);
         }
@@ -83,7 +85,8 @@ impl Run {
             return;
         };
         self.end_render();
-        if let (Some(span), Some(encoder)) = (self.encode_span(timer, name), self.recording.encoder())
+        if let (Some(span), Some(encoder)) =
+            (self.encode_span(timer, name), self.recording.encoder())
         {
             span.mark(encoder, true);
         }
@@ -105,7 +108,8 @@ impl Run {
     pub(crate) fn group(&mut self, pass: u32) {
         if !GROUPED
             || self
-                .planning.labelled
+                .planning
+                .labelled
                 .is_some_and(|known| self.same_group(known, pass))
         {
             return;
@@ -131,10 +135,10 @@ impl Run {
     }
 
     fn pass_set(&self, pass: u32) -> Arc<[SetFormat]> {
-        self.planning.pass_sets.get(pass as usize).map_or_else(
-            || Arc::from(Vec::new()),
-            Arc::clone,
-        )
+        self.planning
+            .pass_sets
+            .get(pass as usize)
+            .map_or_else(|| Arc::from(Vec::new()), Arc::clone)
     }
 
     #[expect(
@@ -278,7 +282,8 @@ impl Run {
                     colors.push((
                         key(target),
                         self.view_of(target).cloned(),
-                        target_format(target, &self.machine.outputs).unwrap_or(crate::machine::SCENE_FORMAT),
+                        target_format(target, &self.machine.outputs)
+                            .unwrap_or(crate::machine::SCENE_FORMAT),
                         ops,
                     ));
                 }
@@ -427,7 +432,8 @@ impl Run {
                 open.offset = offset;
                 open.set.frame = None;
             }
-            if GROUPED && open.label != Some(self.pass) && self.planning.labelled != Some(self.pass) {
+            if GROUPED && open.label != Some(self.pass) && self.planning.labelled != Some(self.pass)
+            {
                 if open.label.is_some() {
                     open.pass.pop_debug_group();
                 }
@@ -679,7 +685,13 @@ fn color_ops(ops: Ops) -> wgpu::Operations<wgpu::Color> {
 fn keep_loads(
     clear: engine_core::Clear,
     colors: &mut [(u64, Option<wgpu::TextureView>, wgpu::TextureFormat, Ops)],
-    depth: Option<&mut (u64, wgpu::TextureView, wgpu::TextureFormat, Option<Ops>, bool)>,
+    depth: Option<&mut (
+        u64,
+        wgpu::TextureView,
+        wgpu::TextureFormat,
+        Option<Ops>,
+        bool,
+    )>,
 ) {
     for (_, _, _, ops) in colors.iter_mut().filter(|_| !clear.color()) {
         ops.load = Load::Load;

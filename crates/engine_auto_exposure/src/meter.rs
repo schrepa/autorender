@@ -3,8 +3,8 @@ use engine_core::{Error, FrameTime, ViewFacts};
 use engine_places_rendering::sky::SkyLight;
 use engine_places_rendering::tonemap::Display;
 use engine_render::{
-    AfterRead, Allocation, Bind, Buffer, ComputePipeline, Count, Encode, GpuPart, Install, Lifetime,
-    Pass, Prepare, TargetName,
+    AfterRead, Allocation, Bind, Buffer, ComputePipeline, Count, Encode, GpuPart, Install,
+    Lifetime, Pass, Prepare, TargetName,
 };
 
 use crate::gpu_layouts::{
@@ -124,7 +124,10 @@ impl GpuPart for MeterGpu {
         } else {
             -1.0
         };
-        self.frame = Some((ExposureUniform::of(&settings, &sky, authored, seconds, [0, 0]), authored));
+        self.frame = Some((
+            ExposureUniform::of(&settings, &sky, authored, seconds, [0, 0]),
+            authored,
+        ));
         cx.read_back::<ExposureFeedback>(STATE_READ, self.state, 0..STATE_BYTES, AfterRead::Keep);
     }
 

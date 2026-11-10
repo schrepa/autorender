@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use engine_core::__private::{schemars, serde};
 use engine_core::{
-    Cut, Error, ErrorCode, Expected, InvalidSetting, MaterialHandle, GeometryHandle, Rule, Setting,
+    Cut, Error, ErrorCode, Expected, GeometryHandle, InvalidSetting, MaterialHandle, Rule, Setting,
     settings, stats,
 };
 
@@ -50,14 +50,7 @@ settings! {
     }
 }
 
-#[derive(
-    Clone,
-    Debug,
-    PartialEq,
-    serde::Serialize,
-    serde::Deserialize,
-    schemars::JsonSchema,
-)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(crate = "engine_core::__private::serde", deny_unknown_fields)]
 #[schemars(crate = "engine_core::__private::schemars")]
 pub struct PlacedLook {
@@ -74,13 +67,7 @@ pub struct PlacedLook {
 }
 
 #[derive(
-    Clone,
-    Copy,
-    Debug,
-    PartialEq,
-    serde::Serialize,
-    serde::Deserialize,
-    schemars::JsonSchema,
+    Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
 )]
 #[serde(crate = "engine_core::__private::serde", deny_unknown_fields)]
 #[schemars(crate = "engine_core::__private::schemars")]
@@ -89,14 +76,7 @@ pub struct PlacedLod {
     pub error: f32,
 }
 
-#[derive(
-    Clone,
-    Debug,
-    PartialEq,
-    serde::Serialize,
-    serde::Deserialize,
-    schemars::JsonSchema,
-)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 #[serde(crate = "engine_core::__private::serde", deny_unknown_fields)]
 #[schemars(crate = "engine_core::__private::schemars")]
 pub struct PlacedPart {

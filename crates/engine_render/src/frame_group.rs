@@ -65,11 +65,27 @@ impl Counted {
 
     fn over(&self, limits: &StageLimits) -> Option<&'static str> {
         [
-            ("uniform_buffers", self.uniform_buffers, limits.uniform_buffers),
-            ("storage_buffers", self.storage_buffers, limits.storage_buffers),
-            ("sampled_textures", self.sampled_textures, limits.sampled_textures),
+            (
+                "uniform_buffers",
+                self.uniform_buffers,
+                limits.uniform_buffers,
+            ),
+            (
+                "storage_buffers",
+                self.storage_buffers,
+                limits.storage_buffers,
+            ),
+            (
+                "sampled_textures",
+                self.sampled_textures,
+                limits.sampled_textures,
+            ),
             ("samplers", self.samplers, limits.samplers),
-            ("storage_textures", self.storage_textures, limits.storage_textures),
+            (
+                "storage_textures",
+                self.storage_textures,
+                limits.storage_textures,
+            ),
         ]
         .into_iter()
         .find(|&(_, count, limit)| count > limit)
@@ -182,71 +198,12 @@ fn adds_storage(
     })
 }
 
-pub(crate) fn plan(
-    variables: &[FrameVariable],
+fn merge(
+    exact: Vec<Variant>,
     reaches: &[Reach],
-    limits: &StageLimits,
-    conflict: &dyn Fn(u32, u32) -> bool,
-) -> Result<FramePlan, Vec<Error>> {
-    let mut exact: Vec<Variant> = Vec::new();
-    let mut conflicts = Vec::new();
-    let mut over = Vec::new();
-    let mut skipped = vec![false; reaches.len()];
-    for (index, reach) in reaches.iter().enumerate() {
-        let pipeline = index as u32;
-        let entries = joined(&[], &reach.reached);
-        if let Some(&(variable, _)) = entries
-            .iter()
-            .find(|&&(variable, _)| conflict(pipeline, variable))
-        {
-            conflicts.push(Error::new(
-                ErrorCode::UsageConflict,
-                format!("{}.{}", reach.label, variables[variable as usize].name),
-            ));
-            continue;
-        }
-        if let Err((stage, what)) = fits(reach, &entries, variables, limits) {
-            over.push(refused(ErrorCode::BindingLimit, reach, variables, stage, what));
-            skipped[index] = true;
-            continue;
-        }
-        if reach.alone {
-            continue;
-        }
-        let same = exact.iter_mut().find(|variant| {
-            variant.entries.len() == entries.len()
-                && variant
-                    .entries
-                    .iter()
-                    .zip(&entries)
-                    .all(|(known, entry)| known.0 == entry.0)
-                && {
-                    let together = joined(&variant.entries, &entries);
-                    variant
-                        .members
-                        .iter()
-                        .chain([&pipeline])
-                        .all(|&member| fits(&reaches[member as usize], &together, variables, limits).is_ok())
-                }
-        });
-        match same {
-            Some(variant) => {
-                variant.entries = joined(&variant.entries, &entries);
-                variant.members.push(pipeline);
-            }
-            None => exact.push(Variant {
-                entries,
-                members: vec![pipeline],
-            }),
-        }
-    }
-    exact.sort_by(|first, second| {
-        second
-            .entries
-            .len()
-            .cmp(&first.entries.len())
-            .then_with(|| first.members[0].cmp(&second.members[0]))
-    });
+    variables: &[FrameVariable],
+    (limits, conflict): (&StageLimits, &dyn Fn(u32, u32) -> bool),
+) -> Vec<Variant> {
     let mut merged: Vec<Variant> = Vec::new();
     for variant in exact {
         let passes: Vec<u32> = variant
@@ -288,6 +245,79 @@ pub(crate) fn plan(
             None => merged.push(variant),
         }
     }
+    merged
+}
+
+pub(crate) fn plan(
+    variables: &[FrameVariable],
+    reaches: &[Reach],
+    limits: &StageLimits,
+    conflict: &dyn Fn(u32, u32) -> bool,
+) -> Result<FramePlan, Vec<Error>> {
+    let mut exact: Vec<Variant> = Vec::new();
+    let mut conflicts = Vec::new();
+    let mut over = Vec::new();
+    let mut skipped = vec![false; reaches.len()];
+    for (index, reach) in reaches.iter().enumerate() {
+        let pipeline = index as u32;
+        let entries = joined(&[], &reach.reached);
+        if let Some(&(variable, _)) = entries
+            .iter()
+            .find(|&&(variable, _)| conflict(pipeline, variable))
+        {
+            conflicts.push(Error::new(
+                ErrorCode::UsageConflict,
+                format!("{}.{}", reach.label, variables[variable as usize].name),
+            ));
+            continue;
+        }
+        if let Err((stage, what)) = fits(reach, &entries, variables, limits) {
+            over.push(refused(
+                ErrorCode::BindingLimit,
+                reach,
+                variables,
+                stage,
+                what,
+            ));
+            skipped[index] = true;
+            continue;
+        }
+        if reach.alone {
+            continue;
+        }
+        let same = exact.iter_mut().find(|variant| {
+            variant.entries.len() == entries.len()
+                && variant
+                    .entries
+                    .iter()
+                    .zip(&entries)
+                    .all(|(known, entry)| known.0 == entry.0)
+                && {
+                    let together = joined(&variant.entries, &entries);
+                    variant.members.iter().chain([&pipeline]).all(|&member| {
+                        fits(&reaches[member as usize], &together, variables, limits).is_ok()
+                    })
+                }
+        });
+        match same {
+            Some(variant) => {
+                variant.entries = joined(&variant.entries, &entries);
+                variant.members.push(pipeline);
+            }
+            None => exact.push(Variant {
+                entries,
+                members: vec![pipeline],
+            }),
+        }
+    }
+    exact.sort_by(|first, second| {
+        second
+            .entries
+            .len()
+            .cmp(&first.entries.len())
+            .then_with(|| first.members[0].cmp(&second.members[0]))
+    });
+    let mut merged = merge(exact, reaches, variables, (limits, conflict));
     let mut of_pipeline: Vec<u32> = reaches
         .iter()
         .map(|reach| if reach.alone { u32::MAX } else { 0 })

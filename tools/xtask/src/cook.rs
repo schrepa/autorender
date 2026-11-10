@@ -132,11 +132,7 @@ pub fn cook(root: &Path, options: &[String]) -> Result<(), Failure> {
     Ok(write_index(&folder)?)
 }
 
-pub fn project_packs(
-    root: &Path,
-    folder: &str,
-    project: &Project,
-) -> Result<Vec<PathBuf>, String> {
+pub fn project_packs(root: &Path, folder: &str, project: &Project) -> Result<Vec<PathBuf>, String> {
     let mut names = vec![project.package.clone()];
     for scene in &project.scenes {
         names.push(scene_id(root, &format!("{folder}/{scene}"))?);

@@ -96,7 +96,10 @@ pub fn save_scene(
             Error::new(ErrorCode::InvalidPath, path.display().to_string()).expected(Expected::File)
         })?
         .to_string_lossy();
-    let _lock = hold_lock(path.with_file_name(format!(".{name}.engine-dev.lock")), alive)?;
+    let _lock = hold_lock(
+        path.with_file_name(format!(".{name}.engine-dev.lock")),
+        alive,
+    )?;
     let original = read_scene_source(&path)?;
     let current = SceneDocument::from_json(&original)?;
     current.validate(kinds)?;

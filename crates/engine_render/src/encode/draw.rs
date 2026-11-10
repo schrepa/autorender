@@ -3,7 +3,10 @@ use engine_core::{DropReason, GeometryStream};
 use super::*;
 use crate::mesh_arena::MeshDraw;
 
-type Painted = (Option<crate::surface::MaterialVariant>, Option<Option<MaterialHandle>>);
+type Painted = (
+    Option<crate::surface::MaterialVariant>,
+    Option<Option<MaterialHandle>>,
+);
 
 fn mesh_draw<'a>(
     assets: &'a Assets,
@@ -91,9 +94,9 @@ impl Run {
         match (built.decl.scope, point) {
             (Scoped::Pass(pass), None) => pass == self.pass,
             (Scoped::Scene(known), Some(point)) => known == point,
-            (Scoped::Scene(_), None)
-            | (Scoped::Pass(_), Some(_))
-            | (Scoped::Outside(_), _) => false,
+            (Scoped::Scene(_), None) | (Scoped::Pass(_), Some(_)) | (Scoped::Outside(_), _) => {
+                false
+            }
         }
     }
 
@@ -123,7 +126,8 @@ impl Run {
 
     fn drawn_variant(&self, shape: &RawShape) -> Result<Painted, DropReason> {
         match shape {
-            RawShape::MeshIndirect { mesh, material, .. } | RawShape::Mesh { mesh, material, .. } => {
+            RawShape::MeshIndirect { mesh, material, .. }
+            | RawShape::Mesh { mesh, material, .. } => {
                 if self.assets.meshes.get(*mesh).is_none() {
                     return Err(DropReason::GeometryNotResident);
                 }
@@ -185,11 +189,12 @@ impl Run {
         let Self {
             machine,
             recording,
-            bindings: Bindings {
-                frame_groups,
-                own_groups,
-                ..
-            },
+            bindings:
+                Bindings {
+                    frame_groups,
+                    own_groups,
+                    ..
+                },
             filled: fills,
             tables,
             sets,
@@ -421,9 +426,7 @@ impl Run {
                 let found = if bound == Bound::Asset {
                     let texture = textures.get(hole).copied();
                     hole += 1;
-                    match texture
-                        .and_then(|texture| self.assets.materials.texture_view(texture))
-                    {
+                    match texture.and_then(|texture| self.assets.materials.texture_view(texture)) {
                         Some(view) => Resolved::View(view.clone()),
                         None => Resolved::Placeholder(ty),
                     }
@@ -526,11 +529,12 @@ impl Run {
         let Self {
             machine,
             recording,
-            bindings: Bindings {
-                frame_groups,
-                own_groups,
-                ..
-            },
+            bindings:
+                Bindings {
+                    frame_groups,
+                    own_groups,
+                    ..
+                },
             tables,
             sets,
             frames,

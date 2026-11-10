@@ -311,7 +311,10 @@ pub const MAPPED_SLOTS: [(&str, &[&str]); 5] = [
     (SurfaceSlot::Opacity.name(), &[BASE_COLOR_MAP]),
     (SurfaceSlot::Cutoff.name(), &[BASE_COLOR_MAP]),
     (SurfaceSlot::Normal.name(), &[NORMAL_MAP]),
-    (SurfaceSlot::Emissive.name(), &[EMISSIVE_MAP, BASE_COLOR_MAP]),
+    (
+        SurfaceSlot::Emissive.name(),
+        &[EMISSIVE_MAP, BASE_COLOR_MAP],
+    ),
 ];
 
 #[derive(Debug, Clone, PartialEq)]
@@ -416,7 +419,9 @@ impl Material {
     }
 
     pub fn with_emission(mut self, emission: f32) -> Result<Self, Error> {
-        emission.check("emission", Self::EMISSION).map_err(invalid)?;
+        emission
+            .check("emission", Self::EMISSION)
+            .map_err(invalid)?;
         self.emission = emission;
         Ok(self)
     }
@@ -437,8 +442,10 @@ impl Material {
     }
 
     pub fn textured(color: [f32; 4], texture: TextureHandle) -> Result<Self, Error> {
-        Self::new(color)?
-            .with_mapped(BASE_COLOR_MAP, TextureRef::new(texture).with_sampler(Sampler::CLAMP))
+        Self::new(color)?.with_mapped(
+            BASE_COLOR_MAP,
+            TextureRef::new(texture).with_sampler(Sampler::CLAMP),
+        )
     }
 
     pub fn with_map(mut self, name: impl Into<String>, texture: TextureRef) -> Result<Self, Error> {
@@ -507,9 +514,7 @@ impl Material {
                 .expected(Expected::Id)
                 .got(name));
         }
-        value
-            .check("values", Self::VALUE)
-            .map_err(invalid)?;
+        value.check("values", Self::VALUE).map_err(invalid)?;
         match self.values.iter_mut().find(|(known, _)| *known == name) {
             Some((_, held)) => *held = value,
             None => self.values.push((name, value)),

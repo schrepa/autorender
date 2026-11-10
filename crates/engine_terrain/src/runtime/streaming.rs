@@ -1,9 +1,7 @@
 use super::*;
-use engine_core::{
-    DeviceLimits, FrameBudget, FrameTime, GlobalTransforms, Joined, Views,
-};
-use engine_places_world::streaming::StreamingFocus;
+use engine_core::{DeviceLimits, FrameBudget, FrameTime, GlobalTransforms, Joined, Views};
 use engine_open_world_kit::terrain::TerrainLayers;
+use engine_places_world::streaming::StreamingFocus;
 use glam::UVec2;
 
 pub(super) fn vertical_fov(camera: &Camera) -> f32 {

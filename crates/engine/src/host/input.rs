@@ -130,7 +130,9 @@ impl DeviceGatherer {
 
     pub fn drop_edges(&mut self) {
         self.devices = self.devices.held();
-        self.devices.pads.retain(|pad| self.polled.contains(&pad.index));
+        self.devices
+            .pads
+            .retain(|pad| self.polled.contains(&pad.index));
         self.polled.clear();
         self.end_touches();
     }

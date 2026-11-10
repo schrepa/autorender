@@ -71,7 +71,10 @@ impl SceneKinds {
     }
 
     pub(crate) fn section(&self, key: &str) -> Option<SettingsEntry> {
-        self.sections.iter().find(|section| section.key == key).copied()
+        self.sections
+            .iter()
+            .find(|section| section.key == key)
+            .copied()
     }
 
     pub(crate) fn cx<'a>(
@@ -136,7 +139,9 @@ impl SceneKinds {
         placed: Placed,
         path: &str,
     ) -> Result<(), Error> {
-        self.each_known(object, path, |kind, value, at| kind.validate_placed(value, placed, at))
+        self.each_known(object, path, |kind, value, at| {
+            kind.validate_placed(value, placed, at)
+        })
     }
 
     pub(crate) fn files<'a>(
@@ -205,7 +210,12 @@ pub(crate) fn component_schemas(
     kinds
         .listed
         .iter()
-        .map(|kind| (kind.key().to_owned(), component_property(kind, &cx, definitions)))
+        .map(|kind| {
+            (
+                kind.key().to_owned(),
+                component_property(kind, &cx, definitions),
+            )
+        })
         .collect()
 }
 

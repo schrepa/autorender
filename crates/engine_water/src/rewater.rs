@@ -114,11 +114,7 @@ fn rewater_terrain(
     waiting
 }
 
-pub(crate) fn rewater(
-    budget: Res<FrameBudget>,
-    mut jobs: Jobs,
-    mut state: ResMut<WaterState>,
-) {
+pub(crate) fn rewater(budget: Res<FrameBudget>, mut jobs: Jobs, mut state: ResMut<WaterState>) {
     let state = &mut *state;
     let mut stale = 0;
     for terrain in &mut state.terrains {

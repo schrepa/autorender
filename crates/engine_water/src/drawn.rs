@@ -89,7 +89,11 @@ pub(crate) fn draw(
             let (work, drawing) = match std::mem::replace(&mut held.base, Base::Made) {
                 Base::Drawing(work) => (work, None),
                 Base::Redrawing(work, drawing) => (work, Some(drawing)),
-                other @ (Base::Waiting | Base::Asking(_) | Base::Failed | Base::Made | Base::Left) => {
+                other @ (Base::Waiting
+                | Base::Asking(_)
+                | Base::Failed
+                | Base::Made
+                | Base::Left) => {
                     held.base = other;
                     continue;
                 }

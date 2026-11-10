@@ -224,6 +224,10 @@ pub fn counted_in_joined_passes(
         .iter()
         .filter(|pass| ran.contains(pass) && !counted.contains_key(pass.as_str()))
         .collect();
-    smoke_eq!(json!(missing), json!([]), "kind_counted_in_every_joined_pass");
+    smoke_eq!(
+        json!(missing),
+        json!([]),
+        "kind_counted_in_every_joined_pass"
+    );
     Ok(counted)
 }

@@ -1,10 +1,10 @@
 use super::*;
 use engine_core::{BASE_COLOR_MAP, NORMAL_MAP, Spawner};
-use engine_places::surface::METALLIC_ROUGHNESS_MAP;
 use engine_open_world_kit::ground::{
     PlacedAsset, PlacedLayer, SurfaceMaps, TerrainEntry, TerrainTiles,
 };
 use engine_open_world_kit::water::Hydrology;
+use engine_places::surface::METALLIC_ROUGHNESS_MAP;
 
 #[derive(Component)]
 pub(crate) struct SurroundingsGround;

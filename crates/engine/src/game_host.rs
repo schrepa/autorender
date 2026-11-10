@@ -206,7 +206,14 @@ impl<G: Game> GameHost<G> {
 
     pub fn pause(&mut self, pause: HostPause) {
         let reason = pause.reason();
-        if self.app.engine().app.world().resource::<Pause>().holds(reason) {
+        if self
+            .app
+            .engine()
+            .app
+            .world()
+            .resource::<Pause>()
+            .holds(reason)
+        {
             return;
         }
         let source = self.input_source();
@@ -279,7 +286,12 @@ impl<G: Game> GameHost<G> {
 
     pub fn key(&mut self, code: &str, down: bool) -> bool {
         self.input.key(code, down);
-        self.app.engine().app.world().resource::<Input>().uses_key(code)
+        self.app
+            .engine()
+            .app
+            .world()
+            .resource::<Input>()
+            .uses_key(code)
     }
 
     pub fn mouse_button(&mut self, button: MouseButton, down: bool) -> bool {
@@ -668,10 +680,7 @@ impl<G: Game> GameHost<G> {
         .and_then(|document| self.arrive(&document, files, Arrival::Reload));
         match result {
             Ok(()) => {
-                let skipped = self
-                    .scene
-                    .instance()
-                    .map(|scene| scene.skipped().to_vec());
+                let skipped = self.scene.instance().map(|scene| scene.skipped().to_vec());
                 let mut reloaded = serde_json::json!({"reloaded": true});
                 if let Some(skipped) = skipped.filter(|skipped| !skipped.is_empty()) {
                     reloaded["skipped"] = serde_json::json!(skipped);

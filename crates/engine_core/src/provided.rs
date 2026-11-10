@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::Resource;
 
-use crate::{MaterialHandle, GeometryHandle, TextureHandle};
+use crate::{GeometryHandle, MaterialHandle, TextureHandle};
 
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
 pub struct ProvidedAssets {

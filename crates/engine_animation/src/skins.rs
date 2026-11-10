@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, DrawnBounds, DrawnPoses, DrawnTable, Error, GlobalTransforms, Mesh, GeometryHandle,
-    Spawner, gpu_struct,
+    AssetLibrary, DrawnBounds, DrawnPoses, DrawnTable, Error, GeometryHandle, GlobalTransforms,
+    Mesh, Spawner, gpu_struct,
 };
 use engine_places_rendering::animation::{Animator, Bound};
 use engine_render::{Allocation, Bind, Buffer, GpuPart, Install, Lifetime, Prepare};
@@ -74,7 +74,11 @@ fn reach_of(palette: &[Bound], mesh: &Mesh) -> Option<Vec<f32>> {
         .collect();
     let mut radii = vec![-1.0; palette.len()];
     for (skin, vertex) in skin.iter().zip(mesh.vertices()) {
-        if skin.joints.iter().any(|&joint| joint as usize >= palette.len()) {
+        if skin
+            .joints
+            .iter()
+            .any(|&joint| joint as usize >= palette.len())
+        {
             return None;
         }
         let position = Vec3::from_array(vertex.position);
@@ -134,7 +138,9 @@ fn pose(
     scratch.spheres.clear();
     for (bound, joint) in palette.iter().zip(&scratch.now) {
         let joint = joint.unwrap_or(Mat4::IDENTITY);
-        rows.push(rows_of(joint * Mat4::from_cols_array_2d(&bound.inverse_bind)));
+        rows.push(rows_of(
+            joint * Mat4::from_cols_array_2d(&bound.inverse_bind),
+        ));
         let local = to_local * joint;
         let scale = Vec3::new(
             local.x_axis.truncate().length_squared(),
@@ -148,7 +154,9 @@ fn pose(
     let was = rows.len() as u32;
     for ((bound, joint), before) in palette.iter().zip(&scratch.now).zip(&scratch.was) {
         let joint = before.or(*joint).unwrap_or(Mat4::IDENTITY);
-        rows.push(rows_of(joint * Mat4::from_cols_array_2d(&bound.inverse_bind)));
+        rows.push(rows_of(
+            joint * Mat4::from_cols_array_2d(&bound.inverse_bind),
+        ));
     }
     Some(SkinSlot {
         now,
@@ -178,7 +186,11 @@ pub(crate) fn pose_skins(
         );
         let rig = animator.rig();
         for (part, &node) in rig.parts.iter().zip(animator.part_nodes()) {
-            let key = (part.mesh, assets.revision_of(part.mesh), animator.rig_revision());
+            let key = (
+                part.mesh,
+                assets.revision_of(part.mesh),
+                animator.rig_revision(),
+            );
             let reach = match reaches.remove(&node) {
                 Some(kept) if kept.key == key => kept,
                 Some(_) | None => Reach {

@@ -10,9 +10,7 @@ use engine_core::{
     Brick, Bricks, ComponentKind, Error, ErrorCode, Moves, Pace, Parent, Placement, Rule,
     SceneComponents, Schedule, Setting, Source, Transform, settings,
 };
-use engine_places_simulation::ground::{
-    Ground, GroundProbe, GroundSurface, Grounded, GroundedAt,
-};
+use engine_places_simulation::ground::{Ground, GroundProbe, GroundSurface, Grounded, GroundedAt};
 use engine_places_simulation::navigation::{NavStep, NavWalk};
 use glam::Vec2;
 use serde::Serialize;

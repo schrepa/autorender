@@ -2,10 +2,10 @@ use bevy_ecs::prelude::*;
 use engine_core::{
     AssetLibrary, Cursor, DepthBias, DeviceLimits, Entry, Error, MaterialHandle, PassRole, Views,
 };
-use engine_places_rendering::probes::ProbeCaptures;
-use engine_places_rendering::shadows::{CasterMap, KeptRefresh, Refresh, ShadowMaps};
 use engine_open_world_kit::ground::{Cover, GroundTiles, TerrainTiles};
 use engine_open_world_kit::water::Waterline;
+use engine_places_rendering::probes::ProbeCaptures;
+use engine_places_rendering::shadows::{CasterMap, KeptRefresh, Refresh, ShadowMaps};
 use engine_render::{
     Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw,
     DrawInput, Encode, FaceCull, Form, FormSide, GpuPart, Install, KindForm, Lifetime, Own,
@@ -485,11 +485,7 @@ impl GpuPart for TerrainGpu {
         let ccw = wgpu::FrontFace::Ccw;
         let ids = [
             cx.render_pipeline(ids_pass, &surface(draw::FS_TERRAIN_IDS, ccw), &[])?,
-            cx.render_pipeline(
-                ids_pass,
-                &surface(draw::FS_TERRAIN_IDS_HOLES, ccw),
-                &[],
-            )?,
+            cx.render_pipeline(ids_pass, &surface(draw::FS_TERRAIN_IDS_HOLES, ccw), &[])?,
         ];
         let resolve = |fragment| RenderPipeline {
             vertex: draw::VS_TERRAIN_RESOLVE,
@@ -704,12 +700,8 @@ impl GpuPart for TerrainGpu {
         self.tables.write_header(cx, h, atlas.now);
         self.tables.write_views(cx, h, &view_list);
         self.maps.prepare(cx, (&tiles, &assets));
-        self.tables.write_palette(
-            cx,
-            h,
-            (&tiles, &ground.palette),
-            (&self.maps, &assets),
-        );
+        self.tables
+            .write_palette(cx, h, (&tiles, &ground.palette), (&self.maps, &assets));
         self.sky
             .prepare(cx, (&tiles, &bakes, &settings, limits.texture_layers));
         self.macro_maps

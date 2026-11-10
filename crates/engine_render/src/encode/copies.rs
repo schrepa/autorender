@@ -12,8 +12,16 @@ fn to_buffer_copy(
         wgpu::TextureAspect::All
     };
     encoder.copy_texture_to_buffer(
-        wgpu::TexelCopyTextureInfo { texture: source, mip_level: mip, origin: at, aspect },
-        wgpu::TexelCopyBufferInfo { buffer: target, layout },
+        wgpu::TexelCopyTextureInfo {
+            texture: source,
+            mip_level: mip,
+            origin: at,
+            aspect,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: target,
+            layout,
+        },
         size,
     );
 }
@@ -21,7 +29,9 @@ fn to_buffer_copy(
 impl Run {
     pub(super) fn copied_texture(&self, copied: Copied) -> Option<wgpu::Texture> {
         match copied {
-            Copied::Texture(texture) => self.written_texture(texture).map(|made| made.texture.clone()),
+            Copied::Texture(texture) => self
+                .written_texture(texture)
+                .map(|made| made.texture.clone()),
             Copied::Target(view) => {
                 let target = final_target(view);
                 self.set()
@@ -37,7 +47,12 @@ impl Run {
 
     pub(crate) fn copy(&mut self, pass: u32) -> bool {
         self.end_render();
-        let Some(at) = self.queued.copies.iter().position(|(known, _)| *known == pass) else {
+        let Some(at) = self
+            .queued
+            .copies
+            .iter()
+            .position(|(known, _)| *known == pass)
+        else {
             return false;
         };
         let (_, regions) = self.queued.copies.swap_remove(at);
@@ -76,35 +91,75 @@ impl Run {
         };
         for region in regions {
             match region {
-                crate::CopyRegion::Bytes { from: at, to: into, size } => {
+                crate::CopyRegion::Bytes {
+                    from: at,
+                    to: into,
+                    size,
+                } => {
                     if let (Some(source), Some(target)) = (&from_buffer, &to_buffer) {
                         encoder.copy_buffer_to_buffer(source, *at, target, *into, *size);
                     }
                 }
-                crate::CopyRegion::Texels { from: at, to: into, size } => {
+                crate::CopyRegion::Texels {
+                    from: at,
+                    to: into,
+                    size,
+                } => {
                     if let (Some(source), Some(target)) = (&source, &target) {
                         encoder.copy_texture_to_texture(
-                            wgpu::TexelCopyTextureInfo { texture: source, mip_level: 0, origin: *at, aspect: wgpu::TextureAspect::All },
-                            wgpu::TexelCopyTextureInfo { texture: target, mip_level: 0, origin: *into, aspect: wgpu::TextureAspect::All },
+                            wgpu::TexelCopyTextureInfo {
+                                texture: source,
+                                mip_level: 0,
+                                origin: *at,
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            wgpu::TexelCopyTextureInfo {
+                                texture: target,
+                                mip_level: 0,
+                                origin: *into,
+                                aspect: wgpu::TextureAspect::All,
+                            },
                             *size,
                         );
                     }
                 }
-                crate::CopyRegion::Levels { from: (from_mip, at), to: (to_mip, into), size } => {
+                crate::CopyRegion::Levels {
+                    from: (from_mip, at),
+                    to: (to_mip, into),
+                    size,
+                } => {
                     if let (Some(source), Some(target)) = (&source, &target) {
                         encoder.copy_texture_to_texture(
-                            wgpu::TexelCopyTextureInfo { texture: source, mip_level: *from_mip, origin: *at, aspect: wgpu::TextureAspect::All },
-                            wgpu::TexelCopyTextureInfo { texture: target, mip_level: *to_mip, origin: *into, aspect: wgpu::TextureAspect::All },
+                            wgpu::TexelCopyTextureInfo {
+                                texture: source,
+                                mip_level: *from_mip,
+                                origin: *at,
+                                aspect: wgpu::TextureAspect::All,
+                            },
+                            wgpu::TexelCopyTextureInfo {
+                                texture: target,
+                                mip_level: *to_mip,
+                                origin: *into,
+                                aspect: wgpu::TextureAspect::All,
+                            },
                             *size,
                         );
                     }
                 }
-                crate::CopyRegion::ToBuffer { from: at, to: layout, size } => {
+                crate::CopyRegion::ToBuffer {
+                    from: at,
+                    to: layout,
+                    size,
+                } => {
                     if let (Some(source), Some(target)) = (&source, &to_buffer) {
                         to_buffer_copy(encoder, (source, 0, *at), (target, *layout), *size);
                     }
                 }
-                crate::CopyRegion::LevelToBuffer { from: (mip, at), to: layout, size } => {
+                crate::CopyRegion::LevelToBuffer {
+                    from: (mip, at),
+                    to: layout,
+                    size,
+                } => {
                     if let (Some(source), Some(target)) = (&source, &to_buffer) {
                         to_buffer_copy(encoder, (source, *mip, *at), (target, *layout), *size);
                     }
@@ -130,10 +185,22 @@ impl Run {
         self.end_render();
         let from = final_target(view);
         let targets = &self.set().targets;
-        let source = targets.iter().find(|(known, _)| *known == from).map(|(_, made)| made.texture.clone());
-        let target = targets.iter().find(|(known, _)| *known == Target::Copy(layer, view)).map(|(_, made)| made.texture.clone());
-        if let (Some(source), Some(target), Some(encoder)) = (source, target, self.recording.encoder()) {
-            encoder.copy_texture_to_texture(source.as_image_copy(), target.as_image_copy(), source.size());
+        let source = targets
+            .iter()
+            .find(|(known, _)| *known == from)
+            .map(|(_, made)| made.texture.clone());
+        let target = targets
+            .iter()
+            .find(|(known, _)| *known == Target::Copy(layer, view))
+            .map(|(_, made)| made.texture.clone());
+        if let (Some(source), Some(target), Some(encoder)) =
+            (source, target, self.recording.encoder())
+        {
+            encoder.copy_texture_to_texture(
+                source.as_image_copy(),
+                target.as_image_copy(),
+                source.size(),
+            );
         }
     }
 
@@ -145,23 +212,42 @@ impl Run {
         let device = self.device.clone();
         let mut lost = Vec::new();
         for request in asked {
-            let Some(buffer) = self.buffer_held(request.buffer).map(|(buffer, _)| buffer.clone()) else {
+            let Some(buffer) = self
+                .buffer_held(request.buffer)
+                .map(|(buffer, _)| buffer.clone())
+            else {
                 lost.push(request);
                 continue;
             };
-            let bytes = request.range.end.saturating_sub(request.range.start).next_multiple_of(4);
+            let bytes = request
+                .range
+                .end
+                .saturating_sub(request.range.start)
+                .next_multiple_of(4);
             let over = most.is_some_and(|most| bytes > most);
             if over {
                 self.reading.list.overflowed();
             }
-            let keep = if request.once || over { Keep::Once } else { Keep::Ring(slots) };
-            let reader = Reader::Part { part: request.part, tag: request.tag };
+            let keep = if request.once || over {
+                Keep::Once
+            } else {
+                Keep::Ring(slots)
+            };
+            let reader = Reader::Part {
+                part: request.part,
+                tag: request.tag,
+            };
             let Some(encoder) = self.recording.encoder() else {
                 lost.push(request);
                 continue;
             };
             let asked = (reader, written, Some(request.deliver));
-            if !self.reading.list.record((&device, encoder), (&buffer, request.range.clone()), asked, keep) {
+            if !self.reading.list.record(
+                (&device, encoder),
+                (&buffer, request.range.clone()),
+                asked,
+                keep,
+            ) {
                 lost.push(request);
                 continue;
             }
@@ -170,7 +256,14 @@ impl Run {
             }
         }
         for request in lost {
-            self.arrived((request.part, request.tag), Readback { value: None, written }, request.deliver);
+            self.arrived(
+                (request.part, request.tag),
+                Readback {
+                    value: None,
+                    written,
+                },
+                request.deliver,
+            );
         }
     }
 }

@@ -115,14 +115,28 @@ pub fn grid(side: usize) -> Value {
 }
 
 fn gem() -> Value {
-    let ring = [[0.5, 0.0, 0.0], [0.0, 0.0, 0.5], [-0.5, 0.0, 0.0], [0.0, 0.0, -0.5]];
+    let ring = [
+        [0.5, 0.0, 0.0],
+        [0.0, 0.0, 0.5],
+        [-0.5, 0.0, 0.0],
+        [0.0, 0.0, -0.5],
+    ];
     let mut vertices = Vec::with_capacity(24);
     for tip in [-0.5, 0.5] {
         for (side, &corner) in ring.iter().enumerate() {
             let next = ring[(side + 1) % ring.len()];
-            let (a, b) = if tip > 0.0 { (next, corner) } else { (corner, next) };
-            let normal = [a[0] + b[0], tip, a[2] + b[2]].map(|axis: f64| axis.signum() / 3.0_f64.sqrt());
-            for (position, uv) in [[0.0, tip, 0.0], a, b].into_iter().zip([[0.5, 0.0], [0.0, 1.0], [1.0, 1.0]]) {
+            let (a, b) = if tip > 0.0 {
+                (next, corner)
+            } else {
+                (corner, next)
+            };
+            let normal =
+                [a[0] + b[0], tip, a[2] + b[2]].map(|axis: f64| axis.signum() / 3.0_f64.sqrt());
+            for (position, uv) in
+                [[0.0, tip, 0.0], a, b]
+                    .into_iter()
+                    .zip([[0.5, 0.0], [0.0, 1.0], [1.0, 1.0]])
+            {
                 vertices.push(json!({ "position": position, "normal": normal, "uv": uv }));
             }
         }

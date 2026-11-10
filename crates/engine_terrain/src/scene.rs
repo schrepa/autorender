@@ -1,14 +1,14 @@
 use std::sync::Arc;
 
 use engine_core::{
-    ComponentKind, ComponentKindOf, Error, ErrorCode, Expected, MaterialHandle, GeometryHandle, Rule,
-    SceneCx, Setting, parse_value_at,
+    ComponentKind, ComponentKindOf, Error, ErrorCode, Expected, GeometryHandle, MaterialHandle,
+    Rule, SceneCx, Setting, parse_value_at,
 };
 use engine_heightfield::layer::{LayerFiles, LayerKind};
-use engine_heightfield::{INVALID_TERRAIN, UNKNOWN_MAP, UNREADABLE_MAP};
 use engine_heightfield::tile::{
     AuthoredPlacement, Biome, Biomes, MacroCauses, PlacementLayer, SteepLayer,
 };
+use engine_heightfield::{INVALID_TERRAIN, UNKNOWN_MAP, UNREADABLE_MAP};
 use engine_open_world_kit::ground::{SurfaceMaterial, SurfaceProjection};
 use engine_open_world_kit::paths::{ScenePath, ScenePaths};
 use engine_open_world_kit::terrain::TerrainLayers;
@@ -487,9 +487,8 @@ fn ground_height(
 
 impl SceneTerrain {
     fn surface(&self, path: &str, assets: &TerrainAssets<'_>) -> Result<TerrainSurface, Error> {
-        let invalid = |field: String| {
-            Error::new(INVALID_TERRAIN, format!("{path}.surface.{field}"))
-        };
+        let invalid =
+            |field: String| Error::new(INVALID_TERRAIN, format!("{path}.surface.{field}"));
         let broken = |error: engine_core::InvalidSetting, at: &str| {
             error.error(INVALID_TERRAIN, &format!("{path}.surface.{at}"))
         };
@@ -604,8 +603,7 @@ impl SceneTerrain {
         (files, kinds): (&dyn LayerFiles, &[&'static LayerKind]),
         surface: TerrainSurface,
     ) -> Result<Terrain, Error> {
-        let invalid =
-            |field: &str| Error::new(INVALID_TERRAIN, format!("{path}.{field}"));
+        let invalid = |field: &str| Error::new(INVALID_TERRAIN, format!("{path}.{field}"));
         if !self.origin.iter().all(|value| value.is_finite()) {
             return Err(invalid("origin")
                 .expected(Expected::Finite)
@@ -655,11 +653,9 @@ impl SceneTerrain {
         for (index, edit) in self.edits.iter().enumerate() {
             let at = format!("{path}.edits[{index}]");
             unique_id(&edit.id, &mut ids, &format!("{at}.id"))?;
-            edit.stamp.validate().map_err(|error| {
-                error
-                    .coded(INVALID_TERRAIN)
-                    .within(&format!("{at}.stamp"))
-            })?;
+            edit.stamp
+                .validate()
+                .map_err(|error| error.coded(INVALID_TERRAIN).within(&format!("{at}.stamp")))?;
             edits.push(TerrainEdit {
                 id: Arc::from(edit.id.as_str()),
                 stamp: edit.stamp,
@@ -670,22 +666,19 @@ impl SceneTerrain {
 
     fn built_rivers(&self, path: &str) -> Result<Arc<[TerrainRiver]>, Error> {
         if self.rivers.len() > crate::MAX_GIVEN_RIVERS {
-            return Err(
-                Error::new(INVALID_TERRAIN, format!("{path}.rivers"))
-                    .at_most(crate::MAX_GIVEN_RIVERS as u64)
-                    .got(self.rivers.len()),
-            );
+            return Err(Error::new(INVALID_TERRAIN, format!("{path}.rivers"))
+                .at_most(crate::MAX_GIVEN_RIVERS as u64)
+                .got(self.rivers.len()));
         }
         let mut ids: Vec<&str> = Vec::with_capacity(self.rivers.len());
         let mut rivers = Vec::with_capacity(self.rivers.len());
         for (index, drawn) in self.rivers.iter().enumerate() {
             let at = format!("{path}.rivers[{index}]");
             unique_id(&drawn.id, &mut ids, &format!("{at}.id"))?;
-            drawn.river.validate().map_err(|error| {
-                error
-                    .coded(INVALID_TERRAIN)
-                    .within(&format!("{at}.river"))
-            })?;
+            drawn
+                .river
+                .validate()
+                .map_err(|error| error.coded(INVALID_TERRAIN).within(&format!("{at}.river")))?;
             rivers.push(TerrainRiver {
                 id: Arc::from(drawn.id.as_str()),
                 river: drawn.river.clone(),
@@ -775,7 +768,6 @@ pub(crate) fn focus_kind() -> ComponentKindOf<StreamingFocus> {
 fn focus_schema() -> Value {
     serde_json::to_value(schemars::schema_for!(StreamingFocus)).unwrap_or(Value::Null)
 }
-
 
 fn prepare_terrain(
     scene: TerrainScene,

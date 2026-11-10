@@ -589,7 +589,10 @@ impl HostOptions {
 
     pub(crate) fn for_game<G>(&self, game: &GameEntry<G>) -> Self {
         let mut options = self.clone();
-        let assets = self.assets.clone().unwrap_or_else(|| default_assets(game.folder));
+        let assets = self
+            .assets
+            .clone()
+            .unwrap_or_else(|| default_assets(game.folder));
         if options.jobs.packs.is_none() {
             options.jobs.packs = Some(assets.join("cooked"));
         }
@@ -598,7 +601,11 @@ impl HostOptions {
     }
 
     pub fn listed<G>(&self, game: &GameEntry<G>) -> engine::Result<BrickList> {
-        engine::game::without((game.bricks)(BrickList::default()), &self.without, "--without")
+        engine::game::without(
+            (game.bricks)(BrickList::default()),
+            &self.without,
+            "--without",
+        )
     }
 
     fn start_scene<G>(&self, game: &GameEntry<G>) -> StartScene {

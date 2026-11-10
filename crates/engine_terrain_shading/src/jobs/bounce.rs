@@ -7,7 +7,9 @@ use engine_core::GpuBits;
 use engine_heightfield::Layers;
 use engine_heightfield::tile::{BiomeRules, SampleShape, control_at};
 
-use super::gpu::{BOUNCE_HIGH, BOUNCE_LOW, BOUNCE_NEAREST, BOUNCE_STEPS, BounceBin, BounceBlockWord};
+use super::gpu::{
+    BOUNCE_HIGH, BOUNCE_LOW, BOUNCE_NEAREST, BOUNCE_STEPS, BounceBin, BounceBlockWord,
+};
 use super::lighting::{Ground, normalized, unorm};
 
 pub const LOW_PROBE: f32 = BOUNCE_LOW;
@@ -422,7 +424,10 @@ fn mean_of(four: [&[u8]; 4]) -> [u8; PROBE_BYTES] {
             let word = u16::from_le_bytes([record[2 * bin], record[2 * bin + 1]]);
             BounceBin::unpack(u32::from(word)).unwrap_or_default()
         };
-        let filled: u32 = four.iter().map(|&record| u32::from(read(record).filled)).sum();
+        let filled: u32 = four
+            .iter()
+            .map(|&record| u32::from(read(record).filled))
+            .sum();
         let coded: u32 = four
             .iter()
             .map(|&record| {

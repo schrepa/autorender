@@ -294,11 +294,16 @@ impl PhysicsWorld {
         let dropped = apply(&self.bodies, solver, asks);
         let reach = reach(&self.bodies, solver);
         let bodies = &self.bodies;
-        self.statics.sync(solver, (around.collision, around.grounds), reach, |entity| {
-            bodies
-                .binary_search_by_key(&entity, |body| body.entity)
-                .is_ok()
-        });
+        self.statics.sync(
+            solver,
+            (around.collision, around.grounds),
+            reach,
+            |entity| {
+                bodies
+                    .binary_search_by_key(&entity, |body| body.entity)
+                    .is_ok()
+            },
+        );
         let samples = push(&mut self.bodies, solver, around, pushes);
         {
             let _profile = engine_core::profile::span("physics", "solve");
@@ -551,7 +556,8 @@ pub const BODY_PART: &str = "body";
 
 fn judge(physics: &PhysicsWorld, held: &[(Entity, bool)], refusals: &mut Refusals) {
     refusals.keep_part(BODY_PART, |entity| {
-        held.binary_search_by_key(&entity, |&(found, _)| found).is_ok()
+        held.binary_search_by_key(&entity, |&(found, _)| found)
+            .is_ok()
     });
     for &(entity, pinned) in held {
         let verdict = match physics.problem(entity) {

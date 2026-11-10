@@ -57,10 +57,13 @@ const SKIN_STREAMS: &[VertexLayout] = &[
     VertexLayout::Buffer(RECORD_STREAM),
 ];
 const VIEW_STREAMS: &[VertexLayout] = &[VERTEX, VertexLayout::Buffer(SLOT_STREAM)];
-const EXTENDED_VIEW_STREAMS: &[VertexLayout] =
-    &[VERTEX, EXTRA, VertexLayout::Buffer(SLOT_STREAM)];
-const SKIN_VIEW_STREAMS: &[VertexLayout] =
-    &[VERTEX, EXTRA, SKIN_STREAM, VertexLayout::Buffer(SLOT_STREAM)];
+const EXTENDED_VIEW_STREAMS: &[VertexLayout] = &[VERTEX, EXTRA, VertexLayout::Buffer(SLOT_STREAM)];
+const SKIN_VIEW_STREAMS: &[VertexLayout] = &[
+    VERTEX,
+    EXTRA,
+    SKIN_STREAM,
+    VertexLayout::Buffer(SLOT_STREAM),
+];
 pub(crate) struct Compaction {
     pub sum: ComputePipeline<MeshesGpu>,
     pub scan: ComputePipeline<MeshesGpu>,

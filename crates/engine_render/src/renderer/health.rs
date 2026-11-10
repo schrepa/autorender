@@ -87,11 +87,7 @@ impl Health {
     fn fatal(&self) -> Option<&Error> {
         match self {
             Self::Failed(error) => Some(error),
-            Self::Live
-            | Self::Lost(_)
-            | Self::Faulted
-            | Self::Recovering
-            | Self::Recovered => None,
+            Self::Live | Self::Lost(_) | Self::Faulted | Self::Recovering | Self::Recovered => None,
         }
     }
 
@@ -200,7 +196,10 @@ impl Renderer {
     }
 
     pub(super) fn usable(&self) -> bool {
-        matches!(self.device_health(), DeviceHealth::Live | DeviceHealth::Recovered)
+        matches!(
+            self.device_health(),
+            DeviceHealth::Live | DeviceHealth::Recovered
+        )
     }
 
     fn change(&self, change: Change) {

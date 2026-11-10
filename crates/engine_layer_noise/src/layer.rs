@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use engine_codec::{Reader, Writer};
 use engine_core::{Error, fields, parse_value};
-use engine_heightfield::{Blend, INVALID_TERRAIN};
 use engine_heightfield::layer::{
     Below, LayerFiles, LayerKind, LayerTile, Made, SamplePoint, TerrainLayer, TileFrame, same_as,
 };
 use engine_heightfield::layers::MAX_HEIGHT;
+use engine_heightfield::{Blend, INVALID_TERRAIN};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

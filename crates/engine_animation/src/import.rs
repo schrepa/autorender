@@ -3,12 +3,12 @@ use std::sync::Arc;
 
 use engine_core::math::max;
 use engine_core::{
-    AlphaMode, AssetLibrary, BASE_COLOR_MAP, Cull, EMISSIVE_MAP, Error, ErrorCode, Expected, Filter,
-    Material, MaterialHandle, Mesh, GeometryHandle, MeshVertex, Sampler, Texture,
+    AlphaMode, AssetLibrary, BASE_COLOR_MAP, Cull, EMISSIVE_MAP, Error, ErrorCode, Expected,
+    Filter, GeometryHandle, Material, MaterialHandle, Mesh, MeshVertex, Sampler, Texture,
     TextureHandle, TextureRef, UvTransform, VertexSkin, Wrap, decode_image,
 };
-use engine_places_rendering::animation::{Bound, Clip, Joint, JointKeys, Keys, Rig, RigPart};
 use engine_places::surface::{METALNESS, ROUGHNESS};
+use engine_places_rendering::animation::{Bound, Clip, Joint, JointKeys, Keys, Rig, RigPart};
 use glam::{Mat3, Mat4, Quat, Vec3};
 use gltf::animation::util::ReadOutputs;
 use gltf::animation::{Interpolation, Property};

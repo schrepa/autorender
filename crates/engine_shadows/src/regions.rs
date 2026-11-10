@@ -8,7 +8,9 @@ use engine_places_rendering::shadows::{
 use crate::atlas::AtlasLayout;
 use crate::constants::{LEVEL_BAND, LEVEL_BEFORE, LEVEL_WINDOW, LEVEL_WORDS};
 use crate::gpu_layouts::{CasterCull, CasterMode, ComposeData, Route, ShadowPiece};
-use crate::shadow_fit::{ClipPlan, Clipmap, LightBasis, MapRegion, MovingTile, Region, region_tiles};
+use crate::shadow_fit::{
+    ClipPlan, Clipmap, LightBasis, MapRegion, MovingTile, Region, region_tiles,
+};
 use crate::sky::{RESOLUTION, SkyDraw};
 
 const NORMAL_OFFSET_TEXELS: f32 = 0.5;
@@ -83,14 +85,18 @@ impl FrameRegions<'_> {
 
     pub(crate) fn placed(&self, (side, sky): (u32, Option<&SkyDraw>), out: &mut Vec<Placed>) {
         out.clear();
-        out.extend((0_u32..).zip(&self.plan.regions).map(|(layer, region)| Placed {
-            clip: self.region_clip(region),
-            target: ViewLayer {
-                layer,
-                rect: [0, 0, side, side],
-            },
-            clear: Clear::DepthOnly,
-        }));
+        out.extend(
+            (0_u32..)
+                .zip(&self.plan.regions)
+                .map(|(layer, region)| Placed {
+                    clip: self.region_clip(region),
+                    target: ViewLayer {
+                        layer,
+                        rect: [0, 0, side, side],
+                    },
+                    clear: Clear::DepthOnly,
+                }),
+        );
         let slot = self.layout.slot;
         out.extend(self.plan.moving.iter().map(|tile| {
             let [x, y, _, _] = self

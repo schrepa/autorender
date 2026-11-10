@@ -1,4 +1,4 @@
-use engine_core::{AssetResidency, Drawn, MaterialHandle, GeometryHandle};
+use engine_core::{AssetResidency, Drawn, GeometryHandle, MaterialHandle};
 
 use super::*;
 

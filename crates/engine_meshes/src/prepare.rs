@@ -6,8 +6,8 @@ use engine_render::{AfterRead, Allocation, GpuPart, Prepare, UploadRange, listed
 
 use crate::gpu::{Drawing, MeshesGpu, VIEW_FRAME_BYTES};
 use crate::layouts::{
-    BatchData, CandidateData, CandidateState, DRAW_ARGS_BYTES, GROUP,
-    LOD_LEVELS, PresentationFrame, UNWATCHED,
+    BatchData, CandidateData, CandidateState, DRAW_ARGS_BYTES, GROUP, LOD_LEVELS,
+    PresentationFrame, UNWATCHED,
 };
 use crate::order::{capacity_for, instance_limit};
 use crate::presentation::{
@@ -32,15 +32,7 @@ impl MeshesGpu {
     pub(crate) fn prepare_frame(
         &mut self,
         (
-            (
-                table,
-                assets,
-                plan,
-                hierarchy,
-                detail,
-                time,
-                limits,
-            ),
+            (table, assets, plan, hierarchy, detail, time, limits),
             (records, views, watched, totals, residency),
         ): SystemParamItem<'_, '_, <Self as GpuPart>::Reads>,
         cx: &mut Prepare<'_, Self>,
@@ -60,7 +52,9 @@ impl MeshesGpu {
         }
         let state = &mut self.state;
         state.batches.settle(&table);
-        state.draws.plan(&state.batches.batches, &assets, &residency);
+        state
+            .draws
+            .plan(&state.batches.batches, &assets, &residency);
         let generation = state.batches.generation();
         let held = records
             .single()
@@ -119,7 +113,6 @@ impl MeshesGpu {
         }
     }
 
-
     fn prepare_instances(
         &mut self,
         table: &DrawnTable,
@@ -134,8 +127,7 @@ impl MeshesGpu {
         if cx.allocate_buffer(instances.records, records_bytes) == Allocation::Fresh {
             cx.write(instances.records, 0, &crate::debug::record_words());
         }
-        let colors =
-            cx.allocate_buffer(instances.colors, capacity * size_of::<ColorData>() as u64);
+        let colors = cx.allocate_buffer(instances.colors, capacity * size_of::<ColorData>() as u64);
         if colors == Allocation::Fresh && state.colors_capacity != 0 {
             engine_core::profile::counter("render.instance_buffer_growth", 1.0);
         }
@@ -469,7 +461,8 @@ impl MeshesGpu {
                     continue;
                 };
                 let id_words = if detailed { u64::from(LOD_LEVELS) } else { 1 } * capacity;
-                let over = (ids + id_words) * 4 > room || (args + arg_count) * DRAW_ARGS_BYTES > room;
+                let over =
+                    (ids + id_words) * 4 > room || (args + arg_count) * DRAW_ARGS_BYTES > room;
                 if room != 0 && over {
                     refused += 1;
                     continue;

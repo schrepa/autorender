@@ -172,7 +172,9 @@ impl Linker {
     fn source_text(&self, module: &'static engine_core::ShaderText) -> Cow<'static, str> {
         self.edited
             .get(module.path())
-            .map_or(Cow::Borrowed(module.text()), |text| Cow::Owned(text.clone()))
+            .map_or(Cow::Borrowed(module.text()), |text| {
+                Cow::Owned(text.clone())
+            })
     }
 
     #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
@@ -660,18 +662,18 @@ impl Linker {
         let Ok(unit) = module.text.parse::<TranslationUnit>() else {
             return false;
         };
-        let declared = unit
-            .global_declarations
-            .iter()
-            .any(|declaration| match declaration.node() {
-                GlobalDeclaration::Declaration(item) => item.ident.to_string() == name,
-                GlobalDeclaration::Struct(item) => item.ident.to_string() == name,
-                GlobalDeclaration::TypeAlias(item) => item.ident.to_string() == name,
-                GlobalDeclaration::Void
-                | GlobalDeclaration::Function(_)
-                | GlobalDeclaration::ConstAssert(_)
-                | GlobalDeclaration::Compound(_) => false,
-            });
+        let declared =
+            unit.global_declarations
+                .iter()
+                .any(|declaration| match declaration.node() {
+                    GlobalDeclaration::Declaration(item) => item.ident.to_string() == name,
+                    GlobalDeclaration::Struct(item) => item.ident.to_string() == name,
+                    GlobalDeclaration::TypeAlias(item) => item.ident.to_string() == name,
+                    GlobalDeclaration::Void
+                    | GlobalDeclaration::Function(_)
+                    | GlobalDeclaration::ConstAssert(_)
+                    | GlobalDeclaration::Compound(_) => false,
+                });
         declared
             || unit
                 .imports

@@ -791,7 +791,13 @@ impl Compiler<'_> {
         let mut hasher = DefaultHasher::new();
         (formats, depth, plain, main, &switches, bits).hash(&mut hasher);
         (fragment.is_some(), faces).hash(&mut hasher);
-        (raster.bias, raster.slope.to_bits(), raster.clamp_near, raster.cull).hash(&mut hasher);
+        (
+            raster.bias,
+            raster.slope.to_bits(),
+            raster.clamp_near,
+            raster.cull,
+        )
+            .hash(&mut hasher);
         let key = hasher.finish();
         let program = built.program_key;
         let made = (program, key);
@@ -899,9 +905,12 @@ impl Compiler<'_> {
             .stages
             .first()?
             .shader(self.device, &mut machine.shaders);
-        let fragment = fragment_stage
-            .zip(shape.fragment)
-            .map(|(stage, entry)| (stage.shader(self.device, &mut machine.shaders), entry.name()));
+        let fragment = fragment_stage.zip(shape.fragment).map(|(stage, entry)| {
+            (
+                stage.shader(self.device, &mut machine.shaders),
+                entry.name(),
+            )
+        });
         let vertex_constants = constants.next().unwrap_or_default();
         let fragment_constants = constants.next().unwrap_or_default();
         Some(RenderJob {
@@ -983,7 +992,8 @@ impl Run {
     pub(crate) fn warm_reached(&mut self, world: &World) {
         let states = world.get_resource::<engine_registry::BrickStates>();
         let in_play: Vec<engine_registry::GateId> = self
-            .installs.gates
+            .installs
+            .gates
             .iter()
             .zip(&self.machine.declared.parts)
             .filter(|(_, part)| !crate::DEV && part.turns_on_in_play)
@@ -1002,7 +1012,8 @@ impl Run {
         self.reached = Reached {
             generation: Some(states.map_or(0, engine_registry::BrickStates::generation)),
             parts: self
-                .installs.gates
+                .installs
+                .gates
                 .iter()
                 .map(|gate| {
                     gate.is_none_or(|gate| {
@@ -1096,11 +1107,7 @@ impl Run {
         }
     }
 
-    fn writes_fit(
-        &self,
-        pipeline: usize,
-        formats: &[Option<wgpu::TextureFormat>],
-    ) -> bool {
+    fn writes_fit(&self, pipeline: usize, formats: &[Option<wgpu::TextureFormat>]) -> bool {
         let Some(built) = self.machine.pipelines.get(pipeline) else {
             return false;
         };

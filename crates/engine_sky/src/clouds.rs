@@ -57,8 +57,27 @@ pub(crate) struct CloudSteps {
 
 impl Readable for CloudSteps {
     fn arrived(&mut self, _: u32, read: Readback<&[u8]>) {
-        let Some((&ran, [c0, c1, c2, c3, c4, c5, c6, c7, g0, g1, g2, g3, g4, g5, g6, g7])) =
-            read.value.split_first()
+        let Some((
+            &ran,
+            [
+                c0,
+                c1,
+                c2,
+                c3,
+                c4,
+                c5,
+                c6,
+                c7,
+                g0,
+                g1,
+                g2,
+                g3,
+                g4,
+                g5,
+                g6,
+                g7,
+            ],
+        )) = read.value.split_first()
         else {
             return;
         };

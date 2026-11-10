@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use bevy_ecs::prelude::{Component, Entity};
 use engine_codec::Expected;
 use engine_math::clamp;
-use engine_place::{ApplyAt, Ask, Error, ErrorCode, MaterialHandle, GeometryHandle};
+use engine_place::{ApplyAt, Ask, Error, ErrorCode, GeometryHandle, MaterialHandle};
 use glam::Quat;
 use serde::{Deserialize, Serialize};
 
@@ -351,7 +351,10 @@ impl Playing {
             speed,
         } = &mut self.track
         {
-            let duration = rig.clips.get(*clip as usize).map_or(0.0, |clip| clip.duration);
+            let duration = rig
+                .clips
+                .get(*clip as usize)
+                .map_or(0.0, |clip| clip.duration);
             *time = wrapped(*time + *speed * seconds, duration, *looped);
         }
     }
@@ -543,9 +546,9 @@ impl Animator {
                 };
                 let rig = &*self.rig;
                 let newest = self.layers.get(*layer).and_then(|held| held.playing.last());
-                if newest.is_some_and(|newest| {
-                    newest.clip() == Some(index as u32) && !newest.done(rig)
-                }) {
+                if newest
+                    .is_some_and(|newest| newest.clip() == Some(index as u32) && !newest.done(rig))
+                {
                     return true;
                 }
                 self.start_on(*layer, clip, *seconds, *looped, *speed)

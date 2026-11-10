@@ -202,14 +202,17 @@ impl Backend {
         Vec::new()
     }
 
-    pub(crate) fn start(&mut self, voice: u32, sound: &Decoded, play: &Start) -> Result<(), String> {
+    pub(crate) fn start(
+        &mut self,
+        voice: u32,
+        sound: &Decoded,
+        play: &Start,
+    ) -> Result<(), String> {
         let device = self.device.as_mut().ok_or("no_device")?;
         let mut track = play.radius.map(|_| device.spatial(play.bus)).transpose()?;
         let bus = &mut device.tracks[play.bus.index()];
         let playing = match sound {
-            Decoded::Held(data) => {
-                Playing::Held(on_track(bus, track.as_mut(), held(data, play))?)
-            }
+            Decoded::Held(data) => Playing::Held(on_track(bus, track.as_mut(), held(data, play))?),
             Decoded::Streamed(bytes) => {
                 Playing::Streamed(on_track(bus, track.as_mut(), streamed(bytes, play)?)?)
             }

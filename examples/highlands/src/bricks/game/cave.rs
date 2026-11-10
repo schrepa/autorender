@@ -1,12 +1,12 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Background, Drawn, Jobs, Landed, MaterialHandle, Mesh, GeometryHandle, Records,
+    AssetLibrary, Background, Drawn, GeometryHandle, Jobs, Landed, MaterialHandle, Mesh, Records,
     Spawner, Transform, math,
 };
+use engine_open_world_kit::ground::TerrainTiles;
 use engine_places::meshes::MESH;
 use engine_places_rendering::lights::{LightRegion, LocalLight};
 use engine_places_rendering::probes::{Interior, ReflectionProbe};
-use engine_open_world_kit::ground::TerrainTiles;
 use glam::{Quat, Vec2, Vec3};
 
 use crate::bricks::game::HighlandsBrick;

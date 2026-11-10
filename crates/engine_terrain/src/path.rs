@@ -61,8 +61,7 @@ pub fn height_grid(
                 .advance(&mut unlimited)
                 .expect("unlimited_budget_finishes");
             let rows = (first[1] - tz * quads).max(0)..=(end[1] - tz * quads).min(samples - 1);
-            let columns =
-                (first[0] - tx * quads).max(0)..=(end[0] - tx * quads).min(samples - 1);
+            let columns = (first[0] - tx * quads).max(0)..=(end[0] - tx * quads).min(samples - 1);
             for row in rows {
                 let to = (tz * quads + row - first[1]) as usize * width;
                 for column in columns.clone() {

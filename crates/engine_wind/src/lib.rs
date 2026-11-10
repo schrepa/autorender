@@ -57,11 +57,7 @@ impl Brick for WindBrick {
     }
 }
 
-fn publish_wind(
-    settings: Res<WindSettings>,
-    mut wind: ResMut<Wind>,
-    mut view: ResMut<ViewWind>,
-) {
+fn publish_wind(settings: Res<WindSettings>, mut wind: ResMut<Wind>, mut view: ResMut<ViewWind>) {
     wind.set_if_neq(Wind {
         velocity: settings.velocity,
         gusts: settings.gusts,

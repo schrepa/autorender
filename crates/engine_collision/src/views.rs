@@ -50,8 +50,8 @@ impl Operation for ColliderQuery {
         request: Self,
     ) -> Result<ColliderView, Error> {
         let entity = resolve_entity(&ids, &entities, &request.entity, false, "$.entity")?;
-        let view = collider_view(&colliders, &globals, Some(fresh.world()), entity)
-            .ok_or_else(|| {
+        let view =
+            collider_view(&colliders, &globals, Some(fresh.world()), entity).ok_or_else(|| {
                 Error::new(ErrorCode::MissingComponent, "$.entity").got(&request.entity)
             })?;
         Ok(view)

@@ -167,9 +167,11 @@ impl Cooking {
         }
         let reading: HashSet<RecordKey> = asked
             .iter()
-            .filter(|each| records.get(each.interest.key()).is_none_or(|request| {
-                matches!(request, Request::Asked(_) | Request::Missing)
-            }))
+            .filter(|each| {
+                records
+                    .get(each.interest.key())
+                    .is_none_or(|request| matches!(request, Request::Asked(_) | Request::Missing))
+            })
             .flat_map(|each| each.ask.reads.iter().copied())
             .collect();
         asked.retain(|each| {

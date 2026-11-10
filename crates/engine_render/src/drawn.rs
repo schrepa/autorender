@@ -28,8 +28,7 @@ const MIN_STORAGE_BYTES: u64 = 256;
 const NODE_LEVELS: usize = MAX_HIERARCHY_DEPTH + 1;
 const PYRAMID_LEVELS: usize = 16;
 const PYRAMID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
-const NODE_BYTES: usize =
-    2 * size_of::<NodePose>() + size_of::<NodeInfo>() + size_of::<PoseRows>();
+const NODE_BYTES: usize = 2 * size_of::<NodePose>() + size_of::<NodeInfo>() + size_of::<PoseRows>();
 
 const VARS: &str = "struct DrawnPose {
     row_0: vec4<f32>,
@@ -823,7 +822,11 @@ impl DrawnGpu {
         for range in &held.ranges {
             let (start, end) = (range.start, range.end);
             bytes += ((end - start) * NODE_BYTES) as u64;
-            cx.write(held.locals, (start * pose) as u64, &streams.current[start..end]);
+            cx.write(
+                held.locals,
+                (start * pose) as u64,
+                &streams.current[start..end],
+            );
             cx.write(
                 held.locals,
                 previous + (start * pose) as u64,
@@ -974,7 +977,10 @@ fn install_occlusion(
         pass,
         entry("drawn_pyramid_first"),
         &[
-            (var(DRAWN_CULL_MODULE, "source_depth"), Bind::Target(TargetName::DEPTH)),
+            (
+                var(DRAWN_CULL_MODULE, "source_depth"),
+                Bind::Target(TargetName::DEPTH),
+            ),
             (
                 var(DRAWN_CULL_MODULE, "target_level"),
                 Bind::Slice {
@@ -983,7 +989,10 @@ fn install_occlusion(
                     layers: 0..1,
                 },
             ),
-            (var(DRAWN_CULL_MODULE, "pyramid_extent"), Bind::Buffer(extents[0])),
+            (
+                var(DRAWN_CULL_MODULE, "pyramid_extent"),
+                Bind::Buffer(extents[0]),
+            ),
         ],
     )?;
     let mut down = Vec::with_capacity(PYRAMID_LEVELS - 1);
@@ -1021,7 +1030,10 @@ fn install_occlusion(
         &[
             (var(DRAWN_CULL_MODULE, "cull_frame"), Bind::Buffer(frame)),
             (var(DRAWN_CULL_MODULE, "cull_occlusion"), Bind::Buffer(held)),
-            (var(DRAWN_CULL_MODULE, "depth_pyramid"), Bind::Texture(pyramid)),
+            (
+                var(DRAWN_CULL_MODULE, "depth_pyramid"),
+                Bind::Texture(pyramid),
+            ),
         ],
     )?;
     Ok(Occlusion {
@@ -1050,6 +1062,8 @@ impl GpuPart for DrawnGpu {
     const NAME: &'static str = "drawn";
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
+        let drawn_at = |name: &'static str| var(DRAWN_MODULE, name);
+        let culled_at = |name: &'static str| var(DRAWN_CULL_MODULE, name);
         let records = cx.buffer("drawn_records", Lifetime::Kept);
         let values = cx.buffer("drawn_values", Lifetime::Kept);
         let fades = cx.buffer("drawn_fades", Lifetime::Kept);
@@ -1078,16 +1092,19 @@ impl GpuPart for DrawnGpu {
             ranges: Vec::new(),
             bits: Vec::new(),
         };
-        cx.frame(var(DRAWN_MODULE, "drawn_records"), Bind::Buffer(records))?;
-        cx.frame(var(DRAWN_MODULE, "drawn_values"), Bind::Buffer(values))?;
-        cx.frame(var(DRAWN_MODULE, "drawn_culled"), Bind::Buffer(culled))?;
-        cx.frame(var(DRAWN_MODULE, "drawn_view"), Bind::Buffer(view))?;
-        cx.frame(var(DRAWN_MODULE, "drawn_fades"), Bind::Buffer(fades))?;
-        cx.frame(var(DRAWN_MODULE, "drawn_views"), Bind::Buffer(views))?;
-        cx.frame(var(DRAWN_MODULE, "drawn_poses"), Bind::Buffer(poses))?;
-        cx.frame(var(DRAWN_MODULE, "drawn_previous_poses"), Bind::Buffer(previous))?;
-        cx.frame(var(DRAWN_MODULE, "drawn_marks"), Bind::Buffer(marks))?;
-        cx.frame(var(DRAWN_FADES_MODULE, "drawn_fade_words"), Bind::Buffer(fades))?;
+        cx.frame(drawn_at("drawn_records"), Bind::Buffer(records))?;
+        cx.frame(drawn_at("drawn_values"), Bind::Buffer(values))?;
+        cx.frame(drawn_at("drawn_culled"), Bind::Buffer(culled))?;
+        cx.frame(drawn_at("drawn_view"), Bind::Buffer(view))?;
+        cx.frame(drawn_at("drawn_fades"), Bind::Buffer(fades))?;
+        cx.frame(drawn_at("drawn_views"), Bind::Buffer(views))?;
+        cx.frame(drawn_at("drawn_poses"), Bind::Buffer(poses))?;
+        cx.frame(drawn_at("drawn_previous_poses"), Bind::Buffer(previous))?;
+        cx.frame(drawn_at("drawn_marks"), Bind::Buffer(marks))?;
+        cx.frame(
+            var(DRAWN_FADES_MODULE, "drawn_fade_words"),
+            Bind::Buffer(fades),
+        )?;
         let cull = cx.pass("drawn_cull").label("engine/drawn-cull").id();
         let keep = cx.copy(
             "drawn_keep_poses",
@@ -1097,13 +1114,13 @@ impl GpuPart for DrawnGpu {
         let entry = |name: &'static str| Entry::generated(core_module(DRAWN_CULL_MODULE), name);
         let node_binds = |level: Buffer<Self>| {
             [
-                (var(DRAWN_CULL_MODULE, "cull_frame"), Bind::Buffer(frame)),
-                (var(DRAWN_CULL_MODULE, "node_locals"), Bind::Buffer(nodes.locals)),
-                (var(DRAWN_CULL_MODULE, "node_info"), Bind::Buffer(nodes.info)),
-                (var(DRAWN_CULL_MODULE, "node_authority"), Bind::Buffer(nodes.authority)),
-                (var(DRAWN_CULL_MODULE, "node_composed"), Bind::Buffer(nodes.composed)),
-                (var(DRAWN_CULL_MODULE, "node_parents"), Bind::Buffer(nodes.parents)),
-                (var(DRAWN_CULL_MODULE, "node_level"), Bind::Buffer(level)),
+                (culled_at("cull_frame"), Bind::Buffer(frame)),
+                (culled_at("node_locals"), Bind::Buffer(nodes.locals)),
+                (culled_at("node_info"), Bind::Buffer(nodes.info)),
+                (culled_at("node_authority"), Bind::Buffer(nodes.authority)),
+                (culled_at("node_composed"), Bind::Buffer(nodes.composed)),
+                (culled_at("node_parents"), Bind::Buffer(nodes.parents)),
+                (culled_at("node_level"), Bind::Buffer(level)),
             ]
         };
         let mut compose = Vec::with_capacity(NODE_LEVELS);
@@ -1114,22 +1131,22 @@ impl GpuPart for DrawnGpu {
             cull,
             entry("drawn_pose"),
             &[
-                (var(DRAWN_CULL_MODULE, "cull_frame"), Bind::Buffer(frame)),
-                (var(DRAWN_CULL_MODULE, "node_locals"), Bind::Buffer(nodes.locals)),
-                (var(DRAWN_CULL_MODULE, "node_info"), Bind::Buffer(nodes.info)),
-                (var(DRAWN_CULL_MODULE, "node_authority"), Bind::Buffer(nodes.authority)),
-                (var(DRAWN_CULL_MODULE, "node_composed"), Bind::Buffer(nodes.composed)),
-                (var(DRAWN_CULL_MODULE, "cull_poses"), Bind::Buffer(poses)),
+                (culled_at("cull_frame"), Bind::Buffer(frame)),
+                (culled_at("node_locals"), Bind::Buffer(nodes.locals)),
+                (culled_at("node_info"), Bind::Buffer(nodes.info)),
+                (culled_at("node_authority"), Bind::Buffer(nodes.authority)),
+                (culled_at("node_composed"), Bind::Buffer(nodes.composed)),
+                (culled_at("cull_poses"), Bind::Buffer(poses)),
             ],
         )?;
         let pipeline = cx.compute_pipeline(
             cull,
             entry("drawn_cull"),
             &[
-                (var(DRAWN_CULL_MODULE, "cull_frame"), Bind::Buffer(frame)),
-                (var(DRAWN_CULL_MODULE, "node_info"), Bind::Buffer(nodes.info)),
-                (var(DRAWN_CULL_MODULE, "cull_bits"), Bind::Buffer(culled)),
-                (var(DRAWN_CULL_MODULE, "cull_marks"), Bind::Buffer(marks)),
+                (culled_at("cull_frame"), Bind::Buffer(frame)),
+                (culled_at("node_info"), Bind::Buffer(nodes.info)),
+                (culled_at("cull_bits"), Bind::Buffer(culled)),
+                (culled_at("cull_marks"), Bind::Buffer(marks)),
             ],
         )?;
         let occlusion = install_occlusion(cx, cull, frame)?;

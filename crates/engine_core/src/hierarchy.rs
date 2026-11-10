@@ -20,8 +20,8 @@ pub(crate) mod tracking;
 mod validation;
 mod views;
 mod words;
-pub use global::{GlobalTransform, Revision};
 pub(crate) use global::ValueIds;
+pub use global::{GlobalTransform, Revision};
 
 pub const MAX_HIERARCHY_DEPTH: usize = 64;
 pub const MAX_TRANSFORM_NODES: usize = u32::MAX as usize - 1;

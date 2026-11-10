@@ -31,16 +31,28 @@ impl DevTools {
         })
         .expect("descriptor_bounded");
         let states: [(&str, StateRegister); 10] = [
-            ("PresentationState", Self::register_state::<PresentationState>),
+            (
+                "PresentationState",
+                Self::register_state::<PresentationState>,
+            ),
             ("Readiness", Self::register_state::<engine_core::Readiness>),
-            ("FrameBudget", Self::register_state::<engine_core::FrameBudget>),
+            (
+                "FrameBudget",
+                Self::register_state::<engine_core::FrameBudget>,
+            ),
             ("Level", Self::register_state::<engine_core::Level>),
             ("Records", Self::register_state::<engine_core::Records>),
-            ("MeshLevels", Self::register_state::<engine_core::MeshLevels>),
+            (
+                "MeshLevels",
+                Self::register_state::<engine_core::MeshLevels>,
+            ),
             ("Input", Self::register_state::<engine_core::Input>),
             ("Devices", Self::register_state::<engine_core::Devices>),
             ("Contexts", Self::register_state::<engine_core::Contexts>),
-            ("CursorRequests", Self::register_state::<engine_core::CursorRequests>),
+            (
+                "CursorRequests",
+                Self::register_state::<engine_core::CursorRequests>,
+            ),
         ];
         for (name, register) in states {
             register(self, schemas, name).expect("descriptor_bounded");
@@ -120,4 +132,3 @@ pub(super) fn transform_value(value: &Transform) -> Value {
         scale: value.scale.to_array()
     })
 }
-

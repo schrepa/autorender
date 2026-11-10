@@ -26,10 +26,10 @@ use engine_core::{
     Attributes, BlendedPass, Brick, Bricks, ColorPass, Cook, CookList, JobKind, KindDecl, KindSkip,
     PassName, Schedule, Source,
 };
+use engine_open_world_kit::ground::{Bounce, GroundBaking, GroundTiles, Heightfield, Horizons};
 use engine_places_rendering::lighting::{Ambient, SunBlockers};
 use engine_places_rendering::reflections::{TraceDepths, TraceSource};
 use engine_places_rendering::sky::OpenSky;
-use engine_open_world_kit::ground::{Bounce, GroundBaking, GroundTiles, Heightfield, Horizons};
 use engine_render::{DebugModes, RenderBricks, SurfaceKind};
 
 pub use gpu::HorizonsPiece;

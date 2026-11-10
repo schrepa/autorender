@@ -2,7 +2,9 @@ use std::fmt;
 use std::hash::Hash;
 use std::sync::Arc;
 
-use crate::{Error, ErrorCode, Interest, MISSING_RECORD, RecordKey, Records, Request, Requests, Settling};
+use crate::{
+    Error, ErrorCode, Interest, MISSING_RECORD, RecordKey, Records, Request, Requests, Settling,
+};
 
 pub trait Delivers<K: Clone> {
     fn landed(&self, held: &Interest<K>) -> Option<Result<Arc<[u8]>, Error>>;
@@ -20,9 +22,9 @@ impl<K: Clone + Eq + Hash, A> Delivers<K> for Requests<K, Arc<[u8]>, A> {
             Request::Asked(_) => None,
             Request::Ready(bytes) => Some(Ok(Arc::clone(bytes))),
             Request::Failed(error) => Some(Err(error.clone())),
-            Request::Missing => {
-                Some(Err(Error::new(ErrorCode::InvalidRecord, "$").got(MISSING_RECORD)))
-            }
+            Request::Missing => Some(Err(
+                Error::new(ErrorCode::InvalidRecord, "$").got(MISSING_RECORD)
+            )),
         }
     }
 }

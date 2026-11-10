@@ -10,12 +10,15 @@ mod light;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, MAPPED, Module, Rule, Schedule, Source, gpu_struct};
-use engine_places_rendering::lighting::{Lighting};
-use engine_places::surface::{METALLIC_ROUGHNESS_MAP, METALNESS, OCCLUSION, OCCLUSION_MAP, OCCLUSION_STRENGTH, ROUGHNESS, SurfaceValues, TRANSMISSION};
+use engine_places::surface::{
+    METALLIC_ROUGHNESS_MAP, METALNESS, OCCLUSION, OCCLUSION_MAP, OCCLUSION_STRENGTH, ROUGHNESS,
+    SurfaceValues, TRANSMISSION,
+};
+use engine_places_rendering::lighting::Lighting;
+use engine_places_rendering::sky::SkyLight;
 use engine_render::{
     Lit, MaterialValue, OpenSlot, RenderBricks, SlotModule, SurfaceKind, SurfaceTerms,
 };
-use engine_places_rendering::sky::SkyLight;
 
 pub use highlights::Highlights;
 pub use light::SurfaceLight;
@@ -80,9 +83,12 @@ impl Brick for LightingModelBrick {
         bricks
             .settings::<SurfaceLight>()
             .settings::<Highlights>()
-            .within(|highlights: Res<Highlights>| highlights.enabled, |bricks| {
-                bricks.resource::<SizedHighlights>();
-            })
+            .within(
+                |highlights: Res<Highlights>| highlights.enabled,
+                |bricks| {
+                    bricks.resource::<SizedHighlights>();
+                },
+            )
             .piece::<LightingPiece>()
             .surface_kind(SurfaceKind { name: "thin" })
             .fill::<Lighting>(Some(shaders::lighting_model::faces::lighting::MODULE))
@@ -121,7 +127,11 @@ fn publish_lighting(sized: Option<Res<SizedHighlights>>, mut lighting: ResMut<Li
 }
 
 fn publish_piece(
-    (surface, highlights, sized): (Res<SurfaceLight>, Res<Highlights>, Option<Res<SizedHighlights>>),
+    (surface, highlights, sized): (
+        Res<SurfaceLight>,
+        Res<Highlights>,
+        Option<Res<SizedHighlights>>,
+    ),
     sky: Res<SkyLight>,
     mut piece: ResMut<LightingPiece>,
 ) {

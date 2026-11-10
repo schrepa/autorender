@@ -17,20 +17,10 @@ pub struct Level {
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum LevelView {
     Idle,
-    Asked {
-        path: String,
-        progress: Progress,
-    },
-    Ready {
-        path: String,
-    },
-    Failed {
-        path: String,
-        error: Refusal,
-    },
-    Missing {
-        path: String,
-    },
+    Asked { path: String, progress: Progress },
+    Ready { path: String },
+    Failed { path: String, error: Refusal },
+    Missing { path: String },
 }
 
 impl Level {

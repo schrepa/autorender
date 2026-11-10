@@ -119,7 +119,12 @@ pub(crate) fn sync(mut state: ResMut<WaterState>, mut spawner: Spawner<WaterBric
         .emitters
         .keys()
         .copied()
-        .filter(|&entity| !state.terrains.iter().any(|terrain| terrain.entity == entity))
+        .filter(|&entity| {
+            !state
+                .terrains
+                .iter()
+                .any(|terrain| terrain.entity == entity)
+        })
         .collect();
     for entity in gone {
         if let Some(emitters) = state.emitters.remove(&entity) {

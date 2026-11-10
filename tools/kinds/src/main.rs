@@ -149,22 +149,22 @@ const KITS: &[(&str, &[&str])] = &[
         &["engine_collision", "engine_physics", "engine_terrain"],
     ),
     (
-    "engine_open_world_kit",
-    &[
-        "engine_terrain",
-        "engine_terrain_shading",
-        "engine_scatter",
-        "engine_ground_cover",
-        "engine_water",
-        "engine_world_streaming",
-        "engine_layer_noise",
-        "engine_layer_stamps",
-        "engine_layer_heightmap",
-        "engine_layer_paths",
-        "engine_layer_erosion",
-        "engine_layer_hydrology",
-        "engine_layer_relief",
-    ],
+        "engine_open_world_kit",
+        &[
+            "engine_terrain",
+            "engine_terrain_shading",
+            "engine_scatter",
+            "engine_ground_cover",
+            "engine_water",
+            "engine_world_streaming",
+            "engine_layer_noise",
+            "engine_layer_stamps",
+            "engine_layer_heightmap",
+            "engine_layer_paths",
+            "engine_layer_erosion",
+            "engine_layer_hydrology",
+            "engine_layer_relief",
+        ],
     ),
 ];
 
@@ -369,9 +369,7 @@ fn closed(members: &[Member], problems: &mut Vec<String>) {
 fn kits(members: &[Member], problems: &mut Vec<String>) {
     for &(kit, users) in KITS {
         match members.iter().find(|member| member.name == kit) {
-            None => problems.push(format!(
-                "Cargo.toml: the kit {kit} is no workspace crate"
-            )),
+            None => problems.push(format!("Cargo.toml: the kit {kit} is no workspace crate")),
             Some(member) if member.kind.as_deref() != Some("kit") => problems.push(format!(
                 "{}: the kits name this crate, which declares {}",
                 member.label(),
@@ -409,11 +407,7 @@ fn kit_part(kit: &str, brick: &str) -> bool {
         .any(|&(name, parts)| name == kit && parts.contains(&brick))
 }
 
-fn declarations(
-    root: &Path,
-    members: &[Member],
-    problems: &mut Vec<String>,
-) -> Result<(), String> {
+fn declarations(root: &Path, members: &[Member], problems: &mut Vec<String>) -> Result<(), String> {
     for member in members {
         let source = member.dir.join("src");
         if member.kind.as_deref() != Some("shared") || !source.is_dir() {
@@ -457,9 +451,9 @@ fn technique_free(
 fn declares_place(line: &str) -> bool {
     let mut words = line.split_whitespace();
     let implements = words.next() == Some("impl")
-        && words.next().is_some_and(|path| {
-            matches!(path.rsplit("::").next(), Some("Slot" | "List" | "Ask"))
-        })
+        && words
+            .next()
+            .is_some_and(|path| matches!(path.rsplit("::").next(), Some("Slot" | "List" | "Ask")))
         && words.next() == Some("for");
     implements || line.contains("PlaceDecl::")
 }
@@ -660,7 +654,8 @@ fn allowed(member: &Member, kind: &str, target: &Member) -> bool {
         }
         "host" => matches!(target_kind, "support" | "core" | "core-internal" | "host"),
         "place" => {
-            matches!(target_kind, "support" | "place") || matches!(name, "engine_place" | "engine_ecs")
+            matches!(target_kind, "support" | "place")
+                || matches!(name, "engine_place" | "engine_ecs")
         }
         "shared" | "kit" => {
             matches!(target_kind, "support" | "place" | "shared")

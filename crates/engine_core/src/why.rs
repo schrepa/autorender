@@ -92,10 +92,12 @@ impl Operation for Why {
         match (request.entity, request.brick) {
             (Some(id), None) => entity_answer(world, &id).map(WhyAnswer::Entity),
             (None, Some(brick)) => brick_answer(world, &brick).map(WhyAnswer::Brick),
-            (Some(_), Some(_)) => Err(Error::new(ErrorCode::InvalidArguments, "$.brick")
-                .expected(Expected::Absent)),
-            (None, None) => Err(Error::new(ErrorCode::MissingField, "$.entity")
-                .expected(Expected::Present)),
+            (Some(_), Some(_)) => {
+                Err(Error::new(ErrorCode::InvalidArguments, "$.brick").expected(Expected::Absent))
+            }
+            (None, None) => {
+                Err(Error::new(ErrorCode::MissingField, "$.entity").expected(Expected::Present))
+            }
         }
     }
 }
@@ -185,7 +187,11 @@ fn brick_answer(world: &World, brick: &str) -> Result<BrickWhy, Error> {
         .map(|states| states.needs(id))
         .unwrap_or_default()
         .iter()
-        .filter_map(|&need| registry.record(need).map(|record| record.package.to_owned()))
+        .filter_map(|&need| {
+            registry
+                .record(need)
+                .map(|record| record.package.to_owned())
+        })
         .collect();
     let readiness = world.get_resource::<Readiness>();
     let waiting: Vec<Unsettled> = readiness

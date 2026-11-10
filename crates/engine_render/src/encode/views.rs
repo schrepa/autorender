@@ -34,8 +34,11 @@ impl Run {
     }
 
     pub(crate) fn write_post(&mut self) {
-        self.queue
-            .write_buffer(&self.set().post_buffer, 0, bytemuck::bytes_of(&self.uniforms.post));
+        self.queue.write_buffer(
+            &self.set().post_buffer,
+            0,
+            bytemuck::bytes_of(&self.uniforms.post),
+        );
     }
 
     pub(crate) fn write_pieces(&mut self, staged: &mut Vec<u8>) -> u64 {
@@ -176,7 +179,12 @@ impl Run {
     }
 
     pub(super) fn placeholder(&mut self, key: (Ty, u64)) {
-        if !self.bindings.placeholders.iter().any(|(known, _)| *known == key) {
+        if !self
+            .bindings
+            .placeholders
+            .iter()
+            .any(|(known, _)| *known == key)
+        {
             let made = placeholder(&self.device, key);
             self.bindings.placeholders.push((key, made));
         }
@@ -197,14 +205,10 @@ impl Run {
                 Some((made, _)) => Resolved::Buffer(made.clone()),
                 None => Resolved::Placeholder(ty),
             },
-            Bound::Window { buffer, size } => {
-                match self.buffer_held(*buffer) {
-                    Some((made, bytes)) if *bytes >= *size => {
-                        Resolved::Dynamic(made.clone(), *size)
-                    }
-                    Some(_) | None => Resolved::Placeholder(ty),
-                }
-            }
+            Bound::Window { buffer, size } => match self.buffer_held(*buffer) {
+                Some((made, bytes)) if *bytes >= *size => Resolved::Dynamic(made.clone(), *size),
+                Some(_) | None => Resolved::Placeholder(ty),
+            },
             Bound::Sampler(sampler) => match self.bindings.samplers.get(*sampler as usize) {
                 Some(made) => Resolved::Sampler(made.clone()),
                 None => Resolved::Placeholder(ty),
@@ -262,9 +266,12 @@ impl Run {
                     }
                     Resolved::View(view) => wgpu::BindingResource::TextureView(view),
                     Resolved::Sampler(sampler) => wgpu::BindingResource::Sampler(sampler),
-                    Resolved::Placeholder(_) => match key
-                        .and_then(|key| self.bindings.placeholders.iter().find(|(known, _)| *known == key))
-                    {
+                    Resolved::Placeholder(_) => match key.and_then(|key| {
+                        self.bindings
+                            .placeholders
+                            .iter()
+                            .find(|(known, _)| *known == key)
+                    }) {
                         Some((_, Placeholder::Buffer(buffer))) => buffer.as_entire_binding(),
                         Some((_, Placeholder::Texture(view))) => {
                             wgpu::BindingResource::TextureView(view)
@@ -317,7 +324,10 @@ impl Run {
                     .get(&binding)
                     .map_or(Ty::Uniform, |slot| slot.ty);
                 let found = match binding {
-                    0 => Resolved::Dynamic(self.uniforms.camera.clone(), size_of::<CameraUniform>() as u64),
+                    0 => Resolved::Dynamic(
+                        self.uniforms.camera.clone(),
+                        size_of::<CameraUniform>() as u64,
+                    ),
                     1 => Resolved::Buffer(self.uniforms.pieces.clone()),
                     _ => match self.machine.frame_bound.get(&binding).cloned() {
                         Some(bound) => self.resource(&bound, ty, true),
@@ -412,10 +422,9 @@ impl Run {
         };
         let split = self.canvas.rect.is_some();
         let set = self.set();
-        let held = set
-            .targets
-            .iter()
-            .any(|(target, made)| *target == Target::Canvas && made.texture.format() == self.canvas.format);
+        let held = set.targets.iter().any(|(target, made)| {
+            *target == Target::Canvas && made.texture.format() == self.canvas.format
+        });
         let live: Vec<Target> = (0..self.machine.outputs.len())
             .filter(|&index| self.planning.live.get(index).copied().unwrap_or(true))
             .map(|index| Target::Output(index as u32))
@@ -471,7 +480,10 @@ impl Run {
             }
         }
         if split {
-            targets.push((Target::Canvas, made("engine/view-canvas", self.canvas.format)));
+            targets.push((
+                Target::Canvas,
+                made("engine/view-canvas", self.canvas.format),
+            ));
         }
         let set = self.set_mut();
         set.targets = targets;
@@ -517,9 +529,9 @@ impl Run {
         if at != self.sets.at {
             let holders = &self.sets.holders;
             for filled in &mut self.filled {
-                let held = holders
-                    .iter()
-                    .any(|holder| matches!(holder, Holder::Own(pipeline, _) if *pipeline == filled.base));
+                let held = holders.iter().any(
+                    |holder| matches!(holder, Holder::Own(pipeline, _) if *pipeline == filled.base),
+                );
                 if held {
                     filled.groups.clear();
                 }
@@ -538,15 +550,16 @@ impl Run {
         if from == at {
             return false;
         }
-        let pairs: Vec<(wgpu::Texture, wgpu::Texture, wgpu::Extent3d)> = [Target::Scene, Target::Depth]
-            .iter()
-            .filter_map(|target| {
-                let from = source.targets.iter().find(|(known, _)| known == target)?;
-                let to = current.targets.iter().find(|(known, _)| known == target)?;
-                (from.1.size == to.1.size)
-                    .then(|| (from.1.texture.clone(), to.1.texture.clone(), to.1.size))
-            })
-            .collect();
+        let pairs: Vec<(wgpu::Texture, wgpu::Texture, wgpu::Extent3d)> =
+            [Target::Scene, Target::Depth]
+                .iter()
+                .filter_map(|target| {
+                    let from = source.targets.iter().find(|(known, _)| known == target)?;
+                    let to = current.targets.iter().find(|(known, _)| known == target)?;
+                    (from.1.size == to.1.size)
+                        .then(|| (from.1.texture.clone(), to.1.texture.clone(), to.1.size))
+                })
+                .collect();
         if pairs.len() != 2 {
             return false;
         }
@@ -609,7 +622,12 @@ pub(crate) struct Tables {
 impl Tables {
     pub(crate) fn of(machine: &Machine) -> Self {
         Self {
-            textures: machine.declared.textures.iter().map(|_| [None, None]).collect(),
+            textures: machine
+                .declared
+                .textures
+                .iter()
+                .map(|_| [None, None])
+                .collect(),
             sizes: machine.declared.textures.iter().map(|_| None).collect(),
             buffers: machine.declared.buffers.iter().map(|_| None).collect(),
         }

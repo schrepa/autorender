@@ -1,12 +1,12 @@
 engine::brick!(walk);
 
 use bevy_ecs::prelude::*;
-use engine_core::{
-    Binding, BindingSource, Brick, Bricks, ComponentKind, Contexts, Filled, FixedTime, Hold,
-    Input, Moves, Pace, Player, SceneComponents, Schedule, Source, Stick, Verb, VerbId,
-    VerbShape, Verbs, stats,
-};
 use engine_core::math::clamp;
+use engine_core::{
+    Binding, BindingSource, Brick, Bricks, ComponentKind, Contexts, Filled, FixedTime, Hold, Input,
+    Moves, Pace, Player, SceneComponents, Schedule, Source, Stick, Verb, VerbId, VerbShape, Verbs,
+    stats,
+};
 use engine_places_simulation::navigation::NavAgent;
 use engine_places_simulation::physics::{
     Collider, Collision, CollisionLayers, QueryFilter, SensorFilter,
@@ -34,7 +34,10 @@ const MOVE: Verb = Verb {
     name: "walk.move",
     shape: VerbShape::Value2,
     bindings: &[
-        Binding::new("walk.move", BindingSource::keys("KeyD", "KeyA", "KeyW", "KeyS")),
+        Binding::new(
+            "walk.move",
+            BindingSource::keys("KeyD", "KeyA", "KeyW", "KeyS"),
+        ),
         Binding::new(
             "walk.move",
             BindingSource::keys("ArrowRight", "ArrowLeft", "ArrowUp", "ArrowDown"),

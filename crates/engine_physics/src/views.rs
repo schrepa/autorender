@@ -6,8 +6,8 @@ use engine_core::{
 use engine_places_simulation::physics::{BodyAsk, BodyChange, RigidBody};
 use serde::{Deserialize, Serialize};
 
-use crate::body::{BodyProblem, BodyWater, check_change};
 use crate::INVALID_RIGID_BODY;
+use crate::body::{BodyProblem, BodyWater, check_change};
 use crate::world::PhysicsWorld;
 
 #[derive(Serialize, schemars::JsonSchema)]

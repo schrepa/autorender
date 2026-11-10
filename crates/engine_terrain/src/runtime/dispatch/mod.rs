@@ -144,7 +144,13 @@ fn load_records(
             },
         );
     }
-    prefetch(state, (missing, named), (recipe, generation, materials), asking, frame);
+    prefetch(
+        state,
+        (missing, named),
+        (recipe, generation, materials),
+        asking,
+        frame,
+    );
 }
 
 fn prefetch(

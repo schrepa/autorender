@@ -1,5 +1,5 @@
-use engine_math::GRAVITY;
 use engine_heightfield::Bed;
+use engine_math::GRAVITY;
 
 pub use super::gpu::{
     COURANT, DEEPEST, DENSITY, DRY, FERGUSON_A1, FERGUSON_A2, GROUND_D84, SHALLOWEST, STRICKLER,

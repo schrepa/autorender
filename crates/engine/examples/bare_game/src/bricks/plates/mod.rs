@@ -3,9 +3,8 @@ engine::brick!(plates);
 use bevy_ecs::prelude::*;
 use engine_core::{
     AssetResidency, AttachPoint, Attributes, BlendedPass, Brick, Bricks, ColorPass, DrawKind,
-    DrawnPoses, DrawnTable, Error, GlobalTransforms, GpuStruct, KindDecl, KindSkip,
-    MaterialHandle, Pass, PassName, PassPurpose, PassViews, SlotSet, Source, SurfaceSlot, Writes,
-    gpu_struct,
+    DrawnPoses, DrawnTable, Error, GlobalTransforms, GpuStruct, KindDecl, KindSkip, MaterialHandle,
+    Pass, PassName, PassPurpose, PassViews, SlotSet, Source, SurfaceSlot, Writes, gpu_struct,
 };
 use engine_render::{
     Allocation, Bind, Buffer, Draw, Form, FormSide, GpuPart, Install, KindForm, Lifetime, Prepare,
@@ -131,9 +130,7 @@ impl GpuPart for PlatesGpu {
             let Some(pose) = poses.drawn_pose(&globals, entity) else {
                 continue;
             };
-            let previous = poses
-                .previous_drawn_pose(&globals, entity)
-                .unwrap_or(pose);
+            let previous = poses.previous_drawn_pose(&globals, entity).unwrap_or(pose);
             if self.material.is_none() {
                 self.material = drawn
                     .material

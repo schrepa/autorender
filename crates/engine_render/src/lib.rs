@@ -5,15 +5,13 @@
     clippy::expect_used
 )]
 
-use std::any::TypeId;
 use std::marker::PhantomData;
 use std::ops::Range;
 
-use bevy_ecs::resource::Resource;
 use bevy_ecs::system::SystemParamItem;
 use engine_core::{
-    Bricks, DrawKind, Entry, Error, List, MaterialHandle, GeometryHandle, PassBit, PassEntry, PassName,
-    PassRole, Read, Readable, Readback, Slot, TextureHandle, Var, gpu_struct,
+    Bricks, DrawKind, Entry, Error, GeometryHandle, MaterialHandle, PassBit, PassEntry, PassName,
+    PassRole, Read, Readable, Readback, TextureHandle, Var, gpu_struct,
 };
 use engine_registry::RecordExt;
 
@@ -23,8 +21,8 @@ use crate::machine::OutputDecl;
 pub use engine_core::{AttachPoint, TargetName};
 pub use wgpu;
 
-mod draws;
 mod drawn;
+mod draws;
 mod encode;
 mod frame_group;
 mod gpu_calls;
@@ -47,6 +45,7 @@ pub mod slots;
 mod surface;
 mod uploads;
 
+mod core_slots;
 mod materials;
 mod memory;
 mod mesh_arena;
@@ -64,13 +63,8 @@ pub use gpu_data::{
 pub use kinds::{
     Form, FormPass, FormSide, FormTopology, KindForm, OwnFragments, RoleFragments, Varyings,
 };
-pub use uploads::{UploadRange, listed_ranges};
 pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
 pub use materials::gpu_format as texture_format;
-pub use surface::{
-    DrawState, FaceCull, LightingModule, MaterialValue, MaterialVariant, OpenSlot, SlotModule,
-    SurfaceKind, SurfaceTerms, material_state,
-};
 #[doc(hidden)]
 pub use memory::GpuMemory;
 #[doc(hidden)]
@@ -87,8 +81,15 @@ pub use renderer::{
     StartingRenderer, device_limits, install_noop,
 };
 pub use shaders::FULLSCREEN;
+pub use surface::{
+    DrawState, FaceCull, LightingModule, MaterialValue, MaterialVariant, OpenSlot, SlotModule,
+    SurfaceKind, SurfaceTerms, material_state,
+};
+pub use uploads::{UploadRange, listed_ranges};
 
 pub const DEV: bool = cfg!(feature = "dev");
+
+pub use core_slots::{DEBUG_BLEND, DEBUG_TARGETS, DebugMode, DebugModes, DebugShown, Lit, Resolve};
 
 pub fn level_region(view: &engine_core::ViewFacts, level: u32) -> (u32, u32) {
     let (display, render) = (view.size(), view.render);
@@ -593,7 +594,10 @@ impl<P: GpuPart> Install<'_, P> {
         format: wgpu::TextureFormat,
         lifetime: Lifetime,
     ) -> Texture<P> {
-        Texture(self.core.texture(label, format, (lifetime, false)), PhantomData)
+        Texture(
+            self.core.texture(label, format, (lifetime, false)),
+            PhantomData,
+        )
     }
 
     pub fn buffer(&mut self, label: &'static str, lifetime: Lifetime) -> Buffer<P> {
@@ -606,7 +610,10 @@ impl<P: GpuPart> Install<'_, P> {
         format: wgpu::TextureFormat,
         lifetime: Lifetime,
     ) -> Texture<P> {
-        Texture(self.core.texture(label, format, (lifetime, true)), PhantomData)
+        Texture(
+            self.core.texture(label, format, (lifetime, true)),
+            PhantomData,
+        )
     }
 
     pub fn view_buffer(&mut self, label: &'static str, lifetime: Lifetime) -> Buffer<P> {
@@ -1150,7 +1157,8 @@ impl<P: GpuPart> Prepare<'_, P> {
 
     pub fn canvas(&self) -> Option<wgpu::TextureFormat> {
         self.core
-            .canvas.texture
+            .canvas
+            .texture
             .as_ref()
             .filter(|texture| texture.usage().contains(wgpu::TextureUsages::COPY_SRC))
             .map(wgpu::Texture::format)
@@ -1210,7 +1218,11 @@ impl<P: GpuPart> Encode<'_, P> {
         drawn
     }
 
-    fn open_view(&mut self, target: &Attach<P>, view: encode::OwnedDraw) -> Option<Draw<'_, P, Own>> {
+    fn open_view(
+        &mut self,
+        target: &Attach<P>,
+        view: encode::OwnedDraw,
+    ) -> Option<Draw<'_, P, Own>> {
         self.core.open_encode_span(self.timer);
         if !self.core.begin_render(raw_attach(target), Some(&view)) {
             self.core.end_render();
@@ -1459,63 +1471,4 @@ gpu_struct! {
         pub detail: [f32; 4],
         pub view: [u32; 4],
     }
-}
-
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Resolve;
-
-impl Slot for Resolve {
-    const NAME: &'static str = "resolve";
-    const WGSL: Option<&'static str> = Some(include_str!("places/resolve.wgsl"));
-}
-
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct Lit;
-
-impl Slot for Lit {
-    const NAME: &'static str = "lit";
-    const WGSL: Option<&'static str> = Some(include_str!("places/lit.wgsl"));
-}
-
-#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct DebugShown {
-    pub owner: Option<TypeId>,
-    pub local: u32,
-}
-
-pub const DEBUG_TARGETS: [TargetName; 3] = [
-    TargetName("debug_ids"),
-    TargetName("debug_count"),
-    TargetName("debug_words"),
-];
-
-pub const DEBUG_BLEND: wgpu::BlendState = wgpu::BlendState {
-    color: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
-    },
-    alpha: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
-    },
-};
-
-impl Slot for DebugShown {
-    const NAME: &'static str = "debug";
-    const WGSL: Option<&'static str> = Some(include_str!("places/debug.wgsl"));
-}
-
-pub struct DebugMode {
-    pub name: &'static str,
-    pub decode: fn(kind: Option<DrawKind>, ids: [u32; 4], color: [f32; 4]) -> serde_json::Value,
-}
-
-pub struct DebugModes;
-
-impl List for DebugModes {
-    const NAME: &'static str = "debug_modes";
-    type Member = DebugMode;
-    const WGSL: Option<&'static str> = Some(include_str!("places/debug_modes.wgsl"));
 }

@@ -38,7 +38,11 @@ impl Run {
     }
 
     pub(crate) fn grow_buffer(&mut self, buffer: u32, bytes: u64) -> Allocation {
-        let Some(held) = self.buffer_tables_mut(buffer).buffers.get_mut(buffer as usize) else {
+        let Some(held) = self
+            .buffer_tables_mut(buffer)
+            .buffers
+            .get_mut(buffer as usize)
+        else {
             return Allocation::Fresh;
         };
         if held.as_ref().is_some_and(|(_, known)| *known >= bytes) {

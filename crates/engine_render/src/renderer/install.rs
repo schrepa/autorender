@@ -307,8 +307,7 @@ fn material_layout(
     let mut terms = Vec::new();
     for (_, declared) in registry.render_entries::<SurfaceTerms>() {
         linker.add_source(declared.derive.source());
-        let (path, name) =
-            crate::linker::path_of((declared.derive, crate::surface::DERIVE_ENTRY));
+        let (path, name) = crate::linker::path_of((declared.derive, crate::surface::DERIVE_ENTRY));
         roots.push((path.to_owned(), name));
         terms.push((*declared, path.to_owned()));
     }
@@ -381,11 +380,20 @@ fn applied_modules(
 fn outputs(registry: &Registry, roots: &mut Vec<(String, String)>) -> Vec<OutputDecl> {
     let mut found = Vec::new();
     for (target, format) in [
-        (engine_core::TargetName::TRANSPARENCY, crate::shared::COVER_FORMAT),
-        (engine_core::TargetName::ACCUMULATED, crate::shared::ACCUMULATED_FORMAT),
+        (
+            engine_core::TargetName::TRANSPARENCY,
+            crate::shared::COVER_FORMAT,
+        ),
+        (
+            engine_core::TargetName::ACCUMULATED,
+            crate::shared::ACCUMULATED_FORMAT,
+        ),
     ] {
         let name = target.name();
-        roots.push((crate::shared::TRANSPARENCY_MODULE.to_owned(), name.to_owned()));
+        roots.push((
+            crate::shared::TRANSPARENCY_MODULE.to_owned(),
+            name.to_owned(),
+        ));
         found.push(OutputDecl {
             name,
             format,
@@ -763,7 +771,9 @@ fn install_with(
         });
     }
     for draw in &draws {
-        let index = listed.iter().position(|entry| entry.record.part == draw.part);
+        let index = listed
+            .iter()
+            .position(|entry| entry.record.part == draw.part);
         if let (Some(index), Some(kind)) = (index, core.passes.kind(draw.kind).copied()) {
             core.draws.push(KindMember {
                 part: index as u32,
@@ -1010,7 +1020,9 @@ pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
     let listed = listing(&mut installed);
     let queue = crate::gpu_calls::Queue::new(queue);
     let mut assets = new_assets(&device, &queue);
-    assets.materials.configure(&device, installed.material.clone());
+    assets
+        .materials
+        .configure(&device, installed.material.clone());
     let scope = crate::gpu_calls::validation_scope(&device);
     let mut run = Run::new(
         (device.clone(), queue.clone(), limits),
@@ -1199,7 +1211,11 @@ pub(crate) fn reinstall(
         &mut run.machine.linker,
         Linker::new(crate::shared::core_source()),
     );
-    let mut core = InstallCore::new(linker, run.device.features(), held_limits(run.limits, world));
+    let mut core = InstallCore::new(
+        linker,
+        run.device.features(),
+        held_limits(run.limits, world),
+    );
     core.passes = scene_passes(world);
     core.outputs = run.machine.outputs.clone();
     core.part = part;

@@ -72,13 +72,16 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
             Err(error) => (error, false),
         };
         let code = error.code.as_str();
-        observed.check(code == rule && error.path == path && skipped == skips, || {
-            let answer = if skipped { "skipped" } else { "refused" };
-            format!(
-                "{name}: expected {rule} at {path}, found {code} at {} {answer}",
-                error.path
-            )
-        });
+        observed.check(
+            code == rule && error.path == path && skipped == skips,
+            || {
+                let answer = if skipped { "skipped" } else { "refused" };
+                format!(
+                    "{name}: expected {rule} at {path}, found {code} at {} {answer}",
+                    error.path
+                )
+            },
+        );
         refused.insert(code.to_owned());
         observed.record(name, json!(error));
     }

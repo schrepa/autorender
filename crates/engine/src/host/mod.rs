@@ -19,21 +19,21 @@ pub use engine_core::{
 };
 pub use engine_panic::{PANIC_GLOBAL, PANIC_PREFIX, PanicReport};
 pub use engine_registry::JobList;
+pub use engine_registry::{call, run_operation};
 pub use environment::{HostEnvironment, KNOWN_DIFFERENCES};
 pub use frame_loop::{FrameLoop, FramePhase, HostPause};
 pub use input::{DeviceGatherer, InputSource};
-pub(crate) use jobs::{Finished, JobScheduler};
 pub use jobs::JobOrder;
+pub(crate) use jobs::{Finished, JobScheduler};
 pub(crate) use level::{LevelLoad, LevelStep};
 pub(crate) use pipeline_list::PipelineList;
 pub use resolution::{render_size, view_size};
 pub use scene_load::{
     FileRead, IMAGE_FORMATS, Image, ImageFormat, SceneLoad, decode_image, image_format,
 };
-pub use engine_registry::{call, run_operation};
 pub use settings::{
-    HostSettings, OVERLAY, SETTINGS, Setting, Settings, SettingsLog, TypedSettings,
-    apply_setting, apply_settings, changed_section, has_setting, reset_setting,
+    HostSettings, OVERLAY, SETTINGS, Setting, Settings, SettingsLog, TypedSettings, apply_setting,
+    apply_settings, changed_section, has_setting, reset_setting,
 };
 
 #[cfg(all(feature = "schema", not(target_arch = "wasm32")))]

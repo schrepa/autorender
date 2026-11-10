@@ -7,9 +7,7 @@ use bevy_ecs::world::World;
 use engine_registry::OperationScene;
 use serde::Serialize;
 
-use crate::{
-    EntityIds, Event, Feed, FeedSettings, Level, LevelView, Raises, Readiness, Refusal,
-};
+use crate::{EntityIds, Event, Feed, FeedSettings, Level, LevelView, Raises, Readiness, Refusal};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]

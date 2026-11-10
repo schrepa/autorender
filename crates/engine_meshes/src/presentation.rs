@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, AssetResidency, Cursor, FrameId, MaterialHandle, GeometryHandle, MeshResidence,
+    AssetLibrary, AssetResidency, Cursor, FrameId, GeometryHandle, MaterialHandle, MeshResidence,
     Readable, Readback, ResidentMesh,
 };
 use engine_places::meshes::LastLevel;
@@ -327,7 +327,8 @@ impl DrawGroups {
     }
 
     pub(crate) fn view_source(&self, slot: &ViewSlot, item: &DrawItem, level: usize) -> (u64, u64) {
-        let args = slot.args_base + (level * self.batch_count as usize + item.batch as usize) as u64;
+        let args =
+            slot.args_base + (level * self.batch_count as usize + item.batch as usize) as u64;
         let ids = if self.first_instance {
             0
         } else {

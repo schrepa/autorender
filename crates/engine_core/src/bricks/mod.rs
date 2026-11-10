@@ -23,9 +23,8 @@ use serde_json::Value;
 
 use crate::moves::NodeKind;
 use crate::{
-    Board, Error, ErrorCode, GpuStruct, JobKind, KindDecl, List, Module, Mover, MoverId,
-    Operation, Pace, PlaceDecl, RecordKey, SceneContext, SceneIds, Section, Slot, Smoke, Source,
-    SubScene,
+    Board, Error, ErrorCode, GpuStruct, JobKind, KindDecl, List, Module, Mover, MoverId, Operation,
+    Pace, PlaceDecl, RecordKey, SceneContext, SceneIds, Section, Slot, Smoke, Source, SubScene,
 };
 
 pub trait Brick: 'static {
@@ -733,7 +732,11 @@ fn installed<B: Brick>(world: &mut World, entities: &[Entity], scene: &SubScene)
     }
 }
 
-fn install<B: Brick>(world: &mut World, entities: &[Entity], scene: &SubScene) -> Result<(), Error> {
+fn install<B: Brick>(
+    world: &mut World,
+    entities: &[Entity],
+    scene: &SubScene,
+) -> Result<(), Error> {
     let scene_id = world
         .get_resource::<OperationScene>()
         .map(|scene| scene.id.clone())

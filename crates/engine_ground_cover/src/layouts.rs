@@ -82,7 +82,10 @@ const _: () = assert!(
     "material_fills_its_rows"
 );
 
-const _: () = assert!(size_of::<CoverTerrain>() == size_of::<[u32; 4]>(), "terrain_fills_a_row");
+const _: () = assert!(
+    size_of::<CoverTerrain>() == size_of::<[u32; 4]>(),
+    "terrain_fills_a_row"
+);
 
 pub(crate) const GENERATED: &[&str] = &[
     Grow::WGSL,

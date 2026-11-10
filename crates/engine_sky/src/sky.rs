@@ -12,9 +12,7 @@ use engine_render::{
 };
 use glam::{Mat4, UVec2, Vec3};
 
-use crate::clouds::{
-    CloudFrame, CloudPass, CloudPlan, CloudSteps, cloud_regions, shadow_lighting,
-};
+use crate::clouds::{CloudFrame, CloudPass, CloudPlan, CloudSteps, cloud_regions, shadow_lighting};
 use crate::environment::{Environment, EnvironmentInputs, EnvironmentPlan, EnvironmentSteps};
 use crate::gpu_layouts::{SKY_TABLE_GROUP, SKY_VIEW_HEIGHT, SKY_VIEW_WIDTH, SkyAir, SkyPiece};
 use crate::haze::{Haze, HazeFrame, HazePlan, HazeSteps};
@@ -112,11 +110,7 @@ impl AirPlan {
     }
 }
 
-fn write_air(
-    air: &mut SkyAir,
-    settings: &Sky,
-    (sun, height, moon): (Vec3, f32, [f32; 4]),
-) {
+fn write_air(air: &mut SkyAir, settings: &Sky, (sun, height, moon): (Vec3, f32, [f32; 4])) {
     air.rayleigh = [
         settings.rayleigh[0],
         settings.rayleigh[1],
@@ -154,7 +148,9 @@ fn write_air(
 fn night_lighting(night: &NightSky, path: &SunPath, sun: Vec3) -> [[f32; 4]; 3] {
     let moon = path.moon;
     let lit = moon.map_or(0.0, |moon| 0.5 - 0.5 * moon.dot(sun));
-    let disc = moon.map_or([0.0, 1.0, 0.0, 0.0], |moon| moon.extend(night.moon_size).to_array());
+    let disc = moon.map_or([0.0, 1.0, 0.0, 0.0], |moon| {
+        moon.extend(night.moon_size).to_array()
+    });
     [
         [
             night.stars,
@@ -282,11 +278,7 @@ type SkySections<'w> = (
     Res<'w, NightSky>,
 );
 
-type SkyLights<'w> = (
-    Res<'w, Sun>,
-    Res<'w, SunPath>,
-    Res<'w, ViewWind>,
-);
+type SkyLights<'w> = (Res<'w, Sun>, Res<'w, SunPath>, Res<'w, ViewWind>);
 
 type SkyFrame<'w> = (
     Res<'w, StaticTables>,
@@ -314,8 +306,9 @@ pub(crate) fn plan_sky(
     let main = views.main();
     let eye = main.map_or(Vec3::ZERO, |main| main.eye);
     let view_projection = main.map_or(Mat4::IDENTITY, |main| main.view_projection);
-    let (display, render) =
-        main.map_or((UVec2::ZERO, UVec2::ZERO), |main| (main.size(), main.render));
+    let (display, render) = main.map_or((UVec2::ZERO, UVec2::ZERO), |main| {
+        (main.size(), main.render)
+    });
     let seconds = time.elapsed;
     let sun_direction = Vec3::from_slice(&sun.direction[..3]);
     let [night_light, _, moon] = night_lighting(&night, &path, sun_direction);
@@ -340,7 +333,12 @@ pub(crate) fn plan_sky(
     (plan.piece.cloud_shadow, plan.piece.cloud_layer) = shadow_lighting(&clouds, eye);
     plan.piece.wind = [wind.velocity[0], wind.velocity[1], 0.0, 0.0];
     plan.clouds.prepare(
-        (&clouds, tables.cloud_noise(), (eye, medium.surface), seconds),
+        (
+            &clouds,
+            tables.cloud_noise(),
+            (eye, medium.surface),
+            seconds,
+        ),
         (&*sun, &plan.piece),
         &mut budget,
     );

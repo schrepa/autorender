@@ -30,14 +30,20 @@ pub(crate) fn color_data(table: &DrawnTable, assets: &AssetLibrary, slot: usize)
         .drawn(slot as u32)
         .and_then(|drawn| drawn.material)
         .and_then(|handle| assets.material(handle));
-    let tint = table.records().get(slot).map_or([1.0; 4], |record| record.tint);
+    let tint = table
+        .records()
+        .get(slot)
+        .map_or([1.0; 4], |record| record.tint);
     ColorData {
         color: pack_color(tinted(material.map_or([1.0; 4], Material::color), tint)),
         surface: pack_surface(
-            SurfaceValues::read(|name| material.and_then(|material| material.surface_value(name)), |name| material.and_then(|material| material.value(name))).units(),
+            SurfaceValues::read(
+                |name| material.and_then(|material| material.surface_value(name)),
+                |name| material.and_then(|material| material.value(name)),
+            )
+            .units(),
             material.map_or(0.0, Material::emission),
         ),
         pad: 0,
     }
 }
-

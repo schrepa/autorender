@@ -242,10 +242,7 @@ impl JobScheduler {
             .filter(|(_, load)| !load.lost)
             .min_by_key(|&(worker, load)| {
                 let (count, urgent) = self.running_on(worker as u32);
-                (
-                    count + load.tasks as usize,
-                    std::cmp::Reverse(urgent),
-                )
+                (count + load.tasks as usize, std::cmp::Reverse(urgent))
             })
             .map(|(worker, _)| worker as u32)
     }

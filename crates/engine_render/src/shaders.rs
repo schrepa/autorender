@@ -49,10 +49,12 @@ pub const FS_COMPOSITE: engine_core::Entry = engine_core::Entry::generated(
     "fs_composite",
 );
 
-
 pub(crate) fn core_module(path: &str) -> Module {
     let index = TEXTS.iter().position(|text| text.path() == path);
-    Module::generated(&CORE, index.unwrap_or_else(|| panic!("core_module_listed {path}")) as u32)
+    Module::generated(
+        &CORE,
+        index.unwrap_or_else(|| panic!("core_module_listed {path}")) as u32,
+    )
 }
 
 pub const PRESENTATION_MODULE: &str = "engine::presentation";
@@ -103,7 +105,11 @@ pub fn presentation_source() -> String {
 pub fn debug_source() -> String {
     use engine_core::GpuBits;
     let mut source = String::from(<crate::debug::DebugRecord as GpuBits>::WGSL);
-    unsigned(&mut source, "DEBUG_NO_MATERIAL", crate::debug::DEBUG_NO_MATERIAL);
+    unsigned(
+        &mut source,
+        "DEBUG_NO_MATERIAL",
+        crate::debug::DEBUG_NO_MATERIAL,
+    );
     source.push_str(
         "
 fn debug_kind_color(kind: u32) -> vec3<f32> {
@@ -141,14 +147,23 @@ pub fn generated_core() -> [(&'static str, String); 13] {
         (DEBUG_MODULE, debug_source()),
         (DECLARATIONS_MODULE, declarations_source()),
         (crate::surface::SHADING_MODULE, standard.shading_source()),
-        (crate::surface::MATERIALS_MODULE, standard.materials_source()),
+        (
+            crate::surface::MATERIALS_MODULE,
+            standard.materials_source(),
+        ),
         (crate::surface::SLOTS_MODULE, standard.slots_source(false)),
         (crate::surface::SURFACES_MODULE, standard.surfaces_source()),
         (VIEW_MODULE, view_source()),
         (PYRAMID_MODULE, crate::pyramid::source()),
         (crate::drawn::DRAWN_MODULE, crate::drawn::source()),
         (crate::drawn::DRAWN_CULL_MODULE, crate::drawn::cull_source()),
-        (crate::drawn::DRAWN_FADES_MODULE, crate::drawn::fades_source()),
-        (crate::shared::WRITES_MODULE, crate::shared::pass_module(true, &[]).1),
+        (
+            crate::drawn::DRAWN_FADES_MODULE,
+            crate::drawn::fades_source(),
+        ),
+        (
+            crate::shared::WRITES_MODULE,
+            crate::shared::pass_module(true, &[]).1,
+        ),
     ]
 }

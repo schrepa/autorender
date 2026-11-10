@@ -7,8 +7,8 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::{
     Background, Error, ErrorCode, Filled, FixedTime, GAMEPLAY_JOBS, GlobalTransforms, Interest,
-    JobFailures, Jobs, Landed, Parent, Records, Refusals, Request, Requests, Transform,
-    fields, job_priority, settings, stats,
+    JobFailures, Jobs, Landed, Parent, Records, Refusals, Request, Requests, Transform, fields,
+    job_priority, settings, stats,
 };
 
 pub const NAVIGATION_PART: &str = "navigation";
@@ -161,10 +161,7 @@ impl<'a> Floors<'a> {
     }
 
     fn read(&self, at: Vec2) -> GroundRead<Option<f32>> {
-        match self
-            .ground
-            .down(GroundProbe::at(at).on_layers(self.layers))
-        {
+        match self.ground.down(GroundProbe::at(at).on_layers(self.layers)) {
             GroundRead::Ready(point) => GroundRead::Ready(point.map(|point| point.height)),
             GroundRead::NotLoaded => GroundRead::NotLoaded,
             GroundRead::Off => GroundRead::Off,
@@ -548,8 +545,7 @@ fn walk(
             continue;
         }
         let untaken = walk.refused.as_deref() == Some(STEPS_NOT_TAKEN);
-        if walk.status == NavStatus::Refused
-            && !(untaken && walk.destination == agent.destination)
+        if walk.status == NavStatus::Refused && !(untaken && walk.destination == agent.destination)
         {
             refusals.accept(entity, NAVIGATION_PART);
             *walk = NavWalk::default();

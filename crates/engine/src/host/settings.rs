@@ -131,8 +131,7 @@ impl SettingsLog {
 }
 
 fn replaces(key: &str, held: &str) -> bool {
-    held
-        .strip_prefix(key)
+    held.strip_prefix(key)
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('.'))
 }
 

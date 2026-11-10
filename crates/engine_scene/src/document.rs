@@ -169,10 +169,7 @@ impl MeshSource {
     pub(crate) fn provided(&self) -> Option<&str> {
         match self {
             Self::Provided { name } => Some(name),
-            Self::Cube {}
-            | Self::Plane {}
-            | Self::Inline { .. }
-            | Self::Buffer { .. } => None,
+            Self::Cube {} | Self::Plane {} | Self::Inline { .. } | Self::Buffer { .. } => None,
         }
     }
 

@@ -1,10 +1,10 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetResidency, Cursor, DrawnTable, DrawnView, Error, GeometryStream, InstanceInput,
-    MaterialHandle, GeometryHandle, PassBit, PassRole, Since, Views,
+    AssetResidency, Cursor, DrawnTable, DrawnView, Error, GeometryHandle, GeometryStream,
+    InstanceInput, MaterialHandle, PassBit, PassRole, Since, Views,
 };
-use engine_places_rendering::impostors::IMPOSTOR_VERTICES;
 use engine_open_world_kit::ground::{GroundTiles, TerrainTiles};
+use engine_places_rendering::impostors::IMPOSTOR_VERTICES;
 use engine_render::{
     Access, AfterRead, Allocation, Attach, Bind, Buffer, ComputePipeline, Count, DepthUse, Draw,
     DrawInput, Encode, FaceCull, Form, FormSide, GpuPart, Install, KindForm, Lifetime, Own,
@@ -84,7 +84,6 @@ const OCCUPANCY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 pub(crate) const PLACED: engine_core::DrawKind = engine_core::DrawKind("placed");
 
-
 const fn object_form(
     vertex: engine_core::Entry,
     streams: &'static [VertexLayout],
@@ -92,7 +91,11 @@ const fn object_form(
 ) -> KindForm {
     KindForm {
         kind: PLACED,
-        placed: FormSide { vertex, streams, depth_bias: FormSide::UNBIASED },
+        placed: FormSide {
+            vertex,
+            streams,
+            depth_bias: FormSide::UNBIASED,
+        },
         owned: None,
         varyings,
     }
@@ -740,7 +743,12 @@ impl ScatterGpu {
         let main = plan
             .main
             .filter(|_| plan.prepared && drawn.is_some())
-            .filter(|_| views.drawn().first().is_some_and(|view| view.owner.is_none()));
+            .filter(|_| {
+                views
+                    .drawn()
+                    .first()
+                    .is_some_and(|view| view.owner.is_none())
+            });
         let mut listed: Vec<(Listed, CullView)> = main
             .map(|main| {
                 let first = Listed {
@@ -1020,7 +1028,10 @@ impl ScatterGpu {
     fn draw_objects(&self, view: usize, draw: &mut Draw<'_, Self, Scene>, inputs: &Streams) -> u32 {
         let held = &self.held;
         let plain = Chosen {
-            material: [draw.form(&self.forms.plain), draw.form(&self.forms.extended)],
+            material: [
+                draw.form(&self.forms.plain),
+                draw.form(&self.forms.extended),
+            ],
             whole: [None, None],
         };
         let fading = Chosen {
@@ -1067,7 +1078,10 @@ impl ScatterGpu {
             &held.lit
         };
         let chosen = Chosen {
-            material: [draw.form(&self.forms.plain), draw.form(&self.forms.extended)],
+            material: [
+                draw.form(&self.forms.plain),
+                draw.form(&self.forms.extended),
+            ],
             whole: [
                 draw.form(&self.forms.whole),
                 draw.form(&self.forms.extended_whole),

@@ -53,8 +53,7 @@ impl Brick for FollowCameraBrick {
             .join::<Verbs>(camera::LOOK, None)
             .join::<Verbs>(camera::TURN, None)
             .join::<SceneComponents>(
-                ComponentKind::of::<CameraTarget>("camera_target")
-                    .schema(target_schema),
+                ComponentKind::of::<CameraTarget>("camera_target").schema(target_schema),
                 None,
             )
             .systems(Schedule::Presentation, camera::follow)

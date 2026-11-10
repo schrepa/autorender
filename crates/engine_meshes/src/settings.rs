@@ -1,7 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetResidency, CullPlan, Culling, Detail, DrawnTable, OcclusionCulling, SubpixelCulling,
-    stats,
+    AssetResidency, CullPlan, Culling, Detail, DrawnTable, OcclusionCulling, SubpixelCulling, stats,
 };
 
 use crate::MESH;

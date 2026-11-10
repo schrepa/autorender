@@ -35,10 +35,7 @@ fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     control(session, "pause", json!({}))?;
     settled(session)?;
     let counted = counted_in_joined_passes(session, SPRITES.name(), FRAMES)?;
-    let color = counted
-        .get(ColorPass::NAME)
-        .cloned()
-        .unwrap_or(Value::Null);
+    let color = counted.get(ColorPass::NAME).cloned().unwrap_or(Value::Null);
     smoke_check!(
         color["state"]["state"] == "drew" && number(&color["state"]["draws"]) > 0.0,
         "sprite_draws",

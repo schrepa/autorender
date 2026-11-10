@@ -122,10 +122,7 @@ pub mod contract {
         end
     }
 
-    pub const fn written<const N: usize>(
-        constants: &[(&str, Value)],
-        text: &str,
-    ) -> [u8; N] {
+    pub const fn written<const N: usize>(constants: &[(&str, Value)], text: &str) -> [u8; N] {
         let (imports, rest) = text.as_bytes().split_at(imports_end(text.as_bytes()));
         let mut out = [0; N];
         let mut end = put(&mut out, 0, imports);

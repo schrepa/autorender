@@ -72,11 +72,8 @@ impl From<&Collider> for SceneCollider {
 
 impl SceneCollider {
     fn runtime(self, path: &str) -> Result<(), Error> {
-        validate_shape(self.shape.runtime()).map_err(|error| {
-            error
-                .coded(INVALID_COLLIDER)
-                .at(format!("{path}.shape"))
-        })
+        validate_shape(self.shape.runtime())
+            .map_err(|error| error.coded(INVALID_COLLIDER).at(format!("{path}.shape")))
     }
 
     fn validate_world(self, matrix: Mat4, path: &str) -> Result<(), Error> {

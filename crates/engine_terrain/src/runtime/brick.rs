@@ -12,9 +12,9 @@ use engine_core::{
 use engine_heightfield::{INVALID_TERRAIN, MISSING_LAYER, UNKNOWN_MAP, UNREADABLE_MAP};
 use engine_open_world_kit::ground::{GroundSurface, TerrainTiles};
 use engine_open_world_kit::paths::{ScenePathSource, ScenePathSources};
-use engine_places_world::streaming::{StreamedKey, StreamedKeys, Streams};
 use engine_open_world_kit::terrain::TerrainLayers;
 use engine_open_world_kit::water::Hydrology;
+use engine_places_world::streaming::{StreamedKey, StreamedKeys, Streams};
 use engine_render::RenderBricks;
 
 pub struct TerrainBrick;
@@ -72,7 +72,12 @@ impl Brick for TerrainBrick {
             .generated(GENERATED)
             .systems(
                 Schedule::ViewSync,
-                (stream_terrains, publish_terrains, sync_solids, bridges::sync),
+                (
+                    stream_terrains,
+                    publish_terrains,
+                    sync_solids,
+                    bridges::sync,
+                ),
             )
             .operation::<TerrainEditControl>()
             .operation::<TerrainUndoControl>()

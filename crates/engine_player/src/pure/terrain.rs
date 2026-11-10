@@ -248,12 +248,7 @@ pub fn run(session: &mut dyn PureSession) -> Result<(), String> {
     let mut graph = Graph::default();
     let mut bytes_held = 0;
     for key in pyramid.level_tiles(gait.level) {
-        let (ground, bytes) = portals(
-            session,
-            (&tiles[&key], &baked),
-            (&pyramid, &gait),
-            &[],
-        )?;
+        let (ground, bytes) = portals(session, (&tiles[&key], &baked), (&pyramid, &gait), &[])?;
         session.hash(&format!("portals {}", name(key)), &bytes);
         let held: TilePortals = codec::decode(&bytes).map_err(|error| error.to_string())?;
         graph.portals.insert(key, Arc::new(held));
@@ -266,12 +261,7 @@ pub fn run(session: &mut dyn PureSession) -> Result<(), String> {
             .with_stamps(&edits, &kinds)
             .map_err(|error| error.to_string())?,
     );
-    let (_, bytes) = portals(
-        session,
-        (&tile, &edited_layers),
-        (&pyramid, &gait),
-        &edits,
-    )?;
+    let (_, bytes) = portals(session, (&tile, &edited_layers), (&pyramid, &gait), &edits)?;
     session.hash(&format!("edited portals {}", name(edited)), &bytes);
     let count: usize = graph
         .portals

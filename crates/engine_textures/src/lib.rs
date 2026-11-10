@@ -183,10 +183,6 @@ pub fn decode(bytes: &[u8]) -> Result<Texture, String> {
         return Err("a texture record holds bytes past its levels".into());
     }
     Texture::from_levels(format, width, height, levels)
-        .map(|texture| {
-            texture
-                .with_summary(summary)
-                .with_color_space(space)
-        })
+        .map(|texture| texture.with_summary(summary).with_color_space(space))
         .map_err(|error| error.to_string())
 }

@@ -442,7 +442,9 @@ pub struct SolidField {
 }
 
 pub const PLACES: &[engine_place::PlaceDecl] =
-    &[engine_place::PlaceDecl::component::<SolidSource>("solid_source")];
+    &[engine_place::PlaceDecl::component::<SolidSource>(
+        "solid_source",
+    )];
 
 #[derive(Component, Clone, Default)]
 pub struct SolidSource {

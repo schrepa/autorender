@@ -127,7 +127,12 @@ macro_rules! __game_scene {
 #[macro_export]
 macro_rules! brick {
     ($name:ident) => {
-        include!(concat!(env!("OUT_DIR"), "/bricks/", stringify!($name), ".rs"));
+        include!(concat!(
+            env!("OUT_DIR"),
+            "/bricks/",
+            stringify!($name),
+            ".rs"
+        ));
     };
 }
 

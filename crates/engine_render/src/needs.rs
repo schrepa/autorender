@@ -7,7 +7,10 @@ fn target_name(machine: &Machine, target: Target) -> Option<&'static str> {
     match target {
         Target::Scene => Some(TargetName::COLOR.name()),
         Target::Depth => Some(TargetName::DEPTH.name()),
-        Target::Output(index) => machine.outputs.get(index as usize).map(|output| output.name),
+        Target::Output(index) => machine
+            .outputs
+            .get(index as usize)
+            .map(|output| output.name),
         Target::Copy(_, view) => target_name(machine, final_target(view)),
         Target::Canvas => None,
     }
@@ -56,7 +59,6 @@ fn push(reads: &mut Vec<Read>, read: Read) {
     if !reads.iter().any(|known| {
         known.reader == read.reader && known.kind == read.kind && known.place == read.place
     }) {
-
         reads.push(read);
     }
 }

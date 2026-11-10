@@ -173,7 +173,11 @@ fn declared_schemas(registry: &Registry, problems: &mut Vec<String>) {
                 event.name, event.brick
             ));
         } else {
-            closed(&format!("event {} ({}) row", event.name, event.brick), &row, problems);
+            closed(
+                &format!("event {} ({}) row", event.name, event.brick),
+                &row,
+                problems,
+            );
         }
     }
 }

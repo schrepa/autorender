@@ -98,7 +98,10 @@ impl LoadedScene {
             previous.despawn(world);
         }
         self.start = main_camera(world).and_then(|camera| {
-            Some((*world.get::<Transform>(camera)?, *world.get::<Camera>(camera)?))
+            Some((
+                *world.get::<Transform>(camera)?,
+                *world.get::<Camera>(camera)?,
+            ))
         });
     }
 }
@@ -152,7 +155,11 @@ pub fn built<G: Game>(
 }
 
 pub fn without(list: BrickList, names: &str, path: &str) -> crate::Result<BrickList> {
-    let packages: Vec<&'static str> = list.listed().iter().map(|listed| listed.package()).collect();
+    let packages: Vec<&'static str> = list
+        .listed()
+        .iter()
+        .map(|listed| listed.package())
+        .collect();
     let left_out = names
         .split(',')
         .filter(|name| !name.is_empty())

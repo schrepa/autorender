@@ -33,7 +33,10 @@ pub(super) fn batch(host: &mut DevHost, app: &AppHost, asked: Asked) -> Result<V
         agent.key(key, true);
     }
     let pressed: Vec<MouseButton> = agent.mouse_held().collect();
-    for &button in pressed.iter().filter(|button| !asked.pointer.buttons.contains(button)) {
+    for &button in pressed
+        .iter()
+        .filter(|button| !asked.pointer.buttons.contains(button))
+    {
         agent.mouse_button(button, false);
     }
     for &button in &asked.pointer.buttons {

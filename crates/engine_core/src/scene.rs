@@ -181,7 +181,9 @@ impl Camera {
             Projection::Orthographic { height } if !within(height, Self::MIN_DEPTH, reach) => {
                 return invalid("projection.height");
             }
-            Projection::Fitted { clip } if !clip.iter().flatten().all(|value| value.is_finite()) => {
+            Projection::Fitted { clip }
+                if !clip.iter().flatten().all(|value| value.is_finite()) =>
+            {
                 return invalid("projection.clip");
             }
             Projection::Perspective { .. }

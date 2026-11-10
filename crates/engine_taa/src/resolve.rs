@@ -44,7 +44,10 @@ impl GpuPart for ResolveGpu {
                 (resolve::HISTORY, Bind::Texture(history)),
                 (resolve::TAA_VIEW, Bind::Buffer(view)),
                 (resolve::MOTION_VECTORS, Bind::Target(TargetName::MOTION)),
-                (resolve::BLENDED_MASK, Bind::Target(TargetName::TRANSPARENCY)),
+                (
+                    resolve::BLENDED_MASK,
+                    Bind::Target(TargetName::TRANSPARENCY),
+                ),
             ],
         )?;
         Ok(Self {

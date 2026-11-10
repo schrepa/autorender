@@ -1,12 +1,12 @@
 use bevy_ecs::prelude::Entity;
 use engine_core::AssetLibrary;
 use engine_heightfield::tile::shaded_elsewhere;
-use engine_tiles::{Pyramid, TileKey};
 use engine_open_world_kit::ground::{
     PALETTE_ENTRIES, PaletteEntry, SurfaceMaps, SurfaceMaterial, SurfaceProjection, TerrainEntry,
     TerrainTiles, TileFace,
 };
 use engine_render::{Allocation, Prepare};
+use engine_tiles::{Pyramid, TileKey};
 
 use super::part::{Handles, TerrainGpu};
 use super::{DIRECTORY_AT, HOLE_WORDS, NO_HOLES};
@@ -75,9 +75,7 @@ impl TerrainTables {
         self.terrains_room = self
             .terrains_room
             .max(tiles.terrains.len().max(1) as u32 * TERRAIN_WORDS);
-        self.views_room = self
-            .views_room
-            .max(views.max(1) as u32 * VIEW_WORDS);
+        self.views_room = self.views_room.max(views.max(1) as u32 * VIEW_WORDS);
         self.layers_room = self.layers_room.max(atlas.capacity.max(1));
         for &(id, layer, upload) in &moves.uploads {
             if upload == Upload::Whole

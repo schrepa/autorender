@@ -3,13 +3,13 @@ use std::collections::VecDeque;
 use bevy_ecs::prelude::*;
 use engine_core::glam::Vec3;
 use engine_core::{
-    AssetLibrary, AssetResidency, Cull, Cursor, Error, Events, GeometryStream, MaterialHandle,
-    GeometryHandle, Readable, Readback, gpu_struct,
+    AssetLibrary, AssetResidency, Cull, Cursor, Error, Events, GeometryHandle, GeometryStream,
+    MaterialHandle, Readable, Readback, gpu_struct,
 };
 use engine_render::{
     AfterRead, Allocation, Attach, Bind, Buffer, Copied, CopyRegion, DepthUse, Encode, GpuPart,
-    Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, Texture,
-    VertexLayout, wgpu,
+    Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, Texture, VertexLayout,
+    wgpu,
 };
 
 use crate::books::{
@@ -282,7 +282,11 @@ impl ImpostorGpu {
                     let two_sided = material
                         .and_then(|handle| library.material(handle))
                         .is_some_and(|material| material.cull() == Cull::None);
-                    Some((mesh, material, usize::from(extended) | (usize::from(two_sided) << 1)))
+                    Some((
+                        mesh,
+                        material,
+                        usize::from(extended) | (usize::from(two_sided) << 1),
+                    ))
                 })
                 .collect();
         let size = shape.size();

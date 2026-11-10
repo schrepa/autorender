@@ -1,4 +1,7 @@
-#![expect(unsafe_code, reason = "opens the driver's pipeline cache from a file it wrote")]
+#![expect(
+    unsafe_code,
+    reason = "opens the driver's pipeline cache from a file it wrote"
+)]
 
 use std::path::PathBuf;
 
@@ -11,8 +14,8 @@ pub(super) fn open(device: &wgpu::Device, adapter: &wgpu::AdapterInfo) -> Option
     if !device.features().contains(wgpu::Features::PIPELINE_CACHE) {
         return None;
     }
-    let file = crate::platform::pipeline_cache_folder()?
-        .join(wgpu::util::pipeline_cache_key(adapter)?);
+    let file =
+        crate::platform::pipeline_cache_folder()?.join(wgpu::util::pipeline_cache_key(adapter)?);
     let data = std::fs::read(&file).ok();
     // SAFETY: the file holds only bytes `save` took from `PipelineCache::get_data`
     // for this adapter's key; wgpu checks the header against the adapter and

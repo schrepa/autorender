@@ -36,7 +36,11 @@ fn cycled(facts: &ViewFacts) -> bool {
     }
 }
 
-pub(crate) fn jitter(time: Res<FrameTime>, views: Query<(Entity, &View)>, mut jitter: ResMut<Jitter>) {
+pub(crate) fn jitter(
+    time: Res<FrameTime>,
+    views: Query<(Entity, &View)>,
+    mut jitter: ResMut<Jitter>,
+) {
     let (offset, noise) = (jitter_offset(time.frame), turn_of(time.frame));
     let mut given: Vec<ViewJitter> = views
         .iter()

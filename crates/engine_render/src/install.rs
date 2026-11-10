@@ -169,8 +169,7 @@ impl PassDecl {
     }
 
     pub(crate) fn per_view(&self) -> bool {
-        self.views != PassViews::Owned
-            && (self.layer.is_some() || crate::shared::composites(self))
+        self.views != PassViews::Owned && (self.layer.is_some() || crate::shared::composites(self))
     }
 }
 
@@ -353,7 +352,11 @@ impl InstallCore {
         (self.declared.textures.len() - 1) as u32
     }
 
-    pub(crate) fn buffer(&mut self, label: &'static str, (lifetime, per_view): (Lifetime, bool)) -> u32 {
+    pub(crate) fn buffer(
+        &mut self,
+        label: &'static str,
+        (lifetime, per_view): (Lifetime, bool),
+    ) -> u32 {
         self.declared.buffers.push(BufferDecl {
             label,
             lifetime,

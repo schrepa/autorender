@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetResidency, Asked, Asks, DrawnPoses, Error, ErrorCode, Expected, GlobalTransforms, Lands,
+    Asked, Asks, AssetResidency, DrawnPoses, Error, ErrorCode, Expected, GlobalTransforms, Lands,
     Operation, SceneIds,
 };
 use engine_places_rendering::animation::{
@@ -350,11 +350,7 @@ impl Operation for AnimationState {
     type Reply = AnimationStateView;
 
     fn run(
-        (ids, animators, globals, poses, (residency, skins)): SystemParamItem<
-            '_,
-            '_,
-            Self::Params,
-        >,
+        (ids, animators, globals, poses, (residency, skins)): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
     ) -> Result<AnimationStateView, Error> {
         let (_, animator) = animator_of(&ids, &animators, &request.entity)?;

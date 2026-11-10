@@ -3,19 +3,19 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use bevy_ecs::world::World;
-use engine_core::{Error, ErrorCode, FrameId, MaterialHandle, GeometryHandle, Readback, TextureHandle};
+use engine_core::{
+    Error, ErrorCode, FrameId, GeometryHandle, MaterialHandle, Readback, TextureHandle,
+};
 
 use crate::graph::{Bits, Clear, FAR, Load, Ops, Plan, Planned};
-use crate::install::{
-    Bound, Copied, PassDecl, Program, Reinstall, Scoped, ViewTarget, Work,
-};
+use crate::install::{Bound, Copied, PassDecl, Program, Reinstall, Scoped, ViewTarget, Work};
 use crate::linker::Ty;
 use crate::machine::{
     CAMERA_STRIDE, CoreFrame, DEPTH_FORMAT, Machine, Ready, SetFormat, Target, final_target,
     lit_set, pass_layer, pass_set, reads_depth_direct, shared, target_read,
 };
 use crate::profiling::GpuProfiler;
-use crate::readback::{Deliver, Keep, Reader, Readbacks};
+use crate::readback::{Deliver, Keep, Readbacks, Reader};
 use crate::registration::{Installed, KindMember};
 use crate::{AfterRead, Allocation, CameraUniform, DepthUse, SceneDraw, VertexLayout};
 
@@ -728,7 +728,11 @@ impl Run {
     }
 
     pub(crate) fn planned(&self) -> Option<&Planned> {
-        self.planning.plan.as_ref()?.passes.get(self.planning.planned_at)
+        self.planning
+            .plan
+            .as_ref()?
+            .passes
+            .get(self.planning.planned_at)
     }
 
     pub(crate) fn path(&self, what: &str) -> String {
@@ -751,7 +755,10 @@ impl Run {
     }
 
     pub(crate) fn drawable(&self, part: u32) -> bool {
-        self.installs.turned.get(part as usize).is_some_and(Option::is_some)
+        self.installs
+            .turned
+            .get(part as usize)
+            .is_some_and(Option::is_some)
     }
 
     pub(crate) fn take_states(&mut self, states: Option<&engine_registry::BrickStates>) {
@@ -827,7 +834,8 @@ impl Run {
         else {
             return Vec::new();
         };
-        self.uniforms.owned
+        self.uniforms
+            .owned
             .iter()
             .filter(|view| {
                 view.pass == scene.name
@@ -846,7 +854,8 @@ impl Run {
         let Some(scene) = pass.scene else {
             return Vec::new();
         };
-        self.installs.draw_entries
+        self.installs
+            .draw_entries
             .iter()
             .filter(|member| {
                 pass.members.contains(&member.part) && member.kind.joins(scene.name, &scene.pass)
@@ -909,7 +918,8 @@ impl Run {
             return Allocation::Kept;
         }
         let dimension = self
-            .bindings.dimensions
+            .bindings
+            .dimensions
             .get(at)
             .copied()
             .unwrap_or(wgpu::TextureDimension::D2);
@@ -946,7 +956,8 @@ impl Run {
 
     pub(crate) fn grow(&mut self, texture: u32, size: wgpu::Extent3d, mips: u32) -> Allocation {
         let at = texture as usize;
-        let Some(Some((known, levels))) = self.texture_tables(texture).sizes.get(at).copied() else {
+        let Some(Some((known, levels))) = self.texture_tables(texture).sizes.get(at).copied()
+        else {
             return self.allocate(texture, size, mips);
         };
         if (known, levels) == (size, mips) {
@@ -962,7 +973,10 @@ impl Run {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("engine/part-grow"),
                 });
-            for (old, new) in previous.iter().zip(&self.texture_tables(texture).textures[at]) {
+            for (old, new) in previous
+                .iter()
+                .zip(&self.texture_tables(texture).textures[at])
+            {
                 let (Some(old), Some(new)) = (old, new) else {
                     continue;
                 };
@@ -1046,7 +1060,11 @@ impl Run {
     }
 
     pub(crate) fn release_buffer(&mut self, buffer: u32) {
-        let Some(held) = self.buffer_tables_mut(buffer).buffers.get_mut(buffer as usize) else {
+        let Some(held) = self
+            .buffer_tables_mut(buffer)
+            .buffers
+            .get_mut(buffer as usize)
+        else {
             return;
         };
         if let Some((made, _)) = held.take() {
@@ -1104,7 +1122,8 @@ impl Run {
     pub(crate) fn deliver(&mut self, world: &mut World) {
         for arrived in std::mem::take(&mut self.reading.arrived) {
             let installed = self
-                .installs.installed
+                .installs
+                .installed
                 .get(arrived.part as usize)
                 .copied()
                 .unwrap_or_default();
@@ -1207,7 +1226,10 @@ impl Run {
     }
 
     fn written_texture(&self, texture: u32) -> Option<&Allocated> {
-        let made = self.texture_tables(texture).textures.get(texture as usize)?;
+        let made = self
+            .texture_tables(texture)
+            .textures
+            .get(texture as usize)?;
         made[self.frames.parity].as_ref().or(made[0].as_ref())
     }
 

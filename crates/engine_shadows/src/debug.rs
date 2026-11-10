@@ -1,9 +1,9 @@
 use std::any::TypeId;
 
+use engine_core::{DrawKind, GpuBits};
 use engine_places_rendering::shadows::{
     DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL, SunShown,
 };
-use engine_core::{DrawKind, GpuBits};
 use engine_render::debug::DebugRecord;
 use engine_render::{DebugMode, DebugShown};
 use serde::Serialize;

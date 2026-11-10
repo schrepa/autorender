@@ -30,7 +30,10 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
             break readiness;
         }
     };
-    let rows = readiness["unsettled"].as_array().cloned().unwrap_or_default();
+    let rows = readiness["unsettled"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
     let working: Vec<&Value> = rows.iter().filter(|row| row["awaits"] != "view").collect();
     let named = rows
         .iter()

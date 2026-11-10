@@ -60,7 +60,11 @@ fn rows_after(session: &mut dyn SmokeSession, name: &str, after: u64) -> Checked
 fn all_done(reply: &Value, count: usize, check: &'static str) -> Checked<()> {
     let wanted = json!({"done": count, "refused": 0});
     let got = json!({"done": reply["done"], "refused": reply["refused"]});
-    smoke_eq!(seen(got == wanted, reply["rows"].clone(), &wanted), wanted, check);
+    smoke_eq!(
+        seen(got == wanted, reply["rows"].clone(), &wanted),
+        wanted,
+        check
+    );
     Ok(())
 }
 
@@ -118,7 +122,11 @@ fn collided(session: &mut dyn SmokeSession, after: u64, entered: &str) -> Checke
                 || (row["first"] == entered && row["second"] == GATE))
     });
     let wanted = json!({"kind": "enter", "pair": [GATE, entered]});
-    smoke_eq!(seen(found, json!(rows), &wanted), wanted, "collision_raised_as_event");
+    smoke_eq!(
+        seen(found, json!(rows), &wanted),
+        wanted,
+        "collision_raised_as_event"
+    );
     Ok(())
 }
 
@@ -128,7 +136,11 @@ fn pressed(session: &mut dyn SmokeSession, after: u64) -> Checked<()> {
     let rows = rows_after(session, "ui_pressed", after)?;
     let found = rows.iter().any(|row| row["button"] == BUTTON);
     let wanted = json!({"button": BUTTON});
-    smoke_eq!(seen(found, json!(rows), &wanted), wanted, "ui_press_raised_as_event");
+    smoke_eq!(
+        seen(found, json!(rows), &wanted),
+        wanted,
+        "ui_press_raised_as_event"
+    );
     Ok(())
 }
 

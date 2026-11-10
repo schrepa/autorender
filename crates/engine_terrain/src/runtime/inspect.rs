@@ -372,11 +372,7 @@ impl Operation for TerrainLayerSweep {
             coordinate(request.center[1], "$.center[1]")?,
         );
         let half_extent = within(request.half_extent, SWEEP_EXTENT, "$.half_extent")?;
-        within(
-            f64::from(request.samples),
-            SWEEP_SAMPLES,
-            "$.samples",
-        )?;
+        within(f64::from(request.samples), SWEEP_SAMPLES, "$.samples")?;
         Ok(layer_sweep(
             &terrains,
             center,
@@ -445,7 +441,10 @@ impl Operation for TerrainListing {
     type Request = Self;
     type Reply = TerrainListed;
 
-    fn run(terrains: SystemParamItem<'_, '_, Self::Params>, _: Self) -> Result<TerrainListed, Error> {
+    fn run(
+        terrains: SystemParamItem<'_, '_, Self::Params>,
+        _: Self,
+    ) -> Result<TerrainListed, Error> {
         Ok(TerrainListed {
             terrains: terrains
                 .entries

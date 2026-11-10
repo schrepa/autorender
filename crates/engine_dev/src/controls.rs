@@ -199,7 +199,10 @@ pub fn validated_camera(
     if (target - position).length_squared() < Camera::MIN_DEPTH * Camera::MIN_DEPTH {
         return Err(Error::new(ErrorCode::InvalidCamera, "$.target"));
     }
-    if !lens.view_projection(position, target - position, 1.0).is_finite() {
+    if !lens
+        .view_projection(position, target - position, 1.0)
+        .is_finite()
+    {
         return Err(Error::new(ErrorCode::InvalidCamera, "$").expected(Expected::Finite));
     }
     Ok((Transform::looking_at(position, target), lens))

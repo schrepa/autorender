@@ -272,7 +272,12 @@ impl State {
             staged.push((
                 label,
                 Glyph {
-                    place: [left * em, top * em, (left + width) * em, (top + height) * em],
+                    place: [
+                        left * em,
+                        top * em,
+                        (left + width) * em,
+                        (top + height) * em,
+                    ],
                     texel: [slot.x as f32, slot.y as f32, width, height],
                     color: run.color,
                 },

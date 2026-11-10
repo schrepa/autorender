@@ -75,7 +75,9 @@ pub(crate) fn ownership(world: &World, values: &Values, uses: &[Used]) -> Owners
             .map(|used| used.brick)
             .collect();
         writers.dedup();
-        let catalogued = info.type_id().and_then(|type_id| (values.catalogued)(type_id));
+        let catalogued = info
+            .type_id()
+            .and_then(|type_id| (values.catalogued)(type_id));
         match (catalogued, writers.as_slice()) {
             (Some(Some(reset)), &[only]) if !resource => {
                 held.private[only.index()].push((id, Reset::Typed(reset)));

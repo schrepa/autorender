@@ -40,7 +40,10 @@ pub struct LayerStats {
 }
 
 fn layer_kind_stats(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    engine_core::shaped_by(generator.subschema_for::<serde_json::Value>(), "terrain_layer_kind")
+    engine_core::shaped_by(
+        generator.subschema_for::<serde_json::Value>(),
+        "terrain_layer_kind",
+    )
 }
 
 pub(super) fn layer_stats(layers: &Layers) -> Vec<LayerStats> {

@@ -1,4 +1,4 @@
-use engine_core::{MaterialHandle, GeometryHandle};
+use engine_core::{GeometryHandle, MaterialHandle};
 use engine_render::{Draw, Pipeline, Scene, SceneDraw, Shape};
 
 use crate::debug::DrawRecord;
@@ -17,12 +17,7 @@ impl MeshesGpu {
         self.draw_kind(scene, draw, true)
     }
 
-    fn draw_kind(
-        &self,
-        scene: &SceneDraw,
-        draw: &mut Draw<'_, Self, Scene>,
-        skinned: bool,
-    ) -> u32 {
+    fn draw_kind(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>, skinned: bool) -> u32 {
         if self.state.instance_count == 0 {
             return 0;
         }
@@ -131,10 +126,7 @@ impl MeshesGpu {
                         material,
                         args: streams.args,
                         offset: args,
-                        streams: &[
-                            (streams.ids, ids),
-                            (streams.records, self.record(level)),
-                        ],
+                        streams: &[(streams.ids, ids), (streams.records, self.record(level))],
                     },
                     || draw_label((mesh, material), (phase, level)),
                 );

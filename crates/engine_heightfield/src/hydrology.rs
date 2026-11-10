@@ -288,8 +288,7 @@ impl Grid<'_> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
-#[derive(schemars::JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, schemars::JsonSchema)]
 pub struct HydrologySample {
     pub flow: f32,
     pub wetness: f32,

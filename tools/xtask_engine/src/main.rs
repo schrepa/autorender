@@ -198,7 +198,9 @@ fn checking_commands() -> Vec<Command> {
         Command::new(
             "pairs",
             [
-                CommandOption::taking("--limit-ms", "MS").in_unit("ms").required(),
+                CommandOption::taking("--limit-ms", "MS")
+                    .in_unit("ms")
+                    .required(),
                 CommandOption::taking("--at-once", "N"),
                 CommandOption::taking("--project", "DIR..."),
                 CommandOption::taking("--scene", "PATH"),
@@ -212,7 +214,9 @@ fn checking_commands() -> Vec<Command> {
             "look",
             [
                 CommandOption::taking("PROJECT", "DIR").required(),
-                CommandOption::taking("--limit-ms", "MS").in_unit("ms").required(),
+                CommandOption::taking("--limit-ms", "MS")
+                    .in_unit("ms")
+                    .required(),
                 CommandOption::flag("--browser"),
                 CommandOption::taking("--out", "DIR"),
             ],

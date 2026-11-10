@@ -32,7 +32,10 @@ pub(crate) fn prepare_sound(
     cx: &SceneCx<'_>,
     path: &str,
 ) -> Result<SoundSource, Error> {
-    source.bytes = cx.buffer(&source.file, &format!("{path}.file")).ok().flatten();
+    source.bytes = cx
+        .buffer(&source.file, &format!("{path}.file"))
+        .ok()
+        .flatten();
     Ok(source)
 }
 

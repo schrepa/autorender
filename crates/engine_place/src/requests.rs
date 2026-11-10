@@ -556,10 +556,12 @@ impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
     }
 
     pub fn failures(&self) -> impl Iterator<Item = (&K, &Error)> + '_ {
-        self.entries.iter().filter_map(|(key, held)| match &held.request {
-            Request::Failed(error) => Some((key, error)),
-            Request::Asked(_) | Request::Ready(_) | Request::Missing => None,
-        })
+        self.entries
+            .iter()
+            .filter_map(|(key, held)| match &held.request {
+                Request::Failed(error) => Some((key, error)),
+                Request::Asked(_) | Request::Ready(_) | Request::Missing => None,
+            })
     }
 
     pub fn iter(&self) -> impl Iterator<Item = (&K, &Request<V>)> + '_ {

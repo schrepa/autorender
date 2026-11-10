@@ -53,11 +53,7 @@ fn registry(world: &World) -> Result<&Registry, String> {
         .ok_or_else(|| "the engine holds no brick registry".to_owned())
 }
 
-fn uses(
-    world: &mut World,
-    packages: &[&'static str],
-    places: &[TypeId],
-) -> BTreeMap<TypeId, Uses> {
+fn uses(world: &mut World, packages: &[&'static str], places: &[TypeId]) -> BTreeMap<TypeId, Uses> {
     let labels: Vec<_> = world
         .resource::<Schedules>()
         .iter()

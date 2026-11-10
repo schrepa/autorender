@@ -6,14 +6,14 @@ use engine_core::{
     DrawnAreas, FrameTime, Readable, Readback, Spawner, Transform, Views,
 };
 use engine_math::collections::HashMap;
+use engine_open_world_kit::ground::{
+    Foliage, GroundTiles, PlacedTiles, PooledTile, TerrainTiles, TileFace,
+};
 use engine_places_rendering::impostors::{
     ImpostorAsks, ImpostorRecord, ImpostorRecords, Impostors,
 };
 use engine_places_rendering::occlusion::OcclusionSource;
 use engine_tiles::TileKey;
-use engine_open_world_kit::ground::{
-    Foliage, GroundTiles, PlacedTiles, PooledTile, TerrainTiles, TileFace,
-};
 use glam::Vec3;
 
 use crate::ScatterBrick;

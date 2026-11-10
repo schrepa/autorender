@@ -10,7 +10,7 @@ use engine_heightfield::tile::{
     OP_VALUE, OP_WETNESS, OP_WORN, Placed, Steep,
 };
 use engine_place::{
-    Feed, List, MaterialHandle, GeometryHandle, Slot, Stamp, TextureHandle, UNIFORM_BINDING_BYTES,
+    Feed, GeometryHandle, List, MaterialHandle, Slot, Stamp, TextureHandle, UNIFORM_BINDING_BYTES,
     gpu_struct,
 };
 use engine_tiles::{Pyramid, TILE_QUADS, TileKey};
@@ -349,8 +349,10 @@ pub struct FarCover;
 impl List for FarCover {
     const NAME: &'static str = "far_cover";
     type Member = ();
-    const WGSL: Option<&'static str> =
-        Some(engine_places::contract!("places/far_cover.wgsl", PALETTE_ENTRIES));
+    const WGSL: Option<&'static str> = Some(engine_places::contract!(
+        "places/far_cover.wgsl",
+        PALETTE_ENTRIES
+    ));
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]

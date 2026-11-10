@@ -3,7 +3,6 @@ use std::sync::Arc;
 
 use engine_codec::Error;
 use engine_core::GpuBits;
-use engine_math::GRAVITY;
 use engine_heightfield::noise::smooth;
 use engine_heightfield::rivers::{RiverRaster, Rivers};
 use engine_heightfield::tile::{
@@ -11,15 +10,16 @@ use engine_heightfield::tile::{
     extend_water, hole_at, on_triangle, tile_cell, water_rows,
 };
 use engine_heightfield::{Layers, Pyramid, Reach, TILE_QUADS, TILE_SAMPLES, TileKey};
+use engine_math::GRAVITY;
 use engine_open_world_kit::ground::TileFace;
 use glam::Vec2;
 
 use super::gpu::WATER_SPAN_STEPS as SPAN_STEPS;
-use super::gpu::{WaterInfoWord, WaterStateWord};
 pub use super::gpu::{
     BREAK_FULL, BREAK_ONSET, BREAK_THINNEST, TURBULENT_SPEED, TURBULENT_SWIRL, WATER_FLOW_RANGE,
     WATER_SHEAR_RANGE, WATER_SPAN_LEAST, WATER_SPAN_MOST,
 };
+use super::gpu::{WaterInfoWord, WaterStateWord};
 use super::shallow_water::DENSITY;
 
 pub(crate) const NONE: u32 = u32::MAX;

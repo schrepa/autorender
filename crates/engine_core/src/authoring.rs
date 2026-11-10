@@ -8,12 +8,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    Call, Camera, Clear, ComponentKind, Drawn, DrawnProjection, DrawnTable, Error, ErrorCode, Lands,
-    Rows,
-    Expected, GlobalTransforms, InstanceValues, Layers, List, MaterialHandle, GeometryHandle, Mover,
-    Node, Parent, PassMask, Placed, Placement, Rect, Rule, SceneComponents, SceneContext, SceneCx,
-    SceneForm, ScenePasses, Setting, Target, TextureHandle, View, scene_component,
-    scene_components,
+    Call, Camera, Clear, ComponentKind, Drawn, DrawnProjection, DrawnTable, Error, ErrorCode,
+    Expected, GeometryHandle, GlobalTransforms, InstanceValues, Lands, Layers, List,
+    MaterialHandle, Mover, Node, Parent, PassMask, Placed, Placement, Rect, Rows, Rule,
+    SceneComponents, SceneContext, SceneCx, SceneForm, ScenePasses, Setting, Target, TextureHandle,
+    View, scene_component, scene_components,
 };
 
 pub(crate) const CHANGE_CALL: Call =
@@ -94,26 +93,24 @@ impl SceneForm for DrawnForm {
                 Some(kind) => kind,
                 None => return Err(Error::new(ErrorCode::MissingField, "$.kind")),
             },
-            Some(name) => {
-                table
-                    .and_then(|table| {
-                        table
-                            .kinds()
-                            .iter()
-                            .find(|declared| declared.kind.name() == name)
-                    })
-                    .map(|declared| declared.kind)
-                    .ok_or_else(|| {
-                        Error::new(ErrorCode::UnknownVariant, "$.kind")
-                            .got(name)
-                            .variants(
-                                table
-                                    .into_iter()
-                                    .flat_map(DrawnTable::kinds)
-                                    .map(|declared| declared.kind.name()),
-                            )
-                    })?
-            }
+            Some(name) => table
+                .and_then(|table| {
+                    table
+                        .kinds()
+                        .iter()
+                        .find(|declared| declared.kind.name() == name)
+                })
+                .map(|declared| declared.kind)
+                .ok_or_else(|| {
+                    Error::new(ErrorCode::UnknownVariant, "$.kind")
+                        .got(name)
+                        .variants(
+                            table
+                                .into_iter()
+                                .flat_map(DrawnTable::kinds)
+                                .map(|declared| declared.kind.name()),
+                        )
+                })?,
         };
         let passes = if self.passes.is_empty() {
             None
@@ -293,7 +290,11 @@ pub(crate) fn keys_taken(world: &World) -> Vec<Error> {
         .all()
         .iter()
         .zip(members.owners())
-        .filter(|(kind, _)| core_components().iter().any(|core| core.key() == kind.key()))
+        .filter(|(kind, _)| {
+            core_components()
+                .iter()
+                .any(|core| core.key() == kind.key())
+        })
         .map(|(kind, &owner)| {
             Error::new(
                 ErrorCode::NameTwice,

@@ -186,13 +186,20 @@ pub fn take_asks<A: Ask>(world: &mut World) -> Vec<A> {
 
 pub(crate) fn moment(world: &World) -> Moment {
     Moment {
-        tick: world.get_resource::<FixedTime>().map_or(0, |time| time.tick),
-        frame: world.get_resource::<FrameTime>().map_or(0, |time| time.frame),
+        tick: world
+            .get_resource::<FixedTime>()
+            .map_or(0, |time| time.tick),
+        frame: world
+            .get_resource::<FrameTime>()
+            .map_or(0, |time| time.frame),
     }
 }
 
 fn paced_handovers(world: &mut World, pace: Pace) -> Vec<HandOver> {
-    if world.get_resource::<Asked<HandOver>>().is_none_or(Asked::is_empty) {
+    if world
+        .get_resource::<Asked<HandOver>>()
+        .is_none_or(Asked::is_empty)
+    {
         return Vec::new();
     }
     let now = moment(world);
@@ -274,8 +281,13 @@ pub(crate) struct MovingKinds(pub(crate) Vec<ComponentId>);
 
 #[derive(Clone, Copy)]
 pub(crate) enum NodeKind {
-    Claimed { claim: fn(&mut World, Mover), mover: Mover },
-    Moving { track: fn(&mut World) -> ComponentId },
+    Claimed {
+        claim: fn(&mut World, Mover),
+        mover: Mover,
+    },
+    Moving {
+        track: fn(&mut World) -> ComponentId,
+    },
 }
 
 pub const MOVER_PART: &str = "mover";
@@ -285,9 +297,11 @@ pub(crate) fn claim<C: Component>(world: &mut World, mover: Mover) {
         let node = add.entity;
         commands.queue(move |world: &mut World| claimed(world, node, mover));
     });
-    world.add_observer(move |remove: On<Remove, C>, mut refusals: ResMut<Refusals>| {
-        refusals.accept(remove.entity, MOVER_PART);
-    });
+    world.add_observer(
+        move |remove: On<Remove, C>, mut refusals: ResMut<Refusals>| {
+            refusals.accept(remove.entity, MOVER_PART);
+        },
+    );
 }
 
 fn claimed(world: &mut World, node: Entity, mover: Mover) {
@@ -325,13 +339,15 @@ pub(crate) fn moving<C: Component>(world: &mut World) -> ComponentId {
 }
 
 pub(crate) fn install_kinds(world: &mut World) {
-    let kinds: Vec<NodeKind> = world.get_resource::<Registry>().map_or_else(Vec::new, |registry| {
-        registry
-            .bricks()
-            .iter()
-            .flat_map(|record| record.entries::<NodeKind>().copied())
-            .collect()
-    });
+    let kinds: Vec<NodeKind> = world
+        .get_resource::<Registry>()
+        .map_or_else(Vec::new, |registry| {
+            registry
+                .bricks()
+                .iter()
+                .flat_map(|record| record.entries::<NodeKind>().copied())
+                .collect()
+        });
     let mut moving = Vec::new();
     for kind in kinds {
         match kind {
@@ -381,27 +397,26 @@ impl Operation for MovesState {
         _: MovesRequest,
     ) -> Result<MovesReply, Error> {
         let ids = SceneNames(world);
-        let asks: Vec<AskedView> = world
-            .get_resource::<Registry>()
-            .map_or_else(Vec::new, |registry| {
-                registry
-                    .catalog()
-                    .iter()
-                    .filter_map(|place| place.view(world, &ids))
-                    .collect()
-            });
-        let moved_static: Vec<MovedNode> = world
-            .get_resource::<GlobalTransforms>()
-            .map_or_else(Vec::new, |globals| {
-                globals
-                    .moved_static()
-                    .map(|node| named(world, node))
-                    .collect()
-            });
-        Ok(MovesReply {
-            asks,
-            moved_static,
-        })
+        let asks: Vec<AskedView> =
+            world
+                .get_resource::<Registry>()
+                .map_or_else(Vec::new, |registry| {
+                    registry
+                        .catalog()
+                        .iter()
+                        .filter_map(|place| place.view(world, &ids))
+                        .collect()
+                });
+        let moved_static: Vec<MovedNode> =
+            world
+                .get_resource::<GlobalTransforms>()
+                .map_or_else(Vec::new, |globals| {
+                    globals
+                        .moved_static()
+                        .map(|node| named(world, node))
+                        .collect()
+                });
+        Ok(MovesReply { asks, moved_static })
     }
 }
 
@@ -478,9 +493,9 @@ impl Operation for TeleportControl {
         request: Self,
     ) -> Result<Rows<Teleported>, Error> {
         Ok(Rows::each("moves", request.moves, |write| {
-            let node = ids
-                .entity(&write.entity)
-                .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$.entity").got(&write.entity))?;
+            let node = ids.entity(&write.entity).ok_or_else(|| {
+                Error::new(ErrorCode::UnknownEntity, "$.entity").got(&write.entity)
+            })?;
             let (held, mover) = nodes.get(node).map_err(|_| {
                 Error::new(ErrorCode::MissingComponent, "$.entity")
                     .expected(Expected::Present)

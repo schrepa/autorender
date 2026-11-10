@@ -3,11 +3,11 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Drawn, Material, MaterialHandle, Mesh, GeometryHandle, MeshVertex, Spawner,
+    AssetLibrary, Drawn, GeometryHandle, Material, MaterialHandle, Mesh, MeshVertex, Spawner,
     Transform,
 };
-use engine_places::surface::ROUGHNESS;
 use engine_places::meshes::MESH;
+use engine_places::surface::ROUGHNESS;
 use engine_places_world::splines::SplineMesh;
 use glam::Vec3;
 
@@ -249,10 +249,16 @@ pub(crate) fn sync(
 ) {
     let wanted: Vec<BridgeSet> = terrains.bridge_sets().collect();
     let bridges = &mut *bridges;
-    bridges.stone = bridges.stone.filter(|&stone| assets.material(stone).is_some());
+    bridges.stone = bridges
+        .stone
+        .filter(|&stone| assets.material(stone).is_some());
     bridges.pier = bridges.pier.filter(|&pier| assets.mesh(pier).is_some());
-    bridges.decks.retain(|&(_, deck)| assets.mesh(deck).is_some());
-    bridges.tubes.retain(|&(_, tube)| assets.mesh(tube).is_some());
+    bridges
+        .decks
+        .retain(|&(_, deck)| assets.mesh(deck).is_some());
+    bridges
+        .tubes
+        .retain(|&(_, tube)| assets.mesh(tube).is_some());
     let mut stale = Vec::new();
     bridges.spawned.retain(|terrain, spawned| {
         let keep = spawned.held(&assets)

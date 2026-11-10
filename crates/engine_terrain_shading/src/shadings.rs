@@ -10,8 +10,8 @@ use engine_core::{
 };
 use engine_heightfield::Stamp;
 use engine_heightfield::tile::shaded_elsewhere;
-use engine_tiles::TileKey;
 use engine_open_world_kit::ground::{TerrainEntry, TerrainTiles, TileFace};
+use engine_tiles::TileKey;
 use glam::Vec2;
 
 use crate::jobs::gpu::TILE_STRIDE;
@@ -413,7 +413,8 @@ pub(crate) fn cook(world: &World, asks: &mut CookAsks<'_>) {
         let record = |key: TileKey| ShadingJob::of(recipe, &pyramid, &entry.edits, key).record();
         for level in 1..pyramid.levels() {
             for key in pyramid.level_tiles(level) {
-                let input = engine_codec::encode(&ShadingJob::of(recipe, &pyramid, &entry.edits, key));
+                let input =
+                    engine_codec::encode(&ShadingJob::of(recipe, &pyramid, &entry.edits, key));
                 if asks.asked(&RecordKey::of(&SHADING, &input)) {
                     continue;
                 }
@@ -449,7 +450,9 @@ pub(crate) fn shade(
     mut jobs: Jobs,
     mut bakes: ResMut<Bakes>,
 ) {
-    let eye = views.main().map_or(glam::Vec3::ZERO, |main| main.detail_eye);
+    let eye = views
+        .main()
+        .map_or(glam::Vec3::ZERO, |main| main.detail_eye);
     let frame = time.frame;
     let moved = tiles.is_changed();
     let bakes = &mut *bakes;

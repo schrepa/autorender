@@ -93,9 +93,9 @@ pub fn spawn(world: &mut World, object: &SceneObject) -> Result<Entity, Error> {
         .parent
         .as_deref()
         .map(|parent| {
-            scene.entity(parent).ok_or_else(|| {
-                Error::new(ErrorCode::UnknownParent, "$.parent").got(parent)
-            })
+            scene
+                .entity(parent)
+                .ok_or_else(|| Error::new(ErrorCode::UnknownParent, "$.parent").got(parent))
         })
         .transpose()?;
     let expanded = ExpandedObject {

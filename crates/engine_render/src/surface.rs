@@ -412,7 +412,10 @@ impl MaterialLayout {
         }
         for kind in kinds {
             if layout.kinds.iter().any(|known| known.name == kind.name) {
-                problems.push(wrong_name(format!("$.surface_kinds.{}", kind.name), kind.name));
+                problems.push(wrong_name(
+                    format!("$.surface_kinds.{}", kind.name),
+                    kind.name,
+                ));
                 continue;
             }
             layout.kinds.push(*kind);
@@ -432,12 +435,14 @@ impl MaterialLayout {
     }
 
     fn slot_index(&self, slot: &str) -> Option<usize> {
-        SurfaceSlot::named(slot).map(SurfaceSlot::index).or_else(|| {
-            self.open
-                .iter()
-                .position(|(name, ..)| *name == slot)
-                .map(|at| SurfaceSlot::ALL.len() + at)
-        })
+        SurfaceSlot::named(slot)
+            .map(SurfaceSlot::index)
+            .or_else(|| {
+                self.open
+                    .iter()
+                    .position(|(name, ..)| *name == slot)
+                    .map(|at| SurfaceSlot::ALL.len() + at)
+            })
     }
 
     fn slot_count(&self) -> usize {
@@ -472,7 +477,9 @@ impl MaterialLayout {
         material.slots().iter().flat_map(move |(slot, module)| {
             self.slots
                 .iter()
-                .filter(move |(known, name, _, _)| *known == slot.as_str() && *name == module.as_str())
+                .filter(move |(known, name, _, _)| {
+                    *known == slot.as_str() && *name == module.as_str()
+                })
                 .flat_map(|(_, _, _, maps)| maps.iter().copied())
         })
     }
@@ -532,7 +539,11 @@ impl MaterialLayout {
         source.push_str(<DrawState as GpuBits>::WGSL);
         source.push_str(<Alpha as BitValue>::WGSL);
         source.push_str(<Lighting as BitValue>::WGSL);
-        let _ = writeln!(source, "const MASK_MIP_SCALE: f32 = {:?};", f64::from(MASK_MIP_SCALE));
+        let _ = writeln!(
+            source,
+            "const MASK_MIP_SCALE: f32 = {:?};",
+            f64::from(MASK_MIP_SCALE)
+        );
         let _ = writeln!(
             source,
             "const SURFACE_EMISSION: f32 = {:?};",
@@ -557,7 +568,10 @@ impl MaterialLayout {
         );
         for (index, path) in self.derives.iter().enumerate() {
             let id = index + 1;
-            let _ = writeln!(imports, "import package::{path}::{DERIVE_ENTRY} as derive_{id};");
+            let _ = writeln!(
+                imports,
+                "import package::{path}::{DERIVE_ENTRY} as derive_{id};"
+            );
             let _ = writeln!(body, "    result = derive_{id}(result);");
         }
         body.push_str("    return result;\n}\n");
@@ -605,10 +619,7 @@ impl MaterialLayout {
                 imports,
                 "import package::{standard}::{name} as standard_{name};"
             );
-            let _ = writeln!(
-                body,
-                "\nfn slot_{name}({params}) -> {returns} {{"
-            );
+            let _ = writeln!(body, "\nfn slot_{name}({params}) -> {returns} {{");
             let modules: Vec<&LaidSlot> = self
                 .slots
                 .iter()
@@ -622,10 +633,7 @@ impl MaterialLayout {
                 );
                 for (index, (_, _, path, _)) in modules.iter().enumerate() {
                     let id = index + 1;
-                    let _ = writeln!(
-                        imports,
-                        "import package::{path}::{name} as {name}_{id};"
-                    );
+                    let _ = writeln!(imports, "import package::{path}::{name} as {name}_{id};");
                     let _ = writeln!(
                         body,
                         "    if picked == {id}u {{\n        return {name}_{id}({args});\n    }}"
@@ -652,7 +660,10 @@ impl MaterialLayout {
             );
             for (index, (_, path)) in self.models.iter().enumerate() {
                 let id = index + 2;
-                let _ = writeln!(imports, "import package::{path}::{LIGHTING_ENTRY} as model_{id};");
+                let _ = writeln!(
+                    imports,
+                    "import package::{path}::{LIGHTING_ENTRY} as model_{id};"
+                );
                 let _ = writeln!(
                     body,
                     "    if point.lighting == {id}u {{\n        return model_{id}(point, pixel);\n    }}"
@@ -661,7 +672,10 @@ impl MaterialLayout {
             let _ = writeln!(body, "    return {LIGHTING_ENTRY}(point, pixel);\n}}");
         }
         let mut used = vec!["material_module".to_owned(), "LIGHTING_UNLIT".to_owned()];
-        used.extend(self.slot_names().map(|name| format!("SLOT_{}", upper(name))));
+        used.extend(
+            self.slot_names()
+                .map(|name| format!("SLOT_{}", upper(name))),
+        );
         let named: Vec<String> = used
             .into_iter()
             .filter(|name| body.contains(name.as_str()))
@@ -679,7 +693,10 @@ impl MaterialLayout {
     pub(crate) fn shading_source(&self) -> String {
         let mut source = String::from(include_str!("shading.wgsl"));
         source.push_str("\nstruct SurfacePoint {\n");
-        let open = self.open.iter().map(|(name, returns, ..)| (*name, *returns));
+        let open = self
+            .open
+            .iter()
+            .map(|(name, returns, ..)| (*name, *returns));
         for (name, ty) in POINT_FIELDS
             .iter()
             .copied()
@@ -695,12 +712,20 @@ impl MaterialLayout {
     pub(crate) fn surfaces_source(&self) -> String {
         let mut source = String::new();
         for (index, kind) in self.kinds.iter().enumerate() {
-            let _ = writeln!(source, "const SURFACE_{}: u32 = {index}u;", upper(kind.name));
+            let _ = writeln!(
+                source,
+                "const SURFACE_{}: u32 = {index}u;",
+                upper(kind.name)
+            );
         }
         source
     }
 
-    pub(crate) fn record(&self, handle: MaterialHandle, material: &Material) -> (Vec<u32>, Vec<Error>) {
+    pub(crate) fn record(
+        &self,
+        handle: MaterialHandle,
+        material: &Material,
+    ) -> (Vec<u32>, Vec<Error>) {
         let path = format!("$.materials.{}", handle.slot());
         let mut problems = Vec::new();
         let mut words = vec![0_u32; self.record_bytes() / 4];
@@ -750,7 +775,8 @@ impl MaterialLayout {
             };
             let [first, second] = transform_rows(&map.transform);
             let at = self.maps_at() + index * 8;
-            words[at..at + 4].copy_from_slice(&[first[0], first[1], first[2], 1.0].map(f32::to_bits));
+            words[at..at + 4]
+                .copy_from_slice(&[first[0], first[1], first[2], 1.0].map(f32::to_bits));
             words[at + 4..at + 8].copy_from_slice(
                 &[second[0], second[1], second[2], map.tex_coord as f32].map(f32::to_bits),
             );
@@ -847,7 +873,9 @@ fn transform_rows(transform: &UvTransform) -> [[f32; 3]; 2] {
 
 pub fn material_state(material: Option<&Material>) -> u32 {
     material
-        .map_or(DrawState::PLAIN, |material| draw_of(material.render_state()))
+        .map_or(DrawState::PLAIN, |material| {
+            draw_of(material.render_state())
+        })
         .pack()
 }
 

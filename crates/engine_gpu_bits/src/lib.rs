@@ -31,7 +31,10 @@ fn expand(args: Tokens, item: Tokens) -> Result<Tokens, Error> {
         Data::Struct(data) => match &mut data.fields {
             Fields::Named(named) => Declared::Word(fields(&mut named.named)?),
             Fields::Unnamed(_) | Fields::Unit => {
-                return Err(Error::new_spanned(&name, "a gpu_bits word has named fields"));
+                return Err(Error::new_spanned(
+                    &name,
+                    "a gpu_bits word has named fields",
+                ));
             }
         },
         Data::Enum(data) => Declared::Value(variants(data)?),
@@ -112,7 +115,10 @@ fn declared_bits(attr: &Attribute) -> Result<(u32, Option<u32>), Error> {
         input.parse::<Token![,]>()?;
         let key: Ident = input.parse()?;
         if key != "at" {
-            return Err(Error::new(key.span(), "bits takes (width) or (width, at = bit)"));
+            return Err(Error::new(
+                key.span(),
+                "bits takes (width) or (width, at = bit)",
+            ));
         }
         input.parse::<Token![=]>()?;
         let at: LitInt = input.parse()?;
@@ -125,7 +131,10 @@ fn fields(named: &mut Punctuated<Field, Token![,]>) -> Result<Vec<Bits>, Error> 
     let mut next = 0;
     for field in named.iter_mut() {
         let Some(ident) = field.ident.clone() else {
-            return Err(Error::new(Span::call_site(), "a gpu_bits word has named fields"));
+            return Err(Error::new(
+                Span::call_site(),
+                "a gpu_bits word has named fields",
+            ));
         };
         let mut declared = None;
         let mut kept = Vec::with_capacity(field.attrs.len());
@@ -150,12 +159,18 @@ fn fields(named: &mut Punctuated<Field, Token![,]>) -> Result<Vec<Bits>, Error> 
             }
         };
         if width == 0 {
-            return Err(Error::new(ident.span(), "a gpu_bits field has at least one bit"));
+            return Err(Error::new(
+                ident.span(),
+                "a gpu_bits field has at least one bit",
+            ));
         }
         if let Kind::Number(most) = kind
             && width > most
         {
-            return Err(Error::new(ident.span(), "the field's type holds fewer bits"));
+            return Err(Error::new(
+                ident.span(),
+                "the field's type holds fewer bits",
+            ));
         }
         let at = at.unwrap_or(next);
         if at + width > 32 {
@@ -191,7 +206,10 @@ fn variants(data: &DataEnum) -> Result<Vec<(Ident, u32)>, Error> {
     for variant in &data.variants {
         let value = discriminant(variant)?.unwrap_or(next);
         if !matches!(variant.fields, Fields::Unit) {
-            return Err(Error::new(variant.ident.span(), "gpu_bits values are unit variants"));
+            return Err(Error::new(
+                variant.ident.span(),
+                "gpu_bits values are unit variants",
+            ));
         }
         if let Some((other, _)) = listed.iter().find(|(_, known)| *known == value) {
             return Err(Error::new(
@@ -203,7 +221,10 @@ fn variants(data: &DataEnum) -> Result<Vec<(Ident, u32)>, Error> {
         listed.push((variant.ident.clone(), value));
     }
     if listed.is_empty() {
-        return Err(Error::new(Span::call_site(), "a gpu_bits enum has variants"));
+        return Err(Error::new(
+            Span::call_site(),
+            "a gpu_bits enum has variants",
+        ));
     }
     Ok(listed)
 }
@@ -213,10 +234,16 @@ fn discriminant(variant: &Variant) -> Result<Option<u32>, Error> {
         return Ok(None);
     };
     let Expr::Lit(literal) = expr else {
-        return Err(Error::new_spanned(expr, "a gpu_bits value is a whole number"));
+        return Err(Error::new_spanned(
+            expr,
+            "a gpu_bits value is a whole number",
+        ));
     };
     let Lit::Int(value) = &literal.lit else {
-        return Err(Error::new_spanned(expr, "a gpu_bits value is a whole number"));
+        return Err(Error::new_spanned(
+            expr,
+            "a gpu_bits value is a whole number",
+        ));
     };
     value.base10_parse::<u32>().map(Some)
 }
@@ -355,14 +382,22 @@ fn word_wgsl(prefix: &str, fields: &[Bits]) -> String {
     let parameters: Vec<String> = fields
         .iter()
         .map(|field| {
-            let ty = if field.kind == Kind::Flag { "bool" } else { "u32" };
+            let ty = if field.kind == Kind::Flag {
+                "bool"
+            } else {
+                "u32"
+            };
             format!("{}: {ty}", field.ident)
         })
         .collect();
     let _ = writeln!(text, "fn {prefix}({}) -> u32 {{", parameters.join(", "));
     let _ = writeln!(text, "    var word = 0u;");
     for field in fields {
-        let _ = writeln!(text, "    word = {prefix}_with_{0}(word, {0});", field.ident);
+        let _ = writeln!(
+            text,
+            "    word = {prefix}_with_{0}(word, {0});",
+            field.ident
+        );
     }
     let _ = writeln!(text, "    return word;");
     let _ = writeln!(text, "}}");

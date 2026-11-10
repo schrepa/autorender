@@ -2,7 +2,6 @@ use bevy_ecs::world::World;
 
 use super::*;
 
-
 impl Renderer {
     pub fn adapter(&self) -> &crate::AdapterInfo {
         &self.core.adapter
@@ -116,9 +115,9 @@ impl Renderer {
     }
 
     pub fn pipelines_listed(&self) -> (u32, u32) {
-        self.run
-            .as_ref()
-            .map_or((0, 0), |run| (run.pipelines.up_front, run.pipelines.unlisted))
+        self.run.as_ref().map_or((0, 0), |run| {
+            (run.pipelines.up_front, run.pipelines.unlisted)
+        })
     }
 
     pub fn disabled_features(&self, world: &World) -> engine_core::Names {
@@ -129,7 +128,8 @@ impl Renderer {
                 .is_some_and(|state| matches!(state, engine_registry::BrickState::Faulted(_)))
         };
         let bits = self.run.as_ref().map_or(0, |run| {
-            run.installs.gates
+            run.installs
+                .gates
                 .iter()
                 .zip(&run.installs.turned)
                 .enumerate()

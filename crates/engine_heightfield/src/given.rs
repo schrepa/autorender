@@ -95,7 +95,10 @@ fn broken(path: impl Into<String>) -> Error {
 }
 
 fn reach() -> [f64; 2] {
-    [bound(-Layers::MAX_COORDINATE), bound(Layers::MAX_COORDINATE)]
+    [
+        bound(-Layers::MAX_COORDINATE),
+        bound(Layers::MAX_COORDINATE),
+    ]
 }
 
 fn state_rules(schema: &mut schemars::Schema) {
@@ -106,7 +109,11 @@ fn state_rules(schema: &mut schemars::Schema) {
         ("depth", MAX_DEPTH),
         ("discharge", MAX_DISCHARGE),
     ] {
-        stated(schema, field, [("exclusiveMinimum", bound(0.0)), ("maximum", bound(most))]);
+        stated(
+            schema,
+            field,
+            [("exclusiveMinimum", bound(0.0)), ("maximum", bound(most))],
+        );
     }
 }
 

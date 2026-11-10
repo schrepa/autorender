@@ -1,4 +1,3 @@
-
 use bevy_ecs::world::World;
 use engine_core::{AssetResidency, FrameTime, Readback, RenderFrame, RenderStats};
 
@@ -105,8 +104,8 @@ impl Renderer {
         };
         let (display, profiler) = (&mut self.core.display, &mut self.core.profiler);
         let mut parts = Vec::new();
-        run.reading.list
-            .take(|reader, written, deliver, arrival| match (reader, arrival) {
+        run.reading.list.take(
+            |reader, written, deliver, arrival| match (reader, arrival) {
                 (Reader::Part { part, tag }, arrival) => {
                     if let Some(deliver) = deliver {
                         let value = match arrival {
@@ -118,7 +117,8 @@ impl Renderer {
                 }
                 (Reader::FrameTimer, arrival) => display.timed(written, arrival),
                 (Reader::Profiler(slot), arrival) => profiler.arrived(slot, arrival),
-            });
+            },
+        );
         for (asked, read, deliver) in parts {
             run.arrived(asked, read, deliver);
         }
@@ -141,22 +141,36 @@ impl Renderer {
             }
         }
         let mut draws = engine_core::PartDraws::default();
-        for (part, drawn) in run.machine.declared.parts.iter().zip(&run.tallies.part_draws) {
+        for (part, drawn) in run
+            .machine
+            .declared
+            .parts
+            .iter()
+            .zip(&run.tallies.part_draws)
+        {
             draws.add(part.ty, *drawn);
         }
         if world.get_resource::<engine_core::PartDraws>() != Some(&draws) {
             world.insert_resource(draws);
         }
         for (part, error) in std::mem::take(&mut run.installs.faults) {
-            let brick = run.installs.gates.get(part as usize).copied().flatten().and_then(|gate| {
-                world
-                    .get_resource::<engine_registry::BrickStates>()
-                    .and_then(|states| states.brick(gate))
-            });
+            let brick = run
+                .installs
+                .gates
+                .get(part as usize)
+                .copied()
+                .flatten()
+                .and_then(|gate| {
+                    world
+                        .get_resource::<engine_registry::BrickStates>()
+                        .and_then(|states| states.brick(gate))
+                });
             match brick {
                 Some(brick) => engine_registry::fault(world, brick, error),
                 None => {
-                    if let Some(mut registry) = world.get_resource_mut::<engine_registry::Registry>() {
+                    if let Some(mut registry) =
+                        world.get_resource_mut::<engine_registry::Registry>()
+                    {
                         registry.report(error);
                     }
                 }
@@ -247,8 +261,9 @@ impl Renderer {
         };
         let world = frame.world();
         let views = world.get_resource::<engine_core::Views>();
-        let listed: Vec<engine_core::ViewFacts> =
-            views.map(|views| views.listed().to_vec()).unwrap_or_default();
+        let listed: Vec<engine_core::ViewFacts> = views
+            .map(|views| views.listed().to_vec())
+            .unwrap_or_default();
         if listed.is_empty() {
             return Ok(RenderStats::default());
         }
@@ -303,7 +318,8 @@ impl Renderer {
             .get_resource::<FrameTime>()
             .map_or(0.0, |time| time.elapsed as f32);
         let previous_seconds = self.seconds.replace(seconds).unwrap_or(seconds);
-        let entities: Vec<bevy_ecs::entity::Entity> = listed.iter().map(|facts| facts.view).collect();
+        let entities: Vec<bevy_ecs::entity::Entity> =
+            listed.iter().map(|facts| facts.view).collect();
         run.settle_sets(&entities);
         let mut cameras: Vec<CameraUniform> = listed
             .iter()
@@ -365,7 +381,13 @@ impl Renderer {
             .map(crate::machine::layered)
             .collect();
         for pass in run.planning.runs.iter() {
-            for (target, ..) in run.planning.pass_sets.get(pass).into_iter().flat_map(|set| set.iter()) {
+            for (target, ..) in run
+                .planning
+                .pass_sets
+                .get(pass)
+                .into_iter()
+                .flat_map(|set| set.iter())
+            {
                 if let Target::Output(index) = target
                     && let Some(on) = live.get_mut(*index as usize)
                 {
@@ -426,7 +448,9 @@ impl Renderer {
         let base = run.planning.runs.clone();
         let states = world.get_resource::<engine_registry::BrickStates>();
         let order = drawn_order(&listed);
-        let last_surface = order.iter().rposition(|&index| listed[index].target.surface());
+        let last_surface = order
+            .iter()
+            .rposition(|&index| listed[index].target.surface());
         let profile_encoding = engine_profile::span("render", "command_encoding");
         let row_encoding = engine_profile::timed(engine_profile::row("render.encoding"));
         let mut encoder = self.frame_encoder(&device, 0);
@@ -485,7 +509,12 @@ impl Renderer {
             keep_eligible(run, &facts, (first, index == 0), Some(step) == last_surface);
             let mut outputs = asked.clone();
             if order.len() > 1 {
-                for pass in run.planning.runs.iter().filter(|&pass| !run.sets.passes.contains(pass)) {
+                for pass in run
+                    .planning
+                    .runs
+                    .iter()
+                    .filter(|&pass| !run.sets.passes.contains(pass))
+                {
                     outputs = union(&outputs, &run.machine.graph.writes(pass));
                 }
             }
@@ -656,7 +685,12 @@ impl Renderer {
             run.flush_clears();
             run.leave();
             if opaque_open {
-                mark_span(&self.core.profiler, run.recording.encoder(), OPAQUE_SCENE, true);
+                mark_span(
+                    &self.core.profiler,
+                    run.recording.encoder(),
+                    OPAQUE_SCENE,
+                    true,
+                );
             }
             if run.canvas.rect.is_some() {
                 run.copy_canvas(false);
@@ -772,7 +806,8 @@ impl Renderer {
                     _ => 0,
                 };
                 let parts: u64 = run
-                    .tallies.uploads
+                    .tallies
+                    .uploads
                     .memory
                     .iter()
                     .filter(|(known, _)| *known == name)
@@ -964,7 +999,10 @@ fn owned_camera(view: &engine_core::DrawnView, seconds: f32) -> CameraUniform {
         [0.0; 2],
         (size.width, size.height),
     );
-    camera.set_region(view.view_projection, crate::targets::FrameRegion::whole(size));
+    camera.set_region(
+        view.view_projection,
+        crate::targets::FrameRegion::whole(size),
+    );
     camera.set_detail(view.eye);
     camera.capture = u32::from(view.capture);
     camera.view[0] = 1 + view.local;
@@ -992,8 +1030,7 @@ fn keep_eligible(
                 engine_core::PassViews::Every | engine_core::PassViews::Owned => true,
                 engine_core::PassViews::Main => facts.target.surface(),
             };
-            (!viewed || views)
-                && (pass.layer != Some(engine_core::AttachPoint::Overlay) || overlay)
+            (!viewed || views) && (pass.layer != Some(engine_core::AttachPoint::Overlay) || overlay)
         };
         if !shown {
             run.planning.runs.remove(index);
