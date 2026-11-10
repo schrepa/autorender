@@ -20,7 +20,16 @@ const SCENE_SOURCES: &[&str] = &[
     "crates/engine_world_streaming/src/scene.rs",
 ];
 
-const UNREACHED: &[(&str, &str)] = &[];
+const UNREACHED: &[(&str, &str)] = &[
+    (
+        "no_scene",
+        "the spawn and remove calls answer it when no scene is open (crates/engine_scene/src/spawning.rs); requests.json reaches it through inspect",
+    ),
+    (
+        "unknown_entity",
+        "the remove call answers it for an id the scene does not hold (crates/engine_scene/src/spawning.rs); requests.json reaches it through inspect",
+    ),
+];
 
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let fixtures: Value = serde_json::from_str(&read(root, FIXTURES)?)

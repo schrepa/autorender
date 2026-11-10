@@ -119,6 +119,10 @@ const UNREACHED: &[(&str, &str)] = &[
     ),
     ("missing_runtime_identity", BRIDGE),
     ("module_outside_brick", APP_BUILD),
+    (
+        "nav_steps_not_taken",
+        "navigation records it when a walking agent's step is not applied by the next tick (crates/engine_navigation); requests run no ticks with agents, and the walker_without_grounding_is_refused smoke reaches it",
+    ),
     ("not_inherited", CHECKS),
     ("origin_rejected", BRIDGE),
     (
