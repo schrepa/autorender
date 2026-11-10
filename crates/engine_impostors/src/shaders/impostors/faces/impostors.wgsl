@@ -5,7 +5,8 @@ import package::engine::geometry::declarations::{AffinePose as PoseRows, FADE_LE
     faded_slot_slot};
 import package::engine::geometry::vertex::pose_matrix;
 import package::engine::shading::{SurfacePoint, ViewPixel};
-import package::engine::slots::{given_point, shade};
+import package::engine::slots::{derived, set_direct_blocked, set_metalness, set_occlusion,
+    set_roughness, set_thickness, set_transmission, shade, standard_point};
 import package::engine::surfaces::SURFACE_SOLID;
 import package::engine::view::{camera, material_detail, stable_normalize, view_pixel};
 import package::face::debug::debug_targets;
@@ -317,7 +318,7 @@ fn card_point(input: CardVertex, record: ImpostorRecord, fade: u32) -> SurfacePo
     let slot_surface = unpack4x8unorm(input.material.z);
     let color = vec4<f32>(unpack2x16unorm(input.material.x), unpack2x16unorm(input.material.y));
     let albedo_color = albedo.rgb * unpremultiply * color.rgb;
-    var point: SurfacePoint;
+    var point = standard_point();
     point.base_color = albedo_color;
     point.opacity = color.a;
     point.emissive = albedo_color * (slot_surface.z * SURFACE_EMISSION * emissive.a * unpremultiply)
@@ -330,13 +331,15 @@ fn card_point(input: CardVertex, record: ImpostorRecord, fade: u32) -> SurfacePo
     point.view = stable_normalize(to_eye);
     point.world = world;
     let reach = select(1.0, 0.25, impostor_flags_hemisphere(record.flags));
-    point.inputs.thickness = reach * length(input.depth_axis.xyz);
-    point.inputs.direct_blocked = 1.0 - saturate(surface.w * unpremultiply);
+    point = set_thickness(point, reach * length(input.depth_axis.xyz));
+    point = set_direct_blocked(point, 1.0 - saturate(surface.w * unpremultiply));
     point.normal_dx = dpdx(geometric);
     point.normal_dy = dpdy(geometric);
-    let units = vec4<f32>(slot_surface.x * surface.x * unpremultiply,
-        slot_surface.y * surface.y * unpremultiply, surface.z * unpremultiply, 0.0);
-    return given_point(point, units);
+    point = set_roughness(point, slot_surface.x * surface.x * unpremultiply);
+    point = set_metalness(point, slot_surface.y * surface.y * unpremultiply);
+    point = set_occlusion(point, surface.z * unpremultiply);
+    point = set_transmission(point, 0.0);
+    return derived(point);
 }
 
 fn card_fading(fade: u32) -> bool {

@@ -13,6 +13,7 @@ use bevy_ecs::prelude::*;
 use engine_core::{
     Brick, Bricks, Pass, PassName, PassPurpose, PassViews, Schedule, SlotSet, Source, Writes, never,
 };
+use engine_places_rendering::lighting::inputs;
 use engine_render::{AttachPoint, LastFrame, RenderBricks, TargetDecl, TargetName, wgpu};
 
 pub use settings::Reflections;
@@ -67,6 +68,7 @@ impl Brick for ReflectionsBrick {
             .pass::<ReflectionsPass>()
             .systems(Schedule::ViewSync, publish_piece)
             .join::<engine_places_rendering::reflections::TraceReaders>((), None)
+            .point_input(inputs::ROUGHNESS)
             .part::<part::TraceGpu>();
     }
 }

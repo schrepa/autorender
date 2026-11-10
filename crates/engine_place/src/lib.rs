@@ -11,6 +11,7 @@ mod feeds;
 mod level;
 mod nodes;
 mod passes;
+mod point;
 mod readback;
 mod readiness;
 mod requests;
@@ -50,6 +51,7 @@ pub use passes::{
     PassEntry, PassMask, PassName, PassPurpose, PassRaster, PassRole, PassViews, ScenePass,
     ScenePasses, SlotSet, TargetName, Writes, every, never, wgsl_name,
 };
+pub use point::{PointInput, PointSet};
 pub use readback::{FrameId, Readable, Readback};
 pub use readiness::{Awaits, CORE_ROW, Readiness, Unsettled};
 pub use requests::{Board, Census, Hold, Interest, Progress, Request, Requests, Settling, Ticket};

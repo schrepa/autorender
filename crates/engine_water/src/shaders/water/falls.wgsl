@@ -1,6 +1,7 @@
 import package::engine::color::luminance;
 import package::engine::shading::{Shaded, SurfacePoint};
-import package::engine::slots::{given_point, shade as shade_point};
+import package::engine::slots::{derived, set_added_light, set_metalness, set_occlusion,
+    set_roughness, set_transmission, shade as shade_point, standard_point};
 import package::engine::surfaces::SURFACE_WATER;
 import package::engine::view::{camera, eye_world, stable_normalize, view_pixel};
 import package::face::ground_tiles::{detail_resolved, detail_span};
@@ -164,7 +165,7 @@ fn shade_fall(input: FallOutput, held: f32) -> FallShade {
         glow = sunlight * (FALL_ALBEDO * scattering.z * -dot(sun, seen));
     }
     let f0 = vec3<f32>(0.02 * (1.0 - white));
-    var point: SurfacePoint;
+    var point = standard_point();
     point.base_color = vec3<f32>(FALL_ALBEDO);
     point.emissive = vec3<f32>(0.0);
     point.geometric = seen;
@@ -175,14 +176,17 @@ fn shade_fall(input: FallOutput, held: f32) -> FallShade {
     point.world_dx = world_dx;
     point.world_dy = world_dy;
     point.kind = SURFACE_WATER;
-    point = given_reflectance(given_point(point, vec4<f32>(WATER_SMOOTHEST, 0.0, input.sky, 0.0)),
-        f0, vec3<f32>(FALL_ALBEDO * scattering.y));
+    point = set_roughness(point, WATER_SMOOTHEST);
+    point = set_metalness(point, 0.0);
+    point = set_occlusion(point, input.sky);
+    point = set_transmission(point, 0.0);
+    point = given_reflectance(derived(point), f0, vec3<f32>(FALL_ALBEDO * scattering.y));
     point.n_v = max(abs(facing), 1.0e-4);
     let reflectance = luminance(environment_brdf(f0, WATER_SMOOTHEST, point.n_v));
     let body = water_body(0.0) * (vec3<f32>(1.0) - clarity)
         * water_scattered(view, sunlight, seen)
         * ((1.0 - reflectance) * scattering.x * input.sky);
-    point.inputs.added_light = body + glow;
+    point = set_added_light(point, body + glow);
     var shade: FallShade;
     shade.point = point;
     shade.shaded = shade_point(point, input.clip_position.xy);

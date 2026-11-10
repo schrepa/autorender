@@ -12,8 +12,9 @@ use engine_core::{
     Attributes, BlendedPass, Brick, Bricks, ColorPass, ComponentKind, Error, ErrorCode, GpuStruct,
     KindDecl, KindSkip, PassRole, PassViews, SceneComponents, Schedule, Source, fields,
 };
+use engine_places_rendering::lighting::inputs;
 use engine_places_rendering::reflections::TraceDepths;
-use engine_render::{RenderBricks, SurfaceKind};
+use engine_render::{PointInput, RenderBricks, SurfaceKind};
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -44,6 +45,13 @@ const SKIPS: &[KindSkip] = &[
     ),
 ];
 
+const SETS: [PointInput; 4] = [
+    inputs::ROUGHNESS,
+    inputs::METALNESS,
+    inputs::OCCLUSION,
+    inputs::TRANSMISSION,
+];
+
 pub struct PondBrick;
 
 impl Brick for PondBrick {
@@ -69,6 +77,9 @@ impl Brick for PondBrick {
             })
             .pass::<part::PondPass>()
             .draws::<part::PondGpu>(part::POND_KIND, part::PondGpu::draw);
+        for input in SETS {
+            bricks.point_set(input.set());
+        }
     }
 }
 

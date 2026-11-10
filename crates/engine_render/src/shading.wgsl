@@ -13,20 +13,6 @@ struct PositionInput {
     object: u32,
 }
 
-struct LightInputs {
-    ignore_face: bool,
-    added_light: vec3<f32>,
-    added_indirect: vec3<f32>,
-    ambient_bend: vec3<f32>,
-    smoother_across: f32,
-    direct_softness: f32,
-    receiver_lift_first: u32,
-    receiver_lifts: vec4<f32>,
-    thickness: f32,
-    direct_blocked: f32,
-    direct_known: bool,
-}
-
 struct SurfaceInput {
     color: vec4<f32>,
     normal: vec3<f32>,

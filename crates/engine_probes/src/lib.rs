@@ -17,9 +17,9 @@ use engine_core::{
     AttachPoint, Brick, Bricks, ComponentKind, Cut, Pass, PassName, PassPurpose, PassViews,
     SceneComponents, Schedule, SlotSet, Source, Writes, every, gpu_consts, never, settings, stats,
 };
-use engine_places_rendering::lighting::{Ambient, Interiors};
+use engine_places_rendering::lighting::{Ambient, Interiors, inputs};
 use engine_places_rendering::probes::{ProbeCaptures, ReflectionProbe};
-use engine_render::{LastFrame, RenderBricks, TargetDecl, TargetName, wgpu};
+use engine_render::{LastFrame, PointInput, RenderBricks, TargetDecl, TargetName, wgpu};
 
 pub use component::{SceneInterior, SceneReflectionProbe};
 
@@ -105,6 +105,18 @@ stats! {
 
 const GENERATED: &[&str] = &[WGSL];
 
+const SETS: [PointInput; 9] = [
+    inputs::IGNORE_FACE,
+    inputs::ADDED_INDIRECT,
+    inputs::AMBIENT_BEND,
+    inputs::DIRECT_BLOCKED,
+    inputs::DIRECT_KNOWN,
+    inputs::ROUGHNESS,
+    inputs::METALNESS,
+    inputs::OCCLUSION,
+    inputs::TRANSMISSION,
+];
+
 pub struct ReflectionProbesBrick;
 
 impl Brick for ReflectionProbesBrick {
@@ -142,6 +154,10 @@ impl Brick for ReflectionProbesBrick {
             .part::<captures::ProbesGpu>();
         for target in SURFACES {
             bricks.view_target(target);
+        }
+        bricks.point_input(inputs::THICKNESS);
+        for input in SETS {
+            bricks.point_input(input).point_set(input.set());
         }
     }
 }

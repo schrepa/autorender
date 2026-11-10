@@ -20,9 +20,10 @@ use engine_core::{
 };
 use engine_open_world_kit::ground::{FarCover, Foliage, PlacedTiles};
 use engine_places::surface::{
-    METALLIC_ROUGHNESS_MAP, METALNESS, OCCLUSION, OCCLUSION_MAP, ROUGHNESS, TRANSMISSION,
+    METALLIC_ROUGHNESS_MAP, METALNESS, OCCLUSION, OCCLUSION_MAP, OCCLUSION_STRENGTH, ROUGHNESS,
+    TRANSMISSION,
 };
-use engine_places_rendering::lighting::Ambient;
+use engine_places_rendering::lighting::{Ambient, inputs};
 use engine_places_rendering::occlusion::OcclusionSource;
 use engine_render::{RenderBricks, SlotModule};
 
@@ -71,7 +72,7 @@ const LOOKS: [Look; 4] = [
             METALNESS,
             TRANSMISSION,
             SurfaceSlot::Kind.name(),
-            SurfaceSlot::LightInputs.name(),
+            inputs::DIRECT_SOFTNESS.name,
         ],
         SURFACE_MAPS,
         &[],
@@ -108,6 +109,7 @@ const LOOKS: [Look; 4] = [
             "top_blue",
             "top_coverage",
             "top_roughness",
+            OCCLUSION_STRENGTH,
         ],
         0.0,
     ),

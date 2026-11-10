@@ -11,6 +11,7 @@ mod empty;
 mod far_ground;
 mod ground;
 mod image;
+mod inputs;
 mod lit_pass;
 mod movers;
 mod partners;
@@ -60,6 +61,11 @@ impl Brick for StandardSmokesBrick {
             name: "missing_ground_names_its_filler",
             run: partners::ground,
             without: &[partners::GROUND_FILLER],
+        },
+        Smoke {
+            name: "unread_inputs_are_noticed",
+            run: inputs::run,
+            without: &[inputs::LEFT_OUT],
         },
         Smoke {
             name: "standard_list_starts_clean",

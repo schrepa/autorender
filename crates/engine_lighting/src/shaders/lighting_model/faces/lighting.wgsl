@@ -50,9 +50,9 @@ fn environment_brdf(f0: vec3<f32>, roughness: f32, n_v: f32) -> vec3<f32> {
 }
 
 fn surface_sun(point: SurfacePoint) -> SunAt {
-    return SunAt(point.world + sun_direction() * point.inputs.thickness, point.geometric,
-        point.world_dx, point.world_dy, point.inputs.direct_softness, point.kind,
-        point.inputs.receiver_lift_first, point.inputs.receiver_lifts);
+    return SunAt(point.world + sun_direction() * point.thickness, point.geometric,
+        point.world_dx, point.world_dy, point.direct_softness, point.kind,
+        point.receiver_lift_first, point.receiver_lifts);
 }
 
 fn sun_visibility(at: SunAt) -> f32 {
@@ -131,7 +131,7 @@ fn reflecting(point: SurfacePoint) -> Reflecting {
 
 fn lit(surface: SurfacePoint, pixel: vec2<f32>) -> Shaded {
     let point = widened(surface);
-    return shade_surface(point, pixel, local_light(point, pixel) + point.inputs.added_light);
+    return shade_surface(point, pixel, local_light(point, pixel) + point.added_light);
 }
 
 fn given_reflectance(point: SurfacePoint, reflectance: vec3<f32>, diffuse: vec3<f32>)

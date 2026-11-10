@@ -133,6 +133,13 @@ fn log_unmet(engine: &Engine) {
         #[cfg(not(target_arch = "wasm32"))]
         eprintln!("{record}");
     }
+    for error in engine.notices() {
+        let record = serde_json::json!({"event": "notice", "error": error});
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::info_1(&wasm_bindgen::JsValue::from_str(&record.to_string()));
+        #[cfg(not(target_arch = "wasm32"))]
+        eprintln!("{record}");
+    }
 }
 
 #[inline(never)]

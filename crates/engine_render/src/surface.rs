@@ -4,8 +4,10 @@ use engine_core::{
     AlphaMode, BitValue, Error, ErrorCode, GpuBits, LightingModel, MAPPED, MAPPED_SLOTS, Material,
     MaterialHandle, Module, Rule, Setting, SurfaceSlot, UvTransform, gpu_bits,
 };
+use engine_place::{PointInput, PointSet};
+use serde_json::{Value, json};
 
-use crate::linker::{Declaration, Ty};
+use crate::linker::{CORE_PACKAGE, Declaration, Ty};
 
 pub const SHADING_MODULE: &str = "engine::shading";
 pub const MATERIALS_MODULE: &str = "engine::materials";
@@ -214,11 +216,8 @@ pub struct MaterialValue {
 
 #[derive(Clone, Copy, Debug)]
 pub struct OpenSlot {
-    pub name: &'static str,
-    pub returns: &'static str,
+    pub input: PointInput,
     pub standard: Module,
-    pub flat: &'static str,
-    pub unit: Option<usize>,
     pub values: &'static [MaterialValue],
 }
 
@@ -228,7 +227,7 @@ pub struct SurfaceTerms {
     pub derive: Module,
 }
 
-const POINT_FIELDS: [(&str, &str); 16] = [
+const POINT_FIELDS: [(&str, &str); 15] = [
     ("base_color", "vec3<f32>"),
     ("opacity", "f32"),
     ("emissive", "vec3<f32>"),
@@ -244,22 +243,42 @@ const POINT_FIELDS: [(&str, &str); 16] = [
     ("distance", "f32"),
     ("kind", "u32"),
     ("lighting", "u32"),
-    ("inputs", "LightInputs"),
 ];
 
 type LaidSlot = (&'static str, &'static str, String, &'static [&'static str]);
 
-type LaidOpen = (
-    &'static str,
-    &'static str,
-    String,
-    &'static str,
-    Option<usize>,
-);
+type LaidOpen = (PointInput, String, &'static str);
 
-const GIVEN_UNITS: usize = 4;
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct LeftInput {
+    pub(crate) brick: &'static str,
+    pub(crate) name: &'static str,
+    pub(crate) opens: bool,
+}
 
-const UNIT_LANES: [&str; GIVEN_UNITS] = ["x", "y", "z", "w"];
+#[derive(Default)]
+pub(crate) struct SurfaceDecls {
+    pub(crate) slots: Vec<(SlotModule, String, &'static str)>,
+    pub(crate) open: Vec<(OpenSlot, String, &'static str)>,
+    pub(crate) inputs: Vec<(PointInput, &'static str)>,
+    pub(crate) sets: Vec<(PointSet, &'static str)>,
+    pub(crate) terms: Vec<(SurfaceTerms, String)>,
+    pub(crate) models: Vec<(LightingModule, String)>,
+    pub(crate) kinds: Vec<SurfaceKind>,
+    pub(crate) left: Vec<LeftInput>,
+}
+
+impl SurfaceDecls {
+    fn left_of(&self, name: &str, opens: bool) -> Vec<&'static str> {
+        let mut bricks = Vec::new();
+        for left in &self.left {
+            if left.name == name && (left.opens || !opens) && !bricks.contains(&left.brick) {
+                bricks.push(left.brick);
+            }
+        }
+        bricks
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct LaidValue {
@@ -273,14 +292,18 @@ pub(crate) struct MaterialLayout {
     maps: Vec<&'static str>,
     values: Vec<LaidValue>,
     open: Vec<LaidOpen>,
+    inputs: Vec<(PointInput, &'static str)>,
+    sets: Vec<(PointSet, bool)>,
     terms: Vec<(&'static str, &'static str)>,
     derives: Vec<String>,
     slots: Vec<LaidSlot>,
+    skipped: Vec<LaidSlot>,
     models: Vec<(&'static str, String)>,
     kinds: Vec<SurfaceKind>,
+    notices: Vec<Error>,
 }
 
-pub(crate) fn core_slots() -> Vec<(SlotModule, String)> {
+pub(crate) fn core_slots() -> Vec<(SlotModule, String, &'static str)> {
     let module = crate::shaders::core_module(MAPPED_MODULE);
     MAPPED_SLOTS
         .iter()
@@ -296,6 +319,7 @@ pub(crate) fn core_slots() -> Vec<(SlotModule, String)> {
                     reach: 0.0,
                 },
                 MAPPED_MODULE.to_owned(),
+                CORE_PACKAGE,
             )
         })
         .collect()
@@ -309,15 +333,50 @@ fn wrong_name(path: String, name: &str) -> Error {
     Error::new(ErrorCode::NameTwice, path).got(name)
 }
 
+fn read_by(brick: &str, input: PointInput) -> Value {
+    json!({ "brick": brick, "type": input.ty, "standard": input.standard })
+}
+
+fn set_by(brick: &str, set: PointSet) -> Value {
+    json!({ "brick": brick, "type": set.ty })
+}
+
+fn disagree(path: String, first: Value, second: Value) -> Error {
+    Error::new(ErrorCode::UsageConflict, path).got([first, second])
+}
+
 impl MaterialLayout {
     pub(crate) fn standard() -> Self {
-        Self::of(&core_slots(), &[], &[], &[], &[], &mut Vec::new())
+        let declared = SurfaceDecls {
+            slots: core_slots(),
+            ..SurfaceDecls::default()
+        };
+        Self::of(&declared, &mut Vec::new())
+    }
+
+    pub(crate) fn notices(&self) -> &[Error] {
+        &self.notices
     }
 
     fn point_field(&self, name: &str) -> bool {
         POINT_FIELDS.iter().any(|(known, _)| *known == name)
-            || self.open.iter().any(|(known, ..)| *known == name)
+            || self.input(name).is_some()
             || self.terms.iter().any(|(known, _)| *known == name)
+    }
+
+    fn input(&self, name: &str) -> Option<(PointInput, &'static str)> {
+        self.open
+            .iter()
+            .map(|(input, _, brick)| (*input, *brick))
+            .chain(self.inputs.iter().copied())
+            .find(|(input, _)| input.name == name)
+    }
+
+    fn fields(&self) -> impl Iterator<Item = PointInput> + '_ {
+        self.open
+            .iter()
+            .map(|(input, ..)| *input)
+            .chain(self.inputs.iter().map(|(input, _)| *input))
     }
 
     fn value(&mut self, name: &'static str, standard: f32, rule: Option<Rule>) {
@@ -330,125 +389,28 @@ impl MaterialLayout {
         }
     }
 
-    fn wrong_unit(&self, declared: &OpenSlot) -> Option<Error> {
-        let unit = declared.unit?;
-        let path = format!("$.open_slots.{}.unit", declared.name);
-        if declared.returns != "f32" {
-            return Some(Error::new(ErrorCode::InvalidType, path).got(declared.returns));
-        }
-        if unit >= GIVEN_UNITS {
-            return Some(
-                Error::new(ErrorCode::OutOfRange, path)
-                    .range(0.0, (GIVEN_UNITS - 1) as f64)
-                    .got(unit),
-            );
-        }
-        if self.open.iter().any(|(.., known)| *known == Some(unit)) {
-            return Some(Error::new(ErrorCode::NameTwice, path).got(unit));
-        }
-        None
-    }
-
-    pub(crate) fn of(
-        slots: &[(SlotModule, String)],
-        open: &[(OpenSlot, String)],
-        terms: &[(SurfaceTerms, String)],
-        models: &[(LightingModule, String)],
-        kinds: &[SurfaceKind],
-        problems: &mut Vec<Error>,
-    ) -> Self {
+    pub(crate) fn of(declared: &SurfaceDecls, problems: &mut Vec<Error>) -> Self {
         let mut layout = Self {
             maps: Vec::new(),
             values: Vec::new(),
             open: Vec::new(),
+            inputs: Vec::new(),
+            sets: Vec::new(),
             terms: Vec::new(),
             derives: Vec::new(),
             slots: Vec::new(),
+            skipped: Vec::new(),
             models: Vec::new(),
             kinds: vec![SurfaceKind::SOLID],
+            notices: Vec::new(),
         };
-        for (declared, path) in open {
-            if layout.slot_index(declared.name).is_some() || layout.point_field(declared.name) {
-                problems.push(wrong_name(
-                    format!("$.open_slots.{}", declared.name),
-                    declared.name,
-                ));
-                continue;
-            }
-            if let Some(wrong) = layout.wrong_unit(declared) {
-                problems.push(wrong);
-                continue;
-            }
-            layout.open.push((
-                declared.name,
-                declared.returns,
-                path.clone(),
-                declared.flat,
-                declared.unit,
-            ));
-            for value in declared.values {
-                layout.value(value.name, value.standard, Some(value.rule));
-            }
-        }
-        for (declared, path) in terms {
-            for &(name, ty) in declared.fields {
-                if layout.slot_index(name).is_some() || layout.point_field(name) {
-                    problems.push(wrong_name(format!("$.surface_terms.{name}"), name));
-                    continue;
-                }
-                layout.terms.push((name, ty));
-            }
-            layout.derives.push(path.clone());
-        }
-        for (declared, path) in slots {
-            if layout.slot_index(declared.slot).is_none() {
-                problems.push(
-                    Error::new(
-                        ErrorCode::UnknownVariable,
-                        format!("$.material_slots.{}.{}", declared.slot, declared.name),
-                    )
-                    .got(declared.slot)
-                    .variants(layout.slot_names()),
-                );
-                continue;
-            }
-            if layout
-                .slots
-                .iter()
-                .any(|(slot, name, _, _)| *slot == declared.slot && *name == declared.name)
-            {
-                problems.push(wrong_name(
-                    format!("$.material_slots.{}.{}", declared.slot, declared.name),
-                    declared.name,
-                ));
-                continue;
-            }
-            for map in declared.maps {
-                if !layout.maps.contains(map) {
-                    layout.maps.push(map);
-                }
-            }
-            for &value in declared.values {
-                layout.value(value, 0.0, None);
-            }
-            layout
-                .slots
-                .push((declared.slot, declared.name, path.clone(), declared.maps));
-        }
-        for (declared, path) in models {
-            let core = [Lighting::Lit, Lighting::Unlit]
-                .iter()
-                .any(|model| snake(model) == declared.name);
-            if core || layout.models.iter().any(|(name, _)| *name == declared.name) {
-                problems.push(wrong_name(
-                    format!("$.lighting_models.{}", declared.name),
-                    declared.name,
-                ));
-                continue;
-            }
-            layout.models.push((declared.name, path.clone()));
-        }
-        for kind in kinds {
+        layout.lay_open(&declared.open, problems);
+        layout.lay_inputs(&declared.inputs, problems);
+        layout.lay_terms(&declared.terms, problems);
+        layout.lay_sets(declared, problems);
+        layout.lay_slots(declared, problems);
+        layout.lay_models(&declared.models, problems);
+        for kind in &declared.kinds {
             if layout.kinds.iter().any(|known| known.name == kind.name) {
                 problems.push(wrong_name(
                     format!("$.surface_kinds.{}", kind.name),
@@ -461,6 +423,157 @@ impl MaterialLayout {
         layout
     }
 
+    fn lay_open(&mut self, open: &[(OpenSlot, String, &'static str)], problems: &mut Vec<Error>) {
+        for (declared, path, brick) in open {
+            let name = declared.input.name;
+            let at = format!("$.open_slots.{name}");
+            if let Some((_, _, first)) = self.open.iter().find(|(input, ..)| input.name == name) {
+                problems.push(Error::new(ErrorCode::NameTwice, at).got([*first, *brick]));
+                continue;
+            }
+            if SurfaceSlot::named(name).is_some() || self.point_field(name) {
+                problems.push(wrong_name(at, name));
+                continue;
+            }
+            self.open.push((declared.input, path.clone(), *brick));
+            for value in declared.values {
+                self.value(value.name, value.standard, Some(value.rule));
+            }
+        }
+    }
+
+    fn lay_inputs(&mut self, inputs: &[(PointInput, &'static str)], problems: &mut Vec<Error>) {
+        for &(input, brick) in inputs {
+            let at = format!("$.point_inputs.{}", input.name);
+            if let Some((known, first)) = self.input(input.name) {
+                if known != input {
+                    problems.push(disagree(at, read_by(first, known), read_by(brick, input)));
+                }
+                continue;
+            }
+            if SurfaceSlot::named(input.name).is_some() || self.point_field(input.name) {
+                problems.push(wrong_name(at, input.name));
+                continue;
+            }
+            self.inputs.push((input, brick));
+        }
+    }
+
+    fn lay_terms(&mut self, terms: &[(SurfaceTerms, String)], problems: &mut Vec<Error>) {
+        for (declared, path) in terms {
+            for &(name, ty) in declared.fields {
+                if self.slot_index(name).is_some() || self.point_field(name) {
+                    problems.push(wrong_name(format!("$.surface_terms.{name}"), name));
+                    continue;
+                }
+                self.terms.push((name, ty));
+            }
+            self.derives.push(path.clone());
+        }
+    }
+
+    fn lay_sets(&mut self, declared: &SurfaceDecls, problems: &mut Vec<Error>) {
+        let mut sets: Vec<(PointSet, Vec<&'static str>)> = Vec::new();
+        for &(set, brick) in &declared.sets {
+            match sets.iter().position(|(known, _)| known.name == set.name) {
+                Some(at) if sets[at].0.ty != set.ty => {
+                    let first = set_by(sets[at].1[0], sets[at].0);
+                    let at = format!("$.point_sets.{}", set.name);
+                    problems.push(disagree(at, first, set_by(brick, set)));
+                }
+                Some(at) => {
+                    if !sets[at].1.contains(&brick) {
+                        sets[at].1.push(brick);
+                    }
+                }
+                None => sets.push((set, vec![brick])),
+            }
+        }
+        for (set, by) in sets {
+            let at = format!("$.point_sets.{}", set.name);
+            match self.input(set.name) {
+                Some((read, reader)) if read.ty != set.ty => {
+                    problems.push(disagree(at, read_by(reader, read), set_by(by[0], set)));
+                }
+                Some(_) => self.sets.push((set, true)),
+                None if SurfaceSlot::named(set.name).is_some() || self.point_field(set.name) => {
+                    problems.push(wrong_name(at, set.name));
+                }
+                None => {
+                    let notice = Error::new(ErrorCode::InputUnread, at)
+                        .got(&by)
+                        .nearest(declared.left_of(set.name, false));
+                    self.notices.push(notice);
+                    self.sets.push((set, false));
+                }
+            }
+        }
+    }
+
+    fn lay_slots(&mut self, declared: &SurfaceDecls, problems: &mut Vec<Error>) {
+        let mut unopened: Vec<(&'static str, Vec<Value>)> = Vec::new();
+        for (slot, path, brick) in &declared.slots {
+            if self.slot_index(slot.slot).is_none() {
+                let filler = json!({ "brick": brick, "module": slot.name });
+                match unopened.iter().position(|(name, _)| *name == slot.slot) {
+                    Some(at) => unopened[at].1.push(filler),
+                    None => unopened.push((slot.slot, vec![filler])),
+                }
+                self.skipped
+                    .push((slot.slot, slot.name, path.clone(), slot.maps));
+                continue;
+            }
+            if self
+                .slots
+                .iter()
+                .any(|(known, name, _, _)| *known == slot.slot && *name == slot.name)
+            {
+                problems.push(wrong_name(
+                    format!("$.material_slots.{}.{}", slot.slot, slot.name),
+                    slot.name,
+                ));
+                continue;
+            }
+            for map in slot.maps {
+                if !self.maps.contains(map) {
+                    self.maps.push(map);
+                }
+            }
+            for &value in slot.values {
+                self.value(value, 0.0, None);
+            }
+            self.slots
+                .push((slot.slot, slot.name, path.clone(), slot.maps));
+        }
+        for (slot, fillers) in unopened {
+            let at = format!("$.material_slots.{slot}");
+            let notice = Error::new(ErrorCode::SlotUnopened, at).got(fillers);
+            let openers = declared.left_of(slot, true);
+            let notice = if openers.is_empty() {
+                notice.variants(self.slot_names())
+            } else {
+                notice.nearest(openers)
+            };
+            self.notices.push(notice);
+        }
+    }
+
+    fn lay_models(&mut self, models: &[(LightingModule, String)], problems: &mut Vec<Error>) {
+        for (declared, path) in models {
+            let core = [Lighting::Lit, Lighting::Unlit]
+                .iter()
+                .any(|model| snake(model) == declared.name);
+            if core || self.models.iter().any(|(name, _)| *name == declared.name) {
+                problems.push(wrong_name(
+                    format!("$.lighting_models.{}", declared.name),
+                    declared.name,
+                ));
+                continue;
+            }
+            self.models.push((declared.name, path.clone()));
+        }
+    }
+
     fn value_vec4s(&self) -> usize {
         self.values.len().div_ceil(4).max(1)
     }
@@ -469,7 +582,7 @@ impl MaterialLayout {
         SurfaceSlot::ALL
             .into_iter()
             .map(SurfaceSlot::name)
-            .chain(self.open.iter().map(|(name, ..)| *name))
+            .chain(self.open.iter().map(|(input, ..)| input.name))
     }
 
     fn slot_index(&self, slot: &str) -> Option<usize> {
@@ -478,7 +591,7 @@ impl MaterialLayout {
             .or_else(|| {
                 self.open
                     .iter()
-                    .position(|(name, ..)| *name == slot)
+                    .position(|(input, ..)| input.name == slot)
                     .map(|at| SurfaceSlot::ALL.len() + at)
             })
     }
@@ -524,6 +637,20 @@ impl MaterialLayout {
 
     pub(crate) fn reads(&self, material: &Material, map: &str) -> bool {
         self.read_maps(material).any(|read| read == map)
+    }
+
+    fn skipped_slot(&self, slot: &str) -> bool {
+        self.skipped.iter().any(|(known, ..)| *known == slot)
+    }
+
+    fn skipped_reads(&self, material: &Material, map: &str) -> bool {
+        material.slots().iter().any(|(slot, module)| {
+            self.skipped.iter().any(|(known, name, _, maps)| {
+                *known == slot.as_str()
+                    && *name == module.as_str()
+                    && maps.iter().any(|read| *read == map)
+            })
+        })
     }
 
     pub(crate) fn model(&self, lighting: &LightingModel) -> Option<u32> {
@@ -613,42 +740,35 @@ impl MaterialLayout {
             let _ = writeln!(body, "    result = derive_{id}(result);");
         }
         body.push_str("    return result;\n}\n");
+        body.push_str("\nfn standard_point() -> SurfacePoint {\n    var point: SurfacePoint;\n");
+        for input in self.fields() {
+            let _ = writeln!(body, "    point.{} = {};", input.name, input.standard);
+        }
+        body.push_str("    return point;\n}\n");
         let _ = writeln!(imports, "import package::engine::surfaces::SURFACE_SOLID;");
         body.push_str(
-            "\nfn flat_point(color: vec4<f32>) -> SurfacePoint {\n    var point: SurfacePoint;\n    point.base_color = color.rgb;\n    point.opacity = color.a;\n    point.normal = vec3<f32>(0.0, 0.0, 1.0);\n    point.geometric = point.normal;\n    point.view = point.normal;\n    point.kind = SURFACE_SOLID;\n",
+            "\nfn flat_point(color: vec4<f32>) -> SurfacePoint {\n    var point = standard_point();\n    point.base_color = color.rgb;\n    point.opacity = color.a;\n    point.normal = vec3<f32>(0.0, 0.0, 1.0);\n    point.geometric = point.normal;\n    point.view = point.normal;\n    point.kind = SURFACE_SOLID;\n    return derived(point);\n}\n",
         );
-        for (name, _, _, flat, _) in &self.open {
-            let _ = writeln!(body, "    point.{name} = {flat};");
-        }
-        body.push_str("    return derived(point);\n}\n");
-        body.push_str(
-            "\nfn given_point(point: SurfacePoint, units: vec4<f32>) -> SurfacePoint {\n    var filled = point;\n",
-        );
-        for (name, _, _, flat, unit) in &self.open {
-            match unit {
-                Some(unit) => {
-                    let _ = writeln!(body, "    filled.{name} = units.{};", UNIT_LANES[*unit]);
-                }
-                None => {
-                    let _ = writeln!(body, "    filled.{name} = {flat};");
-                }
+        for &(PointSet { name, ty }, read) in &self.sets {
+            let _ = writeln!(
+                body,
+                "\nfn set_{name}(point: SurfacePoint, value: {ty}) -> SurfacePoint {{"
+            );
+            if read {
+                let _ = writeln!(
+                    body,
+                    "    var result = point;\n    result.{name} = value;\n    return result;"
+                );
+            } else {
+                body.push_str("    return point;\n");
             }
+            body.push_str("}\n");
         }
-        body.push_str("    return derived(filled);\n}\n");
-        body.push_str(
-            "\nfn point_units(point: SurfacePoint) -> vec4<f32> {\n    var units = vec4<f32>(0.0);\n",
-        );
-        for (name, .., unit) in &self.open {
-            if let Some(unit) = unit {
-                let _ = writeln!(body, "    units.{} = point.{name};", UNIT_LANES[*unit]);
-            }
-        }
-        body.push_str("    return units;\n}\n");
     }
 
     pub(crate) fn slots_source(&self, full: bool) -> String {
         let mut imports = String::from(
-            "import package::engine::shading::{LightInputs, PositionInput, Shaded, SurfaceInput, SurfacePoint, unlit};\n",
+            "import package::engine::shading::{PositionInput, Shaded, SurfaceInput, SurfacePoint, unlit};\n",
         );
         let mut body = String::new();
         let surface = "input: SurfaceInput, point: SurfacePoint";
@@ -662,7 +782,6 @@ impl MaterialLayout {
                     }
                     SurfaceSlot::Opacity | SurfaceSlot::Cutoff => ("f32", surface, "input, point"),
                     SurfaceSlot::Kind => ("u32", surface, "input, point"),
-                    SurfaceSlot::LightInputs => ("LightInputs", surface, "input, point"),
                     SurfaceSlot::Output => (
                         "Shaded",
                         "input: SurfaceInput, point: SurfacePoint, shaded: Shaded",
@@ -672,8 +791,8 @@ impl MaterialLayout {
                 (slot.name(), returns, params, args, STANDARD_MODULE)
             })
             .collect();
-        signed.extend(self.open.iter().map(|(name, returns, path, ..)| {
-            (*name, *returns, surface, "input, point", path.as_str())
+        signed.extend(self.open.iter().map(|(input, path, _)| {
+            (input.name, input.ty, surface, "input, point", path.as_str())
         }));
         for (name, returns, params, args, standard) in signed {
             let _ = writeln!(
@@ -706,7 +825,8 @@ impl MaterialLayout {
         body.push_str(
             "\nfn open_slots(input: SurfaceInput, point: SurfacePoint) -> SurfacePoint {\n    var filled = point;\n",
         );
-        for (name, ..) in &self.open {
+        for (input, ..) in &self.open {
+            let name = input.name;
             let _ = writeln!(body, "    filled.{name} = slot_{name}(input, filled);");
         }
         body.push_str("    return filled;\n}\n");
@@ -754,14 +874,11 @@ impl MaterialLayout {
     pub(crate) fn shading_source(&self) -> String {
         let mut source = String::from(include_str!("shading.wgsl"));
         source.push_str("\nstruct SurfacePoint {\n");
-        let open = self
-            .open
-            .iter()
-            .map(|(name, returns, ..)| (*name, *returns));
+        let inputs = self.fields().map(|input| (input.name, input.ty));
         for (name, ty) in POINT_FIELDS
             .iter()
             .copied()
-            .chain(open)
+            .chain(inputs)
             .chain(self.terms.iter().copied())
         {
             let _ = writeln!(source, "    {name}: {ty},");
@@ -805,6 +922,9 @@ impl MaterialLayout {
         words[9] = alpha.bits();
         for (slot, module) in material.slots() {
             let Some(index) = self.slot_index(slot) else {
+                if self.skipped_slot(slot) {
+                    continue;
+                }
                 problems.push(
                     Error::new(ErrorCode::UnknownVariable, format!("{path}.slots.{slot}"))
                         .got(slot.as_str())
@@ -827,6 +947,9 @@ impl MaterialLayout {
                 .position(|known| known == name)
                 .filter(|_| self.reads(material, name));
             let Some(index) = index else {
+                if self.skipped_reads(material, name) {
+                    continue;
+                }
                 problems.push(
                     Error::new(ErrorCode::UnknownVariable, format!("{path}.maps.{name}"))
                         .got(name.as_str())

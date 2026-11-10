@@ -98,6 +98,7 @@ pub struct Registry {
     reads: Vec<Read>,
     unmet: Vec<Error>,
     gated: Vec<Error>,
+    notices: Vec<Error>,
 }
 
 #[derive(Default)]
@@ -194,20 +195,20 @@ impl RegistryBuilder {
         }
     }
 
-    pub fn leave_out(&mut self, record: &BrickRecord) {
+    pub fn leave_out(&mut self, record: BrickRecord) {
         let package = record.package;
         if self.registry.has(package) {
             return;
         }
+        self.left_owned
+            .extend(record.owned().iter().map(|owned| (owned.type_id, package)));
         if !self.registry.left_out.contains(&package) {
             self.registry.left_out.push(package);
             self.registry.left.push(LeftOut::of(record));
         }
-        self.left_owned
-            .extend(record.owned().iter().map(|owned| (owned.type_id, package)));
     }
 
-    pub fn known(&mut self, record: &BrickRecord) {
+    pub fn known(&mut self, record: BrickRecord) {
         let registry = &mut self.registry;
         let package = record.package;
         if registry.has(package)
@@ -325,6 +326,15 @@ impl Registry {
         &self.left_out
     }
 
+    pub fn left_render_entries<T: Any>(&self) -> impl Iterator<Item = (&'static str, &T)> + '_ {
+        self.left.iter().chain(&self.known).flat_map(|left| {
+            left.render
+                .iter()
+                .filter_map(|entry| entry.downcast_ref::<T>())
+                .map(move |entry| (left.package, entry))
+        })
+    }
+
     pub fn holds(&self, package: &str, type_id: TypeId) -> bool {
         let owner = self.brick(package).and_then(BrickRecord::owner);
         owner.is_some()
@@ -369,6 +379,16 @@ impl Registry {
 
     pub fn unmet(&self) -> &[Error] {
         &self.unmet
+    }
+
+    pub fn report_notice(&mut self, error: Error) {
+        if !self.notices.contains(&error) {
+            self.notices.push(error);
+        }
+    }
+
+    pub fn notices(&self) -> &[Error] {
+        &self.notices
     }
 
     pub fn reads(&self) -> &[Read] {
