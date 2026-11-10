@@ -12,7 +12,6 @@ mod part;
 mod settings;
 mod surface;
 
-use bevy_ecs::prelude::Res;
 use engine_core::{
     Attributes, Brick, Bricks, KindDecl, KindSkip, PassRole, PassViews, Schedule, Source,
 };
@@ -34,8 +33,7 @@ impl Brick for GroundCoverBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|cover: Res<GroundCover>| cover.enabled)
-            .settings::<GroundCover>()
+            .switch::<GroundCover>()
             .stats::<GroundCoverStats>()
             .resource::<covers::CoverTable>()
             .resource::<growth::CoverPlan>()

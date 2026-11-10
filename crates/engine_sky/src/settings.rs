@@ -2,11 +2,11 @@ use engine_core::settings;
 
 settings! {
     #[section("sky")]
+    #[switch(on)]
     #[derive(Copy)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneSky")]
     pub struct Sky {
-        pub enabled: bool = true => any,
         pub planet_radius: f32 = 6360.0 => range(100.0, 100_000.0),
         pub atmosphere_height: f32 = 100.0 => range(1.0, 1000.0),
         pub rayleigh: [f32; 3] = [5.802e-3, 13.558e-3, 33.1e-3] => range(0.0, 1.0),
@@ -28,11 +28,11 @@ settings! {
 
 settings! {
     #[section("haze")]
+    #[switch(off)]
     #[derive(Copy)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneHaze")]
     pub struct Haze {
-        pub enabled: bool = false => any,
         pub visibility: f32 = 0.0 => at_least(0.0),
         pub strength: f32 = 0.7 => range(0.0, 4.0),
         pub forward: f32 = 0.6 => range(0.0, 0.95),
@@ -60,11 +60,11 @@ settings! {
 
 settings! {
     #[section("clouds")]
+    #[switch(off)]
     #[derive(Copy)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneClouds")]
     pub struct Clouds {
-        pub enabled: bool = false => any,
         pub coverage: f32 = 0.45 => range(0.0, 1.0),
         pub base: f32 = 1800.0 => range(-10_000.0, 30_000.0),
         pub thickness: f32 = 1400.0 => range(50.0, 10_000.0),

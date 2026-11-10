@@ -3,10 +3,10 @@ use super::*;
 settings! {
     #[section("terrain")]
     #[check(nested_rules)]
+    #[switch(on)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneTerrainSettings")]
     pub struct TerrainSettings {
-        pub enabled: bool = true => any,
         pub pixel_error: f32 = 6.0 => range(1.0, 64.0),
         pub pinned_levels: u32 = 2 => range(1, 8),
         #[serde(skip_serializing_if = "Option::is_none")]

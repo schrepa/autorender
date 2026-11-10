@@ -123,7 +123,7 @@ impl Brick for ScatterBrick {
         bricks
             .settings::<ScatterSettings>()
             .settings::<FoliageSettings>()
-            .settings::<OccupancySettings>()
+            .within_switch::<OccupancySettings>(|_| {})
             .stats::<ScatterStats>()
             .resource::<systems::ScatterState>()
             .resource::<systems::ScatterFeedback>()

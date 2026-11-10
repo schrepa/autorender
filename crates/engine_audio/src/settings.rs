@@ -5,11 +5,11 @@ pub(crate) const MOST_VOICES: u32 = 512;
 
 settings! {
     #[section("audio")]
+    #[switch(on)]
     #[derive(Copy)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneAudio")]
     pub struct Audio {
-        pub enabled: bool = true => any,
         pub master: f32 = 1.0 => range(0.0, 1.0),
         pub music: f32 = 1.0 => range(0.0, 1.0),
         pub effects: f32 = 1.0 => range(0.0, 1.0),

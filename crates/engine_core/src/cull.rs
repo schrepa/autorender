@@ -12,6 +12,8 @@ settings! {
     #[schemars(rename = "SceneCulling")]
     pub struct Culling {
         pub frustum: bool = true => any,
+        pub occlusion: bool = true => any,
+        pub subpixel: bool = true => any,
         pub instances: Option<u32> = None => at_least(1),
     }
 }
@@ -19,24 +21,6 @@ settings! {
 impl Culling {
     pub fn budget(&self) -> u32 {
         self.instances.unwrap_or(u32::MAX)
-    }
-}
-
-settings! {
-    #[section("occlusion_culling")]
-    #[serde(deny_unknown_fields)]
-    #[schemars(rename = "SceneOcclusionCulling")]
-    pub struct OcclusionCulling {
-        pub enabled: bool = true => any,
-    }
-}
-
-settings! {
-    #[section("subpixel_culling")]
-    #[serde(deny_unknown_fields)]
-    #[schemars(rename = "SceneSubpixelCulling")]
-    pub struct SubpixelCulling {
-        pub enabled: bool = true => any,
     }
 }
 
@@ -81,12 +65,6 @@ pub fn frustum_sees(planes: &[Vec4], low: Vec3, high: Vec3) -> bool {
 
 pub(crate) fn settle(world: &mut World) {
     let culling = world.get_resource::<Culling>().cloned().unwrap_or_default();
-    let occlusion = world
-        .get_resource::<OcclusionCulling>()
-        .is_none_or(|occlusion| occlusion.enabled);
-    let subpixel = world
-        .get_resource::<SubpixelCulling>()
-        .is_none_or(|subpixel| subpixel.enabled);
     let drawn = world.get_resource::<DrawnTable>().map_or(0, |table| {
         table
             .states()
@@ -96,8 +74,8 @@ pub(crate) fn settle(world: &mut World) {
     let budget = culling.budget();
     let plan = CullPlan {
         frustum: culling.frustum,
-        occlusion,
-        subpixel,
+        occlusion: culling.occlusion,
+        subpixel: culling.subpixel,
         budget,
         over_budget: drawn > budget as usize,
     };

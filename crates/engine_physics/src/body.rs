@@ -24,8 +24,7 @@ const RULES: [(&str, Rule); 8] = [
 const PUSH: Rule = Rule::range(-1.0e9, 1.0e9);
 const PUSH_RULES: [(&str, Rule); 2] = [("force", PUSH), ("torque", PUSH)];
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum BodyProblem {
     NoCollider,
     NotRoot,
@@ -43,7 +42,6 @@ pub(crate) struct BodyWater {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) struct BodyStatus {
-    pub problem: Option<BodyProblem>,
     pub mass: f32,
     pub volume: f32,
     pub velocity: Vec3,

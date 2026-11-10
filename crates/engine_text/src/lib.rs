@@ -83,9 +83,9 @@ const GENERATED: &[&str] = &[
 
 settings! {
     #[section("text")]
+    #[switch(on)]
     #[serde(deny_unknown_fields)]
     pub struct TextSettings {
-        pub enabled: bool = true => any,
         pub atlas_size: u32 = 2048 => range(256, 8192),
         pub max_glyphs: u32 = 65_536 => range(1, 2_000_000),
     }
@@ -399,7 +399,7 @@ impl Brick for TextBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .settings::<TextSettings>()
+            .switch::<TextSettings>()
             .stats::<TextStats>()
             .errors(&[typeset::INVALID_FONT])
             .fill::<Text>(Some(shaders::text::faces::text::MODULE))

@@ -2,11 +2,11 @@ use engine_core::{settings, stats};
 
 settings! {
     #[section("bloom")]
+    #[switch(on)]
     #[derive(Copy)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneBloom")]
     pub struct Bloom {
-        pub enabled: bool = true => any,
         pub intensity: f32 = 0.6 => range(0.0, 4.0),
         pub threshold: f32 = 2.0 => at_least(0.0),
     }

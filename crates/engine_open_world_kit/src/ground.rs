@@ -10,8 +10,8 @@ use engine_heightfield::tile::{
     OP_VALUE, OP_WETNESS, OP_WORN, Placed, Steep,
 };
 use engine_place::{
-    Feed, GeometryHandle, List, MaterialHandle, Slot, Stamp, TextureHandle, UNIFORM_BINDING_BYTES,
-    gpu_struct,
+    Feed, GeometryHandle, List, MaterialHandle, Progress, Slot, Stamp, TextureHandle,
+    UNIFORM_BINDING_BYTES, gpu_struct,
 };
 use engine_tiles::{Pyramid, TILE_QUADS, TileKey};
 use glam::{Vec2, Vec3};
@@ -238,18 +238,10 @@ impl Slot for Heightfield {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GroundBake {
-    Off,
-    Asked,
-    Made,
-    Failed,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct GroundBakes {
     pub terrain: Entity,
-    pub lighting: GroundBake,
-    pub bounce: GroundBake,
+    pub lighting: Option<Progress>,
+    pub bounce: Option<Progress>,
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]

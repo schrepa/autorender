@@ -3,7 +3,7 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::{
     Asset, AssetLibrary, AssetResidency, AssetUses, Cut, Detail, DeviceLimits, Drawn, DrawnArea,
-    DrawnAreas, FrameTime, Readable, Readback, Spawner, Transform, Views,
+    DrawnAreas, FrameTime, Readable, Readback, Spawner, Switched, Transform, Views,
 };
 use engine_math::collections::HashMap;
 use engine_open_world_kit::ground::{
@@ -185,6 +185,7 @@ pub(crate) fn take_impostors(
 
 pub(crate) fn place_windows(
     (settings, foliage, views): (Res<OccupancySettings>, Res<FoliageSettings>, Res<Views>),
+    occupying: Switched<OccupancySettings>,
     state: Res<ScatterState>,
     mut windows: ResMut<OccupancyWindows>,
     mut piece: ResMut<CanopyPiece>,
@@ -197,7 +198,7 @@ pub(crate) fn place_windows(
         return;
     };
     let lit = windows.place(
-        &settings,
+        (&settings, occupying.on()),
         main.detail_eye,
         (state.groups.covers.as_slice(), state.objects),
     );
@@ -448,7 +449,7 @@ pub(crate) fn plan_cull(
     let view_projection = main.view_projection;
     let eye = main.detail_eye;
     let height = main.size().y as f32;
-    let pixel_error = detail.enabled.then_some(detail.pixel_error);
+    let pixel_error = detail.chosen_error();
     let impostors = plan.cards.then_some(policy.pixels);
     let y_row = view_projection.row(1).truncate().length();
     let spanned = y_row * height * 0.5;

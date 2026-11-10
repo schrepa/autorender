@@ -27,7 +27,7 @@ pub fn refused(checked: Result<(), InvalidSetting>) -> Result<(), Error> {
 #[macro_export]
 macro_rules! settings {
     (
-        @section $key:literal [$($check:path)?]
+        @section $key:literal [$($check:path)?] [$($switch:ident)?]
         $(#[$meta:meta])*
         $vis:vis struct $name:ident {
             $(
@@ -87,19 +87,71 @@ macro_rules! settings {
                 ::core::result::Result::Ok(())
             }
         }
+
+        $(
+            impl ::engine_core::Switch for $name {
+                const DEFAULT: bool = $crate::__switch_default!($switch);
+
+                fn on(&self) -> bool {
+                    self.enabled
+                }
+            }
+        )?
+    };
+    (
+        @switched $key:literal [$($check:path)?] [$switch:ident]
+        $(#[$meta:meta])*
+        $vis:vis struct $name:ident {
+            $($fields:tt)*
+        }
+    ) => {
+        $crate::settings! {
+            @section $key [$($check)?] [$switch]
+            $(#[$meta])*
+            $vis struct $name {
+                pub enabled: bool = $crate::__switch_default!($switch) => any,
+                $($fields)*
+            }
+        }
+    };
+    (
+        #[section($key:literal)]
+        #[check($check:path)]
+        #[switch($switch:ident)]
+        $($rest:tt)*
+    ) => {
+        $crate::settings! { @switched $key [$check] [$switch] $($rest)* }
     };
     (
         #[section($key:literal)]
         #[check($check:path)]
         $($rest:tt)*
     ) => {
-        $crate::settings! { @section $key [$check] $($rest)* }
+        $crate::settings! { @section $key [$check] [] $($rest)* }
+    };
+    (
+        #[section($key:literal)]
+        #[switch($switch:ident)]
+        $($rest:tt)*
+    ) => {
+        $crate::settings! { @switched $key [] [$switch] $($rest)* }
     };
     (
         #[section($key:literal)]
         $($rest:tt)*
     ) => {
-        $crate::settings! { @section $key [] $($rest)* }
+        $crate::settings! { @section $key [] [] $($rest)* }
+    };
+}
+
+#[doc(hidden)]
+#[macro_export]
+macro_rules! __switch_default {
+    (on) => {
+        true
+    };
+    (off) => {
+        false
     };
 }
 

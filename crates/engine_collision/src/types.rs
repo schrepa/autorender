@@ -69,9 +69,9 @@ pub(crate) fn valid_position(position: Vec3) -> bool {
 
 settings! {
     #[section("collision")]
+    #[switch(on)]
     #[derive(Copy, Eq)]
     pub struct CollisionConfig {
-        pub enabled: bool = true => any,
         pub max_colliders: Option<u32> = None => budget,
         pub max_candidate_pairs: Option<u32> = None => budget,
         pub max_sensor_pairs: Option<u32> = None => budget,

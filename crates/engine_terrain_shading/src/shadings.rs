@@ -25,64 +25,68 @@ const TILE_ARRAY_BYTES: u64 = (TILE_STRIDE as u64) * (TILE_STRIDE as u64) * 4;
 
 type ShadingWork = Background<Arc<[u8]>>;
 
-enum Shading {
-    Looking {
-        record: RecordKey,
+enum Source {
+    Store,
+    Job { reads: Vec<RecordKey> },
+}
+
+enum Shade {
+    Fetch {
         work: ShadingWork,
-    },
-    Making {
-        record: RecordKey,
-        work: ShadingWork,
-        reads: Vec<RecordKey>,
+        source: Source,
     },
     Held {
-        record: RecordKey,
         bytes: Arc<[u8]>,
         shading: Arc<TileShading>,
         shown: Option<engine_core::Stamp>,
     },
-    Made {
-        record: RecordKey,
-    },
-    Missing {
-        record: RecordKey,
-    },
-    Failed {
-        record: RecordKey,
-        _failure: Option<ShadingWork>,
-    },
+    Stored,
+    Absent,
+    Unusable,
+}
+
+struct Shading {
+    record: RecordKey,
+    shade: Shade,
 }
 
 impl Shading {
-    fn record(&self) -> RecordKey {
-        match self {
-            Self::Looking { record, .. }
-            | Self::Making { record, .. }
-            | Self::Held { record, .. }
-            | Self::Made { record }
-            | Self::Missing { record }
-            | Self::Failed { record, .. } => *record,
-        }
-    }
-
     fn asked(&self) -> bool {
-        matches!(self, Self::Looking { .. } | Self::Making { .. })
+        matches!(&self.shade, Shade::Fetch { work, .. } if work.waiting())
     }
 
     fn arrived(&self) -> bool {
-        matches!(self, Self::Held { .. } | Self::Made { .. })
+        matches!(self.shade, Shade::Held { .. } | Shade::Stored)
     }
 
     fn held(&self) -> bool {
-        matches!(self, Self::Held { .. })
+        matches!(self.shade, Shade::Held { .. })
     }
 
-    fn work_mut(&mut self) -> Option<&mut ShadingWork> {
-        match self {
-            Self::Looking { work, .. } | Self::Making { work, .. } => Some(work),
-            Self::Held { .. } | Self::Made { .. } | Self::Missing { .. } | Self::Failed { .. } => {
-                None
+    fn fetching(&mut self) -> Option<(&mut ShadingWork, bool)> {
+        match &mut self.shade {
+            Shade::Fetch { work, source } if work.waiting() => {
+                Some((work, matches!(source, Source::Store)))
             }
+            Shade::Fetch { .. }
+            | Shade::Held { .. }
+            | Shade::Stored
+            | Shade::Absent
+            | Shade::Unusable => None,
+        }
+    }
+
+    fn reads(&self) -> Option<&[RecordKey]> {
+        match &self.shade {
+            Shade::Fetch {
+                work,
+                source: Source::Job { reads },
+            } if work.waiting() => Some(reads.as_slice()),
+            Shade::Fetch { .. }
+            | Shade::Held { .. }
+            | Shade::Stored
+            | Shade::Absent
+            | Shade::Unusable => None,
         }
     }
 }
@@ -106,7 +110,10 @@ pub(crate) struct Shadings {
 
 impl Shadings {
     pub(crate) fn shown(&self, tile: &TileFace) -> Option<&Arc<TileShading>> {
-        if let Some(Shading::Held { shading, shown, .. }) = self.tiles.get(&tile.key)
+        if let Some(Shading {
+            shade: Shade::Held { shading, shown, .. },
+            ..
+        }) = self.tiles.get(&tile.key)
             && *shown == Some(tile.stamp)
         {
             Some(shading)
@@ -133,10 +140,9 @@ impl Shadings {
     }
 
     fn made(&self, key: TileKey, record: RecordKey) -> bool {
-        let missing = matches!(
-            self.tiles.get(&key),
-            Some(Shading::Missing { record: at } | Shading::Making { record: at, .. }) if *at == record
-        );
+        let missing = self.tiles.get(&key).is_some_and(|tile| {
+            tile.record == record && (matches!(tile.shade, Shade::Absent) || tile.reads().is_some())
+        });
         key.level == 1 || missing
     }
 
@@ -151,7 +157,7 @@ impl Shadings {
         }
         let record =
             |key: TileKey| ShadingJob::of(recipe, &entry.pyramid, &entry.edits, key).record();
-        self.tiles.retain(|&key, tile| tile.record() == record(key));
+        self.tiles.retain(|&key, tile| tile.record == record(key));
     }
 
     fn take_arrived(
@@ -162,7 +168,7 @@ impl Shadings {
         let kind = SHADING.name();
         let mut took = false;
         for (&key, tile) in &mut self.tiles {
-            let Some(work) = tile.work_mut() else {
+            let Some((work, looked)) = tile.fetching() else {
                 continue;
             };
             let output = match work.poll(records) {
@@ -171,41 +177,22 @@ impl Shadings {
                 Landed::Failed(error) => Err(error.clone()),
             };
             took = true;
-            let record = tile.record();
-            let (looking, work) = match std::mem::replace(tile, Shading::Missing { record }) {
-                Shading::Looking { work, .. } => (true, work),
-                Shading::Making { work, .. } => (false, work),
-                Shading::Held { .. }
-                | Shading::Made { .. }
-                | Shading::Missing { .. }
-                | Shading::Failed { .. } => continue,
-            };
-            *tile = match output {
-                Err(error) if looking && record_missing(&error) => Shading::Missing { record },
+            tile.shade = match output {
+                Err(error) if looked && record_missing(&error) => Shade::Absent,
                 Err(error) => {
                     failures.record(frame, format!("{kind}: {error}"));
-                    Shading::Failed {
-                        record,
-                        _failure: Some(work),
-                    }
+                    continue;
                 }
                 Ok(bytes) => match shading_output(&bytes) {
-                    Ok(made) if made.key() == key => Shading::Held {
-                        record,
+                    Ok(made) if made.key() == key => Shade::Held {
                         bytes,
                         shading: Arc::new(made),
                         shown: None,
                     },
-                    Ok(_) => Shading::Failed {
-                        record,
-                        _failure: None,
-                    },
+                    Ok(_) => Shade::Unusable,
                     Err(error) => {
                         failures.record(frame, error.within(&format!("$.{kind}")).to_string());
-                        Shading::Failed {
-                            record,
-                            _failure: None,
-                        }
+                        Shade::Unusable
                     }
                 },
             };
@@ -273,9 +260,8 @@ impl Shadings {
         }
         self.tiles.retain(|key, _| wanted.contains_key(key));
         for (key, tile) in &mut self.tiles {
-            let record = tile.record();
             if tile.held() && !wanted.get(key).copied().unwrap_or(false) {
-                *tile = Shading::Made { record };
+                tile.shade = Shade::Stored;
             }
         }
     }
@@ -288,15 +274,10 @@ impl Shadings {
     ) {
         for want in wants {
             let key = want.key;
-            let has = match self.tiles.get(&key) {
-                None | Some(Shading::Missing { .. }) => false,
-                Some(Shading::Made { .. }) => !want.held,
-                Some(
-                    Shading::Looking { .. }
-                    | Shading::Making { .. }
-                    | Shading::Held { .. }
-                    | Shading::Failed { .. },
-                ) => true,
+            let has = match self.tiles.get(&key).map(|tile| &tile.shade) {
+                None | Some(Shade::Absent) => false,
+                Some(Shade::Stored) => !want.held,
+                Some(Shade::Fetch { .. } | Shade::Held { .. } | Shade::Unusable) => true,
             };
             if has {
                 continue;
@@ -317,13 +298,12 @@ impl Shadings {
             {
                 continue;
             }
-            let tile = if made {
+            let shade = if made {
                 let mut reads = Vec::new();
                 for at in &finer {
-                    let Some(Shading::Held {
+                    let Some(Shading {
                         record: read,
-                        bytes,
-                        ..
+                        shade: Shade::Held { bytes, .. },
                     }) = self.tiles.get(at)
                     else {
                         continue;
@@ -333,18 +313,17 @@ impl Shadings {
                         cx.jobs.share_as(*read, Arc::clone(bytes));
                     }
                 }
-                Shading::Making {
-                    record,
+                Shade::Fetch {
                     work: cx.jobs.start(&SHADING, input, want.priority, Ok),
-                    reads,
+                    source: Source::Job { reads },
                 }
             } else {
-                Shading::Looking {
-                    record,
+                Shade::Fetch {
                     work: cx.jobs.look(&SHADING, &input, want.priority, Ok),
+                    source: Source::Store,
                 }
             };
-            self.tiles.insert(key, tile);
+            self.tiles.insert(key, Shading { record, shade });
         }
     }
 
@@ -352,15 +331,9 @@ impl Shadings {
         let reading: HashSet<RecordKey> = self
             .tiles
             .values()
-            .filter_map(|tile| match tile {
-                Shading::Making { reads, .. } => Some(reads.iter().copied()),
-                Shading::Looking { .. }
-                | Shading::Held { .. }
-                | Shading::Made { .. }
-                | Shading::Missing { .. }
-                | Shading::Failed { .. } => None,
-            })
+            .filter_map(Shading::reads)
             .flatten()
+            .copied()
             .collect();
         let shares: Vec<RecordKey> = self.sharing.iter().copied().collect();
         for key in shares {
@@ -376,7 +349,7 @@ impl Shadings {
         self.shaded = 0;
         let mut gave = false;
         for (&key, tile) in &mut self.tiles {
-            let Shading::Held { shown, .. } = tile else {
+            let Shade::Held { shown, .. } = &mut tile.shade else {
                 continue;
             };
             let Some(face) = listed_tile(&entry.tiles, key) else {

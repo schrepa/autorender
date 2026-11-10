@@ -15,7 +15,7 @@ pub(crate) fn cook(world: &World, asks: &mut CookAsks<'_>) {
         if state.terrain.validate().is_err() || (state.around.is_some() && !settings.surroundings) {
             continue;
         }
-        if state.bake.baking() {
+        if state.baking() {
             asks.left(1);
             continue;
         }

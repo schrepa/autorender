@@ -11,7 +11,6 @@ pub mod jobs;
 mod nav;
 mod scene;
 
-use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, JobKind, SceneComponents, Schedule, Source};
 
 pub use agents::{
@@ -36,8 +35,7 @@ impl Brick for NavigationBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|navigation: Res<Navigation>| navigation.enabled)
-            .settings::<Navigation>()
+            .switch::<Navigation>()
             .errors(&[scene::INVALID_NAV_AGENT, agents::NAV_STEPS_NOT_TAKEN])
             .resource::<NavAgents>()
             .stats::<NavStats>()

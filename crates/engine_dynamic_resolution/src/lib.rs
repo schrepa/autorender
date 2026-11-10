@@ -14,11 +14,11 @@ use engine_core::{
 settings! {
     #[section("dynamic_resolution")]
     #[check(sorted_scales)]
+    #[switch(off)]
     #[derive(Copy)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneDynamicResolution")]
     pub struct DynamicResolution {
-        pub enabled: bool = false => any,
         pub min_scale: f32 = 0.5 => range(0.25, 1.0),
         pub max_scale: f32 = 1.0 => range(0.25, 1.0),
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -171,8 +171,7 @@ impl Brick for DynamicResolutionBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|settings: Res<DynamicResolution>| settings.enabled)
-            .settings::<DynamicResolution>()
+            .switch::<DynamicResolution>()
             .stats::<DynamicResolutionStats>()
             .resource::<DynamicScale>()
             .fill::<RenderScale>(None)

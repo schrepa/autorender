@@ -22,7 +22,6 @@ use native as backend;
 pub use mixer::{SOUND_PART, SoundEnded, SoundEndedRow, SoundEnds};
 pub use settings::{Audio, AudioStats};
 
-use bevy_ecs::prelude::Res;
 use engine_core::{Brick, Bricks, ComponentKind, SceneComponents, Schedule, Source};
 use engine_places_rendering::audio::{SoundSource, Sounds};
 
@@ -32,8 +31,7 @@ impl Brick for AudioBrick {
     const SOURCE: &'static Source = &SOURCE;
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|audio: Res<Audio>| audio.enabled)
-            .settings::<Audio>()
+            .switch::<Audio>()
             .stats::<AudioStats>()
             .errors(&[mixer::AUDIO_FAILED])
             .resource::<mixer::Mixer>()

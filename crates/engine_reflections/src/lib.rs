@@ -59,8 +59,7 @@ impl Brick for ReflectionsBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|reflections: Res<Reflections>| reflections.enabled)
-            .settings::<Reflections>()
+            .switch::<Reflections>()
             .piece::<ReflectionsPiece>()
             .generated(gpu::GENERATED)
             .view_target(SURFACE)

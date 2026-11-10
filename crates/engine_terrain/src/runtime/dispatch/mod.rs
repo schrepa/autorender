@@ -78,15 +78,14 @@ fn load_records(
     };
     let generation = state.store.generation();
     let store = &state.store;
-    let stale = state.slots.keys_where(|key, slot| match slot {
-        TileSlot::Loading { made, .. } => {
-            !(*made == generation && keep.contains(key) && store.loads(key))
-        }
-        TileSlot::Failed { .. } => !keep.contains(key),
-        TileSlot::Prefetching { .. } => false,
-    });
+    let left = |key: &TileKey, slot: &TileSlot| match (slot.loading(), slot.failed()) {
+        (Some((made, _)), _) => !(made == generation && keep.contains(key) && store.loads(key)),
+        (None, Some(_)) => !keep.contains(key),
+        (None, None) => false,
+    };
+    let stale = state.slots.keys_where(left);
     for key in stale {
-        state.slot_event(key, SlotEvent::Done);
+        state.slots.remove(&key);
     }
     let mut handed: Vec<(TileKey, Generation, u32)> = state
         .slots
@@ -111,15 +110,14 @@ fn load_records(
                 if !work.spend(2 * TILE_ARRAY_BYTES) {
                     break;
                 }
-                state.slot_event(key, SlotEvent::Done);
+                state.slots.remove(&key);
                 let stamps = state.reaching(key);
                 state.store.arrive(tile, stamps, materials);
             }
-            Ok(_) => state.slot_event(key, SlotEvent::Done),
-            Err(error) => {
-                state.slot_event(key, SlotEvent::Failed);
-                state.failures.record(frame, error);
+            Ok(_) => {
+                state.slots.remove(&key);
             }
+            Err(error) => state.failures.record(frame, error),
         }
     }
     for &(key, priority) in missing {
@@ -134,15 +132,8 @@ fn load_records(
             continue;
         }
         let fetched = fetch_tile(asking.jobs, &input, priority);
-        state.slot_event(
-            key,
-            SlotEvent::Asked {
-                work: fetched,
-                record,
-                made: generation,
-                priority,
-            },
-        );
+        let slot = TileSlot::needed(fetched, (record, generation, priority));
+        state.slots.insert(key, slot);
     }
     prefetch(
         state,
@@ -172,7 +163,7 @@ fn prefetch(
             .and_then(TileSlot::work_mut)
             .and_then(|tile| landed_tile(tile.poll(asking.records)));
         if let Some(output) = output {
-            state.slot_event(key, SlotEvent::Done);
+            state.slots.remove(&key);
             if let Ok(tile) = output
                 && made == generation
                 && tile.key() == key
@@ -182,7 +173,7 @@ fn prefetch(
                 state.store.keep_unseen(tile, stamps, (frame, materials));
             }
         } else if made != generation || !named.contains(&key) {
-            state.slot_event(key, SlotEvent::Done);
+            state.slots.remove(&key);
         }
     }
     if !missing.is_empty() || state.loading() > 0 {
@@ -198,13 +189,8 @@ fn prefetch(
         let priority = job_priority(IDLE_JOBS, place as u32);
         let job = state.tile_job(recipe.hash(), key);
         let work = fetch_tile(asking.jobs, &job.identity(), priority);
-        state.slot_event(
-            key,
-            SlotEvent::Prefetched {
-                work,
-                made: generation,
-            },
-        );
+        let slot = TileSlot::ahead(work, generation);
+        state.slots.insert(key, slot);
     }
 }
 

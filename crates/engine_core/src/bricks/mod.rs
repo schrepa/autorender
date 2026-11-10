@@ -25,6 +25,7 @@ use crate::moves::NodeKind;
 use crate::{
     Board, Error, ErrorCode, GpuStruct, JobKind, KindDecl, List, Module, Mover, MoverId, Operation,
     Pace, PlaceDecl, RecordKey, SceneContext, SceneIds, Section, Slot, Smoke, Source, SubScene,
+    Switch,
 };
 
 pub trait Brick: 'static {
@@ -83,7 +84,26 @@ impl Bricks<'_> {
         F::Param: Read,
         M: 'static,
     {
-        self.record.when(gate_of(gate));
+        self.record.when(gate_of(gate), None);
+        self
+    }
+
+    #[track_caller]
+    pub fn switch<S: Switch + Resource<Mutability = Immutable>>(&mut self) -> &mut Self {
+        self.record.settings(settings_entry::<S>());
+        self.record.when(gate_of(switch_on::<S>), Some(S::KEY));
+        self
+    }
+
+    #[track_caller]
+    pub fn within_switch<S: Switch + Resource<Mutability = Immutable>>(
+        &mut self,
+        items: impl FnOnce(&mut Self),
+    ) -> &mut Self {
+        self.record.settings(settings_entry::<S>());
+        self.record.enter(gate_of(switch_on::<S>), Some(S::KEY));
+        items(self);
+        self.record.leave();
         self
     }
 
@@ -93,7 +113,7 @@ impl Bricks<'_> {
         F::Param: Read,
         M: 'static,
     {
-        self.record.enter(gate_of(gate));
+        self.record.enter(gate_of(gate), None);
         items(self);
         self.record.leave();
         self
@@ -239,6 +259,10 @@ impl Bricks<'_> {
             }));
         self
     }
+}
+
+fn switch_on<S: Switch>(section: Res<S>) -> bool {
+    section.on()
 }
 
 fn gate_of<M: 'static, F>(gate: F) -> GateFn
@@ -612,6 +636,26 @@ impl<S: Slot> Filled<'_, S> {
         self.registry
             .as_ref()
             .is_some_and(|registry| registry.filler(TypeId::of::<S>()).is_some())
+    }
+}
+
+#[derive(SystemParam)]
+pub struct Switched<'w, S: Switch> {
+    registry: Option<Res<'w, Registry>>,
+    states: Option<Res<'w, BrickStates>>,
+    section: PhantomData<fn() -> S>,
+}
+
+impl<S: Switch> Switched<'_, S> {
+    pub fn on(&self) -> bool {
+        self.registry
+            .as_ref()
+            .zip(self.states.as_ref())
+            .is_some_and(|(registry, states)| {
+                registry
+                    .switch_gate(S::KEY)
+                    .is_some_and(|gate| states.on(gate))
+            })
     }
 }
 

@@ -43,6 +43,7 @@ plain_markers!(
 pub(crate) struct ScopeEntry {
     pub(crate) parent: Option<Scope>,
     pub(crate) condition: Option<GateFn>,
+    pub(crate) switch: Option<&'static str>,
 }
 
 type MakeSystems = Box<dyn FnOnce() -> ScheduleConfigs<ScheduleSystem> + Send + Sync>;
@@ -108,6 +109,7 @@ impl BrickRecord {
             scopes: vec![ScopeEntry {
                 parent: None,
                 condition: None,
+                switch: None,
             }],
             current: Scope::BRICK,
             spawned: spawned_id::<B>,
@@ -189,6 +191,13 @@ impl BrickRecord {
             .and_then(|entry| entry.parent)
     }
 
+    pub fn switched(&self, section: &str) -> Option<Scope> {
+        self.scopes
+            .iter()
+            .position(|entry| entry.switch == Some(section))
+            .map(|index| Scope(index as u32))
+    }
+
     pub fn fills(&self) -> &[Filled] {
         &self.fills
     }
@@ -267,21 +276,24 @@ impl BrickRecord {
         self.owned.iter().any(|owned| owned.type_id == type_id)
     }
 
-    pub fn when(&mut self, condition: GateFn) {
+    pub fn when(&mut self, condition: GateFn, switch: Option<&'static str>) {
         if self.scopes[Scope::BRICK.index()].condition.is_some() {
             let path = format!("$.bricks.{}.when", self.package);
             self.problems
                 .push(Error::new(ErrorCode::NameTwice, path).got(self.package));
             return;
         }
-        self.scopes[Scope::BRICK.index()].condition = Some(condition);
+        let root = &mut self.scopes[Scope::BRICK.index()];
+        root.condition = Some(condition);
+        root.switch = switch;
     }
 
-    pub fn enter(&mut self, condition: GateFn) -> Scope {
+    pub fn enter(&mut self, condition: GateFn, switch: Option<&'static str>) -> Scope {
         let scope = Scope(self.scopes.len() as u32);
         self.scopes.push(ScopeEntry {
             parent: Some(self.current),
             condition: Some(condition),
+            switch,
         });
         self.current = scope;
         scope

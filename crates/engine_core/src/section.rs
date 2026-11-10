@@ -26,6 +26,12 @@ pub trait Section:
     }
 }
 
+pub trait Switch: Section {
+    const DEFAULT: bool;
+
+    fn on(&self) -> bool;
+}
+
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, serde::Deserialize, schemars::JsonSchema,
 )]

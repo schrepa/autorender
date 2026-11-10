@@ -40,94 +40,66 @@ fn with_edits(
 
 pub(super) type TileWork = Background<Arc<Tile>>;
 
-pub(super) enum TileSlot {
-    Loading {
-        work: TileWork,
-        record: RecordKey,
-        made: Generation,
-        priority: u32,
-    },
-    Prefetching {
-        work: TileWork,
-        made: Generation,
-    },
-    Failed {
-        record: RecordKey,
-        _failure: TileWork,
-    },
+#[derive(Clone, Copy)]
+enum TileUse {
+    Needed { record: RecordKey, priority: u32 },
+    Ahead,
 }
 
-pub(super) enum SlotEvent {
-    Asked {
-        work: TileWork,
-        record: RecordKey,
-        made: Generation,
-        priority: u32,
-    },
-    Prefetched {
-        work: TileWork,
-        made: Generation,
-    },
-    Failed,
-    Done,
+pub(super) struct TileSlot {
+    work: TileWork,
+    made: Generation,
+    asked: TileUse,
 }
 
 impl TileSlot {
-    fn next(held: Option<Self>, event: SlotEvent) -> Option<Self> {
-        match (held, event) {
-            (
-                _,
-                SlotEvent::Asked {
-                    work,
-                    record,
-                    made,
-                    priority,
-                },
-            ) => Some(Self::Loading {
-                work,
-                record,
-                made,
-                priority,
-            }),
-            (None, SlotEvent::Prefetched { work, made }) => Some(Self::Prefetching { work, made }),
-            (Some(held), SlotEvent::Prefetched { .. }) => Some(held),
-            (Some(Self::Loading { work, record, .. }), SlotEvent::Failed) => Some(Self::Failed {
-                record,
-                _failure: work,
-            }),
-            (Some(Self::Prefetching { .. }) | None, SlotEvent::Failed) | (_, SlotEvent::Done) => {
-                None
-            }
-            (Some(held @ Self::Failed { .. }), SlotEvent::Failed) => Some(held),
+    pub(super) fn needed(
+        work: TileWork,
+        (record, made, priority): (RecordKey, Generation, u32),
+    ) -> Self {
+        Self {
+            work,
+            made,
+            asked: TileUse::Needed { record, priority },
+        }
+    }
+
+    pub(super) fn ahead(work: TileWork, made: Generation) -> Self {
+        Self {
+            work,
+            made,
+            asked: TileUse::Ahead,
         }
     }
 
     pub(super) fn loading(&self) -> Option<(Generation, u32)> {
-        match self {
-            Self::Loading { made, priority, .. } => Some((*made, *priority)),
-            Self::Prefetching { .. } | Self::Failed { .. } => None,
+        match self.asked {
+            TileUse::Needed { priority, .. } if self.work.failure().is_none() => {
+                Some((self.made, priority))
+            }
+            TileUse::Needed { .. } | TileUse::Ahead => None,
         }
     }
 
     pub(super) fn prefetching(&self) -> Option<Generation> {
-        match self {
-            Self::Prefetching { made, .. } => Some(*made),
-            Self::Loading { .. } | Self::Failed { .. } => None,
+        match self.asked {
+            TileUse::Ahead => Some(self.made),
+            TileUse::Needed { .. } => None,
         }
     }
 
     pub(super) fn failed(&self) -> Option<RecordKey> {
-        match self {
-            Self::Failed { record, .. } => Some(*record),
-            Self::Loading { .. } | Self::Prefetching { .. } => None,
+        match self.asked {
+            TileUse::Needed { record, .. } if self.work.failure().is_some() => Some(record),
+            TileUse::Needed { .. } | TileUse::Ahead => None,
         }
     }
 
     pub(super) fn work_mut(&mut self) -> Option<&mut TileWork> {
-        match self {
-            Self::Loading { work, .. } | Self::Prefetching { work, .. } => Some(work),
-            Self::Failed { .. } => None,
+        if self.failed().is_some() {
+            return None;
         }
+        Some(&mut self.work)
     }
 }
 
@@ -153,35 +125,15 @@ pub(super) struct TerrainState {
     pub(super) target: HashSet<TileKey>,
     pub(super) keep: HashSet<TileKey>,
     pub(super) recipe: Option<SharedRecipe>,
-    pub(super) bake: TerrainBake,
+    pub(super) bake: Option<TerrainBake>,
     pub(super) failures: JobFailures,
     pub(super) surface: Option<(Arc<Layers>, Option<Arc<SurfaceData>>)>,
     pub(super) materials: TileMaterials,
 }
 
-#[derive(Default)]
-pub(super) enum TerrainBake {
-    #[default]
-    Unasked,
-    Asked {
-        work: Background<Arc<Layers>>,
-        drawn: Arc<[TerrainRiver]>,
-    },
-    Failed {
-        _failure: Background<Arc<Layers>>,
-        drawn: Arc<[TerrainRiver]>,
-    },
-    Made,
-}
-
-impl TerrainBake {
-    pub(super) fn asked(&self) -> bool {
-        !matches!(self, Self::Unasked)
-    }
-
-    pub(super) fn baking(&self) -> bool {
-        matches!(self, Self::Asked { .. })
-    }
+pub(super) struct TerrainBake {
+    pub(super) work: Background<Arc<Layers>>,
+    pub(super) drawn: Arc<[TerrainRiver]>,
 }
 
 pub(super) const TILE_ARRAY_BYTES: u64 = (TILE_STRIDE as u64) * (TILE_STRIDE as u64) * 4;
@@ -217,18 +169,15 @@ impl TerrainState {
             target: HashSet::default(),
             keep: HashSet::default(),
             recipe: None,
-            bake: TerrainBake::default(),
+            bake: None,
             failures: JobFailures::default(),
             surface: None,
             materials: TileMaterials::Baked,
         }
     }
 
-    pub(super) fn slot_event(&mut self, key: TileKey, event: SlotEvent) {
-        let held = self.slots.remove(&key);
-        if let Some(next) = TileSlot::next(held, event) {
-            self.slots.insert(key, next);
-        }
+    pub(super) fn baking(&self) -> bool {
+        self.bake.as_ref().is_some_and(|bake| bake.work.waiting())
     }
 
     pub(super) fn loading(&self) -> usize {

@@ -20,7 +20,6 @@ mod world;
 pub use types::{CollisionConfig, CollisionLimits, CollisionStats, Count};
 pub use world::COLLIDER_PART;
 
-use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, ComponentKind, ErrorCode, SceneComponents, Schedule, Source};
 use engine_places::queries::SceneQueries;
 use engine_places_simulation::ground::Ground;
@@ -55,8 +54,7 @@ impl Brick for CollisionBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|config: Res<CollisionConfig>| config.enabled)
-            .settings::<CollisionConfig>()
+            .switch::<CollisionConfig>()
             .stats::<CollisionStats>()
             .errors(ERRORS)
             .fill::<Collision>(None)

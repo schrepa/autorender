@@ -28,10 +28,10 @@ settings! {
 
 settings! {
     #[section("occupancy")]
+    #[switch(on)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneOccupancy")]
     pub struct OccupancySettings {
-        pub enabled: bool = true => any,
         pub radius: f32 = 512.0 => range(64.0, 4096.0),
         pub resolution: u32 = 1024 => multiple(32, 128, 4096),
         pub levels: u32 = 4 => range(1, MAX_OCCUPANCY_LEVELS),

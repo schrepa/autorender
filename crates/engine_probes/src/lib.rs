@@ -12,7 +12,6 @@ mod component;
 mod gather;
 mod probes;
 
-use bevy_ecs::prelude::*;
 use engine_core::{
     AttachPoint, Brick, Bricks, ComponentKind, Cut, Pass, PassName, PassPurpose, PassViews,
     SceneComponents, Schedule, SlotSet, Source, Writes, every, gpu_consts, never, settings, stats,
@@ -82,10 +81,10 @@ impl PassName for ProbeLightPass {
 
 settings! {
     #[section("reflection_probes")]
+    #[switch(on)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneReflectionProbes")]
     pub struct ReflectionProbeSettings {
-        pub enabled: bool = true => any,
         pub resolution: u32 = 128 => power_of_two(16, 1024),
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max_probes: Option<u32> = None => budget,
@@ -124,8 +123,7 @@ impl Brick for ReflectionProbesBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|probes: Res<ReflectionProbeSettings>| probes.enabled)
-            .settings::<ReflectionProbeSettings>()
+            .switch::<ReflectionProbeSettings>()
             .stats::<ReflectionProbeStats>()
             .resource::<gather::ProbeList>()
             .resource::<probes::ProbeState>()

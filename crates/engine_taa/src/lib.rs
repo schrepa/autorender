@@ -12,7 +12,6 @@ mod previous;
 mod resolve;
 mod temporal;
 
-use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, Jitter, Schedule, Source};
 use engine_render::{RenderBricks, Resolve};
 
@@ -25,8 +24,7 @@ impl Brick for TaaBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|taa: Res<TemporalAntialiasing>| taa.enabled)
-            .settings::<TemporalAntialiasing>()
+            .switch::<TemporalAntialiasing>()
             .stats::<TemporalAntialiasingStats>()
             .piece::<temporal::TaaPiece>()
             .resource::<temporal::TaaSettling>()

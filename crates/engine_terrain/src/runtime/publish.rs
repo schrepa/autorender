@@ -140,7 +140,7 @@ fn entry_of(
         baked: (state.around.is_none() && terrains.bake_asked(state.entity))
             .then(|| terrains.layers(state.entity))
             .flatten(),
-        baking: state.around.is_none() && state.bake.baking(),
+        baking: state.around.is_none() && state.baking(),
         macro_map: None,
         materials: Arc::from(surface.materials.as_slice()),
         maps: surface

@@ -56,7 +56,6 @@ pub struct NavStep {
 #[derive(Component, Clone, Debug, Default)]
 pub struct NavWalk {
     pub status: NavStatus,
-    pub refused: Option<String>,
     pub destination: Option<[f32; 2]>,
     pub points: Vec<Vec3>,
     pub next: usize,

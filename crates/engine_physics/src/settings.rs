@@ -3,11 +3,11 @@ use engine_math::GRAVITY;
 
 settings! {
     #[section("physics")]
+    #[switch(on)]
     #[derive(Copy)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "ScenePhysics")]
     pub struct Physics {
-        pub enabled: bool = true => any,
         pub gravity: [f32; 3] = [0.0, -GRAVITY, 0.0] => range(-100.0, 100.0),
         pub water_density: f32 = 1000.0 => range(0.0, 20_000.0),
         pub air_density: f32 = 1.225 => range(0.0, 100.0),

@@ -7,7 +7,7 @@ use engine_places_simulation::physics::{BodyAsk, BodyChange, RigidBody};
 use serde::{Deserialize, Serialize};
 
 use crate::INVALID_RIGID_BODY;
-use crate::body::{BodyProblem, BodyWater, check_change};
+use crate::body::{BodyWater, check_change};
 use crate::world::PhysicsWorld;
 
 #[derive(Serialize, schemars::JsonSchema)]
@@ -15,7 +15,6 @@ pub(crate) struct RigidBodyView {
     body: RigidBody,
     moved_by: Option<&'static str>,
     simulated: bool,
-    problem: Option<BodyProblem>,
     mass: f32,
     volume: f32,
     velocity: [f32; 3],
@@ -55,15 +54,12 @@ impl Operation for PhysicsBody {
             return Ok(None);
         };
         let status = physics.status(entity);
-        let simulated = status
-            .as_ref()
-            .is_some_and(|status| status.problem.is_none());
+        let simulated = status.is_some();
         let status = status.unwrap_or_default();
         let view = RigidBodyView {
             body: *body,
             moved_by: mover.map(|mover| mover.by.name()),
             simulated,
-            problem: status.problem,
             mass: status.mass,
             volume: status.volume,
             velocity: status.velocity.to_array(),

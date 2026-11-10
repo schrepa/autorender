@@ -72,11 +72,9 @@ impl MeshesGpu {
         let culling = View {
             eye: main.detail_eye,
             occlusion: plan.occlusion,
-            lod_error: if detail.enabled {
-                detail.pixel_error * main.render.y as f32 / main.size().y.max(1) as f32
-            } else {
-                0.0
-            },
+            lod_error: detail.chosen_error().map_or(0.0, |pixel_error| {
+                pixel_error * main.render.y as f32 / main.size().y.max(1) as f32
+            }),
             fade,
             margin: detail.margin,
             watched: watched.slot,

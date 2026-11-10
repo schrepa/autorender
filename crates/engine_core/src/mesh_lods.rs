@@ -36,7 +36,7 @@ pub(crate) fn settle(world: &mut World) {
     let mut awaiting = world.resource_mut::<AssetLibrary>().take_awaiting_lods();
     let building = world
         .get_resource::<Detail>()
-        .is_none_or(|detail| detail.enabled);
+        .is_none_or(|detail| detail.chosen_error().is_some());
     let mut orders = Vec::new();
     world.resource_scope(|world, mut levels: Mut<MeshLevels>| {
         let levels = &mut *levels;

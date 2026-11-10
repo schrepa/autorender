@@ -446,8 +446,8 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
 pub(crate) fn settle_owned(world: &mut World) {
     let detail = world
         .get_resource::<Detail>()
-        .filter(|detail| detail.enabled)
-        .map_or(0.0, |detail| detail.pixel_error);
+        .and_then(Detail::chosen_error)
+        .unwrap_or(0.0);
     let mut published: Vec<OwnedViews> = world
         .try_query::<&OwnedViews>()
         .map(|mut query| query.iter(world).cloned().collect())

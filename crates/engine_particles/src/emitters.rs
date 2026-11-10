@@ -19,10 +19,10 @@ engine_core::gpu_consts! {
 
 settings! {
     #[section("particles")]
+    #[switch(on)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneParticles")]
     pub struct ParticleSettings {
-        pub enabled: bool = true => any,
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max_particles: Option<u32> = None => budget,
     }

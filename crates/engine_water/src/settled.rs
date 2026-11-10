@@ -5,8 +5,8 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::world::World;
 use engine_core::{
     Background, CookAsks, DeviceLimits, Error, ErrorCode, FrameBudget, FrameTime, Hold, IDLE_JOBS,
-    Interest, JobFailures, Jobs, RecordKey, Records, Request, Requests, Taken, Ticket, VIEW_JOBS,
-    Views, job_priority, record_missing,
+    Interest, JobFailures, Jobs, Landed, RecordKey, Records, Request, Requests, Taken, Ticket,
+    VIEW_JOBS, Views, job_priority, record_missing,
 };
 use engine_heightfield::tile::Solid;
 use engine_heightfield::{Pyramid, Stamp, reaches};
@@ -16,7 +16,7 @@ use crate::jobs::{
     DRAWN, REACH, ReachJob, SETTLED, WaterJob, WaterReach, WaterRegion, settled_share,
     summary_share,
 };
-use crate::state::{Base, Drawing, SettleQueue, WaterState, WaterTerrain};
+use crate::state::{Drawing, SettleQueue, WaterState, WaterTerrain, Work};
 use crate::{SettleRegion, SettledKey, SteadyCell, SteadyWater, TileKey, Water, WaterPart};
 
 mod making;
@@ -123,15 +123,9 @@ struct HeldReach {
     of: Arc<[u32]>,
 }
 
-enum ReachPhase {
-    Asked(Background<WaterReach>),
-    Failed,
-    Held(HeldReach),
-}
-
 struct Reach {
     wanted: ([u8; 32], f32),
-    phase: ReachPhase,
+    work: Option<Background<HeldReach>>,
 }
 
 fn reach_input((recipe, cell): ([u8; 32], f32)) -> Vec<u8> {
@@ -140,10 +134,7 @@ fn reach_input((recipe, cell): ([u8; 32], f32)) -> Vec<u8> {
 
 impl Reach {
     fn held(&self) -> Option<&HeldReach> {
-        match &self.phase {
-            ReachPhase::Held(held) => Some(held),
-            ReachPhase::Asked(_) | ReachPhase::Failed => None,
-        }
+        self.work.as_ref().and_then(Background::ready)
     }
 }
 
@@ -303,10 +294,10 @@ impl Settled {
         let Some(reach) = &self.reach else {
             return 0;
         };
-        let watered = match &reach.phase {
-            ReachPhase::Asked(_) => return 1,
-            ReachPhase::Failed => return 0,
-            ReachPhase::Held(held) => &held.watered,
+        let watered = match reach.work.as_ref().map(Background::state) {
+            Some(Landed::Waiting) => return 1,
+            Some(Landed::Failed(_)) | None => return 0,
+            Some(Landed::Ready(held)) => &held.watered,
         };
         let records = watered
             .iter()
@@ -624,8 +615,8 @@ fn reset(terrain: &mut WaterTerrain, reach: Option<Reach>) {
     };
     for held in terrain.held.values_mut() {
         held.given = None;
-        if matches!(held.base, Base::Redrawing(_, Drawing::Given(_))) {
-            held.base = Base::Made;
+        if matches!(held.work, Some(Work::Redraw(_, Drawing::Given(_)))) {
+            held.keep_made();
         }
     }
     terrain.touch_all();
@@ -636,26 +627,23 @@ fn take_reach(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>, frame: u6
         .settled
         .reach
         .as_mut()
-        .filter(|reach| matches!(reach.phase, ReachPhase::Asked(_)))
+        .filter(|reach| reach.work.as_ref().is_some_and(Background::waiting))
     else {
         return;
     };
-    let ReachPhase::Asked(work) = std::mem::replace(&mut reach.phase, ReachPhase::Failed) else {
+    let Some(work) = reach.work.as_mut() else {
         return;
     };
-    match work.take(cx.records) {
-        Taken::Waiting(work) => reach.phase = ReachPhase::Asked(work),
-        Taken::Ready(made) => {
-            reach.phase = ReachPhase::Held(HeldReach {
-                cell: reach.wanted.1,
-                watered: made.watered.into(),
-                regions: made.regions.into(),
-                of: made.of.into(),
-            });
-            terrain.touch_all();
-        }
-        Taken::Failed(error) => {
-            cx.failures.record(frame, error.to_string());
+    let failed = match work.poll(cx.records) {
+        Landed::Waiting => return,
+        Landed::Ready(_) => None,
+        Landed::Failed(error) => Some(error.to_string()),
+    };
+    match failed {
+        None => terrain.touch_all(),
+        Some(error) => {
+            reach.work = None;
+            cx.failures.record(frame, error);
         }
     }
 }
@@ -739,13 +727,21 @@ fn refresh(
         .is_none_or(|reach| reach.wanted != wanted)
     {
         let input = reach_input(wanted);
+        let cell = wanted.1;
         let work = cx
             .jobs
-            .fetch(&REACH, &input, job_priority(VIEW_JOBS, 0), |bytes| {
-                engine_codec::decode::<WaterReach>(&bytes).map_err(|error| REACH.undecoded(error))
+            .fetch(&REACH, &input, job_priority(VIEW_JOBS, 0), move |bytes| {
+                engine_codec::decode::<WaterReach>(&bytes)
+                    .map(|made| HeldReach {
+                        cell,
+                        watered: made.watered.into(),
+                        regions: made.regions.into(),
+                        of: made.of.into(),
+                    })
+                    .map_err(|error| REACH.undecoded(error))
             });
-        let phase = ReachPhase::Asked(work);
-        reset(terrain, Some(Reach { wanted, phase }));
+        let work = Some(work);
+        reset(terrain, Some(Reach { wanted, work }));
     }
     take_reach(terrain, cx, frame);
     let cell = terrain.settled.cell()?;

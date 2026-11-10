@@ -198,7 +198,7 @@ impl Terrains {
                 frame,
                 asking,
             ) {
-                stats.baking += u32::from(state.bake.baking());
+                stats.baking += u32::from(state.baking());
                 continue;
             }
             let missing = std::mem::take(&mut state.missing);

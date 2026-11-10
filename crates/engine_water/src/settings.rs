@@ -2,10 +2,10 @@ use engine_core::settings;
 
 settings! {
     #[section("water")]
+    #[switch(on)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneWater")]
     pub struct Water {
-        pub enabled: bool = true => any,
         pub color: [f32; 3] = [0.012, 0.045, 0.05] => range(0.0, 1.0),
         pub clarity: f32 = 2.5 => range(0.1, 100.0),
         pub sediment: f32 = 0.15 => range(0.0, 50.0),
@@ -16,14 +16,5 @@ settings! {
         pub subdivision_error: f32 = 1.0 => range(0.25, 64.0),
         pub subdivision_leaves: u32 = 65_536 => range(1024, 4_000_000),
         pub tile_feed: u32 = 4096 => at_least(1),
-    }
-}
-
-impl Water {
-    pub fn off() -> Self {
-        Self {
-            enabled: false,
-            ..Self::default()
-        }
     }
 }

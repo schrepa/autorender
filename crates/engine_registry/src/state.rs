@@ -41,6 +41,7 @@ impl GateId {
 pub enum Off {
     Unstarted,
     Condition,
+    Switched { section: &'static str },
     Parent,
     Needs { brick: &'static str },
     Unmet,
@@ -506,12 +507,24 @@ pub(crate) fn holders(world: &World, id: ComponentId) -> Vec<Entity> {
 
 pub struct GateDriver {
     conditions: Box<[Option<GateFn>]>,
+    switches: Box<[Option<&'static str>]>,
 }
 
 impl GateDriver {
-    pub(crate) fn new(conditions: Vec<Option<GateFn>>) -> Self {
+    pub(crate) fn new(
+        conditions: Vec<Option<GateFn>>,
+        switches: Vec<Option<&'static str>>,
+    ) -> Self {
         Self {
             conditions: conditions.into_boxed_slice(),
+            switches: switches.into_boxed_slice(),
+        }
+    }
+
+    fn unmet(&self, index: usize) -> Off {
+        match self.switches.get(index).copied().flatten() {
+            Some(section) => Off::Switched { section },
+            None => Off::Condition,
         }
     }
 
@@ -587,11 +600,12 @@ impl GateDriver {
                 want[index] = Err(Off::Parent);
                 continue;
             }
+            let unmet = self.unmet(index);
             want[index] = match self.conditions[index].as_mut() {
                 None => Ok(()),
                 Some(condition) => match condition.run_readonly((), world) {
                     Ok(true) => Ok(()),
-                    Ok(false) => Err(Off::Condition),
+                    Ok(false) => Err(unmet),
                     Err(error) => match lacking {
                         Some(need) => Err(Off::Needs {
                             brick: package(world, need),

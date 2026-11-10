@@ -658,14 +658,7 @@ pub(crate) fn publish_captures(
         &mut state.cameras,
         (&mut spawner, &mut moves, &mut lenses),
     );
-    let shape = (
-        state.size,
-        if detail.enabled {
-            detail.pixel_error
-        } else {
-            0.0
-        },
-    );
+    let shape = (state.size, detail.chosen_error().unwrap_or(0.0));
     let jobs = &state.jobs;
     let drawn = face_views((ProbePass::NAME, shape), &state.cameras, |face| {
         jobs.iter()

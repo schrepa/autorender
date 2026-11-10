@@ -69,8 +69,7 @@ impl Brick for TerrainShadingBrick {
     fn register(bricks: &mut Bricks<'_>) {
         use shaders::terrain_shading::{ambient, blockers, faces, modes, trace_depth};
         bricks
-            .when(|shading: Res<TerrainShading>| shading.enabled)
-            .settings::<TerrainShading>()
+            .switch::<TerrainShading>()
             .stats::<TerrainShadingStats>()
             .errors(&[engine_heightfield::INVALID_TERRAIN])
             .resource::<state::Bakes>()

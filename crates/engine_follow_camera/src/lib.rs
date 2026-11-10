@@ -16,11 +16,11 @@ use serde_json::Value;
 
 settings! {
     #[section("follow_camera")]
+    #[switch(on)]
     #[derive(Copy)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneFollowCamera")]
     pub struct FollowCamera {
-        pub enabled: bool = true => any,
         pub distance: f32 = 6.0 => range(0.1, 1000.0),
         pub height: f32 = 1.5 => range(-100.0, 100.0),
         pub pitch_min: f32 = -1.2 => range(-1.5, 1.5),
@@ -46,8 +46,7 @@ impl Brick for FollowCameraBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .when(|follow: Res<FollowCamera>| follow.enabled)
-            .settings::<FollowCamera>()
+            .switch::<FollowCamera>()
             .resource::<camera::Orbit>()
             .resource::<camera::Shake>()
             .join::<Verbs>(camera::LOOK, None)
