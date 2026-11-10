@@ -24,7 +24,7 @@ pub use settings::{Audio, AudioStats};
 
 use bevy_ecs::prelude::Res;
 use engine_core::{Brick, Bricks, ComponentKind, SceneComponents, Schedule, Source};
-use engine_places_rendering::audio::{SoundSource, Sounds};
+use engine_places_rendering::audio::{SOUND_LOADING, SoundSource, Sounds};
 
 pub struct AudioBrick;
 
@@ -35,7 +35,7 @@ impl Brick for AudioBrick {
             .when(|audio: Res<Audio>| audio.enabled)
             .settings::<Audio>()
             .stats::<AudioStats>()
-            .errors(&[mixer::AUDIO_FAILED])
+            .errors(&[mixer::AUDIO_FAILED, SOUND_LOADING])
             .resource::<mixer::Mixer>()
             .resource::<mixer::SoundEnds>()
             .event::<mixer::SoundEnded, mixer::SoundEnds>()

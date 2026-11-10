@@ -2,9 +2,9 @@ use std::collections::BTreeSet;
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
-use engine_core::{Call, Lands, Rows};
-use engine_core::{Error, ErrorCode, Expected, SceneContext, set_parents};
-use engine_registry::{OperationEntry, OperationScene};
+use engine_core::{
+    Callable, Error, ErrorCode, Expected, OperationScene, Rows, SceneContext, set_parents,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -13,14 +13,39 @@ use crate::instance::spawn_entity;
 use crate::validation::identifier;
 use crate::{SceneKinds, SceneObject};
 
-pub const SPAWN: &str = "spawn";
-pub const REMOVE: &str = "remove";
+pub struct SpawnOperation;
 
-pub fn spawn_operation() -> OperationEntry {
-    OperationEntry::of(
-        Call::exclusive::<SpawnRequest, Rows<Placed>>(SPAWN, (true, Lands::Now), run_spawn)
-            .request_in(spawn_request),
-    )
+impl Callable for SpawnOperation {
+    const NAME: &'static str = "spawn";
+    type Request = SpawnRequest;
+    type Reply = Rows<SpawnedEntity>;
+
+    fn answer(world: &mut World, request: SpawnRequest) -> Result<Self::Reply, Error> {
+        Ok(Rows::each("entities", request.entities, |description| {
+            let object = described(world, description)?;
+            spawn(world, &object)?;
+            Ok(SpawnedEntity { entity: object.id })
+        }))
+    }
+
+    fn request_schema(world: &World) -> Value {
+        spawn_request(world)
+    }
+}
+
+pub struct RemoveOperation;
+
+impl Callable for RemoveOperation {
+    const NAME: &'static str = "remove";
+    type Request = RemoveRequest;
+    type Reply = Rows<RemovedEntity>;
+
+    fn answer(world: &mut World, request: RemoveRequest) -> Result<Self::Reply, Error> {
+        Ok(Rows::each("entities", request.entities, |id| {
+            let removed = remove(world, &id)?;
+            Ok(RemovedEntity { entity: id, removed })
+        }))
+    }
 }
 
 fn spawn_request(world: &World) -> Value {
@@ -43,17 +68,15 @@ fn spawn_request(world: &World) -> Value {
     schema
 }
 
-pub fn remove_operation() -> OperationEntry {
-    OperationEntry::of(Call::exclusive::<RemoveRequest, Rows<Placed>>(
-        REMOVE,
-        (true, Lands::Now),
-        run_remove,
-    ))
+#[derive(Serialize, schemars::JsonSchema)]
+pub struct SpawnedEntity {
+    pub entity: String,
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
-struct Placed {
-    entity: String,
+pub struct RemovedEntity {
+    pub entity: String,
+    pub removed: usize,
 }
 
 struct Described;
@@ -76,26 +99,27 @@ impl schemars::JsonSchema for Described {
 
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct SpawnRequest {
+pub struct SpawnRequest {
     #[schemars(with = "Vec<Described>")]
-    entities: Vec<Value>,
+    pub entities: Vec<Value>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct RemoveRequest {
-    entities: Vec<String>,
+pub struct RemoveRequest {
+    pub entities: Vec<String>,
 }
 
-fn scene_of(world: &World) -> Result<OperationScene, Error> {
-    world
-        .get_resource::<OperationScene>()
-        .cloned()
-        .ok_or_else(|| Error::new(ErrorCode::NoScene, "$").expected(Expected::Present))
+fn no_scene() -> Error {
+    Error::new(ErrorCode::NoScene, "$").expected(Expected::Present)
+}
+
+fn scene_of(world: &World) -> Result<&OperationScene, Error> {
+    world.get_resource::<OperationScene>().ok_or_else(no_scene)
 }
 
 pub fn spawn(world: &mut World, object: &SceneObject) -> Result<Entity, Error> {
-    let mut scene = scene_of(world)?;
+    let scene = scene_of(world)?;
     identifier(&object.id, "$.id")?;
     if scene.entity(&object.id).is_some() {
         return Err(Error::new(ErrorCode::DuplicateId, "$.id")
@@ -114,11 +138,16 @@ pub fn spawn(world: &mut World, object: &SceneObject) -> Result<Entity, Error> {
         .parent
         .as_deref()
         .map(|parent| {
-            scene
-                .entity(parent)
-                .ok_or_else(|| Error::new(ErrorCode::UnknownParent, "$.parent").got(parent))
+            scene.named_in(world, parent, "$.parent").map_err(|error| {
+                if error.code == ErrorCode::UnknownEntity {
+                    Error::new(ErrorCode::UnknownParent, "$.parent").got(parent)
+                } else {
+                    error
+                }
+            })
         })
         .transpose()?;
+    let scene_id = scene.id.clone();
     let expanded = ExpandedObject {
         source: object.clone(),
         path: "$".to_owned(),
@@ -126,40 +155,33 @@ pub fn spawn(world: &mut World, object: &SceneObject) -> Result<Entity, Error> {
         prefab_instance: None,
         prefab_local_id: None,
     };
-    let entity = spawn_entity(world, &scene.id, &expanded, transform);
+    let entity = spawn_entity(world, &scene_id, &expanded, transform);
     let context = world.get_resource::<SceneContext>().cloned();
     let landed = crate::loading::within(context.as_ref(), || {
         let cx = kinds.cx(context.as_ref(), None);
         kinds.read(world, entity, object, "$", &cx)?;
-        match parent {
-            Some(parent) => set_parents(world, &[(entity, Some(parent))]),
-            None => Ok(()),
+        if let Some(parent) = parent {
+            set_parents(world, &[(entity, Some(parent))])?;
         }
+        engine_core::admit(world, entity, None, "$")
     });
     if let Err(error) = landed {
         let _ = world.try_despawn(entity);
+        if let Some(mut scene) = world.get_resource_mut::<OperationScene>() {
+            scene.forget(&object.id);
+        }
         return Err(error);
     }
-    scene.installed.insert(object.id.clone(), entity);
-    world.insert_resource(scene);
     Ok(entity)
 }
 
-pub fn remove(world: &mut World, id: &str) -> Result<Entity, Error> {
-    let mut scene = scene_of(world)?;
-    let entity = scene
-        .entity(id)
-        .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$").got(id))?;
-    if world.get_entity(entity).is_err() {
-        return Err(Error::new(ErrorCode::EntityRemoved, "$")
-            .expected(Expected::Live)
-            .got(id));
+pub fn remove(world: &mut World, id: &str) -> Result<usize, Error> {
+    let entity = scene_of(world)?.named_in(world, id, "$")?;
+    let gone = engine_core::subtree(world, entity);
+    for &held in &gone {
+        let _ = world.try_despawn(held);
     }
-    if scene.installed.remove(id).is_some() {
-        world.insert_resource(scene);
-    }
-    let _ = world.try_despawn(entity);
-    Ok(entity)
+    Ok(gone.len())
 }
 
 fn unused_id(world: &World) -> Result<String, Error> {
@@ -184,28 +206,4 @@ fn described(world: &World, mut described: Value) -> Result<SceneObject, Error> 
         fields.insert("id".to_owned(), Value::String(unused_id(world)?));
     }
     engine_settings::parse_value(described)
-}
-
-fn finished<T: Serialize>(rows: &Rows<T>) -> Result<Value, Error> {
-    serde_json::to_value(rows)
-        .map_err(|error| Error::new(ErrorCode::InvalidValue, "$").got(error.to_string()))
-}
-
-fn run_spawn(world: &mut World, request: Value) -> Result<Value, Error> {
-    let SpawnRequest { entities } = engine_settings::parse_value(request)?;
-    let rows = Rows::each("entities", entities, |description| {
-        let object = described(world, description)?;
-        spawn(world, &object)?;
-        Ok(Placed { entity: object.id })
-    });
-    finished(&rows)
-}
-
-fn run_remove(world: &mut World, request: Value) -> Result<Value, Error> {
-    let RemoveRequest { entities } = engine_settings::parse_value(request)?;
-    let rows = Rows::each("entities", entities, |id| {
-        remove(world, &id)?;
-        Ok(Placed { entity: id })
-    });
-    finished(&rows)
 }

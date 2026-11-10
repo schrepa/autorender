@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, DrawnPoses, DrawnTable, Error, ErrorCode, Expected, FrameTime, GlobalTransforms,
-    GpuBits, Material, Operation, PoseRows, SceneIds, pose_rows,
+    AssetLibrary, DrawnPoses, DrawnTable, Error, FrameTime, GlobalTransforms, GpuBits, Material,
+    Operation, PoseRows, SceneIds, pose_rows,
 };
 use engine_places::surface::SurfaceValues;
 
@@ -81,11 +81,7 @@ impl Operation for MeshDrawn {
         request: DrawnRequest,
     ) -> Result<DrawnReply, Error> {
         let id = request.entity;
-        let entity = ids.entity(&id).ok_or_else(|| {
-            Error::new(ErrorCode::UnknownEntity, "$.entity")
-                .expected(Expected::Entity)
-                .got(&id)
-        })?;
+        let entity = ids.named(&id, "$.entity")?;
         let drawn_pose = poses.drawn_pose(&globals, entity).map(pose_rows);
         let Some(slot) = table.slot(entity) else {
             return Ok(DrawnReply {

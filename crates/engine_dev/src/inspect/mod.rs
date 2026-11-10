@@ -7,10 +7,10 @@ use std::{collections::BTreeMap, io::Write};
 use bevy_ecs::prelude::{Component, Entity, Resource, World};
 use engine_core::{
     AssetLibrary, Drawn, Engine, FixedTime, FrameTime, GeometryHandle, GlobalTransforms,
-    JobExchange, MaterialHandle, Mover, Pace, Parent, PresentationState, Refusal, TextureHandle,
-    Transform,
+    JobExchange, MaterialHandle, Mover, OperationScene, Pace, Parent, PresentationState, Refusal,
+    TextureHandle, Transform,
 };
-use engine_registry::{BrickRecord, OperationScene, Registry};
+use engine_registry::{BrickRecord, Registry};
 use engine_scene::{SceneEntity, SceneInstance, SceneMaterial, TextureOrigin};
 use serde::Serialize;
 use serde_json::{Value, json};
@@ -743,16 +743,7 @@ impl DevTools {
                     .range(0.0, 0.0)
                     .got(offset));
             }
-            let entity = scene.entity(id).ok_or_else(|| {
-                Error::new(ErrorCode::UnknownEntity, "$.entity")
-                    .expected(Expected::Entity)
-                    .got(id)
-            })?;
-            if world.get_entity(entity).is_err() {
-                return Err(Error::new(ErrorCode::EntityRemoved, "$.entity")
-                    .expected(Expected::Live)
-                    .got(id));
-            }
+            let entity = scene.named_in(world, id, "$.entity")?;
             return Ok(InspectResult::Entity {
                 entity: self.entity_row(world, (context, &bricks), (id, entity), inspector)?,
             });
@@ -760,17 +751,7 @@ impl DevTools {
         let parent = parent
             .map(|id| {
                 validate_name(id, "$.parent")?;
-                let entity = scene.entity(id).ok_or_else(|| {
-                    Error::new(ErrorCode::UnknownEntity, "$.parent")
-                        .expected(Expected::Entity)
-                        .got(id)
-                })?;
-                if world.get_entity(entity).is_err() {
-                    return Err(Error::new(ErrorCode::EntityRemoved, "$.parent")
-                        .expected(Expected::Live)
-                        .got(id));
-                }
-                Ok(entity)
+                scene.named_in(world, id, "$.parent")
             })
             .transpose()?;
         let mut rows = Vec::with_capacity(limit);

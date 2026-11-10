@@ -5,6 +5,7 @@
 
 extern crate self as engine_core;
 
+mod admission;
 mod assets;
 mod authoring;
 mod background;
@@ -54,8 +55,12 @@ pub mod profile {
     pub use engine_profile::{Aggregate, Span, active, counter, now_ms, span, tally, waited};
 }
 
+pub use admission::admit;
 pub use assets::*;
-pub use authoring::{DrawnForm, ViewForm, core_components};
+pub use authoring::{
+    ChangeOperation, ChangeRequest, ComponentChange, ComponentChanged, DrawnForm, ViewForm,
+    core_components,
+};
 pub use background::{Background, Delivers, Landed, Taken};
 pub use bevy_app::App;
 pub use bricks::*;
@@ -80,10 +85,11 @@ pub use engine_assets::{
     UvTransform, Wrap, attributes_wgsl, lod_input,
 };
 pub use engine_place::{
-    AUTHORED_COMPONENTS, AppliedView, AskedView, Call, Each, EntityIds, Event, EventDecl,
-    EventPage, Lands, Operation, PendingView, RESERVED_REPLY_KEYS, Raises, ReadEvents, Refusal,
-    Rows, SCENE_SCHEMA, SchemaIn, authored_component, embedded, missing_events, open_parts,
-    open_schema, page_of, rooted, scene_references, schema_of,
+    AUTHORED_COMPONENTS, AppliedView, AskedView, AuthoredId, Call, Callable, Each, EntityIds, Event,
+    EventDecl, EventPage, Lands, Named, Operation, OperationScene, PendingView, RESERVED_REPLY_KEYS,
+    Raises, ReadEvents, Refusal, Rows, SCENE_SCHEMA, SceneEntity, SchemaIn, authored_component,
+    embedded, entity_named, entity_removed, missing_events, open_parts, open_schema, page_of,
+    rooted, scene_references, schema_of,
 };
 pub use engine_place::{
     Applied, ApplyAt, Ask, Asked, AttachPoint, Awaits, BlendedPass, Board, BudgetUse, Census,
@@ -105,7 +111,7 @@ pub use engine_place::{
 };
 pub use engine_registry::SceneNames;
 pub use engine_registry::call;
-pub use engine_registry::{AuthoredId, FrameFacts, RecordParity, fault_of};
+pub use engine_registry::{FrameFacts, RecordParity, fault_of};
 pub use engine_settings::{
     Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, fields,
     is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
@@ -293,7 +299,7 @@ fn core_entries(registry: &mut RegistryBuilder) {
     registry.core_settings(bricks::settings_entry::<FoldOrder>());
     registry.core_operation(OperationEntry::of(Call::of::<views::ViewControl>()));
     registry.core_operation(OperationEntry::of(Call::of::<moves::TeleportControl>()));
-    registry.core_operation(OperationEntry::of(authoring::CHANGE_CALL));
+    registry.core_operation(OperationEntry::of(Call::of::<ChangeOperation>()));
     registry.core_operation(OperationEntry::of(Call::of::<moves::MovesState>()));
     registry.core_operation(OperationEntry::of(Call::of::<views::ViewsState>()));
     registry.core_operation(OperationEntry::of(Call::of::<input::Rebind>()));
@@ -528,7 +534,7 @@ impl Engine {
     }
 
     #[track_caller]
-    pub fn operation<O: Operation>(&mut self) -> &mut Self {
+    pub fn operation<O: Callable>(&mut self) -> &mut Self {
         self.core_operation(OperationEntry::of(Call::of::<O>()))
     }
 

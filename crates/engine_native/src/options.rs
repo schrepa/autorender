@@ -196,7 +196,7 @@ pub enum StartScene {
     #[default]
     Empty,
     File(PathBuf),
-    Declared(DefaultScene),
+    Declared { scene: DefaultScene, folder: String },
 }
 
 pub fn open_scene<G: Game>(
@@ -207,10 +207,10 @@ pub fn open_scene<G: Game>(
     let kinds = SceneKinds::of(host.engine().app.world());
     match scene {
         StartScene::Empty => {}
-        StartScene::Declared(scene) => {
+        StartScene::Declared { scene, folder } => {
             let files = SceneLoad::new(scene.text, &kinds).and_then(SceneLoad::finish)?;
             host.open_scene(scene.text, &files)?;
-            host.set_file_root(&folder_of(Path::new(scene.path)));
+            host.set_file_root(folder);
         }
         StartScene::File(path) => {
             let source = std::fs::read_to_string(path)
@@ -626,7 +626,10 @@ impl HostOptions {
             Some(scene) if cfg!(feature = "dev") && Path::new(scene.path).is_file() => {
                 StartScene::File(scene.path.into())
             }
-            Some(scene) => StartScene::Declared(scene),
+            Some(scene) => StartScene::Declared {
+                scene,
+                folder: folder_of(&self.assets.clone().unwrap_or_default().join(scene.name)),
+            },
             None => StartScene::Empty,
         }
     }

@@ -53,7 +53,7 @@ impl Operation for RaycastQuery {
             filter,
         } = request;
         let ray = ray(origin, direction, max_distance)?;
-        let filter = query_filter(&ids, &entities, &filter)?;
+        let filter = query_filter(&ids, &filter)?;
         let world = fresh.world();
         let hit = world.raycast(ray, filter)?;
         Ok(RaycastResult {
@@ -108,7 +108,7 @@ impl Operation for OverlapQuery {
         let shape = shape(&source)?;
         let matrix = pose(position, rotation)?;
         validate_collider_transform(shape, matrix)?;
-        let filter = query_filter(&ids, &entities, &filter)?;
+        let filter = query_filter(&ids, &filter)?;
         let world = fresh.world();
         let mut found = Vec::new();
         world.overlap(shape, matrix, filter, &mut found, limit)?;
@@ -168,7 +168,7 @@ impl Operation for ShapeCastQuery {
         let displacement = ray.direction * ray.max_distance;
         let options = ShapeCastOptions::default();
         validate_shape_cast(shape, matrix, displacement, options)?;
-        let filter = query_filter(&ids, &entities, &filter)?;
+        let filter = query_filter(&ids, &filter)?;
         let world = fresh.world();
         let hit = world.cast_shape(shape, matrix, displacement, filter, options)?;
         Ok(ShapeCastResult {
@@ -359,15 +359,11 @@ fn placed(part: PlacedPart) -> PlacedHit {
     }
 }
 
-fn query_filter(
-    ids: &SceneIds,
-    entities: &Query<Entity>,
-    filter: &CollisionFilterRequest,
-) -> Result<QueryFilter, Error> {
+fn query_filter(ids: &SceneIds, filter: &CollisionFilterRequest) -> Result<QueryFilter, Error> {
     let exclude = filter
         .exclude
         .as_deref()
-        .map(|id| resolve_entity(ids, entities, id, true, "$.filter.exclude"))
+        .map(|id| resolve_entity(ids, id, "$.filter.exclude"))
         .transpose()?;
     Ok(QueryFilter {
         layers: CollisionLayers {
@@ -383,13 +379,7 @@ fn query_filter(
     })
 }
 
-pub(crate) fn resolve_entity(
-    ids: &SceneIds,
-    entities: &Query<Entity>,
-    id: &str,
-    require_alive: bool,
-    path: &str,
-) -> Result<Entity, Error> {
+pub(crate) fn resolve_entity(ids: &SceneIds, id: &str, path: &str) -> Result<Entity, Error> {
     if id.is_empty()
         || id.len() > 192
         || !id
@@ -403,11 +393,5 @@ pub(crate) fn resolve_entity(
     if !ids.loaded() {
         return Err(Error::new(ErrorCode::NoScene, path));
     }
-    let entity = ids
-        .entity(id)
-        .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, path).got(id))?;
-    if require_alive && !entities.contains(entity) {
-        return Err(Error::new(ErrorCode::EntityRemoved, path).got(id));
-    }
-    Ok(entity)
+    ids.named(id, path)
 }

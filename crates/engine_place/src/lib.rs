@@ -9,6 +9,7 @@ mod calls;
 mod drawn;
 mod feeds;
 mod level;
+mod names;
 mod nodes;
 mod passes;
 mod readback;
@@ -28,10 +29,10 @@ use serde_json::Value;
 pub use asks::{Applied, AppliedView, ApplyAt, Ask, Asked, AskedView, Moment, PendingView};
 pub use budget::{BudgetUse, FrameBudget};
 pub use calls::{
-    AUTHORED_COMPONENTS, Call, Each, EntityIds, Event, EventDecl, EventPage, Lands, NamedRun,
-    Operation, RESERVED_REPLY_KEYS, Raises, ReadEvents, Refusal, Rows, SCENE_SCHEMA, SchemaIn,
-    access_of, answer, authored_component, embedded, missing_events, open_parts, open_schema,
-    page_of, rooted, scene_references, schema_of,
+    AUTHORED_COMPONENTS, Call, Callable, Each, EntityIds, Event, EventDecl, EventPage, Lands,
+    NamedRun, Operation, RESERVED_REPLY_KEYS, Raises, ReadEvents, Refusal, Rows, SCENE_SCHEMA,
+    SchemaIn, access_of, answer, authored_component, embedded, missing_events, open_parts,
+    open_schema, page_of, rooted, scene_references, schema_of,
 };
 pub use drawn::{
     DrawKind, Drawn, DrawnBounds, DrawnProjection, InstanceValues, KindDecl, KindSkip, Layers,
@@ -44,6 +45,7 @@ pub use engine_settings::{Error, ErrorCode};
 pub use engine_smoke::{SmokeFailure, SmokeSession, ask, smoke_check, smoke_eq};
 pub use feeds::{Cursor, Events, Feed, FeedView, Ring, Since, StoreId};
 pub use level::{Level, LevelView};
+pub use names::{AuthoredId, Named, OperationScene, SceneEntity, entity_named, entity_removed};
 pub use nodes::{Clock, Mobility, Mover, MoverId, Node, NodeWord, Pace};
 pub use passes::{
     AttachPoint, BlendedPass, CORE_BRICK, ColorPass, KindCell, KindJoin, Pass, PassBit, PassCull,

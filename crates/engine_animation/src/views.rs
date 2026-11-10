@@ -37,9 +37,11 @@ fn animator_of<'a>(
     animators: &'a Query<'_, '_, &'static Animator>,
     id: &str,
 ) -> Result<(Entity, &'a Animator), Error> {
-    ids.entity(id)
-        .and_then(|entity| animators.get(entity).ok().map(|held| (entity, held)))
-        .ok_or_else(|| unknown_entity(id))
+    let entity = ids.named(id, "$.entity")?;
+    animators
+        .get(entity)
+        .map(|held| (entity, held))
+        .map_err(|_| unknown_entity(id))
 }
 
 fn layers(animator: &Animator, asked: &Asked<Animate>, entity: Entity) -> usize {

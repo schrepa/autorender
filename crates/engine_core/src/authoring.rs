@@ -3,21 +3,37 @@ use std::sync::LazyLock;
 
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
-use engine_registry::{CORE_ROW, MembersOf, OperationScene, SceneEntity};
+use engine_registry::{CORE_ROW, MembersOf};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    Call, Camera, Clear, ComponentKind, Drawn, DrawnProjection, DrawnTable, Error, ErrorCode,
-    Expected, GeometryHandle, GlobalTransforms, InstanceValues, Lands, Layers, List,
-    MaterialHandle, Mover, Node, Parent, PassMask, Placed, Placement, Rect, Rows, Rule,
-    SceneComponents, SceneContext, SceneCx, SceneForm, ScenePasses, Setting, Target, TextureHandle,
-    View, scene_component, scene_components,
+    Callable, Camera, Clear, ComponentKind, Drawn, DrawnProjection, DrawnTable, Error, ErrorCode,
+    Expected, GeometryHandle, GlobalTransforms, InstanceValues, Layers, List, MaterialHandle, Mover,
+    Node, Parent, PassMask, Placed, Placement, Rect, Rows, Rule, SceneComponents, SceneContext,
+    SceneCx, SceneEntity, SceneForm, ScenePasses, Setting, Target, TextureHandle, View,
+    entity_named, scene_component, scene_components,
 };
 
-pub(crate) const CHANGE_CALL: Call =
-    Call::exclusive::<ChangeRequest, Rows<Changed>>("change", (true, Lands::Now), run_change)
-        .request_in(change_request);
+pub struct ChangeOperation;
+
+impl Callable for ChangeOperation {
+    const NAME: &'static str = "change";
+    type Request = ChangeRequest;
+    type Reply = Rows<ComponentChanged>;
+
+    fn answer(world: &mut World, request: ChangeRequest) -> Result<Self::Reply, Error> {
+        let context = world.get_resource::<SceneContext>().cloned();
+        Ok(Rows::each("changes", request.changes, |change| match &context {
+            Some(context) => context.scope(|| changed(world, change)),
+            None => changed(world, change),
+        }))
+    }
+
+    fn request_schema(world: &World) -> Value {
+        change_request(world)
+    }
+}
 
 static CORE: LazyLock<[ComponentKind; 5]> = LazyLock::new(|| {
     let node = ComponentKind::of::<Node>("node");
@@ -254,11 +270,21 @@ impl SceneForm for ViewForm {
         } else {
             Some(world.get::<SceneEntity>(view.camera)?.authored_id.clone())
         };
+        Some(Self::of_view(view, camera))
+    }
+
+    fn held(world: &World, entity: Entity) -> Option<Self> {
+        world.get::<View>(entity).map(|view| Self::of_view(view, None))
+    }
+}
+
+impl ViewForm {
+    fn of_view(view: &View, camera: Option<String>) -> Self {
         let texture = match view.target {
             Target::Surface => None,
             Target::Texture(texture) => Some(texture),
         };
-        Some(Self {
+        Self {
             camera,
             texture,
             viewport: view.viewport,
@@ -268,7 +294,7 @@ impl SceneForm for ViewForm {
             order: view.order,
             steady: view.steady,
             found: None,
-        })
+        }
     }
 }
 
@@ -312,11 +338,11 @@ pub(crate) fn keys_taken(world: &World) -> Vec<Error> {
 
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct Change {
-    entity: String,
-    component: String,
+pub struct ComponentChange {
+    pub entity: String,
+    pub component: String,
     #[serde(default)]
-    data: Value,
+    pub data: Value,
 }
 
 fn change_request(world: &World) -> Value {
@@ -336,53 +362,41 @@ fn change_request(world: &World) -> Value {
         .collect();
     let mut schema = crate::schema_of::<ChangeRequest>();
     if let Some(held) = schema.get_mut("$defs").and_then(Value::as_object_mut) {
-        held.insert("Change".to_owned(), serde_json::json!({ "oneOf": changes }));
+        held.insert(
+            "ComponentChange".to_owned(),
+            serde_json::json!({ "oneOf": changes }),
+        );
     }
     schema
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-struct ChangeRequest {
-    changes: Vec<Change>,
+pub struct ChangeRequest {
+    pub changes: Vec<ComponentChange>,
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
-struct Changed {
-    entity: String,
-    component: String,
-    removed: bool,
+pub struct ComponentChanged {
+    pub entity: String,
+    pub component: String,
+    pub removed: bool,
 }
 
-fn run_change(world: &mut World, request: Value) -> Result<Value, Error> {
-    let ChangeRequest { changes } = engine_settings::parse_value(request)?;
-    let context = world.get_resource::<SceneContext>().cloned();
-    let rows = Rows::each("changes", changes, |change| match &context {
-        Some(context) => context.scope(|| changed(world, change)),
-        None => changed(world, change),
-    });
-    serde_json::to_value(rows)
-        .map_err(|error| Error::new(ErrorCode::InvalidValue, "$").got(error.to_string()))
-}
-
-fn changed(world: &mut World, change: Change) -> Result<Changed, Error> {
-    let Change {
+fn changed(world: &mut World, change: ComponentChange) -> Result<ComponentChanged, Error> {
+    let ComponentChange {
         entity,
         component,
         data,
     } = change;
-    let node = world
-        .get_resource::<OperationScene>()
-        .and_then(|scene| scene.entity(&entity))
-        .filter(|&node| world.entities().contains(node))
-        .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$.entity").got(&entity))?;
+    let node = entity_named(world, &entity, "$.entity")?;
     let kind = scene_component(world, &component).ok_or_else(|| {
         Error::new(ErrorCode::UnknownVariant, "$.component")
             .got(&component)
             .variants(scene_components(world).map(ComponentKind::key))
     })?;
     author(world, &kind, node, &data)?;
-    Ok(Changed {
+    Ok(ComponentChanged {
         entity,
         component,
         removed: data.is_null(),

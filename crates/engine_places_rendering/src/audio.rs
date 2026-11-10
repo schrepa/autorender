@@ -1,13 +1,16 @@
+use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
-use bevy_ecs::prelude::{Component, Res, Resource};
+use bevy_ecs::prelude::{Component, Entity, Query, Res, Resource};
 use bevy_ecs::system::SystemParamItem;
-use engine_place::{Call, Error, Lands, Operation, Slot};
+use engine_place::{Call, Error, ErrorCode, Lands, Named, Operation, Slot};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
 const MAX_ORDERS: usize = 1024;
 const RADIUS: f32 = 30.0;
+
+pub const SOUND_LOADING: ErrorCode = ErrorCode::brick("sound_loading");
 
 #[derive(
     Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
@@ -113,7 +116,7 @@ impl Default for OneShot {
 pub enum SoundOrder {
     Play {
         voice: VoiceHandle,
-        entity: String,
+        entity: Entity,
         shot: OneShot,
     },
     PlayBytes {
@@ -125,11 +128,32 @@ pub enum SoundOrder {
     Volume(VoiceHandle, f32),
 }
 
+#[doc(hidden)]
+#[derive(Clone)]
+pub enum SoundStanding {
+    Loading,
+    Ready,
+    Refused(Error),
+}
+
+#[derive(Default)]
+enum Hearing {
+    #[default]
+    Unheard,
+    Heard {
+        device: Result<(), Error>,
+        live: usize,
+        limit: usize,
+    },
+}
+
 #[derive(Default)]
 struct Queue {
     next_voice: u32,
     orders: Vec<SoundOrder>,
     cut: u32,
+    hearing: Hearing,
+    standing: BTreeMap<Entity, SoundStanding>,
 }
 
 #[derive(Resource, Default)]
@@ -156,20 +180,30 @@ pub struct PlaySound {
 
 #[derive(Serialize, schemars::JsonSchema)]
 pub struct Voiced {
-    pub voice: Option<VoiceHandle>,
+    pub voice: VoiceHandle,
 }
 
 impl Operation for PlaySound {
     const NAME: &'static str = "sound_play";
     const LANDS: Lands = Lands::NextFrame;
-    type Params = Res<'static, Sounds>;
+    type Params = (
+        Res<'static, Sounds>,
+        Named<'static, 'static>,
+        Query<'static, 'static, &'static SoundSource>,
+    );
     type Request = Self;
     type Reply = Voiced;
 
-    fn run(sounds: SystemParamItem<'_, '_, Self::Params>, request: Self) -> Result<Voiced, Error> {
-        Ok(Voiced {
-            voice: sounds.play(request.entity, request.shot),
-        })
+    fn run(
+        (sounds, named, sources): SystemParamItem<'_, '_, Self::Params>,
+        request: Self,
+    ) -> Result<Voiced, Error> {
+        let entity = named.entity(&request.entity, "$.entity")?;
+        let source = sources.get(entity).map_err(|_| {
+            Error::new(ErrorCode::MissingComponent, "$.entity").got(&request.entity)
+        })?;
+        let voice = sounds.play((entity, source), request.shot)?;
+        Ok(Voiced { voice })
     }
 }
 
@@ -220,16 +254,22 @@ impl Operation for VoiceVolume {
 }
 
 impl Sounds {
-    pub fn play(&self, entity: impl Into<String>, shot: OneShot) -> Option<VoiceHandle> {
+    pub fn play(
+        &self,
+        (entity, source): (Entity, &SoundSource),
+        shot: OneShot,
+    ) -> Result<VoiceHandle, Error> {
         let mut queue = self.lock();
+        queue.playable(entity, source)?;
         let voice = VoiceHandle(queue.next_voice + 1);
-        queue
-            .order(SoundOrder::Play {
-                voice,
-                entity: entity.into(),
-                shot,
-            })
-            .then(|| queue.took(voice))
+        if !queue.order(SoundOrder::Play {
+            voice,
+            entity,
+            shot,
+        }) {
+            return Err(Error::new(ErrorCode::QueueFull, "$").at_most(MAX_ORDERS as u64));
+        }
+        Ok(queue.took(voice))
     }
 
     pub fn play_bytes(&self, bytes: impl Into<Arc<[u8]>>, shot: OneShot) -> Option<VoiceHandle> {
@@ -262,12 +302,59 @@ impl Sounds {
         std::mem::take(&mut self.lock().cut)
     }
 
+    #[doc(hidden)]
+    pub fn hear(&self, device: Result<(), Error>, live: usize, limit: usize) {
+        self.lock().hearing = Hearing::Heard {
+            device,
+            live,
+            limit,
+        };
+    }
+
+    #[doc(hidden)]
+    pub fn stand(&self, entity: Entity, standing: SoundStanding) {
+        self.lock().standing.insert(entity, standing);
+    }
+
+    #[doc(hidden)]
+    pub fn forget(&self, entity: Entity) {
+        self.lock().standing.remove(&entity);
+    }
+
     fn lock(&self) -> MutexGuard<'_, Queue> {
         self.queue.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 
 impl Queue {
+    fn playable(&self, entity: Entity, source: &SoundSource) -> Result<(), Error> {
+        let Hearing::Heard {
+            device,
+            live,
+            limit,
+        } = &self.hearing
+        else {
+            return Err(Error::new(ErrorCode::PlaceNotFilled, "$").got(Sounds::NAME));
+        };
+        device.clone()?;
+        let queued = self
+            .orders
+            .iter()
+            .filter(|order| matches!(order, SoundOrder::Play { .. } | SoundOrder::PlayBytes { .. }))
+            .count();
+        if live + queued >= *limit {
+            return Err(Error::new(ErrorCode::QueueFull, "$").at_most(*limit as u64));
+        }
+        match self.standing.get(&entity) {
+            Some(SoundStanding::Refused(error)) => Err(error.clone()),
+            Some(SoundStanding::Ready) => Ok(()),
+            Some(SoundStanding::Loading) | None if source.bytes.is_some() => Ok(()),
+            Some(SoundStanding::Loading) | None => {
+                Err(Error::new(SOUND_LOADING, "$.entity").got(&source.file))
+            }
+        }
+    }
+
     fn took(&mut self, voice: VoiceHandle) -> VoiceHandle {
         self.next_voice = voice.0;
         voice

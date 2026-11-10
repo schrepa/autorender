@@ -16,15 +16,16 @@ use bevy_ecs::world::World;
 use engine_place::{Call, Event, EventDecl, Raises};
 use engine_registry::{
     BrickRecord, BrickStates, EventEntry, GateFn, JobList, MembersOf, NamedField, OperationEntry,
-    OperationScene, PlainSystems, Registry, RegistryBuilder, Removal, SceneEntity, SectionRule,
-    SettingsEntry, SpawnedBy, StatsEntry,
+    PlainSystems, Registry, RegistryBuilder, Removal, SectionRule, SettingsEntry, SpawnedBy,
+    StatsEntry,
 };
 use serde_json::Value;
 
 use crate::moves::NodeKind;
 use crate::{
-    Board, Error, ErrorCode, GpuStruct, JobKind, KindDecl, List, Module, Mover, MoverId, Operation,
-    Pace, PlaceDecl, RecordKey, SceneContext, SceneIds, Section, Slot, Smoke, Source, SubScene,
+    Board, Callable, Error, ErrorCode, GpuStruct, JobKind, KindDecl, List, Module, Mover, MoverId,
+    Operation, OperationScene, Pace, Parent, PlaceDecl, RecordKey, SceneContext, SceneEntity,
+    SceneIds, Section, Slot, Smoke, Source, SubScene,
 };
 
 pub trait Brick: 'static {
@@ -175,7 +176,7 @@ impl Bricks<'_> {
     }
 
     #[track_caller]
-    pub fn operation<O: Operation>(&mut self) -> &mut Self {
+    pub fn operation<O: Callable>(&mut self) -> &mut Self {
         self.record.operation(OperationEntry::of(Call::of::<O>()));
         self
     }
@@ -655,8 +656,13 @@ fn spawned<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T) {
         foreign::<B>(world, entity);
         return;
     }
-    if let Ok(mut spawned) = world.get_entity_mut(entity) {
-        spawned.insert((bundle, SpawnedBy::<B>::new()));
+    let Ok(mut spawned) = world.get_entity_mut(entity) else {
+        return;
+    };
+    spawned.insert((bundle, SpawnedBy::<B>::new()));
+    if let Err(error) = crate::admit(world, entity, None, "$") {
+        let _ = world.try_despawn(entity);
+        refused::<B>(world, "spawn", error);
     }
 }
 
@@ -702,8 +708,19 @@ fn inserted<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T) {
         foreign::<B>(world, entity);
         return;
     }
-    if let Ok(mut held) = world.get_entity_mut(entity) {
-        held.insert(bundle);
+    let Ok(mut held) = world.get_entity_mut(entity) else {
+        return;
+    };
+    held.insert(bundle);
+    let parts = world
+        .register_bundle::<T>()
+        .contributed_components()
+        .to_vec();
+    if let Err(error) = crate::admit(world, entity, Some(&parts), "$") {
+        if let Ok(mut held) = world.get_entity_mut(entity) {
+            held.remove::<T>();
+        }
+        refused::<B>(world, "insert", error);
     }
 }
 
@@ -735,8 +752,7 @@ fn installed<B: Brick>(world: &mut World, entities: &[Entity], scene: &SubScene)
         for &entity in entities {
             let _ = world.try_despawn(entity);
         }
-        let path = format!("$.bricks.{}.spawner.install", B::SOURCE.package());
-        report(world, error.within(&path));
+        refused::<B>(world, "install", error);
     }
 }
 
@@ -787,15 +803,16 @@ fn install<B: Brick>(
             let at = format!("$.entities[{index}].{key}");
             let kind = crate::scene_component(world, key)
                 .ok_or_else(|| Error::new(ErrorCode::SectionUnlisted, &at).got(key))?;
-            if let (crate::Placement::Roots(code), Some(_)) = (kind.placement(), item.parent) {
-                return Err(Error::new(code, at).expected(crate::Expected::Absent));
-            }
             kind.validate(value, &at)?;
             kind.read(world, entity, value)
                 .map_err(|error| error.within(&at))?;
         }
     }
-    crate::set_parents(world, &parents).map_err(|error| error.within("$.entities"))
+    crate::set_parents(world, &parents).map_err(|error| error.within("$.entities"))?;
+    for (index, &entity) in entities.iter().enumerate() {
+        crate::admit(world, entity, None, &format!("$.entities[{index}]"))?;
+    }
+    Ok(())
 }
 
 fn parented<B: Brick>(world: &mut World, changes: &[(Entity, Option<Entity>)]) {
@@ -810,10 +827,26 @@ fn parented<B: Brick>(world: &mut World, changes: &[(Entity, Option<Entity>)]) {
         foreign::<B>(world, child);
         return;
     }
+    let before: Vec<(Entity, Option<Entity>)> = changes
+        .iter()
+        .map(|&(child, _)| (child, world.get::<Parent>(child).map(Parent::parent)))
+        .collect();
     if let Err(error) = crate::set_parents(world, changes) {
-        let path = format!("$.bricks.{}.spawner.parent", B::SOURCE.package());
-        report(world, error.within(&path));
+        refused::<B>(world, "parent", error);
+        return;
     }
+    let admitted = changes
+        .iter()
+        .try_for_each(|&(child, _)| crate::admit(world, child, None, "$"));
+    if let Err(error) = admitted {
+        let _ = crate::set_parents(world, &before);
+        refused::<B>(world, "parent", error);
+    }
+}
+
+fn refused<B: Brick>(world: &mut World, call: &str, error: Error) {
+    let path = format!("$.bricks.{}.spawner.{call}", B::SOURCE.package());
+    report(world, error.within(&path));
 }
 
 fn owned<B: Brick>(world: &World, entity: Entity) -> bool {

@@ -6,7 +6,8 @@ use engine_core::{
 };
 use engine_render::{Renderer, wgpu};
 use engine_scene::{
-    SceneDocument, SceneFiles, SceneInstance, SceneLookControl, SceneMaterialControl,
+    RemoveOperation, SceneDocument, SceneFiles, SceneInstance, SceneLookControl,
+    SceneMaterialControl, SpawnOperation,
 };
 
 pub fn engine(bricks: impl FnOnce(BrickList) -> BrickList) -> crate::Result<Engine> {
@@ -20,8 +21,8 @@ pub(crate) fn listed(list: BrickList) -> crate::Result<Engine> {
     engine
         .operation::<SceneLookControl>()
         .operation::<SceneMaterialControl>()
-        .core_operation(engine_scene::spawn_operation())
-        .core_operation(engine_scene::remove_operation());
+        .operation::<SpawnOperation>()
+        .operation::<RemoveOperation>();
     let unwired = wgpu::Limits {
         max_texture_array_layers: 0,
         ..wgpu::Limits::default()
@@ -108,6 +109,7 @@ impl LoadedScene {
 
 #[derive(Clone, Copy, Debug)]
 pub struct DefaultScene {
+    pub name: &'static str,
     pub path: &'static str,
     pub text: &'static str,
 }

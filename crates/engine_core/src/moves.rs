@@ -10,7 +10,8 @@ use bevy_ecs::prelude::{Commands, Query, Res, ResMut, Without};
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{SystemParam, SystemParamItem};
 use bevy_ecs::world::World;
-use engine_registry::{MoverRule, Registry, SceneEntity, SceneNames};
+use engine_place::SceneEntity;
+use engine_registry::{MoverRule, Registry, SceneNames};
 use serde::{Deserialize, Serialize};
 
 use crate::hierarchy::tracking::Invalidation;
@@ -554,9 +555,7 @@ impl Operation for TeleportControl {
         request: Self,
     ) -> Result<Rows<Teleported>, Error> {
         Ok(Rows::each("moves", request.moves, |write| {
-            let node = ids.entity(&write.entity).ok_or_else(|| {
-                Error::new(ErrorCode::UnknownEntity, "$.entity").got(&write.entity)
-            })?;
+            let node = ids.named(&write.entity, "$.entity")?;
             let (held, mover) = nodes.get(node).map_err(|_| {
                 Error::new(ErrorCode::MissingComponent, "$.entity")
                     .expected(Expected::Present)

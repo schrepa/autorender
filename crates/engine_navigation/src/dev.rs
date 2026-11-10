@@ -125,10 +125,10 @@ impl Operation for NavAgentQuery {
         (ids, agents): SystemParamItem<'_, '_, Self::Params>,
         Self { entity: id }: Self,
     ) -> Result<NavAgentView, Error> {
-        let found = ids
-            .entity(&id)
-            .and_then(|entity| agents.get(entity).ok())
-            .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$.entity").got(&id))?;
+        let entity = ids.named(&id, "$.entity")?;
+        let found = agents
+            .get(entity)
+            .map_err(|_| Error::new(ErrorCode::UnknownEntity, "$.entity").got(&id))?;
         Ok(agent_view(&ids, found))
     }
 }
@@ -233,10 +233,10 @@ impl Operation for NavGoControl {
                 .range(-1.0e6, 1.0e6)
                 .got(destination));
         }
-        let mut agent = ids
-            .entity(&id)
-            .and_then(|entity| agents.get_mut(entity).ok())
-            .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$.entity").got(&id))?;
+        let entity = ids.named(&id, "$.entity")?;
+        let mut agent = agents
+            .get_mut(entity)
+            .map_err(|_| Error::new(ErrorCode::UnknownEntity, "$.entity").got(&id))?;
         agent.destination = destination;
         Ok(NavGoResult {
             temporary: true,

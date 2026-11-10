@@ -7,6 +7,7 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod calls;
 mod empty;
+mod entities;
 mod ground;
 mod image;
 mod partners;
@@ -43,6 +44,11 @@ impl Brick for StandardSmokesBrick {
         Smoke {
             name: "empty_scene_settles",
             run: empty::run,
+            without: &[],
+        },
+        Smoke {
+            name: "removed_ids_and_sounds_say_why",
+            run: entities::run,
             without: &[],
         },
         Smoke {

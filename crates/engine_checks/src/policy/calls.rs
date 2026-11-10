@@ -6,6 +6,7 @@ use super::{Problems, rust};
 use crate::at;
 
 const DECLARING: [&str; 2] = ["operation", "observation"];
+const ANSWERING: [&str; 2] = ["Operation", "Callable"];
 
 #[derive(Default)]
 pub struct Calls {
@@ -67,24 +68,34 @@ fn identifier(c: char) -> bool {
 }
 
 fn implemented(code: &str) -> Option<String> {
-    rust::words(code, "Operation").find_map(|end| {
-        let mut before = code[..end - "Operation".len()].trim_end();
-        while let Some(path) = before.strip_suffix("::") {
-            before = path.trim_end_matches(identifier);
-        }
-        if !rust::has_word(before, "impl") {
-            return None;
-        }
-        let rest = code[end..].trim_start().strip_prefix("for")?;
-        if !rest.starts_with(char::is_whitespace) {
-            return None;
-        }
-        let name: String = rest
-            .trim_start()
-            .chars()
-            .take_while(|&c| identifier(c))
-            .collect();
-        (!name.is_empty()).then_some(name)
+    ANSWERING.iter().find_map(|&answering| {
+        rust::words(code, answering).find_map(|end| {
+            let mut before = code[..end - answering.len()].trim_end();
+            while let Some(path) = before.strip_suffix("::") {
+                before = path.trim_end_matches(identifier);
+            }
+            if !rust::has_word(before, "impl") {
+                return None;
+            }
+            let rest = code[end..].trim_start().strip_prefix("for")?;
+            if !rest.starts_with(char::is_whitespace) {
+                return None;
+            }
+            let name: String = rest
+                .trim_start()
+                .chars()
+                .take_while(|&c| identifier(c))
+                .collect();
+            (!name.is_empty() && !generic(before, &name)).then_some(name)
+        })
+    })
+}
+
+fn generic(before: &str, name: &str) -> bool {
+    before.split_once("impl<").is_some_and(|(_, parameters)| {
+        parameters
+            .split([',', '>'])
+            .any(|parameter| parameter.split(':').next().is_some_and(|held| held.trim() == name))
     })
 }
 
