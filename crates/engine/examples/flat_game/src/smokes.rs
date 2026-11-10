@@ -17,7 +17,7 @@ fn scene() -> Value {
         "id": "flat", "revision": 1,
         "textures": [{"id": "sheet", "width": 2, "height": 2, "rgba8": WHITE_SHEET}],
         "materials": [{
-            "id": "glass", "color": [0.4, 0.7, 1.0, 0.5], "alpha_mode": "blend",
+            "id": "glass", "color": [0.4, 0.7, 1.0, 1.0], "opacity": 0.5, "alpha_mode": "blend",
             "cull": "none", "lighting": "unlit",
         }],
         "meshes": [],
