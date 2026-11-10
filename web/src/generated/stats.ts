@@ -5,6 +5,7 @@ export interface FrameStats {
   cut_seconds: number;
   disabled_features: string[];
   draw_calls: number;
+  dropped_draws: DroppedDraws[];
   dropped_seconds: number;
   extraction_ms: number;
   fixed_steps: number;
@@ -66,6 +67,17 @@ export interface BudgetUse {
   spent: number;
 }
 
+export type DropReason = "unknown_pipeline" | "pass_mismatch" | "unfilled_holes" | "geometry_not_resident" | "material_not_resident" | "material_not_held" | "material_waiting" | "geometry_lacks_streams" | "no_render_pass" | "pipeline_skipped" | "pipeline_compiling" | "pipeline_refused" | "missing_input";
+
+export interface DroppedDraws {
+  count: number;
+  faults: boolean;
+  kind: string | null;
+  part: string;
+  pass: string;
+  reason: DropReason;
+}
+
 export interface Error {
   allowed: Allowed | null;
   code: ErrorCode;
@@ -102,7 +114,7 @@ export interface KindPass {
   state: KindPassState;
 }
 
-export type KindPassState = { draws: number; state: "drew" } | { reason: string; state: "skipped" } | { state: "silent" };
+export type KindPassState = { draws: number; state: "drew" } | { draws: number; reason: DropReason; state: "dropped" } | { reason: string; state: "skipped" } | { state: "silent" };
 
 export interface Progress {
   done: number;
