@@ -300,6 +300,7 @@ pub(crate) struct MaterialLayout {
     skipped: Vec<LaidSlot>,
     models: Vec<(&'static str, String)>,
     kinds: Vec<SurfaceKind>,
+    notices: Vec<Error>,
 }
 
 pub(crate) fn core_slots() -> Vec<(SlotModule, String, &'static str)> {
@@ -350,7 +351,11 @@ impl MaterialLayout {
             slots: core_slots(),
             ..SurfaceDecls::default()
         };
-        Self::of(&declared, &mut Vec::new(), &mut Vec::new())
+        Self::of(&declared, &mut Vec::new())
+    }
+
+    pub(crate) fn notices(&self) -> &[Error] {
+        &self.notices
     }
 
     fn point_field(&self, name: &str) -> bool {
@@ -384,11 +389,7 @@ impl MaterialLayout {
         }
     }
 
-    pub(crate) fn of(
-        declared: &SurfaceDecls,
-        problems: &mut Vec<Error>,
-        notices: &mut Vec<Error>,
-    ) -> Self {
+    pub(crate) fn of(declared: &SurfaceDecls, problems: &mut Vec<Error>) -> Self {
         let mut layout = Self {
             maps: Vec::new(),
             values: Vec::new(),
@@ -401,12 +402,13 @@ impl MaterialLayout {
             skipped: Vec::new(),
             models: Vec::new(),
             kinds: vec![SurfaceKind::SOLID],
+            notices: Vec::new(),
         };
         layout.lay_open(&declared.open, problems);
         layout.lay_inputs(&declared.inputs, problems);
         layout.lay_terms(&declared.terms, problems);
-        layout.lay_sets(declared, problems, notices);
-        layout.lay_slots(declared, problems, notices);
+        layout.lay_sets(declared, problems);
+        layout.lay_slots(declared, problems);
         layout.lay_models(&declared.models, problems);
         for kind in &declared.kinds {
             if layout.kinds.iter().any(|known| known.name == kind.name) {
@@ -470,12 +472,7 @@ impl MaterialLayout {
         }
     }
 
-    fn lay_sets(
-        &mut self,
-        declared: &SurfaceDecls,
-        problems: &mut Vec<Error>,
-        notices: &mut Vec<Error>,
-    ) {
+    fn lay_sets(&mut self, declared: &SurfaceDecls, problems: &mut Vec<Error>) {
         let mut sets: Vec<(PointSet, Vec<&'static str>)> = Vec::new();
         for &(set, brick) in &declared.sets {
             match sets.iter().position(|(known, _)| known.name == set.name) {
@@ -503,20 +500,17 @@ impl MaterialLayout {
                     problems.push(wrong_name(at, set.name));
                 }
                 None => {
-                    let notice = Error::new(ErrorCode::InputUnread, at).got(&by);
-                    notices.push(notice.nearest(declared.left_of(set.name, false)));
+                    let notice = Error::new(ErrorCode::InputUnread, at)
+                        .got(&by)
+                        .nearest(declared.left_of(set.name, false));
+                    self.notices.push(notice);
                     self.sets.push((set, false));
                 }
             }
         }
     }
 
-    fn lay_slots(
-        &mut self,
-        declared: &SurfaceDecls,
-        problems: &mut Vec<Error>,
-        notices: &mut Vec<Error>,
-    ) {
+    fn lay_slots(&mut self, declared: &SurfaceDecls, problems: &mut Vec<Error>) {
         let mut unopened: Vec<(&'static str, Vec<Value>)> = Vec::new();
         for (slot, path, brick) in &declared.slots {
             if self.slot_index(slot.slot).is_none() {
@@ -560,7 +554,7 @@ impl MaterialLayout {
             } else {
                 notice.nearest(openers)
             };
-            notices.push(notice);
+            self.notices.push(notice);
         }
     }
 

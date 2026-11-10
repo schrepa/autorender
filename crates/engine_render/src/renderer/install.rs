@@ -32,7 +32,6 @@ pub(crate) struct Built {
     pub(crate) placed: Placed,
     pub(crate) material: crate::surface::MaterialLayout,
     pub(crate) applied: Vec<crate::shared::AppliedModule>,
-    pub(crate) notices: Vec<Error>,
 }
 
 #[derive(Default)]
@@ -339,7 +338,7 @@ fn material_layout(
     linker: &mut Linker,
     roots: &mut Vec<(String, String)>,
     problems: &mut Vec<Error>,
-) -> (crate::surface::MaterialLayout, Vec<Error>) {
+) -> crate::surface::MaterialLayout {
     use crate::surface::{
         LeftInput, LightingModule, MaterialLayout, OpenSlot, SlotModule, SurfaceDecls, SurfaceKind,
         SurfaceTerms,
@@ -409,8 +408,7 @@ fn material_layout(
             opens: false,
         });
     }
-    let mut notices = Vec::new();
-    let layout = MaterialLayout::of(&declared, problems, &mut notices);
+    let layout = MaterialLayout::of(&declared, problems);
     for (path, text) in [
         (crate::surface::SHADING_MODULE, layout.shading_source()),
         (crate::surface::MATERIALS_MODULE, layout.materials_source()),
@@ -419,7 +417,7 @@ fn material_layout(
     ] {
         linker.add_generated(path.to_owned(), CORE_PACKAGE, text);
     }
-    (layout, notices)
+    layout
 }
 
 fn applied_modules(
@@ -725,7 +723,7 @@ pub(crate) fn install(
             registry.report_unmet(error);
         }
         crate::needs::report(&built.machine, &scenes, &mut registry);
-        for notice in &built.notices {
+        for notice in built.material.notices() {
             registry.report_notice(notice.clone());
         }
     }
@@ -750,7 +748,7 @@ fn install_with(
         linker.add_generated(path.to_owned(), CORE_PACKAGE, text);
     }
     let (switches, links) = faces(registry, &mut linker, &mut roots, &mut problems);
-    let (material, notices) = material_layout(registry, &mut linker, &mut roots, &mut problems);
+    let material = material_layout(registry, &mut linker, &mut roots, &mut problems);
     let outputs = outputs(registry, &mut roots);
     let applied = crate::shared::ordered(
         applied_modules(registry, &mut linker, &mut roots, &mut problems),
@@ -965,7 +963,6 @@ fn install_with(
             placed,
             material,
             applied,
-            notices,
         })
     } else {
         Err(problems)
