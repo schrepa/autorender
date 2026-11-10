@@ -3473,6 +3473,456 @@
     ],
     "size": 6800
   },
+  "kind_passes": [
+    {
+      "brick": "engine_render",
+      "join": "joins",
+      "kind": "mesh",
+      "pass": "color"
+    },
+    {
+      "brick": "engine_render",
+      "join": "joins",
+      "kind": "mesh",
+      "pass": "blended"
+    },
+    {
+      "brick": "engine_shadows",
+      "join": "joins",
+      "kind": "mesh",
+      "pass": "shadow"
+    },
+    {
+      "brick": "engine_prepass",
+      "join": "joins",
+      "kind": "mesh",
+      "pass": "prepass"
+    },
+    {
+      "brick": "engine_debug_view",
+      "join": "joins",
+      "kind": "mesh",
+      "pass": "debug_view"
+    },
+    {
+      "brick": "engine_probes",
+      "join": "joins",
+      "kind": "mesh",
+      "pass": "probe"
+    },
+    {
+      "brick": "engine_probes",
+      "join": "not_taken",
+      "kind": "mesh",
+      "pass": "probe_light"
+    },
+    {
+      "brick": "engine_water",
+      "join": "not_taken",
+      "kind": "mesh",
+      "pass": "water"
+    },
+    {
+      "brick": "engine_render",
+      "join": "joins",
+      "kind": "skin",
+      "pass": "color"
+    },
+    {
+      "brick": "engine_render",
+      "join": "joins",
+      "kind": "skin",
+      "pass": "blended"
+    },
+    {
+      "brick": "engine_shadows",
+      "join": "joins",
+      "kind": "skin",
+      "pass": "shadow"
+    },
+    {
+      "brick": "engine_prepass",
+      "join": "joins",
+      "kind": "skin",
+      "pass": "prepass"
+    },
+    {
+      "brick": "engine_debug_view",
+      "join": "joins",
+      "kind": "skin",
+      "pass": "debug_view"
+    },
+    {
+      "brick": "engine_probes",
+      "join": "joins",
+      "kind": "skin",
+      "pass": "probe"
+    },
+    {
+      "brick": "engine_probes",
+      "join": "not_taken",
+      "kind": "skin",
+      "pass": "probe_light"
+    },
+    {
+      "brick": "engine_water",
+      "join": "not_taken",
+      "kind": "skin",
+      "pass": "water"
+    },
+    {
+      "brick": "engine_render",
+      "join": "joins",
+      "kind": "impostor",
+      "pass": "color"
+    },
+    {
+      "brick": "engine_render",
+      "join": "joins",
+      "kind": "impostor",
+      "pass": "blended"
+    },
+    {
+      "brick": "engine_shadows",
+      "join": "skips",
+      "kind": "impostor",
+      "pass": "shadow",
+      "reason": "impostor cards cast no shadows"
+    },
+    {
+      "brick": "engine_prepass",
+      "join": "joins",
+      "kind": "impostor",
+      "pass": "prepass"
+    },
+    {
+      "brick": "engine_debug_view",
+      "join": "joins",
+      "kind": "impostor",
+      "pass": "debug_view"
+    },
+    {
+      "brick": "engine_probes",
+      "join": "skips",
+      "kind": "impostor",
+      "pass": "probe",
+      "reason": "impostor cards stay out of probe captures"
+    },
+    {
+      "brick": "engine_probes",
+      "join": "not_taken",
+      "kind": "impostor",
+      "pass": "probe_light"
+    },
+    {
+      "brick": "engine_water",
+      "join": "not_taken",
+      "kind": "impostor",
+      "pass": "water"
+    },
+    {
+      "brick": "engine_render",
+      "join": "joins",
+      "kind": "text",
+      "pass": "color"
+    },
+    {
+      "brick": "engine_render",
+      "join": "joins",
+      "kind": "text",
+      "pass": "blended"
+    },
+    {
+      "brick": "engine_shadows",
+      "join": "skips",
+      "kind": "text",
+      "pass": "shadow",
+      "reason": "labels cast no shadows"
+    },
+    {
+      "brick": "engine_prepass",
+      "join": "joins",
+      "kind": "text",
+      "pass": "prepass"
+    },
+    {
+      "brick": "engine_debug_view",
+      "join": "joins",
+      "kind": "text",
+      "pass": "debug_view"
+    },
+    {
+      "brick": "engine_probes",
+      "join": "skips",
+      "kind": "text",
+      "pass": "probe",
+      "reason": "labels stay out of probe captures"
+    },
+    {
+      "brick": "engine_probes",
+      "join": "not_taken",
+      "kind": "text",
+      "pass": "probe_light"
+    },
+    {
+      "brick": "engine_water",
+      "join": "not_taken",
+      "kind": "text",
+      "pass": "water"
+    },
+    {
+      "brick": "engine_render",
+      "join": "skips",
+      "kind": "particles",
+      "pass": "color",
+      "reason": "particles only blend"
+    },
+    {
+      "brick": "engine_render",
+      "join": "joins",
+      "kind": "particles",
+      "pass": "blended"
+    },
+    {
+      "brick": "engine_shadows",
+      "join": "skips",
+      "kind": "particles",
+      "pass": "shadow",
+      "reason": "particles cast no shadows"
+    },
+    {
+      "brick": "engine_prepass",
+      "join": "skips",
+      "kind": "particles",
+      "pass": "prepass",
+      "reason": "particles write no depth"
+    },
+    {
+      "brick": "engine_debug_view",
+      "join": "skips",
+      "kind": "particles",
+      "pass": "debug_view",
+      "reason": "particles carry no debug record"
+    },
+    {
+      "brick": "engine_probes",
+      "join": "skips",
+      "kind": "particles",
+      "pass": "probe",
+      "reason": "particles stay out of probe captures"
+    },
+    {
+      "brick": "engine_probes",
+      "join": "not_taken",
+      "kind": "particles",
+      "pass": "probe_light"
+    },
+    {
+      "brick": "engine_water",
+      "join": "not_taken",
+      "kind": "particles",
+      "pass": "water"
+    },
+    {
+      "brick": "engine_render",
+      "join": "skips",
+      "kind": "terrain",
+      "pass": "color",
+      "reason": "terrain shades its colour in its own resolve pass"
+    },
+    {
+      "brick": "engine_render",
+      "join": "skips",
+      "kind": "terrain",
+      "pass": "blended",
+      "reason": "terrain is opaque ground and never blends"
+    },
+    {
+      "brick": "engine_shadows",
+      "join": "joins",
+      "kind": "terrain",
+      "pass": "shadow"
+    },
+    {
+      "brick": "engine_prepass",
+      "join": "joins",
+      "kind": "terrain",
+      "pass": "prepass"
+    },
+    {
+      "brick": "engine_debug_view",
+      "join": "joins",
+      "kind": "terrain",
+      "pass": "debug_view"
+    },
+    {
+      "brick": "engine_probes",
+      "join": "joins",
+      "kind": "terrain",
+      "pass": "probe"
+    },
+    {
+      "brick": "engine_probes",
+      "join": "not_taken",
+      "kind": "terrain",
+      "pass": "probe_light"
+    },
+    {
+      "brick": "engine_water",
+      "join": "not_taken",
+      "kind": "terrain",
+      "pass": "water"
+    },
+    {
+      "brick": "engine_render",
+      "join": "joins",
+      "kind": "placed",
+      "pass": "color"
+    },
+    {
+      "brick": "engine_render",
+      "join": "joins",
+      "kind": "placed",
+      "pass": "blended"
+    },
+    {
+      "brick": "engine_shadows",
+      "join": "joins",
+      "kind": "placed",
+      "pass": "shadow"
+    },
+    {
+      "brick": "engine_prepass",
+      "join": "joins",
+      "kind": "placed",
+      "pass": "prepass"
+    },
+    {
+      "brick": "engine_debug_view",
+      "join": "joins",
+      "kind": "placed",
+      "pass": "debug_view"
+    },
+    {
+      "brick": "engine_probes",
+      "join": "joins",
+      "kind": "placed",
+      "pass": "probe"
+    },
+    {
+      "brick": "engine_probes",
+      "join": "not_taken",
+      "kind": "placed",
+      "pass": "probe_light"
+    },
+    {
+      "brick": "engine_water",
+      "join": "not_taken",
+      "kind": "placed",
+      "pass": "water"
+    },
+    {
+      "brick": "engine_render",
+      "join": "joins",
+      "kind": "cover",
+      "pass": "color"
+    },
+    {
+      "brick": "engine_render",
+      "join": "joins",
+      "kind": "cover",
+      "pass": "blended"
+    },
+    {
+      "brick": "engine_shadows",
+      "join": "joins",
+      "kind": "cover",
+      "pass": "shadow"
+    },
+    {
+      "brick": "engine_prepass",
+      "join": "joins",
+      "kind": "cover",
+      "pass": "prepass"
+    },
+    {
+      "brick": "engine_debug_view",
+      "join": "joins",
+      "kind": "cover",
+      "pass": "debug_view"
+    },
+    {
+      "brick": "engine_probes",
+      "join": "skips",
+      "kind": "cover",
+      "pass": "probe",
+      "reason": "ground cover grows around the main camera only"
+    },
+    {
+      "brick": "engine_probes",
+      "join": "not_taken",
+      "kind": "cover",
+      "pass": "probe_light"
+    },
+    {
+      "brick": "engine_water",
+      "join": "not_taken",
+      "kind": "cover",
+      "pass": "water"
+    },
+    {
+      "brick": "engine_render",
+      "join": "skips",
+      "kind": "water",
+      "pass": "color",
+      "reason": "the water surface draws in its own pass, after the scene it refracts"
+    },
+    {
+      "brick": "engine_render",
+      "join": "joins",
+      "kind": "water",
+      "pass": "blended"
+    },
+    {
+      "brick": "engine_shadows",
+      "join": "skips",
+      "kind": "water",
+      "pass": "shadow",
+      "reason": "the water surface cast no shadows"
+    },
+    {
+      "brick": "engine_prepass",
+      "join": "skips",
+      "kind": "water",
+      "pass": "prepass",
+      "reason": "the water surface refracts the scene behind it, so it fills no depth before it"
+    },
+    {
+      "brick": "engine_debug_view",
+      "join": "joins",
+      "kind": "water",
+      "pass": "debug_view"
+    },
+    {
+      "brick": "engine_probes",
+      "join": "skips",
+      "kind": "water",
+      "pass": "probe",
+      "reason": "the water surface stay out of probe captures"
+    },
+    {
+      "brick": "engine_probes",
+      "join": "not_taken",
+      "kind": "water",
+      "pass": "probe_light"
+    },
+    {
+      "brick": "engine_water",
+      "join": "joins",
+      "kind": "water",
+      "pass": "water"
+    }
+  ],
   "left_out": [],
   "ownership": [],
   "places": [

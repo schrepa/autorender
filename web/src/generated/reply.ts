@@ -53,7 +53,7 @@ export interface CaptureResult {
   temporary?: boolean | null;
 }
 
-export type DescribeResult = { bricks: DescribedBrick[]; types: DescribedType[]; verbs: string[] } | { control_state?: Record<string, unknown> | null; kind: TypeKind; name: string; schema: unknown } | { kind: TypeKind; name: string; schema: unknown } | { codes: string[]; kind: TypeKind; name: string } | { at?: string | null; brick?: string | null; descriptor: InspectorDescriptor; kind: TypeKind } | { args: unknown; at?: string | null; brick?: string | null; kind: TypeKind; name: string; reply?: unknown; shows?: string | null; verb: string } | { brick: DescribedBrick; kind: TypeKind } | { at: string; brick: string; kind: TypeKind; name: string; schema: unknown };
+export type DescribeResult = { bricks: DescribedBrick[]; types: DescribedType[]; verbs: string[] } | { control_state?: Record<string, unknown> | null; kind: TypeKind; name: string; schema: unknown } | { kind: TypeKind; name: string; schema: unknown } | { codes: string[]; kind: TypeKind; name: string } | { cells: KindCell[]; kind: TypeKind; name: string } | { at?: string | null; brick?: string | null; descriptor: InspectorDescriptor; kind: TypeKind } | { args: unknown; at?: string | null; brick?: string | null; kind: TypeKind; name: string; reply?: unknown; shows?: string | null; verb: string } | { brick: DescribedBrick; kind: TypeKind } | { at: string; brick: string; kind: TypeKind; name: string; schema: unknown };
 
 export interface DescribedBrick {
   crate: string;
@@ -162,6 +162,12 @@ export interface KeptArtifact {
   path: string;
   sha256: string;
   tick?: string | null;
+}
+
+export interface KindCell {
+  brick: string;
+  kind: string;
+  pass: string;
 }
 
 export interface MissingAsset {
@@ -303,4 +309,4 @@ export interface TextureAsset {
 
 export type TextureState = "cpu_ready" | "missing";
 
-export type TypeKind = "component" | "resource" | "authoring" | "verb" | "operation" | "brick" | "stats" | "observation" | "catalog";
+export type TypeKind = "component" | "resource" | "authoring" | "verb" | "operation" | "brick" | "stats" | "observation" | "catalog" | "report";
