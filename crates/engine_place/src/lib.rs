@@ -309,6 +309,7 @@ impl engine_codec::Codec for JobRef {
 pub struct Smoke {
     pub name: &'static str,
     pub run: fn(&mut dyn SmokeSession) -> Result<(), SmokeFailure>,
+    pub without: &'static [&'static str],
 }
 
 pub const UNIFORM_BINDING_BYTES: u64 = 16_384;

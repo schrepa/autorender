@@ -82,29 +82,54 @@ fn steps(order: &engine_core::FoldOrder, stage: Stage) -> &[String] {
     }
 }
 
+fn listed(applied: &[AppliedModule], order: Option<&engine_core::FoldOrder>) -> Vec<usize> {
+    let mut picked = Vec::new();
+    let Some(order) = order else {
+        return picked;
+    };
+    for (stage, _) in FOLDS {
+        for step in steps(order, stage) {
+            let found = (0..applied.len()).find(|&at| {
+                !picked.contains(&at)
+                    && applied[at].stage == stage
+                    && applied[at].pass == step.as_str()
+            });
+            picked.extend(found);
+        }
+    }
+    picked
+}
+
 pub(crate) fn ordered(
     applied: Vec<AppliedModule>,
     order: Option<&engine_core::FoldOrder>,
 ) -> Vec<AppliedModule> {
-    let Some(order) = order else {
-        return applied;
-    };
+    let picked = listed(&applied, order);
     let mut left: Vec<Option<AppliedModule>> = applied.into_iter().map(Some).collect();
-    let mut sorted = Vec::with_capacity(left.len());
-    for (stage, _) in FOLDS {
-        for step in steps(order, stage) {
-            let found = left.iter_mut().find(|member| {
-                member
-                    .as_ref()
-                    .is_some_and(|member| member.stage == stage && member.pass == step.as_str())
-            });
-            if let Some(member) = found.and_then(Option::take) {
-                sorted.push(member);
-            }
-        }
-    }
+    let mut sorted: Vec<AppliedModule> = picked
+        .iter()
+        .filter_map(|&at| left.get_mut(at).and_then(Option::take))
+        .collect();
     sorted.extend(left.into_iter().flatten());
     sorted
+}
+
+pub(crate) fn unlisted(
+    ordered: &[AppliedModule],
+    order: Option<&engine_core::FoldOrder>,
+) -> Vec<(&'static str, &'static str)> {
+    let picked = listed(ordered, order);
+    ordered
+        .iter()
+        .enumerate()
+        .filter(|(at, _)| !picked.contains(at))
+        .filter_map(|(_, member)| {
+            FOLDS
+                .iter()
+                .find(|(stage, _)| *stage == member.stage)
+                .map(|&(_, field)| (field, member.pass))
+        })
+        .collect()
 }
 
 pub(crate) fn unknown_steps(

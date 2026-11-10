@@ -176,6 +176,12 @@ impl BrickStates {
         self.needs = needs;
     }
 
+    pub(crate) fn set_unmet(&mut self, mut bricks: Vec<BrickId>) {
+        bricks.sort_unstable();
+        bricks.dedup();
+        self.unmet = bricks;
+    }
+
     pub fn state(&self, brick: BrickId) -> Option<&BrickState> {
         self.gate_state(self.root(brick)?)
     }
@@ -321,17 +327,6 @@ pub fn fault_of<B: 'static>(world: &mut World, error: Error) {
         .and_then(|states| states.id_of(TypeId::of::<B>()));
     if let Some(brick) = brick {
         fault(world, brick, error);
-    }
-}
-
-pub fn hold_unmet(world: &mut World, mut bricks: Vec<BrickId>) {
-    bricks.sort_unstable();
-    bricks.dedup();
-    let Some(mut states) = world.get_resource_mut::<BrickStates>() else {
-        return;
-    };
-    if states.unmet != bricks {
-        states.unmet = bricks;
     }
 }
 

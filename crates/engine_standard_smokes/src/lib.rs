@@ -23,26 +23,37 @@ impl Brick for StandardSmokesBrick {
         Smoke {
             name: "drawn_poses_agree",
             run: poses::run,
+            without: &[],
         },
         Smoke {
             name: "collision_matches_drawn_ground",
             run: ground::run,
+            without: &[],
         },
         Smoke {
             name: "settled_image_repeats",
             run: image::run,
+            without: &[],
         },
         Smoke {
             name: "calls_by_name_in_lists",
             run: calls::run,
+            without: &[],
         },
         Smoke {
             name: "empty_scene_settles",
             run: empty::run,
+            without: &[],
         },
         Smoke {
             name: "missing_partners_are_reported",
             run: partners::run,
+            without: &[partners::LEFT_OUT],
+        },
+        Smoke {
+            name: "standard_list_starts_clean",
+            run: engine_smoke::starts_clean,
+            without: &[],
         },
     ];
 

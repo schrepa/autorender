@@ -10,7 +10,7 @@ use engine::Engine;
 use engine_core::{BrickList, PlaceDecl, ScenePasses, Smoke};
 use engine_place::PlaceKind;
 use engine_registry::{BrickRecord, BrickSet, ReadKind, Registry};
-use engine_render::Installation;
+use engine_render::{FoldStep, Installation};
 use serde_json::{Value, json};
 
 use crate::install::List;
@@ -199,7 +199,14 @@ fn record(
             .reads()
             .iter()
             .filter(|read| read.reader == brick.package)
-            .map(|read| json!({ "kind": read.kind, "place": read.place, "providers": read.providers }))
+            .map(|read| {
+                json!({
+                    "kind": read.kind,
+                    "place": read.place,
+                    "providers": read.providers,
+                    "required": read.required,
+                })
+            })
             .collect::<Vec<_>>(),
         "smokes": smokes(brick.smokes()),
         "dependencies": repository
@@ -233,6 +240,27 @@ fn places(registry: &Registry, uses: &BTreeMap<TypeId, Uses>) -> Vec<Value> {
             })
         })
         .collect()
+}
+
+fn list_order(installed: &Installation) -> Value {
+    let step = |step: &FoldStep| json!({ "stage": step.stage, "step": step.step });
+    json!({
+        "pass_ties": installed
+            .pass_ties
+            .iter()
+            .map(|tie| json!({
+                "target": tie.target,
+                "first": { "brick": tie.first.0, "pass": tie.first.1 },
+                "then": { "brick": tie.then.0, "pass": tie.then.1 },
+            }))
+            .collect::<Vec<_>>(),
+        "fold_ties": installed
+            .fold_ties
+            .iter()
+            .map(|(first, then)| json!({ "first": step(first), "then": step(then) }))
+            .collect::<Vec<_>>(),
+        "unlisted_steps": installed.unlisted_steps.iter().map(step).collect::<Vec<_>>(),
+    })
 }
 
 fn frame(installed: &Installation) -> Value {
@@ -288,6 +316,7 @@ pub fn bricks_json(
         "left_out": registry.left_out(),
         "unmet": registry.unmet(),
         "kind_passes": kind_passes,
+        "list_order": list_order(&installed),
         "ownership": registry.ownership(),
         "frame": frame(&installed),
     }))

@@ -6,10 +6,18 @@ use crate::bricks::plates::{PLATE, PLATE_MODULE, PlatesPass};
 
 const FRAMES: u32 = 8;
 
-pub(crate) const SMOKES: [Smoke; 1] = [Smoke {
-    name: "bare_game_draws_its_own_kind",
-    run,
-}];
+pub(crate) const SMOKES: [Smoke; 2] = [
+    Smoke {
+        name: "bare_game_draws_its_own_kind",
+        run,
+        without: &[],
+    },
+    Smoke {
+        name: "bare_game_starts_clean",
+        run: engine_smoke::starts_clean,
+        without: &[],
+    },
+];
 
 fn scene() -> Value {
     json!({

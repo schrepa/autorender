@@ -19,7 +19,7 @@ use crate::attribution::CORE_ROW;
 use crate::entries::{EventEntry, Kept, OperationEntry, PieceEntry, SettingsEntry, StatsEntry};
 use crate::hooks::{Named, add_removal};
 use crate::jobs::JobQueue;
-use crate::needs::{LeftOut, Read, ReadKind};
+use crate::needs::{LeftOut, Read, ReadKind, STANDARD};
 use crate::order::{self, PlaceRules};
 use crate::owners::{Shared, Used, ValueKind, Values, note, ownership};
 use crate::record::{BrickRecord, crate_segment};
@@ -255,8 +255,12 @@ impl RegistryBuilder {
         let (mut refused, mut found) = order::build(world, schedules);
         registry.problems.append(&mut refused);
         uses.append(&mut found);
-        let needs = registry.analyze(world, &uses);
-        world.resource_mut::<BrickStates>().set_needs(needs);
+        let (needs, unmet) = registry.analyze(world, &uses);
+        {
+            let mut states = world.resource_mut::<BrickStates>();
+            states.set_needs(needs);
+            states.set_unmet(unmet);
+        }
         world.insert_resource(registry);
         GateDriver::new(conditions)
     }
@@ -369,18 +373,36 @@ impl Registry {
     }
 
     pub fn could_provide(&self, place: &str) -> Vec<&'static str> {
-        self.left
+        let left: Vec<&'static str> = self
+            .left
             .iter()
             .filter(|left| left.provides(place))
             .map(|left| left.package)
-            .collect()
+            .collect();
+        if !left.is_empty() {
+            return left;
+        }
+        self.standard(|standard| standard.places.contains(&place))
     }
 
     pub fn could_write(&self, target: &str, before: Option<AttachPoint>) -> Vec<&'static str> {
-        self.left
+        let left: Vec<&'static str> = self
+            .left
             .iter()
             .filter(|left| left.writes(target, before))
             .map(|left| left.package)
+            .collect();
+        if !left.is_empty() {
+            return left;
+        }
+        self.standard(|standard| standard.targets.contains(&target))
+    }
+
+    fn standard(&self, provides: impl Fn(&crate::needs::Standard) -> bool) -> Vec<&'static str> {
+        STANDARD
+            .iter()
+            .filter(|&standard| !self.has(standard.package) && provides(standard))
+            .map(|standard| standard.package)
             .collect()
     }
 
@@ -1072,7 +1094,7 @@ impl Registry {
         conditions
     }
 
-    fn analyze(&mut self, world: &World, uses: &[Used]) -> Vec<Vec<BrickId>> {
+    fn analyze(&mut self, world: &World, uses: &[Used]) -> (Vec<Vec<BrickId>>, Vec<BrickId>) {
         let rule = &self.rule;
         let catalog = &self.catalog;
         let catalogued = |type_id: TypeId| {
@@ -1116,57 +1138,67 @@ impl Registry {
         }
         self.owners = held.shared;
         self.private = held.private;
-        let (reads, unmet) = self.slot_reads(world, uses);
+        let (reads, unmet, lacking) = self.slot_reads(world, uses);
         self.note_reads(&[ReadKind::Slot], reads);
         for error in unmet {
             self.report_unmet(error);
         }
-        held.needs
+        (held.needs, lacking)
     }
 
-    fn slot_reads(&self, world: &World, uses: &[Used]) -> (Vec<Read>, Vec<Error>) {
+    fn slot_reads(&self, world: &World, uses: &[Used]) -> (Vec<Read>, Vec<Error>, Vec<BrickId>) {
         let mut reads = Vec::new();
         let mut unmet = Vec::new();
+        let mut lacking = Vec::new();
         for decl in self
             .catalog
             .iter()
             .filter(|decl| decl.kind() == PlaceKind::Slot)
         {
-            let Some(id) = world.components().get_id(decl.type_id()) else {
-                continue;
-            };
-            let filler = self.filler(decl.type_id());
-            let mut readers: Vec<&'static str> = Vec::new();
-            for used in uses.iter().filter(|used| used.id == id && !used.write) {
-                let Some(record) = self.bricks.get(used.brick.index()) else {
-                    continue;
-                };
-                if Some(record.package) != filler && !readers.contains(&record.package) {
-                    readers.push(record.package);
+            let slot = decl.type_id();
+            let filler = self.filler(slot);
+            let mut readers: Vec<BrickId> = Vec::new();
+            if let Some(id) = world.components().get_id(slot) {
+                for used in uses.iter().filter(|used| used.id == id && !used.write) {
+                    if !readers.contains(&used.brick) {
+                        readers.push(used.brick);
+                    }
                 }
             }
-            for &reader in &readers {
+            for (brick, record) in self.iter() {
+                if record.requires(slot) && !readers.contains(&brick) {
+                    readers.push(brick);
+                }
+            }
+            for brick in readers {
+                let Some(record) = self.bricks.get(brick.index()) else {
+                    continue;
+                };
+                if Some(record.package) == filler {
+                    continue;
+                }
+                let required = record.requires(slot);
                 reads.push(Read {
-                    reader,
+                    reader: record.package,
                     kind: ReadKind::Slot,
                     place: decl.name().to_owned(),
                     providers: filler.into_iter().collect(),
+                    required,
                 });
-            }
-            if filler.is_none() {
-                for &reader in &readers {
+                if required && filler.is_none() {
                     unmet.push(
                         Error::new(
                             ErrorCode::PlaceNotFilled,
-                            format!("$.bricks.{reader}.reads.{}", decl.name()),
+                            format!("$.bricks.{}.reads.{}", record.package, decl.name()),
                         )
                         .expected(Expected::Present)
                         .nearest(self.could_provide(decl.name())),
                     );
+                    lacking.push(brick);
                 }
             }
         }
-        (reads, unmet)
+        (reads, unmet, lacking)
     }
 
     fn check_operations(&mut self, world: &mut World, uses: &mut Vec<Used>) {

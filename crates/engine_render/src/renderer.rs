@@ -29,7 +29,9 @@ pub use attribution::GpuPassTimes;
 pub(crate) use display::Display;
 use display::DisplayFrame;
 pub use health::DeviceHealth;
-pub use install::{Installation, InstalledPart, InstalledPiece, device_limits, install_noop};
+pub use install::{
+    FoldStep, Installation, InstalledPart, InstalledPiece, PassTie, device_limits, install_noop,
+};
 pub use startup::StartingRenderer;
 
 pub(crate) fn new_assets(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Assets {

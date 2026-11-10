@@ -871,7 +871,7 @@ impl Run {
             .passes
             .get(pass as usize)
             .is_some_and(|declared| declared.part == self.part);
-        if owned {
+        if owned && !self.machine.graph.starved(pass as usize) {
             self.planning.runs.insert(pass as usize);
         }
     }
