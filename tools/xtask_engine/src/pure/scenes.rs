@@ -186,6 +186,9 @@ fn refuse(source: &str, refusal: &Value, kinds: &SceneKinds) -> Result<Vec<Error
                 Some(document.instantiate(world)?)
             };
             let id = refusal["remove"].as_str().unwrap_or_default();
+            if refusal["twice"] == true {
+                engine_scene::remove(world, id)?;
+            }
             engine_scene::remove(world, id).map(|_| Vec::new())
         }
         _ => Ok(Vec::new()),

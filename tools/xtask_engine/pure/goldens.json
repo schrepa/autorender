@@ -16,7 +16,7 @@
       "meshes": 2,
       "textures": 1
     },
-    "gltf prefab document": "c656d0a5f2642baf",
+    "gltf prefab document": "ba06bd050d3faac6",
     "gltf prefab file prop/image0.53f2662b9f5e.png": "53f2662b9f5ed040",
     "gltf prefab file prop/node1.p0.761ae8786249.bin": "761ae878624921a2",
     "gltf prefab file prop/node1.p1.8e944532b4c2.bin": "8e944532b4c2174d",
@@ -28,7 +28,7 @@
       "meshes": 2,
       "textures": 1
     },
-    "gltf scene document": "cff62e8b8b4653b7",
+    "gltf scene document": "fdfac42134f81a54",
     "gltf scene file prop/image0.53f2662b9f5e.png": "53f2662b9f5ed040",
     "gltf scene file prop/node1.p0.761ae8786249.bin": "761ae878624921a2",
     "gltf scene file prop/node1.p1.8e944532b4c2.bin": "8e944532b4c2174d"
@@ -227,6 +227,15 @@
       "got": "AssetLibrary",
       "path": "$.assets"
     },
+    "refusal nav_steps_not_taken at $.nav_agent": {
+      "code": "nav_steps_not_taken",
+      "got": [
+        -5.976666450500488,
+        0.0,
+        0.0
+      ],
+      "path": "$.nav_agent"
+    },
     "refusal no_scene at $.entity": {
       "code": "no_scene",
       "expected": "entity",
@@ -246,15 +255,6 @@
       "code": "pause_required",
       "expected": "paused",
       "got": "step",
-      "path": "$"
-    },
-    "refusal request_too_large at $": {
-      "allowed": {
-        "kind": "at_most",
-        "max": 16384
-      },
-      "code": "request_too_large",
-      "got": 16446,
       "path": "$"
     },
     "refusal reserved_inspector at $.name": {
@@ -731,18 +731,18 @@
     }
   },
   "scenes": {
-    "document components": "104688dcb5df3509",
+    "document components": "807e605de1fa1c0a",
     "document components counts": {
-      "bytes": 16580,
+      "bytes": 16712,
       "entities": 10,
       "materials": 3,
       "meshes": 3,
       "prefabs": 1,
       "textures": 1
     },
-    "document garden": "4d991fdda9951c59",
+    "document garden": "aa673d15d8a21079",
     "document garden counts": {
-      "bytes": 104975,
+      "bytes": 105679,
       "entities": 31,
       "materials": 9,
       "meshes": 6,
@@ -758,9 +758,9 @@
       "prefabs": 0,
       "textures": 0
     },
-    "document terrain": "4f88ae63758bd166",
+    "document terrain": "35554a83d2b8e15c",
     "document terrain counts": {
-      "bytes": 24163,
+      "bytes": 24211,
       "entities": 6,
       "materials": 2,
       "meshes": 2,
@@ -786,6 +786,12 @@
       "expected": "unique",
       "got": "t",
       "path": "$.entities[0].tags[1]"
+    },
+    "refusal entity_removed at $": {
+      "code": "entity_removed",
+      "expected": "live",
+      "got": "e",
+      "path": "$"
     },
     "refusal hierarchy_cycle at $.entities[0].parent": {
       "code": "hierarchy_cycle",
@@ -1022,6 +1028,11 @@
       "got": "inner",
       "path": "$.prefabs[1].entities[0].prefab"
     },
+    "refusal no_scene at $": {
+      "code": "no_scene",
+      "expected": "present",
+      "path": "$"
+    },
     "refusal out_of_range at $.environment.streamed.along[0].every": {
       "allowed": {
         "kind": "at_most",
@@ -1053,6 +1064,11 @@
       },
       "code": "source_too_large",
       "got": 67108865,
+      "path": "$"
+    },
+    "refusal unknown_entity at $": {
+      "code": "unknown_entity",
+      "got": "missing",
       "path": "$"
     },
     "refusal unknown_field at $.version": {
@@ -1308,7 +1324,7 @@
       "steepest": 0.016481399536132812,
       "tunnels": 1
     },
-    "bakes": "77e0f1c592094e9f",
+    "bakes": "679b761f4684c77b",
     "bounce": {
       "blocks": 1024,
       "detailed blocks": 474,
@@ -1332,7 +1348,7 @@
       ],
       "texels": 65536
     },
-    "pack": "c3b4241700767314",
+    "pack": "9df892e6264869ec",
     "pack records": 46,
     "portals 0/0/0": "fb26e1b9f5bd9fd8",
     "portals 0/0/1": "29e88506dde27d87",
