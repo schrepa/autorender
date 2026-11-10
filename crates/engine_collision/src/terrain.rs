@@ -25,29 +25,68 @@ fn tiles(sources: &[Arc<SolidField>]) -> impl Iterator<Item = &Arc<FieldTile>> {
     sources.iter().flat_map(|source| &source.fields)
 }
 
+fn floors(filter: QueryFilter) -> bool {
+    filter.layers.interacts(CollisionLayers::default()) && filter.sensors != SensorFilter::Only
+}
+
 fn accepts(filter: QueryFilter, entity: Entity) -> bool {
-    filter.exclude != Some(entity)
-        && filter.layers.interacts(CollisionLayers::default())
-        && filter.sensors != SensorFilter::Only
+    filter.exclude != Some(entity) && floors(filter)
+}
+
+fn covering(
+    sources: &[Arc<SolidField>],
+    at: Vec2,
+) -> impl Iterator<Item = Option<&Arc<FieldTile>>> {
+    sources
+        .iter()
+        .filter(move |source| !source.fields.iter().any(|field| field.covers(at)))
+        .flat_map(move |source| {
+            source
+                .covers
+                .iter()
+                .filter(move |cover| cover.answers(at))
+                .map(move |cover| cover.tile_at(at))
+        })
 }
 
 pub(crate) fn awaits(sources: &[Arc<SolidField>], at: Vec2, filter: QueryFilter) -> bool {
-    if !filter.layers.interacts(CollisionLayers::default()) || filter.sensors == SensorFilter::Only
-    {
-        return false;
+    floors(filter) && covering(sources, at).any(|tile| tile.is_none())
+}
+
+pub(crate) fn below(
+    sources: &[Arc<SolidField>],
+    ray: CollisionRay,
+    filter: QueryFilter,
+) -> Option<RayHit> {
+    if !floors(filter) {
+        return None;
     }
-    let inside = |low: Vec2, high: Vec2| at.cmpge(low).all() && at.cmple(high).all();
-    sources.iter().any(|source| {
-        source
-            .extent
-            .is_some_and(|[low, high]| inside(low, high))
-            && !source.fields.iter().any(|field| {
-                inside(
-                    Vec2::new(field.min.x, field.min.z),
-                    Vec2::new(field.max.x, field.max.z),
-                )
-            })
-    })
+    let at = Vec2::new(ray.origin.x, ray.origin.z);
+    let mut nearest: Option<RayHit> = None;
+    for field in covering(sources, at).flatten() {
+        if !accepts(filter, field.owner) {
+            continue;
+        }
+        let Some((height, normal)) = field.surface(at) else {
+            continue;
+        };
+        let distance = ray.origin.y - height;
+        if !(0.0..=ray.max_distance).contains(&distance) {
+            continue;
+        }
+        let candidate = RayHit {
+            entity: field.owner,
+            distance,
+            point: Vec3::new(at.x, height, at.y),
+            normal,
+            started_inside: false,
+            placed: None,
+        };
+        if nearest.is_none_or(|old| candidate.distance < old.distance) {
+            nearest = Some(candidate);
+        }
+    }
+    nearest
 }
 
 pub(crate) fn ray(
