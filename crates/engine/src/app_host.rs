@@ -40,17 +40,6 @@ pub fn now_ms() -> f64 {
     }
 }
 
-fn report_kinds(engine: &Engine) {
-    let Some(passes) = engine.app.world().get_resource::<engine_core::ScenePasses>() else {
-        return;
-    };
-    let line = serde_json::json!({"event": "kind_passes", "cells": passes.kind_table()}).to_string();
-    #[cfg(target_arch = "wasm32")]
-    web_sys::console::info_1(&wasm_bindgen::JsValue::from_str(&line));
-    #[cfg(not(target_arch = "wasm32"))]
-    eprintln!("{line}");
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum JobClock {
     #[default]
@@ -157,7 +146,6 @@ impl AppHost {
         let renderer = Box::new(starting.finish().await?);
         let mut host = Self::with(engine, renderer, display_paced);
         host.claim_passes()?;
-        report_kinds(&host.engine);
         Ok(host)
     }
 
