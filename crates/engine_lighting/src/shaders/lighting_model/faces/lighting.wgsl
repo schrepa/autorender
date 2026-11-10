@@ -133,3 +133,11 @@ fn lit(surface: SurfacePoint, pixel: vec2<f32>) -> Shaded {
     let point = widened(surface);
     return shade_surface(point, pixel, local_light(point, pixel) + point.inputs.added_light);
 }
+
+fn given_reflectance(point: SurfacePoint, reflectance: vec3<f32>, diffuse: vec3<f32>)
+        -> SurfacePoint {
+    var result = point;
+    result.f0 = reflectance;
+    result.diffuse_color = diffuse;
+    return result;
+}

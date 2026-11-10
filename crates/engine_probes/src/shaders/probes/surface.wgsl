@@ -1,5 +1,6 @@
 import package::engine::color::encode_srgb;
 import package::engine::shading::{Shaded, SurfacePoint, ViewPixel};
+import package::engine::slots::point_units;
 import package::face::lighting::{sun_visibility, surface_sun};
 
 fn folded(direction: vec3<f32>) -> vec2<f32> {
@@ -24,12 +25,12 @@ fn codes(values: vec4<f32>) -> vec4<u32> {
 }
 
 fn probe_base(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> vec4<u32> {
-    return codes(vec4<f32>(encode_srgb(saturate(point.base_color)), point.occlusion));
+    return codes(vec4<f32>(encode_srgb(saturate(point.base_color)), point_units(point).z));
 }
 
 fn probe_surface(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> vec4<u32> {
     let faced = point.inputs.thickness == 0.0 && !point.inputs.ignore_face;
-    let shape = codes(vec4<f32>(point.roughness, point.metalness, 0.0, 0.0));
+    let shape = codes(vec4<f32>(point_units(point).xy, 0.0, 0.0));
     return vec4<u32>(shape.xy, point.kind, select(0u, 1u, faced));
 }
 
@@ -39,7 +40,7 @@ fn probe_normal(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> vec4<f32>
 }
 
 fn probe_emissive(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> vec4<f32> {
-    return vec4<f32>(point.emissive, point.transmission);
+    return vec4<f32>(point.emissive, point_units(point).w);
 }
 
 fn probe_bounce(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> vec4<f32> {

@@ -54,3 +54,8 @@ fn reflecting(point: SurfacePoint) -> Reflecting {
     var result: Reflecting;
     return result;
 }
+
+fn given_reflectance(point: SurfacePoint, reflectance: vec3<f32>, diffuse: vec3<f32>)
+        -> SurfacePoint {
+    return point;
+}

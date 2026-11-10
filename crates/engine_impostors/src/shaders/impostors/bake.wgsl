@@ -3,6 +3,7 @@ import package::engine::materials::alpha_test;
 import package::engine::geometry::vertex::octahedral_normal;
 import package::engine::shading::SurfaceInput;
 import package::engine::mapped::{base_texel, emissive_texel};
+import package::engine::slots::point_units;
 import package::engine::surface::{masked_out, opacity_cut, surface_point};
 import package::engine::view::stable_normalize;
 import package::face::lighting::SURFACE_THIN;
@@ -156,7 +157,7 @@ fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool
     targets.emissive = vec4<f32>(emissive_texel(surface), base.a);
     targets.geometry = vec4<f32>(stable_normalize(point.normal) * 0.5 + 0.5,
         0.5 + 0.5 * input.depth);
-    targets.surface = vec4<f32>(point.roughness, point.metalness, point.occlusion,
+    targets.surface = vec4<f32>(point_units(point).xyz,
         impostor_self_visibility(surface.world, point.geometric));
     return targets;
 }

@@ -1,9 +1,10 @@
 import package::engine::shading::{Shaded, SurfacePoint};
-import package::engine::slots::shade as shade_point;
+import package::engine::slots::{given_point, shade as shade_point};
 import package::engine::surfaces::SURFACE_POND;
 import package::engine::view::{camera, stable_normalize, view_pixel};
 import package::face::debug::{DebugTargets, debug_record, debug_targets};
 import package::face::ground_tiles::{GroundTerrain, ground_height, terrain_info};
+import package::face::lighting::given_reflectance;
 import package::generated::kinds::KIND_POND;
 import package::generated::pond::{POND_MOST, PondShape};
 import package::generated::writes::{Outputs, outputs};
@@ -73,19 +74,15 @@ fn shade_pond(input: PondOutput) -> PondShade {
     var point: SurfacePoint;
     point.base_color = POND_BODY;
     point.kind = SURFACE_POND;
-    point.occlusion = 1.0;
-    point.roughness = POND_ROUGHNESS;
-    point.alpha = POND_ROUGHNESS * POND_ROUGHNESS;
-    point.f0 = vec3<f32>(POND_F0);
-    point.diffuse_color = POND_BODY;
     point.normal = up;
     point.geometric = up;
     point.view = view;
-    point.n_v = n_v;
     point.world = world;
     point.world_dx = world_dx;
     point.world_dy = world_dy;
     point.distance = length(toward);
+    point = given_reflectance(given_point(point, vec4<f32>(POND_ROUGHNESS, 0.0, 1.0, 0.0)),
+        vec3<f32>(POND_F0), POND_BODY);
     var shade: PondShade;
     shade.shaded = shade_point(point, input.clip_position.xy);
     shade.cover = 1.0 - exp(-depth / (POND_CLEAR * n_v));

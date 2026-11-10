@@ -1,11 +1,11 @@
 import package::engine::color::luminance;
 import package::engine::shading::{Shaded, SurfacePoint};
-import package::engine::slots::shade as shade_point;
+import package::engine::slots::{given_point, shade as shade_point};
 import package::engine::surfaces::SURFACE_WATER;
 import package::engine::view::{camera, eye_world, stable_normalize, view_pixel};
 import package::face::ground_tiles::{detail_resolved, detail_span};
 import package::face::heightfield::{terrain_uniform, use_terrain};
-import package::face::lighting::{environment_brdf, sun_visibility};
+import package::face::lighting::{environment_brdf, given_reflectance, sun_visibility};
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
 import package::generated::writes::{Outputs, covered_outputs};
@@ -163,24 +163,22 @@ fn shade_fall(input: FallOutput, held: f32) -> FallShade {
     if backlit {
         glow = sunlight * (FALL_ALBEDO * scattering.z * -dot(sun, seen));
     }
+    let f0 = vec3<f32>(0.02 * (1.0 - white));
     var point: SurfacePoint;
     point.base_color = vec3<f32>(FALL_ALBEDO);
     point.emissive = vec3<f32>(0.0);
-    point.occlusion = input.sky;
-    point.roughness = WATER_SMOOTHEST;
-    point.alpha = point.roughness * point.roughness;
-    point.f0 = vec3<f32>(0.02 * (1.0 - white));
-    point.diffuse_color = vec3<f32>(FALL_ALBEDO * scattering.y);
     point.geometric = seen;
     point.normal = seen;
     point.distance = length(input.relative);
     point.view = view;
-    point.n_v = max(abs(facing), 1.0e-4);
     point.world = world;
     point.world_dx = world_dx;
     point.world_dy = world_dy;
     point.kind = SURFACE_WATER;
-    let reflectance = luminance(environment_brdf(point.f0, point.roughness, point.n_v));
+    point = given_reflectance(given_point(point, vec4<f32>(WATER_SMOOTHEST, 0.0, input.sky, 0.0)),
+        f0, vec3<f32>(FALL_ALBEDO * scattering.y));
+    point.n_v = max(abs(facing), 1.0e-4);
+    let reflectance = luminance(environment_brdf(f0, WATER_SMOOTHEST, point.n_v));
     let body = water_body(0.0) * (vec3<f32>(1.0) - clarity)
         * water_scattered(view, sunlight, seen)
         * ((1.0 - reflectance) * scattering.x * input.sky);

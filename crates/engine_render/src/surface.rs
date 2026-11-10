@@ -218,6 +218,7 @@ pub struct OpenSlot {
     pub returns: &'static str,
     pub standard: Module,
     pub flat: &'static str,
+    pub unit: Option<usize>,
     pub values: &'static [MaterialValue],
 }
 
@@ -248,7 +249,17 @@ const POINT_FIELDS: [(&str, &str); 16] = [
 
 type LaidSlot = (&'static str, &'static str, String, &'static [&'static str]);
 
-type LaidOpen = (&'static str, &'static str, String, &'static str);
+type LaidOpen = (
+    &'static str,
+    &'static str,
+    String,
+    &'static str,
+    Option<usize>,
+);
+
+const GIVEN_UNITS: usize = 4;
+
+const UNIT_LANES: [&str; GIVEN_UNITS] = ["x", "y", "z", "w"];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct LaidValue {
@@ -319,6 +330,25 @@ impl MaterialLayout {
         }
     }
 
+    fn wrong_unit(&self, declared: &OpenSlot) -> Option<Error> {
+        let unit = declared.unit?;
+        let path = format!("$.open_slots.{}.unit", declared.name);
+        if declared.returns != "f32" {
+            return Some(Error::new(ErrorCode::InvalidType, path).got(declared.returns));
+        }
+        if unit >= GIVEN_UNITS {
+            return Some(
+                Error::new(ErrorCode::OutOfRange, path)
+                    .range(0.0, (GIVEN_UNITS - 1) as f64)
+                    .got(unit),
+            );
+        }
+        if self.open.iter().any(|(.., known)| *known == Some(unit)) {
+            return Some(Error::new(ErrorCode::NameTwice, path).got(unit));
+        }
+        None
+    }
+
     pub(crate) fn of(
         slots: &[(SlotModule, String)],
         open: &[(OpenSlot, String)],
@@ -345,9 +375,17 @@ impl MaterialLayout {
                 ));
                 continue;
             }
-            layout
-                .open
-                .push((declared.name, declared.returns, path.clone(), declared.flat));
+            if let Some(wrong) = layout.wrong_unit(declared) {
+                problems.push(wrong);
+                continue;
+            }
+            layout.open.push((
+                declared.name,
+                declared.returns,
+                path.clone(),
+                declared.flat,
+                declared.unit,
+            ));
             for value in declared.values {
                 layout.value(value.name, value.standard, Some(value.rule));
             }
@@ -579,10 +617,33 @@ impl MaterialLayout {
         body.push_str(
             "\nfn flat_point(color: vec4<f32>) -> SurfacePoint {\n    var point: SurfacePoint;\n    point.base_color = color.rgb;\n    point.opacity = color.a;\n    point.normal = vec3<f32>(0.0, 0.0, 1.0);\n    point.geometric = point.normal;\n    point.view = point.normal;\n    point.kind = SURFACE_SOLID;\n",
         );
-        for (name, _, _, flat) in &self.open {
+        for (name, _, _, flat, _) in &self.open {
             let _ = writeln!(body, "    point.{name} = {flat};");
         }
         body.push_str("    return derived(point);\n}\n");
+        body.push_str(
+            "\nfn given_point(point: SurfacePoint, units: vec4<f32>) -> SurfacePoint {\n    var filled = point;\n",
+        );
+        for (name, _, _, flat, unit) in &self.open {
+            match unit {
+                Some(unit) => {
+                    let _ = writeln!(body, "    filled.{name} = units.{};", UNIT_LANES[*unit]);
+                }
+                None => {
+                    let _ = writeln!(body, "    filled.{name} = {flat};");
+                }
+            }
+        }
+        body.push_str("    return derived(filled);\n}\n");
+        body.push_str(
+            "\nfn point_units(point: SurfacePoint) -> vec4<f32> {\n    var units = vec4<f32>(0.0);\n",
+        );
+        for (name, .., unit) in &self.open {
+            if let Some(unit) = unit {
+                let _ = writeln!(body, "    units.{} = point.{name};", UNIT_LANES[*unit]);
+            }
+        }
+        body.push_str("    return units;\n}\n");
     }
 
     pub(crate) fn slots_source(&self, full: bool) -> String {
@@ -611,7 +672,7 @@ impl MaterialLayout {
                 (slot.name(), returns, params, args, STANDARD_MODULE)
             })
             .collect();
-        signed.extend(self.open.iter().map(|(name, returns, path, _)| {
+        signed.extend(self.open.iter().map(|(name, returns, path, ..)| {
             (*name, *returns, surface, "input, point", path.as_str())
         }));
         for (name, returns, params, args, standard) in signed {
