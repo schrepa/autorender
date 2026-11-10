@@ -69,6 +69,7 @@ impl Brick for CollisionBrick {
                     .schema(scene::schema),
                 None,
             )
+            .systems(Schedule::FrameStart, world::publish_ground)
             .systems(
                 Schedule::FixedPreSimulation,
                 (world::sync_ground, world::sync),

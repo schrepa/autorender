@@ -917,6 +917,20 @@ pub(crate) fn sync_ground(sources: Query<Sources>, mut collision: ResMut<Collisi
     installed(&mut collision).sync_ground(&sources);
 }
 
+pub(crate) fn publish_ground(
+    sources: Query<Sources>,
+    mut collision: ResMut<Collision>,
+    (mut queries, mut ground): (ResMut<SceneQueries>, ResMut<Ground>),
+) {
+    let world = installed(&mut collision);
+    if !world.sync_ground(&sources) {
+        return;
+    }
+    let solids = Arc::new(world.sweep());
+    *ground = Ground(Arc::clone(&solids) as Arc<dyn GroundQuery>);
+    queries.0 = solids as Arc<dyn SceneQuery>;
+}
+
 pub(crate) fn sync(
     (colliders, edits, ticks): (Query<ColliderData>, Query<Edits>, SystemChangeTick),
     globals: Res<GlobalTransforms>,
