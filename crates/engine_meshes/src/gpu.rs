@@ -185,7 +185,6 @@ pub(crate) struct Streams<S> {
 pub(crate) struct ViewStreams {
     pub ids: DrawInput<MeshesGpu, Scene>,
     pub args: DrawInput<MeshesGpu, Scene>,
-    pub solid: bool,
 }
 
 pub(crate) struct BlendedStreams {
@@ -574,7 +573,6 @@ fn install_scenes(
                 Drawing::Views(ViewStreams {
                     ids: cx.draw_input(scene, presented.view_visible),
                     args: cx.draw_input(scene, presented.view_draws),
-                    solid: pass.role == PassRole::Depth,
                 })
             }
             (PassRole::Lit | PassRole::Depth | PassRole::Shown, false) => {

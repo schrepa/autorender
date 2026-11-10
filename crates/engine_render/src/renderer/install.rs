@@ -881,34 +881,29 @@ fn install_with(
     }
 }
 
-fn check_render(value: &serde_json::Value, path: &str) -> Result<(), Error> {
-    engine_registry::parse_section::<crate::RenderSettings>(
-        value,
-        path,
-        crate::RenderSettings::check,
-    )
-    .map(drop)
+fn check_core<S: Section>(value: &serde_json::Value, path: &str) -> Result<(), Error> {
+    engine_registry::parse_section::<S>(value, path, S::check).map(drop)
 }
 
-fn set_render(world: &mut World, value: &serde_json::Value, path: &str) -> Result<(), Error> {
-    engine_registry::set_section::<crate::RenderSettings>(
-        world,
-        value,
-        path,
-        crate::RenderSettings::check,
-    )
+fn set_core<S: Section>(
+    world: &mut World,
+    value: &serde_json::Value,
+    path: &str,
+) -> Result<(), Error> {
+    engine_registry::set_section::<S>(world, value, path, S::check)
+}
+
+#[track_caller]
+fn core_entry<S: Section>() -> SettingsEntry {
+    SettingsEntry::of::<S>(S::KEY, check_core::<S>, set_core::<S>, S::schema)
 }
 
 impl Renderer {
     #[doc(hidden)]
     pub fn register_places(registry: &mut RegistryBuilder) {
         registry.places(crate::shared::PLACES);
-        registry.core_settings(SettingsEntry::of::<crate::RenderSettings>(
-            crate::RenderSettings::KEY,
-            check_render,
-            set_render,
-            crate::RenderSettings::schema,
-        ));
+        registry.core_settings(core_entry::<crate::RenderSettings>());
+        registry.core_settings(core_entry::<crate::TransparencySettings>());
     }
 
     pub fn install(&mut self, world: &mut World) -> Result<(), Vec<Error>> {

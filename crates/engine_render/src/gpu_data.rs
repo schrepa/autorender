@@ -21,6 +21,7 @@ impl CameraUniform {
             region: [0.0; 4],
             detail: position.extend(0.0).to_array(),
             view: [0; 4],
+            transparency: crate::TransparencySettings::default().weighting(),
         }
     }
 

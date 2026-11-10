@@ -343,7 +343,7 @@ impl Renderer {
         run.uniforms.owned = owned_draws(world, &mut cameras, seconds);
         let profile_writes = engine_profile::span("render", "queue_writes");
         let row_writes = engine_profile::timed(engine_profile::row("render.writes"));
-        run.uniforms.cameras = cameras;
+        run.uniforms.cameras = weighted(world, cameras);
         run.planning.runs = Bits::of(run.machine.graph.passes());
         for at in run.machine.declared.passes.len()..run.machine.graph.passes() {
             run.planning.runs.insert(at);
@@ -985,6 +985,18 @@ fn owned_draws(
         cameras.push(owned_camera(view, seconds));
     }
     owned
+}
+
+fn weighted(world: &World, mut cameras: Vec<CameraUniform>) -> Vec<CameraUniform> {
+    let weighting = world
+        .get_resource::<crate::TransparencySettings>()
+        .copied()
+        .unwrap_or_default()
+        .weighting();
+    for camera in &mut cameras {
+        camera.transparency = weighting;
+    }
+    cameras
 }
 
 fn owned_camera(view: &engine_core::DrawnView, seconds: f32) -> CameraUniform {
