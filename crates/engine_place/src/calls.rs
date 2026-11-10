@@ -169,6 +169,52 @@ pub trait Operation: Send + Sync + 'static {
     }
 }
 
+pub trait Callable: Send + Sync + 'static {
+    const NAME: &'static str;
+    const CONTROL: bool = true;
+    const LANDS: Lands = Lands::Now;
+    type Request: DeserializeOwned + schemars::JsonSchema + 'static;
+    type Reply: Serialize + schemars::JsonSchema + 'static;
+
+    fn answer(world: &mut World, request: Self::Request) -> Result<Self::Reply, Error>;
+
+    fn access(world: &mut World) -> FilteredAccessSet {
+        access_of::<()>(world)
+    }
+
+    fn request_schema(_: &World) -> Value {
+        schema_of::<Self::Request>()
+    }
+
+    fn reply_schema(_: &World) -> Value {
+        schema_of::<Self::Reply>()
+    }
+}
+
+impl<O: Operation> Callable for O {
+    const NAME: &'static str = <O as Operation>::NAME;
+    const CONTROL: bool = <O as Operation>::CONTROL;
+    const LANDS: Lands = <O as Operation>::LANDS;
+    type Request = <O as Operation>::Request;
+    type Reply = <O as Operation>::Reply;
+
+    fn answer(world: &mut World, request: Self::Request) -> Result<Self::Reply, Error> {
+        answer::<O>(world, request)
+    }
+
+    fn access(world: &mut World) -> FilteredAccessSet {
+        access_of::<O::Params>(world)
+    }
+
+    fn request_schema(world: &World) -> Value {
+        <O as Operation>::request_schema(world)
+    }
+
+    fn reply_schema(world: &World) -> Value {
+        <O as Operation>::reply_schema(world)
+    }
+}
+
 pub type NamedRun = fn(&mut World, Value) -> Result<Value, Error>;
 
 pub type SchemaIn = fn(&World) -> Value;
@@ -186,43 +232,17 @@ pub struct Call {
 }
 
 impl Call {
-    pub const fn of<O: Operation>() -> Self {
+    pub const fn of<O: Callable>() -> Self {
         Self {
             name: O::NAME,
             control: O::CONTROL,
             lands: O::LANDS,
             operation: TypeId::of::<O>,
             run: run_named::<O>,
-            access: access_of::<O::Params>,
+            access: O::access,
             request: O::request_schema,
             reply: O::reply_schema,
         }
-    }
-
-    pub const fn exclusive<Request, Reply>(
-        name: &'static str,
-        (control, lands): (bool, Lands),
-        run: NamedRun,
-    ) -> Self
-    where
-        Request: schemars::JsonSchema + 'static,
-        Reply: schemars::JsonSchema + 'static,
-    {
-        Self {
-            name,
-            control,
-            lands,
-            operation: TypeId::of::<Request>,
-            run,
-            access: access_of::<()>,
-            request: schema_in::<Request>,
-            reply: schema_in::<Reply>,
-        }
-    }
-
-    #[must_use]
-    pub const fn request_in(self, request: SchemaIn) -> Self {
-        Self { request, ..self }
     }
 
     #[must_use]
@@ -233,7 +253,7 @@ impl Call {
         }
     }
 
-    pub fn declares<O: Operation>(&self) -> bool {
+    pub fn declares<O: Callable>(&self) -> bool {
         (self.operation)() == TypeId::of::<O>()
     }
 
@@ -256,10 +276,6 @@ impl Call {
 
 pub fn schema_of<T: schemars::JsonSchema>() -> Value {
     schemars::schema_for!(T).to_value()
-}
-
-fn schema_in<T: schemars::JsonSchema>(_: &World) -> Value {
-    schema_of::<T>()
 }
 
 pub fn authored_component(key: &str) -> Value {
@@ -404,9 +420,9 @@ pub fn answer<O: Operation>(world: &mut World, request: O::Request) -> Result<O:
     reply
 }
 
-fn run_named<O: Operation>(world: &mut World, request: Value) -> Result<Value, Error> {
+fn run_named<O: Callable>(world: &mut World, request: Value) -> Result<Value, Error> {
     let request: O::Request = engine_settings::parse_value(request)?;
-    let reply = answer::<O>(world, request)?;
+    let reply = O::answer(world, request)?;
     let path = format!("$.operations.{}", O::NAME);
     let reply = serde_json::to_value(reply).map_err(|error| {
         Error::new(ErrorCode::InvalidValue, path.clone()).got(error.to_string())

@@ -150,9 +150,11 @@ impl Operation for TerrainInspect {
                 .and_then(|(_, scene)| Some((scene, scene.built.as_ref()?)))
         };
         let found = match request.terrain.as_deref() {
-            Some(name) => ids
-                .entity(name)
-                .and_then(|entity| Some((entity, built(entity)?))),
+            Some(name) => match ids.named(name, "$.terrain") {
+                Ok(entity) => built(entity).map(|held| (entity, held)),
+                Err(error) if error.code == ErrorCode::EntityRemoved => return Err(error),
+                Err(_) => None,
+            },
             None => scenes
                 .iter()
                 .find_map(|(entity, _)| Some((entity, built(entity)?))),

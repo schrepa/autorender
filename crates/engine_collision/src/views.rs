@@ -37,7 +37,6 @@ impl Operation for ColliderQuery {
     const CONTROL: bool = false;
     type Params = (
         SceneIds<'static, 'static>,
-        Query<'static, 'static, Entity>,
         Query<'static, 'static, &'static Collider>,
         Res<'static, GlobalTransforms>,
         Fresh<'static, 'static>,
@@ -46,10 +45,10 @@ impl Operation for ColliderQuery {
     type Reply = ColliderView;
 
     fn run(
-        (ids, entities, colliders, globals, mut fresh): SystemParamItem<'_, '_, Self::Params>,
+        (ids, colliders, globals, mut fresh): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
     ) -> Result<ColliderView, Error> {
-        let entity = resolve_entity(&ids, &entities, &request.entity, false, "$.entity")?;
+        let entity = resolve_entity(&ids, &request.entity, "$.entity")?;
         let view =
             collider_view(&colliders, &globals, Some(fresh.world()), entity).ok_or_else(|| {
                 Error::new(ErrorCode::MissingComponent, "$.entity").got(&request.entity)

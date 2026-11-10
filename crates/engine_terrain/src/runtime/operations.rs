@@ -47,10 +47,11 @@ pub(super) fn terrain_entity(
             .is_ok_and(|(_, scene)| scene.built.is_some())
     };
     match name {
-        Some(name) => ids
-            .entity(name)
-            .filter(|&entity| built(entity))
-            .ok_or_else(|| Error::new(UNKNOWN_TERRAIN, "$.terrain").got(name)),
+        Some(name) => match ids.named(name, "$.terrain") {
+            Err(error) if error.code == ErrorCode::EntityRemoved => Err(error),
+            Ok(entity) if built(entity) => Ok(entity),
+            Ok(_) | Err(_) => Err(Error::new(UNKNOWN_TERRAIN, "$.terrain").got(name)),
+        },
         None => scenes
             .iter()
             .find(|(_, scene)| scene.built.is_some())

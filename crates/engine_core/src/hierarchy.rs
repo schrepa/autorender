@@ -106,6 +106,20 @@ pub fn set_parent(world: &mut World, child: Entity, parent: Option<Entity>) -> R
     set_parents(world, &[(child, parent)])
 }
 
+pub fn subtree(world: &mut World, root: Entity) -> Vec<Entity> {
+    let mut children: HashMap<Entity, Vec<Entity>> = HashMap::default();
+    for (child, parent) in world.query::<(Entity, &Parent)>().iter(world) {
+        children.entry(parent.parent()).or_default().push(child);
+    }
+    let mut found = vec![root];
+    let mut next = 0;
+    while let Some(&parent) = found.get(next) {
+        found.extend(children.get(&parent).into_iter().flatten().copied());
+        next += 1;
+    }
+    found
+}
+
 struct RelationshipNode {
     entity: Entity,
     parent: Option<Entity>,

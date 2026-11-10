@@ -10,7 +10,8 @@ use bevy_ecs::observer::On;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Query, Res, ResMut, SystemParam};
 use bevy_ecs::world::World;
-use engine_registry::{AuthoredId, JobList, OperationScene, SceneEntity};
+use engine_place::{AuthoredId, OperationScene, SceneEntity};
+use engine_registry::JobList;
 use glam::Mat4;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -87,8 +88,9 @@ impl SceneCx<'_> {
 #[doc(hidden)]
 pub struct Prepared(Box<dyn Any + Send + Sync>);
 
-type CheckHook = Arc<dyn Fn(&Value, &str) -> Result<(), Error> + Send + Sync>;
-type PlacedHook = Arc<dyn Fn(&Value, Placed, &str) -> Result<(), Error> + Send + Sync>;
+type Held = dyn Any + Send + Sync;
+type CheckHook = Arc<dyn Fn(&Held, &str) -> Result<(), Error> + Send + Sync>;
+type PlacedHook = Arc<dyn Fn(&Held, Placed, &str) -> Result<(), Error> + Send + Sync>;
 type FilesHook = Arc<dyn Fn(&Value, &SceneCx<'_>) -> Vec<String> + Send + Sync>;
 type SchemaHook = Arc<dyn Fn(&SceneCx<'_>) -> Value + Send + Sync>;
 type PrepareHook = Arc<dyn Fn(&Value, &SceneCx<'_>, &str) -> Result<Prepared, Error> + Send + Sync>;
@@ -102,6 +104,7 @@ pub struct ComponentKind {
     parse: fn(&Value, &str) -> Result<(), Error>,
     value: fn(&World, Entity) -> Option<Value>,
     prepared: fn(&Value, &str) -> Result<Prepared, Error>,
+    held: fn(&World, Entity) -> Option<Prepared>,
     insert: fn(&mut World, Entity, Prepared) -> Result<(), Error>,
     remove: fn(&mut World, Entity),
     placement: Placement,
@@ -127,6 +130,10 @@ pub trait SceneForm: Clone + Serialize + DeserializeOwned + Send + Sync + 'stati
 
     fn read(world: &World, entity: Entity) -> Option<Self>;
 
+    fn held(world: &World, entity: Entity) -> Option<Self> {
+        Self::read(world, entity)
+    }
+
     fn remove(world: &mut World, entity: Entity) {
         remove_component::<Self::Component>(world, entity);
     }
@@ -142,6 +149,7 @@ impl ComponentKind {
                 parse: parse_component::<F>,
                 value: form_value::<F>,
                 prepared: prepared_component::<F>,
+                held: held_form::<F>,
                 insert: insert_form::<F>,
                 remove: F::remove,
                 placement: Placement::Anywhere,
@@ -168,6 +176,7 @@ impl ComponentKind {
                 parse: parse_component::<C>,
                 value: component_value::<C>,
                 prepared: prepared_component::<C>,
+                held: held_component::<C>,
                 insert: insert_component::<C>,
                 remove: remove_component::<C>,
                 placement: Placement::Anywhere,
@@ -276,16 +285,47 @@ impl ComponentKind {
     #[doc(hidden)]
     pub fn validate(&self, value: &Value, path: &str) -> Result<(), Error> {
         match &self.check {
-            Some(check) => check(value, path),
+            Some(check) => check((self.prepared)(value, path)?.0.as_ref(), path),
             None => (self.parse)(value, path),
         }
     }
 
     #[doc(hidden)]
     pub fn validate_placed(&self, value: &Value, placed: Placed, path: &str) -> Result<(), Error> {
-        self.placed
-            .as_ref()
-            .map_or(Ok(()), |check| check(value, placed, path))
+        match &self.placed {
+            Some(check) => check((self.prepared)(value, path)?.0.as_ref(), placed, path),
+            None => Ok(()),
+        }
+    }
+
+    #[doc(hidden)]
+    pub fn admits(&self) -> bool {
+        self.check.is_some()
+            || self.placed.is_some()
+            || matches!(self.placement, Placement::Roots(_))
+    }
+
+    #[doc(hidden)]
+    pub fn admit_held(
+        &self,
+        world: &World,
+        entity: Entity,
+        (parented, placed): (bool, Option<Placed>),
+        path: &str,
+    ) -> Result<(), Error> {
+        let Some(held) = (self.held)(world, entity) else {
+            return Ok(());
+        };
+        if let (Placement::Roots(code), true) = (self.placement, parented) {
+            return Err(Error::new(code, path).expected(Expected::Absent));
+        }
+        if let Some(check) = &self.check {
+            check(held.0.as_ref(), path)?;
+        }
+        if let (Some(check), Some(placed)) = (&self.placed, placed) {
+            check(held.0.as_ref(), placed, path)?;
+        }
+        Ok(())
     }
 
     #[doc(hidden)]
@@ -310,18 +350,18 @@ impl ComponentKind {
 
 impl<C: Clone + Serialize + DeserializeOwned + Send + Sync + 'static> ComponentKindOf<C> {
     pub fn check(mut self, check: fn(&C, &str) -> Result<(), Error>) -> Self {
-        self.kind.check = Some(Arc::new(move |value: &Value, path: &str| {
-            check(&parsed::<C>(value, path)?, path)
+        self.kind.check = Some(Arc::new(move |held: &Held, path: &str| {
+            held.downcast_ref::<C>()
+                .map_or(Ok(()), |component| check(component, path))
         }));
         self
     }
 
     pub fn check_placed(mut self, check: fn(&C, Placed, &str) -> Result<(), Error>) -> Self {
-        self.kind.placed = Some(Arc::new(
-            move |value: &Value, placed: Placed, path: &str| {
-                check(&parsed::<C>(value, path)?, placed, path)
-            },
-        ));
+        self.kind.placed = Some(Arc::new(move |held: &Held, placed: Placed, path: &str| {
+            held.downcast_ref::<C>()
+                .map_or(Ok(()), |component| check(component, placed, path))
+        }));
         self
     }
 
@@ -421,6 +461,16 @@ fn read_component<C: Component + DeserializeOwned>(
         .map_err(|_| Error::new(ErrorCode::UnknownEntity, "$").got(entity.to_string()))?;
     target.insert(component);
     Ok(())
+}
+
+fn held_component<C: Component + Clone>(world: &World, entity: Entity) -> Option<Prepared> {
+    world
+        .get::<C>(entity)
+        .map(|component| Prepared(Box::new(component.clone())))
+}
+
+fn held_form<F: SceneForm>(world: &World, entity: Entity) -> Option<Prepared> {
+    F::held(world, entity).map(|form| Prepared(Box::new(form)))
 }
 
 fn prepared_component<C: DeserializeOwned + Send + Sync + 'static>(
@@ -533,6 +583,13 @@ impl SceneIds<'_, '_> {
 
     pub fn entity(&self, id: &str) -> Option<Entity> {
         self.scene.as_ref()?.entity(id)
+    }
+
+    pub fn named(&self, id: &str, path: &str) -> Result<Entity, Error> {
+        match &self.scene {
+            Some(scene) => scene.named(id, path, |entity| self.entities.contains(entity)),
+            None => Err(Error::new(ErrorCode::UnknownEntity, path).got(id)),
+        }
     }
 
     pub fn id(&self, entity: Entity) -> Option<&str> {

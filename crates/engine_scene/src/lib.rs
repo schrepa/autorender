@@ -24,7 +24,7 @@ pub use document::{
     SceneTransform, SceneVertex,
 };
 pub use engine_assets::{MeshStreams, encode_mesh_buffer_with};
-pub use engine_registry::SceneEntity;
+pub use engine_core::SceneEntity;
 pub use engine_settings::{parse_json, parse_value};
 pub use environment::SceneEnvironment;
 #[cfg(feature = "schema")]
@@ -36,6 +36,9 @@ pub use material::{
     SceneAlphaMode, SceneCull, SceneDepthBias, SceneFilter, SceneMap, SceneMaterial,
     SceneMaterialControl, SceneMipmapFilter, SceneSlot, SceneSlotFill, SceneTextureMap, SceneWrap,
 };
-pub use spawning::{REMOVE, SPAWN, remove, remove_operation, spawn, spawn_operation};
+pub use spawning::{
+    RemoveOperation, RemoveRequest, RemovedEntity, SpawnOperation, SpawnRequest, SpawnedEntity,
+    remove, spawn,
+};
 pub use texture::SceneTexture;
 pub use validation::{identifier, unknown};

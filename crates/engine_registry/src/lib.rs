@@ -39,10 +39,7 @@ pub use record::{BrickRecord, PlainSystems, RecordExt, SectionRule};
 pub use registry::{
     BrickId, BrickSet, Registry, RegistryBuilder, call, check_sections, run_operation, settings,
 };
-pub use scene::{
-    AuthoredId, OperationScene, SceneEntity, SceneNames, SceneRead, SpawnedBy, authored_entity,
-    authored_id,
-};
+pub use scene::{SceneNames, SceneRead, SpawnedBy, authored_entity, authored_id};
 pub use services::FrameFacts;
 pub use state::{
     BRICK_STATE_EVENT, BrickChange, BrickChangeRow, BrickState, BrickStateView, BrickStateWord,

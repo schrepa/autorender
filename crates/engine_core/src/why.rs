@@ -1,6 +1,7 @@
 use bevy_ecs::system::SystemParamItem;
 use bevy_ecs::world::World;
-use engine_registry::{BrickStateView, BrickStates, OperationScene, Registry, SceneEntity};
+use engine_place::SceneEntity;
+use engine_registry::{BrickStateView, BrickStates, Registry};
 use serde::{Deserialize, Serialize};
 
 use crate::{
@@ -141,11 +142,7 @@ fn mover_view(mover: &Mover) -> MoverView {
 }
 
 fn entity_answer(world: &World, id: &str) -> Result<EntityWhy, Error> {
-    let entity = world
-        .get_resource::<OperationScene>()
-        .and_then(|scene| scene.entity(id))
-        .filter(|&entity| world.entities().contains(entity))
-        .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$.entity").got(id))?;
+    let entity = engine_place::entity_named(world, id, "$.entity")?;
     let refused = world
         .get_resource::<Refusals>()
         .map_or(&[][..], |refusals| refusals.of(entity));

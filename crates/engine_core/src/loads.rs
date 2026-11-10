@@ -4,7 +4,7 @@ use std::sync::{Arc, Weak};
 use bevy_ecs::entity::Entity;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
-use engine_registry::OperationScene;
+use engine_place::OperationScene;
 use serde::Serialize;
 
 use crate::{EntityIds, Event, Feed, FeedSettings, Level, LevelView, Raises, Readiness, Refusal};

@@ -9,7 +9,7 @@ use bevy_ecs::schedule::{
 use bevy_ecs::system::{IntoSystem, ScheduleSystem};
 use bevy_ecs::world::World;
 use engine_place::{
-    AttachPoint, Board, Error, ErrorCode, Operation, PlaceDecl, PlaceKind, Slot, Smoke,
+    AttachPoint, Board, Callable, Error, ErrorCode, PlaceDecl, PlaceKind, Slot, Smoke,
 };
 use engine_settings::Expected;
 use serde_json::Value;
@@ -59,7 +59,7 @@ pub fn run_operation(world: &mut World, name: &str, request: Value) -> Result<Va
         .map_err(|error| error.within("$.args"))
 }
 
-pub fn call<O: Operation>(world: &mut World, request: O::Request) -> Result<O::Reply, Error> {
+pub fn call<O: Callable>(world: &mut World, request: O::Request) -> Result<O::Reply, Error> {
     let Some(brick) = world
         .get_resource::<Registry>()
         .and_then(|registry| registry.operation(O::NAME))
@@ -68,7 +68,7 @@ pub fn call<O: Operation>(world: &mut World, request: O::Request) -> Result<O::R
     else {
         return Err(unregistered(O::NAME));
     };
-    Board::owned_by(brick, || engine_place::answer::<O>(world, request))
+    Board::owned_by(brick, || O::answer(world, request))
         .map_err(|error| error.within("$.args"))
 }
 

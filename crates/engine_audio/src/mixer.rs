@@ -9,7 +9,9 @@ use engine_core::{
     GlobalTransforms, Interest, Landed, Pause, Poses, Raises, Refusals, Request, Requests,
     SceneIds, Spawner, Ticket, Views,
 };
-use engine_places_rendering::audio::{Bus, OneShot, SoundOrder, SoundSource, Sounds, VoiceHandle};
+use engine_places_rendering::audio::{
+    Bus, OneShot, SoundOrder, SoundSource, SoundStanding, Sounds, VoiceHandle,
+};
 use glam::{Mat4, Vec3};
 use serde::Serialize;
 
@@ -383,6 +385,23 @@ impl Mixer {
         }
     }
 
+    fn standing(&self, source: &SoundSource) -> SoundStanding {
+        match self.verdict(source) {
+            Err(error) => SoundStanding::Refused(error),
+            Ok(()) if self.bytes_of(source).is_some() => SoundStanding::Ready,
+            Ok(()) => SoundStanding::Loading,
+        }
+    }
+
+    fn hearing(&self) -> Result<(), Error> {
+        let refused = || Error::new(AUDIO_FAILED, "$.audio.device");
+        match self.device {
+            Device::Allowed => Ok(()),
+            Device::Refused => Err(refused().got("unavailable")),
+            Device::Failed => Err(refused().got(self.latest.clone())),
+        }
+    }
+
     fn fail(&mut self, failure: String) {
         self.failures = self.failures.saturating_add(1);
         self.latest = Some(failure);
@@ -556,7 +575,7 @@ impl Mixer {
             } => match named.and_then(|source| self.sound_of(source)) {
                 Some(sound) => self.add(Voice::shot(voice, sound, &shot), limit),
                 None => {
-                    self.latest = Some(format!("sound_play {entity}: no sound ready on it"));
+                    self.latest = Some(format!("sound_play {entity:?}: no sound ready on it"));
                     self.cut_one();
                 }
             },
@@ -712,7 +731,7 @@ impl Mixer {
 pub(crate) fn mix(
     (settings, time, feeds): (Res<Audio>, Res<FrameTime>, Res<FeedSettings>),
     (views, poses, globals, pause): (Res<Views>, Poses, Res<GlobalTransforms>, Option<Res<Pause>>),
-    (sounds, mut files, ids): (Res<Sounds>, ResMut<Files>, SceneIds<'_, '_>),
+    (sounds, mut files): (Res<Sounds>, ResMut<Files>),
     sources: Query<(Entity, Ref<SoundSource>)>,
     (mut stats, mut mixer, mut spawner, mut ends): (
         ResMut<AudioStats>,
@@ -739,9 +758,9 @@ pub(crate) fn mix(
     mixer.cut = mixer.cut.saturating_add(sounds.take_cut());
     for order in sounds.take_orders() {
         let named = match &order {
-            SoundOrder::Play { entity, .. } => ids
-                .entity(entity)
-                .and_then(|held| sources.get(held).ok())
+            SoundOrder::Play { entity, .. } => sources
+                .get(*entity)
+                .ok()
                 .map(|(_, source)| source.into_inner()),
             SoundOrder::PlayBytes { .. } | SoundOrder::Stop(_) | SoundOrder::Volume(..) => None,
         };
@@ -777,6 +796,9 @@ pub(crate) fn mix(
         if failed || source.is_changed() {
             refusals.judge(entity, SOUND_PART, mixer.verdict(&source));
         }
+        if failed || landed || source.is_changed() {
+            sounds.stand(entity, mixer.standing(&source));
+        }
     }
     let pause_moved = pause.as_ref().is_some_and(|pause| pause.is_changed());
     if settings.is_changed() || pause_moved || (closed && mixer.backend.opened()) {
@@ -790,6 +812,7 @@ pub(crate) fn mix(
     );
     mixer.sounds.settle(time.real_elapsed);
     mixer.publish(&mut stats);
+    sounds.hear(mixer.hearing(), mixer.live(), limit as usize);
     if was != Device::Failed && mixer.device == Device::Failed {
         let error = Error::new(AUDIO_FAILED, "$.audio.device").got(mixer.latest.clone());
         spawner.fault(error);
@@ -800,10 +823,11 @@ pub const SOUND_PART: &str = "sound";
 
 pub(crate) fn release(
     In(entity): In<Entity>,
-    mut mixer: ResMut<Mixer>,
+    (mut mixer, sounds): (ResMut<Mixer>, Res<Sounds>),
     mut refusals: ResMut<Refusals>,
 ) {
     refusals.accept(entity, SOUND_PART);
+    sounds.forget(entity);
     if let Some(at) = mixer.voices.iter().position(|held| held.of_entity(entity)) {
         mixer.halt(at);
     }

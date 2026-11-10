@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, ErrorCode, Expected, Operation, SceneContext, SceneIds};
+use engine_core::{Error, ErrorCode, Expected, Operation, Refusal, SceneContext, SceneIds};
 use engine_places_world::splines::SplineMesh;
 use serde::{Deserialize, Serialize};
 
@@ -28,7 +28,6 @@ impl Operation for InspectSplineMesh {
     const NAME: &'static str = "spline_mesh";
     type Params = (
         SceneIds<'static, 'static>,
-        Query<'static, 'static, Entity>,
         Query<'static, 'static, &'static SplineMesh>,
         Res<'static, SplineBuilds>,
         Option<Res<'static, SceneContext>>,
@@ -37,20 +36,11 @@ impl Operation for InspectSplineMesh {
     type Reply = Option<SplineMeshView>;
 
     fn run(
-        (ids, alive, splines, builds, context): SystemParamItem<'_, '_, Self::Params>,
+        (ids, splines, builds, context): SystemParamItem<'_, '_, Self::Params>,
         request: SplineMeshRequest,
     ) -> Result<Option<SplineMeshView>, Error> {
         let id = request.entity;
-        let entity = ids.entity(&id).ok_or_else(|| {
-            Error::new(ErrorCode::UnknownEntity, "$.entity")
-                .expected(Expected::Entity)
-                .got(&id)
-        })?;
-        if !alive.contains(entity) {
-            return Err(Error::new(ErrorCode::EntityRemoved, "$.entity")
-                .expected(Expected::Live)
-                .got(&id));
-        }
+        let entity = ids.named(&id, "$.entity")?;
         let Ok(spline) = splines.get(entity) else {
             return Ok(None);
         };

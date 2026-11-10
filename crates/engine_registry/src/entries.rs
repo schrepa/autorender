@@ -6,8 +6,7 @@ use bevy_ecs::query::FilteredAccessSet;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 use engine_place::{
-    Call, Error, ErrorCode, EventDecl, EventPage, GpuStruct, Lands, List, Operation, PlaceDecl,
-    Slot,
+    Call, Callable, Error, ErrorCode, EventDecl, EventPage, GpuStruct, Lands, List, PlaceDecl, Slot,
 };
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -304,7 +303,7 @@ impl OperationEntry {
         }
     }
 
-    pub fn declares<O: Operation>(&self) -> bool {
+    pub fn declares<O: Callable>(&self) -> bool {
         self.call.declares::<O>()
     }
 

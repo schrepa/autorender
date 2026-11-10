@@ -7,10 +7,10 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::world::{World, WorldId};
 use engine_assets::SceneAssets;
 use engine_core::{
-    AssetLibrary, Error, GeometryHandle, MaterialHandle, ProvidedAssets, SceneContext,
-    TextureHandle, Transform, propagate_transforms, set_parents,
+    AssetLibrary, Error, GeometryHandle, MaterialHandle, OperationScene, ProvidedAssets,
+    SceneContext, SceneEntity, TextureHandle, Transform, propagate_transforms, set_parents,
 };
-use engine_registry::{OperationScene, SceneEntity, SettingsEntry};
+use engine_registry::SettingsEntry;
 use serde_json::Value;
 
 use crate::{
@@ -225,11 +225,7 @@ impl SceneInstance {
     }
 
     pub fn operation_scene(&self) -> OperationScene {
-        OperationScene {
-            id: self.id.clone(),
-            entities: self.entities.clone(),
-            installed: BTreeMap::new(),
-        }
+        OperationScene::new(self.id.clone(), self.entities.clone())
     }
 
     pub fn current_scene(&self, world: &World) -> OperationScene {
@@ -316,11 +312,7 @@ impl SceneDocument {
         let landed = self
             .land(world, (&prepared, &kinds), &context, &spawned)
             .and_then(|()| {
-                world.insert_resource(OperationScene {
-                    id: self.id.clone(),
-                    entities: entities.clone(),
-                    installed: BTreeMap::new(),
-                });
+                world.insert_resource(OperationScene::new(self.id.clone(), entities.clone()));
                 then(world, &entities)
             });
         let done = match landed {

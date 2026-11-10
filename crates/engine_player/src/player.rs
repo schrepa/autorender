@@ -1,6 +1,7 @@
 use engine::prelude::*;
 use engine::scene::SceneFiles;
 use engine::{Error, ErrorCode, Expected};
+use engine_core::{ChangeOperation, ChangeRequest, ComponentChange, Each};
 use serde_json::json;
 
 #[cfg(feature = "dev")]
@@ -130,9 +131,31 @@ fn attach_player(world: &mut World, entity: Entity) -> Result<Player, Error> {
 }
 
 fn walks(world: &mut World, entity: Entity) -> Result<(), Error> {
-    match engine_core::scene_component(world, WALKER) {
-        Some(walker) => walker.read(world, entity, &json!({})),
-        None => Ok(()),
+    if engine_core::scene_component(world, WALKER).is_none() {
+        return Ok(());
+    }
+    let id = world
+        .get::<SceneEntity>(entity)
+        .map(|authored| authored.authored_id.clone())
+        .ok_or_else(|| Error::new(ErrorCode::GameRule, "$.entities").expected(Expected::Present))?;
+    let change = ComponentChange {
+        entity: id,
+        component: WALKER.to_owned(),
+        data: json!({}),
+    };
+    let changed = engine::host::call::<ChangeOperation>(
+        world,
+        ChangeRequest {
+            changes: vec![change],
+        },
+    )?;
+    match changed.rows.into_iter().next() {
+        Some(Each::Refused(refused)) => {
+            let code = serde_json::from_value(json!(refused.reason))
+                .unwrap_or(ErrorCode::GameRule);
+            Err(Error::new(code, refused.path))
+        }
+        Some(Each::Done(_)) | None => Ok(()),
     }
 }
 

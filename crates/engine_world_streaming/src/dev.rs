@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::__private::schemars::JsonSchema;
-use engine_core::{Error, ErrorCode, Expected, Operation, SceneIds};
+use engine_core::{Error, ErrorCode, Operation, SceneIds};
 use serde::{Deserialize, Serialize};
 
 use crate::{STREAMING_GRIDS, StreamedId, WorldCells, WorldChanges};
@@ -113,11 +113,7 @@ impl Operation for StreamedIdQuery {
         (ids, marked): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
     ) -> Result<StreamedIdView, Error> {
-        let entity = ids.entity(&request.entity).ok_or_else(|| {
-            Error::new(ErrorCode::UnknownEntity, "$.entity")
-                .expected(Expected::Entity)
-                .got(&request.entity)
-        })?;
+        let entity = ids.named(&request.entity, "$.entity")?;
         let marked = marked.get(entity).map_err(|_| {
             Error::new(ErrorCode::MissingComponent, "$.component").got("StreamedId")
         })?;

@@ -1,7 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    ApplyAt, Ask, Asked, Error, ErrorCode, Expected, FixedTime, FrameTime, Lands, Moment, Mover,
-    Operation, SceneIds,
+    ApplyAt, Ask, Asked, Error, FixedTime, FrameTime, Lands, Moment, Mover, Operation, SceneIds,
 };
 use engine_places_simulation::physics::{BodyAsk, BodyChange, RigidBody};
 use serde::{Deserialize, Serialize};
@@ -45,11 +44,7 @@ impl Operation for PhysicsBody {
         (physics, ids, bodies): SystemParamItem<'_, '_, Self::Params>,
         request: BodyRequest,
     ) -> Result<Option<RigidBodyView>, Error> {
-        let entity = ids.entity(&request.entity).ok_or_else(|| {
-            Error::new(ErrorCode::UnknownEntity, "$.entity")
-                .expected(Expected::Entity)
-                .got(&request.entity)
-        })?;
+        let entity = ids.named(&request.entity, "$.entity")?;
         let Ok((body, mover)) = bodies.get(entity) else {
             return Ok(None);
         };
@@ -102,11 +97,7 @@ impl Operation for BodyAskOperation {
         (ids, bodies, mut asked, (fixed, frame)): SystemParamItem<'_, '_, Self::Params>,
         request: AskRequest,
     ) -> Result<AskReply, Error> {
-        let entity = ids.entity(&request.entity).ok_or_else(|| {
-            Error::new(ErrorCode::UnknownEntity, "$.entity")
-                .expected(Expected::Entity)
-                .got(&request.entity)
-        })?;
+        let entity = ids.named(&request.entity, "$.entity")?;
         check_change(request.ask, "$.ask")?;
         if !bodies.contains(entity) {
             return Err(Error::new(INVALID_RIGID_BODY, "$.entity").got(&request.entity));

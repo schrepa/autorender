@@ -119,6 +119,7 @@ macro_rules! __game_scene {
     };
     ($scene:literal) => {
         ::core::option::Option::Some($crate::DefaultScene {
+            name: $scene,
             path: concat!(env!("CARGO_MANIFEST_DIR"), "/", $scene),
             text: include_str!(concat!(env!("CARGO_MANIFEST_DIR"), "/", $scene)),
         })

@@ -2,8 +2,8 @@ use crate::protocol::{BenchmarkInput, BenchmarkMode, CaptureRequest, ProfileRequ
 use crate::results::{EnvironmentResult, ParentResult, result};
 use crate::{BrowserControl, EnvironmentControl, bounded};
 use bevy_ecs::prelude::World;
-use engine_core::{Camera, Engine, Projection, Transform, glam::Vec3};
-use engine_registry::{OperationScene, Registry};
+use engine_core::{Camera, Engine, OperationScene, Projection, Transform, glam::Vec3};
+use engine_registry::Registry;
 use engine_scene::{SceneEnvironment, SceneInstance};
 use engine_settings::{Error, ErrorCode, Expected};
 use serde_json::Value;
@@ -318,14 +318,10 @@ fn parented(
         .map(SceneInstance::operation_scene)
         .or_else(|| world.get_resource::<OperationScene>().cloned())
         .ok_or_else(|| Error::new(ErrorCode::NoScene, "$"))?;
-    let found = |id: &str, path: &str| {
-        scene.entity(id).ok_or_else(|| {
-            Error::new(ErrorCode::UnknownEntity, path)
-                .expected(Expected::Entity)
-                .got(id)
-        })
-    };
-    let (child, parent) = (found(entity, "$.entity")?, found(parent, "$.parent")?);
+    let (child, parent) = (
+        scene.named_in(world, entity, "$.entity")?,
+        scene.named_in(world, parent, "$.parent")?,
+    );
     engine_core::set_parent(world, child, Some(parent))?;
     Ok(result::parent(ParentResult { temporary: true }))
 }
