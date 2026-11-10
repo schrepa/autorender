@@ -33,6 +33,7 @@ shader_modules! {
     "engine::surface" = "surface.wgsl";
     "engine::transparency" = "transparency.wgsl";
     "engine::mesh::vertex" = "meshes/vertex.wgsl";
+    "engine::kinds" = "kinds.wgsl";
     "engine::post::pixel" = "post/pixel.wgsl";
     "engine::post::frame" = "effects.wgsl";
     "engine::post::resolve_plain" = "post/resolve_plain.wgsl";

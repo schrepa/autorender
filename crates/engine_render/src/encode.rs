@@ -399,6 +399,7 @@ pub(crate) struct OwnedDraw {
     pub(crate) clear: engine_core::Clear,
     pub(crate) passes: engine_core::PassMask,
     pub(crate) draws: bool,
+    pub(crate) mirrored: bool,
 }
 
 #[derive(Default)]
@@ -807,10 +808,9 @@ impl Run {
         Some(SceneDraw {
             pass: crate::Scene::named(scene.name),
             bit: scene.bit,
-            at: scene.pass.at,
-            reads: scene.pass.reads,
-            writes: scene.pass.writes,
+            role: scene.pass.role(),
             view: view.map(|view| view.local),
+            mirrored: view.is_some_and(|view| view.mirrored),
             index: Some(view.map_or(self.uniforms.camera_slot, |view| view.drawn)),
         })
     }
@@ -847,7 +847,7 @@ impl Run {
         self.installs.draw_entries
             .iter()
             .filter(|member| {
-                pass.members.contains(&member.part) && (scene.pass.takes)(&member.kind)
+                pass.members.contains(&member.part) && member.kind.joins(scene.name, &scene.pass)
             })
             .cloned()
             .collect()

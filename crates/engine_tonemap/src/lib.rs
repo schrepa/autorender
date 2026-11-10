@@ -10,8 +10,8 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 mod tonemap;
 
 use engine_core::{
-    AttachPoint, Brick, Bricks, Pass, PassName, PassViews, Schedule, SlotSet, Source, Writes,
-    never,
+    AttachPoint, Brick, Bricks, Pass, PassName, PassPurpose, PassViews, Schedule, SlotSet, Source,
+    Writes, never,
 };
 use engine_places_rendering::tonemap::Display;
 use engine_render::RenderBricks;
@@ -27,6 +27,7 @@ impl PassName for TonemapPass {
         reads: SlotSet::NONE,
         views: PassViews::Every,
         at: AttachPoint::Display,
+        purpose: PassPurpose::Scene,
         takes: never,
     };
 }

@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, Cull, Cursor, FrameId, MaterialHandle, MeshHandle,
-    MeshResidence, Readable, Readback, ResidentMesh,
+    AssetLibrary, AssetResidency, Cursor, FrameId, MaterialHandle, MeshHandle, MeshResidence,
+    Readable, Readback, ResidentMesh,
 };
 use engine_places::meshes::LastLevel;
 use engine_render::UploadRange;
@@ -133,7 +133,6 @@ pub(crate) struct ViewSlot {
     pub ids_base: u64,
     pub args_base: u64,
     pub detailed: bool,
-    pub mirrored: bool,
 }
 
 impl ViewSlot {
@@ -270,10 +269,6 @@ impl Draws {
                     start: batch.instances.start,
                     batch: index,
                     look: BatchLook {
-                        masked: material.is_some_and(|material| {
-                            matches!(material.alpha_mode(), AlphaMode::Mask { .. })
-                        }),
-                        double_sided: material.is_some_and(|material| material.cull() == Cull::None),
                         extended,
                         skinned: batch.skinned,
                     },

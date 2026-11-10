@@ -16,8 +16,8 @@ use bevy_ecs::prelude::*;
 use engine_core::{
     Asks, Asset, AssetResidency, AssetUses, AttachPoint, Brick, Bricks, ComponentKind, Contexts,
     CursorMode, CursorRequests, Devices, Error, ErrorCode, GlobalTransforms, Input, PassName,
-    PassViews, SceneComponents, SceneContext, SceneCx, Schedule, SlotSet, Source, Spawner, Verbs,
-    Views, Writes, gpu_struct, never, settings, stats,
+    PassPurpose, PassViews, SceneComponents, SceneContext, SceneCx, Schedule, SlotSet, Source,
+    Spawner, Verbs, Views, Writes, gpu_struct, never, settings, stats,
 };
 use engine_places_rendering::screens::{ScreenAsk, Screens};
 use engine_places_rendering::text::Text;
@@ -78,6 +78,7 @@ impl PassName for UiPass {
         reads: SlotSet::NONE,
         views: PassViews::Main,
         at: AttachPoint::Overlay,
+        purpose: PassPurpose::Scene,
         takes: never,
     };
 }

@@ -162,18 +162,47 @@ impl SlotSet {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PassPurpose {
+    Scene,
+    Debug,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PassRole {
+    Lit,
+    Depth,
+    Blended,
+    Shown,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Pass {
     pub writes: Writes,
     pub reads: SlotSet,
     pub views: PassViews,
     pub at: AttachPoint,
+    pub purpose: PassPurpose,
     pub takes: fn(&KindDecl) -> bool,
 }
 
 impl Pass {
     pub const fn scene(&self) -> bool {
         self.reads.position
+    }
+
+    pub const fn role(&self) -> PassRole {
+        if matches!(self.purpose, PassPurpose::Debug) {
+            PassRole::Shown
+        } else if matches!(self.at, AttachPoint::Transparent) {
+            PassRole::Blended
+        } else if self.reads.lighting {
+            PassRole::Lit
+        } else {
+            PassRole::Depth
+        }
     }
 }
 
@@ -224,6 +253,7 @@ impl PassName for ColorPass {
         reads: SlotSet::ALL,
         views: PassViews::Every,
         at: AttachPoint::Opaque,
+        purpose: PassPurpose::Scene,
         takes: every,
     };
 }
@@ -237,6 +267,7 @@ impl PassName for BlendedPass {
         reads: SlotSet::ALL,
         views: PassViews::Every,
         at: AttachPoint::Transparent,
+        purpose: PassPurpose::Scene,
         takes: every,
     };
 }
@@ -373,12 +404,17 @@ impl ScenePasses {
         &self.listed
     }
 
+    pub fn kinds(&self) -> &[KindDecl] {
+        &self.kinds
+    }
+
     pub fn kind(&self, kind: DrawKind) -> Option<&KindDecl> {
         self.kinds.iter().find(|decl| decl.kind == kind)
     }
 
-    pub fn takes(&self, pass: &Pass, kind: DrawKind) -> bool {
-        self.kind(kind).is_some_and(|decl| (pass.takes)(decl))
+    pub fn takes(&self, listed: &ScenePass, kind: DrawKind) -> bool {
+        self.kind(kind)
+            .is_some_and(|decl| decl.joins(listed.name, &listed.pass))
     }
 
     pub fn get(&self, name: &str) -> Option<&ScenePass> {
@@ -402,7 +438,7 @@ impl ScenePasses {
     pub fn defaults(&self, kind: DrawKind) -> PassMask {
         self.listed
             .iter()
-            .filter_map(|listed| listed.bit.filter(|_| self.takes(&listed.pass, kind)))
+            .filter_map(|listed| listed.bit.filter(|_| self.takes(listed, kind)))
             .fold(PassMask::NONE, |mask, bit| mask.set(bit, true))
     }
 

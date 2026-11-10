@@ -1,6 +1,25 @@
 use serde::{Serialize, Serializer};
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+use crate::Error;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum KindPassState {
+    Drew { draws: u32 },
+    Skipped { reason: &'static str },
+    Silent,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct KindPass {
+    pub kind: &'static str,
+    pub pass: &'static str,
+    pub state: KindPassState,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 pub struct RenderStats {
     pub draw_calls: u32,
@@ -24,6 +43,8 @@ pub struct RenderStats {
     #[serde(skip_serializing_if = "none_overflowed")]
     #[cfg_attr(feature = "schema", schemars(skip))]
     pub readback_overflows: u64,
+    pub kind_passes: Vec<KindPass>,
+    pub kind_problems: Vec<Error>,
 }
 
 fn none_overflowed(overflows: &u64) -> bool {

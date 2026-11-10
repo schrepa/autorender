@@ -11,7 +11,7 @@ mod settings;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Brick, Bricks, Pass, PassName, PassViews, Schedule, SlotSet, Source, Writes, never,
+    Brick, Bricks, Pass, PassName, PassPurpose, PassViews, Schedule, SlotSet, Source, Writes, never,
 };
 use engine_render::{AttachPoint, RenderBricks, TargetDecl, TargetName, wgpu};
 
@@ -28,6 +28,7 @@ impl PassName for ReflectionsPass {
         reads: SlotSet::NONE,
         views: PassViews::Main,
         at: AttachPoint::Post,
+        purpose: PassPurpose::Scene,
         takes: never,
     };
 }

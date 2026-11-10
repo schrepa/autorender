@@ -137,15 +137,6 @@ fn vs_view(input: GeometryVertex, @location(INPUT_SLOT) slot: u32) -> MotionOutp
     return mesh_motion(input, slot);
 }
 
-struct ExtendedOutput {
-    @invariant @builtin(position) clip_position: vec4<f32>,
-    @location(0) normal_u: vec4<f32>,
-    @location(1) world_v: vec4<f32>,
-    @location(2) @interpolate(flat) material: vec4<u32>,
-    @location(3) color: vec4<f32>,
-    @location(4) uv1: vec2<f32>,
-}
-
 struct ExtendedMotionOutput {
     @invariant @builtin(position) clip_position: vec4<f32>,
     @location(0) normal_u: vec4<f32>,

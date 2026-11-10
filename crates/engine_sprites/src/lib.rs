@@ -8,7 +8,7 @@ use std::ops::Range;
 use bevy_ecs::prelude::*;
 use engine_core::{
     Asset, AssetResidency, AssetUses, AttachPoint, Attributes, Brick, Bricks, ComponentKind,
-    DrawKind, Drawn, DrawnPoses, DrawnTable, Error, GlobalTransforms, KindDecl, PassViews,
+    DrawKind, Drawn, DrawnPoses, DrawnTable, Error, GlobalTransforms, KindDecl, KindSkip, PassViews,
     SceneComponents, ScenePass, Schedule, Source, Spawner, TargetName, TextureHandle, ViewFacts,
     gpu_struct,
 };
@@ -63,10 +63,17 @@ impl Brick for SpritesBrick {
             .generated(GENERATED)
             .draw_kind(KindDecl {
                 kind: SPRITES,
-                vertex: shaders::sprites::draw::VS_SPRITE.name(),
                 needs: Attributes::NONE,
-                casts_shadows: false,
-                seen_by_probes: false,
+                skips: &[
+                    KindSkip {
+                        pass: "shadow",
+                        reason: "sprites cast no shadows",
+                    },
+                    KindSkip {
+                        pass: "probe",
+                        reason: "sprites stay out of probe captures",
+                    },
+                ],
             })
             .draws::<SpritesGpu>(SPRITES, SpritesGpu::draw);
     }
@@ -137,7 +144,7 @@ fn drawn_in(cx: &Install<'_, SpritesGpu>) -> Vec<ScenePass> {
         .iter()
         .filter(|listed| {
             listed.bit.is_some()
-                && cx.passes().takes(&listed.pass, SPRITES)
+                && cx.passes().takes(listed, SPRITES)
                 && listed.pass.views != PassViews::Owned
                 && listed.pass.at != AttachPoint::Transparent
         })

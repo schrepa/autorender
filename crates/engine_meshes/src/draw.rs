@@ -2,9 +2,11 @@ use engine_core::{MaterialHandle, MeshHandle};
 use engine_render::{Draw, Pipeline, Scene, SceneDraw, Shape};
 
 use crate::debug::DrawRecord;
-use crate::gpu::{BlendedStreams, Drawing, Looked, MeshesGpu, Streams, ViewStreams};
+use crate::gpu::{BlendedStreams, Drawing, Forms, MeshesGpu, Streams, ViewStreams};
 use crate::layouts::LOD_LEVELS;
 use crate::presentation::{PHASE_ONE, ViewSlot};
+
+type ScenePipelines = Forms<Option<Pipeline<MeshesGpu, Scene>>>;
 
 impl MeshesGpu {
     pub(crate) fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
@@ -31,19 +33,41 @@ impl MeshesGpu {
         else {
             return 0;
         };
+        let pipelines = Forms {
+            plain: draw.form(&self.forms.plain),
+            extended: draw.form(&self.forms.extended),
+            skin: draw.form(&self.forms.skin),
+        };
         match &joined.drawing {
-            Drawing::Placed { looks, streams } => {
-                self.draw_meshes(draw, streams, looks, (PHASE_ONE, skinned))
+            Drawing::Placed(streams) => {
+                let opaque = self
+                    .state
+                    .draws
+                    .items
+                    .iter()
+                    .any(|item| !item.blended && item.look.skinned == skinned);
+                if !opaque {
+                    return draw.skip("every material blends");
+                }
+                self.draw_meshes(draw, streams, &pipelines, (PHASE_ONE, skinned))
             }
-            Drawing::Views { looks, streams } => {
+            Drawing::Views(streams) => {
                 let Some(slot) = self.state.view_slot(scene.pass.name(), scene.view) else {
-                    return 0;
+                    return draw.skip("view has no visible list");
                 };
-                let looks = &looks[usize::from(slot.mirrored)];
-                self.draw_view(draw, (streams, looks), slot, skinned)
+                self.draw_view(draw, (streams, &pipelines), slot, skinned)
             }
-            Drawing::Blended { looks, streams } => {
-                self.draw_blended(draw, (streams, looks), skinned)
+            Drawing::Blended(streams) => {
+                let blended = self
+                    .state
+                    .blended
+                    .batches
+                    .iter()
+                    .any(|batch| batch.look.skinned == skinned);
+                if !blended {
+                    return draw.skip("no material blends");
+                }
+                self.draw_blended(draw, (streams, &pipelines), skinned)
             }
         }
     }
@@ -51,7 +75,7 @@ impl MeshesGpu {
     fn draw_blended(
         &self,
         draw: &mut Draw<'_, Self, Scene>,
-        (streams, looks): (&BlendedStreams, &Looked<Pipeline<Self, Scene>>),
+        (streams, pipelines): (&BlendedStreams, &ScenePipelines),
         skinned: bool,
     ) -> u32 {
         let records = (streams.records, self.record(0));
@@ -60,8 +84,11 @@ impl MeshesGpu {
             if batch.look.skinned != skinned {
                 continue;
             }
+            let Some(pipeline) = pipelines.of(batch.look) else {
+                continue;
+            };
             draw.draw(
-                looks.of(batch.look),
+                pipeline,
                 Shape::MeshIndirect {
                     mesh: batch.mesh,
                     material: batch.material,
@@ -83,7 +110,7 @@ impl MeshesGpu {
         &self,
         draw: &mut Draw<'_, Self, S>,
         streams: &Streams<S>,
-        looks: &Looked<Pipeline<Self, S>>,
+        pipelines: &Forms<Option<Pipeline<Self, S>>>,
         (phase, skinned): (usize, bool),
     ) -> u32 {
         let mut drawn = 0;
@@ -91,7 +118,9 @@ impl MeshesGpu {
             if item.blended || item.look.skinned != skinned {
                 continue;
             }
-            let pipeline = looks.of(item.look);
+            let Some(pipeline) = pipelines.of(item.look) else {
+                continue;
+            };
             let (mesh, material) = (item.mesh, item.material);
             for level in 0..LOD_LEVELS as usize {
                 if item.levels & (1 << level) == 0 {
@@ -121,11 +150,10 @@ impl MeshesGpu {
         drawn
     }
 
-
     fn draw_view(
         &self,
         draw: &mut Draw<'_, Self, Scene>,
-        (streams, looks): (&ViewStreams, &Looked<Pipeline<Self, Scene>>),
+        (streams, pipelines): (&ViewStreams, &ScenePipelines),
         slot: &ViewSlot,
         skinned: bool,
     ) -> u32 {
@@ -134,10 +162,13 @@ impl MeshesGpu {
             if item.look.skinned != skinned {
                 continue;
             }
+            let Some(pipeline) = pipelines.of(item.look) else {
+                continue;
+            };
             for level in slot.levels(item.levels) {
                 let (ids, args) = self.state.groups.view_source(slot, item, level);
                 draw.draw(
-                    looks.of(item.look),
+                    pipeline,
                     Shape::MeshIndirect {
                         mesh: item.mesh,
                         material: item.material,

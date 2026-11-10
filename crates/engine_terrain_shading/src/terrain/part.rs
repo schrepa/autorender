@@ -115,7 +115,7 @@ enum Joined {
 }
 
 fn joins(passes: &ScenePasses, listed: &ScenePass) -> bool {
-    listed.bit.is_some() && passes.takes(&listed.pass, TERRAIN)
+    listed.bit.is_some() && passes.takes(listed, TERRAIN)
 }
 
 pub(crate) struct TerrainGpu {

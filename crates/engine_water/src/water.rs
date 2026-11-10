@@ -4,8 +4,8 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::math::max;
 use engine_core::{
-    DrawKind, Entry, Error, KindDecl, PassName, PassViews, ScenePass, ScenePasses, SlotSet, Var,
-    Writes,
+    DrawKind, Entry, Error, KindDecl, PassName, PassPurpose, PassViews, ScenePass, ScenePasses,
+    SlotSet, Var, Writes,
 };
 use engine_heightfield::Fall;
 use engine_places_world::ground::{GroundTiles, Heightfield};
@@ -39,6 +39,7 @@ impl PassName for WaterPass {
         reads: SlotSet::ALL,
         views: PassViews::Main,
         at: AttachPoint::LateOpaque,
+        purpose: PassPurpose::Scene,
         takes: takes_water,
     };
 }
@@ -94,7 +95,7 @@ pub(crate) fn reached(
 fn shows_water(passes: &ScenePasses, listed: &ScenePass) -> bool {
     listed.bit.is_some()
         && listed.pass.views != PassViews::Owned
-        && passes.takes(&listed.pass, WATER_KIND)
+        && passes.takes(listed, WATER_KIND)
         && listed.pass.writes.contains(DEBUG_TARGETS[0])
 }
 

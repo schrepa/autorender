@@ -2,8 +2,8 @@ use std::ops::Range;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AttachPoint, DeviceLimits, Entry, Error, KindDecl, PassName, PassViews, SlotSet, TargetName,
-    Views, Writes, gpu_struct,
+    AttachPoint, DeviceLimits, Entry, Error, KindDecl, PassName, PassPurpose, PassViews, SlotSet,
+    TargetName, Views, Writes, gpu_struct,
 };
 use engine_render::{
     Access, Allocation, Attach, Bind, Buffer, DepthUse, Draw, Encode, FULLSCREEN, GpuPart, Install,
@@ -95,6 +95,7 @@ impl PassName for WeightedPass {
         },
         views: PassViews::Owned,
         at: AttachPoint::Transparent,
+        purpose: PassPurpose::Scene,
         takes: weighted,
     };
 }
@@ -113,6 +114,7 @@ impl PassName for CompositePass {
         },
         views: PassViews::Owned,
         at: AttachPoint::Transparent,
+        purpose: PassPurpose::Scene,
         takes: weighted,
     };
 }

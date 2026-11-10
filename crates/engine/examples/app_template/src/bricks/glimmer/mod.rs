@@ -6,10 +6,10 @@ use bevy_ecs::prelude::*;
 use engine_core::glam::Vec3;
 use engine_core::{
     AttachPoint, Attributes, Brick, Bricks, Camera, Clear, Cursor, DrawKind, Drawn, DrawnPoses,
-    DrawnTable, EMISSIVE_MAP, Error, Events, Feed, FrameTime, GlobalTransforms, GpuStruct,
-    Interest, KindDecl, Node, Pass, PassName, PassViews, Rect, Requests, ScenePass, Schedule,
-    SlotSet, Source, Spawner, SurfaceSlot, TargetName, Ticket, Transform, View, Writes,
-    gpu_struct, settings, stats,
+    DrawnTable, EMISSIVE_MAP, Error, Events, Feed, FrameTime, GlobalTransforms, GpuStruct, Interest,
+    KindDecl, Node, Pass, PassName, PassPurpose, PassViews, Rect, Requests, ScenePass, Schedule,
+    SlotSet, Source, Spawner, SurfaceSlot, TargetName, Ticket, Transform, View, Writes, gpu_struct,
+    settings, stats,
 };
 use engine_render::{
     Allocation, Bind, Buffer, DepthUse, Draw, GpuPart, Install, LightingModule, Lifetime, Pipeline,
@@ -60,6 +60,7 @@ impl PassName for GlimmerPass {
         reads: SlotSet::POSITION,
         views: PassViews::Main,
         at: AttachPoint::Opaque,
+        purpose: PassPurpose::Scene,
         takes: ringed,
     };
 }
@@ -103,10 +104,8 @@ impl Brick for GlimmerBrick {
             .resource::<GlimmerBook>()
             .draw_kind(KindDecl {
                 kind: GLIMMER,
-                vertex: shaders::glimmer::draw::VS_GLIMMER.name(),
                 needs: Attributes::NONE,
-                casts_shadows: true,
-                seen_by_probes: true,
+                skips: &[],
             })
             .pass::<GlimmerPass>()
             .material_slot(SlotModule {
@@ -241,7 +240,7 @@ impl GpuPart for GlimmerGpu {
             .filter(|listed| {
                 listed.bit.is_some()
                     && listed.name != GlimmerPass::NAME
-                    && cx.passes().takes(&listed.pass, GLIMMER)
+                    && cx.passes().takes(listed, GLIMMER)
                     && listed.pass.views != PassViews::Owned
                     && listed.pass.at != AttachPoint::Transparent
             })

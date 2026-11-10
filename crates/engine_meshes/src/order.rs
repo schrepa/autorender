@@ -22,8 +22,6 @@ pub(crate) fn instance_limit(limits: &DeviceLimits) -> usize {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct BatchLook {
-    pub masked: bool,
-    pub double_sided: bool,
     pub extended: bool,
     pub skinned: bool,
 }

@@ -12,7 +12,8 @@ mod part;
 mod settings;
 
 use engine_core::{
-    Attributes, Brick, Bricks, Cook, CookList, GpuBits, JobKind, KindDecl, Schedule, Source,
+    Attributes, Brick, Bricks, Cook, CookList, GpuBits, JobKind, KindDecl, KindSkip, Schedule,
+    Source,
 };
 use engine_places_rendering::impostors::{ImpostorFlags, Impostors};
 use engine_render::RenderBricks;
@@ -53,10 +54,17 @@ impl Brick for ImpostorsBrick {
             .part::<part::ImpostorGpu>()
             .draw_kind(KindDecl {
                 kind: cards::CARD,
-                vertex: shaders::impostors::cards::VS_CARD.name(),
                 needs: Attributes::NONE,
-                casts_shadows: false,
-                seen_by_probes: false,
+                skips: &[
+                    KindSkip {
+                        pass: "shadow",
+                        reason: "impostor cards cast no shadows",
+                    },
+                    KindSkip {
+                        pass: "probe",
+                        reason: "impostor cards stay out of probe captures",
+                    },
+                ],
             })
             .draws::<cards::CardGpu>(cards::CARD, cards::CardGpu::draw);
     }

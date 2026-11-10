@@ -27,8 +27,8 @@ use serde_json::Value;
 pub use asks::{Applied, ApplyAt, Ask, Asked, Moment};
 pub use budget::{BudgetUse, FrameBudget};
 pub use drawn::{
-    DrawKind, Drawn, DrawnBounds, DrawnProjection, InstanceValues, KindDecl, Layers, NodeId,
-    PositionReach,
+    DrawKind, Drawn, DrawnBounds, DrawnProjection, InstanceValues, KindDecl, KindSkip, Layers,
+    NodeId, PositionReach,
 };
 pub use engine_assets::{MaterialHandle, MeshHandle, TextureHandle};
 pub use engine_settings::{Error, ErrorCode};
@@ -37,7 +37,8 @@ pub use feeds::{Cursor, Events, Feed, FeedView, Ring, Since, StoreId};
 pub use nodes::{Clock, Mobility, Mover, MoverId, Node, NodeWord, Pace};
 pub use passes::{
     AttachPoint, BlendedPass, CORE_BRICK, ColorPass, Pass,
-    PassBit, PassCull, PassEntry, PassMask, PassName, PassRaster, PassViews, ScenePass, ScenePasses,
+    PassBit, PassCull, PassEntry, PassMask, PassName, PassPurpose, PassRaster, PassRole, PassViews,
+    ScenePass, ScenePasses,
     SlotSet,
     TargetName, Writes,
     every, never, wgsl_name,

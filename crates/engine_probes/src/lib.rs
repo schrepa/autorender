@@ -14,8 +14,8 @@ mod probes;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AttachPoint, Brick, Bricks, ComponentKind, Cut, KindDecl, Pass, PassName, PassViews,
-    SceneComponents, Schedule, SlotSet, Source, Writes, gpu_consts, never, settings, stats,
+    AttachPoint, Brick, Bricks, ComponentKind, Cut, Pass, PassName, PassPurpose, PassViews,
+    SceneComponents, Schedule, SlotSet, Source, Writes, every, gpu_consts, never, settings, stats,
 };
 use engine_places_rendering::lighting::{Ambient, Interiors};
 use engine_places_rendering::probes::{ProbeCaptures, ReflectionProbe};
@@ -60,12 +60,9 @@ impl PassName for ProbePass {
         reads: SlotSet::ALL,
         views: PassViews::Owned,
         at: AttachPoint::Opaque,
-        takes: reflected,
+        purpose: PassPurpose::Scene,
+        takes: every,
     };
-}
-
-fn reflected(kind: &KindDecl) -> bool {
-    kind.seen_by_probes
 }
 
 pub struct ProbeLightPass;
@@ -77,6 +74,7 @@ impl PassName for ProbeLightPass {
         reads: SlotSet::POSITION,
         views: PassViews::Owned,
         at: AttachPoint::Opaque,
+        purpose: PassPurpose::Scene,
         takes: never,
     };
 }

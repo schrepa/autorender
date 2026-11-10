@@ -113,6 +113,18 @@ pub(crate) struct PassDecl {
     pub(crate) makes_records: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum FragmentUse {
+    Always,
+    Masked,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(crate) enum Faces {
+    Declared,
+    Material(FragmentUse),
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct RenderDecl {
     pub(crate) vertex: Entry,
@@ -124,6 +136,7 @@ pub(crate) struct RenderDecl {
     pub(crate) writes: wgpu::ColorWrites,
     pub(crate) targets: Option<Vec<(Option<wgpu::BlendState>, wgpu::ColorWrites)>>,
     pub(crate) samples: u32,
+    pub(crate) faces: Faces,
 }
 
 #[derive(Clone, Debug)]
@@ -562,7 +575,7 @@ impl InstallCore {
         let mut members: Vec<u32> = self
             .draws
             .iter()
-            .filter(|member| (listed.takes)(&member.kind))
+            .filter(|member| member.kind.joins(name, &listed))
             .map(|member| member.part)
             .collect();
         members.sort_unstable();

@@ -35,7 +35,7 @@ mod windows;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Attributes, Brick, Bricks, Cook, CookList, Cut, JobKind, KindDecl, Schedule, Source,
+    Attributes, Brick, Bricks, Cook, CookList, Cut, JobKind, KindDecl, KindSkip, Schedule, Source,
     SurfaceSlot, stats,
 };
 use engine_places_rendering::reflections::TraceDepths;
@@ -134,10 +134,17 @@ impl Brick for WaterBrick {
             .observation::<views::WaterFlowQuery>()
             .draw_kind(KindDecl {
                 kind: water::WATER_KIND,
-                vertex: shaders::water::surface::VS_WATER.name(),
                 needs: Attributes::NONE,
-                casts_shadows: false,
-                seen_by_probes: false,
+                skips: &[
+                    KindSkip {
+                        pass: "shadow",
+                        reason: "the water surface cast no shadows",
+                    },
+                    KindSkip {
+                        pass: "probe",
+                        reason: "the water surface stay out of probe captures",
+                    },
+                ],
             })
             .pass::<water::WaterPass>()
             .draws::<water::WaterGpu>(water::WATER_KIND, water::WaterGpu::draw);

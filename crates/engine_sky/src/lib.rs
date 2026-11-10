@@ -20,8 +20,8 @@ use bevy_ecs::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
 use engine_core::Corpus;
 use engine_core::{
-    AttachPoint, Brick, Bricks, JobKind, Pass, PassName, PassViews, Schedule, Slot, SlotSet,
-    Source, Writes, never,
+    AttachPoint, Brick, Bricks, JobKind, Pass, PassName, PassPurpose, PassViews, Schedule, Slot,
+    SlotSet, Source, Writes, never,
 };
 use engine_places_rendering::lighting::{Ambient, SunBlockers};
 use engine_places_rendering::sky::SkyLight;
@@ -38,6 +38,7 @@ impl PassName for HazePass {
         reads: SlotSet::NONE,
         views: PassViews::Main,
         at: AttachPoint::Post,
+        purpose: PassPurpose::Scene,
         takes: never,
     };
 }

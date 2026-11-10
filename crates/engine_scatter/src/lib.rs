@@ -143,10 +143,8 @@ impl Brick for ScatterBrick {
             )
             .draw_kind(KindDecl {
                 kind: gpu::PLACED,
-                vertex: shaders::scatter::draw::VS_OBJECT.name(),
                 needs: Attributes::NONE,
-                casts_shadows: true,
-                seen_by_probes: true,
+                skips: &[],
             })
             .draws::<gpu::ScatterGpu>(gpu::PLACED, gpu::ScatterGpu::draw);
         for (name, module, slots, maps, values, reach) in LOOKS {

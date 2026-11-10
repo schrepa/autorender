@@ -38,7 +38,7 @@ mod games {
         Picking, Ray, Rect, Target, View, ViewCut, ViewFacts, ViewHistory, Views,
         main_camera, place_camera,
         CursorMode, CursorRequests, DrawKind, Drawn, DrawnProjection, DrawnState, DrawnTable,
-        InstanceValues, KindDecl, Layers,
+        InstanceValues, KindDecl, KindSkip, Layers,
         Engine, EngineConfig,
         Filter, FixedTime, FrameLimits, FrameTime, GlobalTransform, GlobalTransforms,
         Asks, Clock, Compare, Cull, DepthBias, HandOver, LightingModel, Listing,

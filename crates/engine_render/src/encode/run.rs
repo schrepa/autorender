@@ -126,6 +126,69 @@ pub(crate) struct Tallies {
     pub(crate) part_draws: Vec<u32>,
     pub(crate) rebuilt: Rebuilt,
     pub(crate) uploads: Uploads,
+    pub(crate) kinds: KindTallies,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct KindTally {
+    pub(crate) kind: engine_core::DrawKind,
+    pub(crate) pass: &'static str,
+    pub(crate) draws: u32,
+    pub(crate) skipped: Option<&'static str>,
+}
+
+#[derive(Default)]
+pub(crate) struct KindTallies {
+    pub(crate) drawing: Option<engine_core::DrawKind>,
+    pub(crate) ran: Vec<&'static str>,
+    pub(crate) listed: Vec<KindTally>,
+    pub(crate) reported: Vec<(engine_core::DrawKind, &'static str)>,
+    pub(crate) problems: Vec<Error>,
+}
+
+impl KindTallies {
+    pub(crate) fn scened(&mut self, pass: &'static str) {
+        if !self.ran.contains(&pass) {
+            self.ran.push(pass);
+        }
+    }
+
+    fn tally(&mut self, kind: engine_core::DrawKind, pass: &'static str) -> &mut KindTally {
+        let at = match self
+            .listed
+            .iter()
+            .position(|known| known.kind == kind && known.pass == pass)
+        {
+            Some(at) => at,
+            None => {
+                self.listed.push(KindTally {
+                    kind,
+                    pass,
+                    draws: 0,
+                    skipped: None,
+                });
+                self.listed.len() - 1
+            }
+        };
+        &mut self.listed[at]
+    }
+
+    pub(crate) fn drew(&mut self, kind: engine_core::DrawKind, pass: &'static str, draws: u32) {
+        self.drawing = None;
+        self.tally(kind, pass).draws += draws;
+    }
+
+    pub(crate) fn skip(&mut self, pass: Option<&'static str>, reason: &'static str) {
+        if let (Some(kind), Some(pass)) = (self.drawing, pass) {
+            self.tally(kind, pass).skipped = Some(reason);
+        }
+    }
+
+    pub(crate) fn start_frame(&mut self) {
+        self.drawing = None;
+        self.ran.clear();
+        self.listed.clear();
+    }
 }
 
 #[derive(Default)]
