@@ -1,4 +1,3 @@
-import package::engine::slots::LightInputs;
 import package::engine::surfaces::SURFACE_SOLID;
 
 struct Shaded {
@@ -14,6 +13,20 @@ struct PositionInput {
     pixels: f32,
     kind: u32,
     object: u32,
+}
+
+struct LightInputs {
+    ignore_face: bool,
+    added_light: vec3<f32>,
+    added_indirect: vec3<f32>,
+    sky_bend: vec3<f32>,
+    smoother_across: f32,
+    sun_softness: f32,
+    receiver_lift_first: u32,
+    receiver_lifts: vec4<f32>,
+    thickness: f32,
+    sun_blocked: f32,
+    sun_known: bool,
 }
 
 struct SurfacePoint {
@@ -38,6 +51,7 @@ struct SurfacePoint {
     world_dy: vec3<f32>,
     distance: f32,
     kind: u32,
+    lighting: u32,
     inputs: LightInputs,
 }
 

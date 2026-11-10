@@ -2,7 +2,8 @@ import package::engine::materials::alpha_test;
 import package::engine::mesh::declarations::VertexOutput;
 import package::engine::mesh::vertex::output_color;
 import package::engine::shading::{SurfaceInput, SurfacePoint};
-import package::engine::slots::{shade_model, slot_output};
+import package::engine::slots::shade as shade_point;
+import package::engine::slots::slot_output;
 import package::engine::surface::{masked_out, opacity_cut, surface_point};
 import package::engine::view::{camera, material_bias};
 import package::meshes::vertex::{ExtendedMotionOutput, ExtendedOutput, MotionOutput};
@@ -72,7 +73,7 @@ fn masked_depth(input: SlotFragment) {
 fn shade(input: SlotFragment, front: bool) -> SlotShaded {
     let surface = surface_input(input, front);
     let point = lit_point(surface);
-    return SlotShaded(point, slot_output(surface, point, shade_model(point, input.pixel)));
+    return SlotShaded(point, slot_output(surface, point, shade_point(point, input.pixel)));
 }
 
 fn motion_output(input: MotionOutput) -> VertexOutput {

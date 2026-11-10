@@ -4,7 +4,7 @@ import package::engine::mesh::declarations::{AffinePose, faded_entry_fade, faded
     fade_hidden};
 import package::engine::mesh::vertex::{output_color, pose_matrix, transform_vertex};
 import package::engine::shading::{PositionInput, Shaded, SurfaceInput, SurfacePoint};
-import package::engine::slots::{shade_model, slot_output, slot_position};
+import package::engine::slots::{shade, slot_output, slot_position};
 import package::engine::surface::{masked_out, opacity_cut, surface_point};
 import package::engine::view::{camera, detail_across, material_bias, view_clip, view_pixel};
 import package::face::debug::{DebugTargets, debug_record_with_kind, debug_targets};
@@ -121,7 +121,7 @@ fn placed_point(surface: SurfaceInput) -> SurfacePoint {
 fn placed_shade(input: PlacedExtendedVertex, front: bool) -> PlacedShaded {
     let surface = placed_surface(input, front);
     let point = placed_point(surface);
-    return PlacedShaded(point, slot_output(surface, point, shade_model(point, surface.pixel)));
+    return PlacedShaded(point, slot_output(surface, point, shade(point, surface.pixel)));
 }
 
 fn lit(input: PlacedExtendedVertex, front: bool) -> Outputs {

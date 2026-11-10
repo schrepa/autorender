@@ -1,3 +1,4 @@
+import package::engine::materials::material_model;
 import package::engine::shading::{SurfaceInput, SurfacePoint, derived};
 import package::engine::slots::{slot_base_color, slot_cutoff, slot_emissive, slot_kind,
     slot_light_inputs, slot_metalness, slot_normal, slot_occlusion, slot_opacity, slot_roughness,
@@ -39,6 +40,7 @@ fn surface_point(input: SurfaceInput) -> SurfacePoint {
     point.occlusion = slot_occlusion(input, point);
     point.transmission = slot_transmission(input, point);
     point.kind = slot_kind(input, point);
+    point.lighting = material_model();
     point.inputs = slot_light_inputs(input, point);
     return point;
 }

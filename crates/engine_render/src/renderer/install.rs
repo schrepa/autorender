@@ -298,7 +298,8 @@ fn material_layout(
     let mut models = Vec::new();
     for (_, declared) in registry.render_entries::<LightingModule>() {
         linker.add_source(declared.module.source());
-        let (path, name) = crate::linker::path_of((declared.module, "finish"));
+        let (path, name) =
+            crate::linker::path_of((declared.module, crate::surface::LIGHTING_ENTRY));
         roots.push((path.to_owned(), name));
         models.push((*declared, path.to_owned()));
     }

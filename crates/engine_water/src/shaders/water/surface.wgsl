@@ -1,6 +1,7 @@
 import package::engine::color::luminance;
 import package::engine::math::PI;
 import package::engine::shading::{Shaded, SurfacePoint};
+import package::engine::slots::shade as shade_point;
 import package::engine::surfaces::SURFACE_WATER;
 import package::engine::view::{camera, detail_across, detail_level, eye_world, stable_normalize,
     view_pixel};
@@ -8,7 +9,6 @@ import package::face::heightfield::{SURFACE_LEAF_INDICES, surface_leaf, surface_
     surface_vertex, terrain_level_height, terrain_uniform, terrain_view_uniform, use_terrain};
 import package::face::lighting::{distribution, environment_brdf, fresnel, highlights, specular,
     sun_visibility, visibility};
-import package::face::lit::finish;
 import package::face::sky::{ambient, atmospheric_cover, sky_average};
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
@@ -483,7 +483,6 @@ fn water_light(surface: WaterSurface, pixel: vec2<f32>) -> WaterLit {
         * (mix(around, sky, WATER_FOAM_SKY) + sunlight * max(foam_n_l, 0.0)) + foam_glint;
     var point: SurfacePoint;
     point.base_color = surface.scatter;
-    point.opacity = 1.0;
     point.emissive = vec3<f32>(0.0);
     point.occlusion = 1.0;
     point.roughness = roughness.x;
@@ -501,9 +500,10 @@ fn water_light(surface: WaterSurface, pixel: vec2<f32>) -> WaterLit {
     point.world_dy = surface.world_dy;
     point.kind = SURFACE_WATER;
     point.inputs.sun_blocked = 1.0;
+    point.inputs.added_light = mix(body + glint, foam, surface.foam);
     var lit: WaterLit;
     lit.point = point;
-    lit.shaded = finish(point, pixel, mix(body + glint, foam, surface.foam));
+    lit.shaded = shade_point(point, pixel);
     lit.reflectance = reflectance;
     let sunlit = luminance(sunlight) * max(sun.y, 0.0);
     lit.sunny = sunlit / max(sunlit + luminance(sky), 1.0e-6);

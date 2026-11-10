@@ -1,7 +1,7 @@
 import package::engine::color::decode_srgb;
 import package::engine::shading::{SurfacePoint, derived};
+import package::engine::slots::shade;
 import package::engine::view::{camera, stable_normalize};
-import package::face::lit::finish;
 import package::face::sky::environment_sample;
 import package::probes::filter::FaceOutput;
 import package::probes::surface::unfolded;
@@ -41,7 +41,7 @@ fn stored_point(texel: vec2<i32>, layer: i32, world: vec3<f32>) -> SurfacePoint 
     point.world_dy = select(vec3<f32>(0.0), dpdy(world), faced);
     point.kind = surface.z;
     point.inputs.ignore_face = !faced;
-    point.inputs.bounce = bounce.rgb;
+    point.inputs.added_indirect = bounce.rgb;
     point.inputs.sky_bend = unfolded(directions.zw) - normal;
     point.inputs.sun_blocked = 1.0 - bounce.a;
     point.inputs.sun_known = true;
@@ -56,7 +56,7 @@ fn fs_relight(input: FaceOutput) -> @location(0) vec4<f32> {
     let placed = camera.inverse_view_projection * vec4<f32>(input.ndc, depth, 1.0);
     let world = placed.xyz / placed.w;
     let pixel = input.clip_position.xy;
-    let lit = finish(stored_point(texel, layer, world), pixel, vec3<f32>(0.0)).linear;
+    let lit = shade(stored_point(texel, layer, world), pixel).linear;
     let sky = environment_sample(normalize(world - camera.position.xyz), 0.0);
     return vec4<f32>(select(lit, sky, depth <= 0.0), 1.0);
 }

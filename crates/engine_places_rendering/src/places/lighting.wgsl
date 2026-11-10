@@ -3,19 +3,6 @@ import package::place::sun_blockers::SunAt;
 
 const SURFACE_THIN: u32 = 0u;
 
-struct LightInputs {
-    ignore_face: bool,
-    bounce: vec3<f32>,
-    sky_bend: vec3<f32>,
-    smoother_across: f32,
-    shadow_softness: f32,
-    shadow_lift_first: u32,
-    shadow_lifts: vec4<f32>,
-    thickness: f32,
-    sun_blocked: f32,
-    sun_known: bool,
-}
-
 struct Reflecting {
     light: vec3<f32>,
     share: f32,

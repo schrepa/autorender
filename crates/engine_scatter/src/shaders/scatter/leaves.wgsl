@@ -1,4 +1,4 @@
-import package::engine::shading::{SurfaceInput, SurfacePoint};
+import package::engine::shading::{LightInputs, SurfaceInput, SurfacePoint};
 import package::engine::mapped::base_color as mapped_base_color;
 import package::engine::mapped::cutoff as mapped_cutoff;
 import package::engine::mapped::mask_coverage;
@@ -7,7 +7,7 @@ import package::engine::mapped::normal as mapped_normal;
 import package::engine::mapped::roughness as mapped_roughness;
 import package::engine::view::fade_noise;
 import package::face::foliage::foliage;
-import package::face::lighting::{LightInputs, SURFACE_THIN};
+import package::face::lighting::SURFACE_THIN;
 import package::scatter::grounding::{grounded_color, grounded_metalness, grounded_normal,
     grounded_roughness};
 import package::scatter::values::placed_values_of;
@@ -58,6 +58,6 @@ fn kind(input: SurfaceInput, point: SurfacePoint) -> u32 {
 
 fn light_inputs(input: SurfaceInput, point: SurfacePoint) -> LightInputs {
     var inputs = point.inputs;
-    inputs.shadow_softness = leafiness(mapped_base_color(input, point));
+    inputs.sun_softness = leafiness(mapped_base_color(input, point));
     return inputs;
 }
