@@ -34,6 +34,7 @@ const FORM: KindForm = KindForm {
     placed: FormSide {
         vertex: shaders::plates::draw::VS_PLATE,
         streams: &[],
+        depth_bias: FormSide::UNBIASED,
     },
     owned: None,
     varyings: Varyings::Surface,

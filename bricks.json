@@ -302,7 +302,7 @@
         }
       ],
       "type": "engine_meshes::MeshesBrick",
-      "version": "c08f84d83b1a4998f92974bb8c16408a7fb692f7f03c88931119f4ecad4e6cdb"
+      "version": "3d1e111a0fc1db6f8d941cd2b0e96e2bd854aee8a0759237f9f5637ecbed319e"
     },
     {
       "dependencies": [
@@ -412,7 +412,7 @@
         }
       ],
       "type": "engine_impostors::ImpostorsBrick",
-      "version": "edf565f093907f4830f2c6f493b26f7a4dfd137f0878016511fd4d143f7398f8"
+      "version": "d7ea7db82feef0138dc4a6672a86dd58501ef26197672d423ffb6650c262ab6d"
     },
     {
       "dependencies": [
@@ -1494,7 +1494,7 @@
         }
       ],
       "type": "engine_text::TextBrick",
-      "version": "881fd2708c98c0f98de01f0cbe1b13add58ca8d2652e50174d81cb483fd3799a"
+      "version": "80406396e5ad5ed0b10d19f50d879dedce9f4a10e2fa7aa41c909dc796982da5"
     },
     {
       "dependencies": [
@@ -1883,7 +1883,7 @@
         }
       ],
       "type": "engine_particles::ParticlesBrick",
-      "version": "f66908cab7c54388484491e238b35ab50a3ef8ec46cc73c601683d1fe1e4c215"
+      "version": "b0f80309217e2078f2c336e7c9f9645255ef8e66350c8da916e1cd98049dd880"
     },
     {
       "dependencies": [
@@ -2478,6 +2478,7 @@
         "engine_terrain_shading::state::SurfaceTotals",
         "engine_terrain_shading::state::PartStats",
         "engine_terrain_shading::state::RecordsSettling",
+        "engine_terrain_shading::holes::HoledGround",
         "engine_terrain_shading::gpu::HorizonsPiece"
       ],
       "settings": [
@@ -2494,7 +2495,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "e20154b5579779bfb249257ac904ce2ae9f8b40d16a7ed8798eca6efbc95c622"
+      "version": "fd6176956ada4668928ab18feb5fac1f5c1fafb9b9107b5014f02a9e33900bb4"
     },
     {
       "dependencies": [
@@ -2645,7 +2646,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "c206066d45de4b041e7e0f7cf3118fc37dd989c60754fd6330e89beba58732fd"
+      "version": "1c945760aedfb1413531563af107bf09dc4b3e120ccdc3acd47b01270d49bdca"
     },
     {
       "dependencies": [
@@ -2755,7 +2756,7 @@
         }
       ],
       "type": "engine_ground_cover::GroundCoverBrick",
-      "version": "78e65e8ba875ffc112155a338be4e7149da55b271a77371bb5aafb562b61ba00"
+      "version": "61af18b0b7bb4637be23686472b4c368de08df66f80be2b07ebf6aa2d502958f"
     },
     {
       "dependencies": [
@@ -2982,7 +2983,7 @@
         }
       ],
       "type": "engine_water::WaterBrick",
-      "version": "674d4428a7b993e33f2668d21a3c2e4aac528fe9130dcdf7b952dfe901b8885f"
+      "version": "dfa0125b4c550a8ea6005c7caedd08133224e95eed896c64019bf5a6a2d6cd78"
     },
     {
       "dependencies": [
