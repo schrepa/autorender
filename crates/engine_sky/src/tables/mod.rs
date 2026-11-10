@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Error, ErrorCode, Interest, Job, JobCx, JobKind, Jobs, RecordKey, Records, URGENT_JOBS,
+    Background, Error, ErrorCode, Job, JobCx, JobKind, Jobs, Landed, Records, URGENT_JOBS,
     job_priority,
 };
 
@@ -65,9 +65,9 @@ impl Failures {
 }
 
 enum Part {
-    Asked(Interest<RecordKey>),
+    Asked(Background<Vec<u8>>),
     Arrived,
-    Failed { _held: Interest<RecordKey> },
+    Failed { _failure: Background<Vec<u8>> },
 }
 
 struct TableState<T> {
@@ -102,7 +102,10 @@ impl<T: Assembly> TableState<T> {
             .enumerate()
             .map(|(place, identity)| {
                 let priority = job_priority(URGENT_JOBS, place as u32);
-                Part::Asked(jobs.fetch(kind, identity, priority))
+                Part::Asked(Background::asked(
+                    jobs.fetch(kind, identity, priority),
+                    |bytes| Ok(bytes.to_vec()),
+                ))
             })
             .collect();
         self.assembling = None;
@@ -110,26 +113,26 @@ impl<T: Assembly> TableState<T> {
     }
 
     fn update(&mut self, records: &Records, next: &mut u64, failures: &mut Failures) {
-        let name = self.name;
+        let (name, kind) = (self.name, self.kind.name());
         for part in &mut self.parts {
-            let output = match &*part {
-                Part::Asked(interest) => records.get(interest),
-                Part::Arrived | Part::Failed { .. } => None,
-            };
-            let Some(output) = output else {
+            let Part::Asked(work) = part else {
                 continue;
             };
-            let taken = output
-                .map_err(|error| format!("{name}: {error}"))
-                .and_then(|bytes| {
-                    T::take(&mut self.assembling, &bytes)
-                        .map_err(|error| format!("{name}: its output does not decode: {error}"))
-                });
-            let asked = std::mem::replace(part, Part::Arrived);
-            if let (Err(error), Part::Asked(interest)) = (taken, asked) {
-                failures.record(error);
-                *part = Part::Failed { _held: interest };
-            }
+            let taken = match work.poll(records) {
+                Landed::Waiting => continue,
+                Landed::Failed(error) => Err(format!("{name}: {error}")),
+                Landed::Ready(bytes) => T::take(&mut self.assembling, bytes)
+                    .map_err(|error| format!("{name}: its output does not decode: {error}")),
+            };
+            *part = match taken {
+                Ok(()) => Part::Arrived,
+                Err(error) => {
+                    failures.record(error.clone());
+                    Part::Failed {
+                        _failure: Background::failed(table_error(kind, error)),
+                    }
+                }
+            };
         }
         if !self.parts.is_empty()
             && self.parts.iter().all(|part| matches!(part, Part::Arrived))
@@ -199,14 +202,14 @@ impl StaticTables {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Wants {
     clouds: bool,
-    sky: Option<Air>,
+    sky: Air,
 }
 
 impl Wants {
     fn of(clouds: Clouds, sky: Sky) -> Self {
         Self {
-            clouds: sky.enabled && clouds.enabled,
-            sky: sky.enabled.then_some(Air {
+            clouds: clouds.enabled,
+            sky: Air {
                 rayleigh: sky.rayleigh,
                 rayleigh_height: sky.rayleigh_height,
                 mie: sky.mie,
@@ -216,7 +219,7 @@ impl Wants {
                 ground: sky.ground_albedo,
                 bottom: sky.planet_radius,
                 top: sky.planet_radius + sky.atmosphere_height,
-            }),
+            },
         }
     }
 
@@ -224,7 +227,7 @@ impl Wants {
         [
             self.clouds
                 .then(|| clouds::parts().iter().map(clouds::Part::identity).collect()),
-            self.sky.map(|air| vec![air.identity()]),
+            Some(vec![self.sky.identity()]),
         ]
     }
 }

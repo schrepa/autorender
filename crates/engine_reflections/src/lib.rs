@@ -15,7 +15,7 @@ use engine_core::{
 };
 use engine_render::{AttachPoint, RenderBricks, TargetDecl, TargetName, wgpu};
 
-pub use settings::{Reflections, ReflectionsStats};
+pub use settings::Reflections;
 
 use gpu::ReflectionsPiece;
 
@@ -56,41 +56,23 @@ impl Brick for ReflectionsBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
+            .when(|reflections: Res<Reflections>| reflections.enabled)
             .settings::<Reflections>()
-            .stats::<ReflectionsStats>()
             .piece::<ReflectionsPiece>()
             .generated(gpu::GENERATED)
             .view_target(SURFACE)
             .view_target(REFLECTED)
             .pass::<ReflectionsPass>()
             .systems(Schedule::ViewSync, publish_piece)
-            .within(reflecting, |bricks| {
-                bricks
-                    .join::<engine_places_rendering::reflections::TraceReaders>((), None)
-                    .part::<part::TraceGpu>();
-            });
+            .join::<engine_places_rendering::reflections::TraceReaders>((), None)
+            .part::<part::TraceGpu>();
     }
 }
 
-fn reflecting(reflections: Res<Reflections>) -> bool {
-    reflections.enabled
-}
-
-fn publish_piece(
-    reflections: Res<Reflections>,
-    mut piece: ResMut<ReflectionsPiece>,
-    mut stats: ResMut<ReflectionsStats>,
-) {
-    let active = reflections.enabled;
+fn publish_piece(reflections: Res<Reflections>, mut piece: ResMut<ReflectionsPiece>) {
     piece.set_if_neq(ReflectionsPiece {
         surface: [reflections.max_roughness, 0.0, 0.0, 0.0],
         trace: [reflections.distance, 0.0, 0.0, 0.0],
-        applied: [
-            reflections.distance,
-            reflections.intensity,
-            if active { 1.0 } else { 0.0 },
-            0.0,
-        ],
+        applied: [reflections.distance, reflections.intensity, 0.0, 0.0],
     });
-    stats.set_if_neq(ReflectionsStats { active });
 }

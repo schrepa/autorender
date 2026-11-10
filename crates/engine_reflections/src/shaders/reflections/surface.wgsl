@@ -14,7 +14,7 @@ fn octahedral_coordinates(normal: vec3<f32>) -> vec2<f32> {
 }
 
 fn reflects(point: SurfacePoint) -> bool {
-    return piece().applied.z != 0.0 && point.roughness < piece().surface.x;
+    return point.roughness < piece().surface.x;
 }
 
 fn surface(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> vec4<u32> {

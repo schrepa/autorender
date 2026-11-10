@@ -175,7 +175,7 @@ fn follow(
     if settings.is_changed() || events.is_added() {
         events.resize(settings.events as usize);
     }
-    if state.is_idle() && (roots.is_empty() || !settings.enabled) {
+    if state.is_idle() && roots.is_empty() {
         return;
     }
     let reach = reaches(&cursor);
@@ -224,7 +224,7 @@ fn present(
     mut state: ResMut<UiState>,
     mut stats: ResMut<UiStats>,
 ) {
-    if state.is_idle() && (roots.is_empty() || !settings.enabled) {
+    if state.is_idle() && roots.is_empty() {
         return;
     }
     let facts = Facts::of(
@@ -276,6 +276,7 @@ impl Brick for UiBrick {
             bricks.join::<Verbs>(verb, None);
         }
         bricks
+            .when(|ui: Res<UiSettings>| ui.enabled)
             .settings::<UiSettings>()
             .stats::<UiStats>()
             .resource::<UiState>()

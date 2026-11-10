@@ -1,6 +1,8 @@
+use std::sync::Arc;
+
 use engine_core::{
-    Engine, Interest, JobExchange, RecordKey, Records, Request, URGENT_JOBS, job_priority,
-    look_record,
+    Background, Engine, Error, JobExchange, Landed, MISSING_RECORD, RecordKey, Records,
+    URGENT_JOBS, job_priority, look_record,
 };
 use engine_registry::Registry;
 use engine_render::Renderer;
@@ -21,7 +23,7 @@ enum State {
     Unasked,
     Asked {
         key: RecordKey,
-        fetch: Interest<RecordKey>,
+        fetch: Background<Arc<[u8]>>,
     },
     Making {
         key: RecordKey,
@@ -36,6 +38,10 @@ fn compiled(renderer: &Renderer) -> u32 {
         .iter()
         .map(|(_, count)| *count)
         .sum()
+}
+
+fn missing(error: &Error) -> bool {
+    error.detail.got.as_ref().and_then(serde_json::Value::as_str) == Some(MISSING_RECORD)
 }
 
 fn key_of(identity: &[u8]) -> RecordKey {
@@ -84,7 +90,10 @@ impl PipelineList {
         self.state = if world.contains_resource::<JobExchange>() {
             State::Asked {
                 key,
-                fetch: look_record(world, None, key, job_priority(URGENT_JOBS, 0)),
+                fetch: Background::asked(
+                    look_record(world, None, key, job_priority(URGENT_JOBS, 0)),
+                    |bytes| Ok(Arc::from(bytes)),
+                ),
             }
         } else {
             State::Done
@@ -92,24 +101,24 @@ impl PipelineList {
     }
 
     pub(crate) fn take(&mut self, engine: &mut Engine, renderer: &mut Renderer) {
-        let State::Asked { key, fetch } = &self.state else {
+        let State::Asked { key, fetch } = &mut self.state else {
             return;
         };
         let key = *key;
         let Some(records) = engine.app.world().get_resource::<Records>() else {
             return;
         };
-        self.state = match records.request(fetch) {
-            Some(Request::Ready(record)) => match renderer.create_listed_pipelines(record) {
+        self.state = match fetch.poll(records) {
+            Landed::Ready(record) => match renderer.create_listed_pipelines(record) {
                 Ok(()) => State::Making {
                     key,
                     kept: compiled(renderer),
                 },
                 Err(_) => State::Making { key, kept: 0 },
             },
-            Some(Request::Missing) => State::Making { key, kept: 0 },
-            Some(Request::Failed(_)) => State::Done,
-            Some(Request::Asked(_)) | None => return,
+            Landed::Failed(error) if missing(error) => State::Making { key, kept: 0 },
+            Landed::Failed(_) => State::Done,
+            Landed::Waiting => return,
         };
     }
 

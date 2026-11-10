@@ -29,7 +29,7 @@ use serde::Serialize;
 
 use engine_core::math::{max, min};
 use engine_core::{
-    AssetLibrary, Brick, Bricks, FrameTime, GlobalTransforms, Interest, Poses, Request, Requests,
+    AssetLibrary, Brick, Bricks, FrameTime, GlobalTransforms, Hold, Poses, Request, Requests,
     SceneContext, Schedule, Source, Spawner, ViewFacts, Views, settings, stats,
 };
 use engine_places_world::streaming::{StreamedKeys, StreamingFocus};
@@ -125,7 +125,7 @@ impl WorldChanges {
 
 enum Load {
     Unloaded,
-    Loaded { _held: Vec<Interest<usize>> },
+    Loaded { _held: Vec<Hold> },
 }
 
 struct Cell {
@@ -378,7 +378,8 @@ impl WorldCells {
                 match cell.load {
                     Load::Loaded { .. } if leaving => cell.load = Load::Unloaded,
                     Load::Unloaded if coming => {
-                        let asked = cell.items.iter().map(|&item| spawns.ask(item)).collect();
+                        let asked: Vec<Hold> =
+                            cell.items.iter().map(|&item| spawns.ask(item).into()).collect();
                         cell.load = Load::Loaded { _held: asked };
                     }
                     Load::Loaded { .. } | Load::Unloaded => {}

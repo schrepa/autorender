@@ -7,6 +7,7 @@ extern crate self as engine_core;
 
 mod assets;
 mod authoring;
+mod background;
 mod bricks;
 mod clock;
 mod cook;
@@ -15,6 +16,7 @@ mod cursor;
 mod drawn;
 mod drawn_areas;
 mod entity_indices;
+mod files;
 mod folds;
 mod frame_timing;
 mod hierarchy;
@@ -82,7 +84,7 @@ pub use engine_place::{
     Applied, ApplyAt, Ask, Asked, AttachPoint, BlendedPass, Board, BudgetUse, Census,
     Clock, ColorPass, PositionReach,
     Cursor, DrawKind, Drawn, DrawnBounds, DrawnProjection, Error, ErrorCode, Events,
-    Feed, FeedView, FrameBudget, GpuStruct, InstanceValues, Interest, JobRef,
+    Feed, FeedView, FrameBudget, GpuStruct, Hold, InstanceValues, Interest, JobRef,
     KindDecl, KindSkip, Layers, Level, LevelView, List, MaterialHandle, MeshHandle, Mobility,
     Moment, Mover, MoverId, Node, NodeId, NodeWord, Pace, Pass, PassBit, PassCull, PassEntry,
     PassMask, PassName, PassPurpose, PassRaster, PassRole, PassViews, PlaceDecl, Progress, Readiness, Request, Requests, Ring,
@@ -101,6 +103,8 @@ pub use engine_settings::{
     Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, fields,
     is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
 };
+pub use background::{Background, Landed, Lands};
+pub use files::Files;
 pub use folds::FoldOrder;
 pub use frame_timing::{FrameTiming, GpuFrameTime, RenderScale};
 pub use glam;
@@ -392,6 +396,7 @@ impl Engine {
             .insert_resource(listed)
             .init_resource::<engine_registry::JobQueue>()
             .init_resource::<Records>()
+            .init_resource::<Files>()
             .init_resource::<RecordExchange>()
             .insert_resource(DeviceLimits::without_device(cores))
             .init_resource::<WorkClock>()
@@ -764,6 +769,7 @@ impl Engine {
             modify(self.app.world_mut(), Input::drop_tick_edges);
         }
         records::exchange(self.app.world_mut());
+        files::read_files(self.app.world_mut());
         jobs::exchange_orders(self.app.world_mut());
         modify(self.app.world_mut(), Input::begin_frame);
         presentation::present(self.app.world_mut(), presented);
@@ -861,6 +867,7 @@ impl Engine {
         let spare_ms = std::mem::take(&mut self.spare_ms);
         shared::start_frame(self.app.world_mut(), spare_ms);
         records::exchange(self.app.world_mut());
+        files::read_files(self.app.world_mut());
         jobs::exchange_orders(self.app.world_mut());
         mesh_lods::settle(self.app.world_mut());
         self.app.world_mut().run_schedule(WorldSync);

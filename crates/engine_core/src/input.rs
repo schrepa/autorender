@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::{
-    Error, ErrorCode, Interest, InvalidSetting, List, Operation, Requests, Rule, Section, Setting,
+    Error, ErrorCode, Hold, Interest, InvalidSetting, List, Operation, Requests, Rule, Section, Setting,
     Ticket, settings,
 };
 
@@ -639,10 +639,10 @@ impl Contexts {
         by: &'static str,
         context: &'static str,
         blocks: bool,
-    ) -> Interest<ContextAsk> {
+    ) -> Hold {
         let interest = self.requests.ask(ContextAsk { by, context, blocks });
         stamp(&mut self.requests);
-        interest
+        interest.into()
     }
 
     pub fn asked(&self) -> Vec<ContextAsk> {

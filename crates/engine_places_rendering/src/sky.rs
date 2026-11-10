@@ -3,7 +3,6 @@ use engine_place::{Slot, StoreId};
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct SkyLight {
-    pub on: bool,
     pub sun_intensity: f32,
     pub sun_size: f32,
     pub adaptation: f32,

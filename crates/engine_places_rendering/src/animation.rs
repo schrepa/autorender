@@ -691,3 +691,31 @@ impl Attachment {
         }
     }
 }
+
+#[derive(Component, Clone, Serialize, Deserialize, schemars::JsonSchema)]
+#[schemars(rename = "SceneModel")]
+#[serde(deny_unknown_fields)]
+pub struct Model {
+    pub file: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub play: Option<Start>,
+    #[serde(skip)]
+    pub bytes: Option<Arc<[u8]>>,
+}
+
+impl Model {
+    #[must_use]
+    pub fn file(file: impl Into<String>) -> Self {
+        Self {
+            file: file.into(),
+            play: None,
+            bytes: None,
+        }
+    }
+
+    #[must_use]
+    pub fn playing(mut self, start: Start) -> Self {
+        self.play = Some(start);
+        self
+    }
+}

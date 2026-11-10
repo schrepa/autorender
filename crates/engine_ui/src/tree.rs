@@ -3,8 +3,7 @@ use std::ops::Range;
 use bevy_ecs::prelude::*;
 use engine_core::math::{clamp, max, min};
 use engine_core::{
-    ContextAsk, CursorAsk, FrameFacts, GlobalTransforms, Interest, SceneContext, TextureHandle,
-    VerbId,
+    FrameFacts, GlobalTransforms, Hold, SceneContext, TextureHandle, VerbId,
 };
 use engine_places_rendering::text::{FontId, Text, TextRun};
 use engine_places_rendering::ui::{
@@ -24,7 +23,6 @@ use crate::{UiRect, UiSettings, UiStats};
 pub(crate) type Roots<'w, 's> = Query<'w, 's, (Entity, Ref<'static, UiRoot>)>;
 
 pub(crate) struct Facts<'a> {
-    enabled: bool,
     metrics: [f32; 4],
     max_nodes: usize,
     stamps: [u32; 2],
@@ -46,7 +44,6 @@ impl<'a> Facts<'a> {
     ) -> Self {
         let display = frame.display_size.as_vec2();
         Self {
-            enabled: settings.enabled,
             metrics: [display.x, display.y, frame.pixel_ratio, settings.scale],
             max_nodes: settings.max_nodes as usize,
             stamps: [
@@ -328,8 +325,8 @@ pub(crate) struct UiState {
     pub(crate) pending: Vec<String>,
     pub(crate) menu: bool,
     pub(crate) wanting: bool,
-    pub(crate) cursor: Option<Interest<CursorAsk>>,
-    pub(crate) context: Option<Interest<ContextAsk>>,
+    pub(crate) cursor: Option<Hold>,
+    pub(crate) context: Option<Hold>,
     pub(crate) verbs: Option<[VerbId; 6]>,
     pub(crate) textures: Vec<TextureHandle>,
     pub(crate) rects: Vec<UiRect>,
@@ -445,9 +442,6 @@ impl UiState {
     }
 
     fn same_roots(&self, roots: &Roots<'_, '_>, facts: &Facts<'_>) -> bool {
-        if !facts.enabled {
-            return self.seen.is_empty();
-        }
         let shown = || roots.iter().filter(|(entity, _)| facts.shows(*entity));
         shown().count() == self.seen.len()
             && shown().zip(&self.seen).all(|((entity, root), seen)| {
@@ -504,34 +498,32 @@ impl UiState {
         self.stamps = facts.stamps;
         self.top = facts.top.map(str::to_owned);
         self.stale = true;
-        if facts.enabled {
-            self.seen.extend(
-                roots
-                    .iter()
-                    .filter(|(entity, _)| facts.shows(*entity))
-                    .map(|(entity, root)| (entity, root.last_changed().get())),
-            );
-            let mut shown: Vec<_> = roots
+        self.seen.extend(
+            roots
                 .iter()
-                .filter(|(entity, root)| {
-                    facts.shows(*entity)
-                        && (root.screen.is_none() || root.screen.as_deref() == facts.top)
-                })
-                .collect();
-            shown.sort_by_key(|(entity, root)| (root.order, *entity));
-            self.menu = shown.iter().any(|(_, root)| root.menu);
-            for (entity, root) in shown {
-                let font = root
-                    .bytes
-                    .as_ref()
-                    .and_then(|bytes| facts.text.0.register_font(bytes).ok());
-                let first = self.nodes.len();
-                self.flatten(&root.root, None, entity, font, facts);
-                for flat in &mut self.nodes[first..] {
-                    flat.step = self.shown_roots;
-                }
-                self.shown_roots += 1;
+                .filter(|(entity, _)| facts.shows(*entity))
+                .map(|(entity, root)| (entity, root.last_changed().get())),
+        );
+        let mut shown: Vec<_> = roots
+            .iter()
+            .filter(|(entity, root)| {
+                facts.shows(*entity)
+                    && (root.screen.is_none() || root.screen.as_deref() == facts.top)
+            })
+            .collect();
+        shown.sort_by_key(|(entity, root)| (root.order, *entity));
+        self.menu = shown.iter().any(|(_, root)| root.menu);
+        for (entity, root) in shown {
+            let font = root
+                .bytes
+                .as_ref()
+                .and_then(|bytes| facts.text.0.register_font(bytes).ok());
+            let first = self.nodes.len();
+            self.flatten(&root.root, None, entity, font, facts);
+            for flat in &mut self.nodes[first..] {
+                flat.step = self.shown_roots;
             }
+            self.shown_roots += 1;
         }
         [self.hovered, self.pressed, self.focused] =
             held.map(|mark| mark.and_then(|mark| self.find(&mark)));

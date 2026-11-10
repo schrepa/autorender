@@ -65,6 +65,7 @@ impl Brick for SkyBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
+            .when(|sky: Res<Sky>| sky.enabled)
             .settings::<Clouds>()
             .settings::<Sky>()
             .settings::<Haze>()
@@ -108,7 +109,6 @@ impl Brick for SkyBrick {
 
 fn publish_sky_light(sky: Res<Sky>, plan: Res<sky::SkyPlan>, mut light: ResMut<SkyLight>) {
     light.set_if_neq(SkyLight {
-        on: sky.enabled,
         sun_intensity: sky.sun_intensity,
         sun_size: sky.sun_size,
         adaptation: sky.adaptation,

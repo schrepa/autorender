@@ -2,7 +2,7 @@ use bevy_ecs::prelude::Resource;
 use serde::Serialize;
 
 use crate::input::{stacked, stamp};
-use crate::{Interest, List, Requests, Ticket};
+use crate::{Hold, List, Requests, Ticket};
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
@@ -43,10 +43,10 @@ impl List for CursorRequests {
 }
 
 impl CursorRequests {
-    pub fn ask(&mut self, by: &'static str, mode: CursorMode) -> Interest<CursorAsk> {
+    pub fn ask(&mut self, by: &'static str, mode: CursorMode) -> Hold {
         let interest = self.requests.ask((by, mode));
         stamp(&mut self.requests);
-        interest
+        interest.into()
     }
 
     pub fn wanted(&self) -> CursorMode {

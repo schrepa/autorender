@@ -9,8 +9,12 @@ pub(super) struct Interests {
 
 struct Flight {
     input: Vec<u8>,
-    job: Interest<RecordKey>,
-    key: TileKey,
+    work: Background<TilePortals>,
+}
+
+fn undecoded(error: Error) -> Error {
+    Error::new(ErrorCode::InvalidRecord, "$.navigation")
+        .got(format!("its output does not decode: {error}"))
 }
 
 pub(super) enum Resolved {
@@ -164,14 +168,24 @@ impl WalkRecords {
         self.flights
             .retain(|flight| !portals.contains(&flight.input));
         let mut waiting = Vec::with_capacity(self.flights.len());
-        for flight in std::mem::take(&mut self.flights) {
-            let Some(output) = records.get(&flight.job) else {
-                waiting.push(flight);
-                continue;
+        for mut flight in std::mem::take(&mut self.flights) {
+            let failed = match flight.work.poll(records) {
+                Landed::Waiting => {
+                    waiting.push(flight);
+                    continue;
+                }
+                Landed::Ready(_) => None,
+                Landed::Failed(error) => {
+                    Some(format!("{PORTALS_NAME}: {}", worker_message(error)))
+                }
             };
-            let Flight { input, job, key } = flight;
-            drop(job);
-            let made = made(PORTALS_NAME, output, |bytes| walk_portals(key, bytes));
+            let Flight { input, work } = flight;
+            let made = match failed {
+                Some(message) => Err(message),
+                None => work
+                    .into_ready()
+                    .ok_or_else(|| format!("{PORTALS_NAME}: no output")),
+            };
             end(&mut self.portals, &input, made, (tick, failures));
         }
         self.flights = waiting;
@@ -218,7 +232,12 @@ impl WalkRecords {
             portals_input(&running.area, &ground, &gait),
             priority,
         );
-        self.flights.push(Flight { input, job, key });
+        self.flights.push(Flight {
+            input,
+            work: Background::asked(job, move |bytes| {
+                walk_portals(key, bytes).map_err(undecoded)
+            }),
+        });
         Some(found)
     }
 

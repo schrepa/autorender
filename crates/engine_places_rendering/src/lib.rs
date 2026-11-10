@@ -62,6 +62,7 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::component::<particles::ParticleEmitter>("particle_emitter"),
     PlaceDecl::component::<animation::Animator>("animator"),
     PlaceDecl::component::<animation::Attachment>("attachment"),
+    PlaceDecl::component::<animation::Model>("model"),
     PlaceDecl::ask::<animation::Animate>(),
     PlaceDecl::slot::<text::Text>(),
     PlaceDecl::slot::<ui::UiValues>(),
