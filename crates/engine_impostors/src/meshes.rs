@@ -1,6 +1,7 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Attribute, Cut, DrawnTable, Spawner};
+use engine_core::{Cut, DrawnTable, Spawner};
 use engine_places::meshes::{LastLevel, LastLevels, LevelBatches};
+use engine_places::skin::JOINTS;
 use engine_places_rendering::impostors::{
     IMPOSTOR_VERTICES, ImpostorAsk, ImpostorAsks, ImpostorRecords,
 };
@@ -21,7 +22,7 @@ fn asks_of(batches: &LevelBatches, table: &DrawnTable) -> ImpostorAsks {
             .map(|batch| {
                 let rigid = table
                     .kind(batch.kind)
-                    .is_some_and(|declared| !declared.needs.has(Attribute::Joints));
+                    .is_some_and(|declared| !declared.streams.contains(&JOINTS));
                 rigid.then(|| ImpostorAsk {
                     mesh: batch.mesh,
                     material: batch.material,

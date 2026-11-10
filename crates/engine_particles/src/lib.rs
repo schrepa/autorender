@@ -59,6 +59,7 @@ impl Brick for ParticlesBrick {
             .draw_kind(KindDecl {
                 kind: PARTICLES,
                 needs: Attributes::NONE,
+                streams: &[],
                 skips: &[
                     KindSkip {
                         pass: "shadow",

@@ -87,6 +87,7 @@ impl Brick for SpritesBrick {
             .draw_kind(KindDecl {
                 kind: SPRITES,
                 needs: Attributes::NONE,
+                streams: &[],
                 skips: &[
                     KindSkip {
                         pass: "shadow",

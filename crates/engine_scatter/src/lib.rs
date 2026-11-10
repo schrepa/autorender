@@ -152,6 +152,7 @@ impl Brick for ScatterBrick {
             .draw_kind(KindDecl {
                 kind: gpu::PLACED,
                 needs: Attributes::NONE,
+                streams: &[],
                 skips: &[],
             })
             .draws::<gpu::ScatterGpu>(gpu::PLACED, gpu::ScatterGpu::draw);

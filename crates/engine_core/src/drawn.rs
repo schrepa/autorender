@@ -493,7 +493,9 @@ impl DrawnTable {
                     .got([own.vertical_fov, own.depth_scale]),
             ));
         }
-        if drawn.geometry.is_none() && decl.needs != engine_assets::Attributes::NONE {
+        if drawn.geometry.is_none()
+            && (decl.needs != engine_assets::Attributes::NONE || !decl.streams.is_empty())
+        {
             return Some(DrawnState::Refused(
                 Error::new(ErrorCode::InvalidRenderable, "$.drawn.geometry")
                     .expected(Expected::Present)
@@ -546,10 +548,19 @@ impl DrawnTable {
         let Some(mesh) = cx.library.mesh(geometry) else {
             return Some(DrawnState::Waiting);
         };
-        mesh.attributes()
-            .check(decl.needs, "$.drawn.geometry")
-            .err()
-            .map(DrawnState::Refused)
+        if let Err(error) = mesh.attributes().check(decl.needs, "$.drawn.geometry") {
+            return Some(DrawnState::Refused(error));
+        }
+        decl.streams
+            .iter()
+            .find(|&&shape| mesh.stream(shape).is_none())
+            .map(|shape| {
+                DrawnState::Refused(
+                    Error::new(ErrorCode::InvalidRenderable, "$.drawn.geometry")
+                        .got(shape.name)
+                        .variants(mesh.streams().iter().map(|stream| stream.name())),
+                )
+            })
     }
 
     fn take(&mut self, entity: Entity) -> u32 {

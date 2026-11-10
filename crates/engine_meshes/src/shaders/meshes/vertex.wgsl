@@ -1,12 +1,13 @@
 import package::engine::geometry::declarations::{AffinePose as PoseRows, drawn_slot_moved,
     drawn_slot_slot};
-import package::engine::drawn::{GeometryExtra, GeometrySkin, GeometryVertex, INPUT_DRAW,
-    INPUT_SLOT, drawn_clip, drawn_flags_own_projection, drawn_records};
+import package::engine::drawn::{GeometryExtra, GeometryVertex, INPUT_DRAW, INPUT_SLOT, drawn_clip,
+    drawn_flags_own_projection, drawn_records};
 import package::engine::geometry::vertex::{pose_matrix, transform_vertex};
 import package::engine::shading::PositionInput;
 import package::engine::slots::slot_position;
 import package::engine::view::{camera, detail_across, view_clip};
 import package::face::skin::skin_pose;
+import package::generated::meshes::{JOINTS_AT, WEIGHTS_AT};
 import package::meshes::slots::{instance_colors, slot_pose, slot_previous_pose};
 import package::place::instances::{AffinePose, SlotColor};
 
@@ -92,9 +93,10 @@ fn mesh_motion(input: GeometryVertex, drawn: u32) -> MotionOutput {
         instance_colors[slot]), slot);
 }
 
-fn skin_motion(input: GeometryVertex, skin: GeometrySkin, drawn: u32) -> MotionOutput {
+fn skin_motion(input: GeometryVertex, joints: vec4<u32>, weights: vec4<f32>, drawn: u32)
+        -> MotionOutput {
     let slot = drawn_slot_slot(drawn);
-    let pose = skin_pose(skin.joints, skin.weights, slot);
+    let pose = skin_pose(joints, weights, slot);
     if !pose.posed {
         var hidden: MotionOutput;
         return hidden;
@@ -198,14 +200,17 @@ fn vs_view_extended(input: GeometryVertex, extra: GeometryExtra,
 }
 
 @vertex
-fn vs_skin(input: GeometryVertex, extra: GeometryExtra, skin: GeometrySkin,
+fn vs_skin(input: GeometryVertex, extra: GeometryExtra,
+        @location(JOINTS_AT) joints: vec4<u32>, @location(WEIGHTS_AT) weights: vec4<f32>,
         @location(INPUT_SLOT) slot: u32, @location(INPUT_DRAW) draw: vec4<u32>)
         -> ExtendedMeshOutput {
-    return extended_mesh(skin_motion(input, skin, slot), extra, drawn_object(slot, draw));
+    return extended_mesh(skin_motion(input, joints, weights, slot), extra,
+        drawn_object(slot, draw));
 }
 
 @vertex
-fn vs_skin_view(input: GeometryVertex, extra: GeometryExtra, skin: GeometrySkin,
+fn vs_skin_view(input: GeometryVertex, extra: GeometryExtra,
+        @location(JOINTS_AT) joints: vec4<u32>, @location(WEIGHTS_AT) weights: vec4<f32>,
         @location(INPUT_SLOT) slot: u32) -> ExtendedMotionOutput {
-    return extended_motion(skin_motion(input, skin, slot), extra);
+    return extended_motion(skin_motion(input, joints, weights, slot), extra);
 }

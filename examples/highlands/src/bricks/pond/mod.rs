@@ -40,6 +40,7 @@ impl Brick for PondBrick {
             .draw_kind(KindDecl {
                 kind: part::POND_KIND,
                 needs: Attributes::NONE,
+                streams: &[],
                 skips: &[
                     KindSkip {
                         pass: "shadow",

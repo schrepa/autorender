@@ -2,8 +2,8 @@ use bevy_ecs::component::Component;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 use engine_assets::{
-    Asset, AssetLibrary, GeometryHandle, GeometryStream, MaterialHandle, Mesh, MeshLods,
-    TextureHandle,
+    Asset, AssetLibrary, AttributeFormat, GeometryHandle, GeometryStream, MaterialHandle, Mesh,
+    MeshLods, TextureHandle,
 };
 
 use crate::{Census, Feed, Interest, Request, Requests};
@@ -37,40 +37,63 @@ impl PartialEq for AssetUses {
 }
 
 #[doc(hidden)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MeshStreams {
-    Plain = 0,
-    Extended = 1,
-    Skinned = 2,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ClassStream {
+    Vertex,
+    Extra,
+    Named(String, AttributeFormat),
 }
 
-impl MeshStreams {
-    pub fn of(mesh: &Mesh) -> Self {
-        if mesh.skin().is_some() {
-            Self::Skinned
-        } else if mesh.colors().is_some() || mesh.uv1().is_some() {
-            Self::Extended
-        } else {
-            Self::Plain
-        }
-    }
-
-    pub const fn streams(self) -> &'static [GeometryStream] {
+impl ClassStream {
+    pub fn stride(&self) -> u64 {
         match self {
-            Self::Plain => &[GeometryStream::Vertex],
-            Self::Extended => &[GeometryStream::Vertex, GeometryStream::Extra],
-            Self::Skinned => &[
-                GeometryStream::Vertex,
-                GeometryStream::Extra,
-                GeometryStream::Skin,
-            ],
+            Self::Vertex => GeometryStream::Vertex.stride(),
+            Self::Extra => GeometryStream::Extra.stride(),
+            Self::Named(_, format) => format.bytes(),
         }
     }
 
-    fn widest(self) -> u64 {
-        self.streams()
+    pub fn serves(&self, stream: GeometryStream) -> bool {
+        match (self, stream) {
+            (Self::Vertex, GeometryStream::Vertex) | (Self::Extra, GeometryStream::Extra) => true,
+            (Self::Named(name, format), GeometryStream::Named { shape, .. }) => {
+                name == shape.name && *format == shape.format
+            }
+            (Self::Vertex, GeometryStream::Extra | GeometryStream::Named { .. })
+            | (Self::Extra, GeometryStream::Vertex | GeometryStream::Named { .. })
+            | (Self::Named(..), GeometryStream::Vertex | GeometryStream::Extra) => false,
+        }
+    }
+}
+
+#[doc(hidden)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GeometryClass {
+    pub streams: Vec<ClassStream>,
+}
+
+impl GeometryClass {
+    pub fn of(mesh: &Mesh) -> Self {
+        let mut streams = vec![ClassStream::Vertex];
+        if mesh.colors().is_some() || mesh.uv1().is_some() || !mesh.streams().is_empty() {
+            streams.push(ClassStream::Extra);
+        }
+        streams.extend(
+            mesh.streams()
+                .iter()
+                .map(|stream| ClassStream::Named(stream.name().to_owned(), stream.format())),
+        );
+        Self { streams }
+    }
+
+    pub fn extended(&self) -> bool {
+        self.streams.contains(&ClassStream::Extra)
+    }
+
+    fn widest(&self) -> u64 {
+        self.streams
             .iter()
-            .map(|stream| stream.stride())
+            .map(ClassStream::stride)
             .max()
             .unwrap_or(1)
     }
@@ -81,7 +104,7 @@ impl MeshStreams {
 pub struct MeshPlacement {
     pub first_index: u32,
     pub index_count: u32,
-    pub streams: MeshStreams,
+    pub class: u32,
     pub base_vertex: u32,
     pub vertex_count: u32,
 }
@@ -159,7 +182,7 @@ pub struct ArenaShape {
 #[derive(Clone, Debug)]
 struct Arena {
     shape: ArenaShape,
-    classes: [Space; 3],
+    classes: Vec<(GeometryClass, Space)>,
     indices: Space,
 }
 
@@ -167,14 +190,25 @@ impl Arena {
     fn new(shape: ArenaShape) -> Self {
         Self {
             shape,
-            classes: [Space::default(), Space::default(), Space::default()],
+            classes: Vec::new(),
             indices: Space::default(),
         }
     }
 
+    fn class_of(&mut self, class: GeometryClass) -> u32 {
+        let at = match self.classes.iter().position(|(held, _)| *held == class) {
+            Some(at) => at,
+            None => {
+                self.classes.push((class, Space::default()));
+                self.classes.len() - 1
+            }
+        };
+        at as u32
+    }
+
     fn insert(
         &mut self,
-        streams: MeshStreams,
+        class: u32,
         vertex_count: u32,
         index_count: u32,
     ) -> Option<MeshPlacement> {
@@ -187,8 +221,8 @@ impl Arena {
                 self.indices.allocate(index_count)?
             }
         };
-        let widest = streams.widest();
-        let space = &mut self.classes[streams as usize];
+        let (held, space) = &mut self.classes[class as usize];
+        let widest = held.widest();
         let base_vertex = match space.allocate(vertex_count) {
             Some(start) => Some(start),
             None => grown_capacity(space, vertex_count, widest, limit).and_then(|grown| {
@@ -203,7 +237,7 @@ impl Arena {
         Some(MeshPlacement {
             first_index,
             index_count,
-            streams,
+            class,
             base_vertex,
             vertex_count,
         })
@@ -212,8 +246,9 @@ impl Arena {
     fn remove(&mut self, placement: MeshPlacement) {
         self.indices
             .release(placement.first_index, placement.index_count);
-        self.classes[placement.streams as usize]
-            .release(placement.base_vertex, placement.vertex_count);
+        if let Some((_, space)) = self.classes.get_mut(placement.class as usize) {
+            space.release(placement.base_vertex, placement.vertex_count);
+        }
     }
 }
 
@@ -221,7 +256,8 @@ impl Arena {
 pub struct ResidentMesh {
     placement: MeshResidence,
     revision: u64,
-    streams: MeshStreams,
+    class: u32,
+    extended: bool,
     index_count: u32,
     byte_len: u64,
     lods: Vec<(u32, u32, f32)>,
@@ -253,11 +289,12 @@ impl ResidentMesh {
     }
 
     pub fn extended(&self) -> bool {
-        self.streams != MeshStreams::Plain
+        self.extended
     }
 
-    pub fn streams(&self) -> MeshStreams {
-        self.streams
+    #[doc(hidden)]
+    pub fn class(&self) -> u32 {
+        self.class
     }
 
     pub fn byte_len(&self) -> u64 {
@@ -293,11 +330,13 @@ fn resident_mesh(
     revision: u64,
     arena: &mut Arena,
 ) -> ResidentMesh {
-    let streams = MeshStreams::of(mesh);
+    let class = GeometryClass::of(mesh);
+    let extended = class.extended();
+    let class = arena.class_of(class);
     let total = mesh.indices().len() + lods.map_or(0, |lods| lods.indices.len());
     let placement = u32::try_from(total)
         .ok()
-        .and_then(|count| arena.insert(streams, mesh.vertices().len() as u32, count))
+        .and_then(|count| arena.insert(class, mesh.vertices().len() as u32, count))
         .map_or(MeshResidence::Own, MeshResidence::Arena);
     let levels: Vec<(u32, u32, f32)> = lods.map_or_else(Vec::new, |lods| {
         lods.levels
@@ -308,7 +347,8 @@ fn resident_mesh(
     ResidentMesh {
         placement,
         revision,
-        streams,
+        class,
+        extended,
         index_count: mesh.indices().len() as u32,
         byte_len: mesh.byte_len() as u64,
         plan: plan_levels(&levels),
@@ -453,13 +493,26 @@ impl AssetResidency {
     }
 
     #[doc(hidden)]
-    pub fn capacities(&self) -> Option<([u32; 3], u32)> {
+    pub fn capacities(&self) -> Option<(Vec<(&GeometryClass, u32)>, u32)> {
         self.arena.as_ref().map(|arena| {
             (
-                arena.classes.each_ref().map(|class| class.capacity),
+                arena
+                    .classes
+                    .iter()
+                    .map(|(class, space)| (class, space.capacity))
+                    .collect(),
                 arena.indices.capacity,
             )
         })
+    }
+
+    #[doc(hidden)]
+    pub fn class(&self, class: u32) -> Option<&GeometryClass> {
+        self.arena
+            .as_ref()?
+            .classes
+            .get(class as usize)
+            .map(|(held, _)| held)
     }
 
     fn release(&mut self, asset: Asset, request: &Request<Resident>) {

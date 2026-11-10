@@ -387,6 +387,7 @@ impl Brick for TextBrick {
             .draw_kind(KindDecl {
                 kind: TEXT,
                 needs: Attributes::NONE,
+                streams: &[],
                 skips: &[
                     KindSkip {
                         pass: "shadow",

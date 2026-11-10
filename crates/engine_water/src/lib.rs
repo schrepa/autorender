@@ -135,6 +135,7 @@ impl Brick for WaterBrick {
             .draw_kind(KindDecl {
                 kind: water::WATER_KIND,
                 needs: Attributes::NONE,
+                streams: &[],
                 skips: &[
                     KindSkip {
                         pass: "shadow",

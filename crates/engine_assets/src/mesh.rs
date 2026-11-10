@@ -2,9 +2,8 @@ use std::sync::{Arc, OnceLock};
 
 use engine_codec::{Error, ErrorCode, Expected};
 use glam::Vec3;
-use serde::{Deserialize, Serialize};
 
-use crate::{Attribute, Attributes, MeshLods, MeshVertex};
+use crate::{Attribute, AttributeFormat, Attributes, MeshLods, MeshVertex, StreamShape};
 
 fn invalid(path: impl Into<String>) -> Error {
     Error::new(ErrorCode::InvalidMesh, path)
@@ -26,11 +25,43 @@ impl Aabb {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct VertexSkin {
-    pub joints: [u32; 4],
-    pub weights: [f32; 4],
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct NamedStream {
+    name: String,
+    format: AttributeFormat,
+    bytes: Box<[u8]>,
+}
+
+impl NamedStream {
+    pub fn new(name: impl Into<String>, format: AttributeFormat, bytes: Vec<u8>) -> Self {
+        Self {
+            name: name.into(),
+            format,
+            bytes: bytes.into_boxed_slice(),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn format(&self) -> AttributeFormat {
+        self.format
+    }
+
+    pub fn bytes(&self) -> &[u8] {
+        &self.bytes
+    }
+
+    pub fn is(&self, shape: StreamShape) -> bool {
+        self.name == shape.name && self.format == shape.format
+    }
+
+    pub fn words(&self) -> impl Iterator<Item = [u8; 4]> + '_ {
+        self.bytes
+            .chunks_exact(4)
+            .map(|word| [word[0], word[1], word[2], word[3]])
+    }
 }
 
 #[derive(Debug)]
@@ -40,7 +71,7 @@ pub struct Mesh {
     bounds: Aabb,
     colors: Option<Box<[[f32; 4]]>>,
     uv1: Option<Box<[[f32; 2]]>>,
-    skin: Option<Box<[VertexSkin]>>,
+    streams: Vec<NamedStream>,
     lods: Option<Arc<MeshLods>>,
     identity: OnceLock<u128>,
 }
@@ -93,7 +124,7 @@ impl Mesh {
             bounds: Aabb { min, max },
             colors: None,
             uv1: None,
-            skin: None,
+            streams: Vec::new(),
             lods: None,
             identity: OnceLock::new(),
         })
@@ -125,14 +156,12 @@ impl Mesh {
             for value in self.uv1.iter().flatten().flatten() {
                 bytes.extend_from_slice(&value.to_bits().to_le_bytes());
             }
-            bytes.push(u8::from(self.skin.is_some()));
-            for skin in self.skin.iter().flatten() {
-                for joint in skin.joints {
-                    bytes.extend_from_slice(&joint.to_le_bytes());
-                }
-                for weight in skin.weights {
-                    bytes.extend_from_slice(&weight.to_bits().to_le_bytes());
-                }
+            bytes.push(u8::from(!self.streams.is_empty()));
+            for stream in &self.streams {
+                bytes.extend_from_slice(&(stream.name.len() as u32).to_le_bytes());
+                bytes.extend_from_slice(stream.name.as_bytes());
+                bytes.extend_from_slice(&stream.format.code().to_le_bytes());
+                bytes.extend_from_slice(&stream.bytes);
             }
             hash(&bytes)
         })
@@ -179,20 +208,35 @@ impl Mesh {
         Ok(self)
     }
 
-    pub fn with_skin(mut self, skin: Vec<VertexSkin>) -> Result<Self, Error> {
-        self.check_count("skin", skin.len())?;
-        if let Some(vertex) = skin.iter().position(|skin| {
-            let fine = skin
-                .weights
-                .iter()
-                .all(|weight| weight.is_finite() && *weight >= 0.0);
-            !fine || skin.weights.iter().sum::<f32>() <= 0.0
-        }) {
-            return Err(invalid(format!("$.skin[{vertex}].weights"))
-                .expected(Expected::Nonzero)
-                .got(skin[vertex].weights));
+    pub fn with_stream(mut self, stream: NamedStream) -> Result<Self, Error> {
+        let path = format!("$.streams.{}", stream.name);
+        if stream.name.is_empty() {
+            return Err(invalid("$.streams").expected(Expected::NonEmpty).got(""));
         }
-        self.skin = Some(skin.into_boxed_slice());
+        let width = stream.format.bytes() as usize;
+        let vertices = self.vertices.len();
+        if stream.bytes.len() != vertices * width {
+            return Err(invalid(path)
+                .expected(Expected::Array)
+                .range((vertices * width) as f64, (vertices * width) as f64)
+                .got(stream.bytes.len()));
+        }
+        if stream.format.float()
+            && let Some((at, value)) = stream
+                .words()
+                .map(f32::from_le_bytes)
+                .enumerate()
+                .find(|(_, value)| !value.is_finite())
+        {
+            return Err(invalid(format!("{path}[{}]", at * 4 / width))
+                .expected(Expected::Finite)
+                .got(value));
+        }
+        self.streams.retain(|held| held.name != stream.name);
+        let at = self
+            .streams
+            .partition_point(|held| held.name < stream.name);
+        self.streams.insert(at, stream);
         self.identity = OnceLock::new();
         Ok(self)
     }
@@ -221,8 +265,12 @@ impl Mesh {
         self.uv1.as_deref()
     }
 
-    pub fn skin(&self) -> Option<&[VertexSkin]> {
-        self.skin.as_deref()
+    pub fn streams(&self) -> &[NamedStream] {
+        &self.streams
+    }
+
+    pub fn stream(&self, shape: StreamShape) -> Option<&NamedStream> {
+        self.streams.iter().find(|stream| stream.is(shape))
     }
 
     pub fn attributes(&self) -> Attributes {
@@ -232,9 +280,6 @@ impl Mesh {
         }
         if self.colors.is_some() {
             held = held.with(Attribute::Color);
-        }
-        if self.skin.is_some() {
-            held = held.with(Attribute::Joints).with(Attribute::Weights);
         }
         held
     }
@@ -252,7 +297,11 @@ impl Mesh {
             + std::mem::size_of_val(self.indices())
             + self.colors().map_or(0, std::mem::size_of_val)
             + self.uv1().map_or(0, std::mem::size_of_val)
-            + self.skin().map_or(0, std::mem::size_of_val)
+            + self
+                .streams
+                .iter()
+                .map(|stream| stream.bytes.len())
+                .sum::<usize>()
             + self.lods().map_or(0, |lods| lods.byte_len())
     }
 

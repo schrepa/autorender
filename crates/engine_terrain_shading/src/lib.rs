@@ -106,6 +106,7 @@ impl Brick for TerrainShadingBrick {
             .draw_kind(KindDecl {
                 kind: terrain::TERRAIN,
                 needs: Attributes::NONE,
+                streams: &[],
                 skips: &[
                     KindSkip {
                         pass: ColorPass::NAME,

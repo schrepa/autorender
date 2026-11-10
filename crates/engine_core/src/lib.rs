@@ -73,10 +73,11 @@ pub use drawn::{
 pub use drawn_areas::{DrawnArea, DrawnAreas};
 pub use engine_assets::{
     Aabb, AlphaMode, Asset, AssetBudget, AssetLibrary, Attribute, AttributeFormat, Attributes,
-    BASE_COLOR_MAP, ColorSpace, Compare, Cull, DepthBias, EMISSIVE_MAP, Filter, GeometryStream,
-    InstanceInput, LightingModel, LodInput, LodLevel, MAPPED, MAPPED_MAPS, MAPPED_SLOTS, Material,
-    MaterialBinding, Mesh, MeshLods, MeshVertex, NORMAL_MAP, RenderState, Sampler, SurfaceSlot,
-    Texture, TextureFormat, TextureRef, UvTransform, VertexSkin, Wrap, attributes_wgsl, lod_input,
+    BASE_COLOR_MAP, ColorSpace, Compare, Cull, DepthBias, EMISSIVE_MAP, FIRST_NAMED_LOCATION,
+    Filter, GeometryStream, InstanceInput, LightingModel, LodInput, LodLevel, MAPPED, MAPPED_MAPS,
+    MAPPED_SLOTS, Material, MaterialBinding, Mesh, MeshLods, MeshVertex, NORMAL_MAP, NamedStream,
+    RenderState, Sampler, StreamShape, SurfaceSlot, Texture, TextureFormat, TextureRef,
+    UvTransform, Wrap, attributes_wgsl, lod_input,
 };
 pub use engine_place::{
     Applied, ApplyAt, Ask, Asked, AttachPoint, Awaits, BlendedPass, Board, BudgetUse, Census,

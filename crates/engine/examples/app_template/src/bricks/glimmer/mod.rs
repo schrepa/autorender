@@ -129,6 +129,7 @@ impl Brick for GlimmerBrick {
             .draw_kind(KindDecl {
                 kind: GLIMMER,
                 needs: Attributes::NONE,
+                streams: &[],
                 skips: &[],
             })
             .pass::<GlimmerPass>()

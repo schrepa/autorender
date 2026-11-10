@@ -77,6 +77,7 @@ impl Brick for PlatesBrick {
             .draw_kind(KindDecl {
                 kind: PLATE,
                 needs: Attributes::NONE,
+                streams: &[],
                 skips: SKIPS,
             })
             .pass::<PlatesPass>()

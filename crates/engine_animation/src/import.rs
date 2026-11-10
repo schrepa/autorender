@@ -4,9 +4,10 @@ use std::sync::Arc;
 use engine_core::math::max;
 use engine_core::{
     AlphaMode, AssetLibrary, BASE_COLOR_MAP, Cull, EMISSIVE_MAP, Error, ErrorCode, Expected,
-    Filter, GeometryHandle, Material, MaterialHandle, Mesh, MeshVertex, Sampler, Texture,
-    TextureHandle, TextureRef, UvTransform, VertexSkin, Wrap, decode_image,
+    Filter, GeometryHandle, Material, MaterialHandle, Mesh, MeshVertex, NamedStream, Sampler,
+    Texture, TextureHandle, TextureRef, UvTransform, Wrap, decode_image,
 };
+use engine_places::skin::{JOINTS, WEIGHTS};
 use engine_places::surface::{METALNESS, ROUGHNESS};
 use engine_places_rendering::animation::{Bound, Clip, Joint, JointKeys, Keys, Rig, RigPart};
 use glam::{Mat3, Mat4, Quat, Vec3};
@@ -67,7 +68,38 @@ enum Binding {
 struct Soup {
     vertices: Vec<MeshVertex>,
     indices: Vec<u32>,
-    skin: Vec<VertexSkin>,
+    joints: Vec<[u32; 4]>,
+    weights: Vec<[f32; 4]>,
+}
+
+fn with_joints(mesh: Mesh, joints: &[[u32; 4]], weights: &[[f32; 4]]) -> Result<Mesh, Error> {
+    if let Some(vertex) = weights.iter().position(|held| {
+        let fine = held
+            .iter()
+            .all(|weight| weight.is_finite() && *weight >= 0.0);
+        !fine || held.iter().sum::<f32>() <= 0.0
+    }) {
+        return Err(
+            Error::new(ErrorCode::InvalidMesh, format!("$.skin[{vertex}].weights"))
+                .expected(Expected::Nonzero)
+                .got(weights[vertex]),
+        );
+    }
+    let joint_bytes = joints
+        .iter()
+        .flatten()
+        .flat_map(|joint| joint.to_le_bytes())
+        .collect();
+    let weight_bytes = weights
+        .iter()
+        .flat_map(|held| {
+            let total: f32 = held.iter().sum();
+            held.map(|weight| weight / total)
+        })
+        .flat_map(f32::to_le_bytes)
+        .collect();
+    mesh.with_stream(NamedStream::new(JOINTS.name, JOINTS.format, joint_bytes))?
+        .with_stream(NamedStream::new(WEIGHTS.name, WEIGHTS.format, weight_bytes))
 }
 
 struct Library<'a> {
@@ -148,7 +180,9 @@ pub fn import_glb(
                 .material(&primitive.material())
                 .map_err(|error| error.within(&path))?;
             let built = Mesh::new(soup.vertices, soup.indices).and_then(|built| match binding {
-                Binding::Skinned(_) | Binding::Rigid(_) => built.with_skin(soup.skin),
+                Binding::Skinned(_) | Binding::Rigid(_) => {
+                    with_joints(built, &soup.joints, &soup.weights)
+                }
                 Binding::Still => Ok(built),
             });
             let handle = built
@@ -310,29 +344,20 @@ fn palette_of(
     Ok((palette, starts))
 }
 
-fn vertex_skin(
+fn vertex_joints(
     binding: Binding,
     joints: &[[u16; 4]],
     weights: &[[f32; 4]],
     at: usize,
-) -> VertexSkin {
+) -> ([u32; 4], [f32; 4]) {
     match binding {
-        Binding::Still => VertexSkin {
-            joints: [0; 4],
-            weights: WHOLE,
-        },
-        Binding::Rigid(entry) => VertexSkin {
-            joints: [entry; 4],
-            weights: WHOLE,
-        },
+        Binding::Still => ([0; 4], WHOLE),
+        Binding::Rigid(entry) => ([entry; 4], WHOLE),
         Binding::Skinned(start) => {
             let held = joints.get(at).copied().unwrap_or_default();
             let weights = weights.get(at).copied().unwrap_or_default();
             if weights.iter().sum::<f32>() <= 0.0 {
-                return VertexSkin {
-                    joints: [start; 4],
-                    weights: WHOLE,
-                };
+                return ([start; 4], WHOLE);
             }
             let mut joined = [start; 4];
             for (slot, (&joint, &weight)) in joined.iter_mut().zip(held.iter().zip(&weights)) {
@@ -340,10 +365,7 @@ fn vertex_skin(
                     *slot = start + u32::from(joint);
                 }
             }
-            VertexSkin {
-                joints: joined,
-                weights,
-            }
+            (joined, weights)
         }
     }
 }
@@ -414,7 +436,9 @@ fn read_primitive(
             normal: normal.to_array(),
             uv: uvs.get(at).copied().unwrap_or_default(),
         });
-        soup.skin.push(vertex_skin(binding, &joints, &weights, at));
+        let (joined, weighed) = vertex_joints(binding, &joints, &weights, at);
+        soup.joints.push(joined);
+        soup.weights.push(weighed);
     };
     match normals {
         Some(normals) => {

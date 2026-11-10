@@ -4,6 +4,7 @@ use engine_core::{
     FrameTime, GeometryStream, GlobalTransforms, InstanceInput, PassRole, Views,
 };
 use engine_places::meshes::LastLevels;
+use engine_places::skin::{JOINTS, WEIGHTS};
 use engine_render::{
     AttachPoint, Bind, Buffer, ComputePipeline, DrawInput, Encode, Form, FormSide, GpuPart,
     Install, KindForm, Lifetime, Own, Pass, Pipeline, Prepare, Scene, Scope, Varyings,
@@ -13,7 +14,7 @@ use engine_render::{
 use crate::assets::MeshAssets;
 use crate::debug::RECORD_STREAM;
 use crate::drawn::WatchedSlot;
-use crate::layouts::PresentationFrame;
+use crate::layouts::{JOINTS_AT, PresentationFrame, WEIGHTS_AT};
 use crate::order::BatchLook;
 use crate::presentation::{FrameState, PresentationTotals};
 use crate::shaders::meshes::{presentation, vertex};
@@ -31,7 +32,14 @@ const fn instance_input(input: InstanceInput, offset: u64) -> wgpu::VertexAttrib
 
 const VERTEX: VertexLayout = VertexLayout::Geometry(GeometryStream::Vertex);
 const EXTRA: VertexLayout = VertexLayout::Geometry(GeometryStream::Extra);
-const SKIN_STREAM: VertexLayout = VertexLayout::Geometry(GeometryStream::Skin);
+const JOINTS_STREAM: VertexLayout = VertexLayout::Geometry(GeometryStream::Named {
+    shape: JOINTS,
+    location: JOINTS_AT,
+});
+const WEIGHTS_STREAM: VertexLayout = VertexLayout::Geometry(GeometryStream::Named {
+    shape: WEIGHTS,
+    location: WEIGHTS_AT,
+});
 const SLOT_ATTRIBUTES: [wgpu::VertexAttribute; 1] = [instance_input(InstanceInput::Slot, 0)];
 const SLOT_STREAM: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
     array_stride: 4,
@@ -52,7 +60,8 @@ const EXTENDED_STREAMS: &[VertexLayout] = &[
 const SKIN_STREAMS: &[VertexLayout] = &[
     VERTEX,
     EXTRA,
-    SKIN_STREAM,
+    JOINTS_STREAM,
+    WEIGHTS_STREAM,
     VertexLayout::Buffer(SLOT_STREAM),
     VertexLayout::Buffer(RECORD_STREAM),
 ];
@@ -61,7 +70,8 @@ const EXTENDED_VIEW_STREAMS: &[VertexLayout] = &[VERTEX, EXTRA, VertexLayout::Bu
 const SKIN_VIEW_STREAMS: &[VertexLayout] = &[
     VERTEX,
     EXTRA,
-    SKIN_STREAM,
+    JOINTS_STREAM,
+    WEIGHTS_STREAM,
     VertexLayout::Buffer(SLOT_STREAM),
 ];
 pub(crate) struct Compaction {
