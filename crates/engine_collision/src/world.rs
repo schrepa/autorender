@@ -19,7 +19,7 @@ use engine_places_simulation::physics::{
     QueryFilter, RayHit, SLIDE_STEPS, SensorEvent, SensorEventKind, SensorFilter, SensorPair,
     ShapeCastOptions, ShapeHit, Slid,
 };
-use engine_solids::{Bounds, Bvh, SolidField, SolidSource};
+use engine_solids::{Bounds, Bvh, FieldCover, SolidField, SolidSource};
 use glam::{Mat4, Quat, Vec3};
 
 use crate::{
@@ -46,6 +46,16 @@ fn read(
         .and_then(|global| global.matrix())
         .ok_or(Fault::InvalidTransform)?;
     AffineShape::new(collider.shape(), matrix)
+}
+
+fn same_layout(field: &SolidField, held: &SolidField) -> bool {
+    Arc::ptr_eq(&field.solids, &held.solids)
+        && field.fields.len() == held.fields.len()
+        && field
+            .fields
+            .iter()
+            .zip(&held.fields)
+            .all(|(tile, kept)| Arc::ptr_eq(tile, kept))
 }
 
 #[derive(Clone, Copy)]
@@ -145,6 +155,7 @@ impl CollisionWorld {
                 .iter()
                 .map(|field| field.bounds())
                 .chain(source.solids.bounds())
+                .chain(source.covers.iter().filter_map(FieldCover::bounds))
         });
         Solids {
             entries: Arc::clone(&self.entries),
@@ -176,11 +187,18 @@ impl CollisionWorld {
         {
             return false;
         }
+        let laid = sources.iter().len() != self.sources.len()
+            || sources
+                .iter()
+                .zip(&self.sources)
+                .any(|(source, held)| !same_layout(&source.field, held));
         self.sources.clear();
         self.sources
             .extend(sources.iter().map(|source| Arc::clone(&source.field)));
         self.revision += 1;
-        self.layout += 1;
+        if laid {
+            self.layout += 1;
+        }
         self.report.placed_colliders = self
             .sources
             .iter()
@@ -733,6 +751,9 @@ impl Solids {
             keep(hit.distance, hit.normal, GroundSurface::Placed, hit.entity);
         }
         if let Some(hit) = terrain::ray(&self.sources, ray, filter) {
+            keep(hit.distance, hit.normal, GroundSurface::Field, hit.entity);
+        }
+        if let Some(hit) = terrain::below(&self.sources, ray, filter) {
             keep(hit.distance, hit.normal, GroundSurface::Field, hit.entity);
         }
         Ok(nearest.map(|(_, point)| point))

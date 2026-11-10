@@ -1,7 +1,9 @@
 use engine_core::{Cursor, Since};
 use engine_open_world_kit::ground::TileChange;
 use engine_places_simulation::physics::ColliderShape;
-use engine_solids::{FieldSamples, FieldTile, SolidField, SolidSource, SolidTree, WorldSolid};
+use engine_solids::{
+    FieldCover, FieldGrid, FieldSamples, FieldTile, SolidField, SolidSource, SolidTree, WorldSolid,
+};
 use glam::Quat;
 
 use super::*;
@@ -15,6 +17,60 @@ impl FieldSamples for TileSamples {
 
     fn hole(&self, x: u32, z: u32) -> bool {
         self.0.is_hole(x, z)
+    }
+}
+
+fn field_of(state: &TerrainState, tile: &Arc<Tile>) -> Arc<FieldTile> {
+    let key = tile.key();
+    let size = TILE_QUADS as f32 * tile.spacing();
+    let corner =
+        state.terrain.origin + Vec3::new(f32::from(key.x) * size, 0.0, f32::from(key.z) * size);
+    Arc::new(FieldTile::new(
+        state.entity,
+        corner,
+        (TILE_QUADS, tile.spacing()),
+        tile.bounds(),
+        Box::new(TileSamples(Arc::clone(tile))),
+    ))
+}
+
+#[derive(Default)]
+struct Covered(HashMap<TileKey, (Arc<Tile>, Arc<FieldTile>)>);
+
+impl Covered {
+    fn cover(&mut self, state: &TerrainState) -> FieldCover {
+        let pyramid = state.terrain.pyramid;
+        let corner = Vec2::new(state.terrain.origin.x, state.terrain.origin.z);
+        let mut grids: Vec<FieldGrid> = (0..pyramid.levels())
+            .map(|level| FieldGrid {
+                corner,
+                size: pyramid.tile_size(level),
+                cells: Vec::new(),
+            })
+            .collect();
+        let mut held = std::mem::take(&mut self.0);
+        for tile in state.store.tiles() {
+            let key = tile.key();
+            let field = match held.remove(&key) {
+                Some((old, field)) if Arc::ptr_eq(&old, tile) => field,
+                Some(_) | None => field_of(state, tile),
+            };
+            self.0.insert(key, (Arc::clone(tile), Arc::clone(&field)));
+            if let Some(grid) = grids.get_mut(usize::from(key.level)) {
+                grid.cells.push(([key.x, key.z], field));
+            }
+        }
+        for grid in &mut grids {
+            grid.cells.sort_unstable_by_key(|(cell, _)| *cell);
+        }
+        FieldCover {
+            within: [corner, corner + pyramid.extent()],
+            without: state.around.as_ref().map(|around| {
+                let (low, high) = around.cutout;
+                [corner + low, corner + high]
+            }),
+            grids,
+        }
     }
 }
 
@@ -154,10 +210,16 @@ fn placed_solids(state: &TerrainState, solids: &mut Vec<WorldSolid>) -> HashSet<
 #[derive(Default)]
 pub(crate) struct Published {
     cursor: Cursor,
+    around: Cursor,
     fields: Vec<(Arc<Tile>, Arc<FieldTile>)>,
+    solids: Arc<SolidTree>,
     bridges: Arc<[Bridge]>,
     colliders: Vec<Option<PlacedCollider>>,
     placing: HashSet<TileKey>,
+    floor: bool,
+    surrounded: bool,
+    covered: [Covered; 2],
+    covers: Vec<FieldCover>,
 }
 
 impl Published {
@@ -181,13 +243,26 @@ impl Published {
         })
     }
 
-    fn update(&mut self, state: &TerrainState, loads: bool) -> Option<Arc<SolidField>> {
+    fn update(
+        &mut self,
+        state: &TerrainState,
+        around: Option<&TerrainState>,
+    ) -> Option<Arc<SolidField>> {
         let since = state.store.changes().since(&mut self.cursor);
-        let touched = match since {
-            Since::Same => false,
-            Since::Listed(changes) => self.touched(state, changes),
-            Since::All => true,
+        let (touched, faced) = match since {
+            Since::Same => (false, false),
+            Since::Listed(changes) => (self.touched(state, changes), true),
+            Since::All => (true, true),
         };
+        let surrounded = match around {
+            Some(around) => {
+                !matches!(around.store.changes().since(&mut self.around), Since::Same)
+                    || !self.surrounded
+            }
+            None => self.surrounded,
+        };
+        let floor = state.terrain.collision;
+        let regrounded = faced || surrounded || floor != self.floor;
         let assets = &state.terrain.surface.assets;
         let moved = touched
             || !self.same_tiles(state)
@@ -196,55 +271,54 @@ impl Published {
                 .iter()
                 .map(|asset| asset.collider)
                 .eq(self.colliders.iter().copied());
-        if !moved {
+        if !moved && !regrounded {
             return None;
         }
-        self.bridges = Arc::clone(&state.bridges);
-        self.colliders.clear();
-        self.colliders
-            .extend(assets.iter().map(|asset| asset.collider));
-        let mut kept = std::mem::take(&mut self.fields);
-        if matches!(since, Since::All) {
-            kept.clear();
+        if moved {
+            self.bridges = Arc::clone(&state.bridges);
+            self.colliders.clear();
+            self.colliders
+                .extend(assets.iter().map(|asset| asset.collider));
+            let mut kept = std::mem::take(&mut self.fields);
+            if matches!(since, Since::All) {
+                kept.clear();
+            }
+            self.fields = collision_tiles(state)
+                .map(|tile| {
+                    let field = kept
+                        .iter()
+                        .find(|(old, _)| Arc::ptr_eq(old, tile))
+                        .map_or_else(|| field_of(state, tile), |(_, field)| Arc::clone(field));
+                    (Arc::clone(tile), field)
+                })
+                .collect();
+            let mut solids = Vec::new();
+            bridge_solids(state, &mut solids);
+            self.placing = placed_solids(state, &mut solids);
+            self.solids = Arc::new(SolidTree::new(solids));
         }
-        self.fields = collision_tiles(state)
-            .map(|tile| {
-                let field = kept
-                    .iter()
-                    .find(|(old, _)| Arc::ptr_eq(old, tile))
-                    .map_or_else(
-                        || {
-                            let key = tile.key();
-                            let size = TILE_QUADS as f32 * tile.spacing();
-                            let corner = state.terrain.origin
-                                + Vec3::new(f32::from(key.x) * size, 0.0, f32::from(key.z) * size);
-                            Arc::new(FieldTile::new(
-                                state.entity,
-                                corner,
-                                (TILE_QUADS, tile.spacing()),
-                                tile.bounds(),
-                                Box::new(TileSamples(Arc::clone(tile))),
-                            ))
-                        },
-                        |(_, field)| Arc::clone(field),
-                    );
-                (Arc::clone(tile), field)
-            })
-            .collect();
-        let mut solids = Vec::new();
-        bridge_solids(state, &mut solids);
-        self.placing = placed_solids(state, &mut solids);
+        if regrounded {
+            self.floor = floor;
+            self.surrounded = around.is_some();
+            let [inner, outer] = &mut self.covered;
+            self.covers = if floor {
+                std::iter::once(inner.cover(state))
+                    .chain(around.map(|around| outer.cover(around)))
+                    .collect()
+            } else {
+                *inner = Covered::default();
+                *outer = Covered::default();
+                Vec::new()
+            };
+        }
         Some(Arc::new(SolidField {
             fields: self
                 .fields
                 .iter()
                 .map(|(_, field)| Arc::clone(field))
                 .collect(),
-            solids: Arc::new(SolidTree::new(solids)),
-            extent: (state.terrain.collision && loads).then(|| {
-                let corner = Vec2::new(state.terrain.origin.x, state.terrain.origin.z);
-                [corner, corner + state.terrain.pyramid.extent()]
-            }),
+            solids: Arc::clone(&self.solids),
+            covers: self.covers.clone(),
         }))
     }
 }
@@ -256,18 +330,20 @@ pub(crate) fn sync_solids(
     mut published: Local<HashMap<Entity, Published>>,
 ) {
     for (entity, mut source) in &mut sources {
-        let state = terrains
-            .entries
-            .iter()
-            .find(|state| state.entity == entity && state.around.is_none());
-        let Some(state) = state else {
+        let held = |surrounding: bool| {
+            terrains
+                .entries
+                .iter()
+                .find(|state| state.entity == entity && state.around.is_some() == surrounding)
+        };
+        let Some(state) = held(false) else {
             if published.remove(&entity).is_some() {
                 source.field = Arc::default();
             }
             continue;
         };
-        let loads = settings.collision_radius > 0.0;
-        if let Some(field) = published.entry(entity).or_default().update(state, loads) {
+        let around = held(true).filter(|_| settings.surroundings);
+        if let Some(field) = published.entry(entity).or_default().update(state, around) {
             source.field = field;
         }
     }

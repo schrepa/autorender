@@ -59,6 +59,40 @@ impl FieldTile {
         }
     }
 
+    pub fn covers(&self, at: Vec2) -> bool {
+        at.x >= self.min.x && at.x <= self.max.x && at.y >= self.min.z && at.y <= self.max.z
+    }
+
+    pub fn surface(&self, at: Vec2) -> Option<(f32, Vec3)> {
+        if !self.covers(at) {
+            return None;
+        }
+        let local = (at - Vec2::new(self.min.x, self.min.z)) / self.spacing;
+        let last = self.quads.saturating_sub(1) as f32;
+        let cell = local.floor().clamp(Vec2::ZERO, Vec2::splat(last));
+        let (x, z) = (cell.x as u32, cell.y as u32);
+        if self.samples.hole(x, z) {
+            return None;
+        }
+        let (u, v) = (
+            (local.x - cell.x).clamp(0.0, 1.0),
+            (local.y - cell.y).clamp(0.0, 1.0),
+        );
+        let (column, row) = (x as i32, z as i32);
+        let sample = |dx: i32, dz: i32| self.samples.height(column + dx, row + dz);
+        let (low, right, up, high) = (sample(0, 0), sample(1, 0), sample(0, 1), sample(1, 1));
+        let (rise, height) = if u + v <= 1.0 {
+            let rise = Vec2::new(right - low, up - low);
+            (rise, low + u * rise.x + v * rise.y)
+        } else {
+            let rise = Vec2::new(high - up, high - right);
+            (rise, high - (1.0 - u) * rise.x - (1.0 - v) * rise.y)
+        };
+        let slope = rise / self.spacing;
+        let normal = Vec3::new(-slope.x, 1.0, -slope.y).normalize_or(Vec3::Y);
+        Some((self.center.y + height, normal))
+    }
+
     pub fn shape(&self) -> &Arc<HeightField> {
         self.shape.get_or_init(|| Arc::new(self.build()))
     }
@@ -435,11 +469,61 @@ impl SolidTree {
     }
 }
 
+#[derive(Clone)]
+pub struct FieldGrid {
+    pub corner: Vec2,
+    pub size: f32,
+    pub cells: Vec<([u16; 2], Arc<FieldTile>)>,
+}
+
+impl FieldGrid {
+    pub fn tile_at(&self, at: Vec2) -> Option<&Arc<FieldTile>> {
+        let cell = ((at - self.corner) / self.size).floor();
+        if !(cell.cmpge(Vec2::ZERO).all() && cell.cmplt(Vec2::splat(65536.0)).all()) {
+            return None;
+        }
+        let key = [cell.x as u16, cell.y as u16];
+        self.cells
+            .binary_search_by_key(&key, |(held, _)| *held)
+            .ok()
+            .map(|index| &self.cells[index].1)
+    }
+}
+
+#[derive(Clone)]
+pub struct FieldCover {
+    pub within: [Vec2; 2],
+    pub without: Option<[Vec2; 2]>,
+    pub grids: Vec<FieldGrid>,
+}
+
+impl FieldCover {
+    pub fn answers(&self, at: Vec2) -> bool {
+        let [low, high] = self.within;
+        at.cmpge(low).all()
+            && at.cmplt(high).all()
+            && !self
+                .without
+                .is_some_and(|[low, high]| at.cmpgt(low).all() && at.cmplt(high).all())
+    }
+
+    pub fn tile_at(&self, at: Vec2) -> Option<&Arc<FieldTile>> {
+        self.grids.iter().find_map(|grid| grid.tile_at(at))
+    }
+
+    pub fn bounds(&self) -> Option<Bounds> {
+        self.grids
+            .iter()
+            .flat_map(|grid| grid.cells.iter().map(|(_, tile)| tile.bounds()))
+            .reduce(Bounds::union)
+    }
+}
+
 #[derive(Default)]
 pub struct SolidField {
     pub fields: Vec<Arc<FieldTile>>,
     pub solids: Arc<SolidTree>,
-    pub extent: Option<[Vec2; 2]>,
+    pub covers: Vec<FieldCover>,
 }
 
 pub const PLACES: &[engine_place::PlaceDecl] =
