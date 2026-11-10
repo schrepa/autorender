@@ -156,9 +156,6 @@ pub enum JobOrder {
         key: [u8; 32],
         bytes: Arc<[u8]>,
     },
-    ShareRecord {
-        key: [u8; 32],
-    },
     Unshare {
         key: [u8; 32],
     },

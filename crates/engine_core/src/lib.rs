@@ -104,7 +104,7 @@ pub use engine_settings::{
     Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, fields,
     is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
 };
-pub use background::{Background, Delivers, Landed};
+pub use background::{Background, Delivers, Landed, Taken};
 pub use files::Files;
 pub use folds::FoldOrder;
 pub use frame_timing::{FrameTiming, GpuFrameTime, RenderScale};

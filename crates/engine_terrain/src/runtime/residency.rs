@@ -1,5 +1,5 @@
 use super::*;
-use engine_core::RecordKey;
+use engine_core::{Background, RecordKey};
 
 pub(super) const LOAD_REACH: f32 = 2.0;
 
@@ -39,29 +39,34 @@ fn with_edits(
     base.with_stamps(&stamps, kinds).map_or(base, Arc::new)
 }
 
+pub(super) type TileWork = Background<Arc<Tile>>;
+
 pub(super) enum TileSlot {
     Loading {
-        interest: Interest<RecordKey>,
+        work: TileWork,
+        record: RecordKey,
         made: Generation,
         priority: u32,
     },
     Prefetching {
-        interest: Interest<RecordKey>,
+        work: TileWork,
         made: Generation,
     },
     Failed {
-        interest: Interest<RecordKey>,
+        record: RecordKey,
+        _failure: TileWork,
     },
 }
 
 pub(super) enum SlotEvent {
     Asked {
-        interest: Interest<RecordKey>,
+        work: TileWork,
+        record: RecordKey,
         made: Generation,
         priority: u32,
     },
     Prefetched {
-        interest: Interest<RecordKey>,
+        work: TileWork,
         made: Generation,
     },
     Failed,
@@ -74,22 +79,23 @@ impl TileSlot {
             (
                 _,
                 SlotEvent::Asked {
-                    interest,
+                    work,
+                    record,
                     made,
                     priority,
                 },
             ) => Some(Self::Loading {
-                interest,
+                work,
+                record,
                 made,
                 priority,
             }),
-            (None, SlotEvent::Prefetched { interest, made }) => {
-                Some(Self::Prefetching { interest, made })
-            }
+            (None, SlotEvent::Prefetched { work, made }) => Some(Self::Prefetching { work, made }),
             (Some(held), SlotEvent::Prefetched { .. }) => Some(held),
-            (Some(Self::Loading { interest, .. }), SlotEvent::Failed) => {
-                Some(Self::Failed { interest })
-            }
+            (Some(Self::Loading { work, record, .. }), SlotEvent::Failed) => Some(Self::Failed {
+                record,
+                _failure: work,
+            }),
             (Some(Self::Prefetching { .. }) | None, SlotEvent::Failed) | (_, SlotEvent::Done) => {
                 None
             }
@@ -97,28 +103,31 @@ impl TileSlot {
         }
     }
 
-    pub(super) fn loading(&self) -> Option<(&Interest<RecordKey>, Generation, u32)> {
+    pub(super) fn loading(&self) -> Option<(Generation, u32)> {
         match self {
-            Self::Loading {
-                interest,
-                made,
-                priority,
-            } => Some((interest, *made, *priority)),
+            Self::Loading { made, priority, .. } => Some((*made, *priority)),
             Self::Prefetching { .. } | Self::Failed { .. } => None,
         }
     }
 
-    pub(super) fn prefetching(&self) -> Option<(&Interest<RecordKey>, Generation)> {
+    pub(super) fn prefetching(&self) -> Option<Generation> {
         match self {
-            Self::Prefetching { interest, made } => Some((interest, *made)),
+            Self::Prefetching { made, .. } => Some(*made),
             Self::Loading { .. } | Self::Failed { .. } => None,
         }
     }
 
-    pub(super) fn failed(&self) -> Option<&Interest<RecordKey>> {
+    pub(super) fn failed(&self) -> Option<RecordKey> {
         match self {
-            Self::Failed { interest } => Some(interest),
+            Self::Failed { record, .. } => Some(*record),
             Self::Loading { .. } | Self::Prefetching { .. } => None,
+        }
+    }
+
+    pub(super) fn work_mut(&mut self) -> Option<&mut TileWork> {
+        match self {
+            Self::Loading { work, .. } | Self::Prefetching { work, .. } => Some(work),
+            Self::Failed { .. } => None,
         }
     }
 }
@@ -156,11 +165,11 @@ pub(super) enum TerrainBake {
     #[default]
     Unasked,
     Asked {
-        interest: Interest<RecordKey>,
+        work: Background<Arc<Layers>>,
         drawn: Arc<[TerrainRiver]>,
     },
     Failed {
-        interest: Interest<RecordKey>,
+        _failure: Background<Arc<Layers>>,
         drawn: Arc<[TerrainRiver]>,
     },
     Made,

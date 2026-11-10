@@ -227,17 +227,13 @@ impl WalkRecords {
         if !jobs.admit(priority) {
             return None;
         }
-        let job = jobs.start(
+        let work = jobs.start(
             &PORTALS,
             portals_input(&running.area, &ground, &gait),
             priority,
+            move |bytes| walk_portals(key, &bytes).map_err(undecoded),
         );
-        self.flights.push(Flight {
-            input,
-            work: Background::asked(job, move |bytes| {
-                walk_portals(key, bytes).map_err(undecoded)
-            }),
-        });
+        self.flights.push(Flight { input, work });
         Some(found)
     }
 

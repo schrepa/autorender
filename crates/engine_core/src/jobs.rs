@@ -15,7 +15,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 use crate::{
-    Census, Error, ErrorCode, Interest, JobRef, List, Request, Requests, Source, Ticket,
+    Background, Census, Error, ErrorCode, Interest, JobRef, List, Request, Requests, Source, Ticket,
 };
 
 type JobStart = fn(&[u8], &mut JobCx<'_>) -> Result<Box<dyn Job>, Error>;
@@ -61,6 +61,11 @@ impl JobKind {
     #[doc(hidden)]
     pub fn start(&self, input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
         (self.start)(input, cx)
+    }
+
+    pub fn undecoded(&self, error: impl std::fmt::Display) -> Error {
+        Error::new(ErrorCode::InvalidRecord, format!("$.jobs.{}", self.name))
+            .got(format!("its output does not decode: {error}"))
     }
 }
 
@@ -274,32 +279,35 @@ impl Jobs<'_, '_> {
         admitted
     }
 
-    pub fn start(
+    pub fn start<T>(
         &mut self,
         kind: &'static JobKind,
         input: Vec<u8>,
         priority: u32,
-    ) -> Interest<RecordKey> {
+        decode: impl FnOnce(Arc<[u8]>) -> Result<T, Error> + Send + Sync + 'static,
+    ) -> Background<T> {
         let admitted = std::mem::take(&mut self.orders.admitted);
-        self.make(kind, input, priority, admitted)
+        self.make(kind, input, priority, admitted, decode)
     }
 
-    pub fn fetch(
+    pub fn fetch<T>(
         &mut self,
         kind: &'static JobKind,
         input: &[u8],
         priority: u32,
-    ) -> Interest<RecordKey> {
-        self.make(kind, input.to_vec(), priority, false)
+        decode: impl FnOnce(Arc<[u8]>) -> Result<T, Error> + Send + Sync + 'static,
+    ) -> Background<T> {
+        self.make(kind, input.to_vec(), priority, false, decode)
     }
 
-    fn make(
+    fn make<T>(
         &mut self,
         kind: &'static JobKind,
         input: Vec<u8>,
         priority: u32,
         admitted: bool,
-    ) -> Interest<RecordKey> {
+        decode: impl FnOnce(Arc<[u8]>) -> Result<T, Error> + Send + Sync + 'static,
+    ) -> Background<T> {
         let key = self.listed_key(kind, &input);
         let interest = self.records.requests.ask_later(key);
         self.orders.orders.push(JobOrder::Start {
@@ -309,15 +317,16 @@ impl Jobs<'_, '_> {
             priority,
             admitted,
         });
-        interest
+        Background::asked(interest, decode)
     }
 
-    pub fn run(
+    pub fn run<T>(
         &mut self,
         kind: &'static JobKind,
         input: Vec<u8>,
         priority: u32,
-    ) -> Interest<RecordKey> {
+        decode: impl FnOnce(Arc<[u8]>) -> Result<T, Error> + Send + Sync + 'static,
+    ) -> Background<T> {
         self.listed(kind);
         let key = run_key(kind, &input);
         let interest = self.records.requests.ask_later(key);
@@ -327,15 +336,16 @@ impl Jobs<'_, '_> {
             input,
             priority,
         });
-        interest
+        Background::asked(interest, decode)
     }
 
-    pub fn look(
+    pub fn look<T>(
         &mut self,
         kind: &'static JobKind,
         input: &[u8],
         priority: u32,
-    ) -> Interest<RecordKey> {
+        decode: impl FnOnce(Arc<[u8]>) -> Result<T, Error> + Send + Sync + 'static,
+    ) -> Background<T> {
         let key = self.listed_key(kind, input);
         let interest = self.records.requests.ask_later(key);
         self.orders.orders.push(JobOrder::Look {
@@ -343,7 +353,7 @@ impl Jobs<'_, '_> {
             kind: Some(JobRef::from(kind)),
             priority,
         });
-        interest
+        Background::asked(interest, decode)
     }
 
     pub fn share(&mut self, bytes: Arc<[u8]>) -> RecordKey {
@@ -358,14 +368,6 @@ impl Jobs<'_, '_> {
         self.orders
             .orders
             .push(JobOrder::Share { key: key.0, bytes });
-    }
-
-    pub fn share_record(&mut self, interest: &Interest<RecordKey>) -> RecordKey {
-        let key = *interest.key();
-        self.orders
-            .orders
-            .push(JobOrder::ShareRecord { key: key.0 });
-        key
     }
 
     pub fn unshare(&mut self, key: RecordKey) {
@@ -442,12 +444,12 @@ impl Records {
 }
 
 #[doc(hidden)]
-pub fn look_record(
+pub fn look_record<T>(
     world: &mut World,
     kind: Option<JobRef>,
-    key: RecordKey,
-    priority: u32,
-) -> Interest<RecordKey> {
+    (key, priority): (RecordKey, u32),
+    decode: impl FnOnce(Arc<[u8]>) -> Result<T, Error> + Send + Sync + 'static,
+) -> Background<T> {
     let interest = world.resource::<Records>().requests.ask_later(key);
     world
         .get_resource_or_init::<engine_registry::JobQueue>()
@@ -460,11 +462,16 @@ pub fn look_record(
                 priority,
             },
         ));
-    interest
+    Background::asked(interest, decode)
 }
 
 fn missing_record(path: &str) -> Error {
     Error::new(ErrorCode::InvalidRecord, path).got(MISSING_RECORD)
+}
+
+pub fn record_missing(error: &Error) -> bool {
+    error.code == ErrorCode::InvalidRecord
+        && error.detail.got.as_ref().and_then(serde_json::Value::as_str) == Some(MISSING_RECORD)
 }
 
 static LODBUILD: Source =
@@ -891,12 +898,6 @@ impl JobExchange {
                     })
                 }),
                 JobOrder::Share { key, bytes } => self.share(RecordKey(key), bytes),
-                JobOrder::ShareRecord { key } => {
-                    if let Some(bytes) = records.get(&RecordKey(key)).and_then(Request::ready) {
-                        let bytes = Arc::clone(bytes);
-                        self.share(RecordKey(key), bytes);
-                    }
-                }
                 JobOrder::Unshare { key } => self.unshare(RecordKey(key)),
                 JobOrder::Keep {
                     key,
@@ -1145,15 +1146,6 @@ pub(crate) fn land_job(world: &mut World, id: JobId, output: Result<Arc<[u8]>, S
             exchange.land(&mut records.requests, id, output);
         });
     });
-}
-
-pub fn job_output<T, B: AsRef<[u8]>, F: std::fmt::Display, E: std::fmt::Display>(
-    kind: &str,
-    output: Result<B, F>,
-    decode: impl FnOnce(&[u8]) -> Result<T, E>,
-) -> Result<T, String> {
-    let bytes = output.map_err(|error| format!("{kind}: {error}"))?;
-    decode(bytes.as_ref()).map_err(|error| format!("{kind}: its output does not decode: {error}"))
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

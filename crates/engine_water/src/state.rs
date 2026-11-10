@@ -3,8 +3,8 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Cursor, Feed, FrameBudget, FrameTime, Interest, JobFailures, Jobs, RecordKey,
-    Records, Requests, Settling, Since, Spawner, VIEW_JOBS, Views, job_priority,
+    Background, Cursor, Feed, FrameBudget, FrameTime, JobFailures, Jobs, RecordKey, Records,
+    Requests, Settling, Since, Spawner, Taken, VIEW_JOBS, Views, job_priority,
 };
 use engine_heightfield::tile::{Solid, TileJob};
 use engine_heightfield::{
@@ -16,7 +16,7 @@ use engine_open_world_kit::ground::{TerrainEntry, TerrainTiles, TileFace};
 use engine_open_world_kit::water::{WaterTileErrors, Waterline};
 use glam::{Vec2, Vec3};
 
-use crate::drawn::draw_input;
+use crate::drawn::{DrawnWork, draw_input, start_drawing};
 use crate::emitters::Emitters;
 use crate::flow::Running;
 use crate::jobs::drawn::{DrawnWater, is_dry};
@@ -31,11 +31,11 @@ pub(crate) type Watered = Option<Arc<Running>>;
 
 pub(crate) enum Base {
     Waiting,
-    Asking(Interest<RecordKey>),
-    Drawing(Interest<RecordKey>),
+    Asking(Background<(Arc<[u8]>, bool)>),
+    Drawing(DrawnWork),
     Failed,
     Made,
-    Redrawing(Interest<RecordKey>, Drawing),
+    Redrawing(DrawnWork, Drawing),
     Left,
 }
 
@@ -266,13 +266,17 @@ impl WaterTerrain {
             let Some(job) = self.tile_job(key) else {
                 return;
             };
-            let ticket = jobs.fetch(
+            let work = jobs.fetch(
                 &TILE_WATER,
                 &engine_codec::encode(&job),
                 job_priority(VIEW_JOBS, place),
+                |bytes| {
+                    let dry = is_dry(&bytes).map_err(|error| TILE_WATER.undecoded(error))?;
+                    Ok((bytes, dry))
+                },
             );
             if let Some(held) = self.held.get_mut(&key) {
-                held.base = Base::Asking(ticket);
+                held.base = Base::Asking(work);
             }
         }
     }
@@ -294,23 +298,25 @@ impl WaterTerrain {
             if taken && budget.expired() {
                 break;
             }
-            let Some(held) = self.held.get_mut(&key) else {
+            let Some(held) = self
+                .held
+                .get_mut(&key)
+                .filter(|held| matches!(held.base, Base::Asking(_)))
+            else {
                 continue;
             };
-            let Base::Asking(ticket) = &held.base else {
+            let Base::Asking(work) = std::mem::replace(&mut held.base, Base::Failed) else {
                 continue;
             };
-            let Some(output) = records.get(ticket) else {
-                continue;
+            let made = match work.take(records) {
+                Taken::Waiting(work) => {
+                    held.base = Base::Asking(work);
+                    continue;
+                }
+                Taken::Ready(made) => Ok(made),
+                Taken::Failed(error) => Err(error.to_string()),
             };
             taken = true;
-            held.base = Base::Failed;
-            let made = output.map_err(|error| error.to_string()).and_then(|bytes| {
-                let dry = is_dry(&bytes).map_err(|error| {
-                    format!("{}: its output does not decode: {error}", TILE_WATER.name())
-                })?;
-                Ok((bytes, dry))
-            });
             match made {
                 Ok((_, true)) => {
                     held.base = Base::Made;
@@ -321,7 +327,7 @@ impl WaterTerrain {
                 Ok((record, false)) => {
                     let input = draw_input(held, &record);
                     let priority = job_priority(VIEW_JOBS, 0);
-                    held.base = Base::Drawing(jobs.start(&DRAWN, input, priority));
+                    held.base = Base::Drawing(start_drawing(jobs, &DRAWN, input, priority));
                 }
                 Err(error) => {
                     failures.record(frame, error);

@@ -27,7 +27,7 @@ impl<K: Clone + Eq + Hash, A> Delivers<K> for Requests<K, Arc<[u8]>, A> {
     }
 }
 
-type Decode<T> = Box<dyn FnOnce(&[u8]) -> Result<T, Error> + Send + Sync>;
+type Decode<T> = Box<dyn FnOnce(Arc<[u8]>) -> Result<T, Error> + Send + Sync>;
 
 enum Stage<T, K: Clone> {
     Asked(Interest<K>, Decode<T>),
@@ -41,6 +41,12 @@ pub enum Landed<'a, T> {
     Failed(&'a Error),
 }
 
+pub enum Taken<T, K: Clone = RecordKey> {
+    Waiting(Background<T, K>),
+    Ready(T),
+    Failed(Error),
+}
+
 #[must_use]
 pub struct Background<T, K: Clone = RecordKey> {
     stage: Stage<T, K>,
@@ -48,9 +54,9 @@ pub struct Background<T, K: Clone = RecordKey> {
 }
 
 impl<T, K: Clone> Background<T, K> {
-    pub fn asked(
+    pub(crate) fn asked(
         held: Interest<K>,
-        decode: impl FnOnce(&[u8]) -> Result<T, Error> + Send + Sync + 'static,
+        decode: impl FnOnce(Arc<[u8]>) -> Result<T, Error> + Send + Sync + 'static,
     ) -> Self {
         let report = Settling::default();
         report.left(1);
@@ -75,7 +81,7 @@ impl<T, K: Clone> Background<T, K> {
         {
             let placeholder = Stage::Failed(Error::new(ErrorCode::InvalidRecord, "$"));
             if let Stage::Asked(_, decode) = std::mem::replace(&mut self.stage, placeholder) {
-                self.stage = match landed.and_then(|bytes| decode(&bytes[..])) {
+                self.stage = match landed.and_then(decode) {
                     Ok(value) => Stage::Ready(value),
                     Err(error) => {
                         self.report.failed(Some(error.clone()));
@@ -86,6 +92,19 @@ impl<T, K: Clone> Background<T, K> {
             }
         }
         self.state()
+    }
+
+    pub fn take(mut self, from: &impl Delivers<K>) -> Taken<T, K> {
+        self.poll(from);
+        let Self { stage, report } = self;
+        match stage {
+            Stage::Asked(held, decode) => Taken::Waiting(Self {
+                stage: Stage::Asked(held, decode),
+                report,
+            }),
+            Stage::Ready(value) => Taken::Ready(value),
+            Stage::Failed(error) => Taken::Failed(error),
+        }
     }
 
     pub fn state(&self) -> Landed<'_, T> {
