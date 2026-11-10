@@ -5,7 +5,7 @@ import package::engine::geometry::declarations::{AffinePose as PoseRows, FADE_LE
     faded_slot_slot};
 import package::engine::geometry::vertex::pose_matrix;
 import package::engine::shading::{SurfacePoint, ViewPixel};
-import package::engine::slots::{derived, shade};
+import package::engine::slots::{given_point, shade};
 import package::engine::surfaces::SURFACE_SOLID;
 import package::engine::view::{camera, material_detail, stable_normalize, view_pixel};
 import package::face::debug::debug_targets;
@@ -322,9 +322,6 @@ fn card_point(input: CardVertex, record: ImpostorRecord, fade: u32) -> SurfacePo
     point.opacity = color.a;
     point.emissive = albedo_color * (slot_surface.z * SURFACE_EMISSION * emissive.a * unpremultiply)
         + record.emissive * emissive.rgb * unpremultiply;
-    point.occlusion = surface.z * unpremultiply;
-    point.roughness = slot_surface.x * surface.x * unpremultiply;
-    point.metalness = slot_surface.y * surface.y * unpremultiply;
     point.kind = select(SURFACE_SOLID, SURFACE_THIN, impostor_flags_thin(record.flags));
     point.geometric = geometric;
     point.normal = geometric;
@@ -337,7 +334,9 @@ fn card_point(input: CardVertex, record: ImpostorRecord, fade: u32) -> SurfacePo
     point.inputs.direct_blocked = 1.0 - saturate(surface.w * unpremultiply);
     point.normal_dx = dpdx(geometric);
     point.normal_dy = dpdy(geometric);
-    return derived(point);
+    let units = vec4<f32>(slot_surface.x * surface.x * unpremultiply,
+        slot_surface.y * surface.y * unpremultiply, surface.z * unpremultiply, 0.0);
+    return given_point(point, units);
 }
 
 fn card_fading(fade: u32) -> bool {

@@ -1,3 +1,4 @@
+import package::engine::slots::point_units;
 import package::engine::surfaces::SURFACE_WATER;
 import package::engine::view::eye_world;
 import package::face::debug::{DebugTargets, debug_record, debug_targets};
@@ -47,7 +48,7 @@ fn debug_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt) -> DebugTargets 
     let eddies = water_eddy_froude(speed, length(at.slope), depth);
     var targets = debug_targets(debug_record(KIND_WATER, 0u),
         pack2x16float(vec2<f32>(depth, speed)),
-        water_probe_detail(debug_span_code(at.words.span), debug_byte(shade.point.roughness),
+        water_probe_detail(debug_span_code(at.words.span), debug_byte(point_units(shade.point).x),
             false),
         normal, water_sun(world, normal));
     targets.words = vec2<u32>(pack2x16float(vec2<f32>(froude, eddies)),

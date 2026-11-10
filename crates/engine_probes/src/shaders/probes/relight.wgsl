@@ -1,6 +1,6 @@
 import package::engine::color::decode_srgb;
 import package::engine::shading::SurfacePoint;
-import package::engine::slots::{derived, shade};
+import package::engine::slots::{given_point, shade};
 import package::engine::view::{camera, stable_normalize};
 import package::face::sky::environment_sample;
 import package::probes::filter::FaceOutput;
@@ -26,10 +26,6 @@ fn stored_point(texel: vec2<i32>, layer: i32, world: vec3<f32>) -> SurfacePoint 
     point.base_color = decode_srgb(vec3<f32>(base.rgb) / 255.0);
     point.opacity = 1.0;
     point.emissive = emissive.rgb;
-    point.occlusion = f32(base.a) / 255.0;
-    point.roughness = f32(surface.x) / 255.0;
-    point.metalness = f32(surface.y) / 255.0;
-    point.transmission = emissive.a;
     point.normal = normal;
     point.normal_dx = dpdx(normal);
     point.normal_dy = dpdy(normal);
@@ -45,7 +41,9 @@ fn stored_point(texel: vec2<i32>, layer: i32, world: vec3<f32>) -> SurfacePoint 
     point.inputs.ambient_bend = unfolded(directions.zw) - normal;
     point.inputs.direct_blocked = 1.0 - bounce.a;
     point.inputs.direct_known = true;
-    return derived(point);
+    let units = vec4<f32>(f32(surface.x) / 255.0, f32(surface.y) / 255.0, f32(base.a) / 255.0,
+        emissive.a);
+    return given_point(point, units);
 }
 
 @fragment

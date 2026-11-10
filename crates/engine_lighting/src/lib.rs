@@ -34,12 +34,13 @@ gpu_struct! {
 
 const UNIT: Rule = Rule::range(0.0, 1.0);
 
-const OPEN_SLOTS: [(&str, &str, &[MaterialValue]); 4] = [
-    (ROUGHNESS, "1.0", &[]),
-    (METALNESS, "0.0", &[]),
+const OPEN_SLOTS: [(&str, &str, usize, &[MaterialValue]); 4] = [
+    (ROUGHNESS, "1.0", 0, &[]),
+    (METALNESS, "0.0", 1, &[]),
     (
         OCCLUSION,
         "1.0",
+        2,
         &[MaterialValue {
             name: OCCLUSION_STRENGTH,
             standard: SurfaceValues::MATTE.occlusion_strength,
@@ -49,6 +50,7 @@ const OPEN_SLOTS: [(&str, &str, &[MaterialValue]); 4] = [
     (
         TRANSMISSION,
         "0.0",
+        3,
         &[MaterialValue {
             name: TRANSMISSION,
             standard: SurfaceValues::MATTE.transmission,
@@ -94,12 +96,13 @@ impl Brick for LightingModelBrick {
             .fill::<Lighting>(Some(shaders::lighting_model::faces::lighting::MODULE))
             .fill::<Lit>(Some(shaders::lighting_model::faces::lighting::MODULE))
             .systems(Schedule::ViewSync, (publish_lighting, publish_piece));
-        for (name, flat, values) in OPEN_SLOTS {
+        for (name, flat, unit, values) in OPEN_SLOTS {
             bricks.open_slot(OpenSlot {
                 name,
                 returns: "f32",
                 standard: STANDARD,
                 flat,
+                unit: Some(unit),
                 values,
             });
         }

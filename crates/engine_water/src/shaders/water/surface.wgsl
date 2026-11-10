@@ -1,14 +1,14 @@
 import package::engine::color::luminance;
 import package::engine::math::PI;
 import package::engine::shading::{Shaded, SurfacePoint};
-import package::engine::slots::shade as shade_point;
+import package::engine::slots::{given_point, shade as shade_point};
 import package::engine::surfaces::SURFACE_WATER;
 import package::engine::view::{camera, detail_across, detail_level, eye_world, stable_normalize,
     view_pixel};
 import package::face::heightfield::{SURFACE_LEAF_INDICES, surface_leaf, surface_leaf_count,
     surface_vertex, terrain_level_height, terrain_uniform, terrain_view_uniform, use_terrain};
-import package::face::lighting::{distribution, environment_brdf, fresnel, highlights, specular,
-    sun_visibility, visibility};
+import package::face::lighting::{distribution, environment_brdf, fresnel, given_reflectance,
+    highlights, specular, sun_visibility, visibility};
 import package::face::sky::{ambient, atmospheric_cover, sky_average};
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
@@ -484,23 +484,19 @@ fn water_light(surface: WaterSurface, pixel: vec2<f32>) -> WaterLit {
     var point: SurfacePoint;
     point.base_color = surface.scatter;
     point.emissive = vec3<f32>(0.0);
-    point.occlusion = 1.0;
-    point.roughness = roughness.x;
-    point.alpha = alphas.x;
     point.inputs.smoother_across = roughness.x - roughness.y;
-    point.f0 = f0;
-    point.diffuse_color = vec3<f32>(0.0);
     point.geometric = up;
     point.normal = normal;
     point.distance = distance;
     point.view = view;
-    point.n_v = n_v;
     point.world = world;
     point.world_dx = surface.world_dx;
     point.world_dy = surface.world_dy;
     point.kind = SURFACE_WATER;
     point.inputs.direct_blocked = 1.0;
     point.inputs.added_light = mix(body + glint, foam, surface.foam);
+    point = given_reflectance(given_point(point, vec4<f32>(roughness.x, 0.0, 1.0, 0.0)), f0,
+        vec3<f32>(0.0));
     var lit: WaterLit;
     lit.point = point;
     lit.shaded = shade_point(point, pixel);

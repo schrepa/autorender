@@ -11,7 +11,7 @@ import package::engine::math::PI;
 import package::engine::view::{camera, detail_across, detail_distance, detail_level, eye_world,
     fade_noise, material_detail, stable_normalize, view_pixel};
 import package::engine::shading::{SurfacePoint, ViewPixel};
-import package::engine::slots::shade;
+import package::engine::slots::{given_point, shade};
 import package::engine::surfaces::SURFACE_GROUND;
 import package::face::water::{WATER_HELD, WaterCell, water_cell, water_level};
 import package::generated::writes::{DepthOutputs, Outputs, depth_outputs, outputs};
@@ -1329,29 +1329,23 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook, seen: TerrainSeen,
     point.base_color = albedo;
     point.opacity = 1.0;
     point.emissive = vec3<f32>(0.0);
-    point.occlusion = occlusion * sky;
     point.inputs.added_indirect = bounce_light(world, normal, true).light * occlusion;
     point.inputs.ambient_bend = sky_map.gba * 2.0 - 1.0;
-    point.roughness = roughness;
-    point.alpha = roughness * roughness;
-    point.metalness = ground.metalness;
-    point.f0 = mix(vec3<f32>(0.04), albedo, ground.metalness);
-    point.diffuse_color = albedo * (1.0 - ground.metalness);
     point.geometric = geometric;
     point.normal = normal;
     point.distance = length(relative);
     point.view = stable_normalize(-relative);
-    point.n_v = max(dot(normal, point.view), 1.0e-4);
     point.world = world;
     let detail = material_detail();
     point.world_dx = select(site.world_dx / detail, look.world_dx, look.raw.x);
     point.world_dy = select(site.world_dy / detail, look.world_dy, look.raw.y);
     point.kind = SURFACE_GROUND;
     point.inputs.ignore_face = true;
-    point.transmission = foliage().x * ground.canopy;
     point.inputs.receiver_lift_first = lift.first;
     point.inputs.receiver_lifts = lift.lifts;
-    return point;
+    let units = vec4<f32>(roughness, ground.metalness, occlusion * sky,
+        foliage().x * ground.canopy);
+    return given_point(point, units);
 }
 
 @group(1) @binding(0) var terrain_ids_texture: texture_2d<u32>;
