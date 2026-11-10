@@ -66,6 +66,12 @@ struct KindShaded {
     shaded: Shaded,
 }
 
+struct KindPoint {
+    point: SurfacePoint,
+    pixel: vec2<f32>,
+    at: ViewPixel,
+}
+
 fn surface_input(input: KindFragment, front: bool) -> SurfaceInput {
     var surface: SurfaceInput;
     surface.color = input.color;

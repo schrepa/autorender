@@ -63,8 +63,8 @@ pub use gpu_data::{
 };
 pub use kinds::{
     Channels, Form, FormColor, FormDepth, FormFragment, FormPass, FormSide, FormTarget,
-    FormTopology, FragmentPass, KindForm, OwnFragments, PassFragment, PerPass, RoleFragments,
-    Varyings,
+    FormTopology, FragmentPass, KindForm, KindSurface, OwnFragments, PassFragment, PerPass,
+    RoleFragments, Varyings,
 };
 pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
 pub use materials::gpu_format as texture_format;

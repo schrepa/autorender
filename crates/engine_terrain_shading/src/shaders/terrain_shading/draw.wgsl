@@ -14,13 +14,14 @@ import package::engine::shading::{SurfacePoint, ViewPixel};
 import package::engine::slots::{given_point, shade};
 import package::engine::surfaces::SURFACE_GROUND;
 import package::face::water::{WATER_HELD, WaterCell, water_cell, water_level};
-import package::generated::writes::{DepthOutputs, Outputs, depth_outputs, outputs};
+import package::generated::writes::{DepthOutputs, depth_outputs};
 import package::terrain_shading::draw_shared::{terrain_hash2, terrain_value, terrain_value2};
 import package::terrain_shading::faces::ground_tiles::{DETAIL_EDGE_ON, detail_resolved,
     detail_span};
 import package::terrain_shading::faces::heightfield::{surface_vertex, terrain, terrain_index, terrain_level_height, terrain_view, use_terrain};
 import package::terrain_shading::field::spread_slopes;
 import package::terrain_shading::holes::terrain_holed;
+import package::engine::kinds::KindPoint;
 import package::generated::kinds::KIND_TERRAIN;
 import package::terrain_shading::sky::terrain_sky_map;
 import package::terrain_shading::surface::{surface_leaf, surface_relative, terrain_true_height};
@@ -1456,21 +1457,20 @@ fn fs_terrain_resolve_temporal(input: TerrainResolveInput) -> DepthOutputs {
     return terrain_resolve_targets(input, fade_noise(input.position.xy));
 }
 
-fn terrain_probe_targets(input: TerrainOutput, holes: bool) -> Outputs {
+fn terrain_surfaced(input: TerrainOutput, holes: bool) -> KindPoint {
     use_terrain(input.terrain);
     let point = terrain_point(input.relative.xyz);
     terrain_holes_test(input.cell, holes);
-    let shaded = shade(point, input.clip_position.xy);
-    let still = view_pixel(input.clip_position, vec4<f32>(0.0)).clip;
-    return outputs(point, shaded, ViewPixel(still, still));
+    let world = eye_world(input.relative.xyz);
+    let previous = camera.previous_view_projection * vec4<f32>(world, 1.0);
+    let at: ViewPixel = view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.w));
+    return KindPoint(point, input.clip_position.xy, at);
 }
 
-@fragment
-fn fs_terrain_probe(input: TerrainOutput) -> Outputs {
-    return terrain_probe_targets(input, false);
+fn terrain_surface(input: TerrainOutput) -> KindPoint {
+    return terrain_surfaced(input, false);
 }
 
-@fragment
-fn fs_terrain_probe_holes(input: TerrainOutput) -> Outputs {
-    return terrain_probe_targets(input, true);
+fn terrain_surface_holes(input: TerrainOutput) -> KindPoint {
+    return terrain_surfaced(input, true);
 }

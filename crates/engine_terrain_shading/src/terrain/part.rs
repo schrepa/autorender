@@ -9,8 +9,8 @@ use engine_places_rendering::shadows::{CasterMap, KeptRefresh, Refresh, ShadowMa
 use engine_render::{
     Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, Draw, DrawInput, Encode,
     FaceCull, Form, FormColor, FormDepth, FormFragment, FormSide, FragmentPass, GpuPart, Install,
-    KindForm, Lifetime, Own, OwnFragments, Pass, PassFragment, PerPass, Pipeline, Prepare,
-    RoleFragments, Sampler, Scene, SceneDraw, Shape, Texture, Varyings, VertexLayout,
+    KindForm, KindSurface, Lifetime, Own, OwnFragments, Pass, PassFragment, PerPass, Pipeline,
+    Prepare, RoleFragments, Sampler, Scene, SceneDraw, Shape, Texture, Varyings, VertexLayout,
     pixels_per_meter, wgpu,
 };
 use glam::{Mat4, Vec3};
@@ -19,9 +19,7 @@ use super::atlas::TileAtlas;
 use super::patches::{PATCH_STREAM, PatchDraws, view_uniforms};
 use super::surface::SurfaceTrees;
 use super::tables::TerrainTables;
-use super::{
-    IDS_FORMAT, NEVER_BLENDS, SHADED_ELSEWHERE, SURFACE_SLOTS, TERRAIN, TerrainFrame, reached,
-};
+use super::{IDS_FORMAT, NEVER_BLENDS, SURFACE_SLOTS, TERRAIN, TerrainFrame, reached};
 use crate::gpu::{HEIGHT_FORMAT, SURFACE_ERROR_MIPS};
 use crate::holes::{HoledGround, HoledState};
 use crate::settings::TerrainShading;
@@ -122,32 +120,36 @@ const TERRAIN_FORM: KindForm = KindForm {
     varyings: Varyings::Object,
 };
 
-const fn seen_fragments(seen: Entry, shown: Entry) -> OwnFragments {
-    OwnFragments {
-        placed: RoleFragments {
-            shown: Some(shown),
-            ..RoleFragments::NONE
+const SEEN_VARYINGS: &str = "TerrainOutput";
+
+const fn seen_surface(point: &'static str, shown: Entry) -> KindSurface {
+    let roles = RoleFragments {
+        shown: Some(shown),
+        ..RoleFragments::NONE
+    };
+    KindSurface {
+        module: crate::shaders::terrain_shading::draw::MODULE,
+        varyings: SEEN_VARYINGS,
+        point,
+        own: OwnFragments {
+            placed: roles,
+            owned: roles,
+            cull: FaceCull::Back,
         },
-        owned: RoleFragments {
-            lit: Some(seen),
-            shown: Some(shown),
-            ..RoleFragments::NONE
-        },
-        cull: FaceCull::Back,
     }
 }
 
-const SEEN_FRAGMENTS: OwnFragments = seen_fragments(
-    crate::shaders::terrain_shading::draw::FS_TERRAIN_PROBE,
+const SEEN_SURFACE: KindSurface = seen_surface(
+    "terrain_surface",
     crate::shaders::terrain_shading::debug::FS_DEBUG_TERRAIN,
 );
 
-const SEEN_HOLES_FRAGMENTS: OwnFragments = seen_fragments(
-    crate::shaders::terrain_shading::draw::FS_TERRAIN_PROBE_HOLES,
+const SEEN_HOLES_SURFACE: KindSurface = seen_surface(
+    "terrain_surface_holes",
     crate::shaders::terrain_shading::debug::FS_DEBUG_TERRAIN_HOLES,
 );
 
-const fn seen_form(fragments: &'static OwnFragments) -> KindForm {
+const fn seen_form(surface: &'static KindSurface) -> KindForm {
     KindForm {
         kind: TERRAIN,
         placed: FormSide {
@@ -156,12 +158,12 @@ const fn seen_form(fragments: &'static OwnFragments) -> KindForm {
             depth_bias: FormSide::UNBIASED,
         },
         owned: None,
-        varyings: Varyings::Own(fragments),
+        varyings: Varyings::Surfaced(surface),
     }
 }
 
-const SEEN_FORM: KindForm = seen_form(&SEEN_FRAGMENTS);
-const SEEN_HOLES_FORM: KindForm = seen_form(&SEEN_HOLES_FRAGMENTS);
+const SEEN_FORM: KindForm = seen_form(&SEEN_SURFACE);
+const SEEN_HOLES_FORM: KindForm = seen_form(&SEEN_HOLES_SURFACE);
 
 const IDS_PASS: &str = "terrain_ids";
 const RESOLVE_PASS: &str = "terrain_resolve";
@@ -531,11 +533,10 @@ impl GpuPart for TerrainGpu {
                 args: cx.draw_input(pass.scene, h.args),
                 meshlet: cx.draw_input(pass.scene, h.meshlet),
             },
-            (PassRole::Lit, true) | (PassRole::Shown, _) => Joined::Seen {
+            (PassRole::Lit | PassRole::Shown, _) => Joined::Seen {
                 args: cx.draw_input(pass.scene, h.args),
                 meshlet: cx.draw_input(pass.scene, h.meshlet),
             },
-            (PassRole::Lit, false) => Joined::Elsewhere(SHADED_ELSEWHERE),
             (PassRole::Blended, _) => Joined::Elsewhere(NEVER_BLENDS),
         });
         let inputs = Inputs {
