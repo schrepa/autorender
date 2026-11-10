@@ -20,17 +20,6 @@ const SCENE_SOURCES: &[&str] = &[
     "crates/engine_world_streaming/src/scene.rs",
 ];
 
-const UNREACHED: &[(&str, &str)] = &[
-    (
-        "no_scene",
-        "the spawn and remove calls answer it when no scene is open (crates/engine_scene/src/spawning.rs); requests.json reaches it through inspect",
-    ),
-    (
-        "unknown_entity",
-        "the remove call answers it for an id the scene does not hold (crates/engine_scene/src/spawning.rs); requests.json reaches it through inspect",
-    ),
-];
-
 pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
     let fixtures: Value = serde_json::from_str(&read(root, FIXTURES)?)
         .map_err(|error| format!("{FIXTURES} is not JSON: {error}"))?;
@@ -59,9 +48,8 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
             (_, Some(length)) => chain(length),
             _ => refusal["document"].to_string(),
         };
-        let stage = refusal["stage"].as_str().unwrap_or("parse");
         let skips = refusal["skipped"] == true;
-        let (error, skipped) = match refuse(&source, stage, refusal["world"].as_str(), &kinds) {
+        let (error, skipped) = match refuse(&source, refusal, &kinds) {
             Ok(skipped) => match skipped.into_iter().next() {
                 Some(skip) => (skip, true),
                 None => {
@@ -85,22 +73,11 @@ pub fn run(root: &Path, observed: &mut Observations) -> Result<(), String> {
         refused.insert(code.to_owned());
         observed.record(name, json!(error));
     }
-    let rules = scene_rules(root)?;
-    for rule in &rules {
-        let unreached = UNREACHED.iter().any(|(code, _)| code == rule);
-        observed.check(refused.contains(rule) != unreached, || {
-            if unreached {
-                format!("{rule} is in UNREACHED, but a refusal reaches it")
-            } else {
-                format!("no refusal in {FIXTURES} answers {rule}, which the scene loader names")
-            }
+    for rule in &scene_rules(root)? {
+        observed.check(refused.contains(rule), || {
+            format!("no refusal in {FIXTURES} answers {rule}, which the scene loader names")
         });
     }
-    observed.check(
-        UNREACHED.windows(2).all(|pair| pair[0].0 < pair[1].0)
-            && UNREACHED.iter().all(|(code, _)| rules.contains(*code)),
-        || "UNREACHED must be sorted and name only codes the scene loader names".into(),
-    );
     Ok(())
 }
 
@@ -156,15 +133,11 @@ fn round_trip(name: &str, source: &str, kinds: &SceneKinds, observed: &mut Obser
     }
 }
 
-fn refuse(
-    source: &str,
-    stage: &str,
-    world: Option<&str>,
-    kinds: &SceneKinds,
-) -> Result<Vec<Error>, Error> {
+fn refuse(source: &str, refusal: &Value, kinds: &SceneKinds) -> Result<Vec<Error>, Error> {
     let document = SceneDocument::from_json(source)?;
     document.validate(kinds)?;
-    match stage {
+    let world = refusal["world"].as_str();
+    match refusal["stage"].as_str().unwrap_or("parse") {
         "files" => document
             .validate_with(kinds, &SceneFiles::new())
             .map(|()| Vec::new()),
@@ -203,6 +176,17 @@ fn refuse(
             document
                 .instantiate(world)
                 .map(|scene| scene.skipped().to_vec())
+        }
+        "remove" => {
+            let mut engine = Engine::default();
+            let world = engine.app.world_mut();
+            let _opened = if refusal["opened"] == false {
+                None
+            } else {
+                Some(document.instantiate(world)?)
+            };
+            let id = refusal["remove"].as_str().unwrap_or_default();
+            engine_scene::remove(world, id).map(|_| Vec::new())
         }
         _ => Ok(Vec::new()),
     }

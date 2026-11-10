@@ -2169,6 +2169,8 @@ dependencies = [
  "engine_tiles",
  "glam 0.30.9",
  "libm",
+ "schemars",
+ "serde",
  "serde_json",
 ]
 

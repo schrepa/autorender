@@ -13,6 +13,7 @@ pub(crate) fn modes() -> impl Iterator<Item = DebugMode> {
         .map(|&(_, name)| DebugMode {
             name,
             decode: probe,
+            fields: engine_core::schema_of::<Probed>,
         })
 }
 
@@ -22,7 +23,7 @@ pub(crate) fn shown(local: u32) -> u32 {
         .map_or(0, |&(value, _)| value)
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 enum WaterReach {
     Pool,
@@ -32,7 +33,7 @@ enum WaterReach {
     Falls,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, schemars::JsonSchema)]
 struct WaterProbe {
     depth: f32,
     speed: f32,
@@ -45,7 +46,7 @@ struct WaterProbe {
     roughness: f32,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, schemars::JsonSchema)]
 struct Probed {
     water: Option<WaterProbe>,
 }

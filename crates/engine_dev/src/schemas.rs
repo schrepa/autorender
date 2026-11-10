@@ -111,8 +111,8 @@ pub fn calls(world: &World) -> Result<Value, String> {
                 "verb": if operation.control { Verb::Control.name() } else { Verb::Query.name() },
                 "brick": operation.brick,
                 "lands": operation.lands,
-                "request": operation.request_schema(),
-                "reply": operation.reply_schema(),
+                "request": operation.request_schema(world),
+                "reply": operation.reply_schema(world),
             })
         })
         .collect();
@@ -139,17 +139,31 @@ fn run_points() -> Vec<engine_core::RunPoint> {
 fn closed(what: &str, schema: &Value, problems: &mut Vec<String>) {
     for at in engine_core::open_parts(schema) {
         problems.push(format!(
-            "{what} leaves {at} open: give it a typed struct, or mark a field another schema checks with {}",
-            engine_core::SHAPED_BY
+            "{what} leaves {at} open: give it a typed struct, or build its schema from the world in Operation::request_schema or reply_schema"
         ));
     }
 }
 
-fn declared_schemas(registry: &Registry, problems: &mut Vec<String>) {
+fn scene_reached(what: &str, schema: &Value, scene: Option<&Value>, problems: &mut Vec<String>) {
+    for pointer in engine_core::scene_references(schema) {
+        if scene.and_then(|scene| scene.pointer(&pointer)).is_none() {
+            problems.push(format!(
+                "{what} refers to {}#{pointer}, which the scene schema does not hold",
+                engine_core::SCENE_SCHEMA
+            ));
+        }
+    }
+}
+
+fn declared_schemas(
+    world: &World,
+    (registry, scene): (&Registry, Option<&Value>),
+    problems: &mut Vec<String>,
+) {
     for operation in registry.operations() {
         for (part, schema) in [
-            ("request", operation.request_schema()),
-            ("reply", operation.reply_schema()),
+            ("request", operation.request_schema(world)),
+            ("reply", operation.reply_schema(world)),
         ] {
             if engine_core::open_schema(&schema) {
                 problems.push(format!(
@@ -157,11 +171,9 @@ fn declared_schemas(registry: &Registry, problems: &mut Vec<String>) {
                     operation.name, operation.brick
                 ));
             } else {
-                closed(
-                    &format!("call {} ({}) {part}", operation.name, operation.brick),
-                    &schema,
-                    problems,
-                );
+                let what = format!("call {} ({}) {part}", operation.name, operation.brick);
+                closed(&what, &schema, problems);
+                scene_reached(&what, &schema, scene, problems);
             }
         }
     }
@@ -186,7 +198,7 @@ pub fn verbs(world: &World) -> Result<Vec<(&'static str, Value)>, String> {
     let registry = registry(world)?;
     Ok(Verb::ALL
         .into_iter()
-        .map(|verb| (verb.name(), verb_schema(registry, verb)))
+        .map(|verb| (verb.name(), verb_schema(world, registry, verb)))
         .collect())
 }
 
@@ -207,7 +219,7 @@ pub fn game(world: &World) -> Result<Vec<(&'static str, String)>, String> {
     let mut schemas = builtins();
     if let Some(all) = schemas.as_object_mut() {
         for verb in Verb::ALL {
-            all.insert(verb.name().to_owned(), verb_schema(registry, verb));
+            all.insert(verb.name().to_owned(), verb_schema(world, registry, verb));
         }
         for section in registry.sections() {
             let schema = registry
@@ -246,9 +258,13 @@ pub fn game(world: &World) -> Result<Vec<(&'static str, String)>, String> {
     );
     control_state(registry, &controls, &schemas, &mut problems);
     typed_results(registry, &queries, &controls, &mut problems);
-    declared_schemas(registry, &mut problems);
-    match serde_json::from_str::<Value>(&scene_schema) {
-        Ok(scene) => authored_parity(world, &scene, &schemas, &mut problems),
+    let scene = serde_json::from_str::<Value>(&scene_schema);
+    declared_schemas(world, (registry, scene.as_ref().ok()), &mut problems);
+    match &scene {
+        Ok(scene) => {
+            closed("the scene schema", scene, &mut problems);
+            authored_parity(world, scene, &schemas, &mut problems);
+        }
         Err(error) => problems.push(format!("the scene schema is not JSON: {error}")),
     }
     if !problems.is_empty() {
@@ -272,7 +288,7 @@ pub fn game(world: &World) -> Result<Vec<(&'static str, String)>, String> {
     let protocol = serde_json::to_string_pretty(&summary)
         .map_err(|error| format!("cannot write JSON: {error}"))?;
     Ok(vec![
-        ("scene.schema.json", scene_schema),
+        (engine_core::SCENE_SCHEMA, scene_schema),
         ("protocol.json", protocol + "\n"),
     ])
 }
@@ -336,12 +352,12 @@ fn version_schema() -> Value {
     serialized(schemars::SchemaGenerator::default().subschema_for::<u32>())
 }
 
-pub(crate) fn verb_schema(registry: &Registry, verb: Verb) -> Value {
+pub(crate) fn verb_schema(world: &World, registry: &Registry, verb: Verb) -> Value {
     match verb {
         Verb::Describe => enveloped(verb, schemars::schema_for!(protocol::DescribeRequest)),
         Verb::Inspect => enveloped(verb, schemars::schema_for!(protocol::InspectRequest)),
-        Verb::Query => query_schema(registry),
-        Verb::Control => control_schema(registry),
+        Verb::Query => query_schema(world, registry),
+        Verb::Control => control_schema(world, registry),
         Verb::Capture => enveloped(verb, schemars::schema_for!(protocol::CaptureRequest)),
         Verb::Profile => enveloped(verb, schemars::schema_for!(protocol::ProfileRequest)),
     }
@@ -441,7 +457,11 @@ fn operation_args(schema: Value, definitions: &mut Map<String, Value>) -> Value 
     args
 }
 
-fn named_schema(registry: &Registry, verb: Verb, core: schemars::Schema) -> Value {
+fn named_schema(
+    (world, registry): (&World, &Registry),
+    verb: Verb,
+    core: schemars::Schema,
+) -> Value {
     let control = verb == Verb::Control;
     let mut core = serialized(core);
     let mut definitions = core["$defs"].as_object().cloned().unwrap_or_default();
@@ -457,7 +477,7 @@ fn named_schema(registry: &Registry, verb: Verb, core: schemars::Schema) -> Valu
             .operations()
             .filter(|operation| operation.control == control)
             .map(|operation| {
-                let args = operation_args(operation.request_schema(), &mut definitions);
+                let args = operation_args(operation.request_schema(world), &mut definitions);
                 named_variant(verb, operation.name, args)
             }),
     );
@@ -472,17 +492,17 @@ fn named_schema(registry: &Registry, verb: Verb, core: schemars::Schema) -> Valu
     schema
 }
 
-fn query_schema(registry: &Registry) -> Value {
+fn query_schema(world: &World, registry: &Registry) -> Value {
     named_schema(
-        registry,
+        (world, registry),
         Verb::Query,
         schemars::schema_for!(protocol::Query),
     )
 }
 
-fn control_schema(registry: &Registry) -> Value {
+fn control_schema(world: &World, registry: &Registry) -> Value {
     let mut schema = named_schema(
-        registry,
+        (world, registry),
         Verb::Control,
         schemars::schema_for!(protocol::BrowserControl),
     );

@@ -235,6 +235,10 @@ fn tooling_types(root: &Path) -> Result<(), String> {
     }
 }
 
-pub fn write_generated(root: &Path) -> Result<(), String> {
-    engine_checks::generated::write(root, &generated(root)?)
+pub fn generate(root: &Path, options: &[String]) -> Result<(), String> {
+    match options {
+        [] => engine_checks::generated::write(root, &generated(root)?),
+        [check] if check == "--check" => engine_checks::generated::check(root, &generated(root)?),
+        _ => Err("usage: generate [--check]".to_owned()),
+    }
 }

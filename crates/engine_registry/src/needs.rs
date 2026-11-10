@@ -1,3 +1,5 @@
+use std::any::TypeId;
+
 use engine_place::{AttachPoint, PassEntry};
 use serde::Serialize;
 
@@ -25,6 +27,34 @@ pub(crate) struct Standard {
 }
 
 include!(concat!(env!("OUT_DIR"), "/standard.rs"));
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct PlaceUses {
+    pub writers: Vec<&'static str>,
+    pub readers: Vec<&'static str>,
+}
+
+impl PlaceUses {
+    pub(crate) fn write(&mut self, brick: &'static str) {
+        self.readers.retain(|&reader| reader != brick);
+        if !self.writers.contains(&brick) {
+            self.writers.push(brick);
+        }
+    }
+
+    pub(crate) fn read(&mut self, brick: &'static str) {
+        if !self.writers.contains(&brick) && !self.readers.contains(&brick) {
+            self.readers.push(brick);
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct Accessed {
+    pub(crate) place: TypeId,
+    pub(crate) brick: &'static str,
+    pub(crate) write: bool,
+}
 
 #[derive(Clone, Debug)]
 pub(crate) struct LeftOut {

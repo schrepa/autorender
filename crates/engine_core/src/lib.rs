@@ -80,6 +80,12 @@ pub use engine_assets::{
     UvTransform, Wrap, attributes_wgsl, lod_input,
 };
 pub use engine_place::{
+    AUTHORED_COMPONENTS, AppliedView, AskedView, Call, Each, EntityIds, Event, EventDecl,
+    EventPage, Lands, Operation, PendingView, RESERVED_REPLY_KEYS, Raises, ReadEvents, Refusal,
+    Rows, SCENE_SCHEMA, SchemaIn, authored_component, embedded, missing_events, open_parts,
+    open_schema, page_of, rooted, scene_references, schema_of,
+};
+pub use engine_place::{
     Applied, ApplyAt, Ask, Asked, AttachPoint, Awaits, BlendedPass, Board, BudgetUse, Census,
     Clock, ColorPass, Cursor, DrawKind, Drawn, DrawnBounds, DrawnProjection, Error, ErrorCode,
     Events, Feed, FeedView, FrameBudget, GeometryHandle, GpuStruct, Hold, InstanceValues, Interest,
@@ -89,11 +95,6 @@ pub use engine_place::{
     PositionReach, Progress, Readiness, Request, Requests, Ring, ScenePass, ScenePasses, Settling,
     Since, Slot, SlotSet, Smoke, SmokeFailure, SmokeSession, Stamp, StoreId, TargetName,
     TextureHandle, Ticket, Unsettled, Writes, every, gpu_consts, never, smoke_check, smoke_eq,
-};
-pub use engine_place::{
-    AppliedView, AskedView, Call, Each, EntityIds, Event, EventDecl, EventPage, Lands, Operation,
-    PendingView, RESERVED_REPLY_KEYS, Raises, ReadEvents, Refusal, Rows, SHAPED_BY, missing_events,
-    open_parts, open_schema, page_of, shaped_by,
 };
 pub use engine_place::{
     BitField, BitValue, FrameId, GpuBits, Readable, Readback, decode_bits, gpu_bits,

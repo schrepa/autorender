@@ -19,6 +19,32 @@ pub fn write(root: &Path, files: &[(String, String)]) -> Result<(), String> {
     Ok(())
 }
 
+pub fn check(root: &Path, files: &[(String, String)]) -> Result<(), String> {
+    let stale: Vec<&str> = files
+        .iter()
+        .filter(|(path, contents)| {
+            !fs::read_to_string(root.join(path)).is_ok_and(|held| same_text(&held, contents))
+        })
+        .map(|(path, _)| path.as_str())
+        .collect();
+    for path in &stale {
+        println!("{}", serde_json::json!({"event": "stale", "file": path}));
+    }
+    if stale.is_empty() {
+        println!(
+            "{}",
+            serde_json::json!({"event": "generated_fresh", "files": files.len()})
+        );
+        return Ok(());
+    }
+    Err(format!(
+        "{} of {} generated files differ from what generate writes ({}): run generate",
+        stale.len(),
+        files.len(),
+        stale.join(", ")
+    ))
+}
+
 fn same_text(first: &str, second: &str) -> bool {
     first.replace("\r\n", "\n") == second.replace("\r\n", "\n")
 }

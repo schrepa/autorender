@@ -16,7 +16,8 @@ use crate::{
 };
 
 pub(crate) const CHANGE_CALL: Call =
-    Call::exclusive::<ChangeRequest, Rows<Changed>>("change", (true, Lands::Now), run_change);
+    Call::exclusive::<ChangeRequest, Rows<Changed>>("change", (true, Lands::Now), run_change)
+        .request_in(change_request);
 
 static CORE: LazyLock<[ComponentKind; 5]> = LazyLock::new(|| {
     let node = ComponentKind::of::<Node>("node");
@@ -315,12 +316,29 @@ struct Change {
     entity: String,
     component: String,
     #[serde(default)]
-    #[schemars(schema_with = "component_data")]
     data: Value,
 }
 
-fn component_data(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-    crate::shaped_by(generator.subschema_for::<Value>(), "component")
+fn change_request(world: &World) -> Value {
+    let changes: Vec<Value> = scene_components(world)
+        .map(|kind| {
+            serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "entity": { "type": "string" },
+                    "component": { "const": kind.key(), "type": "string" },
+                    "data": crate::authored_component(kind.key()),
+                },
+                "required": ["entity", "component"],
+                "additionalProperties": false,
+            })
+        })
+        .collect();
+    let mut schema = crate::schema_of::<ChangeRequest>();
+    if let Some(held) = schema.get_mut("$defs").and_then(Value::as_object_mut) {
+        held.insert("Change".to_owned(), serde_json::json!({ "oneOf": changes }));
+    }
+    schema
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]

@@ -19,7 +19,7 @@ use crate::attribution::CORE_ROW;
 use crate::entries::{EventEntry, Kept, OperationEntry, PieceEntry, SettingsEntry, StatsEntry};
 use crate::hooks::{Named, add_removal};
 use crate::jobs::JobQueue;
-use crate::needs::{LeftOut, Read, ReadKind, STANDARD};
+use crate::needs::{Accessed, LeftOut, PlaceUses, Read, ReadKind, STANDARD};
 use crate::order::{self, PlaceRules};
 use crate::owners::{Shared, Used, ValueKind, Values, note, ownership};
 use crate::record::{BrickRecord, crate_segment};
@@ -85,6 +85,8 @@ pub struct Registry {
     rule: AccessRule,
     named: Vec<Named>,
     eachers: Vec<(TypeId, MemberEach)>,
+    lists: Vec<(TypeId, TypeId)>,
+    accessed: Vec<Accessed>,
     owners: Vec<Shared>,
     private: Vec<Vec<(ComponentId, Reset)>>,
     movers: Option<MoverRule>,
@@ -503,6 +505,32 @@ impl Registry {
             .map(|record| record.package)
     }
 
+    pub fn place_uses(&self, decl: &PlaceDecl) -> PlaceUses {
+        let place = decl.type_id();
+        let mut uses = PlaceUses::default();
+        for accessed in self
+            .accessed
+            .iter()
+            .filter(|accessed| accessed.place == place)
+        {
+            if accessed.write {
+                uses.write(accessed.brick);
+            } else {
+                uses.read(accessed.brick);
+            }
+        }
+        if let Some(filler) = self.filler(place) {
+            uses.write(filler);
+        }
+        for member in self.members(place) {
+            uses.write(member);
+        }
+        for read in self.reads.iter().filter(|read| read.place == decl.name()) {
+            uses.read(read.reader);
+        }
+        uses
+    }
+
     pub fn place_members(&self, place: &str) -> Vec<&'static str> {
         let named = |decl: &PlaceDecl| decl.name() == place;
         self.bricks
@@ -892,6 +920,7 @@ impl Registry {
                 }
                 if !self.eachers.iter().any(|(list, _)| *list == joined.list) {
                     self.eachers.push((joined.list, joined.each));
+                    self.lists.push((joined.list, joined.members));
                 }
             }
         }
@@ -1144,12 +1173,38 @@ impl Registry {
         }
         self.owners = held.shared;
         self.private = held.private;
+        self.accessed = self.place_access(world, uses);
         let (reads, unmet, lacking) = self.slot_reads(world, uses);
         self.note_reads(&[ReadKind::Slot], reads);
         for error in unmet {
             self.report_unmet(error);
         }
         (held.needs, lacking)
+    }
+
+    fn place_access(&self, world: &World, uses: &[Used]) -> Vec<Accessed> {
+        let mut accessed = Vec::new();
+        for decl in &self.catalog {
+            let place = decl.type_id();
+            let value = self
+                .lists
+                .iter()
+                .find(|(list, _)| *list == place)
+                .map_or(place, |&(_, members)| members);
+            let Some(id) = world.components().get_id(value) else {
+                continue;
+            };
+            for used in uses.iter().filter(|used| used.id == id) {
+                if let Some(record) = self.bricks.get(used.brick.index()) {
+                    accessed.push(Accessed {
+                        place,
+                        brick: record.package,
+                        write: used.write,
+                    });
+                }
+            }
+        }
+        accessed
     }
 
     fn slot_reads(&self, world: &World, uses: &[Used]) -> (Vec<Read>, Vec<Error>, Vec<BrickId>) {

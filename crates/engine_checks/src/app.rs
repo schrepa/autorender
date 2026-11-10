@@ -3,13 +3,13 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use engine::Engine;
-use engine_command_line::{self as command_line, Command};
+use engine_command_line::{self as command_line, Command, CommandOption};
 
 use crate::install::List;
 use crate::stages::{self, Changes, Stage};
 use crate::{Exceptions, Repository, Rules};
 
-const USAGE: &str = "usage: cargo xtask lint [--base REV] [--all] | generate";
+const USAGE: &str = "usage: cargo xtask lint [--base REV] [--all] | generate [--check]";
 
 const WASM_TARGET: &str = "wasm32-unknown-unknown";
 
@@ -101,6 +101,12 @@ const STAGES: &[Stage<Lint>] = &[
         run: |lint| crate::install::check(&mut lint.app.engine()?),
     },
     Stage {
+        name: "generated",
+        needs: &[],
+        covers: |lint| !lint.packages().is_empty(),
+        run: |lint| crate::generated::check(&lint.app.repository.root, &lint.app.generated()?),
+    },
+    Stage {
         name: "clippy",
         needs: &[],
         covers: |lint| !lint.packages().is_empty(),
@@ -146,7 +152,10 @@ fn run<G: 'static, E: Display + 'static>(
         .ok_or_else(|| format!("{folder} has no parent folder"))?;
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if let Some(json) = command_line::asks_help(&arguments) {
-        let commands = [stages::command(), Command::new("generate", [])];
+        let commands = [
+            stages::command(),
+            Command::new("generate", [CommandOption::flag("--check")]),
+        ];
         if json {
             println!("{}", command_line::commands_json(&commands));
         } else {
@@ -166,6 +175,9 @@ fn run<G: 'static, E: Display + 'static>(
         }
         Some((task, [])) if task == "generate" => {
             crate::generated::write(&app.repository.root, &app.generated()?)
+        }
+        Some((task, [check])) if task == "generate" && check == "--check" => {
+            crate::generated::check(&app.repository.root, &app.generated()?)
         }
         _ => Err(USAGE.to_owned()),
     }

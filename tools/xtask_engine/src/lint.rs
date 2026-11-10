@@ -53,6 +53,12 @@ const LINT: &[Stage<Lint>] = &[
         run: |lint| engine_checks::structure::check(repository(&lint.root)?, &RULES.exceptions),
     },
     Stage {
+        name: "generated",
+        needs: &[],
+        covers: |lint| !lint.changes.affected.is_empty(),
+        run: |lint| crate::authoring::generate(&lint.root, &["--check".to_owned()]),
+    },
+    Stage {
         name: "shader link",
         needs: &[],
         covers: |lint| lint.changes.affects(TOOLS),

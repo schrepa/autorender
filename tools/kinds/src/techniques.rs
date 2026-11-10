@@ -334,6 +334,7 @@ fn rust_names(tokens: &[Located]) -> Vec<Named<'_>> {
                 }
             }
             "trait" | "type" => names.extend(named(index + 1, "type")),
+            "fn" => names.extend(named(index + 1, "function")),
             "const" | "static" => {
                 let at = if word(tokens, index + 1) == Some("mut") {
                     index + 2

@@ -119,6 +119,8 @@
     {"rule": "section_unlisted", "path": "$.entities[0].prefetch", "stage": "instantiate", "world": "engine", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "e", "prefetch": {}}]}},
     {"rule": "missing_asset_library", "path": "$", "stage": "instantiate", "world": "bare", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": []}},
     {"rule": "asset_budget_exceeded", "path": "$.meshes[0]", "stage": "instantiate", "world": "no meshes", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [{"id": "box", "source": {"kind": "cube"}}], "entities": []}},
-    {"rule": "hierarchy_install_failed", "path": "$.entities", "stage": "instantiate", "world": "one node", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p"}]}}
+    {"rule": "hierarchy_install_failed", "path": "$.entities", "stage": "instantiate", "world": "one node", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "p"}, {"id": "c", "parent": "p"}]}},
+    {"rule": "no_scene", "path": "$", "stage": "remove", "opened": false, "remove": "e", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": []}},
+    {"rule": "unknown_entity", "path": "$", "stage": "remove", "remove": "missing", "document": {"id": "a", "revision": 1, "materials": [], "meshes": [], "entities": [{"id": "e"}]}}
   ]
 }

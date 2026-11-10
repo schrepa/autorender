@@ -4,6 +4,7 @@ use bevy_ecs::world::World;
 use engine_place::{EventPage, Operation};
 use engine_registry::Registry;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
+use serde_json::{Value, json};
 
 use crate::{Error, ErrorCode, SceneContext};
 
@@ -87,5 +88,40 @@ impl Operation for EventsQuery {
             name: request.name,
             page,
         })
+    }
+
+    fn reply_schema(world: &World) -> Value {
+        let mut definitions = serde_json::Map::new();
+        let reply = crate::embedded(crate::schema_of::<EventsReply>(), &mut definitions);
+        let page = |name: Value, rows: Value| {
+            let mut page = reply.clone();
+            if let Some(properties) = page.get_mut("properties").and_then(Value::as_object_mut) {
+                properties.insert("name".to_owned(), name);
+                properties.insert("rows".to_owned(), rows);
+            }
+            page
+        };
+        let mut pages = Vec::new();
+        for event in world
+            .get_resource::<Registry>()
+            .into_iter()
+            .flat_map(Registry::events)
+        {
+            let row = crate::embedded(event.row_schema(), &mut definitions);
+            pages.push(page(
+                json!({ "const": event.name, "type": "string" }),
+                json!({ "type": "array", "items": row }),
+            ));
+        }
+        if pages.is_empty() {
+            pages.push(page(
+                json!({ "type": "string" }),
+                json!({ "type": "array", "maxItems": 0 }),
+            ));
+        }
+        crate::rooted(
+            json!({ "title": "EventsReply", "oneOf": pages }),
+            definitions,
+        )
     }
 }
