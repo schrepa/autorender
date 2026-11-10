@@ -13,15 +13,15 @@ mod scene;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Attributes, Brick, Bricks, ComponentKind, DrawKind, GpuStruct, KindDecl, SceneComponents,
+    Attributes, Brick, Bricks, ComponentKind, GpuStruct, KindDecl, SceneComponents,
     Schedule, Source,
 };
 use engine_places_rendering::particles::{ParticleBursts, ParticleEmitter, Transparency};
 use engine_render::RenderBricks;
 
-pub use emitters::{ParticleSettings, ParticleStats};
+pub use emitters::{EMITTER_PART, ParticleSettings, ParticleStats};
 
-pub const PARTICLES: DrawKind = DrawKind("particles");
+pub use engine_places_rendering::particles::PARTICLES;
 
 const GENERATED: &[&str] = &[
     emitters::WGSL,
@@ -50,7 +50,8 @@ impl Brick for ParticlesBrick {
                     .schema(scene::emitter_schema),
                 None,
             )
-            .systems(Schedule::WorldSync, emitters::keep_rows)
+            .systems(Schedule::WorldSync, emitters::judge_emitters)
+            .on_remove::<ParticleEmitter, _>(emitters::forget_emitter)
             .systems(
                 Schedule::ViewSync,
                 (emitters::gather_emitters, emitters::particle_stats),

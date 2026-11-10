@@ -799,6 +799,7 @@ fn install<B: Brick>(world: &mut World, entities: &[Entity], scene: &SubScene) -
             if let (crate::Placement::Roots(code), Some(_)) = (kind.placement(), item.parent) {
                 return Err(Error::new(code, at).expected(crate::Expected::Absent));
             }
+            kind.validate(value, &at)?;
             kind.read(world, entity, value)
                 .map_err(|error| error.within(&at))?;
         }

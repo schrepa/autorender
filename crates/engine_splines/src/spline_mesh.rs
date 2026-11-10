@@ -120,11 +120,10 @@ pub(crate) fn build(
                 }
             };
             chunks.meshes.push(handle);
-            let child = spawner.spawn(Transform::default());
-            spawner.insert(
-                child,
-                Drawn::new(DrawKind::MESH, handle, spline.material, child),
-            );
+            let child = spawner.spawn((
+                Transform::default(),
+                Drawn::new(DrawKind::MESH, handle, spline.material),
+            ));
             chunks.entities.push(child);
         }
         if parented {

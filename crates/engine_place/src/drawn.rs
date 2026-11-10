@@ -91,7 +91,6 @@ pub struct Drawn {
     pub kind: DrawKind,
     pub geometry: Option<MeshHandle>,
     pub material: Option<MaterialHandle>,
-    pub node: NodeId,
     pub passes: Option<PassMask>,
     pub layers: Layers,
     pub order: i16,
@@ -100,25 +99,19 @@ pub struct Drawn {
 }
 
 impl Drawn {
-    pub fn new(
-        kind: DrawKind,
-        geometry: MeshHandle,
-        material: MaterialHandle,
-        node: NodeId,
-    ) -> Self {
+    pub fn new(kind: DrawKind, geometry: MeshHandle, material: MaterialHandle) -> Self {
         Self {
             geometry: Some(geometry),
             material: Some(material),
-            ..Self::procedural(kind, node)
+            ..Self::procedural(kind)
         }
     }
 
-    pub fn procedural(kind: DrawKind, node: NodeId) -> Self {
+    pub fn procedural(kind: DrawKind) -> Self {
         Self {
             kind,
             geometry: None,
             material: None,
-            node,
             passes: None,
             layers: Layers::FIRST,
             order: 0,

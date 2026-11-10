@@ -122,7 +122,6 @@ impl SceneForm for DrawnForm {
             material: self
                 .material
                 .or_else(|| held.as_ref().and_then(|drawn| drawn.material)),
-            node: entity,
             passes,
             layers: self.layers,
             order: self.order,

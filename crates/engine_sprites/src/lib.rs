@@ -2,13 +2,13 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod flat;
 
-use std::collections::BTreeSet;
 use std::ops::Range;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
     Asset, AssetResidency, AssetUses, AttachPoint, Attributes, Brick, Bricks, ComponentKind,
-    DrawKind, Drawn, DrawnPoses, DrawnTable, Error, GlobalTransforms, KindDecl, PassViews,
+    DrawKind, Drawn, DrawnPoses, DrawnTable, Error, ErrorCode, GlobalTransforms, KindDecl, PassViews,
+    Refusals,
     SceneComponents, ScenePass, Schedule, Source, Spawner, TargetName, TextureHandle, ViewFacts,
     gpu_struct,
 };
@@ -28,6 +28,7 @@ const GENERATED: &[&str] = &[<SpriteInstance as engine_core::GpuStruct>::WGSL];
 #[derive(
     Component, Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema,
 )]
+#[require(Drawn = Drawn::procedural(SPRITES))]
 pub struct Sprite {
     pub sheet: TextureHandle,
     pub rect: [f32; 4],
@@ -59,7 +60,8 @@ impl Brick for SpritesBrick {
                     .schema(sprite_schema),
                 None,
             )
-            .systems(Schedule::ViewSync, (keep_rows, publish_sheets))
+            .systems(Schedule::ViewSync, (judge_sprites, publish_sheets))
+            .on_remove::<Sprite, _>(forget_sprite)
             .generated(GENERATED)
             .draw_kind(KindDecl {
                 kind: SPRITES,
@@ -75,25 +77,26 @@ impl Brick for SpritesBrick {
 #[derive(Component)]
 struct Sheets;
 
-#[derive(Component)]
-struct SpriteRow;
+pub const SPRITE_PART: &str = "sprite";
 
-fn keep_rows(
-    sprites: Query<Entity, With<Sprite>>,
-    rows: Query<(Entity, &Drawn), With<SpriteRow>>,
-    mut spawner: Spawner<SpritesBrick>,
+fn judge_sprites(
+    sprites: Query<(Entity, &Drawn), (With<Sprite>, Or<(Added<Sprite>, Changed<Drawn>)>)>,
+    mut refusals: ResMut<Refusals>,
 ) {
-    let mut held = BTreeSet::new();
-    for (row, drawn) in &rows {
-        if !sprites.contains(drawn.node) || !held.insert(drawn.node) {
-            spawner.despawn(row);
-        }
+    for (entity, drawn) in &sprites {
+        let verdict = if drawn.kind == SPRITES {
+            Ok(())
+        } else {
+            Err(Error::new(ErrorCode::UsageConflict, "$.sprite")
+                .got(drawn.kind.name())
+                .nearest(SPRITES.name()))
+        };
+        refusals.judge(entity, SPRITE_PART, verdict);
     }
-    for sprite in &sprites {
-        if !held.contains(&sprite) {
-            spawner.spawn((SpriteRow, Drawn::procedural(SPRITES, sprite)));
-        }
-    }
+}
+
+fn forget_sprite(In(entity): In<Entity>, mut refusals: ResMut<Refusals>) {
+    refusals.accept(entity, SPRITE_PART);
 }
 
 fn publish_sheets(
@@ -248,9 +251,9 @@ fn stage(
     runs.clear();
     let mut sorted: Vec<(TextureHandle, SpriteInstance)> = table
         .rows(SPRITES)
-        .filter_map(|(slot, _, drawn)| {
-            let sprite = sprites.get(drawn.node).ok()?;
-            let pose = poses.drawn_pose(globals, drawn.node)?;
+        .filter_map(|(slot, entity, _)| {
+            let sprite = sprites.get(entity).ok()?;
+            let pose = poses.drawn_pose(globals, entity)?;
             let place = [
                 pose.w_axis.x,
                 pose.w_axis.y,

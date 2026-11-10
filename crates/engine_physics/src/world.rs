@@ -1,5 +1,8 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Applies, Filled, FixedTime, GlobalTransforms, Moves, Parent, Transform};
+use engine_core::{
+    Applies, Error, ErrorCode, Filled, FixedTime, GlobalTransforms, Moves, Parent, Refusals,
+    Transform,
+};
 use engine_places_simulation::physics::{
     BodyAsk, BodyChange, BodyMotion, BodyPush, Collide, Collider, Collision, RigidBody,
 };
@@ -216,6 +219,13 @@ impl PhysicsWorld {
                 problem: Some(problem.clone()),
                 ..BodyStatus::default()
             })
+    }
+
+    fn problem(&self, entity: Entity) -> Option<&BodyProblem> {
+        self.problems
+            .iter()
+            .find(|(found, _)| *found == entity)
+            .map(|(_, problem)| problem)
     }
 
     pub fn holds(&self, entity: Entity) -> bool {
@@ -486,7 +496,7 @@ pub(crate) fn step(
     mut asked: Applies<BodyAsk>,
     pushes: Pushes,
     mut physics: ResMut<PhysicsWorld>,
-    mut stats: ResMut<PhysicsStats>,
+    (mut stats, mut refusals): (ResMut<PhysicsStats>, ResMut<Refusals>),
 ) {
     let _profile = engine_core::profile::span("physics", "step");
     let asks = asked.take();
@@ -503,7 +513,16 @@ pub(crate) fn step(
             refused: body::refused(rigid, pushes.get(entity).ok()),
         })
         .collect();
+    let mut held: Vec<(Entity, bool)> = wanted
+        .iter()
+        .map(|wanted| {
+            let pinned = wanted.settings.motion == BodyMotion::Dynamic && !wanted.moved;
+            (wanted.entity, pinned)
+        })
+        .collect();
+    held.sort_unstable_by_key(|&(entity, _)| entity);
     if wanted.is_empty() && asks.is_empty() && physics.idle() {
+        judge(&physics, &held, &mut refusals);
         return;
     }
     let waters = sorted(waters.iter());
@@ -516,4 +535,23 @@ pub(crate) fn step(
     };
     physics.tick((wanted, asks), &around, &mut moves, &pushes);
     stats.set_if_neq(physics.stats());
+    judge(&physics, &held, &mut refusals);
+}
+
+pub const BODY_PART: &str = "body";
+
+fn judge(physics: &PhysicsWorld, held: &[(Entity, bool)], refusals: &mut Refusals) {
+    refusals.keep_part(BODY_PART, |entity| {
+        held.binary_search_by_key(&entity, |&(found, _)| found).is_ok()
+    });
+    for &(entity, pinned) in held {
+        let verdict = match physics.problem(entity) {
+            Some(problem) => Err(problem.error()),
+            None if pinned => Err(Error::new(ErrorCode::UsageConflict, "$.rigid_body.motion")
+                .got(BodyMotion::Dynamic)
+                .nearest(BodyMotion::Kinematic)),
+            None => Ok(()),
+        };
+        refusals.judge(entity, BODY_PART, verdict);
+    }
 }

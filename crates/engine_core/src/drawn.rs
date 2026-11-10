@@ -16,8 +16,11 @@ use crate::math::sin_cos;
 use crate::{
     AssetResidency, Cursor, DeviceLimits, DrawKind, Drawn, DrawnBounds, Error, ErrorCode,
     Expected, Feed, GlobalTransforms, GpuBits, GpuStruct, Interest, KindDecl, MaterialHandle,
-    MeshHandle, PassMask, PositionReach, Request, Revision, ScenePasses, Since, gpu_struct, settings,
+    MeshHandle, PassMask, PositionReach, Refusals, Request, Revision, ScenePasses, Since, Transform,
+    gpu_struct, settings,
 };
+
+pub const DRAWN_PART: &str = "drawn";
 
 settings! {
     #[section("drawn")]
@@ -157,6 +160,7 @@ pub struct DrawnTable {
     values: Vec<[f32; 4]>,
     free: Vec<u32>,
     touched: Vec<Entity>,
+    verdicts: Vec<(Entity, Result<(), Error>)>,
     changes: Feed<u32>,
     plan: PlanState,
     generation: u64,
@@ -179,6 +183,7 @@ impl Default for DrawnTable {
             values: Vec::new(),
             free: Vec::new(),
             touched: Vec::new(),
+            verdicts: Vec::new(),
             changes: Feed::new(settings.changes as usize),
             plan: PlanState::Stale,
             generation: 0,
@@ -385,6 +390,10 @@ impl DrawnTable {
         cx: &Context<'_>,
     ) {
         let previous = self.held.remove(&entity);
+        let was = previous
+            .as_ref()
+            .and_then(|held| refused_of(&held.state))
+            .cloned();
         let (slot, uses) = match previous {
             Some(held) => {
                 let slot = match held.state {
@@ -408,9 +417,9 @@ impl DrawnTable {
             }
             None => (None, hold(cx.residency, drawn)),
         };
-        let state = match (self.refusal(drawn, cx), slot) {
+        let state = match (self.refusal(entity, drawn, cx), slot) {
             (None, Some(slot)) => {
-                self.write(slot, (drawn, bounds), cx);
+                self.write(slot, entity, (drawn, bounds), cx);
                 DrawnState::Drawn { slot }
             }
             (None, None) => {
@@ -423,7 +432,7 @@ impl DrawnTable {
                             .got((u64::from(slot) + 1) * self.slot_bytes()),
                     )
                 } else {
-                    self.write(slot, (drawn, bounds), cx);
+                    self.write(slot, entity, (drawn, bounds), cx);
                     DrawnState::Drawn { slot }
                 }
             }
@@ -433,6 +442,11 @@ impl DrawnTable {
             }
             (Some(state), None) => state,
         };
+        let now = refused_of(&state);
+        if was.as_ref() != now {
+            self.verdicts
+                .push((entity, now.cloned().map_or(Ok(()), Err)));
+        }
         self.held.insert(
             entity,
             Held {
@@ -451,7 +465,7 @@ impl DrawnTable {
         room != 0 && (u64::from(slot) + 1) * self.slot_bytes() > room
     }
 
-    fn refusal(&self, drawn: &Drawn, cx: &Context<'_>) -> Option<DrawnState> {
+    fn refusal(&self, entity: Entity, drawn: &Drawn, cx: &Context<'_>) -> Option<DrawnState> {
         let Some(decl) = self.kind(drawn.kind) else {
             return Some(DrawnState::Refused(
                 Error::new(ErrorCode::InvalidRenderable, "$.drawn.kind")
@@ -484,12 +498,12 @@ impl DrawnTable {
                     .got(drawn.kind.name()),
             ));
         }
-        if !cx.globals.drawn(drawn.node) {
+        if !cx.globals.drawn(entity) {
             return Some(DrawnState::Hidden);
         }
         if cx
             .globals
-            .get(drawn.node)
+            .get(entity)
             .and_then(|global| global.matrix())
             .is_none()
         {
@@ -561,11 +575,13 @@ impl DrawnTable {
     }
 
     fn forget(&mut self, entity: Entity) {
-        if let Some(Held {
-            state: DrawnState::Drawn { slot },
-            ..
-        }) = self.held.remove(&entity)
-        {
+        let Some(held) = self.held.remove(&entity) else {
+            return;
+        };
+        if refused_of(&held.state).is_some() {
+            self.verdicts.push((entity, Ok(())));
+        }
+        if let DrawnState::Drawn { slot } = held.state {
             self.release(slot);
         }
     }
@@ -573,6 +589,7 @@ impl DrawnTable {
     fn write(
         &mut self,
         slot: u32,
+        entity: Entity,
         (drawn, supplied): (&Drawn, Option<&DrawnBounds>),
         cx: &Context<'_>,
     ) {
@@ -615,7 +632,7 @@ impl DrawnTable {
             bounds_max: [high_x, high_y, high_z, 0.0],
             node: cx
                 .globals
-                .node_index(drawn.node)
+                .node_index(entity)
                 .map_or(u32::MAX, |index| index as u32),
             geometry: drawn
                 .geometry
@@ -633,7 +650,7 @@ impl DrawnTable {
             kind: self.kind_id(drawn.kind).unwrap_or(0),
             mobility: cx
                 .globals
-                .mobility(drawn.node)
+                .mobility(entity)
                 .map_or(0, |mobility| mobility as u32 + 1),
         };
         let mut changed = self.records[at] != record;
@@ -714,6 +731,15 @@ impl DrawnTable {
     }
 }
 
+fn refused_of(state: &DrawnState) -> Option<&Error> {
+    match state {
+        DrawnState::Refused(reason) => Some(reason),
+        DrawnState::Drawn { .. } | DrawnState::Hidden | DrawnState::Unplaced | DrawnState::Waiting => {
+            None
+        }
+    }
+}
+
 fn batch_key(drawn: &Drawn) -> BatchKey {
     (
         drawn.order,
@@ -749,6 +775,7 @@ fn unbounded(remove: On<Remove, DrawnBounds>, mut table: ResMut<DrawnTable>) {
 }
 
 pub(crate) fn install(world: &mut World) {
+    world.register_required_components::<Drawn, Transform>();
     world.init_resource::<DrawnTable>();
     world.add_observer(touched);
     world.add_observer(dropped);
@@ -808,5 +835,14 @@ pub(crate) fn resolve(world: &mut World) {
     if !world.contains_resource::<DrawnTable>() {
         return;
     }
-    world.resource_scope(|world, mut table: Mut<DrawnTable>| table.settle(world, &settings));
+    let verdicts = world.resource_scope(|world, mut table: Mut<DrawnTable>| {
+        table.settle(world, &settings);
+        std::mem::take(&mut table.verdicts)
+    });
+    if let Some(mut refusals) = world.get_resource_mut::<Refusals>() {
+        for (entity, verdict) in verdicts {
+            refusals.judge(entity, DRAWN_PART, verdict);
+        }
+    }
+    crate::refusals::prune(world);
 }

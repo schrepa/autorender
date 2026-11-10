@@ -19,6 +19,7 @@ use browser as backend;
 #[cfg(not(target_arch = "wasm32"))]
 use native as backend;
 
+pub use mixer::SOUND_PART;
 pub use settings::{Audio, AudioStats};
 
 use engine_core::{Brick, Bricks, ComponentKind, SceneComponents, Schedule, Source};

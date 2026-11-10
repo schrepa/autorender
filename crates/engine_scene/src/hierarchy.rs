@@ -183,7 +183,7 @@ fn expand_list(
     })
 }
 
-fn validate_object(
+pub(crate) fn validate_object(
     entity: &SceneObject,
     path: &str,
     prefab_ids: &BTreeSet<&str>,

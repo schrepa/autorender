@@ -8,9 +8,11 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::{
     Error, ErrorCode, Filled, FixedTime, GAMEPLAY_JOBS, GlobalTransforms,
-    Interest, JobFailures, JobKind, JobRef, Jobs, Parent, RecordKey, Records, Request, Requests,
-    Transform, fields, job_output, job_priority, settings, stats,
+    Interest, JobFailures, JobKind, JobRef, Jobs, Parent, RecordKey, Records, Refusals, Request,
+    Requests, Transform, fields, job_output, job_priority, settings, stats,
 };
+
+pub const NAVIGATION_PART: &str = "navigation";
 use engine_math::{atan2, max};
 use engine_places_simulation::ground::{
     Ground, GroundGrid, GroundObstacle, GroundRead, GroundSource, Pyramid, TileKey,
@@ -377,7 +379,7 @@ pub(crate) fn walk_agents(
     (ground, colliders, records): (Res<Ground>, ObstacleColliders, Res<Records>),
     (collision, collides, bodies): (Res<Collision>, Filled<Collision>, Query<&Collider>),
     mut jobs: Jobs,
-    mut navigation: ResMut<NavAgents>,
+    (mut navigation, mut refusals): (ResMut<NavAgents>, ResMut<Refusals>),
     mut stats: ResMut<NavStats>,
     (mut agents, globals): (Agents, Res<GlobalTransforms>),
 ) {
@@ -385,7 +387,7 @@ pub(crate) fn walk_agents(
         (&*settings, *time),
         ((&*ground, &colliders), &*records, &mut jobs),
         (collides.on().then_some(&*collision), &bodies),
-        &mut navigation,
+        (&mut navigation, &mut refusals),
         (&mut agents, &globals),
     );
 }
@@ -394,7 +396,7 @@ fn walk(
     (settings, time): (&Navigation, FixedTime),
     ((ground, colliders), records, jobs): ((&Ground, &ObstacleColliders), &Records, &mut Jobs),
     bodies: (Option<&Collision>, &Query<&Collider>),
-    navigation: &mut NavAgents,
+    (navigation, refusals): (&mut NavAgents, &mut Refusals),
     (agents, globals): (&mut Agents, &GlobalTransforms),
 ) -> NavStats {
     let mut stats = NavStats::default();
@@ -403,7 +405,12 @@ fn walk(
     navigation.settle_records(settings, records);
     for (entity, agent, mut walk, transform) in agents.iter_mut() {
         if let Err(invalid) = SceneNavAgent::from(*agent).validate() {
-            let field = invalid.field.into_owned();
+            let field = invalid.field.to_string();
+            refusals.refuse(
+                entity,
+                NAVIGATION_PART,
+                invalid.error(ErrorCode::InvalidValue, "$.nav_agent"),
+            );
             if walk.refused.as_ref() != Some(&field) {
                 navigation.searches.retain(|(owner, _)| *owner != entity);
                 *walk = NavWalk {
@@ -415,6 +422,7 @@ fn walk(
             continue;
         }
         if walk.status == NavStatus::Refused {
+            refusals.accept(entity, NAVIGATION_PART);
             *walk = NavWalk::default();
         }
         if walk.destination == agent.destination {

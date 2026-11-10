@@ -15,7 +15,9 @@ use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, Cook, CookList, JobKind, SceneComponents, Schedule, Source};
 use engine_places_simulation::ground::UNKNOWN_TERRAIN;
 
-pub use agents::{NavAgents, NavQuery, NavStats, Navigation, ObstacleColliders, SceneNavAgent};
+pub use agents::{
+    NAVIGATION_PART, NavAgents, NavQuery, NavStats, Navigation, ObstacleColliders, SceneNavAgent,
+};
 pub use dev::{
     GroundKey, NavAgentQuery, NavAgentRow, NavAgentView, NavAgentsQuery, NavAgentsView,
     NavGoControl, NavGoResult, NavPathQuery, NavPathResult, WalkResult,

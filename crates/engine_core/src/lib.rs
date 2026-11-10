@@ -27,6 +27,7 @@ mod presentation;
 pub mod presentation_bounds;
 mod provided;
 mod records;
+mod refusals;
 mod render_stats;
 mod scene;
 mod schedules;
@@ -38,6 +39,7 @@ mod statistics;
 mod ticks;
 mod transform_edits;
 mod views;
+mod why;
 
 mod sources {
     include!(concat!(env!("OUT_DIR"), "/sources.rs"));
@@ -59,7 +61,7 @@ pub use cull::{
 };
 pub use cursor::*;
 pub use drawn::{
-    DrawnBatch, DrawnCensus, DrawnFlags,
+    DRAWN_PART, DrawnBatch, DrawnCensus, DrawnFlags,
     DrawnRecord, DrawnSettings, DrawnState, DrawnTable, PlanState, drawn_wgsl,
 };
 pub use engine_assets::{
@@ -102,11 +104,12 @@ pub use hierarchy::*;
 pub use input::*;
 pub use jobs::*;
 pub use mesh_lods::MeshLevels;
-pub use moves::{Applies, Asks, HandOver, Moves, Teleport, mover_of, send_ask, take_asks};
+pub use moves::{Applies, Asks, HandOver, MOVER_PART, Moves, Teleport, mover_of, send_ask, take_asks};
 pub use nearest::Nearest;
 pub use presentation::*;
 pub use provided::*;
 pub use records::*;
+pub use refusals::{Refusals, Refused};
 pub use render_stats::{LinkedStats, Names, RenderStats};
 pub use scene::*;
 pub use engine_place::{
@@ -184,6 +187,7 @@ static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::ledger::<Readiness>("readiness"),
     PlaceDecl::ledger::<AssetLibrary>("asset_library"),
     PlaceDecl::ledger::<RecordExchange>("record_exchange"),
+    PlaceDecl::ledger::<Refusals>("refusals"),
     PlaceDecl::component::<Drawn>("drawn"),
     PlaceDecl::component::<OwnedViews>("owned_views"),
     PlaceDecl::ask::<Teleport>(),
@@ -307,6 +311,14 @@ fn core_entries(registry: &mut RegistryBuilder) {
         )
         .schemas(input::Rebind::schema, input::Rebind::result_schema),
     );
+    registry.core_operation(
+        OperationEntry::of::<<why::Why as Operation>::Params>(
+            why::Why::NAME,
+            why::Why::CONTROL,
+            bricks::run_operation::<why::Why>,
+        )
+        .schemas(why::Why::schema, why::Why::result_schema),
+    );
     registry.mover_rule(moves::rule());
     registry.despawn_rule(hierarchy::despawn_owned);
     registry.fill_core::<Asked<Teleport>>();
@@ -392,6 +404,7 @@ impl Engine {
             .init_resource::<FrameLimits>()
             .init_resource::<Level>()
             .init_resource::<Readiness>()
+            .init_resource::<Refusals>()
             .init_resource::<FrameBudget>()
             .init_resource::<Views>()
             .init_resource::<Detail>()
@@ -518,9 +531,13 @@ impl Engine {
 
     #[track_caller]
     pub fn operation<O: Operation>(&mut self) -> &mut Self {
-        let entry =
+        self.core_operation(
             OperationEntry::of::<O::Params>(O::NAME, O::CONTROL, bricks::run_operation::<O>)
-                .schemas(O::schema, O::result_schema);
+                .schemas(O::schema, O::result_schema),
+        )
+    }
+
+    pub fn core_operation(&mut self, entry: OperationEntry) -> &mut Self {
         if let Some(mut registry) = self.app.world_mut().get_resource_mut::<Registry>() {
             registry.core_operation(entry);
         }

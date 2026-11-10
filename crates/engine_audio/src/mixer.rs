@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use bevy_ecs::prelude::*;
 use engine_core::math::clamp;
 use engine_core::{
-    Error, ErrorCode, FrameTime, GlobalTransforms, Interest, Pause, Poses, Request, Requests,
-    SceneIds, Spawner, Ticket, Views,
+    Error, ErrorCode, FrameTime, GlobalTransforms, Interest, Pause, Poses, Refusals, Request,
+    Requests, SceneIds, Spawner, Ticket, Views,
 };
 use engine_places_rendering::audio::{
     Bus, OneShot, SoundHandle, SoundOrder, SoundSource, Sounds, VoiceHandle,
@@ -336,6 +336,19 @@ impl Mixer {
         self.backend.close();
     }
 
+    fn verdict(&self, source: &SoundSource) -> Result<(), Error> {
+        if source.bytes.is_none() {
+            return Err(Error::new(ErrorCode::MissingFile, "$.sound.file").got(&source.file));
+        }
+        let Some(file) = self.files.get(&(source.file.clone(), source.stream)) else {
+            return Ok(());
+        };
+        match self.sounds.get(file.sound.key()) {
+            Some(Request::Failed(error)) => Err(error.clone()),
+            Some(Request::Asked(_) | Request::Ready(_) | Request::Missing) | None => Ok(()),
+        }
+    }
+
     fn fail(&mut self, failure: String) {
         self.failures = self.failures.saturating_add(1);
         self.latest = Some(failure);
@@ -620,8 +633,10 @@ pub(crate) fn mix(
     sounds: Res<Sounds>,
     sources: Query<(Entity, Ref<SoundSource>)>,
     (mut stats, mut mixer, mut spawner): (ResMut<AudioStats>, ResMut<Mixer>, Spawner<AudioBrick>),
+    mut refusals: ResMut<Refusals>,
 ) {
     let was = mixer.device;
+    let failures = mixer.failures;
     let closed = !mixer.backend.opened();
     let limit = settings.max_voices;
     mixer.set_enabled(settings.enabled);
@@ -660,6 +675,12 @@ pub(crate) fn mix(
     }
     mixer.trim(limit);
     mixer.collect_decoded();
+    let failed = failures != mixer.failures;
+    for (entity, source) in &sources {
+        if failed || source.is_changed() {
+            refusals.judge(entity, SOUND_PART, mixer.verdict(&source));
+        }
+    }
     let pause_moved = pause.as_ref().is_some_and(|pause| pause.is_changed());
     if settings.is_changed() || pause_moved || (closed && mixer.backend.opened()) {
         mixer.apply_buses(&settings, pause.is_some_and(|pause| pause.paused()));
@@ -674,7 +695,14 @@ pub(crate) fn mix(
     }
 }
 
-pub(crate) fn release(In(entity): In<Entity>, mut mixer: ResMut<Mixer>) {
+pub const SOUND_PART: &str = "sound";
+
+pub(crate) fn release(
+    In(entity): In<Entity>,
+    mut mixer: ResMut<Mixer>,
+    mut refusals: ResMut<Refusals>,
+) {
+    refusals.accept(entity, SOUND_PART);
     if let Some(at) = mixer.voices.iter().position(|held| held.of_entity(entity)) {
         mixer.halt(at);
     }

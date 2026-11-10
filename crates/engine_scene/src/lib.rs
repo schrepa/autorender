@@ -13,6 +13,7 @@ mod instance;
 mod loading;
 mod looks;
 mod material;
+mod spawning;
 mod texture;
 mod validation;
 mod writer;
@@ -35,5 +36,6 @@ pub use material::{
     SceneAlphaMode, SceneCull, SceneDepthBias, SceneFilter, SceneMap, SceneMaterial,
     SceneMaterialControl, SceneMipmapFilter, SceneSlot, SceneSlotFill, SceneTextureMap, SceneWrap,
 };
+pub use spawning::{REMOVE, SPAWN, remove, remove_operation, spawn, spawn_operation};
 pub use texture::SceneTexture;
 pub use validation::{identifier, unknown};

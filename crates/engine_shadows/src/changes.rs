@@ -38,7 +38,7 @@ fn caster_box(
     if !casts {
         return None;
     }
-    let matrix = globals.get(drawn.node)?.matrix()?;
+    let matrix = globals.get(table.owner(slot)?)?.matrix()?;
     let low = Vec3::from_slice(&record.bounds_min[..3]);
     let high = Vec3::from_slice(&record.bounds_max[..3]);
     let center = matrix.transform_point3((low + high) * 0.5);

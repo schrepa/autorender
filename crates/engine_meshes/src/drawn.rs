@@ -100,13 +100,13 @@ impl Operation for MeshesListing {
         _: ListingRequest,
     ) -> Result<Value, Error> {
         let instances: Vec<Value> = (0..table.records().len() as u32)
-            .filter_map(|slot| table.drawn(slot))
-            .filter(|drawn| drawn.kind == MESH)
-            .map(|drawn| {
+            .filter_map(|slot| Some((table.owner(slot)?, table.drawn(slot)?)))
+            .filter(|(_, drawn)| drawn.kind == MESH)
+            .map(|(entity, drawn)| {
                 let material = drawn.material.and_then(|handle| assets.material(handle));
                 let surface = material.map_or(Surface::MATTE, Material::surface);
                 let model = globals
-                    .get(drawn.node)
+                    .get(entity)
                     .and_then(|global| global.matrix())
                     .unwrap_or(glam::Mat4::IDENTITY);
                 json!({

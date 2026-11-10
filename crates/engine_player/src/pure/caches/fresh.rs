@@ -232,14 +232,8 @@ fn index<T: PartialEq>(handles: &[T], handle: T) -> usize {
 
 fn spawn(world: &mut World, assets: &Assets, authored: &Authored) -> Entity {
     let mut entity = world.spawn(authored.transform);
-    let id = entity.id();
     if let Some((mesh, material)) = authored.mesh {
-        let mut drawn = Drawn::new(
-            DrawKind::MESH,
-            assets.meshes[mesh],
-            assets.materials[material],
-            id,
-        );
+        let mut drawn = Drawn::new(DrawKind::MESH, assets.meshes[mesh], assets.materials[material]);
         drawn.values.tint = authored.tint;
         entity.insert(drawn);
     }
@@ -306,12 +300,8 @@ fn apply(
             };
             match mesh {
                 Some((mesh, material)) => {
-                    let mut drawn = Drawn::new(
-                        DrawKind::MESH,
-                        assets.meshes[mesh],
-                        assets.materials[material],
-                        entity,
-                    );
+                    let mut drawn =
+                        Drawn::new(DrawKind::MESH, assets.meshes[mesh], assets.materials[material]);
                     drawn.values.tint = tint;
                     held.insert(drawn);
                 }

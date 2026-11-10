@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use engine_core::{Error, ErrorCode, InvalidSetting, Rule, Setting};
+use engine_core::{Error, ErrorCode, Expected, InvalidSetting, Rule, Setting};
 use engine_places_simulation::physics::{BodyChange, BodyPush, RigidBody};
 use glam::Vec3;
 use serde::Serialize;
@@ -71,6 +71,24 @@ pub(crate) fn body_schema() -> Value {
         engine_core::state(&mut schema, field, rule);
     }
     serde_json::to_value(schema).unwrap_or(Value::Null)
+}
+
+impl BodyProblem {
+    pub(crate) fn error(&self) -> Error {
+        match self {
+            Self::NoCollider => Error::new(ErrorCode::MissingComponent, "$.collider")
+                .expected(Expected::Present),
+            Self::NotRoot => {
+                Error::new(crate::INVALID_RIGID_BODY, "$.parent").expected(Expected::Absent)
+            }
+            Self::NoTransform => Error::new(ErrorCode::MissingComponent, "$.transform")
+                .expected(Expected::Present),
+            Self::BadScale => Error::new(ErrorCode::InvalidValue, "$.transform.scale"),
+            Self::BadValue(field) => {
+                Error::new(ErrorCode::InvalidValue, format!("$.rigid_body.{field}"))
+            }
+        }
+    }
 }
 
 pub(crate) fn refused(body: &RigidBody, push: Option<&BodyPush>) -> Option<BodyProblem> {

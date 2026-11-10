@@ -572,7 +572,7 @@ fn read(
     })
 }
 
-fn spawn_entity(
+pub(crate) fn spawn_entity(
     world: &mut World,
     scene_id: &str,
     expanded: &ExpandedObject,
