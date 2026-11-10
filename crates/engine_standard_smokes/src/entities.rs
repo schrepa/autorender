@@ -79,7 +79,11 @@ fn parent_takes_children(session: &mut dyn SmokeSession) -> Checked<()> {
         "remove_takes_the_subtree"
     );
     let why = answer(session, "query", "why", json!({"entity": HELD}));
-    smoke_eq!(code(&why), json!(REMOVED), "a_removed_parent_takes_its_children");
+    smoke_eq!(
+        code(&why),
+        json!(REMOVED),
+        "a_removed_parent_takes_its_children"
+    );
     Ok(())
 }
 
@@ -119,6 +123,10 @@ fn sound_says_why(session: &mut dyn SmokeSession) -> Checked<()> {
     render(session)?;
     let off = play(session);
     control(session, "audio_device", json!({"available": true}))?;
-    smoke_eq!(code(&off), json!(DEVICE_OFF), "sound_play_says_the_device_is_off");
+    smoke_eq!(
+        code(&off),
+        json!(DEVICE_OFF),
+        "sound_play_says_the_device_is_off"
+    );
     Ok(())
 }

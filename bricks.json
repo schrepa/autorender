@@ -25,7 +25,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_texture_cook::brick::TextureCook",
-      "version": "31a39574ccbed6a879c931123459f7915a82c8ac1a2b62f9d810fb123109113a"
+      "version": "3e7cb07c1f3e7e590946353ad2204e543c8f38cab77e78c324d27db169e69822"
     },
     {
       "dependencies": [
@@ -59,7 +59,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_time_of_day::TimeOfDayBrick",
-      "version": "ab2b2000b61a56e0c3a9f014452b5f57af7755dc0da73bc671b6322985807b94"
+      "version": "02120fd1a2f530625a0b3838505c03c257cecd9b05aa6d23236aa3fcea2c0698"
     },
     {
       "dependencies": [
@@ -110,7 +110,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_sun::SunBrick",
-      "version": "72c0624afcac5f1551769da175ac2cea4453e709fa5884b13af7c18e6dfdb9cc"
+      "version": "8d0dae37a6ce0957404a56b568535000cb6730884e6735341d7a97562af2dd74"
     },
     {
       "dependencies": [
@@ -224,7 +224,6 @@
       "resources": [
         "engine_lighting::light::SurfaceLight",
         "engine_lighting::highlights::Highlights",
-        "engine_lighting::SizedHighlights",
         "engine_lighting::LightingPiece"
       ],
       "settings": [
@@ -240,7 +239,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_lighting::LightingModelBrick",
-      "version": "f8c24eb7874b3dfbeb4672d364b1604dc340d163f82851ba5b1f68d0e5dfbd78"
+      "version": "a332f8a918f757d417f754c9c712bac587aa5960c3affe3735030f9133976f98"
     },
     {
       "dependencies": [
@@ -316,7 +315,7 @@
         }
       ],
       "type": "engine_meshes::MeshesBrick",
-      "version": "4bfe0ed6a8e9cf3d3b54b19057c75df67d4e0e076f67b6879ce213659b4ddbc6"
+      "version": "e14b53bbb9d42b93af255ece8dd46f292fb3331980d039ade756c08402e84df6"
     },
     {
       "dependencies": [
@@ -431,7 +430,7 @@
         }
       ],
       "type": "engine_impostors::ImpostorsBrick",
-      "version": "478df6353158f9938a9cdbdaeb362d0d57e86315a9daf083246895cfc49da36e"
+      "version": "89663abca687760cbd0897fed6e861330d27f972625de3f9b3a4f6b3b982053f"
     },
     {
       "dependencies": [
@@ -556,7 +555,7 @@
         }
       ],
       "type": "engine_shadows::ShadowsBrick",
-      "version": "0e71b331a6752476ef892feba502da2aba7faa02591a587c5a42d2124b946414"
+      "version": "1e3e90d30a20dd01e2db936ca9fed6addad2dc0986a0635f78b6c8c4a6c1ecb3"
     },
     {
       "dependencies": [
@@ -616,7 +615,7 @@
         }
       ],
       "type": "engine_lights::LightsBrick",
-      "version": "ad7746fcefd30a6875a9260b03df7a47c1dc5575703ca1cfb56cf1dcf7116ca8"
+      "version": "8d9e26c62c8f92c7bc9cc32abdfe97e5847ab19e97feea03293a7a6dca97ef86"
     },
     {
       "dependencies": [
@@ -759,9 +758,7 @@
         }
       ],
       "resources": [
-        "engine_sky::settings::Clouds",
         "engine_sky::settings::Sky",
-        "engine_sky::settings::Haze",
         "engine_sky::settings::NightSky",
         "engine_sky::views::StaticTablesView",
         "engine_sky::views::CloudStats",
@@ -772,24 +769,26 @@
         "engine_sky::sky::SkyPlan",
         "engine_sky::clouds::CloudSteps",
         "engine_sky::haze::HazeSteps",
-        "engine_sky::environment::EnvironmentSteps"
+        "engine_sky::environment::EnvironmentSteps",
+        "engine_sky::settings::Clouds",
+        "engine_sky::settings::Haze"
       ],
       "settings": [
-        {
-          "key": "clouds",
-          "type": "engine_sky::settings::Clouds"
-        },
         {
           "key": "sky",
           "type": "engine_sky::settings::Sky"
         },
         {
-          "key": "haze",
-          "type": "engine_sky::settings::Haze"
-        },
-        {
           "key": "night_sky",
           "type": "engine_sky::settings::NightSky"
+        },
+        {
+          "key": "clouds",
+          "type": "engine_sky::settings::Clouds"
+        },
+        {
+          "key": "haze",
+          "type": "engine_sky::settings::Haze"
         }
       ],
       "smokes": [],
@@ -812,7 +811,7 @@
         }
       ],
       "type": "engine_sky::SkyBrick",
-      "version": "0bded984f3b8e083d348189195db088a1cc41447583e30af46260bda59bbf910"
+      "version": "be5b0ca345f05826ad14d631e4cc721cadcc5a9e21cf6b539743f95b8b2661ed"
     },
     {
       "dependencies": [
@@ -905,7 +904,7 @@
         }
       ],
       "type": "engine_ambient_occlusion::AmbientOcclusionBrick",
-      "version": "63b0dd16ac4aa64ef57fdb7dc307c688fa9ba52053b5c6f2cd3a43afed2265c9"
+      "version": "b4358f91e3d221ebb25a500d0de1f440bbed83160fb2e3fddf9fcd887f77d894"
     },
     {
       "dependencies": [
@@ -974,7 +973,7 @@
         }
       ],
       "type": "engine_bloom::BloomBrick",
-      "version": "7f79af54d2d06726a5dcb118452325234b821518f859f946a5f26f64ad299c30"
+      "version": "962e4e43ef8e40d95bdbe3b23fe24d7417f56a3d85d0b0a0ea43f756ff4f0e13"
     },
     {
       "dependencies": [
@@ -1083,7 +1082,7 @@
         }
       ],
       "type": "engine_taa::TaaBrick",
-      "version": "da198982ebaff5bd4efbe40f26154e0c260827b6dfb47885da42b420bb9791d1"
+      "version": "46c41d9fc194989036124da927b6954dd808d6b53548a51fece2bac2c0c3010d"
     },
     {
       "dependencies": [
@@ -1175,7 +1174,7 @@
         }
       ],
       "type": "engine_auto_exposure::AutoExposureBrick",
-      "version": "8dbb32282bf8ed75e7ba7f7338a9a4f2c80274ba41d391a102a8ff2710cf5cd7"
+      "version": "4c49d51312f11e99ec9be157a64b22e32003d9df1e3880c593189c985c679616"
     },
     {
       "dependencies": [
@@ -1220,7 +1219,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_tonemap::TonemapBrick",
-      "version": "396dd09d66036545d42f6be2c2e9b67a0b424da1ca4f2402915793c94e572faf"
+      "version": "16b8f3951a05cb6b0770cd91817ac5df4723b0087b428a74e2ff6d49b0acad02"
     },
     {
       "dependencies": [
@@ -1248,7 +1247,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_dither::DitherBrick",
-      "version": "843e0a5727e33bd7dc4c8ae568057c90646b4d88bb7e46ec0905d67aab229e97"
+      "version": "91a449dbe4df23202e2eb34b1b62d0a6b9871ee3b8a162ccd7909ac47ac8aa36"
     },
     {
       "dependencies": [
@@ -1383,7 +1382,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_debug_view::DebugViewBrick",
-      "version": "ffce5e7048743f19c2c6a43f3bf77853ade92189d02fdc49d7d38078c76e6d2b"
+      "version": "90017e1f4600ff6f472ea298e8b9771e6c785c5d89c3d31937b8e8098fdf1d6c"
     },
     {
       "dependencies": [
@@ -1444,7 +1443,7 @@
         }
       ],
       "type": "engine_audio::AudioBrick",
-      "version": "b30224af09e0bca43b495c1f1b3ff107b1a8d73501580abc8b8c64a1660340a9"
+      "version": "60e4910bcacf4425dd519940754b2993ff45486c8bebabde9a8fbe39e687d961"
     },
     {
       "dependencies": [
@@ -1488,7 +1487,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_screens::ScreensBrick",
-      "version": "58ce2641575ac6ab0945f26cd053b2286a785aae4932af72fcb397468fe1dca0"
+      "version": "c08c990bb685cecb0fc382318bc83d1eaa59127fa7d2f8b18ca56b6b018c6a0f"
     },
     {
       "dependencies": [
@@ -1554,7 +1553,7 @@
         }
       ],
       "type": "engine_text::TextBrick",
-      "version": "7ca82a08e2a2d42fe4c17f52b5db4b1ee3e4d5808514d6ddb25426a855ba99dc"
+      "version": "99833f50e93e2c5f126769a43b64a9b2d31d3a9fd9c5a4d6ed5a276aebcee9d8"
     },
     {
       "dependencies": [
@@ -1646,7 +1645,7 @@
         }
       ],
       "type": "engine_ui::UiBrick",
-      "version": "4de417baf0dc82d86e7493cb298cc1fda69b6a16e740f648775810bb9e4b482f"
+      "version": "6411aa156d75ef0a8de094631c9e91b55ec0f56bd923e4a7ab51183e55413c37"
     },
     {
       "dependencies": [
@@ -1735,7 +1734,7 @@
         }
       ],
       "type": "engine_probes::ReflectionProbesBrick",
-      "version": "740c7eb1e3c5d4ef70263638666f5bf2c9eef75f21fde6571d54e7834072cccd"
+      "version": "df022f8114143fb2e28fc3c8e79a1d3c223e988120f5d2da28a61e4055036094"
     },
     {
       "dependencies": [
@@ -1871,7 +1870,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_reflections::ReflectionsBrick",
-      "version": "68f2cd48cd2f09e5a07f20fbd322a951ea708d7bb64df933459c6c50d7c6377b"
+      "version": "80909f0ca0d1fb7c18424c2acfbbd401ec60935f76a1265316b23624f6bd5d91"
     },
     {
       "dependencies": [
@@ -1963,7 +1962,7 @@
         }
       ],
       "type": "engine_particles::ParticlesBrick",
-      "version": "501792acc2317c4f4818beba4f4144f22463e3d4e447e6625973cb7532fa815a"
+      "version": "0c59e7ace899ee8a616548101fdb121ceae29747119ffe2848757b504d0740a4"
     },
     {
       "dependencies": [
@@ -2026,7 +2025,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_animation::AnimationBrick",
-      "version": "33b6e32e474a3249cbae7e986cae7b5f434e46ef58e18b053c60fe0edc563625"
+      "version": "b8beb882550b2003c93984f75075da4753cf826ddf6319b5ac9cb5beb29c5d91"
     },
     {
       "dependencies": [
@@ -2062,7 +2061,7 @@
         }
       ],
       "type": "engine_dynamic_resolution::DynamicResolutionBrick",
-      "version": "3a86523d4c05dfd3910b2835de05fc910c71a60ab797ffc973569ba0288a224f"
+      "version": "dae3d3dbbd0547482fcd83c3a557fd3748fc6920e64b0f657630c84f8d2ca15b"
     },
     {
       "dependencies": [
@@ -2099,7 +2098,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_wind::WindBrick",
-      "version": "a7ef77e20ea76ff6eb61bcd239e9be90918f44056c90872fe948efa0ef96243e"
+      "version": "e01f40c232421899a404547e05be274c406d4489a35d6cd69b201f078940b015"
     },
     {
       "dependencies": [
@@ -2159,7 +2158,7 @@
         }
       ],
       "type": "engine_collision::CollisionBrick",
-      "version": "d01e16c665841301e5ecd4bb42c54a468de38b646fcc28ef47fa8934eff4d875"
+      "version": "f7140566d9bc812e912567465cc23aa3dd21e66359ef6907fa70535bcb22fd7c"
     },
     {
       "dependencies": [
@@ -2228,7 +2227,7 @@
         }
       ],
       "type": "engine_physics::PhysicsBrick",
-      "version": "b87724dc872bf0cb6a8e209d6b76e86afaa1ebd97f0ae6b4104085bdf3bf9672"
+      "version": "f6195d666650cf3508459b589d55e4b395d1414aea8038ebaf639215aa7eaeb5"
     },
     {
       "dependencies": [
@@ -2345,7 +2344,7 @@
         }
       ],
       "type": "engine_terrain::runtime::brick::TerrainBrick",
-      "version": "628a6258c646b9a7c162fde700966ee22a5e58686df392970317945bc57ea0b8"
+      "version": "1fc247c2787dc302d4b0939235e4184af264451726cb56c9f74cc658aa3a834f"
     },
     {
       "dependencies": [
@@ -2597,7 +2596,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "99715a09fa6bb3585d2b9ec0d8664658e7cc573d2bf9cbeac4a4c2c1ba4f1e99"
+      "version": "043ea7aa76df5cfcea6963bb2d6ba0f983a57cb537bba4cee12a31a74da2b40a"
     },
     {
       "dependencies": [
@@ -2759,7 +2758,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "5adfffcbd1444f77d23dea1fbb41ddd997191a82ca94efdf57dd2fb114c6281f"
+      "version": "3199bec7814a8843ffb99b60e865ef96b473a6232a7ce70c1e77684eb2e8d5de"
     },
     {
       "dependencies": [
@@ -2877,7 +2876,7 @@
         }
       ],
       "type": "engine_ground_cover::GroundCoverBrick",
-      "version": "49660a1b1eccb889acb7ad806efa7afad1b45e110416f9e7326058b3f47fd657"
+      "version": "7eedd6c8d6053a392795a4fbfa3601dfcfa1f00382e0db1a6d8d620b796c0d3e"
     },
     {
       "dependencies": [
@@ -3121,7 +3120,7 @@
         }
       ],
       "type": "engine_water::WaterBrick",
-      "version": "d18ae15a57d1dbebe1d8286923030da8c37cbca589328ab45a72d302d00e791c"
+      "version": "86aa6a9636bfd355ac2e9ce42b4f9b8cef1d571f1cac2b6828377a3e232b807e"
     },
     {
       "dependencies": [
@@ -3147,7 +3146,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_noise::LayerNoiseBrick",
-      "version": "1df0f00d52f8379d1cfed07ddd0fe36f3c296eebcda187af90e3ee2faa60fe40"
+      "version": "ef79311d8c2a20d894e74ee3ac28a565ec7247a52b87f65ffbf7c259af70c8b8"
     },
     {
       "dependencies": [
@@ -3173,7 +3172,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_stamps::LayerStampsBrick",
-      "version": "bfe3d9d7dfc72b9844ab6b86ec9bcf78a24c7c2562b76b5e71d17cde3cfea6b8"
+      "version": "d26a81bb626c33fcd9e61863302f600fb214270ddcd84aa659150d11e8cca2cd"
     },
     {
       "dependencies": [
@@ -3200,7 +3199,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_heightmap::LayerHeightmapBrick",
-      "version": "a2ce1ad43e2d21b351280c65f73320379bb807794c40da10024bea474c688f4e"
+      "version": "246bc5047a00856bf0f674ae4356bdd32dd05a8bd1ccc31ca7f4a19eb1c90d15"
     },
     {
       "dependencies": [
@@ -3226,7 +3225,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_paths::LayerPathsBrick",
-      "version": "a868107517b910a55d96a4b87af243d432bca0b02560f896171dfe9c0c6f861a"
+      "version": "04bbf5f43e49db6a7a2ed668d821c788e012f6a61ed6907879e4e4c812d95baa"
     },
     {
       "dependencies": [
@@ -3252,7 +3251,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_erosion::LayerErosionBrick",
-      "version": "da90c0c2e2aafd4c7f1635f4d1942c2bfb81c893bbf4d88d8088c25f57cd6539"
+      "version": "977459e352b1428215d9ff60ff994da51c9a486e40cc35e1554f71d176661e46"
     },
     {
       "dependencies": [
@@ -3279,7 +3278,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_hydrology::LayerHydrologyBrick",
-      "version": "18943feeea7969ab6a557fffc4455e95806dbd0bc9f31c59765b7ef12876fa24"
+      "version": "5afd7a099913337efe3d109909b80d7cdeaeb0f03a9edb2a8319e0ea3a21d518"
     },
     {
       "dependencies": [
@@ -3306,7 +3305,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_relief::LayerReliefBrick",
-      "version": "ec896d3c35dda6485597e7d237af8452c82f4be44ff820061fe362d5ae8ff0f2"
+      "version": "3308874711a495c88435f0dabbf1ab4dd558bb488028880fbd964f2de7b8d68d"
     },
     {
       "dependencies": [
@@ -3330,11 +3329,12 @@
           "providers": [
             "engine_collision"
           ],
-          "required": false
+          "required": true
         }
       ],
       "resources": [
-        "engine_grounding::Grounding"
+        "engine_grounding::Grounding",
+        "engine_grounding::GroundWaits"
       ],
       "settings": [
         {
@@ -3345,7 +3345,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_grounding::GroundingBrick",
-      "version": "73f69803c84fdf7be9e4d7a17f3849a650b8cb0ea736007a8ce6746de289b22c"
+      "version": "0748eae4c8d463cba225fd5c8230a421b54eb8e336e70961d950604f0d61cfaa"
     },
     {
       "dependencies": [
@@ -3412,7 +3412,7 @@
         }
       ],
       "type": "engine_world_streaming::WorldStreamingBrick",
-      "version": "33eeb6ae8963412f4b694cd26d54f8c7243fc4e5a04a2ce3237739a638cdb8d3"
+      "version": "8e25c684da34f491f70bf974223b739467c18996fab977f9766a6ac3acd6904d"
     },
     {
       "dependencies": [
@@ -3488,7 +3488,7 @@
         }
       ],
       "type": "engine_navigation::NavigationBrick",
-      "version": "43e4b2ab16037842df89548dc3abf426a89dd1003a515240f2d88c05f4531ca5"
+      "version": "91611c08cb67a942cfcfc28d59823ffa1723fc6719e4b3ebbe59270df1e08207"
     },
     {
       "dependencies": [
@@ -3521,7 +3521,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_splines::SplinesBrick",
-      "version": "f3b54c99f405c571af2be166c31b9d73fbefa623def8353b3f1ef13ebcfe6fd7"
+      "version": "3e6c86dd6c763f5e6b1795ed444e62579594a9e482085a123d4bfe29d6861172"
     }
   ],
   "frame": {
@@ -5157,9 +5157,11 @@
         "engine_audio",
         "engine_particles",
         "engine_animation",
+        "engine_splines",
         "engine_collision",
         "engine_navigation",
         "engine_physics",
+        "engine_grounding",
         "engine_text"
       ]
     },

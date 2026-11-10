@@ -48,7 +48,11 @@ fn beyond_the_ring(session: &mut dyn SmokeSession) -> Checked<()> {
         "raycast",
         json!({"origin": [FAR[0], DROPPED_FROM, FAR[1]], "direction": [0.0, -1.0, 0.0], "max_distance": 600.0}),
     )?;
-    smoke_eq!(ray["hit"], Value::Null, "no_collision_tile_holds_the_far_point");
+    smoke_eq!(
+        ray["hit"],
+        Value::Null,
+        "no_collision_tile_holds_the_far_point"
+    );
     Ok(())
 }
 

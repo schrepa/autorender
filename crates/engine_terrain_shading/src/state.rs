@@ -99,11 +99,7 @@ impl<T: engine_codec::Codec + Send + Sync + 'static> Bake<T> {
             });
             return;
         }
-        let Some(baking) = self
-            .baking
-            .as_mut()
-            .filter(|baking| baking.work.waiting())
-        else {
+        let Some(baking) = self.baking.as_mut().filter(|baking| baking.work.waiting()) else {
             return;
         };
         match baking.work.poll(records) {
@@ -152,9 +148,7 @@ impl Coloring {
                     Landed::Failed(error) => Some(Err(error.clone())),
                 };
                 match landed.map(|made| {
-                    made.and_then(|pixels| {
-                        exchange.textures(assets, colors_set(&self.job, pixels))
-                    })
+                    made.and_then(|pixels| exchange.textures(assets, colors_set(&self.job, pixels)))
                 }) {
                     None => Some(ColorStep::Bytes(work)),
                     Some(Ok(handles)) => handles.first().map(|&handle| ColorStep::Texture(handle)),
@@ -222,9 +216,11 @@ impl Colors {
             .coloring
             .as_mut()
             .and_then(|coloring| coloring.advance((exchange, assets), records, gone));
-        let Some(wanted) = self.wanted.clone().filter(|wanted| {
-            self.coloring.as_ref().map(|coloring| &coloring.job) != Some(wanted)
-        }) else {
+        let Some(wanted) = self
+            .wanted
+            .clone()
+            .filter(|wanted| self.coloring.as_ref().map(|coloring| &coloring.job) != Some(wanted))
+        else {
             return failed;
         };
         let shown = self.coloring.take().and_then(|coloring| {

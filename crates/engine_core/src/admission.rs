@@ -2,7 +2,9 @@ use bevy_ecs::component::ComponentId;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 
-use crate::{ComponentKind, Error, MAX_HIERARCHY_DEPTH, Parent, Placed, Transform, scene_components};
+use crate::{
+    ComponentKind, Error, MAX_HIERARCHY_DEPTH, Parent, Placed, Transform, scene_components,
+};
 
 pub fn admit(
     world: &mut World,

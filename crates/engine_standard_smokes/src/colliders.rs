@@ -46,7 +46,10 @@ fn fixture() -> Value {
 pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     session.source(&fixture().to_string());
     control(session, "pause", json!({}))?;
-    environment(session, json!({"merge": true, "collision": {"max_colliders": LIMIT}}))?;
+    environment(
+        session,
+        json!({"merge": true, "collision": {"max_colliders": LIMIT}}),
+    )?;
     settled(session)?;
     session.step(1);
     render(session)?;
@@ -73,14 +76,25 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         wanted,
         "only_the_colliders_past_the_limit_are_left_out"
     );
-    reasons(session, &left_out, "why_names_the_limit_for_the_left_out_alone")?;
+    reasons(
+        session,
+        &left_out,
+        "why_names_the_limit_for_the_left_out_alone",
+    )?;
     rays(session, &kept, &left_out)?;
-    environment(session, json!({"merge": true, "collision": {"max_colliders": null}}))?;
+    environment(
+        session,
+        json!({"merge": true, "collision": {"max_colliders": null}}),
+    )?;
     session.step(1);
     render(session)?;
     let placed = places(session)?;
     let wanted = Value::from(vec![ACTIVE; BOXES]);
-    smoke_eq!(json!(placed), wanted, "lifting_the_limit_takes_every_collider_back");
+    smoke_eq!(
+        json!(placed),
+        wanted,
+        "lifting_the_limit_takes_every_collider_back"
+    );
     reasons(session, &[], "lifting_the_limit_clears_the_refusals")
 }
 
@@ -93,11 +107,7 @@ fn places(session: &mut dyn SmokeSession) -> Checked<Vec<String>> {
     Ok(placed)
 }
 
-fn reasons(
-    session: &mut dyn SmokeSession,
-    left_out: &[usize],
-    check: &'static str,
-) -> Checked<()> {
+fn reasons(session: &mut dyn SmokeSession, left_out: &[usize], check: &'static str) -> Checked<()> {
     let mut got = Vec::with_capacity(BOXES);
     let mut wanted = Vec::with_capacity(BOXES);
     for index in 0..BOXES {
@@ -134,7 +144,11 @@ fn rays(session: &mut dyn SmokeSession, kept: &[usize], left_out: &[usize]) -> C
             "raycast",
             json!({"origin": [across(index), 10.0, 0.0], "direction": [0.0, -1.0, 0.0], "max_distance": 50.0}),
         )?;
-        let hit = if hits { json!(named(index)) } else { Value::Null };
+        let hit = if hits {
+            json!(named(index))
+        } else {
+            Value::Null
+        };
         got.push(json!({
             "entity": named(index),
             "hit": ray["hit"]["entity"]["id"],
@@ -148,6 +162,10 @@ fn rays(session: &mut dyn SmokeSession, kept: &[usize], left_out: &[usize]) -> C
             "complete": true,
         }));
     }
-    smoke_eq!(json!(got), json!(wanted), "queries_keep_working_over_the_limit");
+    smoke_eq!(
+        json!(got),
+        json!(wanted),
+        "queries_keep_working_over_the_limit"
+    );
     Ok(())
 }

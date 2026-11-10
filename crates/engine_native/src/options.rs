@@ -197,7 +197,10 @@ pub enum StartScene {
     #[default]
     Empty,
     File(PathBuf),
-    Declared { scene: DefaultScene, folder: String },
+    Declared {
+        scene: DefaultScene,
+        folder: String,
+    },
 }
 
 pub fn open_scene<G: Game>(

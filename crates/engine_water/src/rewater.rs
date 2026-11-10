@@ -47,10 +47,7 @@ fn rewater_terrain(
     let entity = terrain.entity;
     let mut waiting = 0;
     stale.retain(|key| {
-        let flying = terrain
-            .held
-            .get(key)
-            .is_some_and(|held| held.redrawing());
+        let flying = terrain.held.get(key).is_some_and(|held| held.redrawing());
         waiting += u32::from(flying);
         !flying
     });

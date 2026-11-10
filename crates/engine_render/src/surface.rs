@@ -646,9 +646,7 @@ impl MaterialLayout {
     fn skipped_reads(&self, material: &Material, map: &str) -> bool {
         material.slots().iter().any(|(slot, module)| {
             self.skipped.iter().any(|(known, name, _, maps)| {
-                *known == slot.as_str()
-                    && *name == module.as_str()
-                    && maps.iter().any(|read| *read == map)
+                *known == slot.as_str() && *name == module.as_str() && maps.contains(&map)
             })
         })
     }

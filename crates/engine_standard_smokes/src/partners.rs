@@ -154,7 +154,10 @@ fn occlusion_off(session: &mut dyn SmokeSession) -> Checked<()> {
         .collect();
     smoke_eq!(json!(ran), json!([]), "no_occlusion_pass_runs");
     let starved = image(session)?;
-    environment(session, json!({ "ambient_occlusion": { "enabled": false } }))?;
+    environment(
+        session,
+        json!({ "ambient_occlusion": { "enabled": false } }),
+    )?;
     let without = image(session)?;
     let wanted = json!({ "sha256": without });
     smoke_eq!(

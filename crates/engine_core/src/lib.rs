@@ -78,11 +78,11 @@ pub use engine_assets::{
     UvTransform, Wrap, attributes_wgsl, lod_input,
 };
 pub use engine_place::{
-    AUTHORED_COMPONENTS, AppliedView, AskedView, AuthoredId, Call, Callable, Each, EntityIds, Event,
-    EventDecl, EventPage, Lands, Named, Operation, OperationScene, PendingView, RESERVED_REPLY_KEYS,
-    Raises, ReadEvents, Refusal, Rows, SCENE_SCHEMA, SceneEntity, SchemaIn, authored_component,
-    embedded, entity_named, entity_removed, missing_events, open_parts, open_schema, page_of,
-    rooted, scene_references, schema_of,
+    AUTHORED_COMPONENTS, AppliedView, AskedView, AuthoredId, Call, Callable, Each, EntityIds,
+    Event, EventDecl, EventPage, Lands, Named, Operation, OperationScene, PendingView,
+    RESERVED_REPLY_KEYS, Raises, ReadEvents, Refusal, Rows, SCENE_SCHEMA, SceneEntity, SchemaIn,
+    authored_component, embedded, entity_named, entity_removed, missing_events, open_parts,
+    open_schema, page_of, rooted, scene_references, schema_of,
 };
 pub use engine_place::{
     Applied, ApplyAt, Ask, Asked, AttachPoint, Awaits, BlendedPass, Board, BudgetUse, Census,

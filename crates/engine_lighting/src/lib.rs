@@ -131,11 +131,7 @@ fn publish_lighting(sized: Switched<Highlights>, mut lighting: ResMut<Lighting>)
 }
 
 fn publish_piece(
-    (surface, highlights, sized): (
-        Res<SurfaceLight>,
-        Res<Highlights>,
-        Switched<Highlights>,
-    ),
+    (surface, highlights, sized): (Res<SurfaceLight>, Res<Highlights>, Switched<Highlights>),
     sky: Res<SkyLight>,
     mut piece: ResMut<LightingPiece>,
 ) {

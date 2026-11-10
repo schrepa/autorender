@@ -93,9 +93,12 @@ fn implemented(code: &str) -> Option<String> {
 
 fn generic(before: &str, name: &str) -> bool {
     before.split_once("impl<").is_some_and(|(_, parameters)| {
-        parameters
-            .split([',', '>'])
-            .any(|parameter| parameter.split(':').next().is_some_and(|held| held.trim() == name))
+        parameters.split([',', '>']).any(|parameter| {
+            parameter
+                .split(':')
+                .next()
+                .is_some_and(|held| held.trim() == name)
+        })
     })
 }
 

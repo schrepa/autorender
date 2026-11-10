@@ -132,6 +132,8 @@ export type ErrorCode =
   | "binding_limit"
   | "attachment_limit"
   | "unknown_variable"
+  | "input_unread"
+  | "slot_unopened"
   | "pieces_limit"
   | "pass_mismatch"
   | "shader_link"

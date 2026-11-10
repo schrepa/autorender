@@ -9,10 +9,10 @@ use serde_json::Value;
 
 use crate::{
     Callable, Camera, Clear, ComponentKind, Drawn, DrawnProjection, DrawnTable, Error, ErrorCode,
-    Expected, GeometryHandle, GlobalTransforms, InstanceValues, Layers, List, MaterialHandle, Mover,
-    Node, Parent, PassMask, Placed, Placement, Rect, Rows, Rule, SceneComponents, SceneContext,
-    SceneCx, SceneEntity, SceneForm, ScenePasses, Setting, Target, TextureHandle, View,
-    entity_named, scene_component, scene_components,
+    Expected, GeometryHandle, GlobalTransforms, InstanceValues, Layers, List, MaterialHandle,
+    Mover, Node, Parent, PassMask, Placed, Placement, Rect, Rows, Rule, SceneComponents,
+    SceneContext, SceneCx, SceneEntity, SceneForm, ScenePasses, Setting, Target, TextureHandle,
+    View, entity_named, scene_component, scene_components,
 };
 
 pub struct ChangeOperation;
@@ -24,10 +24,14 @@ impl Callable for ChangeOperation {
 
     fn answer(world: &mut World, request: ChangeRequest) -> Result<Self::Reply, Error> {
         let context = world.get_resource::<SceneContext>().cloned();
-        Ok(Rows::each("changes", request.changes, |change| match &context {
-            Some(context) => context.scope(|| changed(world, change)),
-            None => changed(world, change),
-        }))
+        Ok(Rows::each(
+            "changes",
+            request.changes,
+            |change| match &context {
+                Some(context) => context.scope(|| changed(world, change)),
+                None => changed(world, change),
+            },
+        ))
     }
 
     fn request_schema(world: &World) -> Value {
@@ -274,7 +278,9 @@ impl SceneForm for ViewForm {
     }
 
     fn held(world: &World, entity: Entity) -> Option<Self> {
-        world.get::<View>(entity).map(|view| Self::of_view(view, None))
+        world
+            .get::<View>(entity)
+            .map(|view| Self::of_view(view, None))
     }
 }
 

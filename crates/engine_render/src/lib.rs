@@ -57,6 +57,7 @@ mod readback;
 mod renderer;
 mod targets;
 
+pub use engine_place::{PointInput, PointSet};
 pub use gpu_data::{
     jitter_clip, mip_levels, pack_color, pack_surface, pixel_angle, pixels_per_meter,
     pyramid_extents,
@@ -64,8 +65,7 @@ pub use gpu_data::{
 pub use kinds::{
     Channels, Form, FormColor, FormDepth, FormFragment, FormPass, FormSide, FormTarget,
     FormTopology, FragmentPass, KindForm, KindSurface, OwnFaces, OwnFragments, PassFragment,
-    PerPass,
-    RoleFragments, Varyings,
+    PerPass, RoleFragments, Varyings,
 };
 pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
 pub use materials::gpu_format as texture_format;
@@ -84,7 +84,6 @@ pub use renderer::{
     DeviceHealth, FoldStep, GpuPassTimes, Installation, InstalledPart, InstalledPiece, PassTie,
     Renderer, StartingRenderer, device_limits, install_noop,
 };
-pub use engine_place::{PointInput, PointSet};
 pub use shaders::FULLSCREEN;
 pub use surface::{
     DrawState, FaceCull, LightingModule, MaterialValue, MaterialVariant, OpenSlot, SlotModule,

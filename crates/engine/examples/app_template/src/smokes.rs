@@ -92,7 +92,12 @@ fn dropped(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
         "failed": why["failed"],
     });
     let wanted = json!({ "cells": [], "waiting": [], "drawing": [], "failed": [] });
-    smoke_check!(got == wanted, "a_dropped_material_leaves_nothing_waiting", got, wanted);
+    smoke_check!(
+        got == wanted,
+        "a_dropped_material_leaves_nothing_waiting",
+        got,
+        wanted
+    );
     Ok(())
 }
 

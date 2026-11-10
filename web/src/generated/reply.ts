@@ -295,6 +295,7 @@ export interface StatusResult {
   fixed_delta_seconds?: number | null;
   inspectors: number;
   limits: StatusLimits;
+  notices: Refusal[];
   presentation: PresentationState;
   unmet: Refusal[];
   world_entities: number;

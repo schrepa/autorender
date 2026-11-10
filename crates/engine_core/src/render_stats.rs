@@ -120,7 +120,9 @@ impl DrawReports {
     }
 
     pub fn dropped_of<'a>(&'a self, brick: &'a str) -> impl Iterator<Item = &'a DroppedDraws> + 'a {
-        self.dropped.iter().filter(move |dropped| dropped.brick == brick)
+        self.dropped
+            .iter()
+            .filter(move |dropped| dropped.brick == brick)
     }
 }
 

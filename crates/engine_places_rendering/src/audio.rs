@@ -340,7 +340,12 @@ impl Queue {
         let queued = self
             .orders
             .iter()
-            .filter(|order| matches!(order, SoundOrder::Play { .. } | SoundOrder::PlayBytes { .. }))
+            .filter(|order| {
+                matches!(
+                    order,
+                    SoundOrder::Play { .. } | SoundOrder::PlayBytes { .. }
+                )
+            })
             .count();
         if live + queued >= *limit {
             return Err(Error::new(ErrorCode::QueueFull, "$").at_most(*limit as u64));

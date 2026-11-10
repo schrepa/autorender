@@ -32,17 +32,13 @@ const SKIPS: &[KindSkip] = &[
         PassViews::Owned,
         "the pond surface stays out of probe captures",
     ),
-    KindSkip::pass::<ColorPass>(
-        "the pond surface draws in its own pass, over the scene it covers",
-    ),
+    KindSkip::pass::<ColorPass>("the pond surface draws in its own pass, over the scene it covers"),
     KindSkip::role(
         PassRole::Depth,
         PassViews::Main,
         "the pond surface covers the scene behind it, so it fills no depth before it",
     ),
-    KindSkip::pass::<BlendedPass>(
-        "the pond surface covers the scene behind it in its own pass",
-    ),
+    KindSkip::pass::<BlendedPass>("the pond surface covers the scene behind it in its own pass"),
 ];
 
 const SETS: [PointInput; 4] = [

@@ -569,16 +569,16 @@
     },
     "Detail": {
       "properties": {
-        "enabled": {
-          "default": true,
-          "type": "boolean"
-        },
         "fade_seconds": {
           "default": 0.5,
           "format": "float",
           "maximum": 4.0,
           "minimum": 0.0,
           "type": "number"
+        },
+        "levels": {
+          "$ref": "#/$defs/Levels",
+          "default": "by_pixel_error"
         },
         "margin": {
           "default": 0.10000000149011612,
@@ -1614,6 +1614,13 @@
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
+    },
+    "Levels": {
+      "enum": [
+        "by_pixel_error",
+        "finest"
+      ],
+      "type": "string"
     },
     "MacroCauses": {
       "additionalProperties": false,
@@ -3188,6 +3195,14 @@
             "integer",
             "null"
           ]
+        },
+        "occlusion": {
+          "default": true,
+          "type": "boolean"
+        },
+        "subpixel": {
+          "default": true,
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -3860,16 +3875,6 @@
             }
           ]
         },
-        "occlusion_culling": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneOcclusionCulling"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "occupancy": {
           "anyOf": [
             {
@@ -3994,16 +3999,6 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneStreamed"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "subpixel_culling": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneSubpixelCulling"
             },
             {
               "type": "null"
@@ -5288,16 +5283,6 @@
       ],
       "type": "object"
     },
-    "SceneOcclusionCulling": {
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {
-          "default": true,
-          "type": "boolean"
-        }
-      },
-      "type": "object"
-    },
     "SceneOccupancy": {
       "additionalProperties": false,
       "properties": {
@@ -6120,16 +6105,6 @@
             "$ref": "#/$defs/SceneObject"
           },
           "type": "array"
-        }
-      },
-      "type": "object"
-    },
-    "SceneSubpixelCulling": {
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {
-          "default": true,
-          "type": "boolean"
         }
       },
       "type": "object"

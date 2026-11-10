@@ -24,8 +24,8 @@ pub(crate) struct Why;
 #[derive(Serialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub(crate) enum WhyAnswer {
-    Entity(EntityWhy),
-    Brick(BrickWhy),
+    Entity(Box<EntityWhy>),
+    Brick(Box<BrickWhy>),
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
@@ -94,8 +94,12 @@ impl Operation for Why {
         request: WhyRequest,
     ) -> Result<WhyAnswer, Error> {
         match (request.entity, request.brick) {
-            (Some(id), None) => entity_answer(world, &id).map(WhyAnswer::Entity),
-            (None, Some(brick)) => brick_answer(world, &brick).map(WhyAnswer::Brick),
+            (Some(id), None) => {
+                entity_answer(world, &id).map(|why| WhyAnswer::Entity(Box::new(why)))
+            }
+            (None, Some(brick)) => {
+                brick_answer(world, &brick).map(|why| WhyAnswer::Brick(Box::new(why)))
+            }
             (Some(_), Some(_)) => {
                 Err(Error::new(ErrorCode::InvalidArguments, "$.brick").expected(Expected::Absent))
             }

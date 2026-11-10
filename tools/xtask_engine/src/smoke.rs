@@ -12,8 +12,7 @@ use crate::process::{Project, project_option, run};
 
 pub const PLAYER: &str = "crates/engine_player";
 
-const USAGE: &str =
-    "usage: cargo xtask smoke [NAME...] --limit-ms MS [--project DIR] [--browser] | [--project DIR] --list";
+const USAGE: &str = "usage: cargo xtask smoke [NAME...] --limit-ms MS [--project DIR] [--browser] | [--project DIR] --list";
 
 const BROWSER_RUNNER: &str = "scripts/smoke.mjs";
 

@@ -151,8 +151,7 @@ fn walks(world: &mut World, entity: Entity) -> Result<(), Error> {
     )?;
     match changed.rows.into_iter().next() {
         Some(Each::Refused(refused)) => {
-            let code = serde_json::from_value(json!(refused.reason))
-                .unwrap_or(ErrorCode::GameRule);
+            let code = serde_json::from_value(json!(refused.reason)).unwrap_or(ErrorCode::GameRule);
             Err(Error::new(code, refused.path))
         }
         Some(Each::Done(_)) | None => Ok(()),

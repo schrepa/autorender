@@ -198,7 +198,10 @@ fn exchange(message: &Value) -> Value {
     let error = Error::new(ErrorCode::SessionClosed, "$.relay");
     let closed = || json!({"ok": false, "error": error});
     let mut out = std::io::stdout().lock();
-    if writeln!(out, "{message}").and_then(|()| out.flush()).is_err() {
+    if writeln!(out, "{message}")
+        .and_then(|()| out.flush())
+        .is_err()
+    {
         return closed();
     }
     drop(out);

@@ -68,8 +68,7 @@ pub fn call<O: Callable>(world: &mut World, request: O::Request) -> Result<O::Re
     else {
         return Err(unregistered(O::NAME));
     };
-    Board::owned_by(brick, || O::answer(world, request))
-        .map_err(|error| error.within("$.args"))
+    Board::owned_by(brick, || O::answer(world, request)).map_err(|error| error.within("$.args"))
 }
 
 #[derive(Resource, Default)]

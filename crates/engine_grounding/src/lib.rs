@@ -145,8 +145,7 @@ fn unplaced(read: GroundRead<Option<GroundPoint>>, position: Vec2) -> Error {
             .expected(Expected::Present)
             .got(Ground::NAME),
         GroundRead::Ready(_) | GroundRead::NotLoaded => {
-            Error::new(ErrorCode::InvalidPosition, "$.grounded")
-                .got(position.to_array())
+            Error::new(ErrorCode::InvalidPosition, "$.grounded").got(position.to_array())
         }
     }
 }
@@ -280,11 +279,10 @@ fn settle(
     refusals.keep_part(GROUNDED_PART, |entity| query.contains(entity));
 }
 
-fn count_waiting(
-    waits: Res<GroundWaits>,
-    globals: Res<GlobalTransforms>,
-    grounded: Query<(Entity, &GroundedAt, &Mover), (With<Grounded>, Without<Parent>)>,
-) {
+type GroundedRoots<'w, 's> =
+    Query<'w, 's, (Entity, &'static GroundedAt, &'static Mover), (With<Grounded>, Without<Parent>)>;
+
+fn count_waiting(waits: Res<GroundWaits>, globals: Res<GlobalTransforms>, grounded: GroundedRoots) {
     let by = mover_of::<GroundingBrick>();
     let waiting = grounded
         .iter()

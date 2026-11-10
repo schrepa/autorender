@@ -43,7 +43,10 @@ impl Callable for RemoveOperation {
     fn answer(world: &mut World, request: RemoveRequest) -> Result<Self::Reply, Error> {
         Ok(Rows::each("entities", request.entities, |id| {
             let removed = remove(world, &id)?;
-            Ok(RemovedEntity { entity: id, removed })
+            Ok(RemovedEntity {
+                entity: id,
+                removed,
+            })
         }))
     }
 }
