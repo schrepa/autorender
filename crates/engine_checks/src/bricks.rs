@@ -7,7 +7,7 @@ use bevy_ecs::schedule::{NodeId, ScheduleGraph, Schedules, SystemKey, SystemSet,
 use bevy_ecs::system::System;
 use bevy_ecs::world::World;
 use engine::Engine;
-use engine_core::{BrickList, PlaceDecl, Smoke};
+use engine_core::{BrickList, PlaceDecl, ScenePasses, Smoke};
 use engine_place::PlaceKind;
 use engine_registry::{BrickRecord, BrickSet, ReadKind, Registry};
 use engine_render::Installation;
@@ -275,6 +275,10 @@ pub fn bricks_json(
         (packages, places)
     };
     let uses = uses(world, &packages, &places);
+    let kind_passes = world
+        .get_resource::<ScenePasses>()
+        .map(ScenePasses::kind_table)
+        .unwrap_or_default();
     let registry = registry(world)?;
     let listed = list(BrickList::default());
     let bricks: Vec<Value> = registry
@@ -287,6 +291,7 @@ pub fn bricks_json(
         "places": self::places(registry, &uses),
         "left_out": registry.left_out(),
         "unmet": registry.unmet(),
+        "kind_passes": kind_passes,
         "ownership": registry.ownership(),
         "frame": frame(&installed),
     }))

@@ -71,20 +71,28 @@ pub(super) fn kind_passes(run: &mut Run, world: &World) -> Vec<KindPass> {
             });
         }
     }
-    let kinds = &mut run.tallies.kinds;
     for pair in &listed {
         let named = (DrawKind(pair.kind), pair.pass);
+        let kinds = &mut run.tallies.kinds;
         if pair.state != KindPassState::Silent || kinds.reported.contains(&named) {
             continue;
         }
         kinds.reported.push(named);
-        kinds.problems.push(
-            Error::new(
-                ErrorCode::PassMismatch,
-                format!("$.kind_passes.{}.{}", pair.kind, pair.pass),
-            )
-            .got("drew_nothing"),
-        );
+        let error = Error::new(
+            ErrorCode::PassMismatch,
+            format!("$.kind_passes.{}.{}", pair.kind, pair.pass),
+        )
+        .got("drew_nothing");
+        kinds.problems.push(error.clone());
+        let owner = run
+            .installs
+            .draw_entries
+            .iter()
+            .find(|member| member.kind.kind == named.0)
+            .map(|member| member.part);
+        if let Some(part) = owner {
+            run.installs.faults.push((part, error));
+        }
     }
     listed
 }

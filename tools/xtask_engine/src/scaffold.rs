@@ -23,6 +23,18 @@ const TEMPLATE_KIND: &str = "kind = \"game\"\n";
 
 const TEMPLATE_SCENE: &str = "template.scene.json";
 
+const TEMPLATE_SMOKES: &str = "src/smokes.rs";
+
+const TEMPLATE_ONLY: [(&str, &str); 4] = [
+    ("mod smokes;\n\n", ""),
+    ("use crate::bricks::glimmer::GlimmerBrick;\n", ""),
+    ("        .with::<GlimmerBrick>()\n", ""),
+    (
+        "impl Game for Template {\n    const SMOKES: &'static [Smoke] = &smokes::SMOKES;\n}\n",
+        "impl Game for Template {}\n",
+    ),
+];
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BrickKind {
     Gameplay,
@@ -187,13 +199,16 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
     let mut files = Vec::new();
     let drawn = BrickKind::Drawn;
     for (inside, text) in template_files(&root.join(APP_TEMPLATE))? {
-        if inside.starts_with(drawn.folder()) {
+        if inside.starts_with(drawn.folder()) || inside == Path::new(TEMPLATE_SMOKES) {
             continue;
         }
         let text = if inside == Path::new("Cargo.toml") {
             game_manifest(&text, &name, &page)?
         } else {
-            text.replace(&format!("    pub mod {};\n", drawn.template()), "")
+            TEMPLATE_ONLY
+                .iter()
+                .fold(text, |text, (only, kept)| text.replace(only, kept))
+                .replace(&format!("    pub mod {};\n", drawn.template()), "")
                 .replace(TEMPLATE_CRATE, &wasm)
                 .replace("Template", &pascal)
         };
@@ -250,6 +265,7 @@ fn game_manifest(template: &str, name: &str, page: &str) -> Result<String, Strin
         "{TEMPLATE_KIND}page = \"{page}\"\ngame = \"{name}\"\nnative = \"{name}-native\"\n"
     );
     Ok(template
+        .replace(&format!("native = \"{TEMPLATE_CRATE}-native\"\n"), "")
         .replace(TEMPLATE_CRATE, name)
         .replace(TEMPLATE_KIND, &engine))
 }

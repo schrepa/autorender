@@ -36,7 +36,10 @@ const DESCRIBED: &[(&str, TypeKind)] = &[
     ("SceneDocument", TypeKind::Authoring),
     ("FrameStats", TypeKind::Observation),
     ("ErrorCodes", TypeKind::Catalog),
+    (KIND_PASSES, TypeKind::Report),
 ];
+
+pub const KIND_PASSES: &str = "KindPasses";
 
 pub const TOOLING_TYPES: &[&str] = &["ProfileCapture", "GameControls", "PageParameters"];
 
@@ -548,6 +551,16 @@ impl DevTools {
                     kind: TypeKind::Catalog,
                     codes: registry
                         .map_or_else(|| ErrorCode::NAMES.to_vec(), Registry::error_codes),
+                });
+            }
+            KIND_PASSES => {
+                return Ok(DescribeResult::Report {
+                    name: name.to_owned(),
+                    kind: TypeKind::Report,
+                    cells: world
+                        .get_resource::<engine_core::ScenePasses>()
+                        .map(engine_core::ScenePasses::kind_table)
+                        .unwrap_or_default(),
                 });
             }
             "FrameStats" => {

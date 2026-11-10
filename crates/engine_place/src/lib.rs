@@ -42,7 +42,7 @@ pub use engine_smoke::{SmokeFailure, SmokeSession, ask, smoke_check, smoke_eq};
 pub use feeds::{Cursor, Events, Feed, FeedView, Ring, Since, StoreId};
 pub use nodes::{Clock, Mobility, Mover, MoverId, Node, NodeWord, Pace};
 pub use passes::{
-    AttachPoint, BlendedPass, CORE_BRICK, ColorPass, Pass,
+    AttachPoint, BlendedPass, CORE_BRICK, ColorPass, KindCell, KindJoin, Pass,
     PassBit, PassCull, PassEntry, PassMask, PassName, PassPurpose, PassRaster, PassRole, PassViews,
     ScenePass, ScenePasses,
     SlotSet,

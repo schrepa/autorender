@@ -190,6 +190,11 @@ pub enum DescribeResult {
         kind: TypeKind,
         codes: Vec<&'static str>,
     },
+    Report {
+        name: String,
+        kind: TypeKind,
+        cells: Vec<engine_core::KindCell>,
+    },
     Inspector {
         kind: TypeKind,
         descriptor: InspectorDescriptor,
@@ -266,6 +271,7 @@ pub enum TypeKind {
     Stats,
     Observation,
     Catalog,
+    Report,
 }
 
 impl From<InspectorKind> for TypeKind {

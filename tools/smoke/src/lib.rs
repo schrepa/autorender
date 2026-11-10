@@ -1,5 +1,5 @@
 use serde::Serialize;
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SmokeFailure {
@@ -158,4 +158,65 @@ pub fn below(value: impl Serialize) -> Value {
 
 pub fn near(value: impl Serialize, within: f64) -> Value {
     json!({"near": value, "within": within})
+}
+
+pub const KIND_PASSES: &str = "KindPasses";
+
+pub fn joined_passes(session: &mut dyn SmokeSession, kind: &str) -> Checked<Vec<String>> {
+    let table = ask(session, "describe", json!({ "name": KIND_PASSES }))?;
+    Ok(table["cells"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|cell| cell["kind"] == kind && cell["join"] == "joins")
+        .filter_map(|cell| cell["pass"].as_str().map(str::to_owned))
+        .collect())
+}
+
+pub fn counted_in_joined_passes(
+    session: &mut dyn SmokeSession,
+    kind: &str,
+    frames: u32,
+) -> Checked<Map<String, Value>> {
+    let joined = joined_passes(session, kind)?;
+    smoke_check!(
+        !joined.is_empty(),
+        "kind_joins_a_pass",
+        json!({ "kind": kind, "joins": [] }),
+        json!({ "kind": kind, "joins": above(0) })
+    );
+    let mut ran: Vec<String> = Vec::new();
+    let mut counted = Map::new();
+    for _ in 0..frames {
+        let rendering = render(&mut *session)?;
+        smoke_eq!(
+            rendering["kind_problems"],
+            json!([]),
+            "no_kind_pass_is_silent"
+        );
+        for cell in rendering["kind_passes"].as_array().into_iter().flatten() {
+            let Some(pass) = cell["pass"].as_str() else {
+                continue;
+            };
+            if !ran.iter().any(|known| known == pass) {
+                ran.push(pass.to_owned());
+            }
+            if cell["kind"] != kind {
+                continue;
+            }
+            let drew = cell["state"] == "drew";
+            let replaces = counted
+                .get(pass)
+                .is_none_or(|held: &Value| drew && held["state"] != "drew");
+            if replaces {
+                counted.insert(pass.to_owned(), cell.clone());
+            }
+        }
+    }
+    let missing: Vec<&String> = joined
+        .iter()
+        .filter(|pass| ran.contains(pass) && !counted.contains_key(pass.as_str()))
+        .collect();
+    smoke_eq!(json!(missing), json!([]), "kind_counted_in_every_joined_pass");
+    Ok(counted)
 }

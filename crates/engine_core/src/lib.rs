@@ -85,7 +85,7 @@ pub use engine_place::{
     Clock, ColorPass, PositionReach,
     Cursor, DrawKind, Drawn, DrawnBounds, DrawnProjection, Error, ErrorCode, Events,
     Feed, FeedView, FrameBudget, GpuStruct, Hold, InstanceValues, Interest, JobRef,
-    KindDecl, KindSkip, Layers, Level, LevelView, List, MaterialHandle, GeometryHandle, Mobility,
+    KindCell, KindDecl, KindJoin, KindSkip, Layers, Level, LevelView, List, MaterialHandle, GeometryHandle, Mobility,
     Moment, Mover, MoverId, Node, NodeId, NodeWord, Pace, Pass, PassBit, PassCull, PassEntry,
     PassMask, PassName, PassPurpose, PassRaster, PassRole, PassViews, PlaceDecl, Progress, Readiness, Request, Requests, Ring,
     ScenePass, ScenePasses, Since, Slot, SlotSet, Smoke,

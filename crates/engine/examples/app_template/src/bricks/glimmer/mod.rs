@@ -162,8 +162,12 @@ fn enabled(settings: Res<Glimmer>) -> bool {
     settings.enabled
 }
 
-fn open_view(opened: Query<(), With<GlimmerView>>, mut spawner: Spawner<GlimmerBrick>) {
-    if !opened.is_empty() {
+fn open_view(
+    table: Res<DrawnTable>,
+    opened: Query<(), With<GlimmerView>>,
+    mut spawner: Spawner<GlimmerBrick>,
+) {
+    if !opened.is_empty() || table.rows(GLIMMER).next().is_none() {
         return;
     }
     let camera = spawner.spawn((
@@ -393,7 +397,7 @@ impl GlimmerGpu {
     fn draw(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
         let count = self.staged.len() as u32;
         if count == 0 {
-            return 0;
+            return draw.skip("no glimmer has a pose yet");
         }
         if scene.pass == RING {
             draw.draw(
