@@ -87,9 +87,16 @@ pub struct FormPass {
 #[derive(Clone, Copy, Debug)]
 struct FormScene {
     pass: FormPass,
-    plain: u32,
+    plain: Option<u32>,
     mirrored: Option<u32>,
 }
+
+const EVERY_ROLE: [PassRole; 4] = [
+    PassRole::Lit,
+    PassRole::Depth,
+    PassRole::Blended,
+    PassRole::Shown,
+];
 
 pub struct Form<P> {
     kind: DrawKind,
@@ -225,6 +232,15 @@ fn kind_program(
 
 impl<P: GpuPart> Install<'_, P> {
     pub fn form(&mut self, form: &KindForm, bound: &[(Var, Bind<P>)]) -> Result<Form<P>, Error> {
+        self.form_for(form, &EVERY_ROLE, bound)
+    }
+
+    pub fn form_for(
+        &mut self,
+        form: &KindForm,
+        roles: &[PassRole],
+        bound: &[(Var, Bind<P>)],
+    ) -> Result<Form<P>, Error> {
         let bound = bound_list(bound, &self.core.outputs)?;
         let listed: Vec<engine_core::ScenePass> = self
             .core
@@ -238,21 +254,18 @@ impl<P: GpuPart> Install<'_, P> {
         for listed in listed {
             let facts = (listed.pass.role(), listed.pass.views);
             let scope = Scoped::Scene(listed.name);
-            let (Some(plain), Some(turned)) = (
-                kind_program(form, facts, false),
-                kind_program(form, facts, true),
-            ) else {
-                continue;
-            };
-            let plain = self.core.pipeline(scope, plain, bound.clone())?;
             let owned = match listed.pass.views {
                 PassViews::Owned => true,
                 PassViews::Every | PassViews::Main => false,
             };
-            let mirrored = if owned {
-                Some(self.core.pipeline(scope, turned, bound.clone())?)
-            } else {
-                None
+            let built = roles.contains(&facts.0);
+            let plain = match kind_program(form, facts, false).filter(|_| built) {
+                Some(program) => Some(self.core.pipeline(scope, program, bound.clone())?),
+                None => None,
+            };
+            let mirrored = match kind_program(form, facts, true).filter(|_| built && owned) {
+                Some(program) => Some(self.core.pipeline(scope, program, bound.clone())?),
+                None => None,
             };
             scenes.push(FormScene {
                 pass: FormPass {
@@ -294,10 +307,11 @@ impl<P: GpuPart> Draw<'_, P, Scene> {
             .scenes
             .iter()
             .find(|known| known.pass.scene.name() == point)?;
-        let pipeline = found
-            .mirrored
-            .filter(|_| self.mirrored)
-            .unwrap_or(found.plain);
+        let pipeline = if self.mirrored {
+            found.mirrored.or(found.plain)
+        } else {
+            found.plain
+        }?;
         Some(Pipeline(pipeline, PhantomData))
     }
 

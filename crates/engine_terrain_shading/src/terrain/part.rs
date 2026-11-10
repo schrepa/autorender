@@ -485,7 +485,7 @@ impl GpuPart for TerrainGpu {
                 ..surface(fragment, face)
             }
         };
-        let form = cx.form(&TERRAIN_FORM, &[])?;
+        let form = cx.form_for(&TERRAIN_FORM, &[PassRole::Depth], &[])?;
         let scenes: Vec<(Scene, PassRole, bool)> = form
             .passes()
             .map(|pass| (pass.scene, pass.role, pass.owned))
