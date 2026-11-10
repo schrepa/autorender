@@ -12,6 +12,7 @@ mod image;
 mod partners;
 mod poses;
 pub mod requests;
+mod waits;
 
 use engine_core::{Brick, Bricks, Smoke, Source};
 
@@ -53,6 +54,11 @@ impl Brick for StandardSmokesBrick {
         Smoke {
             name: "standard_list_starts_clean",
             run: engine_smoke::starts_clean,
+            without: &[],
+        },
+        Smoke {
+            name: "waiting_kinds_are_unsettled",
+            run: waits::run,
             without: &[],
         },
     ];

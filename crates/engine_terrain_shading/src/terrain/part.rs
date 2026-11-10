@@ -23,7 +23,7 @@ use super::{
     IDS_FORMAT, NEVER_BLENDS, SHADED_ELSEWHERE, SURFACE_SLOTS, TERRAIN, TerrainFrame, reached,
 };
 use crate::gpu::{HEIGHT_FORMAT, SURFACE_ERROR_MIPS};
-use crate::holes::{HoledGround, HoledState};
+use crate::holes::{HoledGround, HoledState, Unheld};
 use crate::settings::TerrainShading;
 use crate::state::{
     Atlas, AtlasMoves, Bakes, DrawnStats, PART_STATS, PartStats, SURFACE_TOTALS, SurfaceTotals,
@@ -209,7 +209,8 @@ const RESOLVE_TEMPORAL: PassFragment =
     resolve_fragment(crate::shaders::terrain_shading::draw::FS_TERRAIN_RESOLVE_TEMPORAL);
 
 const NO_FORM: &str = "terrain has no form in this pass";
-const NO_TILES: &str = "no terrain tile is resident";
+const TERRAIN_TILES: &str = "the terrain tiles";
+const HOLED_MATERIAL: &str = "the holed ground material";
 const NOT_LAID_OUT: &str = "no terrain is laid out this frame";
 const NO_PATCHES: &str = "no terrain patch is laid out for this view";
 
@@ -229,7 +230,9 @@ enum Joined {
     Elsewhere(&'static str),
 }
 
-type Surfaces = [Result<(Pipeline<TerrainGpu, Scene>, Option<MaterialHandle>), &'static str>; 2];
+type Surface = (Pipeline<TerrainGpu, Scene>, Option<MaterialHandle>);
+
+type Surfaces<'a> = [Result<Surface, Unheld<'a>>; 2];
 
 pub(crate) struct TerrainGpu {
     handles: Handles,
@@ -253,6 +256,7 @@ pub(crate) struct TerrainGpu {
     frame: TerrainFrame,
     cursor: Cursor,
     drawn: bool,
+    tiles_waiting: bool,
     deferred: bool,
     temporal: bool,
     render: (u32, u32),
@@ -594,6 +598,7 @@ impl GpuPart for TerrainGpu {
             frame: TerrainFrame::default(),
             cursor: Cursor::default(),
             drawn: false,
+            tiles_waiting: false,
             deferred: false,
             temporal: false,
             render: (0, 0),
@@ -610,7 +615,7 @@ impl GpuPart for TerrainGpu {
         (lists, neighbors, frame, (limits, assets, holed)): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        self.holed = holed.state;
+        self.holed.clone_from(&holed.state);
         let (settings, tiles, atlas, bakes, ground) = lists;
         let (water, cover, shadows, captures) = neighbors;
         let main = frame.main();
@@ -625,6 +630,7 @@ impl GpuPart for TerrainGpu {
             self.surface.rest();
             self.horizons.rest();
             self.drawn = false;
+            self.tiles_waiting = false;
             self.deferred = false;
             cx.release(self.handles.ids);
             cx.deliver::<PartStats>(
@@ -741,6 +747,7 @@ impl GpuPart for TerrainGpu {
                 .any(|(terrain, _)| *terrain == entry.terrain)
         });
         self.drawn = held;
+        self.tiles_waiting = !held && !tiles.terrains.is_empty();
         if !held {
             self.surface.rest();
             self.frame = TerrainFrame::default();
@@ -965,7 +972,7 @@ impl TerrainGpu {
             }
             Joined::Seen { args, meshlet } => {
                 if !self.drawn {
-                    return draw.skip(NO_TILES);
+                    return self.unlaid(draw);
                 }
                 let [plain, holes] = &self.seen;
                 let (Some(plain), Some(holes)) = (draw.form(plain), draw.form(holes)) else {
@@ -979,7 +986,7 @@ impl TerrainGpu {
             }
             Joined::Casters { patches, grid } => {
                 if !self.drawn {
-                    return draw.skip(NO_TILES);
+                    return self.unlaid(draw);
                 }
                 let Some(range) = scene
                     .view
@@ -1005,10 +1012,18 @@ impl TerrainGpu {
         }
     }
 
+    fn unlaid(&self, draw: &mut Draw<'_, Self, Scene>) -> u32 {
+        if self.tiles_waiting {
+            draw.wait(TERRAIN_TILES)
+        } else {
+            draw.skip(NOT_LAID_OUT)
+        }
+    }
+
     fn draw_surface(
         &self,
         draw: &mut Draw<'_, Self, Scene>,
-        surfaces: Surfaces,
+        surfaces: Surfaces<'_>,
         (args, meshlet): (DrawInput<Self, Scene>, DrawInput<Self, Scene>),
     ) -> u32 {
         let mut draws = 0;
@@ -1044,13 +1059,15 @@ impl TerrainGpu {
                 draws += 1;
             }
         }
-        if draws == 0
-            && let Some(reason) = unheld
-        {
-            return draw.skip(reason);
-        }
-        if draws == 0 {
-            return draw.skip(NOT_LAID_OUT);
+        match unheld {
+            Some(Unheld::Waiting) => {
+                draw.wait(HOLED_MATERIAL);
+            }
+            Some(Unheld::Refused(error)) => {
+                draw.refuse(HOLED_MATERIAL, error);
+            }
+            None if draws == 0 => return draw.skip(NOT_LAID_OUT),
+            None => {}
         }
         draws
     }

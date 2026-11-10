@@ -23,7 +23,7 @@ pub(super) fn run(session: &mut dyn SmokeSession) -> Result<(), SmokeFailure> {
     Ok(())
 }
 
-fn image(session: &mut dyn SmokeSession) -> Checked<Value> {
+pub(super) fn image(session: &mut dyn SmokeSession) -> Checked<Value> {
     settled(session)?;
     let first = ask(session, "capture", json!({"alpha": 0}))?["artifact"]["sha256"].take();
     let again = ask(session, "capture", json!({"alpha": 0}))?["artifact"]["sha256"].take();

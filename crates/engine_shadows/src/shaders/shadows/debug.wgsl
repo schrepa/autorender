@@ -5,7 +5,6 @@ import package::engine::debug::debug_kind_color;
 import package::engine::drawn::drawn_records;
 import package::engine::shading::SurfacePoint;
 import package::face::lighting::{sun_debug, surface_sun};
-import package::generated::kinds::KIND_MESH;
 import package::generated::passes::PASS_SHADOW;
 import package::generated::pieces::shadows::piece;
 import package::generated::shadows::{DEBUG_SHOWN_CASTERS, DEBUG_SHOWN_SHADOWS,
@@ -35,10 +34,10 @@ fn debug_sun_color(sun: u32) -> vec3<f32> {
 }
 
 fn drawn_casts(kind: u32, object: u32) -> bool {
-    if kind != KIND_MESH {
+    if object >= arrayLength(&drawn_records) || drawn_records[object].kind != kind {
         return true;
     }
-    return object < arrayLength(&drawn_records) && (drawn_records[object].passes & PASS_SHADOW) != 0u;
+    return (drawn_records[object].passes & PASS_SHADOW) != 0u;
 }
 
 fn debug_caster_color(record: u32, object: u32) -> vec3<f32> {

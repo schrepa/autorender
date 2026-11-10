@@ -18,9 +18,9 @@ use engine_core::{
     AlphaMode, Asset, AssetLibrary, AssetResidency, AssetUses, AttachPoint, Attributes, Brick,
     Bricks, ComponentKind, Cull, DrawKind, Drawn, DrawnPoses, DrawnTable, DropReason, Error,
     ErrorCode, GlobalTransforms, KindDecl, KindSkip, LightingModel, Material, MaterialHandle,
-    PassName, PassPurpose, PassRole, PassViews, Refusals, SceneComponents, SceneCx, SceneForm,
-    Schedule, SlotSet, Source, Spawner, SurfaceSlot, Views, Writes, gpu_struct, never, settings,
-    stats,
+    PassName, PassPurpose, PassRole, PassViews, Refusals, Request, SceneComponents, SceneCx,
+    SceneForm, Schedule, SlotSet, Source, Spawner, SurfaceSlot, Views, Writes, gpu_struct, never,
+    settings, stats,
 };
 use engine_places_rendering::text::{DEFAULT_TEXT_SIZE, FontId, Glyph, Text, TextAlign};
 use engine_render::{
@@ -280,6 +280,30 @@ impl LabelMaterial {
             LabelSurface::Unmade | LabelSurface::Refused(_) => None,
         }
     }
+
+    fn held(&self, residency: &AssetResidency) -> LabelHeld {
+        match &self.0 {
+            LabelSurface::Made(made) if residency.material_resident(*made) => {
+                LabelHeld::Resident(*made)
+            }
+            LabelSurface::Made(made) => match residency.state(Asset::Material(*made)) {
+                Some(Request::Failed(error)) => LabelHeld::Refused(error.clone()),
+                Some(Request::Asked(_) | Request::Ready(_) | Request::Missing) | None => {
+                    LabelHeld::Waiting
+                }
+            },
+            LabelSurface::Unmade => LabelHeld::Waiting,
+            LabelSurface::Refused(error) => LabelHeld::Refused(error.clone()),
+        }
+    }
+}
+
+const LABEL_MATERIAL: &str = "the label material";
+
+enum LabelHeld {
+    Waiting,
+    Resident(MaterialHandle),
+    Refused(Error),
 }
 
 #[derive(Component)]
@@ -427,7 +451,7 @@ struct TextGpu {
     pass: Pass<Self>,
     screen: Form<Self>,
     form: Form<Self>,
-    material: Option<MaterialHandle>,
+    material: LabelHeld,
     instances: Buffer<Self>,
     labels: Buffer<Self>,
     atlas: Texture<Self>,
@@ -454,8 +478,10 @@ impl TextGpu {
         if scene.role == PassRole::Blended {
             return draw.skip("labels are masked, never blended");
         }
-        let Some(material) = self.material else {
-            return draw.skip("the label material is not resident yet");
+        let material = match &self.material {
+            LabelHeld::Resident(material) => *material,
+            LabelHeld::Waiting => return draw.wait(LABEL_MATERIAL),
+            LabelHeld::Refused(error) => return draw.refuse(LABEL_MATERIAL, error),
         };
         let Some(pipeline) = draw.form(&self.form) else {
             return draw.skip("pass has no label form");
@@ -550,7 +576,7 @@ impl GpuPart for TextGpu {
             pass,
             screen,
             form,
-            material: None,
+            material: LabelHeld::Waiting,
             instances,
             labels,
             atlas,
@@ -568,9 +594,7 @@ impl GpuPart for TextGpu {
         self.staged.clear();
         self.labeled.clear();
         self.unlabeled = 0;
-        self.material = material
-            .made()
-            .filter(|made| residency.material_resident(*made));
+        self.material = material.held(&residency);
         let Some(typesetter) = Typesetter::of(&text) else {
             return;
         };

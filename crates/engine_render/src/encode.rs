@@ -31,7 +31,7 @@ mod views;
 
 pub(crate) use compile::Compiler;
 pub(crate) use recording::{Ended, Recording, Step};
-pub(crate) use run::{Bindings, DroppedTally, Pipelines, Run};
+pub(crate) use run::{Bindings, DroppedTally, KindAnswer, Pipelines, Run};
 pub(crate) use views::Tables;
 
 pub(crate) type FrameCore = Run;

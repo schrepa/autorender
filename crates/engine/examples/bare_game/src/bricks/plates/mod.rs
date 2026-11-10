@@ -159,7 +159,7 @@ impl PlatesGpu {
             return draw.skip("no plate has a pose yet");
         }
         let Some(material) = self.material else {
-            return draw.skip("the plate material is not resident yet");
+            return draw.wait("the plate material");
         };
         let Some(pipeline) = draw.form(&self.form) else {
             return draw.skip("pass has no plate form");

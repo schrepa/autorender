@@ -303,6 +303,8 @@ impl Default for Sizes {
 struct Held {
     lit: Vec<Level>,
     cast: Vec<Level>,
+    lit_waiting: bool,
+    cast_waiting: bool,
     lists: Vec<(u32, u32)>,
     ids_per_view: u32,
     group_count: u32,
@@ -602,25 +604,30 @@ impl ScatterGpu {
         held.ids_per_view = data.ids_per_view;
         held.lit.clear();
         held.cast.clear();
+        held.lit_waiting = false;
+        held.cast_waiting = false;
         for (group, drawn) in state.groups.groups.iter().enumerate() {
             if drawn.count == 0 {
                 continue;
             }
             for (level, &mesh) in drawn.meshes.iter().enumerate() {
-                if residency.resident(mesh) {
-                    held.lit.push(Level {
-                        mesh,
-                        material: Some(drawn.material),
-                        group: group as u32,
-                        level: level as u32,
-                        extended: drawn.extended,
-                        coverage: Coverage::Material,
-                    });
+                if !residency.resident(mesh) {
+                    held.lit_waiting = true;
+                    continue;
                 }
+                held.lit.push(Level {
+                    mesh,
+                    material: Some(drawn.material),
+                    group: group as u32,
+                    level: level as u32,
+                    extended: drawn.extended,
+                    coverage: Coverage::Material,
+                });
             }
             let cuts = drawn.masked() && drawn.proxy.is_none();
             let resident = residency.material_resident(drawn.material);
             if cuts && !resident {
+                held.cast_waiting |= !drawn.casters.is_empty();
                 continue;
             }
             let coverage = if drawn.proxy.is_some() && drawn.masked() {
@@ -629,16 +636,18 @@ impl ScatterGpu {
                 Coverage::Material
             };
             for (level, &mesh) in drawn.casters.iter().enumerate() {
-                if residency.resident(mesh) {
-                    held.cast.push(Level {
-                        mesh,
-                        material: resident.then_some(drawn.material),
-                        group: group as u32,
-                        level: level as u32,
-                        extended: drawn.proxy.unwrap_or(drawn.extended),
-                        coverage,
-                    });
+                if !residency.resident(mesh) {
+                    held.cast_waiting = true;
+                    continue;
                 }
+                held.cast.push(Level {
+                    mesh,
+                    material: resident.then_some(drawn.material),
+                    group: group as u32,
+                    level: level as u32,
+                    extended: drawn.proxy.unwrap_or(drawn.extended),
+                    coverage,
+                });
             }
         }
     }
@@ -1016,10 +1025,16 @@ impl ScatterGpu {
         } else {
             self.draw_objects(view, draw, streams)
         };
-        if drawn == 0 {
-            return draw.skip("no placed mesh is resident");
+        let waiting = if joined.owned && self.held.views[view].casts {
+            self.held.cast_waiting
+        } else {
+            self.held.lit_waiting
+        };
+        match (drawn, waiting) {
+            (0, true) => draw.wait("the placed meshes"),
+            (0, false) => draw.skip("nothing placed reaches this view"),
+            (drawn, _) => drawn,
         }
-        drawn
     }
 
     fn draw_levels(

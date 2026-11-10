@@ -286,7 +286,7 @@ impl SpritesGpu {
             return if self.rows.listed == 0 {
                 draw.skip("no drawn row is a sprite")
             } else if self.rows.waiting > 0 {
-                draw.skip("sprite materials are not resident yet")
+                draw.wait("the sprite materials")
             } else if self.rows.incomplete > 0 {
                 0
             } else {

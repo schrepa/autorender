@@ -262,6 +262,7 @@ struct GlimmerGpu {
     form: Form<Self>,
     runs: Vec<(MaterialHandle, Range<u32>)>,
     staged: Vec<GlimmerInstance>,
+    waiting: bool,
 }
 
 impl GpuPart for GlimmerGpu {
@@ -280,6 +281,7 @@ impl GpuPart for GlimmerGpu {
             form: cx.form_owning(&FORM, &[RING], &bound)?,
             runs: Vec::new(),
             staged: Vec::new(),
+            waiting: false,
         })
     }
 
@@ -289,10 +291,12 @@ impl GpuPart for GlimmerGpu {
         cx: &mut Prepare<'_, Self>,
     ) {
         let mut placed: Vec<(MaterialHandle, GlimmerInstance)> = Vec::new();
+        self.waiting = false;
         for (slot, entity, thing) in table.rows(GLIMMER) {
             let held = thing
                 .material
                 .filter(|made| residency.material_resident(*made));
+            self.waiting |= thing.material.is_some() && held.is_none();
             let (Some(pose), Some(material)) = (poses.drawn_pose(&globals, entity), held) else {
                 continue;
             };
@@ -329,8 +333,11 @@ impl GpuPart for GlimmerGpu {
 
 impl GlimmerGpu {
     fn draw(&self, _: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
+        if self.runs.is_empty() && self.waiting {
+            return draw.wait("the glimmer materials");
+        }
         if self.runs.is_empty() {
-            return draw.skip("no glimmer has a pose and a resident material yet");
+            return draw.skip("no glimmer has a pose yet");
         }
         let Some(pipeline) = draw.form(&self.form) else {
             return draw.skip("pass has no glimmer form");

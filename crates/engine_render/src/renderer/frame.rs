@@ -179,6 +179,10 @@ impl Renderer {
         self.follow_states(world);
     }
 
+    pub fn take_draw_reports(&mut self) -> Option<engine_core::DrawReports> {
+        super::kind_passes::take_reports(self.run.as_mut()?)
+    }
+
     pub fn follow_states(&mut self, world: &mut World) {
         let Some(run) = self.run.as_mut() else {
             return;

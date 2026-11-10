@@ -128,6 +128,7 @@ pub use presentation::*;
 pub use provided::*;
 pub use records::*;
 pub use refusals::{Refusals, Refused};
+pub use render_stats::{DrawReports, KindRefusal};
 pub use render_stats::{
     DropReason, DroppedDraws, KindPass, KindPassState, LinkedStats, Names, RenderStats,
 };
@@ -586,6 +587,15 @@ impl Engine {
         if world.resource::<Readiness>().compiling != compiling {
             world.resource_mut::<Readiness>().compiling = compiling;
         }
+    }
+
+    pub fn report_drawing(&mut self, reports: DrawReports) {
+        let world = self.app.world_mut();
+        if world.get_resource::<DrawReports>() == Some(&reports) {
+            return;
+        }
+        world.insert_resource(reports);
+        shared::settle_readiness(world, &self.board);
     }
 
     pub fn frame(&mut self, timestamp_seconds: f64) -> Result<(), Error> {

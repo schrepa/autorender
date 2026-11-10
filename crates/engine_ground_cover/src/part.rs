@@ -9,6 +9,8 @@ use engine_render::{
 
 pub(crate) const COVER: DrawKind = DrawKind("cover");
 
+const COVER_MATERIAL: &str = "the cover material";
+
 use crate::covers::CoverTable;
 use crate::growth::{BLADE_BYTES, BladeCounts, CoverPlan};
 use crate::layouts::{CoverFrame, CoverMaterial, CoverTerrain, Grow};
@@ -136,7 +138,7 @@ impl GpuPart for CoverGpu {
         (plan, table, surface, settings): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        self.surface = surface.state;
+        self.surface.clone_from(&surface.state);
         self.shadows = settings.shadows;
         if table.is_changed() {
             let terrains = size_of_val(table.terrains.as_slice()) as u64;
@@ -213,11 +215,11 @@ impl CoverGpu {
         if !self.drawn {
             return draw.skip("no cover grows this frame");
         }
-        let material = match self.surface {
-            SurfaceState::Resident(material) => material,
-            SurfaceState::Waiting(_) => return draw.skip("cover material is not resident yet"),
-            SurfaceState::Unmade => {
-                return draw.skip("cover material is not in the asset library");
+        let material = match &self.surface {
+            SurfaceState::Resident(material) => *material,
+            SurfaceState::Unmade | SurfaceState::Waiting(_) => return draw.wait(COVER_MATERIAL),
+            SurfaceState::Failed(_, error) | SurfaceState::Refused(error) => {
+                return draw.refuse(COVER_MATERIAL, error);
             }
         };
         let Some(pipeline) = draw.form(&self.form) else {

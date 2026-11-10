@@ -631,6 +631,8 @@ impl AppHost {
         let frame = self.engine.extract_frame()?;
         let after_extraction = now_ms();
         let rendered = self.renderer.render_frame(frame)?;
+        let reports = self.renderer.take_draw_reports().unwrap_or_default();
+        self.engine.report_drawing(reports);
         self.collect_pipelines();
         self.report_shader_errors();
         Ok((

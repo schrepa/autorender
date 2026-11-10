@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     AlphaMode, Asset, AssetLibrary, AssetResidency, AssetUses, Error, Material, MaterialHandle,
-    SurfaceSlot,
+    Request, SurfaceSlot,
 };
 use engine_render::SlotModule;
 
@@ -9,30 +9,38 @@ use crate::shaders::terrain_shading::holes;
 
 const HOLED_GROUND: &str = "holed_ground";
 const HOLE_CUTOFF: f32 = 0.5;
-const NOT_IN_LIBRARY: &str = "the holed ground material is not in the asset library";
-const NOT_RESIDENT: &str = "the holed ground material is not resident yet";
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub(crate) enum HoledState {
     #[default]
     Unmade,
     Waiting(MaterialHandle),
     Resident(MaterialHandle),
+    Failed(MaterialHandle, Error),
+    Refused(Error),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub(crate) enum Unheld<'a> {
+    Waiting,
+    Refused(&'a Error),
 }
 
 impl HoledState {
-    fn material(self) -> Option<MaterialHandle> {
+    fn material(&self) -> Option<MaterialHandle> {
         match self {
-            Self::Unmade => None,
-            Self::Waiting(handle) | Self::Resident(handle) => Some(handle),
+            Self::Unmade | Self::Refused(_) => None,
+            Self::Waiting(handle) | Self::Resident(handle) | Self::Failed(handle, _) => {
+                Some(*handle)
+            }
         }
     }
 
-    pub(crate) fn held(self) -> Result<MaterialHandle, &'static str> {
+    pub(crate) fn held(&self) -> Result<MaterialHandle, Unheld<'_>> {
         match self {
-            Self::Unmade => Err(NOT_IN_LIBRARY),
-            Self::Waiting(_) => Err(NOT_RESIDENT),
-            Self::Resident(handle) => Ok(handle),
+            Self::Unmade | Self::Waiting(_) => Err(Unheld::Waiting),
+            Self::Resident(handle) => Ok(*handle),
+            Self::Failed(_, error) | Self::Refused(error) => Err(Unheld::Refused(error)),
         }
     }
 }
@@ -70,19 +78,28 @@ pub(crate) fn hold_material(
         .material()
         .filter(|&handle| library.material(handle).is_some());
     let material = match kept {
-        Some(handle) => Some(handle),
-        None => holed_material()
-            .and_then(|material| library.insert_material(material))
-            .ok(),
+        Some(handle) => Ok(handle),
+        None => holed_material().and_then(|material| library.insert_material(material)),
     };
-    let wanted: Vec<Asset> = material.map(Asset::Material).into_iter().collect();
+    let wanted: Vec<Asset> = material
+        .as_ref()
+        .ok()
+        .copied()
+        .map(Asset::Material)
+        .into_iter()
+        .collect();
     if ground.uses.assets() != wanted.as_slice() {
         ground.uses = AssetUses::new(&residency, wanted);
     }
     let state = match material {
-        None => HoledState::Unmade,
-        Some(handle) if residency.material_resident(handle) => HoledState::Resident(handle),
-        Some(handle) => HoledState::Waiting(handle),
+        Err(error) => HoledState::Refused(error),
+        Ok(handle) if residency.material_resident(handle) => HoledState::Resident(handle),
+        Ok(handle) => match residency.state(Asset::Material(handle)) {
+            Some(Request::Failed(error)) => HoledState::Failed(handle, error.clone()),
+            Some(Request::Asked(_) | Request::Ready(_) | Request::Missing) | None => {
+                HoledState::Waiting(handle)
+            }
+        },
     };
     if ground.state != state {
         ground.state = state;

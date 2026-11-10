@@ -4,8 +4,9 @@ use engine_registry::{BrickStateView, BrickStates, OperationScene, Registry, Sce
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Clock, DrawnState, DrawnTable, Error, ErrorCode, Expected, GlobalTransforms, Mobility, Mover,
-    NodeWord, Operation, Pace, Readiness, Refusal, Refusals, Unsettled,
+    Clock, DrawReports, DrawnState, DrawnTable, DroppedDraws, Error, ErrorCode, Expected,
+    GlobalTransforms, KindPass, Mobility, Mover, NodeWord, Operation, Pace, Readiness, Refusal,
+    Refusals, Unsettled,
 };
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -74,6 +75,8 @@ pub(crate) struct BrickWhy {
     state: Option<BrickStateView>,
     needs: Vec<String>,
     waiting: Vec<Unsettled>,
+    drawing: Vec<KindPass>,
+    dropped: Vec<DroppedDraws>,
     failed: Vec<Refusal>,
     problems: Vec<Refusal>,
 }
@@ -205,6 +208,17 @@ fn brick_answer(world: &World, brick: &str) -> Result<BrickWhy, Error> {
         .filter(|(by, _)| by == brick)
         .map(|(_, error)| Refusal::of(error))
         .collect();
+    let reports = world.get_resource::<DrawReports>();
+    let drawing: Vec<KindPass> = reports
+        .into_iter()
+        .flat_map(|reports| reports.kinds_of(brick))
+        .copied()
+        .collect();
+    let dropped: Vec<DroppedDraws> = reports
+        .into_iter()
+        .flat_map(|reports| reports.dropped_of(brick))
+        .copied()
+        .collect();
     let prefix = format!("$.bricks.{brick}.");
     let problems: Vec<Refusal> = registry
         .problems()
@@ -219,6 +233,8 @@ fn brick_answer(world: &World, brick: &str) -> Result<BrickWhy, Error> {
         state: state.map(engine_registry::BrickState::view),
         needs,
         waiting,
+        drawing,
+        dropped,
         failed,
         problems,
     })
