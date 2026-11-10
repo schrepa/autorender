@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Background, DrawKind, Drawn, Error, Files, Landed, Refusals, SceneCx, Spawner,
+    AssetLibrary, Background, Drawn, Error, Files, Landed, Refusals, SceneCx, Spawner,
     Transform, valid_uri,
 };
 use engine_places_rendering::animation::{Animator, Model, Start};
@@ -80,7 +80,7 @@ fn spawn_parts(
         .map(|&(mesh, material)| {
             spawner.spawn((
                 Transform::default(),
-                Drawn::new(DrawKind::MESH, mesh, material),
+                Drawn::new(engine_places::meshes::MESH, mesh, material),
             ))
         })
         .collect();

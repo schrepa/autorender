@@ -59,7 +59,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_time_of_day::TimeOfDayBrick",
-      "version": "2cedee94b2b2f12f699fb365fdb8f6b4f5ac284d44f7d34bd7560c13d25b11a3"
+      "version": "19b545b0bbee069e2a284d14dfff2c548e36bb17681310536485ffe1bb4e36c6"
     },
     {
       "dependencies": [
@@ -108,7 +108,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_sun::SunBrick",
-      "version": "ad9fb4136a407159e9d43d99b83472a7c1539d3f4597e33385326a257793826b"
+      "version": "07120cb85b3171df5b5bf81dbac6c895e8a6c3204ec24a4705b0945c32329c14"
     },
     {
       "dependencies": [
@@ -211,6 +211,7 @@
       "resources": [
         "engine_lighting::light::SurfaceLight",
         "engine_lighting::highlights::Highlights",
+        "engine_lighting::SizedHighlights",
         "engine_lighting::LightingPiece"
       ],
       "settings": [
@@ -226,7 +227,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_lighting::LightingModelBrick",
-      "version": "c8c18d6b7ed766769f2d12cec94cc260e37206513e50408930f79883f0771b18"
+      "version": "0f084b257a347f6f62efe6a43a55a05ce7188ce662acdb05b649f9f6cfd15017"
     },
     {
       "dependencies": [
@@ -301,7 +302,7 @@
         }
       ],
       "type": "engine_meshes::MeshesBrick",
-      "version": "b2e594cbb726056b6188ff147a80da48460a6278a14f620975f3f3bdb98995fc"
+      "version": "0d406f2ac320492a859b56b5618a3073b8641b4cea25cb46ab6d758ff649ff08"
     },
     {
       "dependencies": [
@@ -411,7 +412,7 @@
         }
       ],
       "type": "engine_impostors::ImpostorsBrick",
-      "version": "53d55a27202c383683bad55da9d9a0c12ddfd1135e8e96dcfce6179d331d6a50"
+      "version": "6145b257a0720dc17fe5c4542a632535f71fdfbd90e98d367ce93c2b01bef004"
     },
     {
       "dependencies": [
@@ -509,6 +510,7 @@
         "engine_shadows::plan::ShadowFeedback",
         "engine_shadows::plan::ShadowDrawn",
         "engine_shadows::plan::ShadowPlan",
+        "engine_shadows::changes::ShadowChanges",
         "engine_shadows::gpu_layouts::ShadowPiece"
       ],
       "settings": [
@@ -529,7 +531,7 @@
         }
       ],
       "type": "engine_shadows::ShadowsBrick",
-      "version": "051469a5e8ea7f2e4920febae81677a0065d6c0e54c92c75c62f7c39a72af28f"
+      "version": "5b4efa4b4a786f1d26fb21c0306c691926980267a90c566a09b951a948082717"
     },
     {
       "dependencies": [
@@ -588,7 +590,7 @@
         }
       ],
       "type": "engine_lights::LightsBrick",
-      "version": "ce2e6d0a5d8c716106d5a6216f56b72e610e7d78e1d6525add9c4f30fb2e3a9b"
+      "version": "8a7042f340ec1bb13787a19014511aca7bfef6c10ef304a78b185ec4dc7cbfab"
     },
     {
       "dependencies": [
@@ -693,13 +695,6 @@
         },
         {
           "kind": "face",
-          "place": "transparency",
-          "providers": [
-            "engine_particles"
-          ]
-        },
-        {
-          "kind": "face",
           "place": "open_sky",
           "providers": [
             "engine_terrain_shading"
@@ -780,7 +775,7 @@
         }
       ],
       "type": "engine_sky::SkyBrick",
-      "version": "ae5b9aac4b698e521ee38239445f3f08fa431f0ce679574a444c9fc4dfe4a543"
+      "version": "f35ade45d7c841e003c4259e5d636ef9882ea0026e2364866658c1dddb813a05"
     },
     {
       "dependencies": [
@@ -871,7 +866,7 @@
         }
       ],
       "type": "engine_ambient_occlusion::AmbientOcclusionBrick",
-      "version": "a7d4615652a210204b6fa6520b29cf2f4628ea1601ce06965783945935b7b7b7"
+      "version": "800a8747942ebc5f7803fe5e455b5b3c43cf55a74108521e3d72e21e63ba562f"
     },
     {
       "dependencies": [
@@ -915,7 +910,6 @@
             "engine_shadows",
             "engine_sky",
             "engine_reflections",
-            "engine_particles",
             "engine_terrain_shading"
           ]
         }
@@ -939,7 +933,7 @@
         }
       ],
       "type": "engine_bloom::BloomBrick",
-      "version": "80df4a121fb1e0ac0ea45f8dfc030bfe5591f4b315097d1b6bd9cb4f99602427"
+      "version": "5ed97540b83a85b303330b772a0f738456c1a48925758e5a23b7366051b33adb"
     },
     {
       "dependencies": [
@@ -976,13 +970,6 @@
           ]
         },
         {
-          "kind": "face",
-          "place": "transparency",
-          "providers": [
-            "engine_particles"
-          ]
-        },
-        {
           "kind": "target",
           "place": "color",
           "providers": [
@@ -993,7 +980,6 @@
             "engine_shadows",
             "engine_sky",
             "engine_reflections",
-            "engine_particles",
             "engine_terrain_shading"
           ]
         },
@@ -1015,8 +1001,7 @@
           "place": "transparency",
           "providers": [
             "engine_render",
-            "engine_meshes",
-            "engine_particles"
+            "engine_meshes"
           ]
         },
         {
@@ -1053,7 +1038,7 @@
         }
       ],
       "type": "engine_taa::TaaBrick",
-      "version": "3fceb356d773e20a8fe2a841e71a177f3ebf4abb0378ca56c44fadb45fac7b9b"
+      "version": "203a96220bc3e2a45d2b5e1e9bc35e72a01df1a856a6b11c1279a649f9be2e54"
     },
     {
       "dependencies": [
@@ -1105,7 +1090,6 @@
             "engine_shadows",
             "engine_sky",
             "engine_reflections",
-            "engine_particles",
             "engine_terrain_shading"
           ]
         },
@@ -1142,7 +1126,7 @@
         }
       ],
       "type": "engine_auto_exposure::AutoExposureBrick",
-      "version": "eb74c21f9a51dd72ba7245087249156ebc1f5922f0c8facd6a1ce53703b671e9"
+      "version": "79846681d1bc1c6f9a08cca65279249be5524fb93e72493d703dbe2274ec1652"
     },
     {
       "dependencies": [
@@ -1186,7 +1170,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_tonemap::TonemapBrick",
-      "version": "ed2db74bb8563ebd060420b5481b74d00f4925981ca700911435aa00ac82edce"
+      "version": "51f6953bcef3e4429c501653575176e2110da9de33b8f7643b0fe2cabe12fc95"
     },
     {
       "dependencies": [
@@ -1341,7 +1325,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_debug_view::DebugViewBrick",
-      "version": "acd29f4d597c7fbd234eb560aabbae3fc76e9112a0f66ad36d09517d1254d289"
+      "version": "9169960b642236bf119e88727c747dd605a20448492a5350650e2cba4f1cb51f"
     },
     {
       "dependencies": [
@@ -1401,7 +1385,7 @@
         }
       ],
       "type": "engine_audio::AudioBrick",
-      "version": "7a59c633e095f41b7546cfc24b586d9bf683b084095a9582c0a5cb5a862bac26"
+      "version": "1fa6630c94e52ef14272f2956c2b1c9786019713551d2ea7c2a2aa1bc1a00703"
     },
     {
       "dependencies": [
@@ -1445,7 +1429,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_screens::ScreensBrick",
-      "version": "8cb25640b093a305ed02f7b66ec3a7d134c88baf00bbb8f64cd0e65a920f10b8"
+      "version": "e15953f39b0df349d80773d53a708adfce8bfe817c848e1d99160afef9452895"
     },
     {
       "dependencies": [
@@ -1493,7 +1477,8 @@
       ],
       "resources": [
         "engine_text::TextSettings",
-        "engine_text::TextStats"
+        "engine_text::TextStats",
+        "engine_text::LabelMaterial"
       ],
       "settings": [
         {
@@ -1509,7 +1494,7 @@
         }
       ],
       "type": "engine_text::TextBrick",
-      "version": "c253fdba94c0cd1740c2d09f7212802944940100bf06fafca2020501b93e6ecb"
+      "version": "724e7a2d29508550c631893ad88d13ce6fc5fab0d0722a33ca23c7d7b39470c8"
     },
     {
       "dependencies": [
@@ -1598,7 +1583,7 @@
         }
       ],
       "type": "engine_ui::UiBrick",
-      "version": "8f0f6e56835b531b34c6da64437eabb64b78561a0cb237a0e226cfb6420f0aed"
+      "version": "2f108fbb08cc279999328f6639c862112e608a4fe66a10e74dbffe44aa04091c"
     },
     {
       "dependencies": [
@@ -1683,7 +1668,7 @@
         }
       ],
       "type": "engine_probes::ReflectionProbesBrick",
-      "version": "40fbba5de8fa7ca7803358db87cccbd839ab591222a6c01037585d91da3faa54"
+      "version": "38fc7a7cb274691385a7eb6c3332e5e1edbb079970b14f9233b332f7073d0832"
     },
     {
       "dependencies": [
@@ -1715,13 +1700,6 @@
         "size": 48
       },
       "reads": [
-        {
-          "kind": "face",
-          "place": "transparency",
-          "providers": [
-            "engine_particles"
-          ]
-        },
         {
           "kind": "face",
           "place": "lighting",
@@ -1768,7 +1746,6 @@
             "engine_shadows",
             "engine_sky",
             "engine_reflections",
-            "engine_particles",
             "engine_terrain_shading"
           ]
         },
@@ -1803,14 +1780,12 @@
           "place": "transparency",
           "providers": [
             "engine_render",
-            "engine_meshes",
-            "engine_particles"
+            "engine_meshes"
           ]
         }
       ],
       "resources": [
         "engine_reflections::settings::Reflections",
-        "engine_reflections::settings::ReflectionsStats",
         "engine_reflections::gpu::ReflectionsPiece"
       ],
       "settings": [
@@ -1820,14 +1795,9 @@
         }
       ],
       "smokes": [],
-      "stats": [
-        {
-          "key": "reflections_stats",
-          "type": "engine_reflections::settings::ReflectionsStats"
-        }
-      ],
+      "stats": [],
       "type": "engine_reflections::ReflectionsBrick",
-      "version": "8b818536e7858e5545d7b17156194c711b9afa18869211155ed8fdaf4b08d08c"
+      "version": "cff8ea28b7d4a694c1272d891af98b28b18241f3ed39d325e588e717acd1be63"
     },
     {
       "dependencies": [
@@ -1837,7 +1807,6 @@
         "engine_render"
       ],
       "fills": [
-        "transparency",
         "particle_bursts"
       ],
       "jobs": [],
@@ -1854,10 +1823,7 @@
       "parts": [
         {
           "part": "engine_particles::part::ParticlesGpu",
-          "passes": [
-            "transparent",
-            "transparent_composite"
-          ]
+          "passes": []
         }
       ],
       "piece": null,
@@ -1896,19 +1862,6 @@
             "engine_sky",
             "engine_terrain_shading"
           ]
-        },
-        {
-          "kind": "target",
-          "place": "depth",
-          "providers": [
-            "engine_render",
-            "engine_prepass",
-            "engine_debug_view",
-            "engine_water",
-            "engine_meshes",
-            "engine_impostors",
-            "engine_terrain_shading"
-          ]
         }
       ],
       "resources": [
@@ -1931,7 +1884,7 @@
         }
       ],
       "type": "engine_particles::ParticlesBrick",
-      "version": "6f9b7e2dfa82e2d363a1f35a9800e113fe5dbae0ff6e8c3f1e5733faf83730e5"
+      "version": "e0645cd33637af5493f07902f01463009035ef36614518b43d4523f95f7f766c"
     },
     {
       "dependencies": [
@@ -1947,6 +1900,7 @@
       ],
       "jobs": [],
       "joins": [
+        "scene_components",
         "scene_components",
         "scene_components"
       ],
@@ -1980,7 +1934,8 @@
       "resources": [
         "engine_animation::AnimationSettings",
         "engine_animation::animator::Books",
-        "engine_animation::skins::Skins"
+        "engine_animation::skins::Skins",
+        "engine_animation::models::ModelLoads"
       ],
       "settings": [
         {
@@ -1991,7 +1946,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_animation::AnimationBrick",
-      "version": "a10a98d44711ee899638486ac757bcf9fdaf257beb7821aed2065cbf6f7a57b7"
+      "version": "4b01b10e5588d3b60f11b3e2219e2904dbca456aa72e382c8d4b6bcbf7229f2c"
     },
     {
       "dependencies": [
@@ -2064,7 +2019,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_wind::WindBrick",
-      "version": "48e8c0834f76a4da3576a4e2ae1564fa9257c7b6ea3d989731c97c5e053c37b5"
+      "version": "1eb0809aea41ea254b74168d0dc8a75ce5e7c691404757af50e1588f212274dc"
     },
     {
       "dependencies": [
@@ -2128,7 +2083,7 @@
         }
       ],
       "type": "engine_collision::CollisionBrick",
-      "version": "305ad0c85920f08708a624a391101fa0984d570cc714f74dea1fc48510f372d0"
+      "version": "f3e430156e8b1474ebf8782f36420990725df9a63fd7c08876eacf3956805d7e"
     },
     {
       "dependencies": [
@@ -2205,6 +2160,7 @@
         "engine_heightfield",
         "engine_math",
         "engine_open_world_kit",
+        "engine_places",
         "engine_places_simulation",
         "engine_places_world",
         "engine_render",
@@ -2309,7 +2265,7 @@
         }
       ],
       "type": "engine_terrain::runtime::brick::TerrainBrick",
-      "version": "e38b81710310bbdfa99debf9ca38849e95a3abf07b0de284782a757a2a37ae86"
+      "version": "e753af748f4cb7ddc6e45cc4548b3352fbad175401c5e44e81cad47d82dac9fb"
     },
     {
       "dependencies": [
@@ -2540,7 +2496,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "e7ff857ca534175ebefe9b603d05a3111dcf869426ffb5e9e9c36e8e0249a765"
+      "version": "9e50817c820e5a8e604fcb3c510064358cf1fd7908f6ed9171a0a43e2384e4bb"
     },
     {
       "dependencies": [
@@ -2624,16 +2580,6 @@
         },
         {
           "kind": "face",
-          "place": "debug_modes",
-          "providers": [
-            "engine_shadows",
-            "engine_debug_view",
-            "engine_terrain_shading",
-            "engine_water"
-          ]
-        },
-        {
-          "kind": "face",
           "place": "foliage",
           "providers": [
             "engine_scatter"
@@ -2701,7 +2647,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "decb842dd282aaf10409efc33d4fec7a23bc5c8689c0acc546c047d846e61de2"
+      "version": "008e3427ea9a64a050889ccfcaf0301a02c02ccc05a61175f8190b1102168d24"
     },
     {
       "dependencies": [
@@ -2761,16 +2707,9 @@
         },
         {
           "kind": "face",
-          "place": "debug",
+          "place": "ground_tiles",
           "providers": [
-            "engine_debug_view"
-          ]
-        },
-        {
-          "kind": "face",
-          "place": "lighting",
-          "providers": [
-            "engine_lighting"
+            "engine_terrain_shading"
           ]
         },
         {
@@ -2782,16 +2721,16 @@
         },
         {
           "kind": "face",
-          "place": "sun",
+          "place": "lighting",
           "providers": [
-            "engine_sun"
+            "engine_lighting"
           ]
         },
         {
           "kind": "face",
-          "place": "ground_tiles",
+          "place": "sun",
           "providers": [
-            "engine_terrain_shading"
+            "engine_sun"
           ]
         }
       ],
@@ -2800,7 +2739,8 @@
         "engine_ground_cover::settings::GroundCoverStats",
         "engine_ground_cover::covers::CoverTable",
         "engine_ground_cover::growth::CoverPlan",
-        "engine_ground_cover::growth::BladeCounts"
+        "engine_ground_cover::growth::BladeCounts",
+        "engine_ground_cover::surface::CoverSurface"
       ],
       "settings": [
         {
@@ -2816,7 +2756,7 @@
         }
       ],
       "type": "engine_ground_cover::GroundCoverBrick",
-      "version": "fd967adbe4f5fca28437cb036ad4489422daaa1f8a8ff502f024113ffcf868e8"
+      "version": "2106baf384c617b9063b81dc60e42bb6bbca858dc94f63c1b1780a585931d8c4"
     },
     {
       "dependencies": [
@@ -3016,7 +2956,6 @@
             "engine_shadows",
             "engine_sky",
             "engine_reflections",
-            "engine_particles",
             "engine_terrain_shading"
           ]
         }
@@ -3044,7 +2983,7 @@
         }
       ],
       "type": "engine_water::WaterBrick",
-      "version": "566e7caddf773a12eb7f99f084ad9614f55751ed71e5d16d15431628ddbf30e2"
+      "version": "33ce809f0e3f9fa81b17240d479779424348de267c000d95206bd405695b4013"
     },
     {
       "dependencies": [
@@ -3070,7 +3009,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_noise::LayerNoiseBrick",
-      "version": "8704243190ed51431517af0e426113ac0f23de0eaec2b6701ed97e74e0070577"
+      "version": "ae4071fb9e604d4831014efdb3d41b6c9de1748b50dcb1bd53641ca00841741e"
     },
     {
       "dependencies": [
@@ -3096,7 +3035,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_stamps::LayerStampsBrick",
-      "version": "7b0153d0880bec9b6280350de87b91dcc594a011a889bab121a2e3d8cd74d611"
+      "version": "f545e93d3dbbb481b5a560eeda46626d292d4cfe7bfd524b2147419005f13f8b"
     },
     {
       "dependencies": [
@@ -3123,7 +3062,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_heightmap::LayerHeightmapBrick",
-      "version": "ef1f210b7c0a9144f8935274ebeed18761924421616ada839af1a7df572fa0a0"
+      "version": "8c77816432c950c731804f4a90aebd6962d09729503fc5c21e77e9c4f20254f9"
     },
     {
       "dependencies": [
@@ -3149,7 +3088,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_paths::LayerPathsBrick",
-      "version": "bfaedcf836ad276aacb8eb117b9635f4fcfaf9c67a8548e551fbc8e5e3460555"
+      "version": "4416a77688a61b2032f2bfe07e252e456f2eb1fa89fcdb6c6a5d0c802f028094"
     },
     {
       "dependencies": [
@@ -3175,7 +3114,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_erosion::LayerErosionBrick",
-      "version": "e75329a89da300384fa5c23fb603d6c79869904958e814501a2d9c4d97dedb9f"
+      "version": "15b24b8eab45fa44319d9249b678f6249fb9b45fc53f5b303749bf76158f39d2"
     },
     {
       "dependencies": [
@@ -3202,7 +3141,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_hydrology::LayerHydrologyBrick",
-      "version": "e86534be972602c136c17f8dcbdda777752fe1d3c339bbb8501d135d8e024f48"
+      "version": "9baf90e4a7ac3f1dde5e672f0eeafcb76b3f1f427405b08880ab502ca070569a"
     },
     {
       "dependencies": [
@@ -3229,7 +3168,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_relief::LayerReliefBrick",
-      "version": "f454031e4fa9f522fd228740228794f40e77180e3da1e29700eed458677c5e25"
+      "version": "b1c95b0f2632aebf20190670b5f80145ed559f0189dfad7cb11f1737d2cc4392"
     },
     {
       "dependencies": [
@@ -3334,7 +3273,7 @@
         }
       ],
       "type": "engine_world_streaming::WorldStreamingBrick",
-      "version": "1bc0d0f8f02fc148cf7a2fb51ef99b1e223c9ed5d3091dcd3e2f5e1d1d638fa7"
+      "version": "5d0f43ee440abcc589c25a69363704bd7e4856824041d5b43deb8a26c92016ab"
     },
     {
       "dependencies": [
@@ -3408,13 +3347,14 @@
         }
       ],
       "type": "engine_navigation::NavigationBrick",
-      "version": "16a0f36e8a9f7747fbcd1e26868387e2ee273ed3e5620b50654544a47731faaf"
+      "version": "85d2d2a5f2d377b470e18040d0535778eb37a66e38367637d17d18cf82728277"
     },
     {
       "dependencies": [
         "engine_core",
         "engine_ecs",
         "engine_math",
+        "engine_places",
         "engine_places_world"
       ],
       "fills": [],
@@ -3440,12 +3380,12 @@
       "smokes": [],
       "stats": [],
       "type": "engine_splines::SplinesBrick",
-      "version": "d56176c357112ae0893a0540dd06ab0f71528a6cea6030b9b02429223f626e5a"
+      "version": "456ecdfddcbcb349eaca4598d18d456737cd46bf5d2e4bb2ff362284c2c09ab7"
     }
   ],
   "frame": {
-    "frame_variants": 57,
-    "layouts": 141,
+    "frame_variants": 58,
+    "layouts": 143,
     "pieces": [
       {
         "brick": "engine_sun",
@@ -3753,7 +3693,6 @@
         "engine_debug_view",
         "engine_terrain_shading",
         "engine_scatter",
-        "engine_ground_cover",
         "engine_water"
       ],
       "filler": "engine_debug_view",
@@ -3769,8 +3708,7 @@
       "face_readers": [
         "engine_render",
         "engine_impostors",
-        "engine_debug_view",
-        "engine_scatter"
+        "engine_debug_view"
       ],
       "filler": null,
       "kind": "list",
@@ -3792,6 +3730,17 @@
       "kind": "component",
       "members": [],
       "name": "drawn",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "face_readers": [],
+      "filler": null,
+      "kind": "ledger",
+      "members": [],
+      "name": "drawn_areas",
       "readers": null,
       "smokes": [],
       "writers": null
@@ -3832,6 +3781,17 @@
         "engine_ground_cover"
       ],
       "name": "far_cover",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "face_readers": [],
+      "filler": null,
+      "kind": "ledger",
+      "members": [],
+      "name": "files",
       "readers": null,
       "smokes": [],
       "writers": null
@@ -4093,12 +4053,12 @@
         "engine_shadows",
         "engine_sky",
         "engine_probes",
-        "engine_particles",
         "engine_terrain_shading",
         "engine_scatter",
         "engine_ground_cover",
         "engine_water",
-        "engine_reflections"
+        "engine_reflections",
+        "engine_particles"
       ],
       "filler": "engine_lighting",
       "kind": "slot",
@@ -4141,6 +4101,17 @@
       "kind": "component",
       "members": [],
       "name": "local_light",
+      "readers": null,
+      "smokes": [],
+      "writers": null
+    },
+    {
+      "contract": false,
+      "face_readers": [],
+      "filler": null,
+      "kind": "component",
+      "members": [],
+      "name": "model",
       "readers": null,
       "smokes": [],
       "writers": null
@@ -4437,17 +4408,6 @@
       "writers": null
     },
     {
-      "contract": false,
-      "face_readers": [],
-      "filler": null,
-      "kind": "ledger",
-      "members": [],
-      "name": "shadow_changes",
-      "readers": null,
-      "smokes": [],
-      "writers": null
-    },
-    {
       "contract": true,
       "face_readers": [
         "engine_sky",
@@ -4481,9 +4441,9 @@
         "engine_lighting",
         "engine_auto_exposure",
         "engine_probes",
-        "engine_particles",
         "engine_terrain_shading",
-        "engine_water"
+        "engine_water",
+        "engine_particles"
       ],
       "filler": "engine_sky",
       "kind": "slot",
@@ -4596,10 +4556,10 @@
         "engine_sky",
         "engine_auto_exposure",
         "engine_debug_view",
-        "engine_particles",
         "engine_terrain_shading",
         "engine_ground_cover",
-        "engine_water"
+        "engine_water",
+        "engine_particles"
       ],
       "filler": "engine_sun",
       "kind": "slot",
@@ -4613,9 +4573,9 @@
       "contract": true,
       "face_readers": [
         "engine_lighting",
-        "engine_particles",
         "engine_terrain_shading",
-        "engine_water"
+        "engine_water",
+        "engine_particles"
       ],
       "filler": null,
       "kind": "list",
@@ -4776,21 +4736,6 @@
       "kind": "slot",
       "members": [],
       "name": "trace_source",
-      "readers": null,
-      "smokes": [],
-      "writers": null
-    },
-    {
-      "contract": true,
-      "face_readers": [
-        "engine_sky",
-        "engine_taa",
-        "engine_reflections"
-      ],
-      "filler": "engine_particles",
-      "kind": "slot",
-      "members": [],
-      "name": "transparency",
       "readers": null,
       "smokes": [],
       "writers": null

@@ -4292,6 +4292,10 @@
             "integer",
             "null"
           ]
+        },
+        "shadows": {
+          "default": false,
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -4800,6 +4804,28 @@
       ],
       "type": "string"
     },
+    "SceneModel": {
+      "additionalProperties": false,
+      "properties": {
+        "file": {
+          "type": "string"
+        },
+        "play": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Start"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "type": "object"
+    },
     "SceneNavigation": {
       "additionalProperties": false,
       "properties": {
@@ -5021,6 +5047,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneLight"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "model": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneModel"
             },
             {
               "type": "null"

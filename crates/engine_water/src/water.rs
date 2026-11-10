@@ -435,6 +435,7 @@ impl WaterGpu {
                     indices: Some(leaves.pattern),
                     args: leaves.leaves,
                     offset: 0,
+                    material: None,
                 },
             );
             draws += 1;

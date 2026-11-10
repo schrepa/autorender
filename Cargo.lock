@@ -1205,10 +1205,14 @@ dependencies = [
  "engine_sources",
  "engine_textures",
  "glam 0.30.9",
+ "js-sys",
  "schemars",
  "serde",
  "serde_json",
  "sha2",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]
@@ -1981,6 +1985,7 @@ dependencies = [
  "engine_core",
  "engine_ecs",
  "engine_math",
+ "engine_places",
  "engine_places_world",
  "engine_sources",
  "glam 0.30.9",
@@ -2113,6 +2118,7 @@ dependencies = [
  "engine_heightfield",
  "engine_math",
  "engine_open_world_kit",
+ "engine_places",
  "engine_places_simulation",
  "engine_places_world",
  "engine_render",
@@ -2867,6 +2873,7 @@ dependencies = [
  "engine_native",
  "engine_open_world_kit",
  "engine_physics",
+ "engine_places",
  "engine_places_rendering",
  "engine_places_simulation",
  "engine_render",

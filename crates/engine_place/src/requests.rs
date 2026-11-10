@@ -239,11 +239,15 @@ impl Settling {
 }
 
 #[must_use]
-pub struct Hold(Box<dyn Any + Send + Sync>);
+pub struct Hold {
+    _kept: Box<dyn Any + Send + Sync>,
+}
 
 impl<K: Clone + Send + Sync + 'static> From<Interest<K>> for Hold {
     fn from(interest: Interest<K>) -> Self {
-        Self(Box::new(interest))
+        Self {
+            _kept: Box::new(interest),
+        }
     }
 }
 

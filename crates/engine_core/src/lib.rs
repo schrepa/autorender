@@ -201,6 +201,8 @@ static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::ledger::<AssetLibrary>("asset_library"),
     PlaceDecl::ledger::<RecordExchange>("record_exchange"),
     PlaceDecl::ledger::<Refusals>("refusals"),
+    PlaceDecl::ledger::<Files>("files"),
+    PlaceDecl::ledger::<DrawnAreas>("drawn_areas"),
     PlaceDecl::component::<Drawn>("drawn"),
     PlaceDecl::component::<OwnedViews>("owned_views"),
     PlaceDecl::ask::<Teleport>(),

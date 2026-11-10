@@ -1,19 +1,20 @@
 use bevy_ecs::prelude::*;
 use engine_core::{AssetLibrary, Cull, Error, Material, MaterialHandle, SurfaceSlot};
+use engine_places_rendering::lighting::{OCCLUSION, ROUGHNESS, TRANSMISSION};
 use engine_render::SlotModule;
 
 use crate::shaders::cover::surface;
 
 const COVER_SURFACE: &str = "cover";
 
-const COVER_SLOTS: [SurfaceSlot; 7] = [
-    SurfaceSlot::BaseColor,
-    SurfaceSlot::Opacity,
-    SurfaceSlot::Normal,
-    SurfaceSlot::Roughness,
-    SurfaceSlot::Occlusion,
-    SurfaceSlot::Transmission,
-    SurfaceSlot::Kind,
+const COVER_SLOTS: [&str; 7] = [
+    SurfaceSlot::BaseColor.name(),
+    SurfaceSlot::Opacity.name(),
+    SurfaceSlot::Normal.name(),
+    ROUGHNESS,
+    OCCLUSION,
+    TRANSMISSION,
+    SurfaceSlot::Kind.name(),
 ];
 
 #[derive(Resource, Default)]

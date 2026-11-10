@@ -86,6 +86,7 @@ impl PondGpu {
             Shape::Pulled {
                 vertices: 0..6,
                 instances: 0..self.drawn,
+                material: None,
             },
         );
         1
