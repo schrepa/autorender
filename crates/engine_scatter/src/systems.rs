@@ -10,8 +10,8 @@ use engine_places_rendering::impostors::{
     ImpostorAsks, ImpostorRecord, ImpostorRecords, Impostors,
 };
 use engine_places_rendering::occlusion::OcclusionSource;
-use engine_places_simulation::ground::TileKey;
-use engine_places_world::ground::{
+use engine_tiles::TileKey;
+use engine_open_world_kit::ground::{
     Foliage, GroundTiles, PlacedTiles, PooledTile, TerrainTiles, TileFace,
 };
 use glam::Vec3;

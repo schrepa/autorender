@@ -431,15 +431,13 @@ fn settle_ties(
     before: &mut [Bits],
     ties: &[Tie],
 ) -> Result<(), Error> {
-    let follows = follows_of(before);
     for &tie in ties {
         if let Tie::Read { writer, reader } = tie
-            && !follows[writer].contains(reader)
+            && !earlier(before, reader, writer)
         {
             before[reader].insert(writer);
         }
     }
-    let follows = follows_of(before);
     for &tie in ties {
         let Tie::Write {
             first,
@@ -449,7 +447,7 @@ fn settle_ties(
         else {
             continue;
         };
-        if follows[first].contains(second) || follows[second].contains(first) {
+        if earlier(before, first, second) || earlier(before, second, first) {
             continue;
         }
         let (one, other) = (&nodes[first], &nodes[second]);
@@ -473,6 +471,22 @@ fn settle_ties(
         }
     }
     Ok(())
+}
+
+fn earlier(before: &[Bits], first: usize, then: usize) -> bool {
+    let mut seen = Bits::of(before.len());
+    let mut open: Vec<usize> = before[then].iter().collect();
+    while let Some(pass) = open.pop() {
+        if pass == first {
+            return true;
+        }
+        if seen.contains(pass) {
+            continue;
+        }
+        seen.insert(pass);
+        open.extend(before[pass].iter());
+    }
+    false
 }
 
 fn placed_order(nodes: &[Node], before: &[Bits]) -> Result<Vec<usize>, Error> {

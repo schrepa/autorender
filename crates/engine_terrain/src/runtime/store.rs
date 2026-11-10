@@ -1,6 +1,6 @@
 use super::*;
 use engine_core::Feed;
-use engine_places_world::ground::{TileChange, TileChangeKind, TileFace};
+use engine_open_world_kit::ground::{TileChange, TileChangeKind, TileFace};
 
 struct Resident {
     tile: Arc<Tile>,
@@ -76,7 +76,6 @@ pub(super) struct TileStore {
     kept: Arc<[(TileKey, engine_core::Stamp)]>,
     tiles_moved: bool,
     kept_moved: bool,
-    reshaped: bool,
 }
 
 impl TileStore {
@@ -95,12 +94,7 @@ impl TileStore {
             kept: Arc::from(Vec::new()),
             tiles_moved: false,
             kept_moved: false,
-            reshaped: false,
         }
-    }
-
-    pub(super) fn take_reshaped(&mut self) -> bool {
-        std::mem::take(&mut self.reshaped)
     }
 
     pub(super) fn get(&self, key: &TileKey) -> Option<&Arc<Tile>> {
@@ -250,7 +244,6 @@ impl TileStore {
             },
         );
         let kind = if held.is_some() {
-            self.reshaped = true;
             TileChangeKind::Replaced
         } else {
             TileChangeKind::Arrived

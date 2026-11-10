@@ -25,20 +25,12 @@ pub use engine_water::WaterBrick;
 pub use engine_wind::WindBrick;
 pub use engine_world_streaming::WorldStreamingBrick;
 
-pub fn everything<L: Listing>(list: L) -> L {
-    engine_standard_rendering::rendering(list)
-        .with::<WindBrick>()
-        .with::<CollisionBrick>()
-        .with::<PhysicsBrick>()
-        .with::<TerrainBrick>()
+pub fn open_world<L: Listing>(list: L) -> L {
+    list.with::<TerrainBrick>()
         .with::<TerrainShadingBrick>()
-        .with::<GroundingBrick>()
-        .with::<WorldStreamingBrick>()
-        .with::<NavigationBrick>()
         .with::<ScatterBrick>()
         .with::<GroundCoverBrick>()
         .with::<WaterBrick>()
-        .with::<SplinesBrick>()
         .with::<LayerNoiseBrick>()
         .with::<LayerStampsBrick>()
         .with::<LayerHeightmapBrick>()
@@ -46,6 +38,21 @@ pub fn everything<L: Listing>(list: L) -> L {
         .with::<LayerErosionBrick>()
         .with::<LayerHydrologyBrick>()
         .with::<LayerReliefBrick>()
-        .places(engine_places_simulation::PLACES)
-        .places(engine_places_world::PLACES)
+        .places(engine_open_world_kit::PLACES)
+}
+
+pub fn everything<L: Listing>(list: L) -> L {
+    open_world(
+        engine_standard_rendering::rendering(list)
+            .with::<WindBrick>()
+            .with::<CollisionBrick>()
+            .with::<PhysicsBrick>(),
+    )
+    .with::<GroundingBrick>()
+    .with::<WorldStreamingBrick>()
+    .with::<NavigationBrick>()
+    .with::<SplinesBrick>()
+    .places(engine_places_simulation::PLACES)
+    .places(engine_solids::PLACES)
+    .places(engine_places_world::PLACES)
 }

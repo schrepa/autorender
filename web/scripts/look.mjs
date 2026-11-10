@@ -135,7 +135,7 @@ async function main() {
   if (!values.native && !values.url) throw new AgentError("invalid_arguments", "--url", { expected: "present" });
   if (values.source && !values.native) throw new AgentError("invalid_arguments", "--native", { expected: "present" });
   const owned = values.native
-    ? await launchNativeSession({ program: resolve(values.native), args: values.source ? ["--source", values.source] : [] })
+    ? await launchNativeSession({ program: resolve(values.native), args: values.source ? ["--scene", values.source] : [] })
     : await launchBrowserSession({ url: values.url });
   try { process.exitCode = await look(owned, values); } finally { await owned.close(); }
 }

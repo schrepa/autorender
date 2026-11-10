@@ -16,6 +16,7 @@ engine_codec.workspace = true
 glam.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+engine_open_world_kit.workspace = true
 
 [build-dependencies]
 engine_sources.workspace = true

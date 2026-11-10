@@ -10,8 +10,8 @@ use engine_core::{
     content_hash,
 };
 use engine_heightfield::tile::shaded_elsewhere;
-use engine_places_simulation::ground::{Pyramid, TileKey};
-use engine_places_world::ground::{
+use engine_tiles::{Pyramid, TileKey};
+use engine_open_world_kit::ground::{
     GroundBake, GroundBakes, GroundBaking, GroundTiles, Heightfield, HeldTile, PALETTE_ENTRIES,
     TerrainEntry, TerrainTiles, TileChange, TileFace, TileMaterials,
 };

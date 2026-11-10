@@ -35,6 +35,9 @@ engine_tonemap.workspace = true
 engine_debug_view.workspace = true
 engine_texture_cook.workspace = true
 engine_dynamic_resolution.workspace = true
+engine_fly_camera.workspace = true
+engine_follow_camera.workspace = true
+engine_sprites.workspace = true
 
 [lints]
 workspace = true

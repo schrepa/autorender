@@ -13,7 +13,7 @@ use engine_place::{
     Feed, List, MaterialHandle, MeshHandle, Slot, Stamp, TextureHandle, UNIFORM_BINDING_BYTES,
     gpu_struct,
 };
-use engine_places_simulation::ground::{Pyramid, TILE_QUADS, TileKey};
+use engine_tiles::{Pyramid, TILE_QUADS, TileKey};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 

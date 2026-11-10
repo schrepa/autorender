@@ -1,116 +1,70 @@
 use engine::prelude::*;
 use engine::scene::SceneFiles;
-use engine::{Error, ErrorCode};
+use engine::Error;
+use engine_fly_camera::FlyCamera;
 use serde_json::json;
 
 use crate::bricks::game::HighlandsControl;
-use crate::land;
-use crate::options::CONTROLS;
-use crate::scene::{self, set};
-use crate::{Options, RockMaps};
+use crate::land::{self, RockMaps};
+use crate::scene;
 
+const ROCK_FOLDER: &str = "highlands/";
+
+const ROCK_FILES: [&str; 6] = [
+    "highlands/rocks/boulder_albedo.ktx2",
+    "highlands/rocks/boulder_normal.ktx2",
+    "highlands/rocks/boulder_orm.ktx2",
+    "highlands/rocks/cliff_albedo.ktx2",
+    "highlands/rocks/cliff_normal.ktx2",
+    "highlands/rocks/cliff_orm.ktx2",
+];
+
+#[derive(Resource)]
 pub struct Highlands {
-    options: Options,
-    scene: Option<SceneInstance>,
-    start: Option<(Transform, Camera)>,
+    rocks: RockMaps,
     land: bool,
 }
 
 impl Highlands {
-    pub fn build(
-        engine: &mut Engine,
-        options: Options,
-        rocks: &RockMaps,
-        source: &str,
-    ) -> engine::Result<Self> {
-        let document: SceneDocument = engine::scene::parse_json(source)?;
-        let world = engine.app.world_mut();
-        land::provide(world, rocks)?;
-        let mut highlands = Self::new(options);
-        highlands.land = true;
-        highlands.furnish(world, &document, true)?;
-        Ok(highlands)
-    }
-
-    fn new(options: Options) -> Self {
-        Self {
-            options,
-            scene: None,
-            start: None,
-            land: false,
-        }
-    }
-
-    fn furnish(
-        &mut self,
-        world: &mut World,
-        document: &SceneDocument,
-        flying: bool,
-    ) -> engine::Result<()> {
-        let (instance, ()) = document.instantiate_then(world, &SceneFiles::default(), |world, _| {
-            scene::furnish(world, document, flying)
-        })?;
-        if let Some(previous) = self.scene.replace(instance) {
-            previous.despawn(world);
-        }
-        self.start = scene::start(world);
-        watch_bodies(world, &self.options)
-    }
-
-    pub fn control(&mut self, engine: &mut Engine, name: &str, value: &str) -> engine::Result<()> {
-        if !CONTROLS.contains(&name) {
-            return Err(Error::new(ErrorCode::InvalidValue, "$.control")
-                .got(name)
-                .variants(CONTROLS));
-        }
-        let mut options = self.options.clone();
-        options.set(name, value)?;
-        watch_bodies(engine.app.world_mut(), &options)?;
-        self.options = options;
-        Ok(())
-    }
-
-    fn load(&mut self, world: &mut World, source: &str) -> engine::Result<()> {
-        let document = SceneDocument::from_json(source)?;
-        if document.id == engine::scene::parse_json::<SceneDocument>(scene::SCENE)?.id {
-            if !self.land {
-                land::provide(world, &RockMaps::default())?;
-                self.land = true;
-            }
-            return self.furnish(world, &document, false);
-        }
-        let instance = document.instantiate(world)?;
-        if let Some(previous) = self.scene.replace(instance) {
-            previous.despawn(world);
-        }
-        set(world, "fly_camera.enabled", json!(false))
+    pub fn build(engine: &mut Engine) -> engine::Result<Self> {
+        let rocks = engine
+            .app
+            .world()
+            .get_resource::<GameFiles>()
+            .map(rocks)
+            .unwrap_or_default();
+        Ok(Self { rocks, land: false })
     }
 }
 
-engine::__if_dev! {
-    impl Highlands {
-        #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
-        pub(crate) fn played(
-            options: Options,
-            source: Option<&str>,
-            engine: &mut Engine,
-        ) -> engine::Result<Self> {
-            let mut highlands = Self::new(options);
-            if let Some(source) = source {
-                highlands.load(engine.app.world_mut(), source)?;
+fn rocks(files: &GameFiles) -> RockMaps {
+    ROCK_FILES
+        .iter()
+        .filter_map(|path| {
+            let bytes = files.bytes(path)?;
+            if engine::host::image_format(bytes).map(|format| format.name) != Some("ktx2-rgba8") {
+                return None;
             }
-            Ok(highlands)
-        }
-    }
+            let image = engine::host::decode_image(path, bytes).ok()?;
+            Some((path.strip_prefix(ROCK_FOLDER)?.to_owned(), image))
+        })
+        .collect()
 }
 
-fn watch_bodies(world: &mut World, options: &Options) -> engine::Result<()> {
-    land::control(
-        world,
-        HighlandsControl::WatchBodies {
-            on: options.watch_bodies,
-        },
-    )
+fn provide_land(world: &mut World, arrival: Arrival) -> engine::Result<()> {
+    let rocks = {
+        let mut highlands = world.resource_mut::<Highlands>();
+        if highlands.land {
+            return Ok(());
+        }
+        match arrival {
+            Arrival::Opening => std::mem::take(&mut highlands.rocks),
+            Arrival::Reload => RockMaps::default(),
+        }
+    };
+    land::provide(world, &rocks)?;
+    world.resource_mut::<Highlands>().land = true;
+    Ok(())
 }
 
 fn report_failure(event: &str, error: &Error) {
@@ -122,32 +76,47 @@ fn report_failure(event: &str, error: &Error) {
 }
 
 impl Game for Highlands {
-    fn reset_camera(&mut self, engine: &mut Engine) {
+    const FILES: &'static [&'static str] = &ROCK_FILES;
+
+    #[cfg(feature = "dev")]
+    const SMOKES: &'static [Smoke] = &crate::smokes::SMOKES;
+
+    fn load_scene(
+        engine: &mut Engine,
+        document: &SceneDocument,
+        files: &SceneFiles,
+        arrival: Arrival,
+    ) -> Result<SceneInstance, Error> {
+        let world = engine.app.world_mut();
+        let highlands = engine::scene::parse_json::<SceneDocument>(scene::SCENE)?;
+        match arrival {
+            Arrival::Opening => {
+                provide_land(world, arrival)?;
+                scene::furnish(world, document, files, true)
+            }
+            Arrival::Reload if document.id == highlands.id => {
+                provide_land(world, arrival)?;
+                scene::furnish(world, document, files, false)
+            }
+            Arrival::Reload => {
+                let instance = document.instantiate_with(world, files)?;
+                world
+                    .section::<FlyCamera>()
+                    .set(|fly| fly.enabled = false)?;
+                Ok(instance)
+            }
+        }
+    }
+
+    fn reset_camera(engine: &mut Engine, scene: &LoadedScene) {
         let world = engine.app.world_mut();
         if let Err(error) = land::control(world, HighlandsControl::Reset) {
             report_failure("highlands_reset_failed", &error);
         }
-        if let Some((at, lens)) = self.start
-            && let Some(camera) = main_camera(world)
-        {
-            place_camera(world, camera, at, lens);
-        }
+        scene.place_camera(world);
     }
 
-    fn scene(&self) -> Option<&SceneInstance> {
-        self.scene.as_ref()
-    }
-
-    fn content(&self, _engine: &Engine) -> Option<Vec<u8>> {
+    fn content(_engine: &Engine, _scene: &LoadedScene) -> Option<Vec<u8>> {
         Some(crate::SOURCE.hash().to_vec())
-    }
-
-    fn reload_scene(
-        &mut self,
-        engine: &mut Engine,
-        source: &str,
-        _files: &SceneFiles,
-    ) -> Result<(), Error> {
-        self.load(engine.app.world_mut(), source)
     }
 }

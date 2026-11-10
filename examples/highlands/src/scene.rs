@@ -1,5 +1,8 @@
 use engine::prelude::*;
-use serde_json::{Value, json};
+use engine::scene::SceneFiles;
+use engine_collision::CollisionConfig;
+use engine_fly_camera::FlyCamera;
+use engine_physics::Physics;
 
 use crate::land;
 
@@ -7,27 +10,25 @@ pub(crate) const SCENE: &str = include_str!("../highlands.scene.json");
 
 const SPEED: f32 = 160.0;
 
-pub(crate) fn set(world: &mut World, key: &str, value: Value) -> engine::Result<()> {
-    engine::host::apply_setting(world, key, &value)
-}
-
 pub(crate) fn furnish(
     world: &mut World,
     document: &SceneDocument,
+    files: &SceneFiles,
     flying: bool,
-) -> engine::Result<()> {
-    land::populate(world, document)?;
-    set(world, "collision.enabled", json!(false))?;
-    set(world, "physics.enabled", json!(false))?;
-    if flying {
-        set(world, "fly_camera.speed", json!(SPEED))
-    } else {
-        set(world, "fly_camera.enabled", json!(false))
-    }
-}
-
-pub(crate) fn start(world: &World) -> Option<(Transform, Camera)> {
-    main_camera(world).and_then(|camera| {
-        Some((*world.get::<Transform>(camera)?, *world.get::<Camera>(camera)?))
-    })
+) -> engine::Result<SceneInstance> {
+    let (instance, ()) = document.instantiate_then(world, files, |world, _| {
+        land::populate(world, document)?;
+        world
+            .section::<CollisionConfig>()
+            .set(|collision| collision.enabled = false)?;
+        world
+            .section::<Physics>()
+            .set(|physics| physics.enabled = false)?;
+        if flying {
+            world.section::<FlyCamera>().set(|fly| fly.speed = SPEED)
+        } else {
+            world.section::<FlyCamera>().set(|fly| fly.enabled = false)
+        }
+    })?;
+    Ok(instance)
 }

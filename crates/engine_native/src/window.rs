@@ -13,6 +13,7 @@ use winit::window::WindowId;
 
 use crate::host_error;
 use crate::input::Input;
+use crate::options::StartScene;
 use crate::jobs::{JobOptions, JobPool};
 #[cfg(feature = "profiling")]
 use crate::live::LiveProfile;
@@ -25,6 +26,8 @@ pub struct Window {
     pub jobs: JobOptions,
     pub vsync: bool,
     pub settings: HostSettings,
+    pub scene: StartScene,
+    pub environment: Option<String>,
     pub measure: Option<Measure>,
     pub profile: Option<PathBuf>,
 }
@@ -55,6 +58,8 @@ impl Window {
             jobs: JobOptions::default(),
             vsync: true,
             settings: HostSettings::default(),
+            scene: StartScene::Empty,
+            environment: None,
             measure: None,
             profile: None,
         }
@@ -144,6 +149,11 @@ impl<'a, G: Game> App<'a, G> {
         host.set_pixel_ratio(window.scale_factor());
         host.set_refresh_interval(refresh_interval(&window));
         host.set_display_paced(self.options.measure.is_none());
+        crate::open_scene(
+            &mut host,
+            &self.options.scene,
+            self.options.environment.as_deref(),
+        )?;
         self.options.settings.apply(&mut host)?;
         let mut jobs = self.options.jobs.pool(false);
         jobs.attach(&mut host);

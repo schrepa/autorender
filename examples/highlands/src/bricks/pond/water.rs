@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::Spawner;
-use engine_places_simulation::ground::{Ground, GroundRead};
+use engine_places_simulation::ground::{Ground, GroundProbe, GroundRead};
 use engine_places_simulation::water::{WaterBody, WaterQuery, WaterSample};
 use glam::{Vec2, Vec3};
 
@@ -29,13 +29,15 @@ impl WaterQuery for PondWater {
         let Some(surface) = surface else {
             return GroundRead::Ready(None);
         };
-        let ground = match self.ground.point(Vec2::new(point.x, point.z)) {
-            GroundRead::Ready(ground) => ground,
+        let probe = GroundProbe::at(Vec2::new(point.x, point.z)).below(surface);
+        let ground = match self.ground.down(probe) {
+            GroundRead::Ready(Some(ground)) => ground,
+            GroundRead::Ready(None) => return GroundRead::Ready(None),
             GroundRead::NotLoaded => return GroundRead::NotLoaded,
             GroundRead::Off => return GroundRead::Off,
         };
         let depth = surface - ground.height;
-        GroundRead::Ready((depth > 0.0 && !ground.hole).then_some(WaterSample {
+        GroundRead::Ready((depth > 0.0).then_some(WaterSample {
             surface,
             depth,
             velocity: [0.0; 3],

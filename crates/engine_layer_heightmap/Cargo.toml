@@ -15,7 +15,6 @@ import = ["dep:engine_command_line", "dep:png", "dep:tiff"]
 [dependencies]
 engine_ecs.workspace = true
 engine_core.workspace = true
-engine_places_world.workspace = true
 engine_heightfield.workspace = true
 engine_codec.workspace = true
 engine_math.workspace = true
@@ -26,6 +25,7 @@ serde_json.workspace = true
 engine_command_line = { workspace = true, optional = true }
 png = { workspace = true, optional = true }
 tiff = { workspace = true, optional = true }
+engine_open_world_kit.workspace = true
 
 [build-dependencies]
 engine_sources.workspace = true

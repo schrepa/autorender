@@ -191,6 +191,7 @@ dependencies = [
  "engine_sources",
  "engine_standard_rendering",
  "glam 0.30.9",
+ "serde",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -1169,6 +1170,7 @@ dependencies = [
  "engine_math",
  "engine_places",
  "engine_places_simulation",
+ "engine_solids",
  "engine_sources",
  "glam 0.30.9",
  "parry3d",
@@ -1307,8 +1309,8 @@ dependencies = [
  "engine_core",
  "engine_ecs",
  "engine_math",
+ "engine_open_world_kit",
  "engine_places_rendering",
- "engine_places_world",
  "engine_render",
  "engine_sources",
  "schemars",
@@ -1336,7 +1338,7 @@ dependencies = [
  "engine_codec",
  "engine_math",
  "engine_place",
- "engine_places_simulation",
+ "engine_tiles",
  "glam 0.30.9",
  "libm",
  "schemars",
@@ -1366,7 +1368,7 @@ dependencies = [
  "engine_ecs",
  "engine_heightfield",
  "engine_math",
- "engine_places_world",
+ "engine_open_world_kit",
  "engine_sources",
  "glam 0.30.9",
  "libm",
@@ -1385,7 +1387,7 @@ dependencies = [
  "engine_ecs",
  "engine_heightfield",
  "engine_math",
- "engine_places_world",
+ "engine_open_world_kit",
  "engine_sources",
  "glam 0.30.9",
  "png",
@@ -1404,7 +1406,7 @@ dependencies = [
  "engine_ecs",
  "engine_heightfield",
  "engine_math",
- "engine_places_world",
+ "engine_open_world_kit",
  "engine_sources",
  "glam 0.30.9",
  "libm",
@@ -1422,7 +1424,7 @@ dependencies = [
  "engine_ecs",
  "engine_heightfield",
  "engine_math",
- "engine_places_world",
+ "engine_open_world_kit",
  "engine_sources",
  "glam 0.30.9",
  "libm",
@@ -1440,7 +1442,7 @@ dependencies = [
  "engine_ecs",
  "engine_heightfield",
  "engine_math",
- "engine_places_world",
+ "engine_open_world_kit",
  "engine_sources",
  "glam 0.30.9",
  "libm",
@@ -1458,7 +1460,7 @@ dependencies = [
  "engine_ecs",
  "engine_heightfield",
  "engine_math",
- "engine_places_world",
+ "engine_open_world_kit",
  "engine_sources",
  "glam 0.30.9",
  "libm",
@@ -1476,7 +1478,7 @@ dependencies = [
  "engine_ecs",
  "engine_heightfield",
  "engine_math",
- "engine_places_world",
+ "engine_open_world_kit",
  "engine_sources",
  "glam 0.30.9",
  "libm",
@@ -1581,6 +1583,23 @@ dependencies = [
  "engine_math",
  "engine_places_simulation",
  "engine_sources",
+ "engine_tiles",
+ "glam 0.30.9",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "engine_open_world_kit"
+version = "0.1.0"
+dependencies = [
+ "engine_ecs",
+ "engine_heightfield",
+ "engine_place",
+ "engine_places",
+ "engine_sources",
+ "engine_tiles",
  "glam 0.30.9",
  "schemars",
  "serde",
@@ -1619,6 +1638,7 @@ dependencies = [
  "engine_ecs",
  "engine_math",
  "engine_places_simulation",
+ "engine_solids",
  "engine_sources",
  "glam 0.30.9",
  "hashbrown 0.16.1",
@@ -1675,13 +1695,11 @@ dependencies = [
 name = "engine_places_simulation"
 version = "0.1.0"
 dependencies = [
- "engine_codec",
  "engine_ecs",
  "engine_math",
  "engine_place",
  "engine_sources",
  "glam 0.30.9",
- "parry3d",
  "schemars",
  "serde",
 ]
@@ -1691,11 +1709,7 @@ name = "engine_places_world"
 version = "0.1.0"
 dependencies = [
  "engine_ecs",
- "engine_heightfield",
  "engine_place",
- "engine_places",
- "engine_places_simulation",
- "engine_sources",
  "glam 0.30.9",
  "schemars",
  "serde",
@@ -1714,6 +1728,7 @@ dependencies = [
  "engine_meshes",
  "engine_native",
  "engine_navigation",
+ "engine_open_world_kit",
  "engine_places",
  "engine_places_rendering",
  "engine_places_simulation",
@@ -1847,12 +1862,12 @@ dependencies = [
  "engine_ecs",
  "engine_heightfield",
  "engine_math",
+ "engine_open_world_kit",
  "engine_places",
  "engine_places_rendering",
- "engine_places_simulation",
- "engine_places_world",
  "engine_render",
  "engine_sources",
+ "engine_tiles",
  "glam 0.30.9",
  "serde_json",
 ]
@@ -1939,6 +1954,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_solids"
+version = "0.1.0"
+dependencies = [
+ "engine_ecs",
+ "engine_math",
+ "engine_place",
+ "engine_places_simulation",
+ "glam 0.30.9",
+ "parry3d",
+]
+
+[[package]]
 name = "engine_sources"
 version = "0.1.0"
 dependencies = [
@@ -1991,10 +2018,12 @@ dependencies = [
  "engine_layer_relief",
  "engine_layer_stamps",
  "engine_navigation",
+ "engine_open_world_kit",
  "engine_physics",
  "engine_places_simulation",
  "engine_places_world",
  "engine_scatter",
+ "engine_solids",
  "engine_splines",
  "engine_standard_rendering",
  "engine_terrain",
@@ -2017,6 +2046,8 @@ dependencies = [
  "engine_debug_view",
  "engine_dither",
  "engine_dynamic_resolution",
+ "engine_fly_camera",
+ "engine_follow_camera",
  "engine_impostors",
  "engine_lighting",
  "engine_lights",
@@ -2030,6 +2061,7 @@ dependencies = [
  "engine_screens",
  "engine_shadows",
  "engine_sky",
+ "engine_sprites",
  "engine_sun",
  "engine_taa",
  "engine_text",
@@ -2080,9 +2112,11 @@ dependencies = [
  "engine_ecs",
  "engine_heightfield",
  "engine_math",
+ "engine_open_world_kit",
  "engine_places_simulation",
  "engine_places_world",
  "engine_render",
+ "engine_solids",
  "engine_sources",
  "glam 0.30.9",
  "schemars",
@@ -2100,11 +2134,11 @@ dependencies = [
  "engine_ecs",
  "engine_heightfield",
  "engine_math",
+ "engine_open_world_kit",
  "engine_places_rendering",
- "engine_places_simulation",
- "engine_places_world",
  "engine_render",
  "engine_sources",
+ "engine_tiles",
  "glam 0.30.9",
  "libm",
  "serde_json",
@@ -2149,6 +2183,14 @@ dependencies = [
  "png",
  "serde_json",
  "zune-jpeg",
+]
+
+[[package]]
+name = "engine_tiles"
+version = "0.1.0"
+dependencies = [
+ "engine_codec",
+ "glam 0.30.9",
 ]
 
 [[package]]
@@ -2202,9 +2244,9 @@ dependencies = [
  "engine_ecs",
  "engine_heightfield",
  "engine_math",
+ "engine_open_world_kit",
  "engine_places_rendering",
  "engine_places_simulation",
- "engine_places_world",
  "engine_render",
  "engine_sources",
  "glam 0.30.9",
@@ -2249,6 +2291,7 @@ dependencies = [
  "engine_core",
  "engine_ecs",
  "engine_heightfield",
+ "engine_open_world_kit",
  "engine_places_rendering",
  "engine_places_simulation",
  "engine_places_world",
@@ -2817,13 +2860,15 @@ version = "0.1.0"
 dependencies = [
  "engine",
  "engine_cards",
+ "engine_collision",
  "engine_core",
  "engine_ecs",
  "engine_fly_camera",
  "engine_native",
+ "engine_open_world_kit",
+ "engine_physics",
  "engine_places_rendering",
  "engine_places_simulation",
- "engine_places_world",
  "engine_render",
  "engine_smoke",
  "engine_sources",

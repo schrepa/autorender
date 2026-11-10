@@ -5,7 +5,7 @@ use engine_core::{Error, ErrorCode, Job, JobCx, JobKind, RecordKey, codec};
 use engine_heightfield::layer::LayerKind;
 use engine_heightfield::tile::{Recipe, Solid, TileJob};
 use engine_heightfield::{INVALID_TERRAIN, Layers, Pyramid, Stamp, TileKey};
-use engine_places_world::terrain::TerrainLayers;
+use engine_open_world_kit::terrain::TerrainLayers;
 
 use drawn::{start_drawn, start_rewater};
 use steady_water::{

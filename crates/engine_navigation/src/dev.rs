@@ -3,11 +3,13 @@ use engine_core::{
     Error, ErrorCode, Expected, Filled, InvalidSetting, Jobs, Mover, Operation, Records, Rule,
     SceneIds, Setting, Slot, Transform,
 };
-use engine_places_simulation::ground::{Ground, GroundRead, UNKNOWN_TERRAIN};
+use engine_places_simulation::ground::Ground;
 use engine_places_simulation::navigation::{NavAgent, NavStatus, NavWalk};
+use engine_places_simulation::water::WaterBody;
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
+use crate::agents::Floors;
 use crate::{NavAgents, NavOptions, NavQuery, NavStats, Navigation, ObstacleColliders};
 
 const COORDINATE: Rule = Rule::Range(-1.0e6, 1.0e6);
@@ -242,23 +244,7 @@ impl Operation for NavGoControl {
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
-#[serde(untagged)]
-pub enum GroundKey {
-    Authored(String),
-    Entity(u64),
-}
-
-fn ground_key(ids: &SceneIds, entity: Entity) -> GroundKey {
-    ids.id(entity).map_or_else(
-        || GroundKey::Entity(entity.to_bits()),
-        |id| GroundKey::Authored(id.to_owned()),
-    )
-}
-
-#[derive(Serialize, schemars::JsonSchema)]
 pub struct NavPathResult {
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub terrain: Option<GroundKey>,
     pub options: NavOptions,
     pub searching: bool,
     pub walk: Option<WalkResult>,
@@ -285,10 +271,13 @@ impl Operation for NavPathQuery {
     const NAME: &'static str = "nav_path";
     const CONTROL: bool = false;
     type Params = (
-        (Res<'static, Navigation>, Res<'static, Ground>),
+        (
+            Res<'static, Navigation>,
+            Res<'static, Ground>,
+            Query<'static, 'static, &'static WaterBody>,
+        ),
         Filled<'static, Ground>,
         Res<'static, Records>,
-        SceneIds<'static, 'static>,
         ResMut<'static, NavAgents>,
         Jobs<'static, 'static>,
         ObstacleColliders<'static, 'static>,
@@ -297,15 +286,16 @@ impl Operation for NavPathQuery {
     type Reply = NavPathResult;
 
     fn run(
-        ((settings, ground), filled, records, ids, mut navigation, mut jobs, colliders): SystemParamItem<
+        ((settings, ground, waters), filled, records, mut navigation, mut jobs, colliders): SystemParamItem<
             '_,
             '_,
             Self::Params,
         >,
         request: Self,
     ) -> Result<NavPathResult, Error> {
+        let floors = Floors::new(&ground, waters.iter(), settings.floor_layers);
         walk(
-            ((&*settings, &*ground, &colliders), filled.listed(), &*records, &ids),
+            ((&*settings, &floors, &colliders), filled.listed(), &*records),
             (&mut *navigation, &mut jobs),
             request,
         )
@@ -328,11 +318,10 @@ fn out_of_range(invalid: InvalidSetting, path: &str) -> Error {
 }
 
 fn walk(
-    ((settings, ground, colliders), listed, records, ids): (
-        (&Navigation, &Ground, &ObstacleColliders),
+    ((settings, floors, colliders), listed, records): (
+        (&Navigation, &Floors, &ObstacleColliders),
         bool,
         &Records,
-        &SceneIds,
     ),
     (navigation, jobs): (&mut NavAgents, &mut Jobs),
     NavPathQuery { from, to, options }: NavPathQuery,
@@ -352,20 +341,14 @@ fn walk(
             .expected(Expected::Present)
             .got(Ground::NAME));
     }
-    let terrain = match ground.0.source(from, to) {
-        GroundRead::Ready(source) => Some(ground_key(ids, source.ground)),
-        GroundRead::NotLoaded => None,
-        GroundRead::Off => return Err(Error::new(UNKNOWN_TERRAIN, "$")),
-    };
     let found = navigation.query(
-        (settings, ground, colliders),
+        (settings, floors, colliders),
         (records, jobs),
         (from, to),
         &options,
     );
     let round = |value: f32| (f64::from(value) * 100.0).round() / 100.0;
     Ok(NavPathResult {
-        terrain,
         options,
         searching: found == NavQuery::Searching,
         walk: match found {

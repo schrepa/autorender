@@ -1,4 +1,3 @@
-mod cook;
 mod obstacles;
 mod records;
 
@@ -7,31 +6,29 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Error, ErrorCode, Filled, FixedTime, GAMEPLAY_JOBS, GlobalTransforms,
-    Interest, JobFailures, JobKind, JobRef, Jobs, Parent, RecordKey, Records, Refusals, Request,
-    Requests, Transform, fields, job_output, job_priority, settings, stats,
+    Error, ErrorCode, Filled, FixedTime, GAMEPLAY_JOBS, GlobalTransforms, Interest, JobFailures,
+    Jobs, Parent, RecordKey, Records, Refusals, Request, Requests, Transform, fields, job_output,
+    job_priority, settings, stats,
 };
 
 pub const NAVIGATION_PART: &str = "navigation";
 use engine_math::{atan2, max};
-use engine_places_simulation::ground::{
-    Ground, GroundGrid, GroundObstacle, GroundRead, GroundSource, Pyramid, TileKey,
-};
+use engine_places_simulation::ground::{Ground, GroundProbe, GroundRead};
 use engine_places_simulation::navigation::{NavAgent, NavStatus, NavStep, NavWalk};
 use engine_places_simulation::physics::{
     Collider, ColliderShape, Collision, QueryFilter, SensorFilter, Slid,
 };
+use engine_places_simulation::water::WaterBody;
+use engine_tiles::{Pyramid, TILE_SAMPLES, TileKey};
 use glam::{Mat4, Quat, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::jobs::{
-    GroundJob, PORTALS, PORTALS_NAME, PortalsJob, WALK_GROUND, WALK_GROUND_NAME, portals_output,
-};
+use crate::jobs::{PORTALS, PORTALS_NAME, PortalsJob, portals_output};
 use crate::{
-    Gait, NavOptions, NavPath, Stepped, TilePortals, WalkData, WalkGround, WalkSearch, Want,
+    Gait, HOLE_WORDS, NavOptions, NavPath, Stepped, TilePortals, WALK_SAMPLES, WalkData,
+    WalkGround, WalkSearch, Want,
 };
-pub(crate) use cook::cook;
 pub use obstacles::ObstacleColliders;
 use records::{Interests, Resolved, WalkRecords};
 
@@ -43,9 +40,13 @@ settings! {
         pub enabled: bool = true => any,
         pub samples_per_tick: u32 = 32_768 => at_least(1024),
         pub obstacle_layers: u32 = 0 => any,
-        pub grounds_per_tick: u32 = 1 => at_least(1),
+        pub floor_layers: u32 = u32::MAX => any,
+        pub ground_samples_per_tick: u32 = 16_384 => at_least(1),
         pub kept_grounds: u32 = 64 => any,
         pub kept_portals: u32 = 8192 => any,
+        pub walk_center: [f32; 2] = [0.0, 0.0] => range(-1.0e6, 1.0e6),
+        pub walk_tiles: u32 = 64 => range(1, 4096),
+        pub walk_spacing: f32 = 1.0 => range(0.015625, 1024.0),
     }
 }
 
@@ -116,6 +117,138 @@ stats! {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WalkArea {
+    pub corner: Vec2,
+    pub pyramid: Pyramid,
+}
+
+impl WalkArea {
+    pub fn of(settings: &Navigation) -> Option<Self> {
+        let pyramid = Pyramid::new([settings.walk_tiles; 2], settings.walk_spacing).ok()?;
+        let corner = Vec2::from_array(settings.walk_center) - pyramid.extent() * 0.5;
+        Some(Self { corner, pyramid })
+    }
+
+    fn origin(&self) -> Vec3 {
+        Vec3::new(self.corner.x, 0.0, self.corner.y)
+    }
+
+    fn holds(&self, point: Vec2) -> bool {
+        self.pyramid.tile_at(0, point - self.corner).is_some()
+    }
+}
+
+pub(crate) struct Floors<'a> {
+    ground: &'a Ground,
+    waters: Vec<&'a WaterBody>,
+    layers: u32,
+}
+
+impl<'a> Floors<'a> {
+    pub(crate) fn new(
+        ground: &'a Ground,
+        waters: impl Iterator<Item = &'a WaterBody>,
+        layers: u32,
+    ) -> Self {
+        Self {
+            ground,
+            waters: waters.collect(),
+            layers,
+        }
+    }
+
+    fn read(&self, at: Vec2) -> GroundRead<Option<f32>> {
+        match self
+            .ground
+            .down(GroundProbe::at(at).on_layers(self.layers))
+        {
+            GroundRead::Ready(point) => GroundRead::Ready(point.map(|point| point.height)),
+            GroundRead::NotLoaded => GroundRead::NotLoaded,
+            GroundRead::Off => GroundRead::Off,
+        }
+    }
+
+    fn water(&self, point: Vec3) -> Option<f32> {
+        let mut found: Option<(i32, f32)> = None;
+        for body in &self.waters {
+            if found.is_some_and(|(precedence, _)| precedence >= body.precedence) {
+                continue;
+            }
+            if let Some(sample) = body.shape.water(point).ready().flatten() {
+                found = Some((body.precedence, sample.surface));
+            }
+        }
+        found.map(|(_, surface)| surface)
+    }
+
+    fn layout(&self) -> u64 {
+        self.ground.layout()
+    }
+}
+
+struct Sampling {
+    key: TileKey,
+    next: usize,
+    heights: Box<[f32]>,
+    holes: Box<[u64]>,
+    holed: bool,
+    water: Option<Box<[f32]>>,
+}
+
+impl Sampling {
+    fn new(key: TileKey) -> Self {
+        Self {
+            key,
+            next: 0,
+            heights: vec![0.0; WALK_SAMPLES].into_boxed_slice(),
+            holes: vec![0; HOLE_WORDS].into_boxed_slice(),
+            holed: false,
+            water: None,
+        }
+    }
+
+    fn advance(&mut self, area: &WalkArea, floors: &Floors, budget: &mut u64) -> bool {
+        let side = TILE_SAMPLES as usize;
+        let level = u32::from(self.key.level);
+        let spacing = area.pyramid.spacing(level);
+        let first = area.pyramid.first_sample(self.key);
+        while self.next < WALK_SAMPLES {
+            if *budget == 0 {
+                return false;
+            }
+            *budget -= 1;
+            let index = self.next;
+            self.next += 1;
+            let (column, row) = ((index % side) as i64, (index / side) as i64);
+            let at = area.corner
+                + Vec2::new((first[0] + column) as f32, (first[1] + row) as f32) * spacing;
+            let Some(height) = floors.read(at).ready().flatten() else {
+                self.holes[index / 64] |= 1 << (index % 64);
+                self.holed = true;
+                continue;
+            };
+            self.heights[index] = height;
+            if let Some(surface) = floors.water(Vec3::new(at.x, height, at.y)) {
+                self.water
+                    .get_or_insert_with(|| vec![f32::NAN; WALK_SAMPLES].into_boxed_slice())
+                    [index] = surface;
+            }
+        }
+        true
+    }
+
+    fn ground(self, area: &WalkArea) -> WalkGround {
+        let spacing = area.pyramid.spacing(u32::from(self.key.level));
+        WalkGround::new(
+            (self.key, spacing),
+            self.heights,
+            self.holed.then_some(self.holes),
+            self.water,
+        )
+    }
+}
+
 #[derive(Resource, Default)]
 pub struct NavAgents {
     searches: Vec<(Entity, Search)>,
@@ -125,11 +258,6 @@ pub struct NavAgents {
     tick: u64,
     elapsed: f64,
     failures: JobFailures,
-}
-
-struct Walked {
-    source: GroundSource,
-    grid: JobRef,
 }
 
 enum Search {
@@ -142,7 +270,7 @@ enum Search {
 }
 
 struct Running {
-    walked: Walked,
+    area: WalkArea,
     search: WalkSearch,
     held: Held,
     interests: Interests,
@@ -167,6 +295,11 @@ impl WalkData for Held {
 
 type Found = (Vec3, Option<NavPath>);
 
+struct Budgets<'b> {
+    search: &'b mut u64,
+    samples: &'b mut u64,
+}
+
 impl Search {
     fn new(from: Vec2, to: Vec2, options: NavOptions) -> Self {
         Self::Starting { from, to, options }
@@ -181,27 +314,28 @@ impl Search {
 
     fn advance(
         &mut self,
-        (ground, colliders): (&Ground, &ObstacleColliders),
+        (area, floors, colliders): (WalkArea, &Floors, &ObstacleColliders),
         (records, jobs): (&mut WalkRecords, &mut Jobs),
-        budget: &mut u64,
+        budgets: &mut Budgets<'_>,
     ) -> Option<Found> {
         if let Self::Starting { from, to, options } = self {
-            let walked = match ground_source(ground, *from, *to) {
-                GroundRead::Ready(walked) => walked,
+            if !area.holds(*from) || !area.holds(*to) {
+                return Some((Vec3::ZERO, None));
+            }
+            match floors.read(*from) {
+                GroundRead::Ready(_) => {}
                 GroundRead::NotLoaded => return None,
                 GroundRead::Off => return Some((Vec3::ZERO, None)),
-            };
-            let corner = Vec2::new(walked.source.origin.x, walked.source.origin.z);
-            let mut obstacles = ground_obstacles(ground, walked.source.ground);
-            obstacles.extend(colliders.read(corner));
+            }
+            let corner = area.corner;
             let search = WalkSearch::new(
-                &walked.source.pyramid,
+                &area.pyramid,
                 (*from - corner, *to - corner),
-                obstacles,
+                colliders.read(corner),
                 options,
             );
             *self = Self::Running(Box::new(Running {
-                walked,
+                area,
                 search,
                 held: Held::default(),
                 interests: Interests::default(),
@@ -211,19 +345,20 @@ impl Search {
         let Self::Running(running) = self else {
             return None;
         };
-        let origin = running.walked.source.origin;
+        let origin = running.area.origin();
+        records.refresh((floors.layout(), running.area));
         loop {
-            records.ask_ahead(running, jobs);
-            let blocked = match running.search.step(budget, &running.held) {
+            records.ask_ahead(running, (floors, jobs), &mut *budgets.samples);
+            let blocked = match running.search.step(&mut *budgets.search, &running.held) {
                 Stepped::Found(found) => return Some((origin, found)),
                 Stepped::Spent => false,
                 Stepped::Blocked => true,
             };
-            records.ask_ahead(running, jobs);
+            records.ask_ahead(running, (floors, jobs), &mut *budgets.samples);
             if !blocked {
                 return None;
             }
-            match records.resolve(running, jobs) {
+            match records.resolve(running, (floors, jobs), &mut *budgets.samples) {
                 Resolved::Progress => {}
                 Resolved::Waiting => return None,
                 Resolved::Failed => return Some((origin, None)),
@@ -258,14 +393,17 @@ impl NavAgents {
         (self.failures.count, last.map(|(_, error)| error.as_str()))
     }
 
-    pub fn query(
+    pub(crate) fn query(
         &mut self,
-        (settings, ground, colliders): (&Navigation, &Ground, &ObstacleColliders),
+        (settings, floors, colliders): (&Navigation, &Floors, &ObstacleColliders),
         (records, jobs): (&Records, &mut Jobs),
         ends: (Vec2, Vec2),
         options: &NavOptions,
     ) -> NavQuery {
         self.settle_records(settings, records);
+        let Some(area) = WalkArea::of(settings) else {
+            return NavQuery::Unreachable;
+        };
         let mut asked = self
             .query
             .take()
@@ -276,9 +414,15 @@ impl NavAgents {
                 search: Search::new(ends.0, ends.1, *options),
             });
         let mut unlimited = u64::MAX;
-        let found = asked
-            .search
-            .advance((ground, colliders), (&mut self.records, jobs), &mut unlimited);
+        let mut samples = u64::from(settings.ground_samples_per_tick);
+        let found = asked.search.advance(
+            (area, floors, colliders),
+            (&mut self.records, jobs),
+            &mut Budgets {
+                search: &mut unlimited,
+                samples: &mut samples,
+            },
+        );
         let Some((origin, found)) = found else {
             self.query = Some(asked);
             return NavQuery::Searching;
@@ -323,35 +467,17 @@ type Agents<'w, 's> = Query<
     Without<Parent>,
 >;
 
-fn ground_source(ground: &Ground, from: Vec2, to: Vec2) -> GroundRead<Walked> {
-    match ground.0.source(from, to) {
-        GroundRead::Ready(source) => ground.0.grid().map_or(GroundRead::Off, |grid| {
-            GroundRead::Ready(Walked { source, grid })
-        }),
-        GroundRead::NotLoaded => GroundRead::NotLoaded,
-        GroundRead::Off => GroundRead::Off,
-    }
+fn portals_key(layout: u64, key: TileKey, gait: &Gait) -> Vec<u8> {
+    let mut input = engine_codec::encode(&layout);
+    input.extend_from_slice(&engine_codec::encode(&key));
+    input.extend_from_slice(&engine_codec::encode(gait));
+    input
 }
 
-fn ground_obstacles(ground: &Ground, entity: Entity) -> Vec<GroundObstacle> {
-    ground.0.obstacles(entity)
-}
-
-fn ground_input(walked: &Walked, key: TileKey) -> Vec<u8> {
-    GroundJob {
-        grid: walked.grid.clone(),
-        source: walked.source.identity.to_vec(),
-        key,
-    }
-    .input()
-}
-
-fn portals_input(walked: &Walked, key: TileKey, gait: &Gait) -> Vec<u8> {
+fn portals_input(area: &WalkArea, ground: &WalkGround, gait: &Gait) -> Vec<u8> {
     PortalsJob {
-        grid: walked.grid.clone(),
-        source: walked.source.identity.to_vec(),
-        pyramid: walked.source.pyramid,
-        key,
+        ground: ground.clone(),
+        pyramid: area.pyramid,
         gait: *gait,
     }
     .input()
@@ -376,16 +502,22 @@ fn worker_message(error: Error) -> String {
 
 pub(crate) fn walk_agents(
     (time, settings): (Res<FixedTime>, Res<Navigation>),
-    (ground, colliders, records): (Res<Ground>, ObstacleColliders, Res<Records>),
+    (ground, waters, colliders, records): (
+        Res<Ground>,
+        Query<&WaterBody>,
+        ObstacleColliders,
+        Res<Records>,
+    ),
     (collision, collides, bodies): (Res<Collision>, Filled<Collision>, Query<&Collider>),
     mut jobs: Jobs,
     (mut navigation, mut refusals): (ResMut<NavAgents>, ResMut<Refusals>),
     mut stats: ResMut<NavStats>,
     (mut agents, globals): (Agents, Res<GlobalTransforms>),
 ) {
+    let floors = Floors::new(&ground, waters.iter(), settings.floor_layers);
     *stats = walk(
         (&*settings, *time),
-        ((&*ground, &colliders), &*records, &mut jobs),
+        ((&floors, &colliders), &*records, &mut jobs),
         (collides.on().then_some(&*collision), &bodies),
         (&mut navigation, &mut refusals),
         (&mut agents, &globals),
@@ -394,7 +526,7 @@ pub(crate) fn walk_agents(
 
 fn walk(
     (settings, time): (&Navigation, FixedTime),
-    ((ground, colliders), records, jobs): ((&Ground, &ObstacleColliders), &Records, &mut Jobs),
+    ((floors, colliders), records, jobs): ((&Floors, &ObstacleColliders), &Records, &mut Jobs),
     bodies: (Option<&Collision>, &Query<&Collider>),
     (navigation, refusals): (&mut NavAgents, &mut Refusals),
     (agents, globals): (&mut Agents, &GlobalTransforms),
@@ -443,7 +575,7 @@ fn walk(
     }
     search(
         settings,
-        ((ground, colliders), &mut *jobs),
+        ((floors, colliders), &mut *jobs),
         (&mut *navigation, &mut stats),
         agents,
     );
@@ -477,26 +609,40 @@ fn walk(
 
 fn search(
     settings: &Navigation,
-    ((ground, colliders), jobs): ((&Ground, &ObstacleColliders), &mut Jobs),
+    ((floors, colliders), jobs): ((&Floors, &ObstacleColliders), &mut Jobs),
     (navigation, stats): (&mut NavAgents, &mut NavStats),
     agents: &mut Agents,
 ) {
     let mut budget = u64::from(settings.samples_per_tick);
+    let mut samples = u64::from(settings.ground_samples_per_tick);
     let count = navigation.searches.len();
     let mut finished = Vec::new();
-    for offset in 0..count {
-        if budget == 0 {
-            break;
+    if let Some(area) = WalkArea::of(settings) {
+        for offset in 0..count {
+            if budget == 0 {
+                break;
+            }
+            let index = (navigation.turn + offset) % count;
+            let (entity, search) = &mut navigation.searches[index];
+            if let Some(found) = search.advance(
+                (area, floors, colliders),
+                (&mut navigation.records, &mut *jobs),
+                &mut Budgets {
+                    search: &mut budget,
+                    samples: &mut samples,
+                },
+            ) {
+                finished.push((index, *entity, found));
+            }
         }
-        let index = (navigation.turn + offset) % count;
-        let (entity, search) = &mut navigation.searches[index];
-        if let Some(found) = search.advance(
-            (ground, colliders),
-            (&mut navigation.records, &mut *jobs),
-            &mut budget,
-        ) {
-            finished.push((index, *entity, found));
-        }
+    } else {
+        finished.extend(
+            navigation
+                .searches
+                .iter()
+                .enumerate()
+                .map(|(index, (entity, _))| (index, *entity, (Vec3::ZERO, None))),
+        );
     }
     navigation.turn = navigation.turn.wrapping_add(1);
     stats.work = u64::from(settings.samples_per_tick) - budget;

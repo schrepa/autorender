@@ -1,4 +1,4 @@
-include!(concat!(env!("OUT_DIR"), "/bricks/glimmer.rs"));
+engine::brick!(glimmer);
 
 use std::collections::BTreeMap;
 

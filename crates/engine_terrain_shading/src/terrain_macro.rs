@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use engine_core::{AssetLibrary, ColorSpace, Error, Texture, TextureFormat};
-use engine_places_world::ground::TerrainTiles;
+use engine_open_world_kit::ground::TerrainTiles;
 use engine_render::{Allocation, Install, Lifetime, Prepare, wgpu};
 
 use crate::state::Bakes;

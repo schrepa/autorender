@@ -14,7 +14,7 @@ pub use layer::{Noise, NoiseLayer};
 use engine_core::{Brick, Bricks, Source};
 use engine_heightfield::INVALID_TERRAIN;
 use engine_heightfield::layer::{LayerKind, no_files, no_points};
-use engine_places_world::terrain::TerrainLayers;
+use engine_open_world_kit::terrain::TerrainLayers;
 
 pub struct LayerNoiseBrick;
 

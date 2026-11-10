@@ -33,7 +33,7 @@ impl Pack {
     fn arguments<'a>(&'a self, rest: &[&'a str]) -> Vec<&'a str> {
         let mut arguments = Vec::new();
         if let Some(scene) = &self.scene {
-            arguments.extend(["--source", scene.as_str()]);
+            arguments.extend(["--scene", scene.as_str()]);
         }
         arguments.extend(rest);
         arguments

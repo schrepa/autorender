@@ -6,9 +6,7 @@ use engine_codec::{self as codec, Reader, Writer, record, tagged};
 use engine_core::{Error, ErrorCode, fields};
 use engine_math::collections::HashMap;
 use engine_math::{max, min};
-use engine_places_simulation::ground::{
-    GroundGrid, GroundObstacle, MAX_LEVEL, Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey,
-};
+use engine_tiles::{MAX_LEVEL, Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey};
 use glam::{Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
@@ -22,7 +20,7 @@ mod search;
 use corridor::{Corridor, Pull};
 use flood::{Buckets, Flood, Stepper, below_unreached, octile};
 use graph::Graph;
-pub use ground::WalkGround;
+pub use ground::{HOLE_WORDS, WALK_SAMPLES, WalkGround};
 pub use portals::{Portal, Side, TilePortals};
 pub use search::{Stepped, WalkData, WalkSearch, Want};
 
@@ -45,6 +43,19 @@ impl NavOptions {
             max_water: self.max_water,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum WalkObstacle {
+    Circle {
+        center: Vec2,
+        radius: f32,
+    },
+    Box {
+        center: Vec2,
+        half_extents: Vec2,
+        unit_axis: Vec2,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

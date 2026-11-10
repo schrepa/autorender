@@ -1,5 +1,40 @@
 {
   "$defs": {
+    "AnimatorScene": {
+      "additionalProperties": false,
+      "properties": {
+        "play": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Start"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "rig": {
+          "$ref": "#/$defs/Rig"
+        }
+      },
+      "required": [
+        "rig"
+      ],
+      "type": "object"
+    },
+    "Attachment": {
+      "additionalProperties": false,
+      "properties": {
+        "joint": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "joint"
+      ],
+      "type": "object"
+    },
     "AuthoredPlacement": {
       "additionalProperties": false,
       "properties": {
@@ -274,6 +309,35 @@
       ],
       "type": "string"
     },
+    "Bound": {
+      "additionalProperties": false,
+      "properties": {
+        "inverse_bind": {
+          "items": {
+            "items": {
+              "format": "float",
+              "type": "number"
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "type": "array"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "joint": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "joint",
+        "inverse_bind"
+      ],
+      "type": "object"
+    },
     "Bus": {
       "enum": [
         "master",
@@ -353,6 +417,30 @@
         "nothing"
       ],
       "type": "string"
+    },
+    "Clip": {
+      "additionalProperties": false,
+      "properties": {
+        "duration": {
+          "format": "float",
+          "type": "number"
+        },
+        "name": {
+          "type": "string"
+        },
+        "tracks": {
+          "items": {
+            "$ref": "#/$defs/JointKeys"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "name",
+        "duration",
+        "tracks"
+      ],
+      "type": "object"
     },
     "Clock": {
       "enum": [
@@ -896,6 +984,26 @@
       },
       "type": "object"
     },
+    "FoldOrder": {
+      "additionalProperties": false,
+      "properties": {
+        "display": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "post": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "FrameBudgetSettings": {
       "properties": {
         "upload_bytes": {
@@ -1224,6 +1332,183 @@
       "required": [
         "sky",
         "sun"
+      ],
+      "type": "object"
+    },
+    "Joint": {
+      "additionalProperties": false,
+      "properties": {
+        "name": {
+          "type": "string"
+        },
+        "parent": {
+          "default": null,
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "rotation": {
+          "default": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 4,
+          "minItems": 4,
+          "type": "array"
+        },
+        "scale": {
+          "default": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "translation": {
+          "default": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "JointKeys": {
+      "additionalProperties": false,
+      "properties": {
+        "joint": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rotation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Keys2"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scale": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Keys"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "translation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Keys"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "joint"
+      ],
+      "type": "object"
+    },
+    "Keys": {
+      "additionalProperties": false,
+      "properties": {
+        "step": {
+          "default": false,
+          "type": "boolean"
+        },
+        "times": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "values": {
+          "items": {
+            "items": {
+              "format": "float",
+              "type": "number"
+            },
+            "maxItems": 3,
+            "minItems": 3,
+            "type": "array"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "times",
+        "values"
+      ],
+      "type": "object"
+    },
+    "Keys2": {
+      "additionalProperties": false,
+      "properties": {
+        "step": {
+          "default": false,
+          "type": "boolean"
+        },
+        "times": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "type": "array"
+        },
+        "values": {
+          "items": {
+            "items": {
+              "format": "float",
+              "type": "number"
+            },
+            "maxItems": 4,
+            "minItems": 4,
+            "type": "array"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "times",
+        "values"
       ],
       "type": "object"
     },
@@ -2254,6 +2539,64 @@
       },
       "type": "object"
     },
+    "Rig": {
+      "additionalProperties": false,
+      "properties": {
+        "clips": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Clip"
+          },
+          "type": "array"
+        },
+        "joints": {
+          "items": {
+            "$ref": "#/$defs/Joint"
+          },
+          "type": "array"
+        },
+        "palette": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Bound"
+          },
+          "type": "array"
+        },
+        "parts": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/RigPart"
+          },
+          "type": "array"
+        }
+      },
+      "required": [
+        "joints"
+      ],
+      "type": "object"
+    },
+    "RigPart": {
+      "additionalProperties": false,
+      "properties": {
+        "material": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        },
+        "mesh": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mesh",
+        "material"
+      ],
+      "type": "object"
+    },
     "RiversLayer": {
       "properties": {
         "attribution": {
@@ -2440,6 +2783,16 @@
           "exclusiveMinimum": 0.0,
           "format": "float",
           "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SceneAnimation": {
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "default": true,
+          "type": "boolean"
         }
       },
       "type": "object"
@@ -2844,13 +3197,13 @@
           "default": "off",
           "enum": [
             "off",
+            "shadows",
+            "casters",
             "kinds",
             "levels",
             "cards",
             "overdraw",
             "normals",
-            "shadows",
-            "casters",
             "tiles",
             "materials",
             "sky",
@@ -3221,6 +3574,16 @@
             }
           ]
         },
+        "animation": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SceneAnimation"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "audio": {
           "anyOf": [
             {
@@ -3345,6 +3708,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneFlyCamera"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "fold_order": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FoldOrder"
             },
             {
               "type": "null"
@@ -4434,8 +4807,14 @@
           "default": true,
           "type": "boolean"
         },
-        "grounds_per_tick": {
-          "default": 1,
+        "floor_layers": {
+          "default": 4294967295,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "ground_samples_per_tick": {
+          "default": 16384,
           "format": "uint32",
           "minimum": 1,
           "type": "integer"
@@ -4462,6 +4841,35 @@
           "default": 32768,
           "format": "uint32",
           "minimum": 1024,
+          "type": "integer"
+        },
+        "walk_center": {
+          "default": [
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000000.0,
+            "minimum": -1000000.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "walk_spacing": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1024.0,
+          "minimum": 0.015625,
+          "type": "number"
+        },
+        "walk_tiles": {
+          "default": 64,
+          "format": "uint32",
+          "maximum": 4096,
+          "minimum": 1,
           "type": "integer"
         }
       },
@@ -4533,6 +4941,26 @@
     "SceneObject": {
       "additionalProperties": false,
       "properties": {
+        "animator": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AnimatorScene"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "attachment": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Attachment"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "body_push": {
           "anyOf": [
             {
@@ -4726,6 +5154,16 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneSpline"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "streaming_focus": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StreamingFocus"
             },
             {
               "type": "null"
@@ -6997,6 +7435,27 @@
         }
       ]
     },
+    "Start": {
+      "additionalProperties": false,
+      "properties": {
+        "clip": {
+          "type": "string"
+        },
+        "looped": {
+          "default": true,
+          "type": "boolean"
+        },
+        "speed": {
+          "default": 1.0,
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "clip"
+      ],
+      "type": "object"
+    },
     "SteepLayer": {
       "additionalProperties": false,
       "properties": {
@@ -7096,6 +7555,10 @@
         "right"
       ],
       "type": "string"
+    },
+    "StreamingFocus": {
+      "additionalProperties": false,
+      "type": "object"
     },
     "SurfaceProjection": {
       "enum": [

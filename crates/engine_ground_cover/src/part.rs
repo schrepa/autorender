@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{AttachPoint, DrawKind, Error, PassViews, ScenePass, TargetName};
-use engine_places_world::ground::PALETTE_ENTRIES;
+use engine_open_world_kit::ground::PALETTE_ENTRIES;
 use engine_render::{
     AfterRead, Allocation, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND, DEBUG_TARGETS,
     DepthUse, Draw, DrawInput, Encode, GpuPart, Install, Lifetime, Pass, Pipeline, Prepare,

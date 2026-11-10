@@ -9,7 +9,7 @@ mod relief;
 
 use engine_core::{Brick, Bricks, Source};
 use engine_heightfield::{INVALID_TERRAIN, MISSING_LAYER};
-use engine_places_world::terrain::TerrainLayers;
+use engine_open_world_kit::terrain::TerrainLayers;
 
 pub use relief::{HUMMOCKS, HummocksLayer, STEPS, StepsLayer};
 
