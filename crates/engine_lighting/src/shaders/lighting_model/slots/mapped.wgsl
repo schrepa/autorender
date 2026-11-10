@@ -1,6 +1,6 @@
-import package::engine::materials::{MAP_METALLIC_ROUGHNESS, MAP_OCCLUSION, map_present, map_uv,
-    metallic_roughness_map, metallic_roughness_sampler, occlusion_map, occlusion_sampler,
-    occlusion_strength};
+import package::engine::materials::{MAP_METALLIC_ROUGHNESS, MAP_OCCLUSION, VALUE_OCCLUSION_STRENGTH,
+    map_present, map_uv, material_value, metallic_roughness_map, metallic_roughness_sampler,
+    occlusion_map, occlusion_sampler};
 import package::engine::shading::{SurfaceInput, SurfacePoint};
 
 fn metal_rough(input: SurfaceInput) -> vec4<f32> {
@@ -25,5 +25,5 @@ fn occlusion(input: SurfaceInput, point: SurfacePoint) -> f32 {
     }
     let sampled = textureSampleBias(occlusion_map, occlusion_sampler,
         map_uv(MAP_OCCLUSION, input.uv, input.uv1), input.bias).r;
-    return 1.0 + occlusion_strength() * (sampled - 1.0);
+    return 1.0 + material_value(VALUE_OCCLUSION_STRENGTH) * (sampled - 1.0);
 }

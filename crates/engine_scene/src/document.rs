@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 
 use engine_assets::{MeshBuffer, VertexSkin};
-use engine_core::{Error, Mesh, MeshVertex, Surface, Transform, glam};
+use engine_core::{Error, Mesh, MeshVertex, Transform, glam};
 use engine_settings::{ErrorCode, Expected, InvalidSetting, Rule, Setting, valid_uri};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -119,40 +119,6 @@ impl std::io::Write for BoundedSource {
     }
     fn flush(&mut self) -> std::io::Result<()> {
         Ok(())
-    }
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-#[cfg_attr(
-    feature = "schema",
-    derive(schemars::JsonSchema),
-    schemars(transform = Surface::state_rules)
-)]
-#[serde(default, deny_unknown_fields)]
-pub struct SceneSurface {
-    pub roughness: f32,
-    pub metalness: f32,
-    pub emission: f32,
-}
-
-impl Default for SceneSurface {
-    fn default() -> Self {
-        let matte = Surface::MATTE;
-        Self {
-            roughness: matte.roughness,
-            metalness: matte.metalness,
-            emission: matte.emission,
-        }
-    }
-}
-
-impl SceneSurface {
-    pub(crate) fn surface(self) -> Surface {
-        Surface {
-            roughness: self.roughness,
-            metalness: self.metalness,
-            emission: self.emission,
-        }
     }
 }
 

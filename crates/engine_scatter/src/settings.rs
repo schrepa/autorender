@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use engine_core::__private::{schemars, serde};
 use engine_core::{
-    Cut, Error, ErrorCode, Expected, InvalidSetting, MaterialHandle, MeshHandle, Rule, Setting,
+    Cut, Error, ErrorCode, Expected, InvalidSetting, MaterialHandle, GeometryHandle, Rule, Setting,
     settings, stats,
 };
 
@@ -61,13 +61,13 @@ settings! {
 #[serde(crate = "engine_core::__private::serde", deny_unknown_fields)]
 #[schemars(crate = "engine_core::__private::schemars")]
 pub struct PlacedLook {
-    pub mesh: MeshHandle,
+    pub mesh: GeometryHandle,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub lods: Vec<PlacedLod>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<PlacedPart>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub shadow: Option<MeshHandle>,
+    pub shadow: Option<GeometryHandle>,
     #[serde(default, skip_serializing_if = "is_zero")]
     #[schemars(transform = engine_core::stated(SWAY))]
     pub sway: f32,
@@ -85,7 +85,7 @@ pub struct PlacedLook {
 #[serde(crate = "engine_core::__private::serde", deny_unknown_fields)]
 #[schemars(crate = "engine_core::__private::schemars")]
 pub struct PlacedLod {
-    pub mesh: MeshHandle,
+    pub mesh: GeometryHandle,
     pub error: f32,
 }
 
@@ -101,7 +101,7 @@ pub struct PlacedLod {
 #[schemars(crate = "engine_core::__private::schemars")]
 pub struct PlacedPart {
     pub material: MaterialHandle,
-    pub meshes: Vec<MeshHandle>,
+    pub meshes: Vec<GeometryHandle>,
 }
 
 stats! {
@@ -191,7 +191,7 @@ fn check_looks(settings: &ScatterSettings) -> Result<(), InvalidSetting> {
 }
 
 impl ScatterSettings {
-    pub(crate) fn look(&self, mesh: MeshHandle) -> Option<&PlacedLook> {
+    pub(crate) fn look(&self, mesh: GeometryHandle) -> Option<&PlacedLook> {
         self.looks.iter().find(|look| look.mesh == mesh)
     }
 }

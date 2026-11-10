@@ -27,13 +27,12 @@ shader_modules! {
     "engine::screen_points" = "screen_points.wgsl";
     "engine::mipmaps" = "mipmaps.wgsl";
     "engine::view" = "frame/view.wgsl";
-    "engine::shading" = "shading.wgsl";
     "engine::standard" = "standard.wgsl";
     "engine::mapped" = "mapped.wgsl";
     "engine::surface" = "surface.wgsl";
     "engine::transparency" = "transparency.wgsl";
     "engine::transparency_composite" = "transparency_composite.wgsl";
-    "engine::mesh::vertex" = "meshes/vertex.wgsl";
+    "engine::geometry::vertex" = "geometry/vertex.wgsl";
     "engine::kinds" = "kinds.wgsl";
     "engine::post::pixel" = "post/pixel.wgsl";
     "engine::post::frame" = "effects.wgsl";
@@ -58,7 +57,7 @@ pub(crate) fn core_module(path: &str) -> Module {
 
 pub const PRESENTATION_MODULE: &str = "engine::presentation";
 pub const DEBUG_MODULE: &str = "engine::debug";
-pub const DECLARATIONS_MODULE: &str = "engine::mesh::declarations";
+pub const DECLARATIONS_MODULE: &str = "engine::geometry::declarations";
 pub const VIEW_MODULE: &str = "engine::view";
 pub const PYRAMID_MODULE: &str = "engine::pyramid";
 
@@ -120,7 +119,7 @@ fn debug_kind_color(kind: u32) -> vec3<f32> {
 pub fn declarations_source() -> String {
     use crate::slots::{DrawnSlot, FADE_LEVEL_MAX, FadeWord, FadedSlot};
     use engine_core::GpuBits;
-    let mut source = String::from(include_str!("meshes/declarations.wgsl"));
+    let mut source = String::from(include_str!("geometry/declarations.wgsl"));
     for wgsl in [DrawnSlot::WGSL, FadedSlot::WGSL, FadeWord::WGSL] {
         source.push_str(wgsl);
     }
@@ -135,12 +134,13 @@ pub fn view_source() -> String {
     source
 }
 
-pub fn generated_core() -> [(&'static str, String); 12] {
+pub fn generated_core() -> [(&'static str, String); 13] {
     let standard = crate::surface::MaterialLayout::standard();
     [
         (PRESENTATION_MODULE, presentation_source()),
         (DEBUG_MODULE, debug_source()),
         (DECLARATIONS_MODULE, declarations_source()),
+        (crate::surface::SHADING_MODULE, standard.shading_source()),
         (crate::surface::MATERIALS_MODULE, standard.materials_source()),
         (crate::surface::SLOTS_MODULE, standard.slots_source(false)),
         (crate::surface::SURFACES_MODULE, standard.surfaces_source()),

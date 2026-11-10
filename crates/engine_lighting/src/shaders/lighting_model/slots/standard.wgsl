@@ -1,4 +1,4 @@
-import package::engine::materials::transmission_factor;
+import package::engine::materials::{VALUE_TRANSMISSION, material_value};
 import package::engine::shading::{SurfaceInput, SurfacePoint};
 
 fn roughness(input: SurfaceInput, point: SurfacePoint) -> f32 {
@@ -14,5 +14,5 @@ fn occlusion(input: SurfaceInput, point: SurfacePoint) -> f32 {
 }
 
 fn transmission(input: SurfaceInput, point: SurfacePoint) -> f32 {
-    return transmission_factor();
+    return material_value(VALUE_TRANSMISSION);
 }

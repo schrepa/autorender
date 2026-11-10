@@ -7,7 +7,7 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::world::{World, WorldId};
 use engine_assets::SceneAssets;
 use engine_core::{
-    AssetLibrary, Error, MaterialHandle, MeshHandle, ProvidedAssets, SceneContext, TextureHandle,
+    AssetLibrary, Error, MaterialHandle, GeometryHandle, ProvidedAssets, SceneContext, TextureHandle,
     Transform, propagate_transforms, set_parents,
 };
 use engine_registry::{OperationScene, SceneEntity, SettingsEntry};
@@ -84,7 +84,7 @@ impl From<&crate::SceneTexture> for TextureOrigin {
 
 #[derive(Debug, Default)]
 struct Handles {
-    meshes: Vec<MeshHandle>,
+    meshes: Vec<GeometryHandle>,
     materials: Vec<MaterialHandle>,
     textures: Vec<TextureHandle>,
 }
@@ -190,7 +190,7 @@ impl SceneInstance {
             .map(|(id, handle)| (id.as_str(), *handle))
     }
 
-    pub fn meshes(&self) -> impl ExactSizeIterator<Item = (&str, MeshHandle)> {
+    pub fn meshes(&self) -> impl ExactSizeIterator<Item = (&str, GeometryHandle)> {
         self.mesh_ids
             .iter()
             .zip(&self.assets.meshes)
@@ -204,7 +204,7 @@ impl SceneInstance {
             .map(|(id, handle)| (id.as_str(), *handle))
     }
 
-    pub fn mesh_origin(&self, handle: MeshHandle) -> Option<(&str, &MeshOrigin)> {
+    pub fn mesh_origin(&self, handle: GeometryHandle) -> Option<(&str, &MeshOrigin)> {
         let index = self.assets.meshes.iter().position(|&mesh| mesh == handle)?;
         Some((&self.mesh_ids[index], &self.origins.meshes[index]))
     }

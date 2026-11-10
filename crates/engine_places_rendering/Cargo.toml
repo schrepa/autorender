@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 engine_place.workspace = true
+engine_assets.workspace = true
 engine_places.workspace = true
 engine_ecs.workspace = true
 engine_codec.workspace = true

@@ -1,6 +1,6 @@
 import package::engine::math::maximum_abs;
 import package::engine::view::{camera, stable_normalize};
-import package::engine::mesh::declarations::{AffinePose, VertexOutput};
+import package::engine::geometry::declarations::{AffinePose, VertexOutput};
 
 fn pose_matrix(pose: AffinePose) -> mat4x4<f32> {
     return transpose(mat4x4<f32>(pose.row_0, pose.row_1, pose.row_2,

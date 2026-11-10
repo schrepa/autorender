@@ -16,7 +16,7 @@ use crate::drawn::WatchedSlot;
 use crate::layouts::PresentationFrame;
 use crate::order::BatchLook;
 use crate::presentation::{FrameState, PresentationTotals};
-use crate::shaders::meshes::{blended, presentation, vertex};
+use crate::shaders::meshes::{presentation, vertex};
 use crate::{MESH, SKIN};
 
 pub(crate) const VIEW_FRAME_BYTES: u64 = 512;
@@ -73,17 +73,6 @@ pub(crate) struct Passes {
     pub occlusion: Pass<MeshesGpu>,
     pub occluded: Pass<MeshesGpu>,
     pub views: Pass<MeshesGpu>,
-    pub blended: Pass<MeshesGpu>,
-}
-
-pub(crate) struct Sorted {
-    pub rows: Buffer<MeshesGpu>,
-    pub view: Buffer<MeshesGpu>,
-    pub keys: Buffer<MeshesGpu>,
-    pub ids: Buffer<MeshesGpu>,
-    pub args: Buffer<MeshesGpu>,
-    pub keyed: ComputePipeline<MeshesGpu>,
-    pub ranked: ComputePipeline<MeshesGpu>,
 }
 
 pub(crate) struct Instances {
@@ -191,9 +180,8 @@ pub(crate) struct ViewStreams {
 }
 
 pub(crate) struct BlendedStreams {
-    pub ids: DrawInput<MeshesGpu, Scene>,
-    pub args: DrawInput<MeshesGpu, Scene>,
-    pub records: DrawInput<MeshesGpu, Scene>,
+    pub one: Streams<Scene>,
+    pub two: Streams<Scene>,
 }
 
 pub(crate) enum Drawing {
@@ -219,7 +207,6 @@ pub(crate) struct MeshesGpu {
     pub instances: Instances,
     pub presented: Presented,
     pub computes: Computes,
-    pub sorted: Sorted,
     pub forms: Forms<Form<MeshesGpu>>,
     pub scenes: Vec<SceneStreams>,
     pub occluded: Occluded,
@@ -255,20 +242,18 @@ impl GpuPart for MeshesGpu {
         let presented = install_presented(cx)?;
         let passes = install_passes(cx);
         let computes = install_computes(cx, &passes, &presented)?;
-        let sorted = install_sorted(cx, passes.blended, &presented)?;
         let forms = Forms {
             plain: cx.form(&PLAIN_FORM, &[])?,
             extended: cx.form(&EXTENDED_FORM, &[])?,
             skin: cx.form(&SKIN_FORM, &[])?,
         };
-        let scenes = install_scenes(cx, &forms, (&instances, &presented, &sorted));
+        let scenes = install_scenes(cx, &forms, (&instances, &presented));
         let occluded = install_occluded(cx, passes.occluded, &instances, &presented)?;
         Ok(Self {
             passes,
             instances,
             presented,
             computes,
-            sorted,
             forms,
             scenes,
             occluded,
@@ -282,10 +267,6 @@ impl GpuPart for MeshesGpu {
         cx: &mut Prepare<'_, Self>,
     ) {
         self.prepare_frame(reads, cx);
-    }
-
-    fn view(&mut self, _view: &engine_core::ViewFacts, cx: &mut Prepare<'_, Self>) {
-        self.prepare_blended_view(cx);
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
@@ -371,61 +352,12 @@ fn install_passes(cx: &mut Install<'_, MeshesGpu>) -> Passes {
         .at(AttachPoint::LateOpaque)
         .after(occlusion)
         .id();
-    let blended = cx
-        .pass("blended_sort")
-        .at(AttachPoint::Transparent)
-        .after(presentation)
-        .id();
     Passes {
         presentation,
         occlusion,
         occluded,
         views,
-        blended,
     }
-}
-
-fn install_sorted(
-    cx: &mut Install<'_, MeshesGpu>,
-    pass: Pass<MeshesGpu>,
-    presented: &Presented,
-) -> Result<Sorted, Error> {
-    let rows = cx.buffer("blended_rows", Lifetime::Kept);
-    let view = cx.view_buffer("blended_view", Lifetime::Kept);
-    let keys = cx.view_buffer("blended_keys", Lifetime::Kept);
-    let ids = cx.view_buffer("blended_ids", Lifetime::Kept);
-    let args = cx.view_buffer("blended_args", Lifetime::Kept);
-    let keyed = cx.compute_pipeline(
-        pass,
-        blended::BLENDED_KEYS,
-        &[
-            (blended::SORT_VIEW, Bind::Buffer(view)),
-            (blended::SORT_ROWS, Bind::Buffer(rows)),
-            (blended::SORT_BATCHES, Bind::Buffer(presented.batches)),
-            (blended::SORT_KEYS, Bind::Buffer(keys)),
-        ],
-    )?;
-    let ranked = cx.compute_pipeline(
-        pass,
-        blended::BLENDED_RANK,
-        &[
-            (blended::SORT_VIEW, Bind::Buffer(view)),
-            (blended::SORT_ROWS, Bind::Buffer(rows)),
-            (blended::SORT_BATCHES, Bind::Buffer(presented.batches)),
-            (blended::SORT_KEYS, Bind::Buffer(keys)),
-            (blended::SORT_IDS, Bind::Buffer(ids)),
-            (blended::SORT_ARGS, Bind::Buffer(args)),
-        ],
-    )?;
-    Ok(Sorted {
-        rows,
-        view,
-        keys,
-        ids,
-        args,
-        keyed,
-        ranked,
-    })
 }
 
 fn compaction(
@@ -614,7 +546,7 @@ fn streams<S: Scope<MeshesGpu> + Copy>(
 fn install_scenes(
     cx: &mut Install<'_, MeshesGpu>,
     forms: &Forms<Form<MeshesGpu>>,
-    (instances, presented, sorted): (&Instances, &Presented, &Sorted),
+    (instances, presented): (&Instances, &Presented),
 ) -> Vec<SceneStreams> {
     let mut scenes: Vec<SceneStreams> = Vec::new();
     let passes = forms.plain.passes().chain(forms.skin.passes());
@@ -626,9 +558,8 @@ fn install_scenes(
         let scene = pass.scene;
         let drawing = match (pass.role, pass.owned) {
             (PassRole::Blended, true | false) => Drawing::Blended(BlendedStreams {
-                ids: cx.draw_input(scene, sorted.ids),
-                args: cx.draw_input(scene, sorted.args),
-                records: cx.draw_input(scene, instances.records),
+                one: streams(cx, scene, (instances, presented), 0),
+                two: streams(cx, scene, (instances, presented), 1),
             }),
             (PassRole::Lit | PassRole::Depth | PassRole::Shown, true) => {
                 Drawing::Views(ViewStreams {

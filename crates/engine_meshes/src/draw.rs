@@ -1,10 +1,10 @@
-use engine_core::{MaterialHandle, MeshHandle};
+use engine_core::{MaterialHandle, GeometryHandle};
 use engine_render::{Draw, Pipeline, Scene, SceneDraw, Shape};
 
 use crate::debug::DrawRecord;
 use crate::gpu::{BlendedStreams, Drawing, Forms, MeshesGpu, Streams, ViewStreams};
 use crate::layouts::LOD_LEVELS;
-use crate::presentation::{PHASE_ONE, ViewSlot};
+use crate::presentation::{PHASE_ONE, PHASE_TWO, ViewSlot};
 
 type ScenePipelines = Forms<Option<Pipeline<MeshesGpu, Scene>>>;
 
@@ -49,7 +49,7 @@ impl MeshesGpu {
                 if !opaque {
                     return draw.skip("every material blends");
                 }
-                self.draw_meshes(draw, streams, &pipelines, (PHASE_ONE, skinned))
+                self.draw_meshes(draw, streams, &pipelines, (PHASE_ONE, skinned, false))
             }
             Drawing::Views(streams) => {
                 let Some(slot) = self.state.view_slot(scene.pass.name(), scene.view) else {
@@ -71,10 +71,10 @@ impl MeshesGpu {
             Drawing::Blended(streams) => {
                 let blended = self
                     .state
-                    .blended
-                    .batches
+                    .draws
+                    .items
                     .iter()
-                    .any(|batch| batch.look.skinned == skinned);
+                    .any(|item| item.blended && item.look.skinned == skinned);
                 if !blended {
                     return draw.skip("no material blends");
                 }
@@ -89,28 +89,11 @@ impl MeshesGpu {
         (streams, pipelines): (&BlendedStreams, &ScenePipelines),
         skinned: bool,
     ) -> u32 {
-        let records = (streams.records, self.record(0));
-        let mut drawn = 0;
-        for batch in &self.state.blended.batches {
-            if batch.look.skinned != skinned {
-                continue;
-            }
-            let Some(pipeline) = pipelines.of(batch.look) else {
-                continue;
-            };
-            draw.draw(
-                pipeline,
-                Shape::MeshIndirect {
-                    mesh: batch.mesh,
-                    material: batch.material,
-                    args: streams.args,
-                    offset: batch.args,
-                    streams: &[(streams.ids, batch.ids), records],
-                },
-            );
-            drawn += 1;
+        let first = self.draw_meshes(draw, &streams.one, pipelines, (PHASE_ONE, skinned, true));
+        if !self.state.occlusion {
+            return first;
         }
-        drawn
+        first + self.draw_meshes(draw, &streams.two, pipelines, (PHASE_TWO, skinned, true))
     }
 
     pub(crate) fn record(&self, level: usize) -> u64 {
@@ -122,11 +105,11 @@ impl MeshesGpu {
         draw: &mut Draw<'_, Self, S>,
         streams: &Streams<S>,
         pipelines: &Forms<Option<Pipeline<Self, S>>>,
-        (phase, skinned): (usize, bool),
+        (phase, skinned, blended): (usize, bool, bool),
     ) -> u32 {
         let mut drawn = 0;
         for item in &self.state.draws.items {
-            if item.blended || item.look.skinned != skinned {
+            if item.blended != blended || item.look.skinned != skinned {
                 continue;
             }
             let Some(pipeline) = pipelines.of(item.look) else {
@@ -196,7 +179,7 @@ impl MeshesGpu {
 }
 
 fn draw_label(
-    (mesh, material): (MeshHandle, Option<MaterialHandle>),
+    (mesh, material): (GeometryHandle, Option<MaterialHandle>),
     (phase, level): (usize, usize),
 ) -> String {
     let material =

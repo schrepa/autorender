@@ -36,7 +36,7 @@ pub use drawn::{
     DrawKind, Drawn, DrawnBounds, DrawnProjection, InstanceValues, KindDecl, KindSkip, Layers,
     NodeId, PositionReach,
 };
-pub use engine_assets::{MaterialHandle, MeshHandle, TextureHandle};
+pub use engine_assets::{MaterialHandle, GeometryHandle, TextureHandle};
 pub use engine_settings::{Error, ErrorCode};
 pub use engine_smoke::{SmokeFailure, SmokeSession, ask, smoke_check, smoke_eq};
 pub use feeds::{Cursor, Events, Feed, FeedView, Ring, Since, StoreId};

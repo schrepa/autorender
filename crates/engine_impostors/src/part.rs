@@ -4,7 +4,7 @@ use bevy_ecs::prelude::*;
 use engine_core::glam::Vec3;
 use engine_core::{
     AssetLibrary, AssetResidency, Cull, Cursor, Error, Events, GeometryStream, MaterialHandle,
-    MeshHandle, Readable, Readback, gpu_struct,
+    GeometryHandle, Readable, Readback, gpu_struct,
 };
 use engine_render::{
     AfterRead, Allocation, Attach, Bind, Buffer, Copied, CopyRegion, DepthUse, Encode, GpuPart,
@@ -113,9 +113,9 @@ fn bake_pipeline(
 
 struct Asked {
     serial: u32,
-    mesh: MeshHandle,
+    mesh: GeometryHandle,
     material: Option<MaterialHandle>,
-    parts: Vec<(MeshHandle, MaterialHandle)>,
+    parts: Vec<(GeometryHandle, MaterialHandle)>,
     bounds: (Vec3, Vec3),
     hemisphere: bool,
 }
@@ -123,7 +123,7 @@ struct Asked {
 struct Drawn {
     serial: u32,
     shape: AtlasShape,
-    draws: Vec<(MeshHandle, Option<MaterialHandle>, usize)>,
+    draws: Vec<(GeometryHandle, Option<MaterialHandle>, usize)>,
 }
 
 pub(crate) struct ImpostorGpu {
@@ -268,7 +268,7 @@ impl ImpostorGpu {
             cx.deliver::<BakeReads>(asked.serial, Vec::new());
             return;
         };
-        let draws: Vec<(MeshHandle, Option<MaterialHandle>, usize)> =
+        let draws: Vec<(GeometryHandle, Option<MaterialHandle>, usize)> =
             std::iter::once((asked.mesh, asked.material))
                 .chain(
                     asked

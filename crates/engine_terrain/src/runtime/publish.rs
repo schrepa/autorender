@@ -1,5 +1,6 @@
 use super::*;
-use engine_core::{BASE_COLOR_MAP, METALLIC_ROUGHNESS_MAP, NORMAL_MAP, Spawner};
+use engine_core::{BASE_COLOR_MAP, NORMAL_MAP, Spawner};
+use engine_places_rendering::lighting::METALLIC_ROUGHNESS_MAP;
 use engine_open_world_kit::ground::{
     PlacedAsset, PlacedLayer, SurfaceMaps, TerrainEntry, TerrainTiles,
 };

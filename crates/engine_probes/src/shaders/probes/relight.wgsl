@@ -1,6 +1,6 @@
 import package::engine::color::decode_srgb;
-import package::engine::shading::{SurfacePoint, derived};
-import package::engine::slots::shade;
+import package::engine::shading::SurfacePoint;
+import package::engine::slots::{derived, shade};
 import package::engine::view::{camera, stable_normalize};
 import package::face::sky::environment_sample;
 import package::probes::filter::FaceOutput;
@@ -42,9 +42,9 @@ fn stored_point(texel: vec2<i32>, layer: i32, world: vec3<f32>) -> SurfacePoint 
     point.kind = surface.z;
     point.inputs.ignore_face = !faced;
     point.inputs.added_indirect = bounce.rgb;
-    point.inputs.sky_bend = unfolded(directions.zw) - normal;
-    point.inputs.sun_blocked = 1.0 - bounce.a;
-    point.inputs.sun_known = true;
+    point.inputs.ambient_bend = unfolded(directions.zw) - normal;
+    point.inputs.direct_blocked = 1.0 - bounce.a;
+    point.inputs.direct_known = true;
     return derived(point);
 }
 

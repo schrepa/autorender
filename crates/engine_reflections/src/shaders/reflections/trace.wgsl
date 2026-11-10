@@ -1,4 +1,4 @@
-import package::engine::mesh::vertex::octahedral_normal;
+import package::engine::geometry::vertex::octahedral_normal;
 import package::engine::post::frame::{depth_texture, drawn_uv, linear, post};
 import package::engine::screen_points::{depth_normal, world_at};
 import package::face::trace_depths::{TRACE_DEPTH_OPAQUE, TRACE_DEPTH_SOLID, TRACE_DEPTH_THIN};

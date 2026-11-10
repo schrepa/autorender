@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::Component;
-use engine_place::{ErrorCode, List, MeshHandle};
+use engine_place::{ErrorCode, List, GeometryHandle};
 use glam::{Mat4, Vec3};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -33,11 +33,11 @@ pub struct StreamedAt<'a> {
     pub world: Mat4,
     pub position: Vec3,
     pub from: f32,
-    pub mesh_sizes: &'a dyn Fn(MeshHandle) -> f32,
+    pub mesh_sizes: &'a dyn Fn(GeometryHandle) -> f32,
 }
 
 impl StreamedAt<'_> {
-    pub fn mesh_size(&self, mesh: MeshHandle) -> f32 {
+    pub fn mesh_size(&self, mesh: GeometryHandle) -> f32 {
         (self.mesh_sizes)(mesh)
     }
 }

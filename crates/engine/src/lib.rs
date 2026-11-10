@@ -45,9 +45,9 @@ mod games {
         Asks, Clock, Compare, Cull, DepthBias, HandOver, LightingModel, Listing,
         MakeTextures, RenderState, SurfaceSlot,
         Material, Mobility, Mover, MoverId, Moves, Node, NodeWord, Pace, Teleport,
-        MaterialHandle, Mesh, MeshHandle, MeshVertex, Parent,
+        MaterialHandle, Mesh, GeometryHandle, MeshVertex, Parent,
         Pause, PauseReason, Poses, Projection, ProvidedAssets, Sampler,
-        Surface, Texture, TextureHandle, TextureRef, TextureSet, TextureSource, TextureUsage,
+        Texture, TextureHandle, TextureRef, TextureSet, TextureSource, TextureUsage,
         Transform, UvTransform, Wrap, make_fresh, math,
         set_parent, set_parents, Span, TimeScale,
     };

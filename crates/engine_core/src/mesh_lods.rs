@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
-use engine_assets::{AssetLibrary, MeshHandle, MeshLods, lod_input};
+use engine_assets::{AssetLibrary, GeometryHandle, MeshLods, lod_input};
 use engine_registry::{JobBatch, JobOrder, JobQueue};
 
 use crate::jobs::{MESH_LODS_NAME, record_key};
@@ -15,13 +15,13 @@ use crate::{
 pub struct MeshLevels {
     #[serde(skip)]
     #[cfg_attr(feature = "schema", schemars(skip))]
-    waiting: Vec<(MeshHandle, Interest<RecordKey>)>,
+    waiting: Vec<(GeometryHandle, Interest<RecordKey>)>,
     #[serde(skip)]
     #[cfg_attr(feature = "schema", schemars(skip))]
-    ended: Vec<(MeshHandle, Interest<RecordKey>)>,
+    ended: Vec<(GeometryHandle, Interest<RecordKey>)>,
     #[serde(skip)]
     #[cfg_attr(feature = "schema", schemars(skip))]
-    skipped: Vec<MeshHandle>,
+    skipped: Vec<GeometryHandle>,
 }
 
 fn lod_record(input: &[u8]) -> RecordKey {

@@ -1,5 +1,5 @@
 import package::engine::drawn::{drawn_fade, drawn_records};
-import package::engine::mesh::declarations::{drawn_slot_moved, drawn_slot_slot, fade_word_on};
+import package::engine::geometry::declarations::{drawn_slot_moved, drawn_slot_slot, fade_word_on};
 import package::engine::view::view_pixel;
 import package::face::debug::debug_record_with_kind;
 import package::face::instances::{DEBUG_LEVEL_AT, LAST_LEVEL, instance_color, instance_pose,

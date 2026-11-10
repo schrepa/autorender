@@ -1,7 +1,7 @@
 import package::engine::drawn::drawn_records;
 import package::engine::materials::alpha_test;
-import package::engine::mesh::declarations::fade_hidden;
-import package::engine::mesh::vertex::output_color;
+import package::engine::geometry::declarations::fade_hidden;
+import package::engine::geometry::vertex::output_color;
 import package::engine::shading::{Shaded, SurfaceInput, SurfacePoint, ViewPixel};
 import package::engine::slots::shade as shade_point;
 import package::engine::slots::slot_output;

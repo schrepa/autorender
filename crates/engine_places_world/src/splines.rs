@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::Component;
-use engine_place::{MaterialHandle, MeshHandle};
+use engine_place::{MaterialHandle, GeometryHandle};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -7,6 +7,6 @@ use serde::{Deserialize, Serialize};
 #[serde(deny_unknown_fields)]
 pub struct SplineMesh {
     pub points: Vec<Vec3>,
-    pub mesh: MeshHandle,
+    pub mesh: GeometryHandle,
     pub material: MaterialHandle,
 }

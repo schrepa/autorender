@@ -34,7 +34,7 @@ fn probe_surface(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> vec4<u32
 }
 
 fn probe_normal(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> vec4<f32> {
-    let skyward = normalize(point.normal + point.inputs.sky_bend);
+    let skyward = normalize(point.normal + point.inputs.ambient_bend);
     return vec4<f32>(folded(point.normal), folded(skyward));
 }
 
@@ -43,9 +43,9 @@ fn probe_emissive(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> vec4<f3
 }
 
 fn probe_bounce(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> vec4<f32> {
-    let open = 1.0 - point.inputs.sun_blocked;
+    let open = 1.0 - point.inputs.direct_blocked;
     var visible = open;
-    if open != 0.0 && !point.inputs.sun_known {
+    if open != 0.0 && !point.inputs.direct_known {
         visible *= sun_visibility(surface_sun(point));
     }
     return vec4<f32>(point.inputs.added_indirect, visible);

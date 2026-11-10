@@ -2,12 +2,13 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::Entity;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, GpuBits, Material, MaterialHandle, Mesh, MeshHandle,
+    AlphaMode, AssetLibrary, AssetResidency, GpuBits, Material, MaterialHandle, Mesh, GeometryHandle,
     ResidentMesh, SurfaceSlot, TextureHandle,
 };
 use engine_math::collections::HashMap;
 use engine_heightfield::tile::Placed;
 use engine_places_rendering::impostors::{ImpostorAsk, ImpostorRecord};
+use engine_places_rendering::lighting::SurfaceValues;
 use engine_open_world_kit::ground::PlacedAsset;
 use engine_render::{pack_color, pack_surface};
 use glam::Vec3;
@@ -24,7 +25,7 @@ pub(crate) const GROUNDING_HEIGHT: &str = "grounding_height";
 fn slot_color(material: &Material) -> SlotColor {
     SlotColor {
         color: pack_color(material.color()),
-        surface: pack_surface(material.surface()),
+        surface: pack_surface(SurfaceValues::of(Some(material)).units(), material.emission()),
         pad: 0,
     }
 }
@@ -72,13 +73,13 @@ fn placed_values(
 
 type Range3 = (u32, u32, i32);
 
-type PartLevels = (Vec<Range3>, Vec<MeshHandle>);
+type PartLevels = (Vec<Range3>, Vec<GeometryHandle>);
 
-type Levels = (Vec<Range3>, Vec<MeshHandle>, [f32; LEVELS as usize - 1], u32);
+type Levels = (Vec<Range3>, Vec<GeometryHandle>, [f32; LEVELS as usize - 1], u32);
 
 #[derive(Clone, Copy)]
 pub(crate) struct ResolvedMesh<'a> {
-    pub(crate) handle: MeshHandle,
+    pub(crate) handle: GeometryHandle,
     pub(crate) mesh: &'a Arc<Mesh>,
 }
 
@@ -123,7 +124,7 @@ pub(crate) struct Kept {
     pub(crate) lods: (u32, u32),
 }
 
-fn mesh_of(library: &AssetLibrary, handle: MeshHandle) -> Option<ResolvedMesh<'_>> {
+fn mesh_of(library: &AssetLibrary, handle: GeometryHandle) -> Option<ResolvedMesh<'_>> {
     let mesh = library.mesh(handle)?;
     library.mesh_lods(handle)?;
     Some(ResolvedMesh { handle, mesh })
@@ -195,7 +196,7 @@ pub(crate) fn resolve<'a>(
 }
 
 pub(crate) struct DrawGroup {
-    pub(crate) meshes: Vec<MeshHandle>,
+    pub(crate) meshes: Vec<GeometryHandle>,
     pub(crate) material: MaterialHandle,
     pub(crate) source: Material,
     pub(crate) extended: bool,
@@ -205,7 +206,7 @@ pub(crate) struct DrawGroup {
     pub(crate) objects: u32,
     pub(crate) part: Option<usize>,
     pub(crate) count: u32,
-    pub(crate) casters: Vec<MeshHandle>,
+    pub(crate) casters: Vec<GeometryHandle>,
     pub(crate) proxy: Option<bool>,
 }
 

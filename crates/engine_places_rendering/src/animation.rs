@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use bevy_ecs::prelude::{Component, Entity};
 use engine_codec::Expected;
 use engine_math::clamp;
-use engine_place::{ApplyAt, Ask, Error, ErrorCode, MaterialHandle, MeshHandle};
+use engine_place::{ApplyAt, Ask, Error, ErrorCode, MaterialHandle, GeometryHandle};
 use glam::Quat;
 use serde::{Deserialize, Serialize};
 
@@ -125,7 +125,7 @@ impl Clip {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct RigPart {
-    pub mesh: MeshHandle,
+    pub mesh: GeometryHandle,
     pub material: MaterialHandle,
 }
 

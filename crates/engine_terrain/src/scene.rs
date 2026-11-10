@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use engine_core::{
-    ComponentKind, ComponentKindOf, Error, ErrorCode, Expected, MaterialHandle, MeshHandle, Rule,
+    ComponentKind, ComponentKindOf, Error, ErrorCode, Expected, MaterialHandle, GeometryHandle, Rule,
     SceneCx, Setting, parse_value_at,
 };
 use engine_heightfield::layer::{LayerFiles, LayerKind};
@@ -249,7 +249,7 @@ fn half() -> f32 {
 
 pub struct TerrainAssets<'a> {
     pub materials: Vec<(&'a str, MaterialHandle)>,
-    pub meshes: Vec<(&'a str, MeshHandle)>,
+    pub meshes: Vec<(&'a str, GeometryHandle)>,
 }
 
 fn handle_of<H: Copy>(table: &[(&str, H)], id: &str) -> Option<H> {

@@ -66,7 +66,7 @@ use crate::{
 };
 use engine_core::{
     AssetLibrary, Camera, Cut, Error, ErrorCode, Expected, ExtraRules, IDLE_JOBS, InvalidSetting,
-    JobFailures, Jobs, MaterialHandle, MeshHandle, Records, Rule, Setting, Settling, URGENT_JOBS,
+    JobFailures, Jobs, MaterialHandle, GeometryHandle, Records, Rule, Setting, Settling, URGENT_JOBS,
     VIEW_JOBS, content_hash, fields, job_priority, settings, stats,
 };
 use engine_heightfield::tile::{

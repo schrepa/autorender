@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::{Component, Resource};
-use engine_place::{DrawKind, MaterialHandle, MeshHandle, Slot};
+use engine_place::{DrawKind, MaterialHandle, GeometryHandle, Slot};
 
 pub const MESH: DrawKind = DrawKind("mesh");
 pub const SKIN: DrawKind = DrawKind("skin");
@@ -26,7 +26,7 @@ impl Slot for Instances {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct LevelBatch {
     pub kind: DrawKind,
-    pub mesh: MeshHandle,
+    pub mesh: GeometryHandle,
     pub material: Option<MaterialHandle>,
 }
 

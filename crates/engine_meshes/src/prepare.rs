@@ -6,7 +6,7 @@ use engine_render::{AfterRead, Allocation, GpuPart, Prepare, UploadRange, listed
 
 use crate::gpu::{Drawing, MeshesGpu, VIEW_FRAME_BYTES};
 use crate::layouts::{
-    BatchData, BlendedView, CandidateData, CandidateState, DRAW_ARGS_BYTES, GROUP,
+    BatchData, CandidateData, CandidateState, DRAW_ARGS_BYTES, GROUP,
     LOD_LEVELS, PresentationFrame, UNWATCHED,
 };
 use crate::order::{capacity_for, instance_limit};
@@ -61,7 +61,6 @@ impl MeshesGpu {
         let state = &mut self.state;
         state.batches.settle(&table);
         state.draws.plan(&state.batches.batches, &assets, &residency);
-        state.blended.plan(&state.draws.items, &state.batches);
         let generation = state.batches.generation();
         let held = records
             .single()
@@ -104,40 +103,6 @@ impl MeshesGpu {
             self.gpu_counters(group_bytes, totals.last().map(|last| last.visible));
         }
         self.prepare_views(&views, limits.storage_room, cx);
-        self.prepare_blended(cx);
-    }
-
-    fn prepare_blended(&mut self, cx: &mut Prepare<'_, Self>) {
-        let blended = &mut self.state.blended;
-        let bytes = storage_bytes((blended.rows.len() * size_of::<[u32; 4]>()) as u64);
-        if cx.allocate_buffer(self.sorted.rows, bytes) == Allocation::Fresh {
-            blended.uploaded = false;
-        }
-        if !blended.uploaded && !blended.rows.is_empty() {
-            cx.write(self.sorted.rows, 0, &blended.rows);
-            cx.count_upload(std::mem::size_of_val(blended.rows.as_slice()) as u64);
-        }
-        blended.uploaded = true;
-    }
-
-    pub(crate) fn prepare_blended_view(&mut self, cx: &mut Prepare<'_, Self>) {
-        let rows = self.state.blended.rows.len() as u64;
-        if rows == 0 || self.state.instance_count == 0 {
-            return;
-        }
-        let batches = self.state.blended.batches.len() as u64;
-        let sorted = &self.sorted;
-        let view = cx.view_index();
-        let (Allocation::Fresh | Allocation::Kept) =
-            cx.allocate_buffer(sorted.view, size_of::<BlendedView>() as u64);
-        cx.write(sorted.view, 0, &[view, rows as u32, batches as u32, 0]);
-        let (Allocation::Fresh | Allocation::Kept) =
-            cx.allocate_buffer(sorted.keys, storage_bytes(rows * 4));
-        let (Allocation::Fresh | Allocation::Kept) =
-            cx.allocate_buffer(sorted.ids, storage_bytes(rows * 4));
-        let (Allocation::Fresh | Allocation::Kept) =
-            cx.allocate_buffer(sorted.args, storage_bytes(batches * DRAW_ARGS_BYTES));
-        cx.run(self.passes.blended);
     }
 
     fn fade_share(&mut self, seconds: f32, fade_seconds: f32, shown: bool) -> f32 {

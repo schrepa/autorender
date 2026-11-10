@@ -3,7 +3,7 @@ use engine_core::collections::HashMap;
 use engine_core::glam::{Quat, Vec3};
 use engine_core::{
     Camera, Drawn, Engine, GlobalTransforms, Listing, Material, MaterialHandle, Mesh,
-    MeshHandle, MeshVertex, Mover, MoverId, Operation, Pace, Parent, PureSession, Schedule,
+    GeometryHandle, MeshVertex, Mover, MoverId, Operation, Pace, Parent, PureSession, Schedule,
     Transform, make_fresh, set_parent, set_parents,
 };
 use engine_meshes::{MESH, MeshesBrick, MeshesListing};
@@ -25,7 +25,7 @@ const MOVER: Mover = Mover {
 };
 
 struct Assets {
-    meshes: Vec<MeshHandle>,
+    meshes: Vec<GeometryHandle>,
     materials: Vec<MaterialHandle>,
 }
 

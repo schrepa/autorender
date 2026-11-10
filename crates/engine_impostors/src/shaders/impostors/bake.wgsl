@@ -1,6 +1,6 @@
 import package::engine::drawn::{GeometryExtra, GeometryVertex};
 import package::engine::materials::alpha_test;
-import package::engine::mesh::vertex::octahedral_normal;
+import package::engine::geometry::vertex::octahedral_normal;
 import package::engine::shading::SurfaceInput;
 import package::engine::mapped::{base_texel, emissive_texel};
 import package::engine::surface::{masked_out, opacity_cut, surface_point};

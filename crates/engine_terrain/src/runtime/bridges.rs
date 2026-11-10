@@ -3,9 +3,10 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Drawn, Material, MaterialHandle, Mesh, MeshHandle, MeshVertex, Spawner,
-    Surface, Transform,
+    AssetLibrary, Drawn, Material, MaterialHandle, Mesh, GeometryHandle, MeshVertex, Spawner,
+    Transform,
 };
+use engine_places_rendering::lighting::ROUGHNESS;
 use engine_places::meshes::MESH;
 use engine_places_world::splines::SplineMesh;
 use glam::Vec3;
@@ -30,9 +31,9 @@ const VAULT_SEGMENTS: usize = 10;
 #[derive(Resource, Default)]
 pub(crate) struct TerrainBridges {
     spawned: HashMap<Entity, Spawned>,
-    decks: Vec<(f32, MeshHandle)>,
-    tubes: Vec<(f32, MeshHandle)>,
-    pier: Option<MeshHandle>,
+    decks: Vec<(f32, GeometryHandle)>,
+    tubes: Vec<(f32, GeometryHandle)>,
+    pier: Option<GeometryHandle>,
     stone: Option<MaterialHandle>,
 }
 
@@ -40,7 +41,7 @@ struct Spawned {
     bridges: Arc<[Bridge]>,
     material: Option<MaterialHandle>,
     drawn: MaterialHandle,
-    meshes: Vec<MeshHandle>,
+    meshes: Vec<GeometryHandle>,
     entities: Vec<Entity>,
 }
 
@@ -279,12 +280,7 @@ pub(crate) fn sync(
             Some(material) => material,
             None => {
                 let stone = Material::new([0.56, 0.53, 0.49, 1.0])
-                    .and_then(|material| {
-                        material.with_surface(Surface {
-                            roughness: 0.85,
-                            ..Surface::MATTE
-                        })
-                    })
+                    .and_then(|material| material.with_surface(ROUGHNESS, 0.85))
                     .expect("stone_material_valid");
                 let Ok(stone) = assets.insert_material(stone) else {
                     continue;

@@ -1,5 +1,5 @@
 import package::engine::drawn::{INPUT_BATCH, INPUT_SLOT};
-import package::engine::mesh::declarations::{AffinePose, faded_slot_slot};
+import package::engine::geometry::declarations::{AffinePose, faded_slot_slot};
 import package::engine::view::{camera, view_clip};
 import package::face::impostors::{impostor_albedo, impostor_basis, impostor_flags_hemisphere,
     impostor_frame_direction, impostor_frames, impostor_grid, impostor_levels, impostor_size};

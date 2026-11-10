@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, AssetResidency, Cursor, FrameId, MaterialHandle, MeshHandle, MeshResidence,
+    AssetLibrary, AssetResidency, Cursor, FrameId, MaterialHandle, GeometryHandle, MeshResidence,
     Readable, Readback, ResidentMesh,
 };
 use engine_places::meshes::LastLevel;
@@ -152,7 +152,7 @@ pub(crate) struct UploadSources<'a> {
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DrawItem {
-    pub mesh: MeshHandle,
+    pub mesh: GeometryHandle,
     pub material: Option<MaterialHandle>,
     pub start: u32,
     pub batch: u32,
@@ -167,72 +167,6 @@ pub(crate) struct DrawItem {
 #[derive(Default)]
 pub(crate) struct Draws {
     pub items: Vec<DrawItem>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct BlendedBatch {
-    pub batch: u32,
-    pub mesh: MeshHandle,
-    pub material: Option<MaterialHandle>,
-    pub look: BatchLook,
-    pub args: u64,
-    pub ids: u64,
-}
-
-#[derive(Default)]
-pub(crate) struct Blended {
-    pub batches: Vec<BlendedBatch>,
-    pub rows: Vec<[u32; 4]>,
-    pub generation: Option<u64>,
-    pub uploaded: bool,
-}
-
-impl Blended {
-    pub(crate) fn plan(&mut self, items: &[DrawItem], batches: &MeshBatches) -> bool {
-        let mut listed: Vec<BlendedBatch> = items
-            .iter()
-            .filter(|item| item.blended)
-            .map(|item| BlendedBatch {
-                batch: item.batch,
-                mesh: item.mesh,
-                material: item.material,
-                look: item.look,
-                args: 0,
-                ids: 0,
-            })
-            .collect();
-        listed.sort_unstable_by_key(|batch| batch.batch);
-        let mut base = 0_u32;
-        for (entry, listed) in listed.iter_mut().enumerate() {
-            listed.args = entry as u64 * crate::layouts::DRAW_ARGS_BYTES;
-            listed.ids = u64::from(base) * 4;
-            base += batches
-                .batches
-                .get(listed.batch as usize)
-                .map_or(0, |batch| batch.instances.end - batch.instances.start);
-        }
-        let generation = Some(batches.generation());
-        if self.generation == generation && self.batches == listed {
-            return false;
-        }
-        self.generation = generation;
-        self.batches = listed;
-        self.rows.clear();
-        for (entry, listed) in self.batches.iter().enumerate() {
-            let Some(batch) = batches.batches.get(listed.batch as usize) else {
-                continue;
-            };
-            let base = (listed.ids / 4) as u32;
-            let range = batch.instances.start as usize..batch.instances.end as usize;
-            self.rows.extend(
-                batches.ordered[range]
-                    .iter()
-                    .map(|&slot| [slot, listed.batch, base, entry as u32]),
-            );
-        }
-        self.uploaded = false;
-        true
-    }
 }
 
 fn drawn_levels(mesh: Option<&ResidentMesh>) -> u8 {
@@ -452,7 +386,6 @@ pub(crate) struct FrameState {
     pub prepared_at: Option<f32>,
     pub faded_at: Option<f32>,
     pub draws: Draws,
-    pub blended: Blended,
     pub groups: DrawGroups,
     pub fade_slots: u64,
     pub fading_capacity: usize,

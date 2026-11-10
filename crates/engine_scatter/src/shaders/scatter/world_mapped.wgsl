@@ -1,9 +1,9 @@
 import package::engine::materials::{MAP_BASE_COLOR, MAP_METALLIC_ROUGHNESS, MAP_NORMAL,
-    MAP_OCCLUSION, VALUE_TOP_BLUE, VALUE_TOP_COVERAGE, VALUE_TOP_GREEN, VALUE_TOP_RED,
-    VALUE_TOP_ROUGHNESS, VALUE_WORLD_TILING, base_color_map, base_color_sampler, map_gradient,
-    map_present, map_uv, material_value, metallic_roughness_map, metallic_roughness_sampler,
-    normal_map, normal_sampler, normal_scale, occlusion_map, occlusion_sampler,
-    occlusion_strength};
+    MAP_OCCLUSION, VALUE_OCCLUSION_STRENGTH, VALUE_TOP_BLUE, VALUE_TOP_COVERAGE, VALUE_TOP_GREEN,
+    VALUE_TOP_RED, VALUE_TOP_ROUGHNESS, VALUE_WORLD_TILING, base_color_map, base_color_sampler,
+    map_gradient, map_present, map_uv, material_value, metallic_roughness_map,
+    metallic_roughness_sampler, normal_map, normal_sampler, normal_scale, occlusion_map,
+    occlusion_sampler};
 import package::engine::shading::{SurfaceInput, SurfacePoint};
 import package::engine::view::{material_detail, stable_normalize};
 import package::scatter::grounding::{grounded_color, grounded_metalness, grounded_normal,
@@ -143,7 +143,7 @@ fn world_look(input: SurfaceInput, point: SurfacePoint) -> WorldLook {
         look.height = metal_rough.a;
     }
     if map_present(MAP_OCCLUSION) {
-        look.occlusion = 1.0 + occlusion_strength() * (occluded - 1.0);
+        look.occlusion = 1.0 + material_value(VALUE_OCCLUSION_STRENGTH) * (occluded - 1.0);
     }
     if dot(mapped, mapped) > 0.0 {
         look.normal = stable_normalize(mapped);

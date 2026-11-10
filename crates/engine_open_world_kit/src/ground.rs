@@ -10,7 +10,7 @@ use engine_heightfield::tile::{
     OP_VALUE, OP_WETNESS, OP_WORN, Placed, Steep,
 };
 use engine_place::{
-    Feed, List, MaterialHandle, MeshHandle, Slot, Stamp, TextureHandle, UNIFORM_BINDING_BYTES,
+    Feed, List, MaterialHandle, GeometryHandle, Slot, Stamp, TextureHandle, UNIFORM_BINDING_BYTES,
     gpu_struct,
 };
 use engine_tiles::{Pyramid, TILE_QUADS, TileKey};
@@ -77,7 +77,7 @@ pub struct SurfaceMaps {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PlacedAsset {
-    pub mesh: MeshHandle,
+    pub mesh: GeometryHandle,
     pub material: MaterialHandle,
 }
 

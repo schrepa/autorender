@@ -8,7 +8,7 @@ use engine_core::glam::Vec3;
 use engine_core::{
     AlphaMode, AssetLibrary, AssetResidency, Background, Census, CookAsks, Cull, Detail,
     DeviceLimits, Error, ErrorCode, Feed, Filter, FrameBudget, FrameTime, GpuBits, Hold, IDLE_JOBS,
-    Job, JobCx, JobKind, Jobs, Landed, LightingModel, Material, MaterialHandle, MeshHandle,
+    Job, JobCx, JobKind, Jobs, Landed, LightingModel, Material, MaterialHandle, GeometryHandle,
     Records, Request, Requests, Settling, TextureRef, VIEW_JOBS, WorkClock, Wrap,
     content_hash, gpu_struct, job_priority,
 };
@@ -319,19 +319,13 @@ fn material_content(library: &AssetLibrary, material: Option<&Material>) -> u128
         bytes.push(0);
         floats(&mut bytes, &[*value]);
     }
-    let surface = material.surface();
-    floats(
-        &mut bytes,
-        &[
-            surface.roughness,
-            surface.metalness,
-            surface.emission,
-            material.normal_scale(),
-            material.occlusion_strength(),
-        ],
-    );
+    for (name, value) in material.surface() {
+        bytes.extend_from_slice(name.as_bytes());
+        bytes.push(0);
+        floats(&mut bytes, &[*value]);
+    }
+    floats(&mut bytes, &[material.emission(), material.normal_scale()]);
     floats(&mut bytes, &material.emissive());
-    floats(&mut bytes, &[material.transmission()]);
     match material.alpha_mode() {
         AlphaMode::Opaque => bytes.push(0),
         AlphaMode::Mask { cutoff } => {
@@ -442,7 +436,7 @@ fn grown_layers(needed: u32, bytes: u64, limit: u32) -> u32 {
     needed.max(first).next_power_of_two().min(limit).max(needed)
 }
 
-type ImpostorKey = (MeshHandle, Option<MaterialHandle>, bool);
+type ImpostorKey = (GeometryHandle, Option<MaterialHandle>, bool);
 
 struct Baked {
     record: ImpostorRecord,
@@ -476,7 +470,7 @@ struct Bake {
     material: Option<Material>,
     bounds: (Vec3, Vec3),
     content: (u128, u128),
-    parts: Vec<(MeshHandle, MaterialHandle)>,
+    parts: Vec<(GeometryHandle, MaterialHandle)>,
 }
 
 #[derive(Clone, Debug)]
@@ -494,9 +488,9 @@ pub(crate) enum AtlasWork {
     },
     Bake {
         serial: u32,
-        mesh: MeshHandle,
+        mesh: GeometryHandle,
         material: Option<MaterialHandle>,
-        parts: Vec<(MeshHandle, MaterialHandle)>,
+        parts: Vec<(GeometryHandle, MaterialHandle)>,
         bounds: (Vec3, Vec3),
         hemisphere: bool,
     },

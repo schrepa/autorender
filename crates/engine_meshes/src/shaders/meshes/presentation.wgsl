@@ -2,7 +2,7 @@ import package::engine::drawn::{drawn_in_view, drawn_mark_first, drawn_mark_movi
     drawn_mark_subpixel, drawn_marks, drawn_model, drawn_occlusion, drawn_poses, drawn_views,
     occlusion_mark_hidden, occlusion_mark_late};
 import package::engine::drawn_fades::set_drawn_fade;
-import package::engine::mesh::declarations::{FADE_LEVEL_MAX, drawn_slot, fade_word};
+import package::engine::geometry::declarations::{FADE_LEVEL_MAX, drawn_slot, fade_word};
 import package::generated::meshes::{ARGS_GROUP, BatchData as Batch, CULL_GROUP,
     CandidateData as Candidate, GROUP, LOD_FADED, LOD_HISTORY_HELD,
     LOD_LEVELS, PresentationFrame as Frame, UNWATCHED,

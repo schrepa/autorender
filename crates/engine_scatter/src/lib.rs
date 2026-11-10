@@ -15,10 +15,12 @@ mod settings;
 mod systems;
 
 use engine_core::{
-    Attributes, BASE_COLOR_MAP, Brick, Bricks, KindDecl, METALLIC_ROUGHNESS_MAP, Module,
-    NORMAL_MAP, OCCLUSION_MAP, Schedule, Source, SurfaceSlot,
+    Attributes, BASE_COLOR_MAP, Brick, Bricks, KindDecl, Module, NORMAL_MAP, Schedule, Source,
+    SurfaceSlot,
 };
-use engine_places_rendering::lighting::{Ambient, METALNESS, OCCLUSION, ROUGHNESS, TRANSMISSION};
+use engine_places_rendering::lighting::{
+    Ambient, METALLIC_ROUGHNESS_MAP, METALNESS, OCCLUSION, OCCLUSION_MAP, ROUGHNESS, TRANSMISSION,
+};
 use engine_places_rendering::occlusion::OcclusionSource;
 use engine_open_world_kit::ground::{FarCover, Foliage, PlacedTiles};
 use engine_render::{RenderBricks, SlotModule};

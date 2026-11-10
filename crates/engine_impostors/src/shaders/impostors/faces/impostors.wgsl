@@ -1,11 +1,11 @@
 import package::engine::materials::{MASK_MIP_SCALE, SURFACE_EMISSION};
 import package::engine::math::maximum_abs;
-import package::engine::mesh::declarations::{AffinePose as PoseRows, FADE_LEVEL_MAX,
+import package::engine::geometry::declarations::{AffinePose as PoseRows, FADE_LEVEL_MAX,
     fade_hidden, fade_word_level, fade_word_on, fade_word_out, faded_entry_fade,
     faded_slot_slot};
-import package::engine::mesh::vertex::pose_matrix;
-import package::engine::shading::{SurfacePoint, ViewPixel, derived};
-import package::engine::slots::shade;
+import package::engine::geometry::vertex::pose_matrix;
+import package::engine::shading::{SurfacePoint, ViewPixel};
+import package::engine::slots::{derived, shade};
 import package::engine::surfaces::SURFACE_SOLID;
 import package::engine::view::{camera, material_detail, stable_normalize, view_pixel};
 import package::face::debug::debug_targets;
@@ -334,7 +334,7 @@ fn card_point(input: CardVertex, record: ImpostorRecord, fade: u32) -> SurfacePo
     point.world = world;
     let reach = select(1.0, 0.25, impostor_flags_hemisphere(record.flags));
     point.inputs.thickness = reach * length(input.depth_axis.xyz);
-    point.inputs.sun_blocked = 1.0 - saturate(surface.w * unpremultiply);
+    point.inputs.direct_blocked = 1.0 - saturate(surface.w * unpremultiply);
     point.normal_dx = dpdx(geometric);
     point.normal_dy = dpdy(geometric);
     return derived(point);
