@@ -36,6 +36,7 @@ settings! {
     #[schemars(rename = "SceneGroundCover")]
     pub struct GroundCover {
         pub enabled: bool = true => any,
+        pub shadows: bool = false => any,
         pub density: f32 = 1.0 => range(0.0, 4.0),
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max_blades: Option<u32> = None => budget,

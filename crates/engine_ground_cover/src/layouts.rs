@@ -54,17 +54,6 @@ pub(crate) struct CoverLeaves {
     pub(crate) lean_y: u32,
 }
 
-#[gpu_bits]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct CoverGround {
-    #[bits(16)]
-    pub(crate) height: u32,
-    #[bits(8)]
-    pub(crate) tilt_x: u32,
-    #[bits(8)]
-    pub(crate) tilt_y: u32,
-}
-
 engine_core::gpu_struct! {
     pub(crate) struct CoverMaterial {
         pub(crate) shape: [f32; 4],
@@ -101,7 +90,6 @@ pub(crate) const GENERATED: &[&str] = &[
     CoverBlade::WGSL,
     <CoverFacing as GpuBits>::WGSL,
     <CoverLeaves as GpuBits>::WGSL,
-    <CoverGround as GpuBits>::WGSL,
     CoverMaterial::WGSL,
     CoverTerrain::WGSL,
     WGSL,

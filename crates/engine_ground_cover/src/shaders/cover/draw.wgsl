@@ -1,25 +1,17 @@
-import package::cover::faces::cover::{COVER_FAR_SIDE, COVER_ROUGHNESS};
-import package::cover::laws::{COVER_LEAF_STEPS, COVER_ROOT_OCCLUSION, STRAIGHT_FIRST_VERTEX,
-    STRAIGHT_JOINTS};
+import package::cover::laws::{COVER_LEAF_STEPS, STRAIGHT_FIRST_VERTEX, STRAIGHT_JOINTS};
 import package::engine::math::PI;
-import package::engine::shading::SurfacePoint;
-import package::engine::slots::shade;
-import package::engine::view::{camera, stable_normalize, view_pixel};
-import package::face::lighting::SURFACE_THIN;
-import package::face::foliage::foliage;
-import package::face::sun::sun_direction;
+import package::engine::view::camera;
 import package::generated::cover::{CoverBlade, CoverFrame, cover_facing_angle,
-    cover_facing_tilt_x, cover_facing_tilt_y, cover_ground, cover_ground_height,
-    cover_ground_tilt_x, cover_ground_tilt_y, cover_leaves_lean_x, cover_leaves_lean_y,
+    cover_facing_tilt_x, cover_facing_tilt_y, cover_leaves_lean_x, cover_leaves_lean_y,
     cover_leaves_steps};
-import package::generated::writes::{Outputs, outputs};
+import package::generated::kinds::KIND_COVER;
 
 fn blade_facing(blade: CoverBlade) -> f32 {
     return f32(cover_facing_angle(blade.facing)) / 65535.0 * (2.0 * PI);
 }
 
-@group(1) @binding(0) var<storage, read> cover_blades: array<CoverBlade>;
-@group(1) @binding(1) var<uniform> cover_frame: CoverFrame;
+@group(2) @binding(0) var<storage, read> cover_blades: array<CoverBlade>;
+@group(2) @binding(1) var<uniform> cover_frame: CoverFrame;
 
 const COVER_SEGMENTS: u32 = 4u;
 
@@ -88,15 +80,19 @@ fn blade_vertex(instance: u32, vertex: u32) -> BladeVertex {
     return at;
 }
 
-struct CoverOutput {
+struct CoverVaryings {
     @invariant @builtin(position) clip_position: vec4<f32>,
-    @location(1) world: vec3<f32>,
-    @location(2) normal: vec3<f32>,
-    @location(3) color: vec3<f32>,
-    @location(4) along: f32,
-    @location(5) @interpolate(flat) ground: u32,
-    @location(6) previous: vec4<f32>,
+    @location(0) normal_u: vec4<f32>,
+    @location(1) world_v: vec4<f32>,
+    @location(2) @interpolate(flat) material: vec4<u32>,
+    @location(3) previous: vec3<f32>,
+    @location(4) color: vec4<f32>,
+    @location(5) uv1: vec2<f32>,
+    @location(6) @interpolate(flat) object: vec4<u32>,
 }
+
+const COVER_WHITE: u32 = 0xffffffffu;
+const COVER_UNGROUNDED: f32 = -1.0;
 
 struct CoverPoint {
     world: vec3<f32>,
@@ -147,74 +143,28 @@ fn cover_vertex_point(at: BladeVertex, time: f32) -> CoverPoint {
     return cover_point(at.leaf, at.along, at.across, time);
 }
 
-fn cover_output(instance: u32, vertex: u32, time: f32) -> CoverOutput {
+fn cover_varyings(instance: u32, vertex: u32) -> CoverVaryings {
     let at = blade_vertex(instance, vertex);
-    let point = cover_vertex_point(at, time);
-    var output: CoverOutput;
+    let point = cover_vertex_point(at, cover_frame.wind.z);
+    let previous = cover_vertex_point(at, cover_frame.wind.w);
+    var output: CoverVaryings;
     output.clip_position = camera.view_projection * vec4<f32>(point.world, 1.0);
-    output.world = point.world;
-    output.normal = point.normal;
-    output.color = cover_color(at.blade, at.along);
-    output.along = at.along;
+    output.normal_u = vec4<f32>(point.normal, at.along);
+    output.world_v = vec4<f32>(point.world, 0.0);
+    output.material = vec4<u32>(COVER_WHITE, COVER_WHITE, 0u, 0u);
+    output.previous = (camera.previous_view_projection * vec4<f32>(previous.world, 1.0)).xyw;
+    output.color = vec4<f32>(cover_color(at.blade, at.along), COVER_UNGROUNDED);
     if cover_frame.ground.x != 0.0 {
-        output.ground = cover_ground(pack2x16float(vec2<f32>(at.leaf.height, 0.0)),
-            cover_facing_tilt_x(at.blade.facing), cover_facing_tilt_y(at.blade.facing));
+        output.color.w = at.leaf.height;
+        output.uv1 = vec2<f32>(f32(cover_facing_tilt_x(at.blade.facing)),
+            f32(cover_facing_tilt_y(at.blade.facing))) / 255.0 * 2.0 - 1.0;
     }
+    output.object = vec4<u32>(0u, 0u, 0u, KIND_COVER);
     return output;
 }
 
 @vertex
 fn vs_cover(@builtin(instance_index) instance: u32, @builtin(vertex_index) vertex: u32)
-        -> CoverOutput {
-    var output = cover_output(instance, vertex, cover_frame.wind.z);
-    let previous = cover_vertex_point(blade_vertex(instance, vertex), cover_frame.wind.w);
-    output.previous = camera.previous_view_projection * vec4<f32>(previous.world, 1.0);
-    return output;
-}
-
-fn cover_surface(input: CoverOutput, front: bool) -> SurfacePoint {
-    var face = normalize(input.normal);
-    if !front {
-        face = -face;
-    }
-    let through = dot(face, sun_direction()) < 0.0;
-    let lit = select(face, -face, through);
-    var normal = normalize(mix(lit, vec3<f32>(0.0, 1.0, 0.0), 0.6));
-    if foliage().w > 0.0 && input.ground != 0u {
-        let tilt = vec2<f32>(f32(cover_ground_tilt_x(input.ground)),
-            f32(cover_ground_tilt_y(input.ground))) / 255.0 * 2.0 - 1.0;
-        let ground = vec3<f32>(tilt.x, sqrt(max(1.0 - dot(tilt, tilt), 0.0)), tilt.y);
-        let above = input.along * unpack2x16float(cover_ground_height(input.ground)).x;
-        normal = normalize(mix(normal, ground, 1.0 - smoothstep(0.0, foliage().w, above)));
-    }
-    let relative = input.world - camera.position.xyz;
-    let albedo = input.color * select(1.0, COVER_FAR_SIDE, through);
-    var point: SurfacePoint;
-    point.base_color = albedo;
-    point.kind = SURFACE_THIN;
-    point.transmission = foliage().x;
-    point.opacity = 1.0;
-    point.occlusion = mix(COVER_ROOT_OCCLUSION, 1.0, input.along);
-    point.roughness = COVER_ROUGHNESS;
-    point.alpha = COVER_ROUGHNESS * COVER_ROUGHNESS;
-    point.f0 = vec3<f32>(0.04);
-    point.diffuse_color = albedo;
-    point.geometric = normal;
-    point.normal = normal;
-    point.distance = length(relative);
-    point.view = stable_normalize(-relative);
-    point.n_v = max(dot(normal, point.view), 1.0e-4);
-    point.world = input.world;
-    point.world_dx = dpdx(input.world);
-    point.world_dy = dpdy(input.world);
-    point.normal_dx = dpdx(normal);
-    point.normal_dy = dpdy(normal);
-    return point;
-}
-
-@fragment
-fn fs_cover(input: CoverOutput, @builtin(front_facing) front: bool) -> Outputs {
-    let point = cover_surface(input, front);
-    let shaded = shade(point, input.clip_position.xy);
-    return outputs(point, shaded, view_pixel(input.clip_position, input.previous));
+        -> CoverVaryings {
+    return cover_varyings(instance, vertex);
 }

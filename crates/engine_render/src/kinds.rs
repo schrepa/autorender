@@ -54,6 +54,21 @@ pub struct OwnFragments {
     pub cull: FaceCull,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FormTopology {
+    List,
+    Strip,
+}
+
+impl FormTopology {
+    fn primitive(self) -> wgpu::PrimitiveTopology {
+        match self {
+            Self::List => wgpu::PrimitiveTopology::TriangleList,
+            Self::Strip => wgpu::PrimitiveTopology::TriangleStrip,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct FormSide {
     pub vertex: Entry,
@@ -182,7 +197,7 @@ fn fragment_of(role: PassRole, varyings: Varyings, views: PassViews) -> Option<F
 fn kind_program(
     form: &KindForm,
     (role, views): (PassRole, PassViews),
-    mirrored: bool,
+    (mirrored, topology): (bool, FormTopology),
 ) -> Option<Program> {
     let side = form.side(views);
     let fragment = fragment_of(role, form.varyings, views)?;
@@ -199,7 +214,7 @@ fn kind_program(
         fragment: Some(fragment.entry),
         vertices: side.streams.to_vec(),
         primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
+            topology: topology.primitive(),
             front_face: if mirrored {
                 wgpu::FrontFace::Cw
             } else {
@@ -225,6 +240,15 @@ fn kind_program(
 
 impl<P: GpuPart> Install<'_, P> {
     pub fn form(&mut self, form: &KindForm, bound: &[(Var, Bind<P>)]) -> Result<Form<P>, Error> {
+        self.form_shaped(form, FormTopology::List, bound)
+    }
+
+    pub fn form_shaped(
+        &mut self,
+        form: &KindForm,
+        topology: FormTopology,
+        bound: &[(Var, Bind<P>)],
+    ) -> Result<Form<P>, Error> {
         let bound = bound_list(bound, &self.core.outputs)?;
         let listed: Vec<engine_core::ScenePass> = self
             .core
@@ -239,8 +263,8 @@ impl<P: GpuPart> Install<'_, P> {
             let facts = (listed.pass.role(), listed.pass.views);
             let scope = Scoped::Scene(listed.name);
             let (Some(plain), Some(turned)) = (
-                kind_program(form, facts, false),
-                kind_program(form, facts, true),
+                kind_program(form, facts, (false, topology)),
+                kind_program(form, facts, (true, topology)),
             ) else {
                 continue;
             };
@@ -279,7 +303,7 @@ impl<P: GpuPart> Install<'_, P> {
     ) -> Result<Pipeline<P, Own>, Error> {
         let bound = bound_list(bound, &self.core.outputs)?;
         let facts = (N::PASS.role(), N::PASS.views);
-        let program = kind_program(form, facts, false).ok_or_else(|| {
+        let program = kind_program(form, facts, (false, FormTopology::List)).ok_or_else(|| {
             Error::new(ErrorCode::PassMismatch, format!("forms.{}", form.kind.0)).got(N::NAME)
         })?;
         let pipeline = self.core.pipeline(Scoped::Pass(pass.0), program, bound)?;

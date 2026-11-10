@@ -10,6 +10,7 @@ mod growth;
 mod layouts;
 mod part;
 mod settings;
+mod surface;
 
 use bevy_ecs::prelude::Res;
 use engine_core::{Attributes, Brick, Bricks, KindDecl, KindSkip, Schedule, Source};
@@ -31,27 +32,30 @@ impl Brick for GroundCoverBrick {
             .resource::<covers::CoverTable>()
             .resource::<growth::CoverPlan>()
             .resource::<growth::BladeCounts>()
+            .resource::<surface::CoverSurface>()
             .fill::<Cover>(Some(shaders::cover::faces::cover::MODULE))
             .join::<FarCover>((), Some(shaders::cover::faces::far::MODULE))
             .systems(
                 Schedule::ViewSync,
-                (covers::write_covers, growth::plan_cover, growth::cover_stats),
+                (
+                    covers::write_covers,
+                    growth::plan_cover,
+                    growth::cover_stats,
+                    surface::hold_surface,
+                ),
             )
             .generated(layouts::GENERATED)
             .draw_kind(KindDecl {
                 kind: part::COVER,
                 needs: Attributes::NONE,
-                skips: &[
-                    KindSkip {
-                        pass: "shadow",
-                        reason: "ground cover cast no shadows",
-                    },
-                    KindSkip {
-                        pass: "probe",
-                        reason: "ground cover stay out of probe captures",
-                    },
-                ],
+                skips: &[KindSkip {
+                    pass: "probe",
+                    reason: "ground cover grows around the main camera only",
+                }],
             })
             .draws::<part::CoverGpu>(part::COVER, part::CoverGpu::draw);
+        for module in surface::slot_modules() {
+            bricks.material_slot(module);
+        }
     }
 }
