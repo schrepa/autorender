@@ -6,18 +6,6 @@ use engine_core::{
 
 use crate::encode::Run;
 
-fn drawn_kinds(world: &World) -> Vec<DrawKind> {
-    let mut kinds: Vec<DrawKind> = Vec::new();
-    if let Some(table) = world.get_resource::<engine_core::DrawnTable>() {
-        for batch in table.batches() {
-            if !kinds.contains(&batch.kind) {
-                kinds.push(batch.kind);
-            }
-        }
-    }
-    kinds
-}
-
 fn dropped_state(run: &Run, kind: DrawKind, pass: &'static str) -> Option<KindPassState> {
     let mut draws = 0;
     let mut most: Option<(DropReason, u32)> = None;
@@ -26,7 +14,10 @@ fn dropped_state(run: &Run, kind: DrawKind, pass: &'static str) -> Option<KindPa
             continue;
         }
         draws += dropped.count;
-        if most.is_none_or(|(_, count)| dropped.count > count) {
+        let ahead = most.is_none_or(|(reason, count)| {
+            (dropped.reason.faults(), dropped.count) > (reason.faults(), count)
+        });
+        if ahead {
             most = Some((dropped.reason, dropped.count));
         }
     }
@@ -103,40 +94,48 @@ fn kind_fault(pair: &KindPass) -> Option<Error> {
 }
 
 fn held_reason(residency: &AssetResidency, dropped: &crate::encode::DroppedTally) -> DropReason {
-    let Some(material) = dropped.material else {
+    let Some(asset) = dropped.asset else {
         return dropped.reason;
     };
-    match residency.state(Asset::Material(material)) {
-        None | Some(Request::Missing) => DropReason::MaterialNotHeld,
-        Some(Request::Asked(_)) => DropReason::MaterialWaiting,
-        Some(Request::Ready(_) | Request::Failed(_)) => dropped.reason,
+    let state = residency.state(asset);
+    match asset {
+        Asset::Mesh(_) => match state {
+            None | Some(Request::Missing) => DropReason::GeometryNotHeld,
+            Some(Request::Asked(_)) => DropReason::GeometryWaiting,
+            Some(Request::Failed(_)) => DropReason::GeometryFailed,
+            Some(Request::Ready(_)) => dropped.reason,
+        },
+        Asset::Material(_) => match state {
+            None | Some(Request::Missing) => DropReason::MaterialNotHeld,
+            Some(Request::Asked(_)) => DropReason::MaterialWaiting,
+            Some(Request::Failed(_)) => DropReason::MaterialFailed,
+            Some(Request::Ready(_)) => dropped.reason,
+        },
+        Asset::Texture(_) => dropped.reason,
     }
 }
 
-fn name_material_drops(run: &mut Run, world: &World) {
+fn name_asset_drops(run: &mut Run, world: &World) {
     let Some(residency) = world.get_resource::<AssetResidency>() else {
         return;
     };
     for dropped in &mut run.tallies.kinds.dropped {
-        if dropped.reason == DropReason::MaterialNotResident {
-            dropped.reason = held_reason(residency, dropped);
-        }
+        dropped.reason = held_reason(residency, dropped);
     }
 }
 
 pub(super) fn kind_passes(run: &mut Run, world: &World) -> Vec<KindPass> {
-    name_material_drops(run, world);
+    name_asset_drops(run, world);
     let Some(passes) = world.get_resource::<engine_core::ScenePasses>() else {
         return Vec::new();
     };
-    let drawn = drawn_kinds(world);
     let mut listed = Vec::new();
     for scene in passes.listed() {
         if scene.bit.is_none() || !run.tallies.kinds.ran.contains(&scene.name) {
             continue;
         }
         for decl in passes.kinds() {
-            if !drawn.contains(&decl.kind) || !(scene.pass.takes)(decl) {
+            if !(scene.pass.takes)(decl) {
                 continue;
             }
             let Some(state) = state_of(run, decl, scene.name) else {

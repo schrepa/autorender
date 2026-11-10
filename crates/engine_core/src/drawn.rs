@@ -497,7 +497,7 @@ impl DrawnTable {
             && (decl.needs != engine_assets::Attributes::NONE || !decl.streams.is_empty())
         {
             return Some(DrawnState::Refused(
-                Error::new(ErrorCode::InvalidRenderable, "$.drawn.geometry")
+                Error::new(ErrorCode::InvalidRenderable, "$.drawn.mesh")
                     .expected(Expected::Present)
                     .got(drawn.kind.name()),
             ));
@@ -516,7 +516,7 @@ impl DrawnTable {
         let assets = [
             drawn
                 .geometry
-                .map(|geometry| (Asset::Mesh(geometry), "$.drawn.geometry")),
+                .map(|geometry| (Asset::Mesh(geometry), "$.drawn.mesh")),
             drawn
                 .material
                 .map(|material| (Asset::Material(material), "$.drawn.material")),
@@ -548,17 +548,21 @@ impl DrawnTable {
         let Some(mesh) = cx.library.mesh(geometry) else {
             return Some(DrawnState::Waiting);
         };
-        if let Err(error) = mesh.attributes().check(decl.needs, "$.drawn.geometry") {
+        if let Err(error) = mesh.attributes().check(decl.needs, "$.drawn.mesh") {
             return Some(DrawnState::Refused(error));
         }
         decl.streams
             .iter()
             .find(|&&shape| mesh.stream(shape).is_none())
-            .map(|shape| {
+            .map(|missing| {
+                let has: Vec<&str> = mesh.streams().iter().map(|stream| stream.name()).collect();
                 DrawnState::Refused(
-                    Error::new(ErrorCode::InvalidRenderable, "$.drawn.geometry")
-                        .got(shape.name)
-                        .variants(mesh.streams().iter().map(|stream| stream.name())),
+                    Error::new(
+                        ErrorCode::InvalidRenderable,
+                        format!("$.drawn.mesh.streams.{}", missing.name),
+                    )
+                    .variants(decl.streams.iter().map(|shape| shape.name))
+                    .got(has),
                 )
             })
     }

@@ -85,13 +85,16 @@ impl SceneForm for DrawnForm {
         let held = world.get::<Drawn>(entity).cloned();
         let table = world.get_resource::<DrawnTable>();
         let kind = match &self.kind {
-            None => match held.as_ref().map(|drawn| drawn.kind).or_else(|| {
-                table
-                    .and_then(|table| table.kinds().first())
-                    .map(|declared| declared.kind)
-            }) {
+            None => match held.as_ref().map(|drawn| drawn.kind) {
                 Some(kind) => kind,
-                None => return Err(Error::new(ErrorCode::MissingField, "$.kind")),
+                None => {
+                    return Err(Error::new(ErrorCode::MissingField, "$.kind").variants(
+                        table
+                            .into_iter()
+                            .flat_map(DrawnTable::kinds)
+                            .map(|declared| declared.kind.name()),
+                    ));
+                }
             },
             Some(name) => table
                 .and_then(|table| {

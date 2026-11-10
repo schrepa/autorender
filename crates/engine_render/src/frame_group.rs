@@ -63,7 +63,7 @@ impl Counted {
         }
     }
 
-    fn over(&self, limits: &StageLimits) -> Option<&'static str> {
+    fn over(&self, limits: &StageLimits) -> Option<Over> {
         [
             (
                 "uniform_buffers",
@@ -89,9 +89,10 @@ impl Counted {
         ]
         .into_iter()
         .find(|&(_, count, limit)| count > limit)
-        .map(|(what, _, _)| what)
     }
 }
+
+type Over = (&'static str, u32, u32);
 
 const STAGES: [(&str, ShaderStages); 3] = [
     ("vertex", ShaderStages::VERTEX),
@@ -112,9 +113,12 @@ fn fits(
     entries: &[(u32, ShaderStages)],
     variables: &[FrameVariable],
     limits: &StageLimits,
-) -> Result<(), (&'static str, &'static str)> {
+) -> Result<(), (&'static str, Over)> {
     if 1 + reach.own_groups > limits.bind_groups {
-        return Err(("layout", "bind_groups"));
+        return Err((
+            "layout",
+            ("bind_groups", 1 + reach.own_groups, limits.bind_groups),
+        ));
     }
     let dynamics = reach.own.iter().filter(|&&(kind, _)| dynamic(kind)).count()
         + entries
@@ -122,7 +126,14 @@ fn fits(
             .filter(|&&(variable, _)| dynamic(variables[variable as usize].kind))
             .count();
     if dynamics as u32 > limits.dynamic_uniform_buffers {
-        return Err(("layout", "dynamic_uniform_buffers"));
+        return Err((
+            "layout",
+            (
+                "dynamic_uniform_buffers",
+                dynamics as u32,
+                limits.dynamic_uniform_buffers,
+            ),
+        ));
     }
     for (name, stage) in STAGES {
         let mut counted = Counted::default();
@@ -136,19 +147,17 @@ fn fits(
                 counted.add(variables[variable as usize].kind);
             }
         }
-        if let Some(what) = counted.over(limits) {
-            return Err((name, what));
+        if let Some(over) = counted.over(limits) {
+            return Err((name, over));
         }
     }
     Ok(())
 }
 
-fn refused(
-    code: ErrorCode,
+fn over_limit(
     reach: &Reach,
     variables: &[FrameVariable],
-    stage: &str,
-    what: &str,
+    (stage, (what, need, limit)): (&str, Over),
 ) -> Error {
     let mut bricks: Vec<&'static str> = reach
         .reached
@@ -157,19 +166,12 @@ fn refused(
         .collect();
     bricks.sort_unstable();
     bricks.dedup();
-    let reached: Vec<String> = reach
-        .reached
-        .iter()
-        .map(|&(variable, _)| {
-            let variable = &variables[variable as usize];
-            format!("{}::{}", variable.brick, variable.name)
-        })
-        .collect();
     Error::new(
-        code,
+        ErrorCode::BindingLimit,
         format!("{}.{stage}.{what}[{}]", reach.label, bricks.join(",")),
     )
-    .got(reached)
+    .got(need)
+    .at_most(u64::from(limit))
 }
 
 fn joined(
@@ -271,14 +273,8 @@ pub(crate) fn plan(
             ));
             continue;
         }
-        if let Err((stage, what)) = fits(reach, &entries, variables, limits) {
-            over.push(refused(
-                ErrorCode::BindingLimit,
-                reach,
-                variables,
-                stage,
-                what,
-            ));
+        if let Err(beyond) = fits(reach, &entries, variables, limits) {
+            over.push(over_limit(reach, variables, beyond));
             skipped[index] = true;
             continue;
         }

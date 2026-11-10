@@ -19,14 +19,27 @@ impl MeshesGpu {
 
     fn draw_kind(&self, scene: &SceneDraw, draw: &mut Draw<'_, Self, Scene>, skinned: bool) -> u32 {
         if self.state.instance_count == 0 {
-            return 0;
+            return draw.skip("no mesh row is drawn");
+        }
+        let of_kind = self
+            .state
+            .draws
+            .items
+            .iter()
+            .any(|item| item.look.skinned == skinned);
+        if !of_kind {
+            return draw.skip(if skinned {
+                "no drawn mesh row is skinned"
+            } else {
+                "every drawn mesh row is skinned"
+            });
         }
         let Some(joined) = self
             .scenes
             .iter()
             .find(|joined| joined.name == scene.pass.name())
         else {
-            return 0;
+            return draw.skip("pass has no mesh streams");
         };
         let pipelines = Forms {
             plain: draw.form(&self.forms.plain),

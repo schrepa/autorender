@@ -313,6 +313,12 @@ impl Registry {
         &self.left_out
     }
 
+    pub fn left_passes(&self) -> impl Iterator<Item = &'static str> + '_ {
+        self.left
+            .iter()
+            .flat_map(|left| left.passes.iter().map(|entry| entry.name))
+    }
+
     pub fn holds(&self, package: &str, type_id: TypeId) -> bool {
         let owner = self.brick(package).and_then(BrickRecord::owner);
         owner.is_some()

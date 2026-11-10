@@ -143,7 +143,7 @@ pub(crate) struct DroppedTally {
     pub(crate) kind: Option<engine_core::DrawKind>,
     pub(crate) pass: &'static str,
     pub(crate) reason: engine_core::DropReason,
-    pub(crate) material: Option<engine_core::MaterialHandle>,
+    pub(crate) asset: Option<engine_core::Asset>,
     pub(crate) count: u32,
 }
 
@@ -200,28 +200,32 @@ impl KindTallies {
         }
     }
 
-    pub(crate) fn drop_draw(
+    pub(crate) fn drop_draws(
         &mut self,
         (part, own_pass): (u32, &'static str),
-        reason: engine_core::DropReason,
-        material: Option<engine_core::MaterialHandle>,
+        (reason, asset): (engine_core::DropReason, Option<engine_core::Asset>),
+        count: u32,
     ) {
         let (kind, pass) = match self.drawing.and_then(|at| self.listed.get(at)) {
             Some(tally) => (Some(tally.kind), tally.pass),
             None => (None, own_pass),
         };
         let known = self.dropped.iter_mut().find(|known| {
-            known.part == part && known.kind == kind && known.pass == pass && known.reason == reason
+            known.part == part
+                && known.kind == kind
+                && known.pass == pass
+                && known.reason == reason
+                && known.asset == asset
         });
         match known {
-            Some(known) => known.count += 1,
+            Some(known) => known.count += count,
             None => self.dropped.push(DroppedTally {
                 part,
                 kind,
                 pass,
                 reason,
-                material,
-                count: 1,
+                asset,
+                count,
             }),
         }
     }

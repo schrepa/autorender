@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use engine_core::{
-    DepthBias, DrawKind, Entry, Error, ErrorCode, PassName, PassRole, PassViews, Var,
+    DepthBias, DrawKind, DropReason, Entry, Error, ErrorCode, PassName, PassRole, PassViews, Var,
 };
 
 use crate::install::{Faces, FragmentUse, Program, RenderDecl, Scoped};
@@ -470,5 +470,17 @@ impl<P: GpuPart> Draw<'_, P, Scene> {
     pub fn skip(&mut self, reason: &'static str) -> u32 {
         self.raw.run().tallies.kinds.skip(reason);
         0
+    }
+
+    pub fn drop_rows(&mut self, reason: DropReason, rows: u32) {
+        if rows == 0 {
+            return;
+        }
+        let part = self.raw.part();
+        let run = self.raw.run();
+        let pass = run.point.unwrap_or_default();
+        run.tallies
+            .kinds
+            .drop_draws((part, pass), (reason, None), rows);
     }
 }

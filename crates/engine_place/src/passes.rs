@@ -372,10 +372,36 @@ pub fn wgsl_name(name: &str) -> String {
         .collect()
 }
 
+fn unknown_skips(listed: &[ScenePass], kinds: &[KindDecl], left: &[&'static str]) -> Vec<Error> {
+    let known = |name: &str| {
+        listed.iter().any(|known| known.name == name) || left.iter().any(|&left| left == name)
+    };
+    let mut unknown = Vec::new();
+    for decl in kinds {
+        for skip in decl.skips.iter().filter(|skip| !known(skip.pass)) {
+            unknown.push(
+                Error::new(
+                    ErrorCode::UnknownVariant,
+                    format!("$.draw_kinds.{}.skips.{}", decl.kind.name(), skip.pass),
+                )
+                .got(skip.pass)
+                .variants(
+                    listed
+                        .iter()
+                        .map(|known| known.name)
+                        .chain(left.iter().copied()),
+                ),
+            );
+        }
+    }
+    unknown
+}
+
 impl ScenePasses {
     pub fn of(
         registered: impl IntoIterator<Item = (&'static str, PassEntry)>,
         kinds: Vec<KindDecl>,
+        left: &[&'static str],
     ) -> (Self, Vec<Error>) {
         let entries: Vec<(&'static str, PassEntry)> = registered.into_iter().collect();
         let mut listed: Vec<ScenePass> = Vec::with_capacity(entries.len() + CORE_PASSES.len());
@@ -406,6 +432,7 @@ impl ScenePasses {
                 bit,
             });
         }
+        problems.extend(unknown_skips(&listed, &kinds, left));
         (Self { listed, kinds }, problems)
     }
 

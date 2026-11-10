@@ -1,4 +1,4 @@
-use engine_core::{DropReason, GeometryStream};
+use engine_core::{Asset, DropReason, GeometryStream};
 
 use super::*;
 use crate::mesh_arena::MeshDraw;
@@ -24,14 +24,43 @@ fn mesh_draw<'a>(
     }
 }
 
-fn material_of(shape: &RawShape) -> Option<MaterialHandle> {
+fn handles_of(shape: &RawShape) -> (Option<GeometryHandle>, Option<MaterialHandle>) {
     match shape {
-        RawShape::MeshIndirect { material, .. }
-        | RawShape::Mesh { material, .. }
-        | RawShape::Pulled { material, .. }
-        | RawShape::Indirect { material, .. } => *material,
-        RawShape::Buffers { .. } | RawShape::IndirectAt { .. } => None,
+        RawShape::MeshIndirect { mesh, material, .. } | RawShape::Mesh { mesh, material, .. } => {
+            (Some(*mesh), *material)
+        }
+        RawShape::Pulled { material, .. } | RawShape::Indirect { material, .. } => {
+            (None, *material)
+        }
+        RawShape::Buffers { .. } | RawShape::IndirectAt { .. } => (None, None),
     }
+}
+
+fn dropped_asset(
+    reason: DropReason,
+    (mesh, material): (Option<GeometryHandle>, Option<MaterialHandle>),
+) -> Option<Asset> {
+    if reason == DropReason::GeometryNotResident {
+        mesh.map(Asset::Mesh)
+    } else if reason == DropReason::MaterialNotResident {
+        material.map(Asset::Material)
+    } else {
+        None
+    }
+}
+
+fn bound_input<'b>(
+    input: impl Fn(u32) -> Option<&'b wgpu::Buffer>,
+    stream: u32,
+) -> Result<&'b wgpu::Buffer, DropReason> {
+    input(stream).ok_or(DropReason::MissingInput)
+}
+
+fn index_input<'b>(
+    input: impl Fn(u32) -> Option<&'b wgpu::Buffer>,
+    indices: Option<u32>,
+) -> Result<Option<&'b wgpu::Buffer>, DropReason> {
+    indices.map(|stream| bound_input(input, stream)).transpose()
 }
 
 fn input_of<'b>(
@@ -109,7 +138,7 @@ impl Run {
         timed: TimedDraw<'_>,
     ) {
         let _row = engine_profile::timed(engine_profile::row("render.draw"));
-        let material = material_of(&shape);
+        let handles = handles_of(&shape);
         match self.issue_draw(part, point, handle, shape, timed) {
             Ok(()) => self.tallies.kinds.reached(),
             Err(reason) => {
@@ -119,7 +148,10 @@ impl Run {
                     .passes
                     .get(self.pass as usize)
                     .map_or("", |declared| declared.name);
-                self.tallies.kinds.drop_draw((part, pass), reason, material);
+                let asset = dropped_asset(reason, handles);
+                self.tallies
+                    .kinds
+                    .drop_draws((part, pass), (reason, asset), 1);
             }
         }
     }
@@ -213,11 +245,11 @@ impl Run {
             open.set.pipeline = Some((pipeline, chosen.key));
             open.set.frame = None;
         }
-        if open.set.frame != Some((built.variant, open.offset))
-            && let Some(group) = frame_groups
+        if open.set.frame != Some((built.variant, open.offset)) {
+            let group = frame_groups
                 .get(built.variant as usize)
                 .and_then(|groups| held_group(groups, set, Holder::Frame(built.variant), parity))
-        {
+                .ok_or(DropReason::MissingBindGroup)?;
             let camera = usize::from(
                 machine
                     .variants
@@ -248,14 +280,13 @@ impl Run {
                 Holder::Own(pipeline, at as u32),
                 parity,
             );
-            if let Some(made) = filled_group.or(owned) {
-                render.set_bind_group(group.index, made, dynamic);
-                if let Some(known) = open.set.own.get_mut(slot) {
-                    *known = Some(holding);
-                }
-                if group.index == 1 {
-                    open.set.material = None;
-                }
+            let made = filled_group.or(owned).ok_or(DropReason::MissingBindGroup)?;
+            render.set_bind_group(group.index, made, dynamic);
+            if let Some(known) = open.set.own.get_mut(slot) {
+                *known = Some(holding);
+            }
+            if group.index == 1 {
+                open.set.material = None;
             }
         }
         if let Some(material) = painted
@@ -288,12 +319,12 @@ impl Run {
                 elements,
                 instances,
             } => {
+                let indexed = index_input(&input, indices)?;
                 for (slot, (stream, _)) in vertices.listed().iter().enumerate() {
-                    if let Some(buffer) = input(*stream) {
-                        render.set_vertex_buffer(slot as u32, buffer.slice(..));
-                    }
+                    let buffer = bound_input(&input, *stream)?;
+                    render.set_vertex_buffer(slot as u32, buffer.slice(..));
                 }
-                match indices.and_then(input) {
+                match indexed {
                     Some(indices) => {
                         render.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
                         timed_draw(render, timed, |render| {
@@ -310,13 +341,13 @@ impl Run {
                 offset,
                 ..
             } => {
+                let args = bound_input(&input, args)?;
+                let indexed = index_input(&input, indices)?;
                 for (slot, (stream, _)) in vertices.listed().iter().enumerate() {
-                    if let Some(buffer) = input(*stream) {
-                        render.set_vertex_buffer(slot as u32, buffer.slice(..));
-                    }
+                    let buffer = bound_input(&input, *stream)?;
+                    render.set_vertex_buffer(slot as u32, buffer.slice(..));
                 }
-                let args = input(args).ok_or(DropReason::MissingInput)?;
-                match indices.and_then(input) {
+                match indexed {
                     Some(indices) => {
                         render.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
                         timed_draw(render, timed, |render| {
@@ -332,13 +363,13 @@ impl Run {
                 args,
                 offset,
             } => {
+                let args = bound_input(&input, args)?;
+                let indexed = index_input(&input, indices)?;
                 for (slot, (stream, start)) in vertices.listed().iter().enumerate() {
-                    if let Some(buffer) = input(*stream) {
-                        render.set_vertex_buffer(slot as u32, buffer.slice(*start..));
-                    }
+                    let buffer = bound_input(&input, *stream)?;
+                    render.set_vertex_buffer(slot as u32, buffer.slice(*start..));
                 }
-                let args = input(args).ok_or(DropReason::MissingInput)?;
-                match indices.and_then(input) {
+                match indexed {
                     Some(indices) => {
                         render.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
                         timed_draw(render, timed, |render| {
@@ -360,7 +391,7 @@ impl Run {
                     .materials
                     .group(material)
                     .ok_or(DropReason::MaterialNotResident)?;
-                let args = input(args).ok_or(DropReason::MissingInput)?;
+                let args = bound_input(&input, args)?;
                 if open.set.material != Some(material) {
                     render.set_bind_group(1, group, &[]);
                     open.set.material = Some(material);
@@ -371,10 +402,9 @@ impl Run {
                     render.set_vertex_buffer(slot as u32, buffer.slice(..));
                 }
                 for (at, (stream, start)) in streams.listed().iter().enumerate() {
-                    if let Some(buffer) = input(*stream) {
-                        let slot = geometry_slots + at as u32;
-                        render.set_vertex_buffer(slot, buffer.slice(*start..));
-                    }
+                    let buffer = bound_input(&input, *stream)?;
+                    let slot = geometry_slots + at as u32;
+                    render.set_vertex_buffer(slot, buffer.slice(*start..));
                 }
                 render.set_index_buffer(draw.indices.slice(..), wgpu::IndexFormat::Uint32);
                 timed_draw(render, timed, |render| {
