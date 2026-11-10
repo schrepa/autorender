@@ -483,7 +483,7 @@ impl DevTools {
         let bricks = self.brick_inspectors(world);
         let registry = world.get_resource::<Registry>();
         StatusResult {
-            world_entities: world.entities().len(),
+            world_entities: world.entities().count_spawned(),
             authored_entities: scene.map(SceneInstance::entity_count),
             inspectors: self.all_inspectors(&bricks).count(),
             culling_enabled: frustum_culling(world),
