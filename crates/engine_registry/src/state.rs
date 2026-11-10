@@ -43,6 +43,7 @@ pub enum Off {
     Condition,
     Parent,
     Needs { brick: &'static str },
+    Unmet,
     Cleared,
 }
 
@@ -122,6 +123,7 @@ pub struct BrickStates {
     roots: Vec<GateId>,
     types: Vec<TypeId>,
     needs: Vec<Vec<BrickId>>,
+    unmet: Vec<BrickId>,
     installs: Vec<u64>,
     generation: u64,
     changes: Feed<BrickChange>,
@@ -163,6 +165,7 @@ impl BrickStates {
             roots,
             types,
             needs: vec![Vec::new(); count],
+            unmet: Vec::new(),
             installs: vec![0; gates],
             generation: 0,
             changes: Feed::new(KEPT_CHANGES),
@@ -318,6 +321,17 @@ pub fn fault_of<B: 'static>(world: &mut World, error: Error) {
         .and_then(|states| states.id_of(TypeId::of::<B>()));
     if let Some(brick) = brick {
         fault(world, brick, error);
+    }
+}
+
+pub fn hold_unmet(world: &mut World, mut bricks: Vec<BrickId>) {
+    bricks.sort_unstable();
+    bricks.dedup();
+    let Some(mut states) = world.get_resource_mut::<BrickStates>() else {
+        return;
+    };
+    if states.unmet != bricks {
+        states.unmet = bricks;
     }
 }
 
@@ -531,10 +545,11 @@ impl GateDriver {
         let mut want: Vec<Result<(), Off>> = vec![Err(Off::Unstarted); count];
         for index in 0..count {
             let gate = GateId(index as u32);
-            let (brick, parent, faulted, lacking) = {
+            let (brick, parent, faulted, lacking, unmet) = {
                 let states = world.get_resource::<BrickStates>()?;
                 let brick = states.brick(gate)?;
                 let parent = states.parent(gate);
+                let unmet = parent.is_none() && states.unmet.contains(&brick);
                 let lacking = parent
                     .is_none()
                     .then(|| {
@@ -545,9 +560,13 @@ impl GateDriver {
                             .find(|need| !states.brick_on(*need))
                     })
                     .flatten();
-                (brick, parent, states.faulted(gate), lacking)
+                (brick, parent, states.faulted(gate), lacking, unmet)
             };
             if faulted {
+                continue;
+            }
+            if unmet {
+                want[index] = Err(Off::Unmet);
                 continue;
             }
             if parent.is_some_and(|parent| want[parent.index()].is_err()) {
