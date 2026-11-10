@@ -11,7 +11,9 @@ import package::engine::math::PI;
 import package::engine::view::{camera, detail_across, detail_distance, detail_level, eye_world,
     fade_noise, material_detail, stable_normalize, view_pixel};
 import package::engine::shading::{SurfacePoint, ViewPixel};
-import package::engine::slots::{given_point, shade};
+import package::engine::slots::{derived, set_added_indirect, set_ambient_bend, set_ignore_face,
+    set_metalness, set_occlusion, set_receiver_lift_first, set_receiver_lifts, set_roughness,
+    set_transmission, shade, standard_point};
 import package::engine::surfaces::SURFACE_GROUND;
 import package::face::water::{WATER_HELD, WaterCell, water_cell, water_level};
 import package::generated::writes::{DepthOutputs, Outputs, depth_outputs, outputs};
@@ -1325,12 +1327,12 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook, seen: TerrainSeen,
     roughness = max(roughness, 0.03);
     let sky_map = terrain_sky_map(local);
     let sky = sky_map.r;
-    var point: SurfacePoint;
+    var point = standard_point();
     point.base_color = albedo;
     point.opacity = 1.0;
     point.emissive = vec3<f32>(0.0);
-    point.inputs.added_indirect = bounce_light(world, normal, true).light * occlusion;
-    point.inputs.ambient_bend = sky_map.gba * 2.0 - 1.0;
+    point = set_added_indirect(point, bounce_light(world, normal, true).light * occlusion);
+    point = set_ambient_bend(point, sky_map.gba * 2.0 - 1.0);
     point.geometric = geometric;
     point.normal = normal;
     point.distance = length(relative);
@@ -1340,12 +1342,14 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook, seen: TerrainSeen,
     point.world_dx = select(site.world_dx / detail, look.world_dx, look.raw.x);
     point.world_dy = select(site.world_dy / detail, look.world_dy, look.raw.y);
     point.kind = SURFACE_GROUND;
-    point.inputs.ignore_face = true;
-    point.inputs.receiver_lift_first = lift.first;
-    point.inputs.receiver_lifts = lift.lifts;
-    let units = vec4<f32>(roughness, ground.metalness, occlusion * sky,
-        foliage().x * ground.canopy);
-    return given_point(point, units);
+    point = set_ignore_face(point, true);
+    point = set_receiver_lift_first(point, lift.first);
+    point = set_receiver_lifts(point, lift.lifts);
+    point = set_roughness(point, roughness);
+    point = set_metalness(point, ground.metalness);
+    point = set_occlusion(point, occlusion * sky);
+    point = set_transmission(point, foliage().x * ground.canopy);
+    return derived(point);
 }
 
 @group(1) @binding(0) var terrain_ids_texture: texture_2d<u32>;

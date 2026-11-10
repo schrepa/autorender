@@ -489,6 +489,7 @@ impl DevTools {
             culling_enabled: frustum_culling(world),
             features: registry.map(|registry| registry.names().collect()),
             unmet: engine.unmet().iter().map(Refusal::of).collect(),
+            notices: engine.notices().iter().map(Refusal::of).collect(),
             presentation: *engine.presentation(),
             fixed_delta_seconds: world
                 .get_resource::<FixedTime>()

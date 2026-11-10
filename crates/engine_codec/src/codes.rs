@@ -249,6 +249,8 @@ error_codes! {
     BindingLimit => "binding_limit",
     AttachmentLimit => "attachment_limit",
     UnknownVariable => "unknown_variable",
+    InputUnread => "input_unread",
+    SlotUnopened => "slot_unopened",
     PiecesLimit => "pieces_limit",
     PassMismatch => "pass_mismatch",
     ShaderLink => "shader_link",

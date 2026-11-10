@@ -1,4 +1,4 @@
-use std::any::TypeId;
+use std::any::{Any, TypeId};
 
 use engine_place::{AttachPoint, PassEntry};
 use serde::Serialize;
@@ -56,11 +56,12 @@ pub(crate) struct Accessed {
     pub(crate) write: bool,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Debug)]
 pub(crate) struct LeftOut {
     pub(crate) package: &'static str,
     pub(crate) places: Vec<&'static str>,
     pub(crate) passes: Vec<PassEntry>,
+    pub(crate) render: Vec<Box<dyn Any + Send + Sync>>,
 }
 
 impl LeftOut {

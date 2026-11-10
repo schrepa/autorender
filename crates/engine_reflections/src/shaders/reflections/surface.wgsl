@@ -1,5 +1,4 @@
 import package::engine::shading::{Shaded, SurfacePoint, ViewPixel};
-import package::engine::slots::point_units;
 import package::face::lighting::{SURFACE_THIN, reflecting};
 import package::face::trace_depths::{TRACE_DEPTH_SOLID, TRACE_DEPTH_THIN, trace_depth};
 import package::generated::pieces::reflections::piece;
@@ -15,12 +14,12 @@ fn octahedral_coordinates(normal: vec3<f32>) -> vec2<f32> {
 }
 
 fn reflects(point: SurfacePoint) -> bool {
-    return point_units(point).x < piece().surface.x;
+    return point.roughness < piece().surface.x;
 }
 
 fn surface(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> vec4<u32> {
     let normal = pack2x16unorm(octahedral_coordinates(point.normal) * 0.5 + 0.5);
-    let rough = point_units(point).x;
+    let rough = point.roughness;
     var across = rough;
     if reflects(point) {
         across = reflecting(point).across;

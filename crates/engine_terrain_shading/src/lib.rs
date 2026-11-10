@@ -27,16 +27,28 @@ use engine_core::{
     PassName, Schedule, Source,
 };
 use engine_open_world_kit::ground::{Bounce, GroundBaking, GroundTiles, Heightfield, Horizons};
-use engine_places_rendering::lighting::{Ambient, SunBlockers};
+use engine_places_rendering::lighting::{Ambient, SunBlockers, inputs};
 use engine_places_rendering::reflections::{TraceDepths, TraceSource};
 use engine_places_rendering::sky::OpenSky;
-use engine_render::{DebugModes, RenderBricks, SurfaceKind};
+use engine_render::{DebugModes, PointInput, RenderBricks, SurfaceKind};
 
 pub use gpu::HorizonsPiece;
 pub use jobs::shading::TileShading;
 pub use settings::{MAX_BOUNCE_LEVELS, TerrainShading, TerrainShadingStats};
 
 use terrain::TerrainGpu;
+
+const SETS: [PointInput; 9] = [
+    inputs::ADDED_INDIRECT,
+    inputs::AMBIENT_BEND,
+    inputs::IGNORE_FACE,
+    inputs::RECEIVER_LIFT_FIRST,
+    inputs::RECEIVER_LIFTS,
+    inputs::ROUGHNESS,
+    inputs::METALNESS,
+    inputs::OCCLUSION,
+    inputs::TRANSMISSION,
+];
 
 pub struct TerrainShadingBrick;
 
@@ -120,6 +132,9 @@ impl Brick for TerrainShadingBrick {
             })
             .draws::<TerrainGpu>(terrain::TERRAIN, TerrainGpu::draw);
         bricks.material_slot(holes::SLOT_MODULE);
+        for input in SETS {
+            bricks.point_set(input.set());
+        }
     }
 }
 

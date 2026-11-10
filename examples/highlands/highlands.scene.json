@@ -4438,8 +4438,8 @@
           "module": "foliage"
         },
         "cutoff": "foliage",
+        "direct_softness": "foliage",
         "kind": "foliage",
-        "light_inputs": "foliage",
         "metalness": "foliage",
         "normal": "foliage",
         "opacity": "mapped",

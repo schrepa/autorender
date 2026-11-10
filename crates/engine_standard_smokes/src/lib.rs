@@ -9,6 +9,7 @@ mod calls;
 mod empty;
 mod ground;
 mod image;
+mod inputs;
 mod partners;
 mod poses;
 pub mod requests;
@@ -49,6 +50,11 @@ impl Brick for StandardSmokesBrick {
             name: "missing_partners_are_reported",
             run: partners::run,
             without: &[partners::LEFT_OUT],
+        },
+        Smoke {
+            name: "unread_inputs_are_noticed",
+            run: inputs::run,
+            without: &[inputs::LEFT_OUT],
         },
         Smoke {
             name: "standard_list_starts_clean",

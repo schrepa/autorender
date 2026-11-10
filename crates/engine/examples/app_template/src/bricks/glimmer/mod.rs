@@ -14,8 +14,8 @@ use engine_core::{
 };
 use engine_render::{
     Allocation, Bind, Buffer, Draw, FaceCull, Form, FormColor, FormDepth, FormFragment, FormSide,
-    FragmentPass, GpuPart, Install, KindForm, Lifetime, LightingModule, PassFragment, Prepare,
-    RenderBricks, Scene, SceneDraw, Shape, SlotModule, Varyings,
+    FragmentPass, GpuPart, Install, KindForm, Lifetime, LightingModule, PassFragment, PointInput,
+    Prepare, RenderBricks, Scene, SceneDraw, Shape, SlotModule, Varyings,
 };
 
 pub const GLIMMER: DrawKind = DrawKind("glimmer");
@@ -23,6 +23,8 @@ pub const GLIMMER: DrawKind = DrawKind("glimmer");
 const GENERATED: &[&str] = &[<GlimmerInstance as GpuStruct>::WGSL];
 
 pub const LOOK: &str = "glimmer";
+
+const ADDED_LIGHT: PointInput = PointInput::new("added_light", "vec3<f32>", "vec3<f32>(0.0)");
 
 pub const GLIMMER_PART: &str = "glimmer";
 
@@ -154,6 +156,7 @@ impl Brick for GlimmerBrick {
                 name: LOOK,
                 module: shaders::glimmer::bands::MODULE,
             })
+            .point_input(ADDED_LIGHT)
             .generated(GENERATED)
             .draws::<GlimmerGpu>(GLIMMER, GlimmerGpu::draw)
             .systems(Schedule::FrameStart, (open_view, judge))

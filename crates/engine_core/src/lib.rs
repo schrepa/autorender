@@ -477,7 +477,7 @@ impl Engine {
             registry.add(listed.record());
         }
         for left in list.left() {
-            registry.leave_out(&left.record());
+            registry.leave_out(left.record());
         }
         let world = self.app.world_mut();
         world.insert_resource(JobListed::of(&jobs));
@@ -575,6 +575,13 @@ impl Engine {
             .world()
             .get_resource::<Registry>()
             .map_or(&[], Registry::unmet)
+    }
+
+    pub fn notices(&self) -> &[Error] {
+        self.app
+            .world()
+            .get_resource::<Registry>()
+            .map_or(&[], Registry::notices)
     }
 
     pub fn budget(&self) -> &FrameBudget {

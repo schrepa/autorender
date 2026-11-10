@@ -40,9 +40,10 @@ use engine_core::{
 };
 use engine_open_world_kit::ground::Heightfield;
 use engine_open_world_kit::water::Waterline;
+use engine_places_rendering::lighting::inputs;
 use engine_places_rendering::reflections::TraceDepths;
 use engine_places_rendering::sky::EyeMedium;
-use engine_render::{DebugModes, DebugShown, RenderBricks, SlotModule, SurfaceKind};
+use engine_render::{DebugModes, DebugShown, PointInput, RenderBricks, SlotModule, SurfaceKind};
 
 pub(crate) use engine_heightfield::TileKey;
 pub(crate) use engine_heightfield::tile::Footprint;
@@ -92,6 +93,16 @@ stats! {
         pub failed_jobs: u64,
     }
 }
+
+const SETS: [PointInput; 7] = [
+    inputs::SMOOTHER_ACROSS,
+    inputs::DIRECT_BLOCKED,
+    inputs::ADDED_LIGHT,
+    inputs::ROUGHNESS,
+    inputs::METALNESS,
+    inputs::OCCLUSION,
+    inputs::TRANSMISSION,
+];
 
 pub struct WaterBrick;
 
@@ -188,6 +199,10 @@ impl Brick for WaterBrick {
             .systems(Schedule::FixedSimulation, flow_step::step)
             .generated(gpu::GENERATED)
             .part::<water::WaterGpu>();
+        bricks.point_input(inputs::ROUGHNESS);
+        for input in SETS {
+            bricks.point_set(input.set());
+        }
     }
 }
 

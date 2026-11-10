@@ -249,12 +249,11 @@ pub enum SurfaceSlot {
     Normal,
     Emissive,
     Kind,
-    LightInputs,
     Output,
 }
 
 impl SurfaceSlot {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 8] = [
         Self::Position,
         Self::BaseColor,
         Self::Opacity,
@@ -262,7 +261,6 @@ impl SurfaceSlot {
         Self::Normal,
         Self::Emissive,
         Self::Kind,
-        Self::LightInputs,
         Self::Output,
     ];
 
@@ -275,7 +273,6 @@ impl SurfaceSlot {
             Self::Normal => "normal",
             Self::Emissive => "emissive",
             Self::Kind => "kind",
-            Self::LightInputs => "light_inputs",
             Self::Output => "output",
         }
     }

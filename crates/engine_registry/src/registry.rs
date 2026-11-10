@@ -95,6 +95,7 @@ pub struct Registry {
     left: Vec<LeftOut>,
     reads: Vec<Read>,
     unmet: Vec<Error>,
+    notices: Vec<Error>,
 }
 
 #[derive(Default)]
@@ -190,13 +191,17 @@ impl RegistryBuilder {
         }
     }
 
-    pub fn leave_out(&mut self, record: &BrickRecord) {
+    pub fn leave_out(&mut self, mut record: BrickRecord) {
         let package = record.package;
         if self.registry.has(package) {
             return;
         }
         if !self.registry.left_out.contains(&package) {
             self.registry.left_out.push(package);
+            let passes = record
+                .render_entries::<engine_place::PassEntry>()
+                .copied()
+                .collect();
             self.registry.left.push(LeftOut {
                 package,
                 places: record
@@ -205,10 +210,8 @@ impl RegistryBuilder {
                     .map(|filled| filled.place.name())
                     .chain(record.joins().iter().map(|joined| joined.place.name()))
                     .collect(),
-                passes: record
-                    .render_entries::<engine_place::PassEntry>()
-                    .copied()
-                    .collect(),
+                passes,
+                render: std::mem::take(&mut record.render),
             });
         }
         self.left_owned
@@ -325,6 +328,15 @@ impl Registry {
             .flat_map(|left| left.passes.iter().map(|entry| entry.name))
     }
 
+    pub fn left_render_entries<T: Any>(&self) -> impl Iterator<Item = (&'static str, &T)> + '_ {
+        self.left.iter().flat_map(|left| {
+            left.render
+                .iter()
+                .filter_map(|entry| entry.downcast_ref::<T>())
+                .map(move |entry| (left.package, entry))
+        })
+    }
+
     pub fn holds(&self, package: &str, type_id: TypeId) -> bool {
         let owner = self.brick(package).and_then(BrickRecord::owner);
         owner.is_some()
@@ -369,6 +381,16 @@ impl Registry {
 
     pub fn unmet(&self) -> &[Error] {
         &self.unmet
+    }
+
+    pub fn report_notice(&mut self, error: Error) {
+        if !self.notices.contains(&error) {
+            self.notices.push(error);
+        }
+    }
+
+    pub fn notices(&self) -> &[Error] {
+        &self.notices
     }
 
     pub fn reads(&self) -> &[Read] {

@@ -1,6 +1,8 @@
 import package::engine::color::decode_srgb;
 import package::engine::shading::SurfacePoint;
-import package::engine::slots::{given_point, shade};
+import package::engine::slots::{derived, set_added_indirect, set_ambient_bend, set_direct_blocked,
+    set_direct_known, set_ignore_face, set_metalness, set_occlusion, set_roughness, set_transmission,
+    shade, standard_point};
 import package::engine::view::{camera, stable_normalize};
 import package::face::sky::environment_sample;
 import package::probes::filter::FaceOutput;
@@ -22,7 +24,7 @@ fn stored_point(texel: vec2<i32>, layer: i32, world: vec3<f32>) -> SurfacePoint 
     let normal = unfolded(directions.xy);
     let faced = surface.w != 0u;
     let to_eye = camera.position.xyz - world;
-    var point: SurfacePoint;
+    var point = standard_point();
     point.base_color = decode_srgb(vec3<f32>(base.rgb) / 255.0);
     point.opacity = 1.0;
     point.emissive = emissive.rgb;
@@ -36,14 +38,16 @@ fn stored_point(texel: vec2<i32>, layer: i32, world: vec3<f32>) -> SurfacePoint 
     point.world_dx = select(vec3<f32>(0.0), dpdx(world), faced);
     point.world_dy = select(vec3<f32>(0.0), dpdy(world), faced);
     point.kind = surface.z;
-    point.inputs.ignore_face = !faced;
-    point.inputs.added_indirect = bounce.rgb;
-    point.inputs.ambient_bend = unfolded(directions.zw) - normal;
-    point.inputs.direct_blocked = 1.0 - bounce.a;
-    point.inputs.direct_known = true;
-    let units = vec4<f32>(f32(surface.x) / 255.0, f32(surface.y) / 255.0, f32(base.a) / 255.0,
-        emissive.a);
-    return given_point(point, units);
+    point = set_ignore_face(point, !faced);
+    point = set_added_indirect(point, bounce.rgb);
+    point = set_ambient_bend(point, unfolded(directions.zw) - normal);
+    point = set_direct_blocked(point, 1.0 - bounce.a);
+    point = set_direct_known(point, true);
+    point = set_roughness(point, f32(surface.x) / 255.0);
+    point = set_metalness(point, f32(surface.y) / 255.0);
+    point = set_occlusion(point, f32(base.a) / 255.0);
+    point = set_transmission(point, emissive.a);
+    return derived(point);
 }
 
 @fragment

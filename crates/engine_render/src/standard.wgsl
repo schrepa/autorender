@@ -1,5 +1,5 @@
 import package::engine::materials::{SURFACE_EMISSION, alpha_cutoff, emissive_factor};
-import package::engine::shading::{LightInputs, PositionInput, Shaded, SurfaceInput, SurfacePoint};
+import package::engine::shading::{PositionInput, Shaded, SurfaceInput, SurfacePoint};
 
 fn position(input: PositionInput) -> vec3<f32> {
     return input.world;
@@ -19,10 +19,6 @@ fn cutoff(input: SurfaceInput, point: SurfacePoint) -> f32 {
 
 fn kind(input: SurfaceInput, point: SurfacePoint) -> u32 {
     return point.kind;
-}
-
-fn light_inputs(input: SurfaceInput, point: SurfacePoint) -> LightInputs {
-    return point.inputs;
 }
 
 fn normal(input: SurfaceInput, point: SurfacePoint) -> vec3<f32> {

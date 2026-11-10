@@ -83,6 +83,7 @@ pub use renderer::{
     DeviceHealth, FoldStep, GpuPassTimes, Installation, InstalledPart, InstalledPiece, PassTie,
     Renderer, StartingRenderer, device_limits, install_noop,
 };
+pub use engine_place::{PointInput, PointSet};
 pub use shaders::FULLSCREEN;
 pub use surface::{
     DrawState, FaceCull, LightingModule, MaterialValue, MaterialVariant, OpenSlot, SlotModule,
@@ -161,6 +162,8 @@ pub trait RenderBricks {
     fn generated(&mut self, wgsl: &'static [&'static str]) -> &mut Self;
     fn material_slot(&mut self, module: SlotModule) -> &mut Self;
     fn open_slot(&mut self, slot: OpenSlot) -> &mut Self;
+    fn point_input(&mut self, input: PointInput) -> &mut Self;
+    fn point_set(&mut self, set: PointSet) -> &mut Self;
     fn surface_terms(&mut self, terms: SurfaceTerms) -> &mut Self;
     fn lighting_model(&mut self, module: LightingModule) -> &mut Self;
     fn surface_kind(&mut self, kind: SurfaceKind) -> &mut Self;
@@ -247,6 +250,16 @@ impl RenderBricks for Bricks<'_> {
 
     fn open_slot(&mut self, slot: OpenSlot) -> &mut Self {
         self.record().render.push(Box::new(slot));
+        self
+    }
+
+    fn point_input(&mut self, input: PointInput) -> &mut Self {
+        self.record().render.push(Box::new(input));
+        self
+    }
+
+    fn point_set(&mut self, set: PointSet) -> &mut Self {
+        self.record().render.push(Box::new(set));
         self
     }
 

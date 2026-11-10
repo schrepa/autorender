@@ -1,7 +1,7 @@
 import package::engine::materials::material_model;
 import package::engine::shading::{SurfaceInput, SurfacePoint};
 import package::engine::slots::{derived, open_slots, slot_base_color, slot_cutoff, slot_emissive,
-    slot_kind, slot_light_inputs, slot_normal, slot_opacity};
+    slot_kind, slot_normal, slot_opacity, standard_point};
 import package::engine::surfaces::SURFACE_SOLID;
 import package::engine::view::stable_normalize;
 
@@ -11,7 +11,7 @@ fn geometric_normal(surface_normal: vec3<f32>, front: bool) -> vec3<f32> {
 }
 
 fn placed(input: SurfaceInput) -> SurfacePoint {
-    var point: SurfacePoint;
+    var point = standard_point();
     point.world = input.world;
     point.world_dx = input.world_dx;
     point.world_dy = input.world_dy;
@@ -36,7 +36,6 @@ fn surface_point(input: SurfaceInput) -> SurfacePoint {
     point.emissive = slot_emissive(input, point);
     point.kind = slot_kind(input, point);
     point.lighting = material_model();
-    point.inputs = slot_light_inputs(input, point);
     return point;
 }
 

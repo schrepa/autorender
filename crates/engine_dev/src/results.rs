@@ -53,6 +53,7 @@ pub struct StatusResult {
     pub culling_enabled: bool,
     pub features: Option<Vec<&'static str>>,
     pub unmet: Vec<Refusal>,
+    pub notices: Vec<Refusal>,
     pub presentation: PresentationState,
     pub fixed_delta_seconds: Option<f32>,
     pub limits: StatusLimits,

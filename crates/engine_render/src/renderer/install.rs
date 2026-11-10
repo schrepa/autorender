@@ -32,6 +32,7 @@ pub(crate) struct Built {
     pub(crate) placed: Placed,
     pub(crate) material: crate::surface::MaterialLayout,
     pub(crate) applied: Vec<crate::shared::AppliedModule>,
+    pub(crate) notices: Vec<Error>,
 }
 
 #[derive(Default)]
@@ -338,47 +339,78 @@ fn material_layout(
     linker: &mut Linker,
     roots: &mut Vec<(String, String)>,
     problems: &mut Vec<Error>,
-) -> crate::surface::MaterialLayout {
+) -> (crate::surface::MaterialLayout, Vec<Error>) {
     use crate::surface::{
-        LightingModule, MaterialLayout, OpenSlot, SlotModule, SurfaceKind, SurfaceTerms,
+        LeftInput, LightingModule, MaterialLayout, OpenSlot, SlotModule, SurfaceDecls, SurfaceKind,
+        SurfaceTerms,
     };
-    let mut slots = crate::surface::core_slots();
-    for (declared, path) in &slots {
-        roots.push((path.clone(), declared.slot.to_owned()));
+    use engine_place::{PointInput, PointSet};
+    let package = |brick: engine_registry::BrickId| {
+        registry
+            .record(brick)
+            .map_or(CORE_PACKAGE, |record| record.package)
+    };
+    let mut declared = SurfaceDecls {
+        slots: crate::surface::core_slots(),
+        ..SurfaceDecls::default()
+    };
+    for (slot, path, _) in &declared.slots {
+        roots.push((path.clone(), slot.slot.to_owned()));
     }
-    for (_, declared) in registry.render_entries::<SlotModule>() {
-        linker.add_source(declared.module.source());
-        let (path, name) = crate::linker::path_of((declared.module, declared.slot));
+    for (brick, slot) in registry.render_entries::<SlotModule>() {
+        linker.add_source(slot.module.source());
+        let (path, name) = crate::linker::path_of((slot.module, slot.slot));
         roots.push((path.to_owned(), name));
-        slots.push((*declared, path.to_owned()));
+        declared
+            .slots
+            .push((*slot, path.to_owned(), package(brick)));
     }
-    let mut open = Vec::new();
-    for (_, declared) in registry.render_entries::<OpenSlot>() {
-        linker.add_source(declared.standard.source());
-        let (path, name) = crate::linker::path_of((declared.standard, declared.name));
+    for (brick, open) in registry.render_entries::<OpenSlot>() {
+        linker.add_source(open.standard.source());
+        let (path, name) = crate::linker::path_of((open.standard, open.input.name));
         roots.push((path.to_owned(), name));
-        open.push((*declared, path.to_owned()));
+        declared.open.push((*open, path.to_owned(), package(brick)));
     }
-    let mut terms = Vec::new();
-    for (_, declared) in registry.render_entries::<SurfaceTerms>() {
-        linker.add_source(declared.derive.source());
-        let (path, name) = crate::linker::path_of((declared.derive, crate::surface::DERIVE_ENTRY));
+    for (brick, input) in registry.render_entries::<PointInput>() {
+        declared.inputs.push((*input, package(brick)));
+    }
+    for (brick, set) in registry.render_entries::<PointSet>() {
+        declared.sets.push((*set, package(brick)));
+    }
+    for (_, terms) in registry.render_entries::<SurfaceTerms>() {
+        linker.add_source(terms.derive.source());
+        let (path, name) = crate::linker::path_of((terms.derive, crate::surface::DERIVE_ENTRY));
         roots.push((path.to_owned(), name));
-        terms.push((*declared, path.to_owned()));
+        declared.terms.push((*terms, path.to_owned()));
     }
-    let mut models = Vec::new();
-    for (_, declared) in registry.render_entries::<LightingModule>() {
-        linker.add_source(declared.module.source());
-        let (path, name) =
-            crate::linker::path_of((declared.module, crate::surface::LIGHTING_ENTRY));
+    for (_, model) in registry.render_entries::<LightingModule>() {
+        linker.add_source(model.module.source());
+        let (path, name) = crate::linker::path_of((model.module, crate::surface::LIGHTING_ENTRY));
         roots.push((path.to_owned(), name));
-        models.push((*declared, path.to_owned()));
+        declared.models.push((*model, path.to_owned()));
     }
-    let kinds: Vec<SurfaceKind> = registry
+    declared.kinds = registry
         .render_entries::<SurfaceKind>()
         .map(|(_, kind)| *kind)
         .collect();
-    let layout = MaterialLayout::of(&slots, &open, &terms, &models, &kinds, problems);
+    for (brick, open) in registry.left_render_entries::<OpenSlot>() {
+        let name = open.input.name;
+        declared.left.push(LeftInput {
+            brick,
+            name,
+            opens: true,
+        });
+    }
+    for (brick, input) in registry.left_render_entries::<PointInput>() {
+        let name = input.name;
+        declared.left.push(LeftInput {
+            brick,
+            name,
+            opens: false,
+        });
+    }
+    let mut notices = Vec::new();
+    let layout = MaterialLayout::of(&declared, problems, &mut notices);
     for (path, text) in [
         (crate::surface::SHADING_MODULE, layout.shading_source()),
         (crate::surface::MATERIALS_MODULE, layout.materials_source()),
@@ -387,7 +419,7 @@ fn material_layout(
     ] {
         linker.add_generated(path.to_owned(), CORE_PACKAGE, text);
     }
-    layout
+    (layout, notices)
 }
 
 fn applied_modules(
@@ -693,6 +725,9 @@ pub(crate) fn install(
             registry.report_unmet(error);
         }
         crate::needs::report(&built.machine, &scenes, &mut registry);
+        for notice in &built.notices {
+            registry.report_notice(notice.clone());
+        }
     }
     Ok(built)
 }
@@ -715,7 +750,7 @@ fn install_with(
         linker.add_generated(path.to_owned(), CORE_PACKAGE, text);
     }
     let (switches, links) = faces(registry, &mut linker, &mut roots, &mut problems);
-    let material = material_layout(registry, &mut linker, &mut roots, &mut problems);
+    let (material, notices) = material_layout(registry, &mut linker, &mut roots, &mut problems);
     let outputs = outputs(registry, &mut roots);
     let applied = crate::shared::ordered(
         applied_modules(registry, &mut linker, &mut roots, &mut problems),
@@ -930,6 +965,7 @@ fn install_with(
             placed,
             material,
             applied,
+            notices,
         })
     } else {
         Err(problems)

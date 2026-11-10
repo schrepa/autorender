@@ -16,13 +16,25 @@ use engine_core::{
     Source,
 };
 use engine_places_rendering::impostors::{ImpostorFlags, Impostors};
-use engine_render::RenderBricks;
+use engine_places_rendering::lighting::inputs;
+use engine_render::{PointInput, RenderBricks};
 
 pub use settings::{ImpostorSettings, ImpostorStats};
 
 const GENERATED: &[&str] = &[
     <ImpostorFlags as GpuBits>::WGSL,
     <cards::CardFrames as GpuBits>::WGSL,
+];
+
+const READS: [PointInput; 3] = [inputs::ROUGHNESS, inputs::METALNESS, inputs::OCCLUSION];
+
+const SETS: [PointInput; 6] = [
+    inputs::THICKNESS,
+    inputs::DIRECT_BLOCKED,
+    inputs::ROUGHNESS,
+    inputs::METALNESS,
+    inputs::OCCLUSION,
+    inputs::TRANSMISSION,
 ];
 
 pub struct ImpostorsBrick;
@@ -68,5 +80,11 @@ impl Brick for ImpostorsBrick {
                 ],
             })
             .draws::<cards::CardGpu>(cards::CARD, cards::CardGpu::draw);
+        for input in READS {
+            bricks.point_input(input);
+        }
+        for input in SETS {
+            bricks.point_set(input.set());
+        }
     }
 }

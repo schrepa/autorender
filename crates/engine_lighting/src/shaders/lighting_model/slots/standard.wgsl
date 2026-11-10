@@ -16,3 +16,7 @@ fn occlusion(input: SurfaceInput, point: SurfacePoint) -> f32 {
 fn transmission(input: SurfaceInput, point: SurfacePoint) -> f32 {
     return material_value(VALUE_TRANSMISSION);
 }
+
+fn direct_softness(input: SurfaceInput, point: SurfacePoint) -> f32 {
+    return 0.0;
+}
