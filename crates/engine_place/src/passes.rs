@@ -59,13 +59,11 @@ pub struct TargetName(pub &'static str);
 impl TargetName {
     pub const COLOR: Self = Self("color");
     pub const DEPTH: Self = Self("depth");
-    pub const MOTION: Self = Self("motion");
     pub const TRANSPARENCY: Self = Self("transparency");
     pub const ACCUMULATED: Self = Self("accumulated");
-    pub const CORE: [Self; 5] = [
+    pub const CORE: [Self; 4] = [
         Self::COLOR,
         Self::DEPTH,
-        Self::MOTION,
         Self::TRANSPARENCY,
         Self::ACCUMULATED,
     ];

@@ -19,7 +19,7 @@ use engine_core::{
 };
 use engine_places_rendering::lighting::{Ambient, Interiors};
 use engine_places_rendering::probes::{ProbeCaptures, ReflectionProbe};
-use engine_render::{RenderBricks, TargetDecl, TargetName, wgpu};
+use engine_render::{LastFrame, RenderBricks, TargetDecl, TargetName, wgpu};
 
 pub use component::{SceneInterior, SceneReflectionProbe};
 
@@ -33,6 +33,7 @@ const fn stored(name: &'static str, format: wgpu::TextureFormat) -> TargetDecl {
         format,
         written: &[],
         module: Some(shaders::probes::surface::MODULE),
+        last_frame: LastFrame::Unread,
     }
 }
 

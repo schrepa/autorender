@@ -133,7 +133,7 @@ const fn seen_fragments(seen: Entry, shown: Entry) -> OwnFragments {
             shown: Some(shown),
             ..RoleFragments::NONE
         },
-        cull: FaceCull::Back,
+        faces: engine_render::OwnFaces::Culled(FaceCull::Back),
     }
 }
 

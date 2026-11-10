@@ -9,6 +9,8 @@ use crate::shaders::bloom::{apply, chain};
 
 const BLOOM_LEVELS: u32 = 6;
 
+const LEVELS_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg11b10Ufloat;
+
 const ADD: wgpu::BlendState = wgpu::BlendState {
     color: wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::One,
@@ -35,15 +37,7 @@ impl GpuPart for BloomGpu {
     const LABELS: &'static [&'static str] = &["engine/bloom"];
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        let format = if cx
-            .features()
-            .contains(wgpu::Features::RG11B10UFLOAT_RENDERABLE)
-        {
-            wgpu::TextureFormat::Rg11b10Ufloat
-        } else {
-            wgpu::TextureFormat::Rgba16Float
-        };
-        let levels = cx.view_texture("engine/bloom", format, Lifetime::Kept);
+        let levels = cx.view_texture("engine/bloom", LEVELS_FORMAT, Lifetime::Kept);
         let sampler = cx.sampler(engine_core::Sampler::LINEAR_CLAMP);
         cx.frame(apply::BLOOM, mip(levels, 0))?;
         cx.frame(apply::BLOOM_SAMPLER, Bind::Sampler(sampler))?;

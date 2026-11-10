@@ -248,8 +248,12 @@ pub(crate) type FrameReads = (
     Res<'static, DeviceLimits>,
 );
 
+pub(crate) const INSTANCE_STAGING_ROW: &str = "memory.instance_staging_capacity_bytes";
+pub(crate) const INSTANCE_BUFFER_ROW: &str = "memory.gpu_instance_buffer_bytes";
+
 impl GpuPart for MeshesGpu {
     type Reads = MeshReads;
+    const MEMORY: &'static [&'static str] = &[INSTANCE_STAGING_ROW, INSTANCE_BUFFER_ROW];
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         let instances = install_instances(cx)?;

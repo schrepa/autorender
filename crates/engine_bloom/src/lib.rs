@@ -13,7 +13,7 @@ use engine_core::{
     AttachPoint, Brick, Bricks, Pass, PassName, PassPurpose, PassViews, Schedule, SlotSet, Source,
     Writes, gpu_struct, never,
 };
-use engine_render::RenderBricks;
+use engine_render::{RenderBricks, wgpu};
 
 pub use settings::{Bloom, BloomStats};
 
@@ -50,6 +50,7 @@ impl Brick for BloomBrick {
             .settings::<Bloom>()
             .stats::<BloomStats>()
             .piece::<BloomPiece>()
+            .device_feature(wgpu::Features::RG11B10UFLOAT_RENDERABLE)
             .applies::<BloomPass>(shaders::bloom::apply::MODULE)
             .systems(Schedule::ViewSync, publish_bloom)
             .part::<part::BloomGpu>();

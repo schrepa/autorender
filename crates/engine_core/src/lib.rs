@@ -46,10 +46,6 @@ mod transform_edits;
 mod views;
 mod why;
 
-mod sources {
-    include!(concat!(env!("OUT_DIR"), "/sources.rs"));
-}
-
 pub mod profile {
     pub use engine_profile::{Aggregate, Span, active, counter, now_ms, span, tally, waited};
 }

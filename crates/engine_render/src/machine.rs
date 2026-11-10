@@ -26,6 +26,7 @@ pub(crate) struct OutputDecl {
     pub(crate) format: wgpu::TextureFormat,
     pub(crate) layers: Vec<AttachPoint>,
     pub(crate) module: Option<String>,
+    pub(crate) last_frame: crate::LastFrame,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

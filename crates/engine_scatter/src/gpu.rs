@@ -8,9 +8,9 @@ use engine_places_rendering::impostors::IMPOSTOR_VERTICES;
 use engine_render::{
     Access, AfterRead, Allocation, Attach, Bind, Buffer, Channels, ComputePipeline, Count, Draw,
     DrawInput, Encode, FaceCull, Form, FormColor, FormDepth, FormFragment, FormSide, FormTarget,
-    FragmentPass, GpuPart, Install, KindForm, Lifetime, Own, OwnFragments, Pass, PassFragment,
-    PerPass, Pipeline, Prepare, RoleFragments, Scene, SceneDraw, Shape, Texture, Varyings,
-    VertexLayout, wgpu,
+    FragmentPass, GpuPart, Install, KindForm, Lifetime, Own, OwnFaces, OwnFragments, Pass,
+    PassFragment, PerPass, Pipeline, Prepare, RoleFragments, Scene, SceneDraw, Shape, Texture,
+    Varyings, VertexLayout, wgpu,
 };
 use glam::Vec3;
 
@@ -24,6 +24,7 @@ use crate::occupancy::{ALL_CELLS, LISTED_RESET, OccupancyWindows};
 use crate::pool::{SlotWrite, dead};
 use crate::shaders::scatter::{
     cards as card_shaders, casters as caster_shaders, draw as object_shaders,
+    fading as fading_shaders,
 };
 use crate::systems::{ScatterFeedback, ScatterState};
 
@@ -111,16 +112,42 @@ const EXTENDED_FORM: KindForm = object_form(
     Varyings::ObjectExtra,
 );
 
+const FADING_ROLES: RoleFragments = RoleFragments {
+    lit: Some(fading_shaders::FS_FADING_LIT),
+    depth: Some(fading_shaders::FS_FADING_DEPTH),
+    blended: Some(fading_shaders::FS_FADING_BLENDED),
+    shown: Some(fading_shaders::FS_FADING_SHOWN),
+};
+
+const EXTENDED_FADING_ROLES: RoleFragments = RoleFragments {
+    lit: Some(fading_shaders::FS_FADING_LIT_EXTENDED),
+    depth: Some(fading_shaders::FS_FADING_DEPTH_EXTENDED),
+    blended: Some(fading_shaders::FS_FADING_BLENDED_EXTENDED),
+    shown: Some(fading_shaders::FS_FADING_SHOWN_EXTENDED),
+};
+
+const FADING_FRAGMENTS: OwnFragments = OwnFragments {
+    placed: FADING_ROLES,
+    owned: FADING_ROLES,
+    faces: OwnFaces::Material,
+};
+
+const EXTENDED_FADING_FRAGMENTS: OwnFragments = OwnFragments {
+    placed: EXTENDED_FADING_ROLES,
+    owned: EXTENDED_FADING_ROLES,
+    faces: OwnFaces::Material,
+};
+
 const FADING_FORM: KindForm = object_form(
     object_shaders::VS_OBJECT_FADING,
     PLAIN_STREAMS,
-    Varyings::FadingObject,
+    Varyings::Own(&FADING_FRAGMENTS),
 );
 
 const EXTENDED_FADING_FORM: KindForm = object_form(
     object_shaders::VS_OBJECT_EXTENDED_FADING,
     EXTENDED_STREAMS,
-    Varyings::FadingObjectExtra,
+    Varyings::Own(&EXTENDED_FADING_FRAGMENTS),
 );
 
 const WHOLE_FRAGMENTS: OwnFragments = OwnFragments {
@@ -129,7 +156,7 @@ const WHOLE_FRAGMENTS: OwnFragments = OwnFragments {
         depth: Some(object_shaders::FS_WHOLE_DEPTH),
         ..RoleFragments::NONE
     },
-    cull: FaceCull::None,
+    faces: OwnFaces::Culled(FaceCull::None),
 };
 
 const WHOLE_FORM: KindForm = object_form(
@@ -152,7 +179,7 @@ const CARD_FRAGMENTS: OwnFragments = OwnFragments {
         shown: Some(card_shaders::FS_DEBUG_PLACED_CARD),
     },
     owned: RoleFragments::NONE,
-    cull: FaceCull::None,
+    faces: OwnFaces::Culled(FaceCull::None),
 };
 
 const CARD_FORM: KindForm = object_form(
@@ -167,7 +194,7 @@ const CASTER_FRAGMENTS: OwnFragments = OwnFragments {
         depth: Some(caster_shaders::FS_IMPOSTOR_CARD),
         ..RoleFragments::NONE
     },
-    cull: FaceCull::None,
+    faces: OwnFaces::Culled(FaceCull::None),
 };
 
 const CASTER_FORM: KindForm = object_form(

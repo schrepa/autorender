@@ -21,6 +21,7 @@ pub(crate) struct PartRecord {
     pub(crate) lazy: bool,
     pub(crate) turns_on_in_play: bool,
     pub(crate) labels: &'static [&'static str],
+    pub(crate) memory: &'static [&'static str],
     pub(crate) scope: Scope,
     pub(crate) install: InstallFn,
 }
@@ -37,6 +38,7 @@ impl PartRecord {
             lazy: P::LAZY,
             turns_on_in_play: P::TURNS_ON_IN_PLAY,
             labels: P::LABELS,
+            memory: P::MEMORY,
             scope,
             install: install::<P>,
         }
@@ -44,6 +46,8 @@ impl PartRecord {
 }
 
 pub(crate) struct Generated(pub(crate) &'static [&'static str]);
+
+pub(crate) struct DeviceFeature(pub(crate) wgpu::Features);
 
 pub(crate) struct PassScope {
     pub(crate) name: &'static str,

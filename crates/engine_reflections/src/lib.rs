@@ -13,7 +13,7 @@ use bevy_ecs::prelude::*;
 use engine_core::{
     Brick, Bricks, Pass, PassName, PassPurpose, PassViews, Schedule, SlotSet, Source, Writes, never,
 };
-use engine_render::{AttachPoint, RenderBricks, TargetDecl, TargetName, wgpu};
+use engine_render::{AttachPoint, LastFrame, RenderBricks, TargetDecl, TargetName, wgpu};
 
 pub use settings::Reflections;
 
@@ -40,6 +40,7 @@ const SURFACE: TargetDecl = TargetDecl {
     format: wgpu::TextureFormat::Rgba16Uint,
     written: SURFACE_POINTS,
     module: Some(shaders::reflections::surface::MODULE),
+    last_frame: LastFrame::Unread,
 };
 
 const REFLECTED: TargetDecl = TargetDecl {
@@ -47,6 +48,7 @@ const REFLECTED: TargetDecl = TargetDecl {
     format: wgpu::TextureFormat::Rgba16Float,
     written: SURFACE_POINTS,
     module: Some(shaders::reflections::surface::MODULE),
+    last_frame: LastFrame::Unread,
 };
 
 pub struct ReflectionsBrick;

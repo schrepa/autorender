@@ -5,13 +5,43 @@ use std::path::{Path, PathBuf};
 pub const FREE_KINDS: &[&str] = &["core", "core-internal"];
 
 const WORDS: &[&str] = &[
-    "shadow",
-    "probe",
-    "roughness",
+    "animation",
+    "audio",
+    "bloom",
+    "collision",
+    "dither",
+    "erosion",
+    "exposure",
+    "fog",
+    "heightfield",
+    "heightmap",
+    "hydrology",
+    "impostor",
     "metalness",
+    "navigation",
+    "particle",
+    "physics",
+    "prepass",
+    "probe",
+    "reflection",
+    "relief",
+    "roughness",
+    "scatter",
+    "shadow",
     "skin",
+    "sky",
+    "spline",
+    "sprite",
+    "sun",
+    "taa",
     "terrain",
+    "tonemap",
     "water",
+    "wind",
+];
+
+const WGSL_DECLARATIONS: &[&str] = &[
+    "fn", "struct", "var", "let", "const", "alias", "override", "import",
 ];
 
 const ENDINGS: &[&str] = &["", "s", "es", "ed", "ing", "ned", "ning"];
@@ -365,6 +395,30 @@ fn rust_names(tokens: &[Located]) -> Vec<Named<'_>> {
     names
 }
 
+fn holds_wgsl(located: &[Located]) -> bool {
+    located
+        .windows(2)
+        .any(|pair| match (&pair[0].token, &pair[1].token) {
+            (Token::Mark('@'), Token::Word(_)) => true,
+            (Token::Word(word), Token::Word(_)) => WGSL_DECLARATIONS.contains(&word.as_str()),
+            (Token::Word(word), Token::Mark('<')) => word == "var",
+            _ => false,
+        })
+}
+
+fn held_wgsl(located: &[Located]) -> Vec<(usize, Vec<Located>)> {
+    located
+        .iter()
+        .filter_map(|found| match &found.token {
+            Token::Text(text) => {
+                let inner = tokens(text);
+                holds_wgsl(&inner).then_some((found.line, inner))
+            }
+            Token::Word(_) | Token::Mark(_) => None,
+        })
+        .collect()
+}
+
 fn wgsl_names(tokens: &[Located]) -> Vec<Named<'_>> {
     tokens
         .iter()
@@ -402,27 +456,34 @@ pub(crate) fn files(folder: &Path, found: &mut Vec<PathBuf>) -> Result<(), Strin
 
 pub fn check(
     label: &str,
-    source: &Path,
+    found: &[PathBuf],
     shown: impl Fn(&Path) -> String,
     problems: &mut Vec<String>,
 ) -> Result<(), String> {
-    if !source.is_dir() {
-        return Ok(());
-    }
-    let mut found = Vec::new();
-    files(source, &mut found)?;
     for path in found {
         let text =
-            fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
+            fs::read_to_string(path).map_err(|error| format!("{}: {error}", path.display()))?;
         let located = tokens(&text);
         let wgsl = path
             .extension()
             .is_some_and(|extension| extension == "wgsl");
-        let names = if wgsl {
+        let held = if wgsl {
+            Vec::new()
+        } else {
+            held_wgsl(&located)
+        };
+        let mut names = if wgsl {
             wgsl_names(&located)
         } else {
             rust_names(&located)
         };
+        for (line, inner) in &held {
+            names.extend(wgsl_names(inner).into_iter().map(|named| Named {
+                line: line + named.line - 1,
+                what: "WGSL text",
+                ..named
+            }));
+        }
         let mut reported: BTreeSet<(&str, &str)> = BTreeSet::new();
         for named in names {
             let Some(word) = technique(named.name) else {
@@ -433,7 +494,7 @@ pub fn check(
             }
             problems.push(format!(
                 "{label}: {}:{} names the technique {word} in the {} {}; the core names no technique",
-                shown(&path),
+                shown(path),
                 named.line,
                 named.what,
                 named.name

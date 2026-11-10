@@ -12,14 +12,14 @@ use crate::{
 
 pub(crate) const KINDS_MODULE: &str = "engine::kinds";
 
+const MATERIAL_FACES: Faces = Faces::Material(FragmentUse::Always);
+
 #[derive(Clone, Copy, Debug)]
 pub enum Varyings {
     Surface,
     SurfaceExtra,
     Object,
     ObjectExtra,
-    FadingObject,
-    FadingObjectExtra,
     Own(&'static OwnFragments),
 }
 
@@ -50,17 +50,23 @@ impl RoleFragments {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub enum OwnFaces {
+    Culled(FaceCull),
+    Material,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct OwnFragments {
     pub placed: RoleFragments,
     pub owned: RoleFragments,
-    pub cull: FaceCull,
+    pub faces: OwnFaces,
 }
 
 impl OwnFragments {
     pub const NONE: Self = Self {
         placed: RoleFragments::NONE,
         owned: RoleFragments::NONE,
-        cull: FaceCull::Back,
+        faces: OwnFaces::Culled(FaceCull::Back),
     };
 }
 
@@ -350,38 +356,39 @@ fn object_name(role: PassRole, extra: bool) -> &'static str {
     }
 }
 
-fn fragment_use(role: PassRole, fades: bool) -> FragmentUse {
-    match (role, fades) {
-        (PassRole::Depth, false) => FragmentUse::Masked,
-        (PassRole::Depth, true) | (PassRole::Lit | PassRole::Blended | PassRole::Shown, _) => {
-            FragmentUse::Always
-        }
+fn fragment_use(role: PassRole) -> FragmentUse {
+    match role {
+        PassRole::Depth => FragmentUse::Masked,
+        PassRole::Lit | PassRole::Blended | PassRole::Shown => FragmentUse::Always,
     }
 }
 
 fn fragment_of(role: PassRole, varyings: Varyings, views: PassViews) -> Option<Fragment> {
-    let (name, fades) = match varyings {
-        Varyings::Surface => (generic_name(role, false), false),
-        Varyings::SurfaceExtra => (generic_name(role, true), false),
-        Varyings::Object => (object_name(role, false), false),
-        Varyings::ObjectExtra => (object_name(role, true), false),
-        Varyings::FadingObject => (object_name(role, false), true),
-        Varyings::FadingObjectExtra => (object_name(role, true), true),
+    let name = match varyings {
+        Varyings::Surface => generic_name(role, false),
+        Varyings::SurfaceExtra => generic_name(role, true),
+        Varyings::Object => object_name(role, false),
+        Varyings::ObjectExtra => object_name(role, true),
         Varyings::Own(own) => {
             let side = match views {
                 PassViews::Owned => &own.owned,
                 PassViews::Every | PassViews::Main => &own.placed,
             };
-            return side.of(role).map(|entry| Fragment {
+            let (faces, culled) = match own.faces {
+                OwnFaces::Culled(cull) => (Faces::Declared, cull.face()),
+                OwnFaces::Material => (MATERIAL_FACES, Some(wgpu::Face::Back)),
+            };
+            let entry = side.of(role)?;
+            return Some(Fragment {
                 entry,
-                faces: Faces::Declared,
-                cull: own.cull.face(),
+                faces,
+                cull: culled,
             });
         }
     };
     Some(Fragment {
         entry: Entry::generated(crate::shaders::core_module(KINDS_MODULE), name),
-        faces: Faces::Material(fragment_use(role, fades)),
+        faces: Faces::Material(fragment_use(role)),
         cull: Some(wgpu::Face::Back),
     })
 }

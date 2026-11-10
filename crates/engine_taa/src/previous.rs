@@ -1,12 +1,13 @@
-use engine_render::{AttachPoint, TargetDecl, TargetName, wgpu};
+use engine_render::{AttachPoint, LastFrame, TargetDecl, TargetName, wgpu};
 
 pub(crate) const JITTER_SAMPLES: u64 = 8;
 
 pub(crate) const MOTION: TargetDecl = TargetDecl {
-    name: TargetName::MOTION,
+    name: TargetName("motion"),
     format: wgpu::TextureFormat::Rg16Float,
     written: &[AttachPoint::Opaque, AttachPoint::LateOpaque],
     module: Some(crate::shaders::taa::motion::MODULE),
+    last_frame: LastFrame::Read,
 };
 
 fn halton(mut index: u32, base: u32) -> f32 {

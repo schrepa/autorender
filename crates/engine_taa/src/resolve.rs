@@ -43,7 +43,10 @@ impl GpuPart for ResolveGpu {
                 (resolve::SCENE_COLOR, Bind::Target(TargetName::COLOR)),
                 (resolve::HISTORY, Bind::Texture(history)),
                 (resolve::TAA_VIEW, Bind::Buffer(view)),
-                (resolve::MOTION_VECTORS, Bind::Target(TargetName::MOTION)),
+                (
+                    resolve::MOTION_VECTORS,
+                    Bind::Target(crate::previous::MOTION.name),
+                ),
                 (
                     resolve::BLENDED_MASK,
                     Bind::Target(TargetName::TRANSPARENCY),
