@@ -119,6 +119,27 @@ const EXTENDED_FADING_FORM: KindForm = object_form(
     Varyings::FadingObjectExtra,
 );
 
+const WHOLE_FRAGMENTS: OwnFragments = OwnFragments {
+    placed: RoleFragments::NONE,
+    owned: RoleFragments {
+        depth: Some(object_shaders::FS_WHOLE_DEPTH),
+        ..RoleFragments::NONE
+    },
+    cull: FaceCull::None,
+};
+
+const WHOLE_FORM: KindForm = object_form(
+    object_shaders::VS_OBJECT,
+    PLAIN_STREAMS,
+    Varyings::Own(&WHOLE_FRAGMENTS),
+);
+
+const EXTENDED_WHOLE_FORM: KindForm = object_form(
+    object_shaders::VS_OBJECT_EXTENDED,
+    EXTENDED_STREAMS,
+    Varyings::Own(&WHOLE_FRAGMENTS),
+);
+
 const CARD_FRAGMENTS: OwnFragments = OwnFragments {
     placed: RoleFragments {
         lit: Some(card_shaders::FS_PLACED_CARD),
@@ -161,12 +182,19 @@ struct MapPipelines {
     listed: DrawInput<ScatterGpu, Own>,
 }
 
+#[derive(Clone, Copy)]
+enum Coverage {
+    Material,
+    Whole,
+}
+
 struct Level {
     mesh: GeometryHandle,
     material: Option<MaterialHandle>,
     group: u32,
     level: u32,
     extended: bool,
+    coverage: Coverage,
 }
 
 #[derive(Clone, Copy)]
@@ -249,11 +277,18 @@ struct Forms {
     extended: Form<ScatterGpu>,
     fading: Form<ScatterGpu>,
     extended_fading: Form<ScatterGpu>,
+    whole: Form<ScatterGpu>,
+    extended_whole: Form<ScatterGpu>,
     cards: Form<ScatterGpu>,
     casters: Form<ScatterGpu>,
 }
 
 type Pair = [Option<Pipeline<ScatterGpu, Scene>>; 2];
+
+struct Chosen {
+    material: Pair,
+    whole: Pair,
+}
 
 #[derive(Clone, Copy)]
 struct Streams {
@@ -469,6 +504,8 @@ impl ScatterGpu {
             extended: cx.form(&EXTENDED_FORM, &placed)?,
             fading: cx.form(&FADING_FORM, &placed)?,
             extended_fading: cx.form(&EXTENDED_FADING_FORM, &placed)?,
+            whole: cx.form(&WHOLE_FORM, &placed)?,
+            extended_whole: cx.form(&EXTENDED_WHOLE_FORM, &placed)?,
             cards: cx.form(
                 &CARD_FORM,
                 &[
@@ -537,6 +574,7 @@ impl ScatterGpu {
                         group: group as u32,
                         level: level as u32,
                         extended: drawn.extended,
+                        coverage: Coverage::Material,
                     });
                 }
             }
@@ -545,15 +583,20 @@ impl ScatterGpu {
             if cuts && !resident {
                 continue;
             }
-            let shaped = drawn.proxy.is_none() || !drawn.masked();
+            let coverage = if drawn.proxy.is_some() && drawn.masked() {
+                Coverage::Whole
+            } else {
+                Coverage::Material
+            };
             for (level, &mesh) in drawn.casters.iter().enumerate() {
                 if residency.resident(mesh) {
                     held.cast.push(Level {
                         mesh,
-                        material: (resident && shaped).then_some(drawn.material),
+                        material: resident.then_some(drawn.material),
                         group: group as u32,
                         level: level as u32,
                         extended: drawn.proxy.unwrap_or(drawn.extended),
+                        coverage,
                     });
                 }
             }
@@ -943,11 +986,15 @@ impl ScatterGpu {
         (view, items): (usize, &[Level]),
         draw: &mut Draw<'_, Self, Scene>,
         inputs: &Streams,
-        pipelines: &Pair,
+        pipelines: &Chosen,
     ) -> u32 {
         let mut draws = 0;
         for item in items {
-            let Some(pipeline) = &pipelines[usize::from(item.extended)] else {
+            let pair = match item.coverage {
+                Coverage::Material => &pipelines.material,
+                Coverage::Whole => &pipelines.whole,
+            };
+            let Some(pipeline) = &pair[usize::from(item.extended)] else {
                 continue;
             };
             let level = item.level as usize;
@@ -972,12 +1019,18 @@ impl ScatterGpu {
 
     fn draw_objects(&self, view: usize, draw: &mut Draw<'_, Self, Scene>, inputs: &Streams) -> u32 {
         let held = &self.held;
-        let plain = [draw.form(&self.forms.plain), draw.form(&self.forms.extended)];
-        let fading = [
-            draw.form(&self.forms.fading),
-            draw.form(&self.forms.extended_fading),
-        ];
-        let lists: &[(usize, &Pair)] = if view == 0 {
+        let plain = Chosen {
+            material: [draw.form(&self.forms.plain), draw.form(&self.forms.extended)],
+            whole: [None, None],
+        };
+        let fading = Chosen {
+            material: [
+                draw.form(&self.forms.fading),
+                draw.form(&self.forms.extended_fading),
+            ],
+            whole: [None, None],
+        };
+        let lists: &[(usize, &Chosen)] = if view == 0 {
             &[(0, &plain), (held.fading_view, &fading)]
         } else {
             &[(view, &plain)]
@@ -1013,8 +1066,14 @@ impl ScatterGpu {
         } else {
             &held.lit
         };
-        let plain = [draw.form(&self.forms.plain), draw.form(&self.forms.extended)];
-        let mut draws = self.draw_levels((view, items), draw, inputs, &plain);
+        let chosen = Chosen {
+            material: [draw.form(&self.forms.plain), draw.form(&self.forms.extended)],
+            whole: [
+                draw.form(&self.forms.whole),
+                draw.form(&self.forms.extended_whole),
+            ],
+        };
+        let mut draws = self.draw_levels((view, items), draw, inputs, &chosen);
         let card = draw.form(&self.forms.casters).filter(|_| held.atlas);
         if let (Some(card), Some((cards, offset))) = (card, self.card_source(view)) {
             draw.draw(
