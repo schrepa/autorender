@@ -135,7 +135,9 @@ impl<P> Form<P> {
     }
 
     pub fn draws_in(&self, scene: &str) -> bool {
-        self.scenes.iter().any(|known| known.pass.scene.name() == scene)
+        self.scenes
+            .iter()
+            .any(|known| known.pass.scene.name() == scene && known.plain.is_some())
     }
 
     pub fn passes(&self) -> impl Iterator<Item = FormPass> + '_ {
