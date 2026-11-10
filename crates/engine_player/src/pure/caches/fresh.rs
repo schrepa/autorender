@@ -428,7 +428,11 @@ fn frame(engine: &mut Engine) -> Result<Frame, String> {
         .collect();
     let retained = engine::host::call::<MeshesListing>(engine.app.world_mut(), MeshesListing {})
         .map_err(|error| format!("{}: {error}", MeshesListing::NAME))?;
-    let mut instances: Vec<String> = retained.instances.iter().map(Value::to_string).collect();
+    let mut instances: Vec<String> = retained
+        .instances
+        .iter()
+        .map(|instance| serde_json::to_string(instance).unwrap_or_default())
+        .collect();
     instances.sort_unstable();
     Ok(Frame {
         globals,

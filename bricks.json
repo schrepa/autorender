@@ -59,7 +59,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_time_of_day::TimeOfDayBrick",
-      "version": "19b545b0bbee069e2a284d14dfff2c548e36bb17681310536485ffe1bb4e36c6"
+      "version": "8ffcd38eb3a05c9456162af2fe5dcfe8ebcc0918f81be4657a48466e3aa4a207"
     },
     {
       "dependencies": [
@@ -108,7 +108,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_sun::SunBrick",
-      "version": "07120cb85b3171df5b5bf81dbac6c895e8a6c3204ec24a4705b0945c32329c14"
+      "version": "36854e717f55898219f42eb501c08a934e23f7f72b468e0d2dffdfe6693e7ddd"
     },
     {
       "dependencies": [
@@ -227,7 +227,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_lighting::LightingModelBrick",
-      "version": "0f084b257a347f6f62efe6a43a55a05ce7188ce662acdb05b649f9f6cfd15017"
+      "version": "201c3e2fcbbfd10812994a35254b4e4ce5bfe0a40ae38f5fd38081c8f4da5575"
     },
     {
       "dependencies": [
@@ -302,7 +302,7 @@
         }
       ],
       "type": "engine_meshes::MeshesBrick",
-      "version": "0d406f2ac320492a859b56b5618a3073b8641b4cea25cb46ab6d758ff649ff08"
+      "version": "35ffbf00e5838ffd16275765d062f51f4c7c2440833ee372e33219a70d40df47"
     },
     {
       "dependencies": [
@@ -412,7 +412,7 @@
         }
       ],
       "type": "engine_impostors::ImpostorsBrick",
-      "version": "6145b257a0720dc17fe5c4542a632535f71fdfbd90e98d367ce93c2b01bef004"
+      "version": "a1d65a817eaa9eb1fe7c952b3860109011ba9912c635b07a66fcf67b308a2e9f"
     },
     {
       "dependencies": [
@@ -531,7 +531,7 @@
         }
       ],
       "type": "engine_shadows::ShadowsBrick",
-      "version": "5b4efa4b4a786f1d26fb21c0306c691926980267a90c566a09b951a948082717"
+      "version": "2b2d58d4d555f571b9998d3cbe752b9e2764664278e002254e436a23f461a1c5"
     },
     {
       "dependencies": [
@@ -590,7 +590,7 @@
         }
       ],
       "type": "engine_lights::LightsBrick",
-      "version": "8a7042f340ec1bb13787a19014511aca7bfef6c10ef304a78b185ec4dc7cbfab"
+      "version": "76fc68db65fb41b161e305db63f18c5559c3afea2c2d19f907df756f3efaea4f"
     },
     {
       "dependencies": [
@@ -775,7 +775,7 @@
         }
       ],
       "type": "engine_sky::SkyBrick",
-      "version": "f35ade45d7c841e003c4259e5d636ef9882ea0026e2364866658c1dddb813a05"
+      "version": "e6eb6261a3d2f35e01b911a8b352a88baec562f2523db6cec031ea09444ddc8c"
     },
     {
       "dependencies": [
@@ -866,7 +866,7 @@
         }
       ],
       "type": "engine_ambient_occlusion::AmbientOcclusionBrick",
-      "version": "800a8747942ebc5f7803fe5e455b5b3c43cf55a74108521e3d72e21e63ba562f"
+      "version": "df894f51c1624c73213691d95944639d3bba789afad4359a0e11698c7fdf7c32"
     },
     {
       "dependencies": [
@@ -1126,7 +1126,7 @@
         }
       ],
       "type": "engine_auto_exposure::AutoExposureBrick",
-      "version": "79846681d1bc1c6f9a08cca65279249be5524fb93e72493d703dbe2274ec1652"
+      "version": "3b991a2ef0ebe8660ef9c5e4ec56adf321bbbe87d3a7e1db35c8aa9e2e439bb5"
     },
     {
       "dependencies": [
@@ -1170,7 +1170,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_tonemap::TonemapBrick",
-      "version": "51f6953bcef3e4429c501653575176e2110da9de33b8f7643b0fe2cabe12fc95"
+      "version": "238d04e56c31663809ce1050d789bedbf6dad612217cb8800588fd3c53871e8b"
     },
     {
       "dependencies": [
@@ -1325,7 +1325,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_debug_view::DebugViewBrick",
-      "version": "9169960b642236bf119e88727c747dd605a20448492a5350650e2cba4f1cb51f"
+      "version": "8a09253818ed5ee8976c370d06b7aefef0f33c8c4491a5ab1298f7edc0e13745"
     },
     {
       "dependencies": [
@@ -1369,7 +1369,8 @@
       "resources": [
         "engine_audio::settings::Audio",
         "engine_audio::settings::AudioStats",
-        "engine_audio::mixer::Mixer"
+        "engine_audio::mixer::Mixer",
+        "engine_audio::mixer::SoundEnds"
       ],
       "settings": [
         {
@@ -1385,7 +1386,7 @@
         }
       ],
       "type": "engine_audio::AudioBrick",
-      "version": "1fa6630c94e52ef14272f2956c2b1c9786019713551d2ea7c2a2aa1bc1a00703"
+      "version": "3ca9aeb8fd732e8bdf1890141a8bf1ba1d3902876c652e2b09589c0a1f66ba90"
     },
     {
       "dependencies": [
@@ -1429,7 +1430,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_screens::ScreensBrick",
-      "version": "e15953f39b0df349d80773d53a708adfce8bfe817c848e1d99160afef9452895"
+      "version": "bd3e7cdc8ce71615ca2cb7e4f53d134f9ff848e990210e613ddd2596efc4007b"
     },
     {
       "dependencies": [
@@ -1494,7 +1495,7 @@
         }
       ],
       "type": "engine_text::TextBrick",
-      "version": "724e7a2d29508550c631893ad88d13ce6fc5fab0d0722a33ca23c7d7b39470c8"
+      "version": "bb907999c6eb5078adad2b118c7caba31c92ce7d98e3993f4ffb2720fd354ad3"
     },
     {
       "dependencies": [
@@ -1583,7 +1584,7 @@
         }
       ],
       "type": "engine_ui::UiBrick",
-      "version": "2f108fbb08cc279999328f6639c862112e608a4fe66a10e74dbffe44aa04091c"
+      "version": "be7fc595830a931225efb2b37c6ce59b468de530fadf5e9c70624558dfa475a9"
     },
     {
       "dependencies": [
@@ -1668,7 +1669,7 @@
         }
       ],
       "type": "engine_probes::ReflectionProbesBrick",
-      "version": "38fc7a7cb274691385a7eb6c3332e5e1edbb079970b14f9233b332f7073d0832"
+      "version": "36f3bb8038635ba58b982b88e2f25de06cb9051c9553dd38a83cc28c174c8936"
     },
     {
       "dependencies": [
@@ -1797,7 +1798,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_reflections::ReflectionsBrick",
-      "version": "cff8ea28b7d4a694c1272d891af98b28b18241f3ed39d325e588e717acd1be63"
+      "version": "a2ab2591348c00047b2cb68ebc0c81b7b00550ee1ddea21f3da60d6336042473"
     },
     {
       "dependencies": [
@@ -1884,7 +1885,7 @@
         }
       ],
       "type": "engine_particles::ParticlesBrick",
-      "version": "e0645cd33637af5493f07902f01463009035ef36614518b43d4523f95f7f766c"
+      "version": "ce1093bf5302af7974728b16b75aa7c0c94f8e8ecd2f14474fed527809fb8a40"
     },
     {
       "dependencies": [
@@ -1935,7 +1936,8 @@
         "engine_animation::AnimationSettings",
         "engine_animation::animator::Books",
         "engine_animation::skins::Skins",
-        "engine_animation::models::ModelLoads"
+        "engine_animation::models::ModelLoads",
+        "engine_animation::animator::AnimationEnds"
       ],
       "settings": [
         {
@@ -1946,7 +1948,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_animation::AnimationBrick",
-      "version": "4b01b10e5588d3b60f11b3e2219e2904dbca456aa72e382c8d4b6bcbf7229f2c"
+      "version": "d3e6651c07d2eb3ce697fecbd68a329fd2b8b3d83d34e4a202b729bae711eb04"
     },
     {
       "dependencies": [
@@ -2019,7 +2021,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_wind::WindBrick",
-      "version": "1eb0809aea41ea254b74168d0dc8a75ce5e7c691404757af50e1588f212274dc"
+      "version": "fb5eb434c2cffc36e02c091959ef2b65c25ad9898441ec585092a204a78d9986"
     },
     {
       "dependencies": [
@@ -2055,10 +2057,6 @@
         },
         {
           "control": false,
-          "name": "collision_events"
-        },
-        {
-          "control": false,
           "name": "collider"
         }
       ],
@@ -2083,7 +2081,7 @@
         }
       ],
       "type": "engine_collision::CollisionBrick",
-      "version": "f3e430156e8b1474ebf8782f36420990725df9a63fd7c08876eacf3956805d7e"
+      "version": "789f18dc9d5e38507f8c9d101c4f258c142f7b1131c1cb429f07fd5e5d8d568c"
     },
     {
       "dependencies": [
@@ -2150,7 +2148,7 @@
         }
       ],
       "type": "engine_physics::PhysicsBrick",
-      "version": "9d28cf1d5785c26976b87e87e974498bf3c714a6643a4544fb365ea2d130850e"
+      "version": "50f05c515dd1772607c38e21216a3a04ee3d50e58d91f81726509a4647dd800e"
     },
     {
       "dependencies": [
@@ -2265,7 +2263,7 @@
         }
       ],
       "type": "engine_terrain::runtime::brick::TerrainBrick",
-      "version": "e753af748f4cb7ddc6e45cc4548b3352fbad175401c5e44e81cad47d82dac9fb"
+      "version": "cc776fa8d61b150faaace8cf0d985e43abd4c161f0bace0812234bab719bfb00"
     },
     {
       "dependencies": [
@@ -2496,7 +2494,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "9e50817c820e5a8e604fcb3c510064358cf1fd7908f6ed9171a0a43e2384e4bb"
+      "version": "d74c4a4f0af3bc9156eef6522c0aea2587edb21597e865e23c1f04bbe4aefc76"
     },
     {
       "dependencies": [
@@ -2647,7 +2645,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "008e3427ea9a64a050889ccfcaf0301a02c02ccc05a61175f8190b1102168d24"
+      "version": "f0d4f5ca98c306768bc4d391472f1cb1dfd09f162cae2c4d9fd83ebeea4028fe"
     },
     {
       "dependencies": [
@@ -2756,7 +2754,7 @@
         }
       ],
       "type": "engine_ground_cover::GroundCoverBrick",
-      "version": "2106baf384c617b9063b81dc60e42bb6bbca858dc94f63c1b1780a585931d8c4"
+      "version": "e6cc28c94482fff2736f8e4992ec8bfc7e2628fbc7f11e605f5d0dc4a5743d3e"
     },
     {
       "dependencies": [
@@ -2983,7 +2981,7 @@
         }
       ],
       "type": "engine_water::WaterBrick",
-      "version": "33ce809f0e3f9fa81b17240d479779424348de267c000d95206bd405695b4013"
+      "version": "d821236afe52bf81c24acacc25457c2ebe8da7de0704aaf6f5bea6bb6e1d7ea6"
     },
     {
       "dependencies": [
@@ -3206,7 +3204,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_grounding::GroundingBrick",
-      "version": "9c57a222e7746ec2e486ad38598eb28156a1f9fb97aad35a6b05bcf0f4aef890"
+      "version": "4d9aec921ec0af1b553bc00b7bc13a4eb02782f8c665cd53712c8521617948f6"
     },
     {
       "dependencies": [
@@ -3273,7 +3271,7 @@
         }
       ],
       "type": "engine_world_streaming::WorldStreamingBrick",
-      "version": "5d0f43ee440abcc589c25a69363704bd7e4856824041d5b43deb8a26c92016ab"
+      "version": "7e051b043583c48e11408771348db5d181463f303b3ef4522e8ccd4b56eddf03"
     },
     {
       "dependencies": [
@@ -3347,7 +3345,7 @@
         }
       ],
       "type": "engine_navigation::NavigationBrick",
-      "version": "85d2d2a5f2d377b470e18040d0535778eb37a66e38367637d17d18cf82728277"
+      "version": "6832155a58b350b58f3b4ca7a65f80a11d8d777537c2e9f7fa398d06a90bfe8c"
     },
     {
       "dependencies": [
@@ -3380,7 +3378,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_splines::SplinesBrick",
-      "version": "456ecdfddcbcb349eaca4598d18d456737cd46bf5d2e4bb2ff362284c2c09ab7"
+      "version": "b3617b47b252e856a46a6067d4bc9b5fceaa232b021aba283e8c2c5b679014a4"
     }
   ],
   "frame": {

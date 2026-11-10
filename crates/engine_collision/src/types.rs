@@ -1,7 +1,7 @@
 use std::borrow::Cow;
 
 use engine_core::rule::Bound;
-use engine_core::{Error, ErrorCode, Expected, settings, stats};
+use engine_core::{Error, settings, stats};
 use engine_places_simulation::physics::{
     COLLISION_CANDIDATE_BUDGET, COLLISION_INCOMPLETE_WORLD, COLLISION_INVALID_CAST,
     COLLISION_INVALID_CONFIG, COLLISION_INVALID_RAY, COLLISION_INVALID_SHAPE,
@@ -217,15 +217,8 @@ impl CollisionStats {
     }
 }
 
-pub(crate) fn missing_brick(name: &str, path: impl Into<String>) -> Error {
-    Error::new(ErrorCode::MissingPlugin, path)
-        .expected(Expected::Present)
-        .got(name)
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Fault {
-    MissingPlugin,
     InvalidShape,
     InvalidTransform,
     InvalidRay,
@@ -242,7 +235,6 @@ impl Fault {
     pub(crate) fn error(self) -> Error {
         const PATH: &str = "$.collision";
         let code = match self {
-            Self::MissingPlugin => return missing_brick("collision", PATH),
             Self::InvalidShape => {
                 return Error::new(COLLISION_INVALID_SHAPE, PATH)
                     .range(MIN_COLLIDER_EXTENT.bound(), MAX_COLLIDER_EXTENT.bound());

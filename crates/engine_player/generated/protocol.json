@@ -67,7 +67,7 @@
     "parent",
     "view",
     "teleport",
-    "component",
+    "change",
     "rebind",
     "scene_look",
     "scene_material",
@@ -274,8 +274,77 @@
   ],
   "events": [
     "brick_state",
-    "sensor"
+    "input",
+    "load",
+    "sound_ended",
+    "ui_pressed",
+    "animation_ended",
+    "collision"
   ],
+  "lands": {
+    "animation_aim": "next_step",
+    "animation_layer": "next_step",
+    "animation_play": "next_step",
+    "animation_state": "now",
+    "audio_device": "now",
+    "audio_voices": "now",
+    "body_ask": "next_step",
+    "change": "now",
+    "collider": "now",
+    "events": "now",
+    "inspect_shadow_tile": "now",
+    "level": "next_frame",
+    "level_progress": "now",
+    "mesh_drawn": "now",
+    "meshes_listing": "now",
+    "moves": "now",
+    "nav_agent": "now",
+    "nav_agents": "now",
+    "nav_go": "now",
+    "nav_path": "now",
+    "overlap": "now",
+    "particle_burst": "next_frame",
+    "physics_body": "now",
+    "probe_pixel": "now",
+    "probed_pixel": "now",
+    "raycast": "now",
+    "rebind": "now",
+    "remove": "now",
+    "scene_look": "now",
+    "scene_material": "now",
+    "screen": "now",
+    "screens": "now",
+    "shape_cast": "now",
+    "sound_play": "next_frame",
+    "sound_stop": "next_frame",
+    "sound_volume": "next_frame",
+    "spawn": "now",
+    "spline_mesh": "now",
+    "streamed_id": "now",
+    "teleport": "next_step",
+    "terrain_edit": "now",
+    "terrain_height": "now",
+    "terrain_layer_sweep": "now",
+    "terrain_listing": "now",
+    "terrain_redo": "now",
+    "terrain_river": "now",
+    "terrain_route": "now",
+    "terrain_sweep": "now",
+    "terrain_undo": "now",
+    "terrain_view": "now",
+    "text_measure": "now",
+    "text_runs": "now",
+    "ui_press": "next_frame",
+    "ui_tree": "now",
+    "ui_value": "now",
+    "view": "now",
+    "views": "now",
+    "water_pools": "now",
+    "why": "now",
+    "world_cells": "now",
+    "world_changes": "now",
+    "world_removals": "now"
+  },
   "max_request_bytes": 16384,
   "profile_max_events": 65536,
   "queries": [
@@ -300,7 +369,6 @@
     "raycast",
     "overlap",
     "shape_cast",
-    "collision_events",
     "collider",
     "physics_body",
     "terrain_height",
@@ -317,6 +385,40 @@
     "nav_agent",
     "nav_agents",
     "spline_mesh"
+  ],
+  "run_points": [
+    {
+      "name": "frame_start",
+      "pace": "frame"
+    },
+    {
+      "name": "fixed_pre_simulation",
+      "pace": "fixed_step"
+    },
+    {
+      "name": "fixed_move",
+      "pace": "fixed_step"
+    },
+    {
+      "name": "fixed_simulation",
+      "pace": "fixed_step"
+    },
+    {
+      "name": "fixed_post_simulation",
+      "pace": "fixed_step"
+    },
+    {
+      "name": "presentation",
+      "pace": "frame"
+    },
+    {
+      "name": "world_sync",
+      "pace": "frame"
+    },
+    {
+      "name": "view_sync",
+      "pace": "frame"
+    }
   ],
   "verbs": [
     "describe",

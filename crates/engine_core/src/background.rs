@@ -4,17 +4,17 @@ use std::sync::Arc;
 
 use crate::{Error, ErrorCode, Interest, MISSING_RECORD, RecordKey, Records, Request, Requests, Settling};
 
-pub trait Lands<K: Clone> {
+pub trait Delivers<K: Clone> {
     fn landed(&self, held: &Interest<K>) -> Option<Result<Arc<[u8]>, Error>>;
 }
 
-impl Lands<RecordKey> for Records {
+impl Delivers<RecordKey> for Records {
     fn landed(&self, held: &Interest<RecordKey>) -> Option<Result<Arc<[u8]>, Error>> {
         self.get(held)
     }
 }
 
-impl<K: Clone + Eq + Hash, A> Lands<K> for Requests<K, Arc<[u8]>, A> {
+impl<K: Clone + Eq + Hash, A> Delivers<K> for Requests<K, Arc<[u8]>, A> {
     fn landed(&self, held: &Interest<K>) -> Option<Result<Arc<[u8]>, Error>> {
         match self.of(held)? {
             Request::Asked(_) => None,
@@ -69,7 +69,7 @@ impl<T, K: Clone> Background<T, K> {
         }
     }
 
-    pub fn poll(&mut self, from: &impl Lands<K>) -> Landed<'_, T> {
+    pub fn poll(&mut self, from: &impl Delivers<K>) -> Landed<'_, T> {
         if let Stage::Asked(held, _) = &self.stage
             && let Some(landed) = from.landed(held)
         {

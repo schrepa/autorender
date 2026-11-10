@@ -3,7 +3,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 
-use crate::{Background, Error, ErrorCode, Interest, Lands, Requests, Ticket};
+use crate::{Background, Delivers, Error, ErrorCode, Interest, Requests, Ticket};
 
 type Landing = Arc<Mutex<Vec<(String, Ticket, Result<Vec<u8>, String>)>>>;
 
@@ -38,7 +38,7 @@ impl Files {
     }
 }
 
-impl Lands<String> for Files {
+impl Delivers<String> for Files {
     fn landed(&self, held: &Interest<String>) -> Option<Result<Arc<[u8]>, Error>> {
         self.requests.landed(held)
     }

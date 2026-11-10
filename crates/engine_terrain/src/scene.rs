@@ -37,6 +37,7 @@ pub struct SceneTerrain {
     #[schemars(range(min = crate::Pyramid::MIN_SPACING, max = crate::Pyramid::MAX_SPACING))]
     pub spacing: Option<f32>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[schemars(schema_with = "layer_shapes")]
     pub layers: Vec<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<SceneTerrainSurface>,
@@ -49,6 +50,10 @@ pub struct SceneTerrain {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     #[schemars(length(max = crate::MAX_GIVEN_RIVERS))]
     pub rivers: Vec<SceneTerrainRiver>,
+}
+
+fn layer_shapes(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    engine_core::shaped_by(generator.subschema_for::<Vec<Value>>(), "terrain_layer")
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
