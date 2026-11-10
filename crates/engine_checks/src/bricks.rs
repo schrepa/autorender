@@ -284,7 +284,7 @@ pub fn bricks_json(
         .collect();
     let text = serde_json::to_string_pretty(&json!({
         "bricks": bricks,
-        "places": places(registry, &uses),
+        "places": self::places(registry, &uses),
         "left_out": registry.left_out(),
         "unmet": registry.unmet(),
         "ownership": registry.ownership(),

@@ -86,8 +86,10 @@ struct Sheets;
 
 pub const SPRITE_PART: &str = "sprite";
 
+type ChangedSprites = (With<Sprite>, Or<(Added<Sprite>, Changed<Drawn>)>);
+
 fn judge_sprites(
-    sprites: Query<(Entity, &Drawn), (With<Sprite>, Or<(Added<Sprite>, Changed<Drawn>)>)>,
+    sprites: Query<(Entity, &Drawn), ChangedSprites>,
     mut refusals: ResMut<Refusals>,
 ) {
     for (entity, drawn) in &sprites {
