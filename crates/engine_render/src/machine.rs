@@ -1185,11 +1185,15 @@ fn graph_of(
         let part = declared.parts.get(pass.part as usize);
         let entry = PassEntry {
             label: pass.name,
-            package: part.map_or("", |part| part.package),
+            brick: part.map_or("", |part| part.package),
             registered: index as u32,
             layer: pass.layer,
             shared: shared(pass),
             group: pass.group,
+            blends: pipelines
+                .iter()
+                .filter(|pipeline| in_pass(pipeline, index as u32, pass))
+                .any(|pipeline| composes(&pipeline.decl.program)),
         };
         let scene = pass_layer(pass);
         let depth_written = depth_writes.get(index).copied().unwrap_or(true);
@@ -1374,11 +1378,12 @@ fn graph_of(
         passes.push(GraphPass {
             entry: PassEntry {
                 label: "view_copy",
-                package: "",
+                brick: "",
                 registered: 0,
                 layer: Some(layer),
                 shared: true,
                 group: None,
+                blends: false,
             },
             reads: vec![from],
             writes: vec![copy],
@@ -1390,6 +1395,20 @@ fn graph_of(
     }
     let graph = StaticGraph::build(resources, passes)?;
     Ok((graph, ids))
+}
+
+fn composes(program: &Program) -> bool {
+    match program {
+        Program::Render(render) => {
+            render.blend.is_some()
+                || render
+                    .targets
+                    .as_ref()
+                    .is_some_and(|targets| targets.iter().any(|(blend, _)| blend.is_some()))
+                || matches!(render.depth, DepthUse::None | DepthUse::Overwrite)
+        }
+        Program::Compute(_) => false,
+    }
 }
 
 fn copies(

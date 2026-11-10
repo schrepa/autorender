@@ -33,6 +33,7 @@ mod graph;
 mod install;
 mod linker;
 mod machine;
+mod needs;
 mod pieces;
 mod pipelines;
 mod places;

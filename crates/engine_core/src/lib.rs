@@ -14,6 +14,7 @@ mod cull;
 mod cursor;
 mod drawn;
 mod entity_indices;
+mod folds;
 mod frame_timing;
 mod hierarchy;
 mod input;
@@ -96,6 +97,7 @@ pub use engine_settings::{
     Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, fields,
     is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
 };
+pub use folds::FoldOrder;
 pub use frame_timing::{FrameTiming, GpuFrameTime, RenderScale};
 pub use glam;
 pub use hierarchy::*;
@@ -266,6 +268,7 @@ fn core_entries(registry: &mut RegistryBuilder) {
     registry.core_settings(bricks::settings_entry::<SubpixelCulling>());
     registry.core_settings(bricks::settings_entry::<FrameLimits>());
     registry.core_settings(bricks::settings_entry::<InputSettings>());
+    registry.core_settings(bricks::settings_entry::<FoldOrder>());
     registry.core_operation(OperationEntry::of::<
         <views::ViewControl as Operation>::Params,
     >(
@@ -415,6 +418,7 @@ impl Engine {
             .init_resource::<Devices>()
             .init_resource::<Contexts>()
             .init_resource::<InputSettings>()
+            .init_resource::<FoldOrder>()
             .init_resource::<CursorRequests>()
             .init_resource::<WholeFrames>()
             .init_resource::<ProvidedAssets>()
@@ -476,6 +480,9 @@ impl Engine {
         world.resource_mut::<JobExchange>().set_list(jobs);
         let labels: [InternedScheduleLabel; 8] = Schedule::ALL.map(Schedule::label);
         let mut gates = registry.install(world, &labels);
+        for default in list.defaults() {
+            default(world);
+        }
         moves::install_kinds(world);
         drawn::install_kinds(world);
         install_passes(world);

@@ -1,5 +1,6 @@
 use std::any::{Any, TypeId};
 use std::marker::PhantomData;
+use std::sync::Arc;
 
 use bevy_ecs::bundle::Bundle;
 use bevy_ecs::component::{Component, ComponentId, Immutable, Mutable};
@@ -329,7 +330,11 @@ pub trait Listing: Sized {
     fn without<B: Brick>(self) -> Self;
     #[must_use]
     fn places(self, places: &'static [PlaceDecl]) -> Self;
+    #[must_use]
+    fn settings<S: Section>(self, value: S) -> Self;
 }
+
+pub type ListDefault = Arc<dyn Fn(&mut World) + Send + Sync>;
 
 #[doc(hidden)]
 #[derive(Clone, Copy)]
@@ -394,6 +399,7 @@ pub struct BrickList {
     left: Vec<Listed>,
     places: Vec<&'static [PlaceDecl]>,
     core: Vec<fn(&mut RegistryBuilder)>,
+    defaults: Vec<ListDefault>,
 }
 
 impl BrickList {
@@ -417,6 +423,10 @@ impl BrickList {
         &self.core
     }
 
+    pub fn defaults(&self) -> &[ListDefault] {
+        &self.defaults
+    }
+
     pub fn contains(&self, package: &str) -> bool {
         self.bricks.iter().any(|listed| listed.package() == package)
     }
@@ -430,7 +440,6 @@ impl BrickList {
 
     pub fn job_list(&self) -> Result<JobList, Error> {
         let mut records: Vec<BrickRecord> = self.bricks.iter().map(Listed::record).collect();
-        records.sort_by(|a, b| a.package.cmp(b.package));
         let members = records
             .iter_mut()
             .flat_map(BrickRecord::take_members)
@@ -492,6 +501,13 @@ impl Listing for BrickList {
 
     fn places(mut self, places: &'static [PlaceDecl]) -> Self {
         self.places.push(places);
+        self
+    }
+
+    fn settings<S: Section>(mut self, value: S) -> Self {
+        self.defaults.push(Arc::new(move |world: &mut World| {
+            world.insert_resource(value.clone());
+        }));
         self
     }
 }

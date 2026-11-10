@@ -337,8 +337,7 @@ impl ScenePasses {
         registered: impl IntoIterator<Item = (&'static str, PassEntry)>,
         kinds: Vec<KindDecl>,
     ) -> (Self, Vec<Error>) {
-        let mut entries: Vec<(&'static str, PassEntry)> = registered.into_iter().collect();
-        entries.sort_by(|first, second| (first.0, first.1.name).cmp(&(second.0, second.1.name)));
+        let entries: Vec<(&'static str, PassEntry)> = registered.into_iter().collect();
         let mut listed: Vec<ScenePass> = Vec::with_capacity(entries.len() + CORE_PASSES.len());
         let mut problems = Vec::new();
         let mut next = 0_u32;

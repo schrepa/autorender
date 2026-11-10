@@ -8,7 +8,7 @@ use bevy_ecs::schedule::{
 };
 use bevy_ecs::system::{IntoSystem, ScheduleSystem};
 use bevy_ecs::world::World;
-use engine_place::{Error, ErrorCode, PlaceDecl, PlaceKind, Slot, Smoke};
+use engine_place::{AttachPoint, Error, ErrorCode, PlaceDecl, PlaceKind, Slot, Smoke};
 use serde_json::Value;
 
 use crate::access::{AccessRule, MoverRule};
@@ -16,6 +16,7 @@ use crate::attribution::CORE_ROW;
 use crate::entries::{Kept, OperationEntry, PieceEntry, SettingsEntry, StatsEntry};
 use crate::hooks::{Named, add_removal};
 use crate::jobs::JobQueue;
+use crate::needs::{LeftOut, Read, ReadKind};
 use crate::order::{self, PlaceRules};
 use crate::owners::{Shared, Used, ValueKind, Values, note, ownership};
 use crate::record::{BrickRecord, crate_segment};
@@ -71,6 +72,9 @@ pub struct Registry {
     movers: Option<MoverRule>,
     despawn: Option<Despawn>,
     problems: Vec<Error>,
+    left: Vec<LeftOut>,
+    reads: Vec<Read>,
+    unmet: Vec<Error>,
 }
 
 #[derive(Default)]
@@ -97,23 +101,18 @@ impl RegistryBuilder {
                 .problems
                 .push(Error::new(ErrorCode::ForeignAccess, path).got(record.type_name()));
         }
-        let at = match registry
-            .bricks
-            .binary_search_by(|known| known.package.cmp(package))
-        {
-            Ok(_) => {
-                let path = format!("$.bricks.{package}");
-                registry
-                    .problems
-                    .push(Error::new(ErrorCode::NameTwice, path).got(package));
-                return;
-            }
-            Err(at) => at,
-        };
+        if registry.has(package) {
+            let path = format!("$.bricks.{package}");
+            registry
+                .problems
+                .push(Error::new(ErrorCode::NameTwice, path).got(package));
+            return;
+        }
         registry.check_names(&record);
         registry.left_out.retain(|&left| left != package);
+        registry.left.retain(|left| left.package != package);
         self.listed.push(package);
-        registry.bricks.insert(at, record);
+        registry.bricks.push(record);
     }
 
     pub fn places(&mut self, places: &'static [PlaceDecl]) {
@@ -167,6 +166,19 @@ impl RegistryBuilder {
         }
         if !self.registry.left_out.contains(&package) {
             self.registry.left_out.push(package);
+            self.registry.left.push(LeftOut {
+                package,
+                places: record
+                    .fills()
+                    .iter()
+                    .map(|filled| filled.place.name())
+                    .chain(record.joins().iter().map(|joined| joined.place.name()))
+                    .collect(),
+                passes: record
+                    .render_entries::<engine_place::PassEntry>()
+                    .copied()
+                    .collect(),
+            });
         }
         self.left_owned
             .extend(record.owned().iter().map(|owned| (owned.type_id, package)));
@@ -220,7 +232,6 @@ impl RegistryBuilder {
 }
 
 impl Registry {
-
     pub fn core_settings(&mut self, mut entry: SettingsEntry) {
         entry.brick = CORE_ROW;
         let owner = self
@@ -293,6 +304,41 @@ impl Registry {
         self.problems.push(error);
     }
 
+    pub fn report_unmet(&mut self, error: Error) {
+        if !self.unmet.contains(&error) {
+            self.unmet.push(error);
+        }
+    }
+
+    pub fn unmet(&self) -> &[Error] {
+        &self.unmet
+    }
+
+    pub fn reads(&self) -> &[Read] {
+        &self.reads
+    }
+
+    pub fn note_reads(&mut self, kinds: &[ReadKind], reads: Vec<Read>) {
+        self.reads.retain(|read| !kinds.contains(&read.kind));
+        self.reads.extend(reads);
+    }
+
+    pub fn could_provide(&self, place: &str) -> Vec<&'static str> {
+        self.left
+            .iter()
+            .filter(|left| left.provides(place))
+            .map(|left| left.package)
+            .collect()
+    }
+
+    pub fn could_write(&self, target: &str, before: Option<AttachPoint>) -> Vec<&'static str> {
+        self.left
+            .iter()
+            .filter(|left| left.writes(target, before))
+            .map(|left| left.package)
+            .collect()
+    }
+
     pub fn problems(&self) -> &[Error] {
         &self.problems
     }
@@ -318,8 +364,8 @@ impl Registry {
 
     pub fn id(&self, package: &str) -> Option<BrickId> {
         self.bricks
-            .binary_search_by(|known| known.package.cmp(package))
-            .ok()
+            .iter()
+            .position(|known| known.package == package)
             .map(|index| BrickId(index as u32))
     }
 
@@ -999,7 +1045,52 @@ impl Registry {
         }
         self.owners = held.shared;
         self.private = held.private;
+        let (reads, unmet) = self.slot_reads(world, uses);
+        self.note_reads(&[ReadKind::Slot], reads);
+        for error in unmet {
+            self.report_unmet(error);
+        }
         held.needs
+    }
+
+    fn slot_reads(&self, world: &World, uses: &[Used]) -> (Vec<Read>, Vec<Error>) {
+        let mut reads = Vec::new();
+        let mut unmet = Vec::new();
+        for decl in self
+            .catalog
+            .iter()
+            .filter(|decl| decl.kind() == PlaceKind::Slot)
+        {
+            let Some(id) = world.components().get_id(decl.type_id()) else {
+                continue;
+            };
+            let filler = self.filler(decl.type_id());
+            let mut readers: Vec<&'static str> = Vec::new();
+            for used in uses.iter().filter(|used| used.id == id && !used.write) {
+                let Some(record) = self.bricks.get(used.brick.index()) else {
+                    continue;
+                };
+                if Some(record.package) != filler && !readers.contains(&record.package) {
+                    readers.push(record.package);
+                }
+            }
+            for &reader in &readers {
+                reads.push(Read {
+                    reader,
+                    kind: ReadKind::Slot,
+                    place: decl.name().to_owned(),
+                    providers: filler.into_iter().collect(),
+                });
+            }
+            if filler.is_none() && !readers.is_empty() {
+                unmet.push(
+                    Error::new(ErrorCode::PlaceNotFilled, format!("$.places.{}", decl.name()))
+                        .got(&readers)
+                        .nearest(self.could_provide(decl.name())),
+                );
+            }
+        }
+        (reads, unmet)
     }
 
     fn check_operations(&mut self, world: &mut World, uses: &mut Vec<Used>) {
