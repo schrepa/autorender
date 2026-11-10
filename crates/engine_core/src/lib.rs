@@ -479,6 +479,9 @@ impl Engine {
         for left in list.left() {
             registry.leave_out(&left.record());
         }
+        for known in list.known() {
+            registry.known(&known.record());
+        }
         let world = self.app.world_mut();
         world.insert_resource(JobListed::of(&jobs));
         world.resource_mut::<JobExchange>().set_list(jobs);

@@ -216,7 +216,6 @@ pub(crate) struct Published {
     bridges: Arc<[Bridge]>,
     colliders: Vec<Option<PlacedCollider>>,
     placing: HashSet<TileKey>,
-    floor: bool,
     surrounded: bool,
     covered: [Covered; 2],
     covers: Vec<FieldCover>,
@@ -261,8 +260,7 @@ impl Published {
             }
             None => self.surrounded,
         };
-        let floor = state.terrain.collision;
-        let regrounded = faced || surrounded || floor != self.floor;
+        let regrounded = faced || surrounded;
         let assets = &state.terrain.surface.assets;
         let moved = touched
             || !self.same_tiles(state)
@@ -298,18 +296,11 @@ impl Published {
             self.solids = Arc::new(SolidTree::new(solids));
         }
         if regrounded {
-            self.floor = floor;
             self.surrounded = around.is_some();
             let [inner, outer] = &mut self.covered;
-            self.covers = if floor {
-                std::iter::once(inner.cover(state))
-                    .chain(around.map(|around| outer.cover(around)))
-                    .collect()
-            } else {
-                *inner = Covered::default();
-                *outer = Covered::default();
-                Vec::new()
-            };
+            self.covers = std::iter::once(inner.cover(state))
+                .chain(around.map(|around| outer.cover(around)))
+                .collect();
         }
         Some(Arc::new(SolidField {
             fields: self

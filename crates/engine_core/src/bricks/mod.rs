@@ -297,6 +297,8 @@ pub trait Listing: Sized {
     #[must_use]
     fn without<B: Brick>(self) -> Self;
     #[must_use]
+    fn knows<B: Brick>(self) -> Self;
+    #[must_use]
     fn places(self, places: &'static [PlaceDecl]) -> Self;
     #[must_use]
     fn settings<S: Section>(self, value: S) -> Self;
@@ -365,6 +367,7 @@ fn record_of<B: Brick>() -> BrickRecord {
 pub struct BrickList {
     bricks: Vec<Listed>,
     left: Vec<Listed>,
+    known: Vec<Listed>,
     places: Vec<&'static [PlaceDecl]>,
     core: Vec<fn(&mut RegistryBuilder)>,
     defaults: Vec<ListDefault>,
@@ -385,6 +388,10 @@ impl BrickList {
 
     pub fn left(&self) -> &[Listed] {
         &self.left
+    }
+
+    pub fn known(&self) -> &[Listed] {
+        &self.known
     }
 
     pub fn core_places(&self) -> &[fn(&mut RegistryBuilder)] {
@@ -455,11 +462,15 @@ impl Listing for BrickList {
     fn with<B: Brick>(mut self) -> Self {
         self.left
             .retain(|left| !std::ptr::eq(left.source, B::SOURCE));
+        self.known
+            .retain(|known| !std::ptr::eq(known.source, B::SOURCE));
         self.bricks.push(Listed::of::<B>());
         self
     }
 
     fn without<B: Brick>(mut self) -> Self {
+        self.known
+            .retain(|known| !std::ptr::eq(known.source, B::SOURCE));
         let (mut out, kept) = std::mem::take(&mut self.bricks)
             .into_iter()
             .partition::<Vec<_>, _>(|listed| std::ptr::eq(listed.source, B::SOURCE));
@@ -468,6 +479,17 @@ impl Listing for BrickList {
             out.push(Listed::of::<B>());
         }
         self.leave(out)
+    }
+
+    fn knows<B: Brick>(mut self) -> Self {
+        let held = |listed: &Listed| std::ptr::eq(listed.source, B::SOURCE);
+        if !self.bricks.iter().any(held)
+            && !self.left.iter().any(held)
+            && !self.known.iter().any(held)
+        {
+            self.known.push(Listed::of::<B>());
+        }
+        self
     }
 
     fn places(mut self, places: &'static [PlaceDecl]) -> Self {

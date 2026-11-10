@@ -148,6 +148,7 @@ pub enum GroundedAt {
         surface: Option<GroundSurface>,
         revision: u64,
     },
+    Waiting,
     Unsupported {
         position: Vec2,
         offset: f32,
@@ -159,7 +160,7 @@ impl GroundedAt {
     pub fn surface(self) -> Option<GroundSurface> {
         match self {
             Self::Stood { surface, .. } => surface,
-            Self::Unsettled | Self::Unsupported { .. } => None,
+            Self::Unsettled | Self::Waiting | Self::Unsupported { .. } => None,
         }
     }
 }

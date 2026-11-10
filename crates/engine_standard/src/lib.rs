@@ -25,8 +25,31 @@ pub use engine_water::WaterBrick;
 pub use engine_wind::WindBrick;
 pub use engine_world_streaming::WorldStreamingBrick;
 
+fn known<L: Listing>(list: L) -> L {
+    list.knows::<CollisionBrick>()
+        .knows::<GroundCoverBrick>()
+        .knows::<GroundingBrick>()
+        .knows::<LayerErosionBrick>()
+        .knows::<LayerHeightmapBrick>()
+        .knows::<LayerHydrologyBrick>()
+        .knows::<LayerNoiseBrick>()
+        .knows::<LayerPathsBrick>()
+        .knows::<LayerReliefBrick>()
+        .knows::<LayerStampsBrick>()
+        .knows::<NavigationBrick>()
+        .knows::<PhysicsBrick>()
+        .knows::<ScatterBrick>()
+        .knows::<SplinesBrick>()
+        .knows::<TerrainBrick>()
+        .knows::<TerrainShadingBrick>()
+        .knows::<WaterBrick>()
+        .knows::<WindBrick>()
+        .knows::<WorldStreamingBrick>()
+}
+
 pub fn open_world<L: Listing>(list: L) -> L {
-    list.with::<TerrainBrick>()
+    known(list)
+        .with::<TerrainBrick>()
         .with::<TerrainShadingBrick>()
         .with::<ScatterBrick>()
         .with::<GroundCoverBrick>()

@@ -142,17 +142,19 @@ fn unmet_of(machine: &Machine, scenes: &ScenePasses, registry: &Registry) -> Vec
             let could = target
                 .map(|name| registry.could_write(name, entry.layer))
                 .unwrap_or_default();
-            unmet.push(
-                Error::new(
-                    ErrorCode::ReadBeforeWrite,
-                    format!("$.bricks.{reader}.passes.{}.reads.{label}", entry.label),
-                )
-                .got(serde_json::json!({
-                    "before": entry.layer.map(AttachPoint::name),
-                    "listed_writers": listed,
-                }))
-                .nearest(could),
-            );
+            let unwritten = Error::new(
+                ErrorCode::ReadBeforeWrite,
+                format!("$.bricks.{reader}.passes.{}.reads.{label}", entry.label),
+            )
+            .got(serde_json::json!({
+                "before": entry.layer.map(AttachPoint::name),
+                "listed_writers": listed,
+            }));
+            unmet.push(if could.is_empty() {
+                unwritten
+            } else {
+                unwritten.nearest(could)
+            });
         }
     }
     unmet
