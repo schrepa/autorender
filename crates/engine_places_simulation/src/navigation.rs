@@ -50,6 +50,7 @@ pub struct NavStep {
     pub to: Vec3,
     pub facing: Quat,
     pub blocked: Option<Entity>,
+    pub taken: bool,
 }
 
 #[derive(Component, Clone, Debug, Default)]

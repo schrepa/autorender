@@ -56,13 +56,24 @@ impl Readable for EnvironmentSteps {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct EnvironmentPlan {
     shown: Option<EnvironmentInputs>,
     drawing: Option<EnvironmentInputs>,
     image: u64,
     beyond: Option<StoreId>,
     settling: Settling,
+}
+
+impl Default for EnvironmentPlan {
+    fn default() -> Self {
+        Self {
+            shown: None,
+            drawing: None,
+            image: 0,
+            beyond: None,
+            settling: Settling::on_view(),
+        }
+    }
 }
 
 impl EnvironmentPlan {

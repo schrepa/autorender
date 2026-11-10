@@ -5,11 +5,13 @@ use engine::host::FramePhase;
 use engine::{
     BrickList, Engine, Error, ErrorCode, Expected, Game, GameHost, GpuPreference, RenderTarget,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::files::Image;
 use crate::jobs::{JobOptions, JobPool};
 use crate::{Pix, RenderDoc, file_error};
+
+const PREPARING_SAID_EVERY: Duration = Duration::from_secs(5);
 
 pub struct Offscreen<G: Game> {
     host: Box<GameHost<G>>,
@@ -256,8 +258,10 @@ impl<G: Game> Offscreen<G> {
     pub fn prepare(&mut self, timestamp: f64) -> engine::Result<()> {
         let (width, height) = self.size;
         let started = Instant::now();
+        let mut said = started;
         self.host.set_preparation(true);
         loop {
+            let began = Instant::now();
             let at = timestamp + started.elapsed().as_secs_f64() * 1000.0;
             let phase = self.host.animation_frame(at, width, height)?;
             self.exchange_jobs();
@@ -265,6 +269,25 @@ impl<G: Game> Offscreen<G> {
             if phase == FramePhase::Started {
                 return Ok(());
             }
+            if said.elapsed() >= PREPARING_SAID_EVERY {
+                said = Instant::now();
+                let record = json!({
+                    "event": "preparing",
+                    "phase": format!("{phase:?}"),
+                    "seconds": started.elapsed().as_secs_f64(),
+                    "readiness": &self.host.frame_times().readiness,
+                });
+                eprintln!("{record}");
+            }
+            self.pace(began);
+        }
+    }
+
+    fn pace(&self, began: Instant) {
+        let interval = Duration::try_from_secs_f64(self.host.refresh_interval() / 1000.0)
+            .unwrap_or_default();
+        if let Some(rest) = interval.checked_sub(began.elapsed()) {
+            std::thread::sleep(rest);
         }
     }
 

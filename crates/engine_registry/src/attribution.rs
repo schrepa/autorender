@@ -1,6 +1,6 @@
 use bevy_ecs::resource::Resource;
 
-pub const CORE_ROW: &str = "core";
+pub use engine_place::CORE_ROW;
 pub const UNATTRIBUTED_ROW: &str = "unattributed";
 pub const GPU_IDLE_ROW: &str = "gpu_idle";
 

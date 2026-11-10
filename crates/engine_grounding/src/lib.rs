@@ -13,7 +13,7 @@ use engine_core::{
 use engine_places_simulation::ground::{
     Ground, GroundProbe, GroundSurface, Grounded, GroundedAt,
 };
-use engine_places_simulation::navigation::NavWalk;
+use engine_places_simulation::navigation::{NavStep, NavWalk};
 use glam::Vec2;
 use serde::Serialize;
 use serde_json::Value;
@@ -89,6 +89,18 @@ type GroundedQuery<'w, 's> = Query<
         &'static Grounded,
         &'static mut GroundedAt,
         Option<&'static NavWalk>,
+    ),
+    Without<Parent>,
+>;
+
+type SteeredQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static Grounded,
+        &'static mut GroundedAt,
+        &'static mut NavWalk,
     ),
     Without<Parent>,
 >;
@@ -181,15 +193,19 @@ fn stand(
 fn steer(
     (ground, settings): (Res<Ground>, Res<Grounding>),
     mut moves: Moves<GroundingBrick>,
-    mut query: GroundedQuery,
+    mut query: SteeredQuery,
 ) {
-    for (entity, grounded, mut at, walk) in &mut query {
-        let Some(step) = walk.and_then(|walk| walk.step) else {
+    for (entity, grounded, mut at, mut walk) in &mut query {
+        let Some(step) = walk.step.filter(|step| !step.taken) else {
             continue;
         };
         let Some(mut transform) = moves.get_mut(entity) else {
             continue;
         };
+        walk.step = Some(NavStep {
+            taken: true,
+            ..step
+        });
         transform.translation.x = step.to.x;
         transform.translation.z = step.to.z;
         if transform.rotation != step.facing {

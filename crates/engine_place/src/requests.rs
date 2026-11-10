@@ -1,5 +1,5 @@
 use std::any::Any;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::hash_map::Entry;
 use std::fmt;
 use std::hash::Hash;
@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, Weak};
 use engine_math::collections::HashMap;
 use serde::{Serialize, Serializer};
 
+use crate::readiness::{Awaits, CORE_ROW};
 use crate::{Error, Readiness};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize)]
@@ -147,6 +148,8 @@ struct Tally {
     settling: u32,
     failed: Vec<(u64, Error)>,
     joined: bool,
+    owner: &'static str,
+    awaits: Awaits,
 }
 
 type Tallied = Arc<Mutex<Tally>>;
@@ -157,6 +160,20 @@ pub struct Board(Arc<Mutex<Vec<Weak<Mutex<Tally>>>>>);
 
 thread_local! {
     static BOARD: RefCell<Option<Board>> = const { RefCell::new(None) };
+    static OWNER: Cell<&'static str> = const { Cell::new(CORE_ROW) };
+}
+
+struct Owner(&'static str);
+
+impl Drop for Owner {
+    fn drop(&mut self) {
+        let previous = self.0;
+        let _ = OWNER.try_with(|owner| owner.set(previous));
+    }
+}
+
+fn owner() -> &'static str {
+    OWNER.try_with(Cell::get).unwrap_or(CORE_ROW)
 }
 
 struct Restore(Option<Board>);
@@ -178,16 +195,28 @@ impl Board {
         run()
     }
 
-    pub fn add_to(&self, readiness: &mut Readiness) {
+    pub fn owned_by<R>(brick: &'static str, run: impl FnOnce() -> R) -> R {
+        let previous = OWNER
+            .try_with(|owner| owner.replace(brick))
+            .unwrap_or(CORE_ROW);
+        let _restore = Owner(previous);
+        run()
+    }
+
+    pub fn add_to(&self, readiness: &mut Readiness, viewed: bool) {
         lock(&self.0).retain(|member| {
             let Some(tally) = member.upgrade() else {
                 return false;
             };
             let tally = lock(&tally);
-            readiness.loading = readiness.loading.and(tally.loading);
-            readiness.settle(tally.settling);
+            readiness.load(tally.owner, tally.loading);
+            if tally.awaits == Awaits::View && !viewed {
+                readiness.await_view(tally.owner, tally.settling);
+            } else {
+                readiness.settle(tally.owner, tally.settling);
+            }
             for (_, error) in &tally.failed {
-                readiness.fail(&error.path, error.clone());
+                readiness.fail(tally.owner, error.clone());
             }
             true
         });
@@ -213,7 +242,9 @@ fn join(tally: &Tallied) {
     let _ = BOARD.try_with(|board| {
         if let Some(board) = board.borrow().as_ref() {
             lock(&board.0).push(Arc::downgrade(tally));
-            lock(tally).joined = true;
+            let mut joined = lock(tally);
+            joined.joined = true;
+            joined.owner = owner();
         }
     });
 }
@@ -227,6 +258,12 @@ impl Default for Settling {
 }
 
 impl Settling {
+    pub fn on_view() -> Self {
+        let settling = Self::default();
+        lock(&settling.0).awaits = Awaits::View;
+        settling
+    }
+
     pub fn left(&self, left: u32) {
         join(&self.0);
         lock(&self.0).settling = left;

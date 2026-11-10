@@ -23,8 +23,9 @@ use serde_json::Value;
 
 use crate::moves::NodeKind;
 use crate::{
-    Error, ErrorCode, GpuStruct, JobKind, KindDecl, List, Module, Mover, MoverId, Operation, Pace,
-    PlaceDecl, RecordKey, SceneContext, SceneIds, Section, Slot, Smoke, Source, SubScene,
+    Board, Error, ErrorCode, GpuStruct, JobKind, KindDecl, List, Module, Mover, MoverId,
+    Operation, Pace, PlaceDecl, RecordKey, SceneContext, SceneIds, Section, Slot, Smoke, Source,
+    SubScene,
 };
 
 pub trait Brick: 'static {
@@ -719,10 +720,10 @@ fn despawned<B: Brick>(world: &mut World, entity: Entity) {
 
 fn installed<B: Brick>(world: &mut World, entities: &[Entity], scene: &SubScene) {
     let context = world.get_resource::<SceneContext>().cloned();
-    let landed = match &context {
+    let landed = Board::owned_by(B::SOURCE.package(), || match &context {
         Some(context) => context.scope(|| install::<B>(world, entities, scene)),
         None => install::<B>(world, entities, scene),
-    };
+    });
     if let Err(error) = landed {
         for &entity in entities {
             let _ = world.try_despawn(entity);
