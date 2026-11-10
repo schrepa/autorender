@@ -1418,10 +1418,10 @@ impl<P: GpuPart> Draw<'_, P, Own> {
             if member.part == encoding {
                 let run = self.raw.run();
                 run.point = Some(scene.pass.0);
-                run.tallies.kinds.drawing = Some(kind);
+                run.tallies.kinds.begin(kind, scene.pass.0);
                 let count = (member.call)(own, &scene, &mut self.raw.member(member.part));
                 let run = self.raw.run();
-                run.tallies.kinds.drew(kind, scene.pass.0, count);
+                run.tallies.kinds.end();
                 run.point = None;
                 drawn += count;
                 continue;
@@ -1431,10 +1431,10 @@ impl<P: GpuPart> Draw<'_, P, Own> {
                 continue;
             };
             run.point = Some(scene.pass.0);
-            run.tallies.kinds.drawing = Some(kind);
+            run.tallies.kinds.begin(kind, scene.pass.0);
             let count = (member.call)(held.part(), &scene, &mut self.raw.member(member.part));
             let run = self.raw.run();
-            run.tallies.kinds.drew(kind, scene.pass.0, count);
+            run.tallies.kinds.end();
             run.point = None;
             run.give_member(member.part, held);
             drawn += count;

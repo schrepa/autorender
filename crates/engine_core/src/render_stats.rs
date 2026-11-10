@@ -4,9 +4,46 @@ use crate::Error;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+#[serde(rename_all = "snake_case")]
+pub enum DropReason {
+    UnknownPipeline,
+    PassMismatch,
+    UnfilledHoles,
+    GeometryNotResident,
+    MaterialNotResident,
+    MaterialNotHeld,
+    MaterialWaiting,
+    GeometryLacksStreams,
+    NoRenderPass,
+    PipelineSkipped,
+    PipelineCompiling,
+    PipelineRefused,
+    MissingInput,
+}
+
+impl DropReason {
+    pub const fn faults(self) -> bool {
+        !matches!(self, Self::PipelineCompiling | Self::MaterialWaiting)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct DroppedDraws {
+    pub part: &'static str,
+    pub kind: Option<&'static str>,
+    pub pass: &'static str,
+    pub reason: DropReason,
+    pub faults: bool,
+    pub count: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum KindPassState {
     Drew { draws: u32 },
+    Dropped { reason: DropReason, draws: u32 },
     Skipped { reason: &'static str },
     Silent,
 }
@@ -45,6 +82,7 @@ pub struct RenderStats {
     pub readback_overflows: u64,
     pub kind_passes: Vec<KindPass>,
     pub kind_problems: Vec<Error>,
+    pub dropped_draws: Vec<DroppedDraws>,
 }
 
 fn none_overflowed(overflows: &u64) -> bool {

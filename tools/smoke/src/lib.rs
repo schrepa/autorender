@@ -194,6 +194,13 @@ pub fn counted_in_joined_passes(
             json!([]),
             "no_kind_pass_is_silent"
         );
+        let dropped: Vec<&Value> = rendering["dropped_draws"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter(|row| row["kind"] == kind && row["faults"] == true)
+            .collect();
+        smoke_eq!(json!(dropped), json!([]), "no_draw_of_the_kind_is_dropped");
         for cell in rendering["kind_passes"].as_array().into_iter().flatten() {
             let Some(pass) = cell["pass"].as_str() else {
                 continue;

@@ -23,7 +23,7 @@ use super::{
     IDS_FORMAT, NEVER_BLENDS, SHADED_ELSEWHERE, SURFACE_SLOTS, TERRAIN, TerrainFrame, reached,
 };
 use crate::gpu::{HEIGHT_FORMAT, SURFACE_ERROR_MIPS};
-use crate::holes::HoledGround;
+use crate::holes::{HoledGround, HoledState};
 use crate::settings::TerrainShading;
 use crate::state::{
     Atlas, AtlasMoves, Bakes, DrawnStats, PART_STATS, PartStats, SURFACE_TOTALS, SurfaceTotals,
@@ -170,7 +170,6 @@ const NO_FORM: &str = "terrain has no form in this pass";
 const NO_TILES: &str = "no terrain tile is resident";
 const NOT_LAID_OUT: &str = "no terrain is laid out this frame";
 const NO_PATCHES: &str = "no terrain patch is laid out for this view";
-const NO_HOLED_MATERIAL: &str = "the holed ground material is not in the asset library";
 
 enum Joined {
     Ground {
@@ -188,7 +187,7 @@ enum Joined {
     Elsewhere(&'static str),
 }
 
-type Surfaces = [Option<(Pipeline<TerrainGpu, Scene>, Option<MaterialHandle>)>; 2];
+type Surfaces = [Result<(Pipeline<TerrainGpu, Scene>, Option<MaterialHandle>), &'static str>; 2];
 
 pub(crate) struct TerrainGpu {
     handles: Handles,
@@ -197,7 +196,7 @@ pub(crate) struct TerrainGpu {
     inputs: Inputs,
     form: Form<TerrainGpu>,
     seen: [Form<TerrainGpu>; 2],
-    holed: Option<MaterialHandle>,
+    holed: HoledState,
     joined: Vec<(&'static str, Joined)>,
     atlas: TileAtlas,
     tables: TerrainTables,
@@ -586,7 +585,7 @@ impl GpuPart for TerrainGpu {
             inputs,
             form,
             seen,
-            holed: None,
+            holed: HoledState::Unmade,
             joined,
             atlas: TileAtlas::default(),
             tables: TerrainTables::default(),
@@ -616,7 +615,7 @@ impl GpuPart for TerrainGpu {
         (lists, neighbors, frame, (limits, assets, holed)): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        self.holed = holed.material;
+        self.holed = holed.state;
         let (settings, tiles, atlas, bakes, ground) = lists;
         let (water, cover, shadows, captures) = neighbors;
         let main = frame.main();
@@ -969,8 +968,8 @@ impl TerrainGpu {
                 let Some(pipeline) = draw.form(&self.form) else {
                     return draw.skip(NO_FORM);
                 };
-                let holed = self.holed.map(|material| (pipeline, Some(material)));
-                self.draw_surface(draw, [Some((pipeline, None)), holed], (*args, *meshlet))
+                let holed = self.holed.held().map(|material| (pipeline, Some(material)));
+                self.draw_surface(draw, [Ok((pipeline, None)), holed], (*args, *meshlet))
             }
             Joined::Seen { args, meshlet } => {
                 if !self.drawn {
@@ -982,7 +981,7 @@ impl TerrainGpu {
                 };
                 self.draw_surface(
                     draw,
-                    [Some((plain, None)), Some((holes, None))],
+                    [Ok((plain, None)), Ok((holes, None))],
                     (*args, *meshlet),
                 )
             }
@@ -1021,7 +1020,7 @@ impl TerrainGpu {
         (args, meshlet): (DrawInput<Self, Scene>, DrawInput<Self, Scene>),
     ) -> u32 {
         let mut draws = 0;
-        let mut unheld = false;
+        let mut unheld = None;
         for holes in [false, true] {
             let drawn = surfaces[usize::from(holes)];
             for terrain in self
@@ -1033,9 +1032,12 @@ impl TerrainGpu {
                 let Some(offset) = self.surface.draw_offset(terrain.terrain) else {
                     continue;
                 };
-                let Some((pipeline, material)) = drawn else {
-                    unheld = true;
-                    continue;
+                let (pipeline, material) = match drawn {
+                    Ok(drawn) => drawn,
+                    Err(reason) => {
+                        unheld = Some(reason);
+                        continue;
+                    }
                 };
                 draw.draw(
                     &pipeline,
@@ -1050,8 +1052,10 @@ impl TerrainGpu {
                 draws += 1;
             }
         }
-        if draws == 0 && unheld {
-            return draw.skip(NO_HOLED_MATERIAL);
+        if draws == 0
+            && let Some(reason) = unheld
+        {
+            return draw.skip(reason);
         }
         if draws == 0 {
             return draw.skip(NOT_LAID_OUT);
