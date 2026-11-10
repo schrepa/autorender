@@ -12,7 +12,8 @@ mod record;
 mod texture;
 
 pub use attributes::{
-    Attribute, AttributeFormat, Attributes, GeometryStream, InstanceInput, attributes_wgsl,
+    Attribute, AttributeFormat, Attributes, FIRST_NAMED_LOCATION, GeometryStream, InstanceInput,
+    StreamShape, attributes_wgsl,
 };
 pub use engine_lodbuild::{LodInput, LodLevel, MeshLods, MeshVertex};
 pub use library::{
@@ -25,7 +26,7 @@ pub use material::{
     MAPPED, MAPPED_MAPS, MAPPED_SLOTS, Material, MaterialBinding, NORMAL_MAP, RenderState, Sampler,
     SurfaceSlot, TextureRef, UvTransform, Wrap,
 };
-pub use mesh::{Aabb, Mesh, VertexSkin};
+pub use mesh::{Aabb, Mesh, NamedStream};
 pub use record::{
     MESH_BUFFER_EXTRAS_MAGIC, MESH_BUFFER_MAGIC, MeshBuffer, MeshStreams, encode_mesh_buffer_with,
 };

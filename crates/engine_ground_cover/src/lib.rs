@@ -48,6 +48,7 @@ impl Brick for GroundCoverBrick {
             .draw_kind(KindDecl {
                 kind: part::COVER,
                 needs: Attributes::NONE,
+                streams: &[],
                 skips: &[KindSkip {
                     pass: "probe",
                     reason: "ground cover grows around the main camera only",

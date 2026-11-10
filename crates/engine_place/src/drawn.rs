@@ -1,6 +1,6 @@
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::Entity;
-use engine_assets::Attributes;
+use engine_assets::{Attributes, StreamShape};
 use serde::{Deserialize, Serialize};
 
 use crate::{GeometryHandle, MaterialHandle, PassMask};
@@ -26,6 +26,7 @@ pub struct KindSkip {
 pub struct KindDecl {
     pub kind: DrawKind,
     pub needs: Attributes,
+    pub streams: &'static [StreamShape],
     pub skips: &'static [KindSkip],
 }
 

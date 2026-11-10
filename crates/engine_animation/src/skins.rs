@@ -5,6 +5,7 @@ use engine_core::{
     AssetLibrary, DrawnBounds, DrawnPoses, DrawnTable, Error, GeometryHandle, GlobalTransforms,
     Mesh, Spawner, gpu_struct,
 };
+use engine_places::skin::{JOINTS, WEIGHTS};
 use engine_places_rendering::animation::{Animator, Bound};
 use engine_render::{Allocation, Bind, Buffer, GpuPart, Install, Lifetime, Prepare};
 use glam::{Mat4, Vec3, Vec4};
@@ -67,22 +68,24 @@ fn rows_of(matrix: Mat4) -> JointRows {
 }
 
 fn reach_of(palette: &[Bound], mesh: &Mesh) -> Option<Vec<f32>> {
-    let skin = mesh.skin()?;
+    let joints: Vec<u32> = mesh.stream(JOINTS)?.words().map(u32::from_le_bytes).collect();
+    let weights: Vec<f32> = mesh
+        .stream(WEIGHTS)?
+        .words()
+        .map(f32::from_le_bytes)
+        .collect();
     let inverses: Vec<Mat4> = palette
         .iter()
         .map(|bound| Mat4::from_cols_array_2d(&bound.inverse_bind))
         .collect();
     let mut radii = vec![-1.0; palette.len()];
-    for (skin, vertex) in skin.iter().zip(mesh.vertices()) {
-        if skin
-            .joints
-            .iter()
-            .any(|&joint| joint as usize >= palette.len())
-        {
+    let lanes = joints.chunks_exact(4).zip(weights.chunks_exact(4));
+    for ((joints, weights), vertex) in lanes.zip(mesh.vertices()) {
+        if joints.iter().any(|&joint| joint as usize >= palette.len()) {
             return None;
         }
         let position = Vec3::from_array(vertex.position);
-        for (&joint, &weight) in skin.joints.iter().zip(&skin.weights) {
+        for (&joint, &weight) in joints.iter().zip(weights) {
             if weight <= 0.0 {
                 continue;
             }

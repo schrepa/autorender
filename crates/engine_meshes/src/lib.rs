@@ -58,11 +58,13 @@ impl Brick for MeshesBrick {
             .draw_kind(KindDecl {
                 kind: MESH,
                 needs: Attributes::BASE,
+                streams: &[],
                 skips: &[],
             })
             .draw_kind(KindDecl {
                 kind: SKIN,
-                needs: Attributes::SKINNED,
+                needs: Attributes::BASE,
+                streams: engine_places::skin::STREAMS,
                 skips: &[],
             })
             .draws::<gpu::MeshesGpu>(MESH, gpu::MeshesGpu::draw)

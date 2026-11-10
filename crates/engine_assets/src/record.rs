@@ -7,19 +7,22 @@
 use engine_codec::{Error, ErrorCode, Expected};
 use serde::Serialize;
 
-use crate::{Mesh, MeshLods, MeshVertex, VertexSkin};
+use crate::{AttributeFormat, Mesh, MeshLods, MeshVertex, NamedStream};
 
 pub const MESH_BUFFER_MAGIC: [u8; 4] = *b"EMB1";
 pub const MESH_BUFFER_EXTRAS_MAGIC: [u8; 4] = *b"EMB2";
 
-const FLAGS: u32 = 15;
-const SKIN_WORDS: usize = 8;
+const COLORS: u32 = 1;
+const UV1: u32 = 2;
+const NAMED: u32 = 4;
+const LODS: u32 = 8;
+const FLAGS: u32 = COLORS | UV1 | NAMED | LODS;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct MeshStreams<'a> {
     pub colors: Option<&'a [[f32; 4]]>,
     pub uv1: Option<&'a [[f32; 2]]>,
-    pub skin: Option<&'a [VertexSkin]>,
+    pub named: &'a [NamedStream],
     pub lods: Option<&'a MeshLods>,
 }
 
@@ -27,6 +30,14 @@ fn count(length: usize) -> [u8; 4] {
     u32::try_from(length)
         .expect("buffer_count_fits_u32")
         .to_le_bytes()
+}
+
+fn flag(held: bool, bit: u32) -> u32 {
+    if held { bit } else { 0 }
+}
+
+fn width(format: AttributeFormat) -> usize {
+    usize::try_from(format.bytes()).expect("format_width_fits_usize")
 }
 
 pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
@@ -37,12 +48,18 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     let MeshStreams {
         colors,
         uv1,
-        skin,
+        named,
         lods,
     } = streams;
-    let extras = colors.is_some() || uv1.is_some() || skin.is_some() || lods.is_some();
+    let flags = flag(colors.is_some(), COLORS)
+        | flag(uv1.is_some(), UV1)
+        | flag(!named.is_empty(), NAMED)
+        | flag(lods.is_some(), LODS);
+    let extras = flags != 0;
+    let named_bytes: usize = named.iter().map(|stream| stream.bytes().len()).sum();
     let mut bytes = Vec::with_capacity(
-        16 + vertices.len() * (32 + if extras { 24 + SKIN_WORDS * 4 } else { 0 })
+        16 + vertices.len() * (32 + if extras { 24 } else { 0 })
+            + named_bytes
             + indices.len() * 4,
     );
     bytes.extend_from_slice(if extras {
@@ -53,11 +70,17 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     bytes.extend_from_slice(&count(vertices.len()));
     bytes.extend_from_slice(&count(indices.len()));
     if extras {
-        let flags = u32::from(colors.is_some())
-            | u32::from(uv1.is_some()) << 1
-            | u32::from(skin.is_some()) << 2
-            | u32::from(lods.is_some()) << 3;
         bytes.extend_from_slice(&flags.to_le_bytes());
+    }
+    if !named.is_empty() {
+        bytes.extend_from_slice(&count(named.len()));
+        for stream in named {
+            let name = stream.name().as_bytes();
+            bytes.extend_from_slice(&count(name.len()));
+            bytes.extend_from_slice(name);
+            bytes.resize(bytes.len().next_multiple_of(4), 0);
+            bytes.extend_from_slice(&stream.format().code().to_le_bytes());
+        }
     }
     for &vertex in vertices {
         let vertex: MeshVertex = vertex.into();
@@ -78,13 +101,8 @@ pub fn encode_mesh_buffer_with<V: Copy + Into<MeshVertex>>(
     {
         bytes.extend_from_slice(&value.to_le_bytes());
     }
-    for skin in skin.into_iter().flatten() {
-        for joint in skin.joints {
-            bytes.extend_from_slice(&joint.to_le_bytes());
-        }
-        for weight in skin.weights {
-            bytes.extend_from_slice(&weight.to_le_bytes());
-        }
+    for stream in named {
+        bytes.extend_from_slice(stream.bytes());
     }
     for index in indices {
         bytes.extend_from_slice(&index.to_le_bytes());
@@ -103,7 +121,7 @@ impl Mesh {
             MeshStreams {
                 colors: self.colors(),
                 uv1: self.uv1(),
-                skin: self.skin(),
+                named: self.streams(),
                 lods: self.lods().map(AsRef::as_ref),
             },
         )
@@ -125,8 +143,16 @@ pub struct MeshBuffer {
     pub indices: Vec<u32>,
     pub colors: Option<Vec<[f32; 4]>>,
     pub uv1: Option<Vec<[f32; 2]>>,
-    pub skin: Option<Vec<VertexSkin>>,
+    pub named: Vec<NamedStream>,
     pub lods: Option<MeshLods>,
+}
+
+struct Layout {
+    header: usize,
+    vertex_count: usize,
+    index_count: usize,
+    flags: u32,
+    named: Vec<(String, AttributeFormat)>,
 }
 
 impl MeshBuffer {
@@ -139,8 +165,8 @@ impl MeshBuffer {
         if let Some(uv1) = self.uv1 {
             mesh = mesh.with_uv1(uv1).map_err(invalid)?;
         }
-        if let Some(skin) = self.skin {
-            mesh = mesh.with_skin(skin).map_err(invalid)?;
+        for stream in self.named {
+            mesh = mesh.with_stream(stream).map_err(invalid)?;
         }
         match self.lods {
             Some(lods) => mesh
@@ -150,7 +176,50 @@ impl MeshBuffer {
         }
     }
 
-    fn layout(bytes: &[u8], path: &str) -> Result<(usize, usize, usize, u32), Error> {
+    fn named_table(
+        bytes: &[u8],
+        mut header: usize,
+        path: &str,
+    ) -> Result<(usize, Vec<(String, AttributeFormat)>), Error> {
+        let invalid = || Error::new(ErrorCode::InvalidMesh, path);
+        let short = |needed: usize| {
+            invalid()
+                .at_least(u64::try_from(needed).unwrap_or(u64::MAX))
+                .got(bytes.len())
+        };
+        let word = |offset: usize| {
+            bytes
+                .get(offset..offset + 4)
+                .map(|word| u32::from_le_bytes(word.try_into().expect("four_bytes")))
+                .ok_or_else(|| short(offset + 4))
+        };
+        let streams = word(header)? as usize;
+        header += 4;
+        let mut named = Vec::new();
+        for _ in 0..streams {
+            let length = word(header)? as usize;
+            header += 4;
+            let end = header.saturating_add(length);
+            let name = bytes.get(header..end).ok_or_else(|| short(end))?;
+            let name = std::str::from_utf8(name)
+                .ok()
+                .filter(|name| !name.is_empty())
+                .ok_or_else(|| invalid().got(String::from_utf8_lossy(name)))?
+                .to_owned();
+            header += length.next_multiple_of(4);
+            let code = word(header)?;
+            header += 4;
+            let format = AttributeFormat::of_code(code).ok_or_else(|| {
+                invalid()
+                    .at_most(u64::from(AttributeFormat::Uint32x4.code()))
+                    .got(code)
+            })?;
+            named.push((name, format));
+        }
+        Ok((header, named))
+    }
+
+    fn layout(bytes: &[u8], path: &str) -> Result<Layout, Error> {
         let invalid = || Error::new(ErrorCode::InvalidMesh, path);
         let word = |offset: usize| {
             bytes
@@ -180,32 +249,49 @@ impl MeshBuffer {
             0
         };
         let header = if extras { 16 } else { 12 };
+        let (header, named) = if flags & NAMED == 0 {
+            (header, Vec::new())
+        } else {
+            Self::named_table(bytes, header, path)?
+        };
         let (vertex_count, index_count) = (vertex_count as usize, index_count as usize);
         let floats = 8
-            + if flags & 1 != 0 { 4 } else { 0 }
-            + if flags & 2 != 0 { 2 } else { 0 }
-            + if flags & 4 != 0 { SKIN_WORDS } else { 0 };
+            + if flags & COLORS != 0 { 4 } else { 0 }
+            + if flags & UV1 != 0 { 2 } else { 0 };
+        let named_width: usize = named.iter().map(|&(_, format)| width(format)).sum();
         let expected = vertex_count
-            .checked_mul(floats * 4)
+            .checked_mul(floats * 4 + named_width)
             .and_then(|vertices| vertices.checked_add(index_count.checked_mul(4)?))
             .and_then(|payload| payload.checked_add(header));
         let fits = expected.is_some_and(|expected| {
-            expected == bytes.len() || (flags & 8 != 0 && expected < bytes.len())
+            expected == bytes.len() || (flags & LODS != 0 && expected < bytes.len())
         });
         if !fits {
             let failure = invalid().got(bytes.len());
             return Err(match expected.map(u64::try_from) {
-                Some(Ok(expected)) if flags & 8 != 0 => failure.at_least(expected),
+                Some(Ok(expected)) if flags & LODS != 0 => failure.at_least(expected),
                 Some(Ok(expected)) => failure.range(expected as f64, expected as f64),
                 Some(Err(_)) | None => failure,
             });
         }
-        Ok((header, vertex_count, index_count, flags))
+        Ok(Layout {
+            header,
+            vertex_count,
+            index_count,
+            flags,
+            named,
+        })
     }
 
     pub fn parse(bytes: &[u8], path: &str) -> Result<Self, Error> {
         let invalid = || Error::new(ErrorCode::InvalidMesh, path);
-        let (header, vertex_count, index_count, flags) = Self::layout(bytes, path)?;
+        let Layout {
+            header,
+            vertex_count,
+            index_count,
+            flags,
+            named,
+        } = Self::layout(bytes, path)?;
         let float = |offset: usize| {
             f32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("four_bytes"))
         };
@@ -232,40 +318,30 @@ impl MeshBuffer {
             });
         }
         let mut offset = header + vertex_count * 32;
-        let colors = (flags & 1 != 0).then(|| {
+        let colors = (flags & COLORS != 0).then(|| {
             let colors: Vec<[f32; 4]> = (0..vertex_count)
                 .map(|vertex| std::array::from_fn(|lane| float(offset + (vertex * 4 + lane) * 4)))
                 .collect();
             offset += vertex_count * 16;
             colors
         });
-        let uv1 = (flags & 2 != 0).then(|| {
+        let uv1 = (flags & UV1 != 0).then(|| {
             let uv1: Vec<[f32; 2]> = (0..vertex_count)
                 .map(|vertex| std::array::from_fn(|lane| float(offset + (vertex * 2 + lane) * 4)))
                 .collect();
             offset += vertex_count * 8;
             uv1
         });
-        let skin = (flags & 4 != 0).then(|| {
-            let word = |at: usize| -> [u8; 4] {
-                bytes[offset + at * 4..offset + at * 4 + 4]
-                    .try_into()
-                    .expect("four_bytes")
-            };
-            let skin: Vec<VertexSkin> = (0..vertex_count)
-                .map(|vertex| {
-                    let base = vertex * SKIN_WORDS;
-                    VertexSkin {
-                        joints: std::array::from_fn(|lane| u32::from_le_bytes(word(base + lane))),
-                        weights: std::array::from_fn(|lane| {
-                            f32::from_le_bytes(word(base + 4 + lane))
-                        }),
-                    }
-                })
-                .collect();
-            offset += vertex_count * SKIN_WORDS * 4;
-            skin
-        });
+        let named = named
+            .into_iter()
+            .map(|(name, format)| {
+                let length = vertex_count * width(format);
+                let held = bytes[offset..offset + length].to_vec();
+                let stream = NamedStream::new(name, format, held);
+                offset += length;
+                stream
+            })
+            .collect();
         let indices = (0..index_count)
             .map(|index| {
                 u32::from_le_bytes(
@@ -275,7 +351,7 @@ impl MeshBuffer {
                 )
             })
             .collect();
-        let lods = (flags & 8 != 0)
+        let lods = (flags & LODS != 0)
             .then(|| {
                 MeshLods::from_bytes(&bytes[offset + index_count * 4..])
                     .map_err(|error| error.coded(ErrorCode::InvalidMesh).within(path))
@@ -286,7 +362,7 @@ impl MeshBuffer {
             indices,
             colors,
             uv1,
-            skin,
+            named,
             lods,
         })
     }

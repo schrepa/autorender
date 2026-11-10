@@ -161,7 +161,7 @@ pub(crate) struct DrawItem {
     pub blended: bool,
     flat: bool,
     variant: u32,
-    buffers: u8,
+    buffers: u32,
 }
 
 #[derive(Default)]
@@ -210,9 +210,9 @@ impl Draws {
                     blended: material.is_some_and(|material| material.alpha_mode().blended()),
                     flat,
                     variant: engine_render::material_state(material),
-                    buffers: resident.map_or(u8::MAX, |resident| match resident.placement() {
-                        MeshResidence::Arena(placement) => placement.streams as u8,
-                        MeshResidence::Own => u8::MAX,
+                    buffers: resident.map_or(u32::MAX, |resident| match resident.placement() {
+                        MeshResidence::Arena(placement) => placement.class,
+                        MeshResidence::Own => u32::MAX,
                     }),
                 }
             }));

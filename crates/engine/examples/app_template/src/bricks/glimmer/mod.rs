@@ -122,6 +122,7 @@ impl Brick for GlimmerBrick {
             .draw_kind(KindDecl {
                 kind: GLIMMER,
                 needs: Attributes::NONE,
+                streams: &[],
                 skips: &[KindSkip {
                     pass: BlendedPass::NAME,
                     reason: "glimmers are masked, never blended",

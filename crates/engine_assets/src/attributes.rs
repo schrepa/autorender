@@ -8,11 +8,9 @@ pub enum Attribute {
     Uv0,
     Uv1,
     Color,
-    Joints,
-    Weights,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum AttributeFormat {
     Float32x2,
     Float32x3,
@@ -23,6 +21,37 @@ pub enum AttributeFormat {
 }
 
 impl AttributeFormat {
+    pub const ALL: [Self; 6] = [
+        Self::Float32x2,
+        Self::Float32x3,
+        Self::Float32x4,
+        Self::Snorm16x2,
+        Self::Unorm16x4,
+        Self::Uint32x4,
+    ];
+
+    pub const fn code(self) -> u32 {
+        match self {
+            Self::Float32x2 => 0,
+            Self::Float32x3 => 1,
+            Self::Float32x4 => 2,
+            Self::Snorm16x2 => 3,
+            Self::Unorm16x4 => 4,
+            Self::Uint32x4 => 5,
+        }
+    }
+
+    pub fn of_code(code: u32) -> Option<Self> {
+        Self::ALL.into_iter().find(|format| format.code() == code)
+    }
+
+    pub const fn float(self) -> bool {
+        match self {
+            Self::Float32x2 | Self::Float32x3 | Self::Float32x4 => true,
+            Self::Snorm16x2 | Self::Unorm16x4 | Self::Uint32x4 => false,
+        }
+    }
+
     pub const fn bytes(self) -> u64 {
         match self {
             Self::Snorm16x2 => 4,
@@ -43,15 +72,13 @@ impl AttributeFormat {
 }
 
 impl Attribute {
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 6] = [
         Self::Position,
         Self::Normal,
         Self::Tangent,
         Self::Uv0,
         Self::Uv1,
         Self::Color,
-        Self::Joints,
-        Self::Weights,
     ];
 
     pub const fn name(self) -> &'static str {
@@ -62,8 +89,6 @@ impl Attribute {
             Self::Uv0 => "uv0",
             Self::Uv1 => "uv1",
             Self::Color => "color",
-            Self::Joints => "joints",
-            Self::Weights => "weights",
         }
     }
 
@@ -74,8 +99,6 @@ impl Attribute {
             Self::Tangent => None,
             Self::Uv0 | Self::Uv1 => Some(AttributeFormat::Float32x2),
             Self::Color => Some(AttributeFormat::Unorm16x4),
-            Self::Joints => Some(AttributeFormat::Uint32x4),
-            Self::Weights => Some(AttributeFormat::Float32x4),
         }
     }
 
@@ -89,20 +112,26 @@ impl Attribute {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct StreamShape {
+    pub name: &'static str,
+    pub format: AttributeFormat,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum GeometryStream {
     Vertex,
     Extra,
-    Skin,
+    Named { shape: StreamShape, location: u32 },
 }
 
 impl GeometryStream {
-    pub const ALL: [Self; 3] = [Self::Vertex, Self::Extra, Self::Skin];
+    pub const FIXED: [Self; 2] = [Self::Vertex, Self::Extra];
 
     pub const fn attributes(self) -> &'static [Attribute] {
         match self {
             Self::Vertex => &[Attribute::Position, Attribute::Normal, Attribute::Uv0],
             Self::Extra => &[Attribute::Color, Attribute::Uv1],
-            Self::Skin => &[Attribute::Joints, Attribute::Weights],
+            Self::Named { .. } => &[],
         }
     }
 
@@ -110,7 +139,7 @@ impl GeometryStream {
         match self {
             Self::Vertex => "Vertex",
             Self::Extra => "Extra",
-            Self::Skin => "Skin",
+            Self::Named { shape, .. } => shape.name,
         }
     }
 
@@ -124,8 +153,21 @@ impl GeometryStream {
         })
     }
 
+    pub fn inputs(self) -> Vec<(u32, AttributeFormat, u64)> {
+        match self {
+            Self::Vertex | Self::Extra => self
+                .placed()
+                .map(|(attribute, stored, offset)| (attribute.location(), stored, offset))
+                .collect(),
+            Self::Named { shape, location } => vec![(location, shape.format, 0)],
+        }
+    }
+
     pub fn stride(self) -> u64 {
-        self.placed().map(|(_, stored, _)| stored.bytes()).sum()
+        match self {
+            Self::Vertex | Self::Extra => self.placed().map(|(_, stored, _)| stored.bytes()).sum(),
+            Self::Named { shape, .. } => shape.format.bytes(),
+        }
     }
 }
 
@@ -152,6 +194,9 @@ impl InstanceInput {
     }
 }
 
+pub const FIRST_NAMED_LOCATION: u32 =
+    Attribute::ALL.len() as u32 + InstanceInput::ALL.len() as u32;
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct Attributes(u8);
 
@@ -161,7 +206,6 @@ impl Attributes {
         .with(Attribute::Position)
         .with(Attribute::Normal)
         .with(Attribute::Uv0);
-    pub const SKINNED: Self = Self::BASE.with(Attribute::Joints).with(Attribute::Weights);
     pub const POSITION: Self = Self::NONE.with(Attribute::Position);
 
     #[must_use]
@@ -212,7 +256,7 @@ pub fn attributes_wgsl() -> String {
             input.location()
         ));
     }
-    for stream in GeometryStream::ALL {
+    for stream in GeometryStream::FIXED {
         text.push_str(&format!("struct Geometry{} {{\n", stream.name()));
         for (attribute, stored, _) in stream.placed() {
             text.push_str(&format!(

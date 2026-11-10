@@ -58,12 +58,36 @@ fn stage_constants(
         .collect()
 }
 
-fn vertex_layouts(vertices: &[VertexLayout]) -> Vec<Option<wgpu::VertexBufferLayout<'static>>> {
+struct HeldLayout {
+    stride: u64,
+    step: wgpu::VertexStepMode,
+    attributes: Vec<wgpu::VertexAttribute>,
+}
+
+impl HeldLayout {
+    fn layout(&self) -> wgpu::VertexBufferLayout<'_> {
+        wgpu::VertexBufferLayout {
+            array_stride: self.stride,
+            step_mode: self.step,
+            attributes: &self.attributes,
+        }
+    }
+}
+
+fn vertex_layouts(vertices: &[VertexLayout]) -> Vec<HeldLayout> {
     vertices
         .iter()
         .map(|layout| match layout {
-            VertexLayout::Geometry(stream) => Some(crate::mesh_arena::geometry_layout(*stream)),
-            VertexLayout::Buffer(layout) => Some(layout.clone()),
+            VertexLayout::Geometry(stream) => HeldLayout {
+                stride: stream.stride(),
+                step: wgpu::VertexStepMode::Vertex,
+                attributes: crate::mesh_arena::geometry_attributes(*stream),
+            },
+            VertexLayout::Buffer(layout) => HeldLayout {
+                stride: layout.array_stride,
+                step: layout.step_mode,
+                attributes: layout.attributes.to_vec(),
+            },
         })
         .collect()
 }
@@ -316,7 +340,7 @@ struct RenderJob {
     label: String,
     layout: wgpu::PipelineLayout,
     vertex: StageJob,
-    buffers: Vec<Option<wgpu::VertexBufferLayout<'static>>>,
+    buffers: Vec<HeldLayout>,
     primitive: wgpu::PrimitiveState,
     depth_stencil: Option<wgpu::DepthStencilState>,
     samples: u32,
@@ -358,6 +382,11 @@ impl RenderJob {
         #[cfg(not(target_arch = "wasm32"))]
         let scope = crate::gpu_calls::validation_scope(&self.device);
         let vertex_constants = named(&self.vertex.2);
+        let buffers: Vec<Option<wgpu::VertexBufferLayout<'_>>> = self
+            .buffers
+            .iter()
+            .map(|held| Some(held.layout()))
+            .collect();
         let fragment_constants = self
             .fragment
             .as_ref()
@@ -371,7 +400,7 @@ impl RenderJob {
                     module: &self.vertex.0,
                     entry_point: Some(self.vertex.1),
                     compilation_options: options(&vertex_constants),
-                    buffers: &self.buffers,
+                    buffers: &buffers,
                 },
                 primitive: self.primitive,
                 depth_stencil: self.depth_stencil.clone(),

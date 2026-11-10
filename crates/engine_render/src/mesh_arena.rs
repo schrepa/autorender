@@ -1,11 +1,10 @@
 use std::collections::BTreeMap;
-use std::sync::LazyLock;
 
 use bevy_ecs::world::World;
 use engine_core::{
-    ArenaShape, AssetLibrary, AssetResidency, Attribute, AttributeFormat, Cursor, GeometryHandle,
-    GeometryStream, Mesh, MeshLods, MeshPlacement, MeshResidence, MeshStreams, ResidentMesh, Since,
-    math::clamp,
+    ArenaShape, AssetLibrary, AssetResidency, Attribute, AttributeFormat, ClassStream, Cursor,
+    GeometryClass, GeometryHandle, GeometryStream, Mesh, MeshLods, MeshPlacement, MeshResidence,
+    ResidentMesh, Since, math::clamp,
 };
 
 use crate::gpu_calls::Queue;
@@ -22,25 +21,16 @@ const fn format_of(stored: AttributeFormat) -> wgpu::VertexFormat {
     }
 }
 
-static ATTRIBUTES: LazyLock<[Vec<wgpu::VertexAttribute>; 3]> = LazyLock::new(|| {
-    GeometryStream::ALL.map(|stream| {
-        stream
-            .placed()
-            .map(|(attribute, stored, offset)| wgpu::VertexAttribute {
-                format: format_of(stored),
-                offset,
-                shader_location: attribute.location(),
-            })
-            .collect()
-    })
-});
-
-pub(crate) fn geometry_layout(stream: GeometryStream) -> wgpu::VertexBufferLayout<'static> {
-    wgpu::VertexBufferLayout {
-        array_stride: stream.stride(),
-        step_mode: wgpu::VertexStepMode::Vertex,
-        attributes: &ATTRIBUTES[stream as usize],
-    }
+pub(crate) fn geometry_attributes(stream: GeometryStream) -> Vec<wgpu::VertexAttribute> {
+    stream
+        .inputs()
+        .into_iter()
+        .map(|(location, stored, offset)| wgpu::VertexAttribute {
+            format: format_of(stored),
+            offset,
+            shader_location: location,
+        })
+        .collect()
 }
 
 fn octahedral(normal: [f32; 3]) -> [i16; 2] {
@@ -63,7 +53,6 @@ fn packed(mesh: &Mesh, index: usize, attribute: Attribute, bytes: &mut Vec<u8>) 
             bytes.extend_from_slice(&value.to_le_bytes());
         }
     };
-    let skin = mesh.skin().map(|skin| skin[index]);
     match attribute {
         Attribute::Position => floats(bytes, &vertex.position),
         Attribute::Normal => {
@@ -80,27 +69,31 @@ fn packed(mesh: &Mesh, index: usize, attribute: Attribute, bytes: &mut Vec<u8>) 
                 bytes.extend_from_slice(&unit.to_le_bytes());
             }
         }
-        Attribute::Joints => {
-            for joint in skin.map_or([0; 4], |skin| skin.joints) {
-                bytes.extend_from_slice(&joint.to_le_bytes());
-            }
-        }
-        Attribute::Weights => {
-            let weights = skin.map_or([1.0, 0.0, 0.0, 0.0], |skin| {
-                let total: f32 = skin.weights.iter().sum();
-                skin.weights.map(|weight| weight / total)
-            });
-            floats(bytes, &weights);
-        }
         Attribute::Tangent => {}
     }
 }
 
-fn stream_bytes(mesh: &Mesh, stream: GeometryStream, bytes: &mut Vec<u8>) {
+fn stream_bytes(mesh: &Mesh, stream: &ClassStream, bytes: &mut Vec<u8>) {
     bytes.clear();
-    bytes.reserve(mesh.vertices().len() * stream.stride() as usize);
-    for index in 0..mesh.vertices().len() {
-        for (attribute, _, _) in stream.placed() {
+    let vertices = mesh.vertices().len();
+    bytes.reserve(vertices * stream.stride() as usize);
+    let fixed = match stream {
+        ClassStream::Vertex => GeometryStream::Vertex,
+        ClassStream::Extra => GeometryStream::Extra,
+        ClassStream::Named(name, format) => {
+            let held = mesh
+                .streams()
+                .iter()
+                .find(|held| held.name() == name && held.format() == *format);
+            match held {
+                Some(held) => bytes.extend_from_slice(held.bytes()),
+                None => bytes.resize(vertices * format.bytes() as usize, 0),
+            }
+            return;
+        }
+    };
+    for index in 0..vertices {
+        for (attribute, _, _) in fixed.placed() {
             packed(mesh, index, attribute, bytes);
         }
     }
@@ -124,6 +117,7 @@ pub(crate) fn configure(
 
 #[derive(Clone, Copy)]
 pub struct MeshDraw<'a> {
+    pub streams: &'a [ClassStream],
     pub buffers: &'a [wgpu::Buffer],
     pub indices: &'a wgpu::Buffer,
     pub first_index: u32,
@@ -133,7 +127,8 @@ pub struct MeshDraw<'a> {
 
 impl<'a> MeshDraw<'a> {
     pub fn stream(&self, stream: GeometryStream) -> Option<&'a wgpu::Buffer> {
-        self.buffers.get(stream as usize)
+        let at = self.streams.iter().position(|held| held.serves(stream))?;
+        self.buffers.get(at)
     }
 
     pub fn holds(&self, streams: &[GeometryStream]) -> bool {
@@ -142,13 +137,29 @@ impl<'a> MeshDraw<'a> {
 }
 
 struct Class {
+    class: GeometryClass,
     buffers: Vec<wgpu::Buffer>,
     strides: Vec<u64>,
     capacity: u32,
 }
 
+impl Class {
+    fn new(device: &wgpu::Device, class: &GeometryClass) -> Self {
+        let strides: Vec<u64> = class.streams.iter().map(ClassStream::stride).collect();
+        Self {
+            class: class.clone(),
+            buffers: strides
+                .iter()
+                .map(|_| buffer(device, "engine/mesh-arena", 0, VERTEX_USAGE))
+                .collect(),
+            strides,
+            capacity: 0,
+        }
+    }
+}
+
 struct MeshArena {
-    classes: [Class; 3],
+    classes: Vec<Class>,
     indices: wgpu::Buffer,
     index_capacity: u32,
 }
@@ -196,27 +207,8 @@ fn regrown(
 
 impl MeshArena {
     fn new(device: &wgpu::Device) -> Self {
-        let class = |streams: MeshStreams| {
-            let strides: Vec<u64> = streams
-                .streams()
-                .iter()
-                .map(|stream| stream.stride())
-                .collect();
-            Class {
-                buffers: strides
-                    .iter()
-                    .map(|_| buffer(device, "engine/mesh-arena", 0, VERTEX_USAGE))
-                    .collect(),
-                strides,
-                capacity: 0,
-            }
-        };
         Self {
-            classes: [
-                class(MeshStreams::Plain),
-                class(MeshStreams::Extended),
-                class(MeshStreams::Skinned),
-            ],
+            classes: Vec::new(),
             indices: buffer(device, "engine/mesh-arena-indices", 0, INDEX_USAGE),
             index_capacity: 0,
         }
@@ -232,7 +224,27 @@ impl MeshArena {
                 .sum::<u64>()
     }
 
-    fn fit(&mut self, device: &wgpu::Device, queue: &Queue, vertices: [u32; 3], indices: u32) {
+    fn fit(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &Queue,
+        classes: &[(&GeometryClass, u32)],
+        indices: u32,
+    ) -> Vec<u32> {
+        let mut replaced: Vec<u32> = (classes.len()..self.classes.len())
+            .map(|at| at as u32)
+            .collect();
+        self.classes.truncate(classes.len());
+        for (at, &(class, _)) in classes.iter().enumerate() {
+            match self.classes.get_mut(at) {
+                Some(held) if held.class == *class => {}
+                Some(held) => {
+                    *held = Class::new(device, class);
+                    replaced.push(at as u32);
+                }
+                None => self.classes.push(Class::new(device, class)),
+            }
+        }
         if indices > self.index_capacity {
             self.indices = regrown(
                 device,
@@ -243,7 +255,7 @@ impl MeshArena {
             );
             self.index_capacity = indices;
         }
-        for (class, capacity) in self.classes.iter_mut().zip(vertices) {
+        for (class, &(_, capacity)) in self.classes.iter_mut().zip(classes) {
             if capacity <= class.capacity {
                 continue;
             }
@@ -258,10 +270,13 @@ impl MeshArena {
             }
             class.capacity = capacity;
         }
+        replaced
     }
 
     fn write(&self, queue: &Queue, placement: MeshPlacement, streams: &[Vec<u8>], indices: &[u32]) {
-        let class = &self.classes[placement.streams as usize];
+        let Some(class) = self.classes.get(placement.class as usize) else {
+            return;
+        };
         for ((buffer, stride), bytes) in class.buffers.iter().zip(&class.strides).zip(streams) {
             if !bytes.is_empty() {
                 queue.write_buffer(buffer, u64::from(placement.base_vertex) * stride, bytes);
@@ -276,18 +291,21 @@ impl MeshArena {
         }
     }
 
-    fn draw(&self, placement: MeshPlacement) -> MeshDraw<'_> {
-        MeshDraw {
-            buffers: &self.classes[placement.streams as usize].buffers,
+    fn draw(&self, placement: MeshPlacement) -> Option<MeshDraw<'_>> {
+        let class = self.classes.get(placement.class as usize)?;
+        Some(MeshDraw {
+            streams: &class.class.streams,
+            buffers: &class.buffers,
             indices: &self.indices,
             first_index: placement.first_index,
             base_vertex: placement.base_vertex as i32,
             index_count: placement.index_count,
-        }
+        })
     }
 }
 
 struct OwnMesh {
+    streams: Vec<ClassStream>,
     buffers: Vec<wgpu::Buffer>,
     indices: wgpu::Buffer,
 }
@@ -300,13 +318,21 @@ pub struct GpuMesh {
 }
 
 impl GpuMesh {
+    fn in_class(&self, classes: &[u32]) -> bool {
+        match self.placement {
+            MeshResidence::Arena(placement) => classes.contains(&placement.class),
+            MeshResidence::Own => false,
+        }
+    }
+
     fn draw<'a>(&'a self, arena: &'a MeshArena) -> Option<MeshDraw<'a>> {
         match (self.placement, &self.own) {
             (MeshResidence::Arena(placement), _) => Some(MeshDraw {
                 index_count: self.index_count,
-                ..arena.draw(placement)
+                ..arena.draw(placement)?
             }),
             (MeshResidence::Own, Some(own)) => Some(MeshDraw {
+                streams: &own.streams,
                 buffers: &own.buffers,
                 indices: &own.indices,
                 first_index: 0,
@@ -376,9 +402,14 @@ impl GpuMeshes {
         ) else {
             return 0;
         };
-        let Some((vertices, indices)) = residency.capacities() else {
+        let Some((classes, indices)) = residency.capacities() else {
             return 0;
         };
+        let replaced = self.arena.fit(device, queue, &classes, indices);
+        if !replaced.is_empty() {
+            self.meshes.retain(|_, mesh| !mesh.in_class(&replaced));
+            self.placed = Cursor::default();
+        }
         let all: Vec<GeometryHandle>;
         let changed = match residency.placed().since(&mut self.placed) {
             Since::Same => return 0,
@@ -394,7 +425,6 @@ impl GpuMeshes {
                 all.as_slice()
             }
         };
-        self.arena.fit(device, queue, vertices, indices);
         let mut bytes = 0;
         for &handle in changed {
             let resident = residency.mesh(handle);
@@ -411,8 +441,11 @@ impl GpuMeshes {
             let (Some(resident), Some(source)) = (resident, library.mesh(handle)) else {
                 continue;
             };
+            let Some(class) = residency.class(resident.class()) else {
+                continue;
+            };
             let lods = library.mesh_lods(handle).flatten().map(|lods| &**lods);
-            bytes += self.upload(device, queue, (handle, resident), source, lods);
+            bytes += self.upload(device, queue, (handle, resident, class), source, lods);
         }
         bytes
     }
@@ -421,14 +454,14 @@ impl GpuMeshes {
         &mut self,
         device: &wgpu::Device,
         queue: &Queue,
-        (handle, resident): (GeometryHandle, &ResidentMesh),
+        (handle, resident, class): (GeometryHandle, &ResidentMesh, &GeometryClass),
         source: &Mesh,
         lods: Option<&MeshLods>,
     ) -> u64 {
-        let streams = resident.streams().streams();
+        let streams = &class.streams;
         self.staging
             .resize_with(streams.len().max(self.staging.len()), Vec::new);
-        for (&stream, bytes) in streams.iter().zip(&mut self.staging) {
+        for (stream, bytes) in streams.iter().zip(&mut self.staging) {
             stream_bytes(source, stream, bytes);
         }
         let staged = &self.staging[..streams.len()];
@@ -452,6 +485,7 @@ impl GpuMeshes {
                 };
                 let vertex = wgpu::BufferUsages::VERTEX;
                 Some(OwnMesh {
+                    streams: streams.clone(),
                     buffers: staged
                         .iter()
                         .map(|bytes| buffer("engine/mesh-vertices", bytes, vertex))

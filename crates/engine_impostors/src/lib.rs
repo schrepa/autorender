@@ -55,6 +55,7 @@ impl Brick for ImpostorsBrick {
             .draw_kind(KindDecl {
                 kind: cards::CARD,
                 needs: Attributes::NONE,
+                streams: &[],
                 skips: &[
                     KindSkip {
                         pass: "shadow",
