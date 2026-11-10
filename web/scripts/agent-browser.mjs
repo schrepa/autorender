@@ -159,6 +159,17 @@ export async function launchBrowserSession({ url: value, browserPath }) {
       return api.request(command);
     }, { expected: instance, command });
   }
+  async function evaluatePlay(source) {
+    await attached();
+    if (invalidated || closing) throw new AgentError("session_unavailable", "$", { expected: "live" });
+    return page.evaluate(({ expected, source }) => {
+      const api = window.__engineDev;
+      if (!api || api.instance !== expected) {
+        return { ok: false, error: { code: "runtime_replaced", path: "$", expected: "matching", got: api?.instance ?? null } };
+      }
+      return api.play(source);
+    }, { expected: instance, source });
+  }
   async function attached() {
     while (true) {
       if (invalidated || closing) throw new AgentError("session_unavailable", "$", { expected: "live" });
@@ -276,6 +287,7 @@ export async function launchBrowserSession({ url: value, browserPath }) {
     const owned = {
       session, url: url.href, close, setInvalidated,
       page,
+      play: evaluatePlay,
       async activity() {
         const waiting = await Promise.race([page.evaluate(() => window.__engineDev?.waitingOnGpu()).catch(() => undefined), delay(1000)]);
         return typeof waiting === "boolean" ? { waiting_on_gpu: waiting } : {};

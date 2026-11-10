@@ -1,8 +1,10 @@
 use std::io::{BufRead, BufReader};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::time::Duration;
 
 use serde_json::{Value, json};
+use xtask::serve::Server;
 
 use crate::Failure;
 use crate::pipeline::build_native;
@@ -11,13 +13,16 @@ use crate::process::{Project, project_option, run};
 pub const PLAYER: &str = "crates/engine_player";
 
 const USAGE: &str =
-    "usage: cargo xtask smoke [NAME...] --limit-ms MS [--project DIR] | [--project DIR] --list";
+    "usage: cargo xtask smoke [NAME...] --limit-ms MS [--project DIR] [--browser] | [--project DIR] --list";
+
+const BROWSER_RUNNER: &str = "scripts/smoke.mjs";
 
 struct Options {
     project: String,
     names: Vec<String>,
     list: bool,
     limit_ms: Option<String>,
+    browser: bool,
 }
 
 fn options(arguments: &[String]) -> Result<Options, String> {
@@ -27,11 +32,13 @@ fn options(arguments: &[String]) -> Result<Options, String> {
         names: Vec::new(),
         list: false,
         limit_ms: None,
+        browser: false,
     };
     let mut given = rest.into_iter();
     while let Some(option) = given.next() {
         match option.as_str() {
             "--list" => options.list = true,
+            "--browser" => options.browser = true,
             "--limit-ms" => {
                 options.limit_ms = Some(
                     given
@@ -44,7 +51,8 @@ fn options(arguments: &[String]) -> Result<Options, String> {
             _ => options.names.push(option),
         }
     }
-    if options.list && (!options.names.is_empty() || options.limit_ms.is_some()) {
+    if options.list && (!options.names.is_empty() || options.limit_ms.is_some() || options.browser)
+    {
         return Err(USAGE.to_owned());
     }
     Ok(options)
@@ -63,11 +71,42 @@ pub fn smoke(root: &Path, arguments: &[String]) -> Result<(), Failure> {
         options.names.join(",")
     };
     let limit = options.limit_ms.ok_or_else(|| USAGE.to_owned())?;
+    if options.browser {
+        return browser(root, &project, &program, (&names, &limit));
+    }
     let mut command = Command::new(&program);
     command
         .args(["--smoke", &names, "--limit-ms", &limit])
         .current_dir(root);
     judged(&collect(command, &program)?)
+}
+
+fn browser(
+    root: &Path,
+    project: &Project,
+    program: &str,
+    (names, limit): (&str, &str),
+) -> Result<(), Failure> {
+    let page = project
+        .client()
+        .and_then(|client| client.page.clone())
+        .ok_or_else(|| format!("{}: page", project.package))?;
+    let limit_ms = limit.parse::<u64>().map_err(|_| USAGE.to_owned())?;
+    let log = root
+        .join("target")
+        .join("smoke")
+        .join(format!("{}-browser", project.package))
+        .join("server.log");
+    let server = Server::page(root, &log, Duration::from_millis(limit_ms))?;
+    let mut command = Command::new("node");
+    command
+        .args([BROWSER_RUNNER, "--native", program])
+        .args(["--url", &format!("{}/{page}", server.url)])
+        .args(["--smoke", names, "--limit-ms", limit])
+        .current_dir(root.join("web"));
+    let records = collect(command, BROWSER_RUNNER);
+    drop(server);
+    judged(&records?)
 }
 
 fn collect(mut command: Command, program: &str) -> Result<Vec<Value>, Failure> {

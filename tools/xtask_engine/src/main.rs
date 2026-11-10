@@ -162,6 +162,7 @@ fn authoring_commands() -> Vec<Command> {
                 CommandOption::taking("NAME", "NAME...|all"),
                 CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
                 CommandOption::taking("--project", "DIR"),
+                CommandOption::flag("--browser"),
             ],
         ),
         Command::new(
