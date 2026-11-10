@@ -1,19 +1,57 @@
 use std::marker::PhantomData;
 
-use engine_core::{DrawKind, Entry, Error, PassName, PassRole, PassViews, Var};
+use engine_core::{DrawKind, Entry, Error, ErrorCode, PassName, PassRole, PassViews, Var};
 
 use crate::install::{Faces, FragmentUse, Program, RenderDecl, Scoped};
 use crate::{
-    Bind, DEBUG_BLEND, DepthUse, Draw, GpuPart, Install, Own, Pass, Pipeline, Scene, VertexLayout,
-    bound_list,
+    Bind, DEBUG_BLEND, DepthUse, Draw, FaceCull, GpuPart, Install, Own, Pass, Pipeline, Scene,
+    VertexLayout, bound_list,
 };
 
 pub(crate) const KINDS_MODULE: &str = "engine::kinds";
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug)]
 pub enum Varyings {
     Surface,
     SurfaceExtra,
+    Object,
+    ObjectExtra,
+    FadingObject,
+    FadingObjectExtra,
+    Own(&'static OwnFragments),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct RoleFragments {
+    pub lit: Option<Entry>,
+    pub depth: Option<Entry>,
+    pub blended: Option<Entry>,
+    pub shown: Option<Entry>,
+}
+
+impl RoleFragments {
+    pub const NONE: Self = Self {
+        lit: None,
+        depth: None,
+        blended: None,
+        shown: None,
+    };
+
+    fn of(&self, role: PassRole) -> Option<Entry> {
+        match role {
+            PassRole::Lit => self.lit,
+            PassRole::Depth => self.depth,
+            PassRole::Blended => self.blended,
+            PassRole::Shown => self.shown,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct OwnFragments {
+    pub placed: RoleFragments,
+    pub owned: RoleFragments,
+    pub cull: FaceCull,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -73,34 +111,81 @@ impl<P> Form<P> {
     }
 }
 
-fn fragment_of(role: PassRole, varyings: Varyings) -> (Entry, FragmentUse) {
-    let (name, uses) = match (role, varyings) {
-        (PassRole::Lit, Varyings::Surface) => ("fs_kind_lit", FragmentUse::Always),
-        (PassRole::Lit, Varyings::SurfaceExtra) => ("fs_kind_lit_extra", FragmentUse::Always),
-        (PassRole::Blended, Varyings::Surface) => ("fs_kind_blended", FragmentUse::Always),
-        (PassRole::Blended, Varyings::SurfaceExtra) => {
-            ("fs_kind_blended_extra", FragmentUse::Always)
+struct Fragment {
+    entry: Entry,
+    faces: Faces,
+    cull: Option<wgpu::Face>,
+}
+
+fn generic_name(role: PassRole, extra: bool) -> &'static str {
+    match (role, extra) {
+        (PassRole::Lit, false) => "fs_kind_lit",
+        (PassRole::Lit, true) => "fs_kind_lit_extra",
+        (PassRole::Blended, false) => "fs_kind_blended",
+        (PassRole::Blended, true) => "fs_kind_blended_extra",
+        (PassRole::Shown, false) => "fs_kind_shown",
+        (PassRole::Shown, true) => "fs_kind_shown_extra",
+        (PassRole::Depth, false) => "fs_kind_masked_depth",
+        (PassRole::Depth, true) => "fs_kind_masked_depth_extra",
+    }
+}
+
+fn object_name(role: PassRole, extra: bool) -> &'static str {
+    match (role, extra) {
+        (PassRole::Lit, false) => "fs_kind_object_lit",
+        (PassRole::Lit, true) => "fs_kind_object_lit_extra",
+        (PassRole::Blended, false) => "fs_kind_object_blended",
+        (PassRole::Blended, true) => "fs_kind_object_blended_extra",
+        (PassRole::Shown, false) => "fs_kind_object_shown",
+        (PassRole::Shown, true) => "fs_kind_object_shown_extra",
+        (PassRole::Depth, false) => "fs_kind_object_masked_depth",
+        (PassRole::Depth, true) => "fs_kind_object_masked_depth_extra",
+    }
+}
+
+fn fragment_use(role: PassRole, fades: bool) -> FragmentUse {
+    match (role, fades) {
+        (PassRole::Depth, false) => FragmentUse::Masked,
+        (PassRole::Depth, true) | (PassRole::Lit | PassRole::Blended | PassRole::Shown, _) => {
+            FragmentUse::Always
         }
-        (PassRole::Shown, Varyings::Surface) => ("fs_kind_shown", FragmentUse::Always),
-        (PassRole::Shown, Varyings::SurfaceExtra) => ("fs_kind_shown_extra", FragmentUse::Always),
-        (PassRole::Depth, Varyings::Surface) => ("fs_kind_masked_depth", FragmentUse::Masked),
-        (PassRole::Depth, Varyings::SurfaceExtra) => {
-            ("fs_kind_masked_depth_extra", FragmentUse::Masked)
+    }
+}
+
+fn fragment_of(role: PassRole, varyings: Varyings, views: PassViews) -> Option<Fragment> {
+    let (name, fades) = match varyings {
+        Varyings::Surface => (generic_name(role, false), false),
+        Varyings::SurfaceExtra => (generic_name(role, true), false),
+        Varyings::Object => (object_name(role, false), false),
+        Varyings::ObjectExtra => (object_name(role, true), false),
+        Varyings::FadingObject => (object_name(role, false), true),
+        Varyings::FadingObjectExtra => (object_name(role, true), true),
+        Varyings::Own(own) => {
+            let side = match views {
+                PassViews::Owned => &own.owned,
+                PassViews::Every | PassViews::Main => &own.placed,
+            };
+            return side.of(role).map(|entry| Fragment {
+                entry,
+                faces: Faces::Declared,
+                cull: own.cull.face(),
+            });
         }
     };
-    (
-        Entry::generated(crate::shaders::core_module(KINDS_MODULE), name),
-        uses,
-    )
+    Some(Fragment {
+        entry: Entry::generated(crate::shaders::core_module(KINDS_MODULE), name),
+        faces: Faces::Material(fragment_use(role, fades)),
+        cull: Some(wgpu::Face::Back),
+    })
 }
 
 fn kind_program(
     form: &KindForm,
     (role, views): (PassRole, PassViews),
     mirrored: bool,
-) -> Program {
+) -> Option<Program> {
     let side = form.side(views);
-    let (fragment, uses) = fragment_of(role, form.varyings);
+    let fragment = fragment_of(role, form.varyings, views)?;
     let writes = match (role, views) {
         (PassRole::Depth, PassViews::Owned) => wgpu::ColorWrites::empty(),
         (PassRole::Depth, PassViews::Every | PassViews::Main)
@@ -109,9 +194,9 @@ fn kind_program(
             PassViews::Every | PassViews::Main | PassViews::Owned,
         ) => wgpu::ColorWrites::ALL,
     };
-    Program::Render(RenderDecl {
+    Some(Program::Render(RenderDecl {
         vertex: side.vertex,
-        fragment: Some(fragment),
+        fragment: Some(fragment.entry),
         vertices: side.streams.to_vec(),
         primitive: wgpu::PrimitiveState {
             topology: wgpu::PrimitiveTopology::TriangleList,
@@ -120,7 +205,7 @@ fn kind_program(
             } else {
                 wgpu::FrontFace::Ccw
             },
-            cull_mode: Some(wgpu::Face::Back),
+            cull_mode: fragment.cull,
             ..Default::default()
         },
         depth: DepthUse::Write {
@@ -134,8 +219,8 @@ fn kind_program(
         writes,
         targets: None,
         samples: 1,
-        faces: Faces::Material(uses),
-    })
+        faces: fragment.faces,
+    }))
 }
 
 impl<P: GpuPart> Install<'_, P> {
@@ -153,18 +238,19 @@ impl<P: GpuPart> Install<'_, P> {
         for listed in listed {
             let facts = (listed.pass.role(), listed.pass.views);
             let scope = Scoped::Scene(listed.name);
-            let plain = self
-                .core
-                .pipeline(scope, kind_program(form, facts, false), bound.clone())?;
+            let (Some(plain), Some(turned)) = (
+                kind_program(form, facts, false),
+                kind_program(form, facts, true),
+            ) else {
+                continue;
+            };
+            let plain = self.core.pipeline(scope, plain, bound.clone())?;
             let owned = match listed.pass.views {
                 PassViews::Owned => true,
                 PassViews::Every | PassViews::Main => false,
             };
             let mirrored = if owned {
-                Some(
-                    self.core
-                        .pipeline(scope, kind_program(form, facts, true), bound.clone())?,
-                )
+                Some(self.core.pipeline(scope, turned, bound.clone())?)
             } else {
                 None
             };
@@ -193,9 +279,10 @@ impl<P: GpuPart> Install<'_, P> {
     ) -> Result<Pipeline<P, Own>, Error> {
         let bound = bound_list(bound, &self.core.outputs)?;
         let facts = (N::PASS.role(), N::PASS.views);
-        let pipeline =
-            self.core
-                .pipeline(Scoped::Pass(pass.0), kind_program(form, facts, false), bound)?;
+        let program = kind_program(form, facts, false).ok_or_else(|| {
+            Error::new(ErrorCode::PassMismatch, format!("forms.{}", form.kind.0)).got(N::NAME)
+        })?;
+        let pipeline = self.core.pipeline(Scoped::Pass(pass.0), program, bound)?;
         Ok(Pipeline(pipeline, PhantomData))
     }
 }
