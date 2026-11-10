@@ -34,11 +34,7 @@ impl MeshesGpu {
                 "every drawn mesh row is skinned"
             });
         }
-        let Some(joined) = self
-            .scenes
-            .iter()
-            .find(|joined| joined.name == scene.pass.name())
-        else {
+        let Some(joined) = draw.per_pass(&self.scenes) else {
             return draw.skip("pass has no mesh streams");
         };
         let pipelines = Forms {
@@ -46,7 +42,7 @@ impl MeshesGpu {
             extended: draw.form(&self.forms.extended),
             skin: draw.form(&self.forms.skin),
         };
-        match &joined.drawing {
+        match joined {
             Drawing::Placed(streams) => {
                 let opaque = self
                     .state
@@ -60,7 +56,7 @@ impl MeshesGpu {
                 self.draw_meshes(draw, streams, &pipelines, (PHASE_ONE, skinned, false))
             }
             Drawing::Views(streams) => {
-                let Some(slot) = self.state.view_slot(scene.pass.name(), scene.view) else {
+                let Some(slot) = self.state.view_slot(scene.view.and(scene.index)) else {
                     return draw.skip("view has no visible list");
                 };
                 self.draw_view(draw, (streams, &pipelines), slot, skinned)

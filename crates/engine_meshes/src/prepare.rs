@@ -449,13 +449,11 @@ impl MeshesGpu {
             };
             let drawn = self
                 .scenes
-                .iter()
-                .filter(|scene| scene.name == pass)
-                .any(|scene| matches!(scene.drawing, Drawing::Views(_)));
+                .named(pass)
+                .is_some_and(|drawing| matches!(drawing, Drawing::Views(_)));
             if !drawn || !view.draws {
                 continue;
             }
-            let index = view.local;
             {
                 let (Some(base), detailed) = (base, view.detail > 0.0) else {
                     continue;
@@ -481,8 +479,7 @@ impl MeshesGpu {
                 uniform.eye = view.eye.extend(0.0).to_array();
                 uniform.bases = [ids as u32, args as u32, global as u32, 0];
                 state.views.push(ViewSlot {
-                    pass,
-                    index,
+                    drawn: global as u32,
                     frame_at: (frames.len() as u64 * VIEW_FRAME_BYTES) as u32,
                     ids_base: ids,
                     args_base: args,

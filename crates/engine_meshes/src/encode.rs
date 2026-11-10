@@ -1,6 +1,6 @@
 use engine_render::{Attach, Count, Encode, Pass};
 
-use crate::gpu::{Compaction, MeshesGpu};
+use crate::gpu::{Compaction, Forms, MeshesGpu};
 use crate::layouts::{ARGS_GROUP, CULL_GROUP, GROUP};
 use crate::presentation::PHASE_TWO;
 
@@ -84,15 +84,19 @@ impl MeshesGpu {
         if !self.state.occlusion || self.state.instance_count == 0 {
             return 0;
         }
-        let occluded = &self.occluded;
         let mut draw = cx.render(Attach::Declared);
+        let pipelines = Forms {
+            plain: draw.form(&self.forms.plain),
+            extended: draw.form(&self.forms.extended),
+            skin: draw.form(&self.forms.skin),
+        };
         [false, true]
             .into_iter()
             .map(|skinned| {
                 self.draw_meshes(
                     &mut draw,
-                    &occluded.streams,
-                    &occluded.pipelines,
+                    &self.occluded,
+                    &pipelines,
                     (PHASE_TWO, skinned, false),
                 )
             })

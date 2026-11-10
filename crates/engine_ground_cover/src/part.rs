@@ -3,8 +3,8 @@ use engine_core::{DrawKind, Error, PassRole};
 use engine_open_world_kit::ground::PALETTE_ENTRIES;
 use engine_render::{
     AfterRead, Allocation, Bind, Buffer, ComputePipeline, Count, Draw, DrawInput, Encode, Form,
-    FormSide, FormTopology, GpuPart, Install, KindForm, Lifetime, Pass, Prepare, Scene, SceneDraw,
-    Shape, Varyings, wgpu,
+    FormSide, FormTopology, GpuPart, Install, KindForm, Lifetime, Pass, PerPass, Prepare, Scene,
+    SceneDraw, Shape, Varyings, wgpu,
 };
 
 pub(crate) const COVER: DrawKind = DrawKind("cover");
@@ -46,7 +46,7 @@ pub(crate) struct CoverGpu {
     stepping: ComputePipeline<Self>,
     finishing: ComputePipeline<Self>,
     form: Form<Self>,
-    inputs: Vec<(&'static str, DrawInput<Self, Scene>)>,
+    inputs: PerPass<DrawInput<Self, Scene>>,
     surface: SurfaceState,
     shadows: bool,
     cells: Vec<u32>,
@@ -108,10 +108,7 @@ impl GpuPart for CoverGpu {
                 (draw::COVER_FRAME, Bind::Buffer(frame)),
             ],
         )?;
-        let inputs = form
-            .passes()
-            .map(|pass| (pass.scene.name(), cx.draw_input(pass.scene, args)))
-            .collect();
+        let inputs = PerPass::of(form.passes(), |pass| cx.draw_input(pass.scene, args));
         Ok(Self {
             grow: grow_pass,
             rows,
@@ -226,11 +223,7 @@ impl CoverGpu {
         let Some(pipeline) = draw.form(&self.form) else {
             return draw.skip("pass has no cover pipeline");
         };
-        let Some(&(_, args)) = self
-            .inputs
-            .iter()
-            .find(|(name, _)| *name == scene.pass.name())
-        else {
+        let Some(&args) = draw.per_pass(&self.inputs) else {
             return draw.skip("pass has no cover list");
         };
         for offset in [0, DRAW_ARGS] {

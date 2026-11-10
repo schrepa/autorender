@@ -3,12 +3,13 @@ use std::collections::VecDeque;
 use bevy_ecs::prelude::*;
 use engine_core::glam::Vec3;
 use engine_core::{
-    AssetLibrary, AssetResidency, Cull, Cursor, Error, Events, GeometryHandle, GeometryStream,
-    MaterialHandle, Readable, Readback, gpu_struct,
+    AssetLibrary, AssetResidency, Cull, Cursor, Entry, Error, Events, GeometryHandle,
+    GeometryStream, MaterialHandle, Readable, Readback, gpu_struct,
 };
 use engine_render::{
-    AfterRead, Allocation, Attach, Bind, Buffer, Copied, CopyRegion, DepthUse, Encode, GpuPart,
-    Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, Texture, VertexLayout,
+    AfterRead, Allocation, Attach, Bind, Buffer, Copied, CopyRegion, Encode, FaceCull, Form,
+    FormColor, FormDepth, FormFragment, FormSide, FragmentPass, GpuPart, Install, KindForm,
+    Lifetime, OwnFragments, Pass, PassFragment, Prepare, Shape, Texture, Varyings, VertexLayout,
     wgpu,
 };
 
@@ -16,6 +17,7 @@ use crate::books::{
     AtlasShape, AtlasWork, ImpostorBooks, RECORD_START, ROW_ALIGNMENT, level_rows, readback_bytes,
     record_of, rows,
 };
+use crate::cards::CARD;
 use crate::shaders::impostors::bake;
 use crate::shaders::impostors::faces::impostors as face;
 
@@ -48,6 +50,24 @@ const EXTENDED: &[VertexLayout] = &[
     VertexLayout::Geometry(GeometryStream::Vertex),
     VertexLayout::Geometry(GeometryStream::Extra),
 ];
+const SHADE_PASS: &str = "impostor_shade";
+const BAKE_PASS: &str = "impostor_bake";
+
+const fn bake_form(vertex: Entry, streams: &'static [VertexLayout]) -> KindForm {
+    KindForm {
+        kind: CARD,
+        placed: FormSide {
+            vertex,
+            streams,
+            depth_bias: FormSide::UNBIASED,
+        },
+        owned: None,
+        varyings: Varyings::Own(&OwnFragments::NONE),
+    }
+}
+
+const BAKE_FORM: KindForm = bake_form(bake::VS_IMPOSTOR_BAKE, MESH);
+const BAKE_EXTENDED_FORM: KindForm = bake_form(bake::VS_IMPOSTOR_BAKE_EXTENDED, EXTENDED);
 
 gpu_struct! {
     pub struct ImpostorBake {
@@ -88,26 +108,20 @@ fn flat(side: u32) -> wgpu::Extent3d {
     }
 }
 
-fn bake_pipeline(
-    (vertex, fragment): (engine_core::Entry, engine_core::Entry),
-    (vertices, two_sided): (&'static [VertexLayout], bool),
-) -> RenderPipeline<'static> {
-    RenderPipeline {
-        vertex,
-        fragment: Some(fragment),
-        vertices,
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: (!two_sided).then_some(wgpu::Face::Back),
-            ..Default::default()
+fn baked(pass: &'static str, entry: Entry, two_sided: bool) -> PassFragment {
+    PassFragment {
+        pass: FragmentPass::Own(pass),
+        side: None,
+        fragment: FormFragment::Entry {
+            entry,
+            cull: if two_sided {
+                FaceCull::None
+            } else {
+                FaceCull::Back
+            },
+            depth: FormDepth::Written,
+            color: FormColor::Written,
         },
-        depth: DepthUse::Compare {
-            compare: wgpu::CompareFunction::GreaterEqual,
-            write: true,
-            bias: wgpu::DepthBiasState::default(),
-        },
-        blend: None,
-        writes: wgpu::ColorWrites::ALL,
     }
 }
 
@@ -136,8 +150,8 @@ pub(crate) struct ImpostorGpu {
     read: Buffer<Self>,
     shading: Pass<Self>,
     baking: Pass<Self>,
-    shade_pipelines: Vec<Pipeline<Self, Own>>,
-    bake_pipelines: Vec<Pipeline<Self, Own>>,
+    shade_forms: Vec<Form<Self>>,
+    bake_forms: Vec<Form<Self>>,
     cursor: Cursor,
     shape: Option<AtlasShape>,
     asked: VecDeque<Asked>,
@@ -394,13 +408,13 @@ impl GpuPart for ImpostorGpu {
         }
         cx.frame(face::ATLAS_SAMPLER, Bind::Sampler(sampler))?;
         let shading = cx
-            .pass("impostor_shade")
+            .pass(SHADE_PASS)
             .label("engine/impostor-shade")
             .makes_records()
             .depth_cleared(shade, 0.0)
             .id();
         let mut baking = cx
-            .pass("impostor_bake")
+            .pass(BAKE_PASS)
             .label("engine/impostor-bake")
             .makes_records()
             .after(shading);
@@ -408,33 +422,31 @@ impl GpuPart for ImpostorGpu {
             baking = baking.color_cleared(color, wgpu::Color::TRANSPARENT);
         }
         let baking = baking.depth_cleared(depth, 0.0).id();
-        let mut shade_pipelines = Vec::with_capacity(4);
-        let mut bake_pipelines = Vec::with_capacity(4);
+        let mut shade_forms = Vec::with_capacity(4);
+        let mut bake_forms = Vec::with_capacity(4);
         for index in 0..4_usize {
             let (extended, two_sided) = (index & 1 != 0, index & 2 != 0);
-            let (vertex, shaded, baked, vertices) = if extended {
+            let (form, shaded, baked_entry) = if extended {
                 (
-                    bake::VS_IMPOSTOR_BAKE_EXTENDED,
+                    &BAKE_EXTENDED_FORM,
                     bake::FS_IMPOSTOR_SHADE_EXTENDED,
                     bake::FS_IMPOSTOR_BAKE_EXTENDED,
-                    EXTENDED,
                 )
             } else {
                 (
-                    bake::VS_IMPOSTOR_BAKE,
+                    &BAKE_FORM,
                     bake::FS_IMPOSTOR_SHADE,
                     bake::FS_IMPOSTOR_BAKE,
-                    MESH,
                 )
             };
-            shade_pipelines.push(cx.render_pipeline(
-                shading,
-                &bake_pipeline((vertex, shaded), (vertices, two_sided)),
+            shade_forms.push(cx.form_owning(
+                form,
+                &[baked(SHADE_PASS, shaded, two_sided)],
                 &[(bake::IMPOSTOR_BAKE, Bind::Buffer(uniform))],
             )?);
-            bake_pipelines.push(cx.render_pipeline(
-                baking,
-                &bake_pipeline((vertex, baked), (vertices, two_sided)),
+            bake_forms.push(cx.form_owning(
+                form,
+                &[baked(BAKE_PASS, baked_entry, two_sided)],
                 &[
                     (bake::IMPOSTOR_BAKE, Bind::Buffer(uniform)),
                     (bake::IMPOSTOR_SHADE, Bind::Texture(shade)),
@@ -452,8 +464,8 @@ impl GpuPart for ImpostorGpu {
             read,
             shading,
             baking,
-            shade_pipelines,
-            bake_pipelines,
+            shade_forms,
+            bake_forms,
             cursor: Cursor::default(),
             shape: None,
             asked: VecDeque::new(),
@@ -505,16 +517,19 @@ impl GpuPart for ImpostorGpu {
         let Some(drawn) = self.drawing.as_ref() else {
             return 0;
         };
-        let pipelines = if pass == self.shading {
-            &self.shade_pipelines
+        let forms = if pass == self.shading {
+            &self.shade_forms
         } else {
-            &self.bake_pipelines
+            &self.bake_forms
         };
         let frames = drawn.shape.frames * drawn.shape.frames;
         let mut draw = cx.render(Attach::Declared);
         for &(mesh, material, index) in &drawn.draws {
+            let Some(pipeline) = draw.form(&forms[index]) else {
+                continue;
+            };
             draw.draw(
-                &pipelines[index],
+                &pipeline,
                 Shape::Mesh {
                     mesh,
                     material,

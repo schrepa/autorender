@@ -62,8 +62,9 @@ pub use gpu_data::{
     pyramid_extents,
 };
 pub use kinds::{
-    Form, FormDepth, FormPass, FormSide, FormTopology, KindForm, OwnFragments, PassFragment,
-    RoleFragments, Varyings,
+    Channels, Form, FormColor, FormDepth, FormFragment, FormPass, FormSide, FormTarget,
+    FormTopology, FragmentPass, KindForm, OwnFragments, PassFragment, PerPass, RoleFragments,
+    Varyings,
 };
 pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
 pub use materials::gpu_format as texture_format;

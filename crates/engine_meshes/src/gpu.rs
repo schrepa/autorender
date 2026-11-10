@@ -1,14 +1,14 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, AssetResidency, ColorPass, CullPlan, Detail, DeviceLimits, DrawnTable, Error,
-    FrameTime, GeometryStream, GlobalTransforms, InstanceInput, PassRole, Views,
+    AssetLibrary, AssetResidency, CullPlan, Detail, DeviceLimits, DrawnTable, Error, FrameTime,
+    GeometryStream, GlobalTransforms, InstanceInput, PassRole, Views,
 };
 use engine_places::meshes::LastLevels;
 use engine_places::skin::{JOINTS, WEIGHTS};
 use engine_render::{
-    AttachPoint, Bind, Buffer, ComputePipeline, DrawInput, Encode, Form, FormSide, GpuPart,
-    Install, KindForm, Lifetime, Own, Pass, Pipeline, Prepare, Scene, Scope, Varyings,
-    VertexLayout, wgpu,
+    AttachPoint, Bind, Buffer, ComputePipeline, DrawInput, Encode, Form, FormFragment, FormSide,
+    FragmentPass, GpuPart, Install, KindForm, Lifetime, Own, Pass, PassFragment, PerPass, Prepare,
+    Scene, Scope, Varyings, VertexLayout, wgpu,
 };
 
 use crate::assets::MeshAssets;
@@ -186,6 +186,14 @@ const SKIN_FORM: KindForm = KindForm {
     varyings: Varyings::SurfaceExtra,
 };
 
+const OCCLUDED_PASS: &str = "occluded";
+
+const OCCLUDED: PassFragment = PassFragment {
+    pass: FragmentPass::Own(OCCLUDED_PASS),
+    side: None,
+    fragment: FormFragment::Role(PassRole::Lit),
+};
+
 pub(crate) struct Streams<S> {
     pub ids: DrawInput<MeshesGpu, S>,
     pub args: DrawInput<MeshesGpu, S>,
@@ -208,26 +216,14 @@ pub(crate) enum Drawing {
     Blended(BlendedStreams),
 }
 
-pub(crate) struct SceneStreams {
-    pub name: &'static str,
-    pub drawing: Drawing,
-}
-
-pub(crate) type OwnPipelines = Forms<Option<Pipeline<MeshesGpu, Own>>>;
-
-pub(crate) struct Occluded {
-    pub pipelines: OwnPipelines,
-    pub streams: Streams<Own>,
-}
-
 pub(crate) struct MeshesGpu {
     pub passes: Passes,
     pub instances: Instances,
     pub presented: Presented,
     pub computes: Computes,
     pub forms: Forms<Form<MeshesGpu>>,
-    pub scenes: Vec<SceneStreams>,
-    pub occluded: Occluded,
+    pub scenes: PerPass<Drawing>,
+    pub occluded: Streams<Own>,
     pub state: FrameState,
 }
 
@@ -261,12 +257,12 @@ impl GpuPart for MeshesGpu {
         let passes = install_passes(cx);
         let computes = install_computes(cx, &passes, &presented)?;
         let forms = Forms {
-            plain: cx.form(&PLAIN_FORM, &[])?,
-            extended: cx.form(&EXTENDED_FORM, &[])?,
-            skin: cx.form(&SKIN_FORM, &[])?,
+            plain: cx.form_owning(&PLAIN_FORM, &[OCCLUDED], &[])?,
+            extended: cx.form_owning(&EXTENDED_FORM, &[OCCLUDED], &[])?,
+            skin: cx.form_owning(&SKIN_FORM, &[OCCLUDED], &[])?,
         };
         let scenes = install_scenes(cx, &forms, (&instances, &presented));
-        let occluded = install_occluded(cx, passes.occluded, &instances, &presented)?;
+        let occluded = streams(cx, passes.occluded, (&instances, &presented), 1);
         Ok(Self {
             passes,
             instances,
@@ -366,7 +362,7 @@ fn install_passes(cx: &mut Install<'_, MeshesGpu>) -> Passes {
         .after(views)
         .id();
     let occluded = cx
-        .pass("occluded")
+        .pass(OCCLUDED_PASS)
         .at(AttachPoint::LateOpaque)
         .after(occlusion)
         .id();
@@ -565,16 +561,11 @@ fn install_scenes(
     cx: &mut Install<'_, MeshesGpu>,
     forms: &Forms<Form<MeshesGpu>>,
     (instances, presented): (&Instances, &Presented),
-) -> Vec<SceneStreams> {
-    let mut scenes: Vec<SceneStreams> = Vec::new();
+) -> PerPass<Drawing> {
     let passes = forms.plain.passes().chain(forms.skin.passes());
-    for pass in passes {
-        let name = pass.scene.name();
-        if scenes.iter().any(|known| known.name == name) {
-            continue;
-        }
+    PerPass::of(passes, |pass| {
         let scene = pass.scene;
-        let drawing = match (pass.role, pass.owned) {
+        match (pass.role, pass.owned) {
             (PassRole::Blended, true | false) => Drawing::Blended(BlendedStreams {
                 one: streams(cx, scene, (instances, presented), 0),
                 two: streams(cx, scene, (instances, presented), 1),
@@ -588,24 +579,6 @@ fn install_scenes(
             (PassRole::Lit | PassRole::Depth | PassRole::Shown, false) => {
                 Drawing::Placed(streams(cx, scene, (instances, presented), 0))
             }
-        };
-        scenes.push(SceneStreams { name, drawing });
-    }
-    scenes
-}
-
-fn install_occluded(
-    cx: &mut Install<'_, MeshesGpu>,
-    pass: Pass<MeshesGpu>,
-    instances: &Instances,
-    presented: &Presented,
-) -> Result<Occluded, Error> {
-    Ok(Occluded {
-        pipelines: Forms {
-            plain: Some(cx.form_as::<ColorPass>(pass, &PLAIN_FORM, &[])?),
-            extended: Some(cx.form_as::<ColorPass>(pass, &EXTENDED_FORM, &[])?),
-            skin: Some(cx.form_as::<ColorPass>(pass, &SKIN_FORM, &[])?),
-        },
-        streams: streams(cx, pass, (instances, presented), 1),
+        }
     })
 }

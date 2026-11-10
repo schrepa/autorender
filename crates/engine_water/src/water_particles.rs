@@ -6,8 +6,7 @@ use engine_open_world_kit::ground::{GroundTiles, TerrainTiles};
 use engine_places_simulation::wind::Wind;
 use engine_render::{
     AfterRead, Allocation, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, Draw,
-    DrawInput, Encode, Install, Lifetime, Own, Pass, Pipeline, Prepare, Sampler, Shape, Texture,
-    wgpu,
+    DrawInput, Encode, Form, Install, Lifetime, Own, Pass, Prepare, Sampler, Shape, Texture, wgpu,
 };
 use glam::{UVec2, Vec2, Vec3};
 
@@ -698,16 +697,15 @@ impl ParticlesGpu {
         true
     }
 
-    pub(crate) fn draw_foam(
-        &self,
-        draw: &mut Draw<'_, WaterGpu, Own>,
-        pipeline: &Pipeline<WaterGpu, Own>,
-    ) {
+    pub(crate) fn draw_foam(&self, draw: &mut Draw<'_, WaterGpu, Own>, form: &Form<WaterGpu>) {
         let (Some(args), true) = (self.foam_args, self.running()) else {
             return;
         };
+        let Some(pipeline) = draw.form(form) else {
+            return;
+        };
         draw.draw(
-            pipeline,
+            &pipeline,
             Shape::Indirect {
                 vertices: &[],
                 indices: None,

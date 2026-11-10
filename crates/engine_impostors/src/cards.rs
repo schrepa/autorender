@@ -1,11 +1,12 @@
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParamItem;
-use engine_core::{AttachPoint, ColorPass, CullPlan, DrawKind, Entry, Error, gpu_bits};
+use engine_core::{AttachPoint, CullPlan, DrawKind, Entry, Error, PassRole, gpu_bits};
 use engine_places_rendering::impostors::{ImpostorRecord, ImpostorRecords};
 use engine_render::{
     Allocation, Attach, Bind, Buffer, ComputePipeline, Count, Draw, DrawInput, Encode, FaceCull,
-    Form, FormSide, GpuPart, Install, KindForm, Lifetime, Own, OwnFragments, Pass, Pipeline,
-    Prepare, RoleFragments, Scene, SceneDraw, Shape, Varyings, wgpu,
+    Form, FormFragment, FormSide, FragmentPass, GpuPart, Install, KindForm, Lifetime, Own,
+    OwnFragments, Pass, PassFragment, PerPass, Prepare, RoleFragments, Scene, SceneDraw, Shape,
+    Varyings, wgpu,
 };
 
 use crate::meshes::MeshCards;
@@ -54,7 +55,14 @@ const fn card_form(vertex: Entry) -> KindForm {
 
 const CARD_FORM: KindForm = card_form(cards::VS_CARD);
 const FADING_CARD_FORM: KindForm = card_form(cards::VS_FADING_CARD);
-const LATE_CARD_FORM: KindForm = card_form(cards::VS_LATE_CARD);
+
+const LATE_PASS: &str = "mesh_cards_occluded";
+
+const LATE: PassFragment = PassFragment {
+    pass: FragmentPass::Own(LATE_PASS),
+    side: Some(FormSide::pulled(cards::VS_LATE_CARD)),
+    fragment: FormFragment::Role(PassRole::Lit),
+};
 
 pub(crate) struct CardGpu {
     counted: Pass<Self>,
@@ -65,11 +73,10 @@ pub(crate) struct CardGpu {
     late_args: Buffer<Self>,
     count: ComputePipeline<Self>,
     count_late: ComputePipeline<Self>,
-    late_pipeline: Pipeline<Self, Own>,
     late_input: DrawInput<Self, Own>,
     placed: Form<Self>,
     fading: Form<Self>,
-    inputs: Vec<(&'static str, DrawInput<Self, Scene>)>,
+    inputs: PerPass<DrawInput<Self, Scene>>,
     drawn: bool,
 }
 
@@ -87,7 +94,7 @@ impl GpuPart for CardGpu {
         let counted = cx.pass("mesh_cards").id();
         let late_counted = cx.pass("mesh_cards_late").at(AttachPoint::LateOpaque).id();
         let late = cx
-            .pass("mesh_cards_occluded")
+            .pass(LATE_PASS)
             .at(AttachPoint::LateOpaque)
             .after(late_counted)
             .id();
@@ -102,14 +109,10 @@ impl GpuPart for CardGpu {
             &[(counts::LATE_CARD_ARGS, Bind::Buffer(late_args))],
         )?;
         let bound = [(cards::CARD_RECORDS, Bind::Buffer(records))];
-        let late_pipeline = cx.form_as::<ColorPass>(late, &LATE_CARD_FORM, &bound)?;
         let late_input = cx.draw_input(late, late_args);
-        let placed = cx.form(&CARD_FORM, &bound)?;
+        let placed = cx.form_owning(&CARD_FORM, &[LATE], &bound)?;
         let fading = cx.form(&FADING_CARD_FORM, &bound)?;
-        let inputs = placed
-            .passes()
-            .map(|pass| (pass.scene.name(), cx.draw_input(pass.scene, args)))
-            .collect();
+        let inputs = PerPass::of(placed.passes(), |pass| cx.draw_input(pass.scene, args));
         Ok(Self {
             counted,
             late_counted,
@@ -119,7 +122,6 @@ impl GpuPart for CardGpu {
             late_args,
             count,
             count_late,
-            late_pipeline,
             late_input,
             placed,
             fading,
@@ -166,8 +168,11 @@ impl GpuPart for CardGpu {
             cx.dispatch(&self.count_late, Count::Groups([1, 1, 1]));
         } else if pass == self.late {
             let mut draw = cx.render(Attach::Declared);
+            let Some(pipeline) = draw.form(&self.placed) else {
+                return 0;
+            };
             draw.draw(
-                &self.late_pipeline,
+                &pipeline,
                 Shape::Indirect {
                     vertices: &[],
                     indices: None,
@@ -194,11 +199,7 @@ impl CardGpu {
         else {
             return draw.skip("impostor cards draw opaque");
         };
-        let Some(&(_, args)) = self
-            .inputs
-            .iter()
-            .find(|(name, _)| *name == scene.pass.name())
-        else {
+        let Some(&args) = draw.per_pass(&self.inputs) else {
             return draw.skip("pass has no impostor card list");
         };
         for (pipeline, offset) in [(placed, 0), (fading, DRAW_ARGS)] {
