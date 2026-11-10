@@ -6,7 +6,7 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemChangeTick;
 use engine_core::profile::{Aggregate, span};
 use engine_core::{
-    Cursor, Error, Events, Feed, FixedTime, FrameTime, GlobalTransforms, Refusals, Section, Since,
+    Cursor, Error, Feed, FixedTime, FrameTime, GlobalTransforms, Refusals, Section, Since,
     Transform,
 };
 use engine_math::collections::HashMap;
@@ -122,10 +122,6 @@ pub(crate) fn installed(collision: &mut Collision) -> &mut CollisionWorld {
     (&mut *collision.0 as &mut dyn Any)
         .downcast_mut::<CollisionWorld>()
         .expect("collision_world_installed")
-}
-
-pub(crate) fn world_of(collision: &Collision) -> Option<&CollisionWorld> {
-    (&*collision.0 as &dyn Any).downcast_ref::<CollisionWorld>()
 }
 
 impl CollisionWorld {
@@ -379,20 +375,17 @@ impl CollisionWorld {
         }
     }
 
-    fn detect(&mut self, tick: u64) {
+    fn detect(&mut self) {
         let mut events = std::mem::take(&mut self.sensors);
         events.events.resize(self.config.sensor_feed as usize);
-        self.detect_into(&mut events, tick);
+        self.detect_into(&mut events);
         self.sensors = events;
     }
 
-    fn detect_into(&mut self, events: &mut SensorEvents, tick: u64) {
+    fn detect_into(&mut self, events: &mut SensorEvents) {
         let _profile = span("collision", "sensor_detect");
         let mut precise = Aggregate::new("collision.narrow", "sensor_overlap_tests");
         let mut broad = Aggregate::new("collision.broad", "bvh_traversal");
-        events.sequence = events.sequence.saturating_add(1);
-        events.tick = Some(tick);
-        events.last = 0;
         events.candidate_pairs = 0;
         self.next_pairs.clear();
         let result = (|| {
@@ -469,7 +462,6 @@ impl CollisionWorld {
         }
         std::mem::swap(&mut events.pairs, &mut self.next_pairs);
         self.next_pairs.clear();
-        events.committed_tick = Some(tick);
     }
 }
 
@@ -864,11 +856,7 @@ fn candidate(count: &mut usize, limit: usize) -> Result<(), Fault> {
 
 pub(crate) struct SensorEvents {
     events: Feed<SensorEvent>,
-    last: usize,
     pairs: Vec<SensorPair>,
-    sequence: u64,
-    tick: Option<u64>,
-    committed_tick: Option<u64>,
     candidate_pairs: usize,
     error: Option<Fault>,
 }
@@ -877,11 +865,7 @@ impl Default for SensorEvents {
     fn default() -> Self {
         Self {
             events: Feed::new(1),
-            last: 0,
             pairs: Vec::new(),
-            sequence: 0,
-            tick: None,
-            committed_tick: None,
             candidate_pairs: 0,
             error: None,
         }
@@ -891,38 +875,8 @@ impl Default for SensorEvents {
 impl SensorEvents {
     fn push(&mut self, event: SensorEvent) {
         self.events.push(event);
-        self.last += 1;
     }
 
-    pub(crate) fn last(&self) -> &[SensorEvent] {
-        let mut cursor = Cursor::default();
-        match self.events.events(&mut cursor) {
-            Events::Listed(all) => &all[all.len().saturating_sub(self.last)..],
-            Events::Missed(_) => &[],
-        }
-    }
-
-    pub(crate) fn feed(&self) -> &Feed<SensorEvent> {
-        &self.events
-    }
-    pub(crate) fn pairs(&self) -> &[SensorPair] {
-        &self.pairs
-    }
-    pub(crate) fn sequence(&self) -> u64 {
-        self.sequence
-    }
-    pub(crate) fn tick(&self) -> Option<u64> {
-        self.tick
-    }
-    pub(crate) fn committed_tick(&self) -> Option<u64> {
-        self.committed_tick
-    }
-    pub(crate) fn complete(&self) -> bool {
-        self.tick.is_some() && self.error.is_none()
-    }
-    pub(crate) fn candidate_pairs(&self) -> usize {
-        self.candidate_pairs
-    }
     pub(crate) fn error(&self) -> Option<Error> {
         self.error.map(Fault::error)
     }
@@ -1015,6 +969,6 @@ impl Fresh<'_, '_> {
     }
 }
 
-pub(crate) fn detect(mut collision: ResMut<Collision>, time: Res<FixedTime>) {
-    installed(&mut collision).detect(time.tick);
+pub(crate) fn detect(mut collision: ResMut<Collision>) {
+    installed(&mut collision).detect();
 }

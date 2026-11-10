@@ -25,11 +25,12 @@ use bevy_ecs::{
 };
 use serde_json::Value;
 
-pub use asks::{Applied, ApplyAt, Ask, Asked, Moment};
+pub use asks::{Applied, AppliedView, ApplyAt, Ask, Asked, AskedView, Moment, PendingView};
 pub use budget::{BudgetUse, FrameBudget};
 pub use calls::{
-    Call, Event, EventDecl, EventPage, NamedRun, Operation, RESERVED_REPLY_KEYS, Raises, access_of,
-    answer, open_schema, page_of, schema_of,
+    Call, Each, EntityIds, Event, EventDecl, EventPage, Lands, NamedRun, Operation,
+    RESERVED_REPLY_KEYS, Raises, ReadEvents, Refusal, Rows, SHAPED_BY, access_of, answer,
+    missing_events, open_parts, open_schema, page_of, schema_of, shaped_by,
 };
 pub use drawn::{
     DrawKind, Drawn, DrawnBounds, DrawnProjection, InstanceValues, KindDecl, KindSkip, Layers,
@@ -77,7 +78,7 @@ pub trait List: Send + Sync + 'static {
 }
 
 type ReadMembers = fn(&World, &mut dyn FnMut(&dyn Any));
-type ViewPlace = fn(&World) -> Option<Value>;
+type ViewPlace = fn(&World, &dyn EntityIds) -> Option<AskedView>;
 
 #[derive(Clone, Copy)]
 pub struct PlaceDecl {
@@ -171,8 +172,8 @@ impl PlaceDecl {
     }
 
     #[doc(hidden)]
-    pub fn view(&self, world: &World) -> Option<Value> {
-        self.view.and_then(|view| view(world))
+    pub fn view(&self, world: &World, ids: &dyn EntityIds) -> Option<AskedView> {
+        self.view.and_then(|view| view(world, ids))
     }
 
     #[doc(hidden)]
@@ -229,8 +230,8 @@ fn insert_resource<R: Resource + Default>(world: &mut World) {
     world.init_resource::<R>();
 }
 
-fn view_asked<A: Ask>(world: &World) -> Option<Value> {
-    world.get_resource::<Asked<A>>().map(Asked::view)
+fn view_asked<A: Ask>(world: &World, ids: &dyn EntityIds) -> Option<AskedView> {
+    world.get_resource::<Asked<A>>().map(|asked| asked.view(ids))
 }
 
 fn insert_component<C: Component>(world: &mut World) {

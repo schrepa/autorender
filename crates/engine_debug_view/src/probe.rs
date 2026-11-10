@@ -312,7 +312,12 @@ pub(crate) struct ProbedRequest {}
 #[derive(Serialize, schemars::JsonSchema)]
 pub(crate) struct ProbedReply {
     probing: bool,
+    #[schemars(schema_with = "probed_fields")]
     probe: Option<Value>,
+}
+
+fn probed_fields(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    engine_core::shaped_by(generator.subschema_for::<Option<Value>>(), "debug_modes")
 }
 
 pub(crate) struct ProbedPixel;

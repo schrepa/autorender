@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetResidency, Asked, Asks, DrawnPoses, Error, ErrorCode, Expected, GlobalTransforms,
+    AssetResidency, Asked, Asks, DrawnPoses, Error, ErrorCode, Expected, GlobalTransforms, Lands,
     Operation, SceneIds,
 };
 use engine_places_rendering::animation::{
@@ -77,6 +77,7 @@ pub struct AnimationPlay {
 
 impl Operation for AnimationPlay {
     const NAME: &'static str = "animation_play";
+    const LANDS: Lands = Lands::NextStep;
     type Params = Ordered;
     type Request = Self;
     type Reply = AnimationAsked;
@@ -131,6 +132,7 @@ pub struct AnimationLayer {
 
 impl Operation for AnimationLayer {
     const NAME: &'static str = "animation_layer";
+    const LANDS: Lands = Lands::NextStep;
     type Params = Ordered;
     type Request = Self;
     type Reply = AnimationAsked;
@@ -166,6 +168,7 @@ pub struct AnimationAim {
 
 impl Operation for AnimationAim {
     const NAME: &'static str = "animation_aim";
+    const LANDS: Lands = Lands::NextStep;
     type Params = Ordered;
     type Request = Self;
     type Reply = AnimationAsked;

@@ -7,7 +7,8 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Applies, Asked, Brick, Bricks, ComponentKind, Error, ErrorCode, Level, LevelView, Operation,
+    Applies, Asked, Brick, Bricks, ComponentKind, Error, ErrorCode, Lands, Level, LevelView,
+    Operation,
     Pause, PauseReason, SceneComponents, Schedule, Source,
 };
 use engine_places_rendering::screens::{Screen, ScreenAsk, Screens};
@@ -176,6 +177,7 @@ pub(crate) struct LevelOperation;
 
 impl Operation for LevelOperation {
     const NAME: &'static str = "level";
+    const LANDS: Lands = Lands::NextFrame;
     type Params = ResMut<'static, Level>;
     type Request = LevelAsk;
     type Reply = LevelAsk;

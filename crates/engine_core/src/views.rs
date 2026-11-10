@@ -3,13 +3,13 @@ use bevy_ecs::prelude::{Query, Res, Resource, World};
 use bevy_ecs::system::{Commands, SystemParam, SystemParamItem};
 use glam::{Mat4, UVec2, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
 use crate::{
     AssetLibrary, Camera, Clear, ColorSpace, Detail, Drawn, DrawnFlags, DrawnPoses, DrawnTable, Error,
     ErrorCode, FrameFacts, FrameId, FrameTime, GlobalTransforms, Hold, Jitter, Layers, List,
     Mobility, Operation, OwnedView, OwnedViews, PassBit, PassMask, PassViews, Requests,
-    ScenePasses, Target, View, ViewCut, ViewHistory, ViewJitter, ViewLayer, take_asks,
+    Refusal, SceneIds, ScenePasses, Target, View, ViewCut, ViewHistory, ViewJitter, ViewLayer,
+    take_asks,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -106,28 +106,32 @@ impl ViewFacts {
         ))
     }
 
-    fn json(&self) -> Value {
-        let target = match self.target {
-            Target::Surface => json!("surface"),
-            Target::Texture(texture) => json!({ "texture": format!("{texture:?}") }),
-        };
-        json!({
-            "view": self.view.to_bits(),
-            "camera": self.camera.to_bits(),
-            "target": target,
-            "pixels": self.pixels,
-            "render": self.render.to_array(),
-            "layers": self.layers.0,
-            "clear": self.clear,
-            "clear_color": self.clear_color,
-            "order": self.order,
-            "eye": self.eye.to_array(),
-            "detail_eye": self.detail_eye.to_array(),
-            "forward": self.forward.to_array(),
-            "history": self.history,
-            "jitter": self.jitter.map(|jitter| jitter.to_array()),
-            "noise": self.noise,
-        })
+    fn row(&self, ids: &SceneIds<'_, '_>) -> ViewRow {
+        let named = |entity: Entity| ids.id(entity).map(str::to_owned);
+        ViewRow {
+            view: named(self.view),
+            camera: named(self.camera),
+            texture: match self.target {
+                Target::Surface => None,
+                Target::Texture(texture) => Some(format!("{texture:?}")),
+            },
+            pixels: self.pixels,
+            render: self.render.to_array(),
+            layers: self.layers.0,
+            clear: match self.clear {
+                Clear::All => ClearRow::All,
+                Clear::DepthOnly => ClearRow::DepthOnly,
+                Clear::Nothing => ClearRow::Nothing,
+            },
+            clear_color: self.clear_color,
+            order: self.order,
+            eye: self.eye.to_array(),
+            detail_eye: self.detail_eye.to_array(),
+            forward: self.forward.to_array(),
+            history_valid: self.history.valid(),
+            jitter: self.jitter.map(|jitter| jitter.to_array()),
+            noise: self.noise,
+        }
     }
 }
 
@@ -219,15 +223,15 @@ impl Views {
         &self.refused
     }
 
-    fn reply(&self) -> ViewsReply {
+    fn reply(&self, ids: &SceneIds<'_, '_>) -> ViewsReply {
         ViewsReply {
-            views: self.listed.iter().map(ViewFacts::json).collect(),
+            views: self.listed.iter().map(|facts| facts.row(ids)).collect(),
             refused: self
                 .refused
                 .iter()
                 .map(|(view, error)| RefusedView {
-                    view: view.to_bits(),
-                    error: error.clone(),
+                    view: ids.id(*view).map(str::to_owned),
+                    error: Refusal::of(error),
                 })
                 .collect(),
         }
@@ -637,15 +641,41 @@ pub(crate) struct ViewsRequest {}
 
 #[derive(Default, Serialize, schemars::JsonSchema)]
 pub(crate) struct ViewsReply {
-    views: Vec<Value>,
+    views: Vec<ViewRow>,
     refused: Vec<RefusedView>,
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum ClearRow {
+    All,
+    DepthOnly,
+    Nothing,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct ViewRow {
+    view: Option<String>,
+    camera: Option<String>,
+    texture: Option<String>,
+    pixels: [u32; 4],
+    render: [u32; 2],
+    layers: u32,
+    clear: ClearRow,
+    clear_color: [f32; 4],
+    order: i32,
+    eye: [f32; 3],
+    detail_eye: [f32; 3],
+    forward: [f32; 3],
+    history_valid: bool,
+    jitter: Option<[f32; 2]>,
+    noise: f32,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
 pub(crate) struct RefusedView {
-    view: u64,
-    #[schemars(with = "Value")]
-    error: Error,
+    view: Option<String>,
+    error: Refusal,
 }
 
 pub(crate) struct ViewsState;
@@ -653,15 +683,15 @@ pub(crate) struct ViewsState;
 impl Operation for ViewsState {
     const NAME: &'static str = "views";
     const CONTROL: bool = false;
-    type Params = Option<Res<'static, Views>>;
+    type Params = (Option<Res<'static, Views>>, SceneIds<'static, 'static>);
     type Request = ViewsRequest;
     type Reply = ViewsReply;
 
     fn run(
-        views: SystemParamItem<'_, '_, Self::Params>,
+        (views, ids): SystemParamItem<'_, '_, Self::Params>,
         _: ViewsRequest,
     ) -> Result<ViewsReply, Error> {
-        Ok(views.map_or_else(ViewsReply::default, |views| views.reply()))
+        Ok(views.map_or_else(ViewsReply::default, |views| views.reply(&ids)))
     }
 }
 

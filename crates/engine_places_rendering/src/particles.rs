@@ -2,7 +2,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use bevy_ecs::prelude::{Component, Res, Resource};
 use bevy_ecs::system::SystemParamItem;
-use engine_place::{Call, DrawKind, Drawn, Error, ErrorCode, Operation, Slot};
+use engine_place::{Call, DrawKind, Drawn, Error, ErrorCode, Lands, Operation, Slot};
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
 
@@ -254,6 +254,7 @@ pub struct BurstParticles {
 
 impl Operation for BurstParticles {
     const NAME: &'static str = "particle_burst";
+    const LANDS: Lands = Lands::NextFrame;
     type Params = Res<'static, ParticleBursts>;
     type Request = Self;
     type Reply = ();

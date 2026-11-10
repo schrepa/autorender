@@ -1,9 +1,8 @@
 use bevy_ecs::entity::Entity;
 use bevy_ecs::resource::Resource;
 use serde::Serialize;
-use serde_json::{Value, json};
 
-use crate::Slot;
+use crate::{EntityIds, Slot};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
 #[derive(schemars::JsonSchema)]
@@ -31,12 +30,32 @@ pub struct Moment {
     pub frame: u64,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
-#[derive(schemars::JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Applied {
-    pub node: Option<u64>,
+    pub node: Option<Entity>,
     pub asked: Moment,
     pub applied: Moment,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub struct PendingView {
+    pub entity: Option<String>,
+    pub asked: Moment,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub struct AppliedView {
+    pub entity: Option<String>,
+    pub asked: Moment,
+    pub applied: Moment,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub struct AskedView {
+    pub name: String,
+    pub at: ApplyAt,
+    pub pending: Vec<PendingView>,
+    pub applied: Vec<AppliedView>,
 }
 
 #[derive(Resource)]
@@ -92,7 +111,7 @@ impl<A: Ask> Asked<A> {
             .into_iter()
             .map(|(ask, asked)| {
                 self.applied.push(Applied {
-                    node: ask.node().map(Entity::to_bits),
+                    node: ask.node(),
                     asked,
                     applied: now,
                 });
@@ -101,17 +120,28 @@ impl<A: Ask> Asked<A> {
             .collect()
     }
 
-    pub fn view(&self) -> Value {
-        let pending: Vec<Value> = self
-            .pending
-            .iter()
-            .map(|(ask, asked)| json!({ "node": ask.node().map(Entity::to_bits), "asked": asked }))
-            .collect();
-        json!({
-            "name": A::NAME,
-            "at": A::AT,
-            "pending": pending,
-            "applied": self.applied,
-        })
+    pub fn view(&self, ids: &dyn EntityIds) -> AskedView {
+        let named = |node: Option<Entity>| node.and_then(|node| ids.id(node));
+        AskedView {
+            name: A::NAME.to_owned(),
+            at: A::AT,
+            pending: self
+                .pending
+                .iter()
+                .map(|(ask, asked)| PendingView {
+                    entity: named(ask.node()),
+                    asked: *asked,
+                })
+                .collect(),
+            applied: self
+                .applied
+                .iter()
+                .map(|applied| AppliedView {
+                    entity: named(applied.node),
+                    asked: applied.asked,
+                    applied: applied.applied,
+                })
+                .collect(),
+        }
     }
 }

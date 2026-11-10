@@ -5,7 +5,9 @@ use bevy_ecs::component::{ComponentId, Mutable};
 use bevy_ecs::query::FilteredAccessSet;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
-use engine_place::{Call, Error, EventDecl, EventPage, GpuStruct, List, Operation, PlaceDecl, Slot};
+use engine_place::{
+    Call, Error, EventDecl, EventPage, GpuStruct, Lands, List, Operation, PlaceDecl, Slot,
+};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -281,6 +283,7 @@ pub struct OperationEntry {
     pub name: &'static str,
     pub brick: &'static str,
     pub control: bool,
+    pub lands: Lands,
     pub at: &'static Location<'static>,
     call: Call,
 }
@@ -292,6 +295,7 @@ impl OperationEntry {
             name: call.name,
             brick: "",
             control: call.control,
+            lands: call.lands,
             at: Location::caller(),
             call,
         }
@@ -337,8 +341,8 @@ impl EventEntry {
         }
     }
 
-    pub fn read(&self, world: &World, after: u64) -> Option<EventPage> {
-        self.event.read(world, after)
+    pub fn read(&self, world: &World, after: u64) -> Result<EventPage, Error> {
+        self.event.read(world, &crate::SceneNames(world), after)
     }
 
     pub fn row_schema(&self) -> Value {

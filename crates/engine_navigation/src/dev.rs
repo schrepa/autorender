@@ -88,10 +88,7 @@ fn agent_view(
         left: position.map_or(0.0, |position| remaining(walk, position)),
         searched: walk.searched,
         moved_by: mover.map(|mover| mover.by.name().to_owned()),
-        blocked_by: blocked.map(|entity| {
-            ids.id(entity)
-                .map_or_else(|| entity.to_bits().to_string(), str::to_owned)
-        }),
+        blocked_by: blocked.and_then(|entity| ids.id(entity).map(str::to_owned)),
     }
 }
 

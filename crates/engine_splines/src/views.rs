@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, ErrorCode, Expected, Operation, SceneContext, SceneIds};
+use engine_core::{Error, ErrorCode, Expected, Operation, Refusal, SceneContext, SceneIds};
 use engine_places_world::splines::SplineMesh;
 use serde::{Deserialize, Serialize};
 
@@ -14,8 +14,7 @@ pub(crate) struct SplineMeshView {
     copies: Option<u32>,
     chunks: Option<usize>,
     vertices: Option<u32>,
-    #[schemars(with = "Option<serde_json::Value>")]
-    error: Option<Error>,
+    error: Option<Refusal>,
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -80,7 +79,7 @@ impl Operation for InspectSplineMesh {
             copies: chunks.map(|chunks| chunks.copies),
             chunks: chunks.map(|chunks| chunks.entities.len()),
             vertices: chunks.map(|chunks| chunks.vertices),
-            error: chunks.and_then(|chunks| chunks.error.clone()),
+            error: chunks.and_then(|chunks| chunks.error.as_ref().map(Refusal::of)),
         }))
     }
 }

@@ -10,15 +10,14 @@ use bevy_ecs::prelude::{Commands, Query, Res, ResMut, Without};
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{SystemParam, SystemParamItem};
 use bevy_ecs::world::World;
-use engine_registry::{MoverRule, Registry, SceneEntity};
+use engine_registry::{MoverRule, Registry, SceneEntity, SceneNames};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::hierarchy::tracking::Invalidation;
 use crate::{
-    ApplyAt, Ask, Asked, Brick, Error, ErrorCode, Expected, FixedTime, FrameTime,
-    GlobalTransforms, Moment, Mover, MoverId, Operation, Pace, Refusals, SceneIds, Transform,
-    edit_transform,
+    ApplyAt, Ask, Asked, AskedView, Brick, Error, ErrorCode, Expected, FixedTime, FrameTime,
+    GlobalTransforms, Lands, Moment, Mover, MoverId, Operation, Pace, Refusals, Rows, SceneIds,
+    Transform, edit_transform,
 };
 
 mod key {
@@ -345,8 +344,6 @@ pub(crate) fn install_kinds(world: &mut World) {
 
 #[derive(Serialize, schemars::JsonSchema)]
 pub(crate) struct MovedNode {
-    node: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
     id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     name: Option<String>,
@@ -355,7 +352,6 @@ pub(crate) struct MovedNode {
 fn named(world: &World, node: Entity) -> MovedNode {
     let authored = world.get::<SceneEntity>(node);
     MovedNode {
-        node: node.to_bits(),
         id: authored.map(|authored| authored.authored_id.clone()),
         name: authored.map(|authored| authored.name.clone()),
     }
@@ -367,7 +363,7 @@ pub(crate) struct MovesRequest {}
 
 #[derive(Serialize, schemars::JsonSchema)]
 pub(crate) struct MovesReply {
-    asks: Vec<Value>,
+    asks: Vec<AskedView>,
     moved_static: Vec<MovedNode>,
 }
 
@@ -384,13 +380,14 @@ impl Operation for MovesState {
         world: SystemParamItem<'_, '_, Self::Params>,
         _: MovesRequest,
     ) -> Result<MovesReply, Error> {
-        let asks: Vec<Value> = world
+        let ids = SceneNames(world);
+        let asks: Vec<AskedView> = world
             .get_resource::<Registry>()
             .map_or_else(Vec::new, |registry| {
                 registry
                     .catalog()
                     .iter()
-                    .filter_map(|place| place.view(world))
+                    .filter_map(|place| place.view(world, &ids))
                     .collect()
             });
         let moved_static: Vec<MovedNode> = world
@@ -410,50 +407,96 @@ impl Operation for MovesState {
 
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct TeleportControl {
+pub(crate) struct TransformWrite {
     entity: String,
-    translation: [f32; 3],
+    #[serde(default)]
+    translation: Option<[f32; 3]>,
+    #[serde(default)]
+    rotation: Option<[f32; 4]>,
+    #[serde(default)]
+    scale: Option<[f32; 3]>,
+}
+
+#[derive(Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct TeleportControl {
+    moves: Vec<TransformWrite>,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct Teleported {
+    entity: String,
+    at: ApplyAt,
+}
+
+fn finite<const N: usize>(values: Option<[f32; N]>, path: &str) -> Result<Option<[f32; N]>, Error> {
+    match values {
+        Some(held) if held.iter().any(|value| !value.is_finite()) => {
+            Err(Error::new(ErrorCode::InvalidValue, path)
+                .expected(Expected::Finite)
+                .got(held.to_vec()))
+        }
+        Some(_) | None => Ok(values),
+    }
+}
+
+fn written(held: &Transform, write: &TransformWrite) -> Result<Transform, Error> {
+    let translation = finite(write.translation, "$.translation")?;
+    let scale = finite(write.scale, "$.scale")?;
+    let rotation = match finite(write.rotation, "$.rotation")? {
+        Some(rotation) => {
+            let rotation = glam::Quat::from_array(rotation);
+            if rotation.length_squared() <= f32::EPSILON {
+                return Err(Error::new(ErrorCode::InvalidValue, "$.rotation")
+                    .expected(Expected::Normalized)
+                    .got(rotation.to_array()));
+            }
+            Some(rotation.normalize())
+        }
+        None => None,
+    };
+    Ok(Transform {
+        translation: translation.map_or(held.translation, glam::Vec3::from_array),
+        rotation: rotation.unwrap_or(held.rotation),
+        scale: scale.map_or(held.scale, glam::Vec3::from_array),
+    })
 }
 
 impl Operation for TeleportControl {
     const NAME: &'static str = Teleport::NAME;
+    const LANDS: Lands = Lands::NextStep;
     type Params = (
         SceneIds<'static, 'static>,
         Query<'static, 'static, (&'static Transform, Option<&'static Mover>)>,
         Asks<'static, 'static, Teleport>,
     );
     type Request = Self;
-    type Reply = TeleportReply;
+    type Reply = Rows<Teleported>;
 
     fn run(
         (ids, nodes, mut asks): SystemParamItem<'_, '_, Self::Params>,
         request: Self,
-    ) -> Result<TeleportReply, Error> {
-        let node = ids
-            .entity(&request.entity)
-            .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$.entity").got(&request.entity))?;
-        let (held, mover) = nodes.get(node).map_err(|_| {
-            Error::new(ErrorCode::MissingComponent, "$.entity.transform")
-                .expected(Expected::Present)
-                .got(node.to_bits())
-        })?;
-        asks.send(Teleport {
-            node,
-            to: Transform {
-                translation: glam::Vec3::from_array(request.translation),
-                ..*held
-            },
-        });
-        let at = if tick_paced(mover) {
-            ApplyAt::TickEnd
-        } else {
-            ApplyAt::FrameStart
-        };
-        Ok(TeleportReply { at })
+    ) -> Result<Rows<Teleported>, Error> {
+        Ok(Rows::each("moves", request.moves, |write| {
+            let node = ids
+                .entity(&write.entity)
+                .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$.entity").got(&write.entity))?;
+            let (held, mover) = nodes.get(node).map_err(|_| {
+                Error::new(ErrorCode::MissingComponent, "$.entity")
+                    .expected(Expected::Present)
+                    .got(&write.entity)
+            })?;
+            let to = written(held, &write)?;
+            asks.send(Teleport { node, to });
+            let at = if tick_paced(mover) {
+                ApplyAt::TickEnd
+            } else {
+                ApplyAt::FrameStart
+            };
+            Ok(Teleported {
+                entity: write.entity,
+                at,
+            })
+        }))
     }
-}
-
-#[derive(Serialize, schemars::JsonSchema)]
-pub(crate) struct TeleportReply {
-    at: ApplyAt,
 }

@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Error, ErrorCode, GlobalTransforms, Operation, SceneIds};
+use engine_core::{Error, ErrorCode, GlobalTransforms, Operation, Refusal, SceneIds};
 use engine_places_simulation::physics::{Collider, ColliderShape};
 use serde::{Deserialize, Serialize};
 
@@ -21,8 +21,8 @@ pub(crate) struct ColliderView {
     pub filter: u32,
     pub sensor: bool,
     pub world_valid: bool,
-    #[schemars(with = "Option<serde_json::Value>")]
-    pub world_error: Option<Error>,
+    pub world_error: Option<Refusal>,
+    pub sensors_error: Option<Refusal>,
     pub cache_status: String,
 }
 
@@ -86,7 +86,10 @@ fn collider_view(
         filter: collider.layers().filter,
         sensor: collider.is_sensor(),
         world_valid: valid.is_ok(),
-        world_error: valid.err().map(Fault::error),
+        world_error: valid.err().map(|fault| Refusal::of(&fault.error())),
+        sensors_error: cache
+            .and_then(|cache| cache.sensors.error())
+            .map(|error| Refusal::of(&error)),
         cache_status: cache_status.to_owned(),
     })
 }

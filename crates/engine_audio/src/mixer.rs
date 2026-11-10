@@ -5,8 +5,9 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use bevy_ecs::prelude::*;
 use engine_core::math::clamp;
 use engine_core::{
-    Background, Error, ErrorCode, Files, FrameTime, GlobalTransforms, Interest, Landed, Pause,
-    Poses, Refusals, Request, Requests, SceneIds, Spawner, Ticket, Views,
+    Background, EntityIds, Error, ErrorCode, Event, Feed, FeedSettings, Files, FrameTime,
+    GlobalTransforms, Interest, Landed, Pause, Poses, Raises, Refusals, Request, Requests, SceneIds,
+    Spawner, Ticket, Views,
 };
 use engine_places_rendering::audio::{
     Bus, OneShot, SoundHandle, SoundOrder, SoundSource, Sounds, VoiceHandle,
@@ -22,6 +23,49 @@ use crate::settings::{Audio, AudioStats};
 pub const AUDIO_FAILED: ErrorCode = ErrorCode::brick("audio_failed");
 
 static NEXT_ID: AtomicU32 = AtomicU32::new(1);
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SoundEnded {
+    pub entity: Option<Entity>,
+    pub voice: Option<VoiceHandle>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+pub struct SoundEndedRow {
+    pub entity: Option<String>,
+    pub voice: Option<VoiceHandle>,
+}
+
+impl Event for SoundEnded {
+    const NAME: &'static str = "sound_ended";
+    type Row = SoundEndedRow;
+
+    fn row(&self, ids: &dyn EntityIds) -> SoundEndedRow {
+        SoundEndedRow {
+            entity: self.entity.and_then(|entity| ids.id(entity)),
+            voice: self.voice,
+        }
+    }
+}
+
+#[derive(Resource)]
+pub struct SoundEnds {
+    raised: Feed<SoundEnded>,
+}
+
+impl Default for SoundEnds {
+    fn default() -> Self {
+        Self {
+            raised: Feed::new(FeedSettings::default().events as usize),
+        }
+    }
+}
+
+impl Raises<SoundEnded> for SoundEnds {
+    fn raised(&self) -> &Feed<SoundEnded> {
+        &self.raised
+    }
+}
 
 fn fresh() -> u32 {
     NEXT_ID.fetch_add(1, Ordering::Relaxed)
@@ -593,7 +637,7 @@ impl Mixer {
         }
     }
 
-    fn advance(&mut self) {
+    fn advance(&mut self, ends: &mut SoundEnds) {
         if !self.voices.iter().any(Voice::live) {
             return;
         }
@@ -606,6 +650,16 @@ impl Mixer {
             }
             let voice = &mut self.voices[at];
             self.backend.stop(voice.id);
+            ends.raised.push(match &voice.owner {
+                Owner::Source(entity, _) => SoundEnded {
+                    entity: Some(*entity),
+                    voice: None,
+                },
+                Owner::Handle(handle) => SoundEnded {
+                    entity: None,
+                    voice: Some(*handle),
+                },
+            });
             if voice.ends() {
                 voice.playing = Playing::Ended;
                 at += 1;
@@ -653,7 +707,7 @@ impl Mixer {
 }
 
 pub(crate) fn mix(
-    (settings, time): (Res<Audio>, Res<FrameTime>),
+    (settings, time, feeds): (Res<Audio>, Res<FrameTime>, Res<FeedSettings>),
     (views, poses, globals, pause): (
         Res<Views>,
         Poses,
@@ -662,7 +716,12 @@ pub(crate) fn mix(
     ),
     (sounds, mut files): (Res<Sounds>, ResMut<Files>),
     sources: Query<(Entity, Ref<SoundSource>)>,
-    (mut stats, mut mixer, mut spawner): (ResMut<AudioStats>, ResMut<Mixer>, Spawner<AudioBrick>),
+    (mut stats, mut mixer, mut spawner, mut ends): (
+        ResMut<AudioStats>,
+        ResMut<Mixer>,
+        Spawner<AudioBrick>,
+        ResMut<SoundEnds>,
+    ),
     mut refusals: ResMut<Refusals>,
 ) {
     let was = mixer.device;
@@ -718,7 +777,8 @@ pub(crate) fn mix(
     if settings.is_changed() || pause_moved || (closed && mixer.backend.opened()) {
         mixer.apply_buses(&settings, pause.is_some_and(|pause| pause.paused()));
     }
-    mixer.advance();
+    ends.raised.resize(feeds.events as usize);
+    mixer.advance(&mut ends);
     mixer.hear(views.main().and_then(|main| poses.drawn_pose(main.camera)), &globals);
     mixer.sounds.settle(time.real_elapsed);
     mixer.publish(&mut stats);

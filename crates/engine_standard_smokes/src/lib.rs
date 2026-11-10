@@ -5,6 +5,7 @@
 
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
+mod calls;
 mod ground;
 mod image;
 mod poses;
@@ -28,6 +29,10 @@ impl Brick for StandardSmokesBrick {
         Smoke {
             name: "settled_image_repeats",
             run: image::run,
+        },
+        Smoke {
+            name: "calls_by_name_in_lists",
+            run: calls::run,
         },
     ];
 

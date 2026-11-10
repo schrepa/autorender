@@ -7,6 +7,7 @@ settings! {
     pub struct FeedSettings {
         pub transforms: u32 = 16384 => at_least(1),
         pub mesh_residency: u32 = 4096 => at_least(1),
+        pub events: u32 = 1024 => at_least(1),
     }
 }
 
@@ -44,6 +45,7 @@ pub(crate) fn start_frame(world: &mut World, spare_ms: f64) {
     if let Some(mut level) = world.get_resource_mut::<Level>() {
         level.settle(now);
     }
+    crate::loads::settle_level(world);
 }
 
 pub(crate) fn settle_readiness(world: &mut World, board: &Board) {
@@ -59,4 +61,5 @@ pub(crate) fn settle_readiness(world: &mut World, board: &Board) {
         readiness.settle(u32::try_from(cooking.left()).unwrap_or(u32::MAX));
     }
     world.insert_resource(readiness);
+    crate::loads::settle_scene(world);
 }

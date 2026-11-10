@@ -22,6 +22,7 @@ mod frame_timing;
 mod hierarchy;
 mod input;
 mod jobs;
+mod loads;
 pub mod math;
 mod mesh_lods;
 mod moves;
@@ -111,6 +112,7 @@ pub use glam;
 pub use hierarchy::*;
 pub use input::*;
 pub use jobs::*;
+pub use loads::{Load, Loaded, Loads};
 pub use mesh_lods::MeshLevels;
 pub use moves::{Applies, Asks, HandOver, MOVER_PART, Moves, Teleport, mover_of, send_ask, take_asks};
 pub use nearest::Nearest;
@@ -120,13 +122,16 @@ pub use records::*;
 pub use refusals::{Refusals, Refused};
 pub use render_stats::{KindPass, KindPassState, LinkedStats, Names, RenderStats};
 pub use scene::*;
+pub use schedules::{RunPace, RunPoint};
 pub use engine_place::{
     BitField, BitValue, FrameId, GpuBits, Readable, Readback, decode_bits, gpu_bits,
 };
 pub use engine_place::{
-    Call, Event, EventDecl, EventPage, Operation, RESERVED_REPLY_KEYS, Raises, open_schema,
-    page_of,
+    AppliedView, AskedView, Call, Each, EntityIds, Event, EventDecl, EventPage, Lands, Operation,
+    PendingView, RESERVED_REPLY_KEYS, Raises, ReadEvents, Refusal, Rows, SHAPED_BY,
+    missing_events, open_parts, open_schema, page_of, shaped_by,
 };
+pub use engine_registry::SceneNames;
 pub use engine_registry::call;
 pub use section::{Cut, EventsQuery, Section};
 pub use shared::{FeedSettings, FrameBudgetSettings};
@@ -288,7 +293,7 @@ fn core_entries(registry: &mut RegistryBuilder) {
     registry.core_settings(bricks::settings_entry::<FoldOrder>());
     registry.core_operation(OperationEntry::of(Call::of::<views::ViewControl>()));
     registry.core_operation(OperationEntry::of(Call::of::<moves::TeleportControl>()));
-    registry.core_operation(OperationEntry::of(authoring::COMPONENT_CALL));
+    registry.core_operation(OperationEntry::of(authoring::CHANGE_CALL));
     registry.core_operation(OperationEntry::of(Call::of::<moves::MovesState>()));
     registry.core_operation(OperationEntry::of(Call::of::<views::ViewsState>()));
     registry.core_operation(OperationEntry::of(Call::of::<input::Rebind>()));
@@ -298,6 +303,8 @@ fn core_entries(registry: &mut RegistryBuilder) {
         BRICK_STATE_EVENT,
         brick_changes,
     )));
+    registry.core_event(EventEntry::of(EventDecl::of::<InputChange, InputChanges>()));
+    registry.core_event(EventEntry::of(EventDecl::of::<Load, Loads>()));
     registry.mover_rule(moves::rule());
     registry.despawn_rule(hierarchy::despawn_owned);
     registry.fill_core::<Asked<Teleport>>();
@@ -405,6 +412,8 @@ impl Engine {
             .init_resource::<PartDraws>()
             .init_resource::<MeshLevels>()
             .init_resource::<Input>()
+            .init_resource::<InputChanges>()
+            .init_resource::<Loads>()
             .init_resource::<Devices>()
             .init_resource::<Contexts>()
             .init_resource::<InputSettings>()

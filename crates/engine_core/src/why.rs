@@ -1,27 +1,18 @@
-use bevy_ecs::entity::Entity;
 use bevy_ecs::system::SystemParamItem;
 use bevy_ecs::world::World;
-use engine_registry::{BrickStates, OperationScene, Registry, SceneEntity};
+use engine_registry::{BrickStateView, BrickStates, OperationScene, Registry, SceneEntity};
 use serde::{Deserialize, Serialize};
-use serde_json::{Value, json};
 
 use crate::{
-    DrawnState, DrawnTable, Error, ErrorCode, Expected, GlobalTransforms, Mover, Operation,
-    Readiness, Refusals,
+    Clock, DrawnState, DrawnTable, Error, ErrorCode, Expected, GlobalTransforms, Mobility, Mover,
+    NodeWord, Operation, Pace, Readiness, Refusal, Refusals,
 };
-
-#[derive(Deserialize, schemars::JsonSchema)]
-#[serde(untagged)]
-pub(crate) enum Named {
-    Id(String),
-    Bits(u64),
-}
 
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct WhyRequest {
     #[serde(default)]
-    entity: Option<Named>,
+    entity: Option<String>,
     #[serde(default)]
     brick: Option<String>,
 }
@@ -36,25 +27,54 @@ pub(crate) enum WhyAnswer {
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct RefusedPart {
+    part: String,
+    reason: Refusal,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct NodeView {
+    active: bool,
+    visible: bool,
+    real_clock: bool,
+    moving: bool,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum DrawnWhy {
+    Drawn { slot: u32 },
+    Hidden,
+    Unplaced,
+    Waiting,
+    Refused,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct MoverView {
+    by: String,
+    frame_paced: bool,
+}
+
+#[derive(Serialize, schemars::JsonSchema)]
 pub(crate) struct EntityWhy {
-    entity: u64,
-    id: Option<String>,
+    id: String,
     name: Option<String>,
     doing: bool,
-    refused: Value,
-    node: Value,
-    drawn: Option<Value>,
-    mover: Value,
+    refused: Vec<RefusedPart>,
+    node: Option<NodeView>,
+    drawn: Option<DrawnWhy>,
+    mover: Option<MoverView>,
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
 pub(crate) struct BrickWhy {
     brick: String,
     doing: bool,
-    state: Value,
+    state: Option<BrickStateView>,
     needs: Vec<String>,
-    failed: Vec<Value>,
-    problems: Vec<Value>,
+    failed: Vec<Refusal>,
+    problems: Vec<Refusal>,
 }
 
 impl Operation for Why {
@@ -69,7 +89,7 @@ impl Operation for Why {
         request: WhyRequest,
     ) -> Result<WhyAnswer, Error> {
         match (request.entity, request.brick) {
-            (Some(named), None) => entity_answer(world, &named).map(WhyAnswer::Entity),
+            (Some(id), None) => entity_answer(world, &id).map(WhyAnswer::Entity),
             (None, Some(brick)) => brick_answer(world, &brick).map(WhyAnswer::Brick),
             (Some(_), Some(_)) => Err(Error::new(ErrorCode::InvalidArguments, "$.brick")
                 .expected(Expected::Absent)),
@@ -77,35 +97,49 @@ impl Operation for Why {
                 .expected(Expected::Present)),
         }
     }
-
 }
 
-fn found(world: &World, named: &Named) -> Option<Entity> {
-    let entity = match named {
-        Named::Id(id) => world.get_resource::<OperationScene>()?.entity(id)?,
-        Named::Bits(bits) => Entity::try_from_bits(*bits)?,
-    };
-    world.entities().contains(entity).then_some(entity)
-}
-
-fn drawn_view(state: &DrawnState) -> Value {
+fn drawn_view(state: &DrawnState) -> DrawnWhy {
     match state {
-        DrawnState::Drawn { slot } => json!({ "state": "drawn", "slot": slot }),
-        DrawnState::Hidden => json!({ "state": "hidden" }),
-        DrawnState::Unplaced => json!({ "state": "unplaced" }),
-        DrawnState::Waiting => json!({ "state": "waiting" }),
-        DrawnState::Refused(_) => json!({ "state": "refused" }),
+        DrawnState::Drawn { slot } => DrawnWhy::Drawn { slot: *slot },
+        DrawnState::Hidden => DrawnWhy::Hidden,
+        DrawnState::Unplaced => DrawnWhy::Unplaced,
+        DrawnState::Waiting => DrawnWhy::Waiting,
+        DrawnState::Refused(_) => DrawnWhy::Refused,
     }
 }
 
-fn entity_answer(world: &World, named: &Named) -> Result<EntityWhy, Error> {
-    let entity = found(world, named).ok_or_else(|| {
-        let got = match named {
-            Named::Id(id) => json!(id),
-            Named::Bits(bits) => json!(bits),
-        };
-        Error::new(ErrorCode::UnknownEntity, "$.entity").got(got)
-    })?;
+fn node_view(word: NodeWord) -> NodeView {
+    NodeView {
+        active: word.active,
+        visible: word.visible,
+        real_clock: match word.clock {
+            Clock::Game => false,
+            Clock::Real => true,
+        },
+        moving: match word.mobility {
+            Mobility::Static => false,
+            Mobility::Moving => true,
+        },
+    }
+}
+
+fn mover_view(mover: &Mover) -> MoverView {
+    MoverView {
+        by: mover.by.name().to_owned(),
+        frame_paced: match mover.pace {
+            Pace::Tick => false,
+            Pace::Frame => true,
+        },
+    }
+}
+
+fn entity_answer(world: &World, id: &str) -> Result<EntityWhy, Error> {
+    let entity = world
+        .get_resource::<OperationScene>()
+        .and_then(|scene| scene.entity(id))
+        .filter(|&entity| world.entities().contains(entity))
+        .ok_or_else(|| Error::new(ErrorCode::UnknownEntity, "$.entity").got(id))?;
     let refused = world
         .get_resource::<Refusals>()
         .map_or(&[][..], |refusals| refusals.of(entity));
@@ -116,16 +150,22 @@ fn entity_answer(world: &World, named: &Named) -> Result<EntityWhy, Error> {
     let node = world
         .get_resource::<GlobalTransforms>()
         .and_then(|globals| globals.word(entity));
-    let authored = world.get::<SceneEntity>(entity);
     Ok(EntityWhy {
-        entity: entity.to_bits(),
-        id: authored.map(|authored| authored.authored_id.clone()),
-        name: authored.map(|authored| authored.name.clone()),
+        id: id.to_owned(),
+        name: world
+            .get::<SceneEntity>(entity)
+            .map(|authored| authored.name.clone()),
         doing: refused.is_empty() && node.is_none_or(|word| word.active),
-        refused: json!(refused),
-        node: json!(node),
+        refused: refused
+            .iter()
+            .map(|refused| RefusedPart {
+                part: refused.part.to_owned(),
+                reason: Refusal::of(&refused.reason),
+            })
+            .collect(),
+        node: node.map(node_view),
         drawn,
-        mover: json!(world.get::<Mover>(entity)),
+        mover: world.get::<Mover>(entity).map(mover_view),
     })
 }
 
@@ -146,25 +186,26 @@ fn brick_answer(world: &World, brick: &str) -> Result<BrickWhy, Error> {
         .iter()
         .filter_map(|&need| registry.record(need).map(|record| record.package.to_owned()))
         .collect();
-    let failed: Vec<&Error> = world
+    let failed: Vec<Refusal> = world
         .get_resource::<Readiness>()
         .into_iter()
         .flat_map(|readiness| readiness.failed.iter())
         .filter(|(by, _)| by == brick)
-        .map(|(_, error)| error)
+        .map(|(_, error)| Refusal::of(error))
         .collect();
     let prefix = format!("$.bricks.{brick}.");
-    let problems: Vec<&Error> = registry
+    let problems: Vec<Refusal> = registry
         .problems()
         .iter()
         .filter(|problem| problem.path.starts_with(&prefix))
+        .map(Refusal::of)
         .collect();
     Ok(BrickWhy {
         brick: brick.to_owned(),
         doing: state.is_some_and(engine_registry::BrickState::on) && failed.is_empty(),
-        state: json!(state),
+        state: state.map(engine_registry::BrickState::view),
         needs,
-        failed: failed.into_iter().map(|error| json!(error)).collect(),
-        problems: problems.into_iter().map(|error| json!(error)).collect(),
+        failed,
+        problems,
     })
 }
