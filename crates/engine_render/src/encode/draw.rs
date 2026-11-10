@@ -319,9 +319,9 @@ impl Run {
                 elements,
                 instances,
             } => {
-                let indexed = index_input(&input, indices)?;
+                let indexed = index_input(input, indices)?;
                 for (slot, (stream, _)) in vertices.listed().iter().enumerate() {
-                    let buffer = bound_input(&input, *stream)?;
+                    let buffer = bound_input(input, *stream)?;
                     render.set_vertex_buffer(slot as u32, buffer.slice(..));
                 }
                 match indexed {
@@ -341,10 +341,10 @@ impl Run {
                 offset,
                 ..
             } => {
-                let args = bound_input(&input, args)?;
-                let indexed = index_input(&input, indices)?;
+                let args = bound_input(input, args)?;
+                let indexed = index_input(input, indices)?;
                 for (slot, (stream, _)) in vertices.listed().iter().enumerate() {
-                    let buffer = bound_input(&input, *stream)?;
+                    let buffer = bound_input(input, *stream)?;
                     render.set_vertex_buffer(slot as u32, buffer.slice(..));
                 }
                 match indexed {
@@ -363,10 +363,10 @@ impl Run {
                 args,
                 offset,
             } => {
-                let args = bound_input(&input, args)?;
-                let indexed = index_input(&input, indices)?;
+                let args = bound_input(input, args)?;
+                let indexed = index_input(input, indices)?;
                 for (slot, (stream, start)) in vertices.listed().iter().enumerate() {
-                    let buffer = bound_input(&input, *stream)?;
+                    let buffer = bound_input(input, *stream)?;
                     render.set_vertex_buffer(slot as u32, buffer.slice(*start..));
                 }
                 match indexed {
@@ -391,7 +391,7 @@ impl Run {
                     .materials
                     .group(material)
                     .ok_or(DropReason::MaterialNotResident)?;
-                let args = bound_input(&input, args)?;
+                let args = bound_input(input, args)?;
                 if open.set.material != Some(material) {
                     render.set_bind_group(1, group, &[]);
                     open.set.material = Some(material);
@@ -402,7 +402,7 @@ impl Run {
                     render.set_vertex_buffer(slot as u32, buffer.slice(..));
                 }
                 for (at, (stream, start)) in streams.listed().iter().enumerate() {
-                    let buffer = bound_input(&input, *stream)?;
+                    let buffer = bound_input(input, *stream)?;
                     let slot = geometry_slots + at as u32;
                     render.set_vertex_buffer(slot, buffer.slice(*start..));
                 }

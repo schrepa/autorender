@@ -104,7 +104,10 @@ fn pass_ties(machine: &Machine) -> Vec<PassTie> {
 fn fold_ties(unlisted: &[FoldStep]) -> Vec<(FoldStep, FoldStep)> {
     let mut ties = Vec::new();
     for (at, &first) in unlisted.iter().enumerate() {
-        if let Some(&then) = unlisted[at + 1..].iter().find(|then| then.stage == first.stage) {
+        if let Some(&then) = unlisted[at + 1..]
+            .iter()
+            .find(|then| then.stage == first.stage)
+        {
             ties.push((first, then));
         }
     }
@@ -1064,7 +1067,10 @@ pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
     let (device, queue) = noop_device().map_err(|error| vec![error])?;
     let limits = device_limits(&device.limits(), device.features(), 0);
     let mut installed = install(&device, limits, world, std::collections::BTreeMap::new())?;
-    let listed = listing(&mut installed, world.get_resource::<engine_core::FoldOrder>());
+    let listed = listing(
+        &mut installed,
+        world.get_resource::<engine_core::FoldOrder>(),
+    );
     let queue = crate::gpu_calls::Queue::new(queue);
     let mut assets = new_assets(&device, &queue);
     assets

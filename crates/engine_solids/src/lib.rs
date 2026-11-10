@@ -75,8 +75,8 @@ impl FieldTile {
             return None;
         }
         let (u, v) = (
-            (local.x - cell.x).clamp(0.0, 1.0),
-            (local.y - cell.y).clamp(0.0, 1.0),
+            engine_math::clamp(local.x - cell.x, 0.0, 1.0),
+            engine_math::clamp(local.y - cell.y, 0.0, 1.0),
         );
         let (column, row) = (x as i32, z as i32);
         let sample = |dx: i32, dz: i32| self.samples.height(column + dx, row + dz);

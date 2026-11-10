@@ -433,11 +433,7 @@ impl GpuPart for ImpostorGpu {
                     bake::FS_IMPOSTOR_BAKE_EXTENDED,
                 )
             } else {
-                (
-                    &BAKE_FORM,
-                    bake::FS_IMPOSTOR_SHADE,
-                    bake::FS_IMPOSTOR_BAKE,
-                )
+                (&BAKE_FORM, bake::FS_IMPOSTOR_SHADE, bake::FS_IMPOSTOR_BAKE)
             };
             shade_forms.push(cx.form_owning(
                 form,

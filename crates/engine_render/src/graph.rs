@@ -871,21 +871,16 @@ impl StaticGraph {
         let mut passes = Vec::new();
         for mut planned in kept.into_iter().flatten() {
             let node = &self.nodes[planned.pass.index()];
-            let refused_read = node
-                .required()
-                .without(&written)
-                .iter()
-                .find(|&resource| {
-                    let unwritten =
-                        matches!(self.resources[resource].life, Life::Frame | Life::Output)
-                            && !planned_writes.contains(resource);
-                    let elsewhere = self
-                        .nodes
-                        .iter()
-                        .filter(|other| other.outputs().contains(resource))
-                        .all(|other| other.entry.brick != node.entry.brick);
-                    !(unwritten && elsewhere)
-                });
+            let refused_read = node.required().without(&written).iter().find(|&resource| {
+                let unwritten = matches!(self.resources[resource].life, Life::Frame | Life::Output)
+                    && !planned_writes.contains(resource);
+                let elsewhere = self
+                    .nodes
+                    .iter()
+                    .filter(|other| other.outputs().contains(resource))
+                    .all(|other| other.entry.brick != node.entry.brick);
+                !(unwritten && elsewhere)
+            });
 
             if let Some(resource) = refused_read {
                 return Err(refused(

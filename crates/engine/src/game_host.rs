@@ -604,7 +604,7 @@ impl<G: Game> GameHost<G> {
         loop {
             match load.step() {
                 Ok(LevelStep::Progress(_)) => {}
-                Ok(LevelStep::Ready { source, files }) => {
+                Ok(LevelStep::Ready { source, files, .. }) => {
                     return Some(self.reload_scene(&source, &files));
                 }
                 Err(error) => return Some(Err(error)),

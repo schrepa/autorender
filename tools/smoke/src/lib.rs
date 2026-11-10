@@ -111,7 +111,11 @@ pub fn starts_clean(session: &mut dyn SmokeSession) -> Checked<()> {
     session.source(&empty.to_string());
     render(session)?;
     let status = query(session, "status", json!({}))?;
-    smoke_eq!(status["unmet"], json!([]), "the_list_starts_with_no_unmet_need");
+    smoke_eq!(
+        status["unmet"],
+        json!([]),
+        "the_list_starts_with_no_unmet_need"
+    );
     Ok(())
 }
 

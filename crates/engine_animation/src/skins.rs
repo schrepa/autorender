@@ -83,7 +83,11 @@ fn reach_of(palette: &[Bound], mesh: &Mesh) -> Option<Vec<f32>> {
         .map(|bound| Mat4::from_cols_array_2d(&bound.inverse_bind))
         .collect();
     let mut radii = vec![-1.0; palette.len()];
-    let lanes = joints.as_chunks::<4>().0.iter().zip(weights.as_chunks::<4>().0);
+    let lanes = joints
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(weights.as_chunks::<4>().0);
     for ((joints, weights), vertex) in lanes.zip(mesh.vertices()) {
         if joints.iter().any(|&joint| joint as usize >= palette.len()) {
             return None;

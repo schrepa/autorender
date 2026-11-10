@@ -374,7 +374,7 @@ pub fn wgsl_name(name: &str) -> String {
 
 fn unknown_skips(listed: &[ScenePass], kinds: &[KindDecl], left: &[&'static str]) -> Vec<Error> {
     let known = |name: &str| {
-        listed.iter().any(|known| known.name == name) || left.iter().any(|&left| left == name)
+        listed.iter().any(|known| known.name == name) || left.contains(&name)
     };
     let mut unknown = Vec::new();
     for decl in kinds {

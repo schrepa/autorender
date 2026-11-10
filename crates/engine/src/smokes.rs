@@ -35,9 +35,9 @@ impl SmokeEntry {
     }
 
     pub fn list(&self, bricks: &BrickList) -> BrickList {
-        self.without
-            .iter()
-            .fold(bricks.clone(), |list, package| list.without_package(package))
+        self.without.iter().fold(bricks.clone(), |list, package| {
+            list.without_package(package)
+        })
     }
 }
 

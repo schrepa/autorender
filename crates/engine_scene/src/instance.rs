@@ -530,7 +530,11 @@ impl Replaced {
     }
 
     fn retire(self, world: &mut World) {
-        for entity in self.scene.into_iter().flat_map(|scene| scene.installed.into_values()) {
+        for entity in self
+            .scene
+            .into_iter()
+            .flat_map(|scene| scene.installed.into_values())
+        {
             let _ = world.try_despawn(entity);
         }
     }

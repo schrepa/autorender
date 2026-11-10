@@ -236,12 +236,18 @@ const CLEAR_FORM: KindForm = map_form(crate::shaders::scatter::occupancy_maps::V
 const SPLAT_FORM: KindForm = map_form(crate::shaders::scatter::occupancy_maps::VS_SPLAT);
 const MEANS_FORM: KindForm = map_form(crate::shaders::scatter::occupancy_maps::VS_MEANS);
 
-const CLEAR: PassFragment =
-    map_fragment(crate::shaders::scatter::occupancy_maps::FS_CLEAR, MAP_WRITTEN);
-const SPLAT: PassFragment =
-    map_fragment(crate::shaders::scatter::occupancy_maps::FS_SPLAT, MAP_SPLATTED);
-const MEANS: PassFragment =
-    map_fragment(crate::shaders::scatter::occupancy_maps::FS_MEANS, MAP_WRITTEN);
+const CLEAR: PassFragment = map_fragment(
+    crate::shaders::scatter::occupancy_maps::FS_CLEAR,
+    MAP_WRITTEN,
+);
+const SPLAT: PassFragment = map_fragment(
+    crate::shaders::scatter::occupancy_maps::FS_SPLAT,
+    MAP_SPLATTED,
+);
+const MEANS: PassFragment = map_fragment(
+    crate::shaders::scatter::occupancy_maps::FS_MEANS,
+    MAP_WRITTEN,
+);
 
 struct MapPipelines {
     select: ComputePipeline<ScatterGpu>,
@@ -501,11 +507,7 @@ impl ScatterGpu {
                 (maps::LISTED_DRAW, Bind::Buffer(listed_draw)),
             ],
         )?;
-        let clear = cx.form_owning(
-            &CLEAR_FORM,
-            &[CLEAR],
-            &[(maps::SPLAT, Bind::Buffer(splat))],
-        )?;
+        let clear = cx.form_owning(&CLEAR_FORM, &[CLEAR], &[(maps::SPLAT, Bind::Buffer(splat))])?;
         let splat_pipeline = cx.form_owning(
             &SPLAT_FORM,
             &[SPLAT],
