@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Background, Error, Hold, JobKind, Jobs, Landed, Mesh, MeshHandle, ProvidedAssets,
+    AssetLibrary, Background, Error, Hold, JobKind, Jobs, Landed, Mesh, GeometryHandle, ProvidedAssets,
     RecordExchange, Records, Requests, URGENT_JOBS, job_priority,
 };
 use glam::Vec3;
@@ -14,10 +14,10 @@ const SPRUCES: u32 = 3;
 
 #[derive(Resource, Default)]
 pub(crate) struct Content {
-    asked: Vec<(Background<Mesh>, MeshHandle, &'static JobKind)>,
-    fills: Requests<MeshHandle, ()>,
+    asked: Vec<(Background<Mesh>, GeometryHandle, &'static JobKind)>,
+    fills: Requests<GeometryHandle, ()>,
     filling: Vec<Hold>,
-    pub(crate) boulders: Vec<MeshHandle>,
+    pub(crate) boulders: Vec<GeometryHandle>,
     failures: u64,
     latest: Option<String>,
 }
@@ -28,19 +28,19 @@ impl Content {
         (jobs, assets): (&mut Jobs<'_, '_>, &mut AssetLibrary),
         kind: &'static JobKind,
         input: &[u8],
-    ) -> Result<MeshHandle, Error> {
+    ) -> Result<GeometryHandle, Error> {
         let handle = assets.reserve_mesh()?;
-        let work = Background::asked(jobs.fetch(kind, input, self.priority()), Mesh::from_record);
+        let work = jobs.fetch(kind, input, self.priority(), |bytes| Mesh::from_record(&bytes));
         self.asked.push((work, handle, kind));
         self.hold(handle);
         Ok(handle)
     }
 
-    pub(crate) fn hold(&mut self, mesh: MeshHandle) {
+    pub(crate) fn hold(&mut self, mesh: GeometryHandle) {
         self.filling.push(self.fills.ask(mesh).into());
     }
 
-    pub(crate) fn filled(&mut self, kind: &JobKind, mesh: MeshHandle, filled: Result<(), Error>) {
+    pub(crate) fn filled(&mut self, kind: &JobKind, mesh: GeometryHandle, filled: Result<(), Error>) {
         if let Err(error) = &filled {
             self.failed(kind, error);
         }

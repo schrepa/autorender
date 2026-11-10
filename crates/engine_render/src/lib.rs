@@ -12,7 +12,7 @@ use std::ops::Range;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::SystemParamItem;
 use engine_core::{
-    Bricks, DrawKind, Entry, Error, List, MaterialHandle, MeshHandle, PassBit, PassEntry, PassName,
+    Bricks, DrawKind, Entry, Error, List, MaterialHandle, GeometryHandle, PassBit, PassEntry, PassName,
     PassRole, Read, Readable, Readback, Slot, TextureHandle, Var, gpu_struct,
 };
 use engine_registry::RecordExt;
@@ -68,8 +68,8 @@ pub use uploads::{UploadRange, listed_ranges};
 pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
 pub use materials::gpu_format as texture_format;
 pub use surface::{
-    DrawState, FaceCull, LightingModule, MaterialVariant, OpenSlot, SlotModule, SurfaceKind,
-    material_state,
+    DrawState, FaceCull, LightingModule, MaterialValue, MaterialVariant, OpenSlot, SlotModule,
+    SurfaceKind, SurfaceTerms, material_state,
 };
 #[doc(hidden)]
 pub use memory::GpuMemory;
@@ -155,6 +155,7 @@ pub trait RenderBricks {
     fn generated(&mut self, wgsl: &'static [&'static str]) -> &mut Self;
     fn material_slot(&mut self, module: SlotModule) -> &mut Self;
     fn open_slot(&mut self, slot: OpenSlot) -> &mut Self;
+    fn surface_terms(&mut self, terms: SurfaceTerms) -> &mut Self;
     fn lighting_model(&mut self, module: LightingModule) -> &mut Self;
     fn surface_kind(&mut self, kind: SurfaceKind) -> &mut Self;
 }
@@ -240,6 +241,11 @@ impl RenderBricks for Bricks<'_> {
 
     fn open_slot(&mut self, slot: OpenSlot) -> &mut Self {
         self.record().render.push(Box::new(slot));
+        self
+    }
+
+    fn surface_terms(&mut self, terms: SurfaceTerms) -> &mut Self {
+        self.record().render.push(Box::new(terms));
         self
     }
 
@@ -473,14 +479,14 @@ pub enum Shape<'a, P, S> {
         offset: u64,
     },
     MeshIndirect {
-        mesh: MeshHandle,
+        mesh: GeometryHandle,
         material: Option<MaterialHandle>,
         args: DrawInput<P, S>,
         offset: u64,
         streams: &'a [(DrawInput<P, S>, u64)],
     },
     Mesh {
-        mesh: MeshHandle,
+        mesh: GeometryHandle,
         material: Option<MaterialHandle>,
         instances: Range<u32>,
     },
@@ -935,7 +941,7 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.uniforms.camera_slot
     }
 
-    pub fn drawable(&self, mesh: MeshHandle, material: Option<MaterialHandle>) -> bool {
+    pub fn drawable(&self, mesh: GeometryHandle, material: Option<MaterialHandle>) -> bool {
         self.core.assets.meshes.get(mesh).is_some()
             && self.core.assets.materials.group(material).is_some()
     }

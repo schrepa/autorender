@@ -1,5 +1,6 @@
 use bytemuck::{Pod, Zeroable};
-use engine_core::{AssetLibrary, DrawnTable, Material, Surface};
+use engine_core::{AssetLibrary, DrawnTable, Material};
+use engine_places::surface::SurfaceValues;
 use engine_render::{pack_color, pack_surface};
 
 pub(crate) type PoseData = engine_core::PoseRows;
@@ -32,7 +33,10 @@ pub(crate) fn color_data(table: &DrawnTable, assets: &AssetLibrary, slot: usize)
     let tint = table.records().get(slot).map_or([1.0; 4], |record| record.tint);
     ColorData {
         color: pack_color(tinted(material.map_or([1.0; 4], Material::color), tint)),
-        surface: pack_surface(material.map_or(Surface::MATTE, Material::surface)),
+        surface: pack_surface(
+            SurfaceValues::read(|name| material.and_then(|material| material.surface_value(name)), |name| material.and_then(|material| material.value(name))).units(),
+            material.map_or(0.0, Material::emission),
+        ),
         pad: 0,
     }
 }

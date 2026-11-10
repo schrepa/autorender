@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Drawn, Error, Expected, Mesh, MeshHandle, MeshVertex,
+    AssetLibrary, Drawn, Error, Expected, Mesh, GeometryHandle, MeshVertex,
     Spawner, Transform,
 };
 use engine_math::collections::HashMap;
@@ -29,7 +29,7 @@ impl SplineBuilds {
 #[derive(Clone, Debug, Default)]
 pub(crate) struct SplineChunks {
     pub(crate) entities: Vec<Entity>,
-    pub(crate) meshes: Vec<MeshHandle>,
+    pub(crate) meshes: Vec<GeometryHandle>,
     pub(crate) length: f32,
     pub(crate) copies: u32,
     pub(crate) vertices: u32,

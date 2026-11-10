@@ -1,12 +1,25 @@
 use bevy_ecs::prelude::*;
-use engine_core::{FrameBudget, FrameTime, Records};
+use engine_core::{Background, FrameBudget, FrameTime, JobKind, Jobs, RecordKey, Records, Taken};
 use engine_heightfield::TileKey;
 use engine_heightfield::tile::TileJob;
 
 use crate::TileWater;
-use crate::jobs::DRAWN;
-use crate::jobs::drawn::{DrawHead, FloodHead, landed};
+use crate::jobs::drawn::{DrawHead, DrawnWater, FloodHead, landed};
 use crate::state::{Base, Drawing, HeldWater, WaterState};
+
+pub(crate) type DrawnWork = Background<Option<(TileWater, DrawnWater)>>;
+
+pub(crate) fn start_drawing(
+    jobs: &mut Jobs<'_, '_>,
+    kind: &'static JobKind,
+    input: Vec<u8>,
+    priority: u32,
+) -> DrawnWork {
+    let record = RecordKey::of(kind, &input);
+    jobs.start(kind, input, priority, move |bytes| {
+        landed(&bytes, record).map_err(|error| kind.undecoded(error))
+    })
+}
 
 pub(crate) fn draw_input(held: &HeldWater, record: &[u8]) -> Vec<u8> {
     let beds = held.face.river_beds.as_deref().unwrap_or(&[]);
@@ -73,25 +86,28 @@ pub(crate) fn draw(
             let Some(held) = terrain.held.get_mut(&key) else {
                 continue;
             };
-            let asked = match &held.base {
-                Base::Drawing(asked) | Base::Redrawing(asked, _) => asked,
-                Base::Waiting | Base::Asking(_) | Base::Failed | Base::Made | Base::Left => {
+            let (work, drawing) = match std::mem::replace(&mut held.base, Base::Made) {
+                Base::Drawing(work) => (work, None),
+                Base::Redrawing(work, drawing) => (work, Some(drawing)),
+                other @ (Base::Waiting | Base::Asking(_) | Base::Failed | Base::Made | Base::Left) => {
+                    held.base = other;
                     continue;
                 }
             };
-            let Some(output) = records.get(asked) else {
-                continue;
+            let made = match work.take(&*records) {
+                Taken::Waiting(work) => {
+                    held.base = match drawing {
+                        None => Base::Drawing(work),
+                        Some(drawing) => Base::Redrawing(work, drawing),
+                    };
+                    continue;
+                }
+                Taken::Ready(made) => Ok(made),
+                Taken::Failed(error) => Err(error.to_string()),
             };
             landed_any = true;
-            let record = *asked.key();
-            let made = output.map_err(|error| error.to_string()).and_then(|bytes| {
-                landed(&bytes, record).map_err(|error| {
-                    format!("{}: its output does not decode: {error}", DRAWN.name())
-                })
-            });
-            let base = std::mem::replace(&mut held.base, Base::Made);
-            if let Base::Drawing(_) = base {
-                match made {
+            match drawing {
+                None => match made {
                     Ok(made) => {
                         held.hold(made);
                         held.watered = None;
@@ -100,9 +116,8 @@ pub(crate) fn draw(
                         held.base = Base::Failed;
                         state.failures.record(frame, error);
                     }
-                }
-            } else if let Base::Redrawing(_, drawing) = base {
-                match (made, drawing) {
+                },
+                Some(drawing) => match (made, drawing) {
                     (Ok(made), Drawing::Given(record)) => {
                         held.hold(made);
                         held.watered = None;
@@ -124,7 +139,7 @@ pub(crate) fn draw(
                         held.watered = to;
                         state.failures.record(frame, error);
                     }
-                }
+                },
             }
             terrain.touch(key);
         }

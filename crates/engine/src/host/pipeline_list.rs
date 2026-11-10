@@ -1,8 +1,8 @@
 use std::sync::Arc;
 
 use engine_core::{
-    Background, Engine, Error, JobExchange, Landed, MISSING_RECORD, RecordKey, Records,
-    URGENT_JOBS, job_priority, look_record,
+    Background, Engine, JobExchange, Landed, RecordKey, Records, URGENT_JOBS, job_priority,
+    look_record, record_missing,
 };
 use engine_registry::Registry;
 use engine_render::Renderer;
@@ -38,10 +38,6 @@ fn compiled(renderer: &Renderer) -> u32 {
         .iter()
         .map(|(_, count)| *count)
         .sum()
-}
-
-fn missing(error: &Error) -> bool {
-    error.detail.got.as_ref().and_then(serde_json::Value::as_str) == Some(MISSING_RECORD)
 }
 
 fn key_of(identity: &[u8]) -> RecordKey {
@@ -90,10 +86,7 @@ impl PipelineList {
         self.state = if world.contains_resource::<JobExchange>() {
             State::Asked {
                 key,
-                fetch: Background::asked(
-                    look_record(world, None, key, job_priority(URGENT_JOBS, 0)),
-                    |bytes| Ok(Arc::from(bytes)),
-                ),
+                fetch: look_record(world, None, (key, job_priority(URGENT_JOBS, 0)), Ok),
             }
         } else {
             State::Done
@@ -116,7 +109,7 @@ impl PipelineList {
                 },
                 Err(_) => State::Making { key, kept: 0 },
             },
-            Landed::Failed(error) if missing(error) => State::Making { key, kept: 0 },
+            Landed::Failed(error) if record_missing(error) => State::Making { key, kept: 0 },
             Landed::Failed(_) => State::Done,
             Landed::Waiting => return,
         };

@@ -1327,7 +1327,7 @@ fn terrain_point_seen(relative: vec3<f32>, look: TerrainLook, seen: TerrainSeen,
     point.emissive = vec3<f32>(0.0);
     point.occlusion = occlusion * sky;
     point.inputs.added_indirect = bounce_light(world, normal, true).light * occlusion;
-    point.inputs.sky_bend = sky_map.gba * 2.0 - 1.0;
+    point.inputs.ambient_bend = sky_map.gba * 2.0 - 1.0;
     point.roughness = roughness;
     point.alpha = roughness * roughness;
     point.metalness = ground.metalness;

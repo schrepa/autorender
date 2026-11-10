@@ -20,7 +20,7 @@ mod writer;
 
 pub use components::SceneKinds;
 pub use document::{
-    MAX_SOURCE_BYTES, MeshSource, SceneDocument, SceneMesh, SceneObject, ScenePrefab, SceneSurface,
+    MAX_SOURCE_BYTES, MeshSource, SceneDocument, SceneMesh, SceneObject, ScenePrefab,
     SceneTransform, SceneVertex,
 };
 pub use engine_assets::{MeshStreams, encode_mesh_buffer_with};

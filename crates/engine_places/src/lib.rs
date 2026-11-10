@@ -22,6 +22,7 @@ macro_rules! contract {
 pub mod meshes;
 pub mod queries;
 pub mod skin;
+pub mod surface;
 
 use engine_place::PlaceDecl;
 

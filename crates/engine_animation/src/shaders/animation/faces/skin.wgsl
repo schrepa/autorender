@@ -1,4 +1,4 @@
-import package::engine::mesh::declarations::AffinePose;
+import package::engine::geometry::declarations::AffinePose;
 import package::generated::animation::{JointRows, SkinSlot};
 import package::place::skin::SkinPose;
 

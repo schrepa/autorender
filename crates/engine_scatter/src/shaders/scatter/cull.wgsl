@@ -1,5 +1,5 @@
 import package::engine::drawn::{drawn_in_view, drawn_view_sees};
-import package::engine::mesh::declarations::{FADE_LEVEL_MAX, faded_slot, faded_slot_slot};
+import package::engine::geometry::declarations::{FADE_LEVEL_MAX, faded_slot, faded_slot_slot};
 import package::engine::view::seen_share;
 import package::generated::scatter::{
     CullFrame, CullGroup, CullView, DEAD, FADED, NO_LAYER, SCATTER_GROUP, SHOWN_CARD, SHOWN_NONE,

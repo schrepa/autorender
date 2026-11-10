@@ -16,7 +16,7 @@ use crate::math::sin_cos;
 use crate::{
     AssetResidency, Cursor, DeviceLimits, DrawKind, Drawn, DrawnBounds, Error, ErrorCode,
     Expected, Feed, GlobalTransforms, GpuBits, GpuStruct, Interest, KindDecl, MaterialHandle,
-    MeshHandle, PassMask, PositionReach, Refusals, Request, Revision, ScenePasses, Since, Transform,
+    GeometryHandle, PassMask, PositionReach, Refusals, Request, Revision, ScenePasses, Since, Transform,
     gpu_struct, settings,
 };
 
@@ -116,7 +116,7 @@ pub enum PlanState {
 #[derive(Clone, Debug, PartialEq)]
 pub struct DrawnBatch {
     pub kind: DrawKind,
-    pub geometry: Option<MeshHandle>,
+    pub geometry: Option<GeometryHandle>,
     pub material: Option<MaterialHandle>,
     pub order: i16,
     pub instances: Range<u32>,

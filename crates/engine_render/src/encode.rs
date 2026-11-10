@@ -3,7 +3,7 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use bevy_ecs::world::World;
-use engine_core::{Error, ErrorCode, FrameId, MaterialHandle, MeshHandle, Readback, TextureHandle};
+use engine_core::{Error, ErrorCode, FrameId, MaterialHandle, GeometryHandle, Readback, TextureHandle};
 
 use crate::graph::{Bits, Clear, FAR, Load, Ops, Plan, Planned};
 use crate::install::{
@@ -441,14 +441,14 @@ pub(crate) enum RawShape {
         offset: u64,
     },
     MeshIndirect {
-        mesh: MeshHandle,
+        mesh: GeometryHandle,
         material: Option<MaterialHandle>,
         args: u32,
         offset: u64,
         streams: Streams,
     },
     Mesh {
-        mesh: MeshHandle,
+        mesh: GeometryHandle,
         material: Option<MaterialHandle>,
         instances: Range<u32>,
     },

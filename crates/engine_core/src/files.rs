@@ -30,7 +30,7 @@ impl Files {
         path: &str,
         decode: impl FnOnce(&[u8]) -> Result<T, Error> + Send + Sync + 'static,
     ) -> Background<T, String> {
-        Background::asked(self.requests.ask(path.to_owned()), decode)
+        Background::asked(self.requests.ask(path.to_owned()), move |bytes| decode(&bytes[..]))
     }
 
     pub fn census(&self) -> crate::Census {

@@ -76,8 +76,7 @@ pub use engine_assets::{
     ColorSpace, Compare, Cull, DepthBias, Filter, LightingModel, LodInput,
     LodLevel, Material, MaterialBinding, Mesh,
     MeshLods, MeshVertex, BASE_COLOR_MAP, EMISSIVE_MAP, MAPPED, MAPPED_MAPS, MAPPED_SLOTS,
-    METALLIC_ROUGHNESS_MAP, NORMAL_MAP, OCCLUSION_MAP, RenderState, Sampler,
-    Surface, SurfaceSlot, Texture, TextureFormat, TextureRef, UvTransform, Wrap, attributes_wgsl,
+    NORMAL_MAP, RenderState, Sampler, SurfaceSlot, Texture, TextureFormat, TextureRef, UvTransform, Wrap, attributes_wgsl,
     lod_input,
 };
 pub use engine_textures::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
@@ -86,7 +85,7 @@ pub use engine_place::{
     Clock, ColorPass, PositionReach,
     Cursor, DrawKind, Drawn, DrawnBounds, DrawnProjection, Error, ErrorCode, Events,
     Feed, FeedView, FrameBudget, GpuStruct, Hold, InstanceValues, Interest, JobRef,
-    KindCell, KindDecl, KindJoin, KindSkip, Layers, Level, LevelView, List, MaterialHandle, MeshHandle, Mobility,
+    KindCell, KindDecl, KindJoin, KindSkip, Layers, Level, LevelView, List, MaterialHandle, GeometryHandle, Mobility,
     Moment, Mover, MoverId, Node, NodeId, NodeWord, Pace, Pass, PassBit, PassCull, PassEntry,
     PassMask, PassName, PassPurpose, PassRaster, PassRole, PassViews, PlaceDecl, Progress, Readiness, Request, Requests, Ring,
     ScenePass, ScenePasses, Since, Slot, SlotSet, Smoke,
@@ -104,7 +103,7 @@ pub use engine_settings::{
     Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, fields,
     is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
 };
-pub use background::{Background, Delivers, Landed};
+pub use background::{Background, Delivers, Landed, Taken};
 pub use files::Files;
 pub use folds::FoldOrder;
 pub use frame_timing::{FrameTiming, GpuFrameTime, RenderScale};

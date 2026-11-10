@@ -1,7 +1,9 @@
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-use engine_core::{Error, ErrorCode, RecordKey, Request, VIEW_JOBS, job_priority};
+use engine_core::{
+    Error, ErrorCode, RecordKey, Request, Taken, VIEW_JOBS, job_priority, record_missing,
+};
 
 use super::{
     Follow, Landed, Making, Settle, Settled, arrive, both, claim, end, record_input, water_part,
@@ -121,7 +123,10 @@ pub(super) fn start_making(
         let fresh = parts.get(&part).is_none();
         wanted.push(parts.ask(part));
         if fresh {
-            part_jobs.push((key, cx.jobs.start(&PARTS, input, priority)));
+            let work = cx.jobs.start(&PARTS, input, priority, |bytes| {
+                crate::jobs::water_output(&bytes).map_err(|error| PARTS.undecoded(error))
+            });
+            part_jobs.push((key, part, work));
         }
     }
     making.push(Making {
@@ -179,23 +184,18 @@ pub(super) fn take_parts(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>
     let cell = terrain.settled.cell();
     let settled = &mut terrain.settled;
     let mut flying = Vec::new();
-    for (key, job) in std::mem::take(&mut settled.part_jobs) {
-        let made = match cx.records.request(&job) {
-            None | Some(Request::Asked(_)) => {
-                flying.push((key, job));
+    for (key, part, job) in std::mem::take(&mut settled.part_jobs) {
+        let made = match job.take(cx.records) {
+            Taken::Waiting(job) => {
+                flying.push((key, part, job));
                 continue;
             }
-            Some(Request::Ready(bytes)) => crate::jobs::water_output(bytes).map_err(|error| {
-                Some(format!(
-                    "{}: its output does not decode: {error}",
-                    PARTS.name()
-                ))
-            }),
-            Some(Request::Failed(error)) => Err(Some(error.to_string())),
-            Some(Request::Missing) => Err(Some(format!("{}: no record", PARTS.name()))),
+            Taken::Ready(made) => Ok(made),
+            Taken::Failed(error) if record_missing(&error) => {
+                Err(Some(format!("{}: no record", PARTS.name())))
+            }
+            Taken::Failed(error) => Err(Some(error.to_string())),
         };
-        let part = *job.key();
-        drop(job);
         let Some(ticket) = settled.parts.ticket(&part) else {
             continue;
         };

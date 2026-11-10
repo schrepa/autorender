@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use engine_core::{DeviceLimits, DrawnTable, MaterialHandle, MeshHandle, PlanState};
+use engine_core::{DeviceLimits, DrawnTable, MaterialHandle, GeometryHandle, PlanState};
 use engine_render::slots::DRAWN_SLOTS;
 
 use crate::uploads::PoseData;
@@ -28,7 +28,7 @@ pub(crate) struct BatchLook {
 
 #[derive(Debug, PartialEq)]
 pub(crate) struct DrawBatch {
-    pub mesh: MeshHandle,
+    pub mesh: GeometryHandle,
     pub material: Option<MaterialHandle>,
     pub instances: Range<u32>,
     pub skinned: bool,

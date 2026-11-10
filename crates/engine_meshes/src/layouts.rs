@@ -49,7 +49,6 @@ gpu_consts! {
     pub const CULL_GROUP: u32 = 256;
     pub const GROUP: u32 = 64;
     pub const ARGS_GROUP: u32 = 64;
-    pub const BLEND_GROUP: u32 = 64;
     pub const UNWATCHED: u32 = u32::MAX;
 }
 
@@ -62,15 +61,6 @@ const _: () = assert!(
     LOD_LEVELS == engine_places::meshes::LAST_LEVEL,
     "the_last_level_follows_the_mesh_levels"
 );
-
-gpu_struct! {
-    pub(crate) struct BlendedView {
-        pub view: u32,
-        pub rows: u32,
-        pub batches: u32,
-        pub pad: u32,
-    }
-}
 
 pub(crate) const DRAW_ARGS_BYTES: u64 = 20;
 

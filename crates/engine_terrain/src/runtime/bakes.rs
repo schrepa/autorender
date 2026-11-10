@@ -1,4 +1,5 @@
 use super::*;
+use engine_core::Landed;
 
 pub(super) fn bake(
     state: &mut TerrainState,
@@ -10,42 +11,52 @@ pub(super) fn bake(
     if layers.unbaked().is_none() {
         return false;
     }
-    let arrived = match std::mem::take(&mut state.bake) {
-        TerrainBake::Asked { interest, drawn } => match asking.take(&interest) {
-            Some(output) => Some((output, interest, drawn)),
-            None => {
-                state.bake = TerrainBake::Asked { interest, drawn };
-                return true;
+    let kinds = asking.kinds;
+    let (baked, drawn) = match std::mem::take(&mut state.bake) {
+        TerrainBake::Asked { mut work, drawn } => {
+            let landed = match work.poll(asking.records) {
+                Landed::Waiting => None,
+                Landed::Ready(baked) => Some(Ok(Arc::clone(baked))),
+                Landed::Failed(error) => Some(Err(format!("{}: {error}", BAKE.name()))),
+            };
+            match landed {
+                None => {
+                    state.bake = TerrainBake::Asked { work, drawn };
+                    return true;
+                }
+                Some(Ok(baked)) => (baked, drawn),
+                Some(Err(error)) => {
+                    state.failures.record(frame, error);
+                    state.bake = TerrainBake::Failed {
+                        _failure: work,
+                        drawn,
+                    };
+                    return true;
+                }
             }
-        },
-        TerrainBake::Failed { interest, drawn } if drawn[..] == state.terrain.rivers[..] => {
-            state.bake = TerrainBake::Failed { interest, drawn };
+        }
+        TerrainBake::Failed { _failure, drawn } if drawn[..] == state.terrain.rivers[..] => {
+            state.bake = TerrainBake::Failed { _failure, drawn };
             return true;
         }
-        TerrainBake::Unasked | TerrainBake::Failed { .. } | TerrainBake::Made => None,
-    };
-    let Some((output, interest, drawn)) = arrived else {
-        let priority = job_priority(URGENT_JOBS, 0);
-        let input = BakeJob {
-            layers: (*layers).clone(),
-            pyramid: state.terrain.pyramid,
-        }
-        .input();
-        state.changed = true;
-        state.bake = TerrainBake::Asked {
-            interest: asking.jobs.fetch(&BAKE, &input, priority),
-            drawn: state.terrain.rivers.clone(),
-        };
-        return true;
-    };
-    let kinds = asking.kinds;
-    let baked = match job_output(BAKE.name(), output, |bytes| {
-        crate::jobs::bake_output(bytes, kinds)
-    }) {
-        Ok(baked) => baked,
-        Err(error) => {
-            state.failures.record(frame, error);
-            state.bake = TerrainBake::Failed { interest, drawn };
+        TerrainBake::Unasked | TerrainBake::Failed { .. } | TerrainBake::Made => {
+            let priority = job_priority(URGENT_JOBS, 0);
+            let input = BakeJob {
+                layers: (*layers).clone(),
+                pyramid: state.terrain.pyramid,
+            }
+            .input();
+            state.changed = true;
+            let listed = kinds.to_vec();
+            let work = asking.jobs.fetch(&BAKE, &input, priority, move |bytes| {
+                crate::jobs::bake_output(&bytes, &listed)
+                    .map(Arc::new)
+                    .map_err(|error| BAKE.undecoded(error))
+            });
+            state.bake = TerrainBake::Asked {
+                work,
+                drawn: state.terrain.rivers.clone(),
+            };
             return true;
         }
     };
@@ -55,7 +66,7 @@ pub(super) fn bake(
         state.hydrology_changed = true;
     }
     let before = state.baked.clone();
-    state.finish_bake(Arc::new(baked), kinds);
+    state.finish_bake(baked, kinds);
     state.redrawn(drawn, before.as_deref());
     false
 }

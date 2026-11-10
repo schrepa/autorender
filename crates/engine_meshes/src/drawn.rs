@@ -1,8 +1,10 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     AssetLibrary, DrawnPoses, DrawnTable, Error, ErrorCode, Expected, FrameTime, GlobalTransforms,
-    GpuBits, Material, Operation, PoseRows, SceneIds, Surface, pose_rows,
+    GpuBits, Material, Operation, PoseRows, SceneIds, pose_rows,
 };
+use engine_places::surface::SurfaceValues;
+
 use crate::MESH;
 use crate::layouts::{LodFade, LodHistory};
 use crate::presentation::PresentationTotals;
@@ -164,7 +166,7 @@ impl Operation for MeshesListing {
             .filter(|(_, drawn)| drawn.kind == MESH)
             .map(|(entity, drawn)| {
                 let material = drawn.material.and_then(|handle| assets.material(handle));
-                let surface = material.map_or(Surface::MATTE, Material::surface);
+                let surface = SurfaceValues::read(|name| material.and_then(|material| material.surface_value(name)), |name| material.and_then(|material| material.value(name)));
                 let model = globals
                     .get(entity)
                     .and_then(|global| global.matrix())
@@ -178,7 +180,7 @@ impl Operation for MeshesListing {
                     surface: MeshSurface {
                         roughness: surface.roughness,
                         metalness: surface.metalness,
-                        emission: surface.emission,
+                        emission: material.map_or(0.0, Material::emission),
                     },
                 }
             })

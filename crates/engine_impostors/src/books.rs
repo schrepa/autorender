@@ -6,11 +6,11 @@ use bevy_ecs::world::World;
 use engine_core::collections::{HashMap, HashSet};
 use engine_core::glam::Vec3;
 use engine_core::{
-    AlphaMode, AssetLibrary, AssetResidency, Census, CookAsks, Cull, Detail, DeviceLimits, Error,
-    ErrorCode, Feed, Filter, FrameBudget, FrameTime, GpuBits, IDLE_JOBS, Interest, Job, JobCx,
-    JobKind, Jobs, LightingModel, Material, MaterialHandle, MeshHandle, RecordKey, Records,
-    Request, Requests, Settling, TextureRef, VIEW_JOBS, WorkClock, Wrap, content_hash,
-    gpu_struct, job_priority,
+    AlphaMode, AssetLibrary, AssetResidency, Background, Census, CookAsks, Cull, Detail,
+    DeviceLimits, Error, ErrorCode, Feed, Filter, FrameBudget, FrameTime, GpuBits, Hold, IDLE_JOBS,
+    Job, JobCx, JobKind, Jobs, Landed, LightingModel, Material, MaterialHandle, GeometryHandle,
+    Records, Request, Requests, Settling, TextureRef, VIEW_JOBS, WorkClock, Wrap,
+    content_hash, gpu_struct, job_priority,
 };
 use engine_places_rendering::impostors::{
     ImpostorAsk, ImpostorAsks, ImpostorFlags, ImpostorRecord, ImpostorRecords, Impostors,
@@ -319,19 +319,13 @@ fn material_content(library: &AssetLibrary, material: Option<&Material>) -> u128
         bytes.push(0);
         floats(&mut bytes, &[*value]);
     }
-    let surface = material.surface();
-    floats(
-        &mut bytes,
-        &[
-            surface.roughness,
-            surface.metalness,
-            surface.emission,
-            material.normal_scale(),
-            material.occlusion_strength(),
-        ],
-    );
+    for (name, value) in material.surface() {
+        bytes.extend_from_slice(name.as_bytes());
+        bytes.push(0);
+        floats(&mut bytes, &[*value]);
+    }
+    floats(&mut bytes, &[material.emission(), material.normal_scale()]);
     floats(&mut bytes, &material.emissive());
-    floats(&mut bytes, &[material.transmission()]);
     match material.alpha_mode() {
         AlphaMode::Opaque => bytes.push(0),
         AlphaMode::Mask { cutoff } => {
@@ -442,7 +436,7 @@ fn grown_layers(needed: u32, bytes: u64, limit: u32) -> u32 {
     needed.max(first).next_power_of_two().min(limit).max(needed)
 }
 
-type ImpostorKey = (MeshHandle, Option<MaterialHandle>, bool);
+type ImpostorKey = (GeometryHandle, Option<MaterialHandle>, bool);
 
 struct Baked {
     record: ImpostorRecord,
@@ -451,8 +445,9 @@ struct Baked {
 
 struct Supply {
     material: Option<Material>,
-    interest: Interest<ImpostorIdentity>,
-    fetch: Option<Interest<RecordKey>>,
+    identity: ImpostorIdentity,
+    _held: Hold,
+    fetch: Option<Background<Arc<[u8]>>>,
     since: Option<f64>,
 }
 
@@ -475,7 +470,7 @@ struct Bake {
     material: Option<Material>,
     bounds: (Vec3, Vec3),
     content: (u128, u128),
-    parts: Vec<(MeshHandle, MaterialHandle)>,
+    parts: Vec<(GeometryHandle, MaterialHandle)>,
 }
 
 #[derive(Clone, Debug)]
@@ -493,9 +488,9 @@ pub(crate) enum AtlasWork {
     },
     Bake {
         serial: u32,
-        mesh: MeshHandle,
+        mesh: GeometryHandle,
         material: Option<MaterialHandle>,
-        parts: Vec<(MeshHandle, MaterialHandle)>,
+        parts: Vec<(GeometryHandle, MaterialHandle)>,
         bounds: (Vec3, Vec3),
         hemisphere: bool,
     },
@@ -678,13 +673,14 @@ impl Book {
             .supplies
             .get(&key)
             .filter(|supply| supply.material.as_ref() == bake.material.as_ref())
-            .map(|supply| (*supply.interest.key(), supply.since));
+            .map(|supply| (supply.identity, supply.since));
         let Some((identity, since)) = asked else {
             let identity = identity(self.shape.facing(key.2), bake.content);
-            let fetch = cx.jobs.look(&BAKE, &identity, job_priority(VIEW_JOBS, 0));
+            let fetch = cx.jobs.look(&BAKE, &identity, job_priority(VIEW_JOBS, 0), Ok);
             let supply = Supply {
                 material: bake.material.clone(),
-                interest: self.answers.ask(identity),
+                identity,
+                _held: self.answers.ask(identity).into(),
                 fetch: Some(fetch),
                 since: cx.now,
             };
@@ -808,20 +804,22 @@ impl Book {
         self.answers.settle(now);
         let answers = &mut self.answers;
         for supply in self.supplies.values_mut() {
-            let Some(fetch) = supply.fetch.as_ref() else {
+            let Some(fetch) = supply.fetch.as_mut() else {
                 continue;
             };
-            let Some(found) = records.get(fetch) else {
-                continue;
+            let found = match fetch.poll(records) {
+                Landed::Waiting => continue,
+                Landed::Ready(bytes) => Some(Arc::clone(bytes)),
+                Landed::Failed(_) => None,
             };
             supply.fetch = None;
-            let identity = *supply.interest.key();
+            let identity = supply.identity;
             let Some(ticket) = answers.ticket(&identity) else {
                 continue;
             };
             match found {
-                Ok(bytes) => answers.ready(&identity, ticket, bytes),
-                Err(_) => answers.miss(&identity, ticket),
+                Some(bytes) => answers.ready(&identity, ticket, bytes),
+                None => answers.miss(&identity, ticket),
             };
         }
     }
@@ -841,7 +839,7 @@ impl Book {
         let waiting = self
             .supplies
             .values()
-            .filter(|supply| !matches!(self.answers.of(&supply.interest), Some(Request::Failed(_))))
+            .filter(|supply| !matches!(self.answers.get(&supply.identity), Some(Request::Failed(_))))
             .count();
         (waiting + self.baking.len()) as u64
     }
@@ -852,7 +850,7 @@ impl Book {
             .values()
             .filter(|supply| {
                 matches!(
-                    self.answers.of(&supply.interest),
+                    self.answers.get(&supply.identity),
                     Some(Request::Ready(_) | Request::Missing)
                 )
             })
@@ -876,7 +874,7 @@ pub(crate) struct ImpostorBooks {
     serials: Serials,
     missed: bool,
     read: Vec<(ImpostorIdentity, Result<Vec<u8>, Error>)>,
-    assembling: Vec<(Interest<RecordKey>, ImpostorIdentity)>,
+    assembling: Vec<(Background<Arc<[u8]>>, ImpostorIdentity)>,
     made: Vec<(ImpostorIdentity, Made)>,
     settling: Settling,
 }
@@ -939,21 +937,24 @@ impl ImpostorBooks {
             }
             match read {
                 Ok(input) => {
-                    let job = jobs.run(&ASSEMBLY, input, job_priority(IDLE_JOBS, 0));
+                    let job = jobs.run(&ASSEMBLY, input, job_priority(IDLE_JOBS, 0), Ok);
                     self.assembling.push((job, identity));
                 }
                 Err(error) => self.made.push((identity, Err(error))),
             }
         }
         let made = &mut self.made;
-        self.assembling.retain(|(job, identity)| {
-            if !baking.contains(identity) {
+        self.assembling.retain_mut(|(job, identity)| {
+            let identity = *identity;
+            if !baking.contains(&identity) {
                 return false;
             }
-            let Some(output) = records.get(job) else {
-                return true;
+            let output = match job.poll(records) {
+                Landed::Waiting => return true,
+                Landed::Ready(bytes) => Ok(Arc::clone(bytes)),
+                Landed::Failed(error) => Err(error.clone()),
             };
-            made.push((*identity, output));
+            made.push((identity, output));
             false
         });
     }

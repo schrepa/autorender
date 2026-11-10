@@ -5,8 +5,8 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::world::World;
 use engine_core::collections::{HashMap, HashSet};
 use engine_core::{
-    CookAsks, Error, ErrorCode, FrameBudget, FrameTime, IDLE_JOBS, Interest, JobFailures, Jobs,
-    MISSING_RECORD, RecordKey, Records, VIEW_JOBS, Views, job_priority,
+    Background, CookAsks, FrameBudget, FrameTime, IDLE_JOBS, JobFailures, Jobs, Landed, RecordKey,
+    Records, VIEW_JOBS, Views, job_priority, record_missing,
 };
 use engine_heightfield::Stamp;
 use engine_heightfield::tile::shaded_elsewhere;
@@ -23,19 +23,21 @@ const BUDGET: &str = "terrain_shading";
 
 const TILE_ARRAY_BYTES: u64 = (TILE_STRIDE as u64) * (TILE_STRIDE as u64) * 4;
 
+type ShadingWork = Background<Arc<[u8]>>;
+
 enum Shading {
     Looking {
         record: RecordKey,
-        interest: Interest<RecordKey>,
+        work: ShadingWork,
     },
     Making {
         record: RecordKey,
-        interest: Interest<RecordKey>,
+        work: ShadingWork,
         reads: Vec<RecordKey>,
     },
     Held {
         record: RecordKey,
-        interest: Interest<RecordKey>,
+        bytes: Arc<[u8]>,
         shading: Arc<TileShading>,
         shown: Option<engine_core::Stamp>,
     },
@@ -47,7 +49,7 @@ enum Shading {
     },
     Failed {
         record: RecordKey,
-        interest: Option<Interest<RecordKey>>,
+        _failure: Option<ShadingWork>,
     },
 }
 
@@ -75,13 +77,12 @@ impl Shading {
         matches!(self, Self::Held { .. })
     }
 
-    fn interest(&self) -> Option<&Interest<RecordKey>> {
+    fn work_mut(&mut self) -> Option<&mut ShadingWork> {
         match self {
-            Self::Looking { interest, .. }
-            | Self::Making { interest, .. }
-            | Self::Held { interest, .. } => Some(interest),
-            Self::Failed { interest, .. } => interest.as_ref(),
-            Self::Made { .. } | Self::Missing { .. } => None,
+            Self::Looking { work, .. } | Self::Making { work, .. } => Some(work),
+            Self::Held { .. } | Self::Made { .. } | Self::Missing { .. } | Self::Failed { .. } => {
+                None
+            }
         }
     }
 }
@@ -161,47 +162,49 @@ impl Shadings {
         let kind = SHADING.name();
         let mut took = false;
         for (&key, tile) in &mut self.tiles {
-            if !tile.asked() {
+            let Some(work) = tile.work_mut() else {
                 continue;
-            }
-            let Some(output) = tile.interest().and_then(|interest| records.get(interest)) else {
-                continue;
+            };
+            let output = match work.poll(records) {
+                Landed::Waiting => continue,
+                Landed::Ready(bytes) => Ok(Arc::clone(bytes)),
+                Landed::Failed(error) => Err(error.clone()),
             };
             took = true;
             let record = tile.record();
-            let (looking, interest) = match std::mem::replace(tile, Shading::Missing { record }) {
-                Shading::Looking { interest, .. } => (true, interest),
-                Shading::Making { interest, .. } => (false, interest),
+            let (looking, work) = match std::mem::replace(tile, Shading::Missing { record }) {
+                Shading::Looking { work, .. } => (true, work),
+                Shading::Making { work, .. } => (false, work),
                 Shading::Held { .. }
                 | Shading::Made { .. }
                 | Shading::Missing { .. }
                 | Shading::Failed { .. } => continue,
             };
             *tile = match output {
-                Err(error) if looking && missing(&error) => Shading::Missing { record },
+                Err(error) if looking && record_missing(&error) => Shading::Missing { record },
                 Err(error) => {
                     failures.record(frame, format!("{kind}: {error}"));
                     Shading::Failed {
                         record,
-                        interest: Some(interest),
+                        _failure: Some(work),
                     }
                 }
                 Ok(bytes) => match shading_output(&bytes) {
                     Ok(made) if made.key() == key => Shading::Held {
                         record,
-                        interest,
+                        bytes,
                         shading: Arc::new(made),
                         shown: None,
                     },
                     Ok(_) => Shading::Failed {
                         record,
-                        interest: Some(interest),
+                        _failure: None,
                     },
                     Err(error) => {
                         failures.record(frame, error.within(&format!("$.{kind}")).to_string());
                         Shading::Failed {
                             record,
-                            interest: Some(interest),
+                            _failure: None,
                         }
                     }
                 },
@@ -319,7 +322,7 @@ impl Shadings {
                 for at in &finer {
                     let Some(Shading::Held {
                         record: read,
-                        interest,
+                        bytes,
                         ..
                     }) = self.tiles.get(at)
                     else {
@@ -327,18 +330,18 @@ impl Shadings {
                     };
                     reads.push(*read);
                     if self.sharing.insert(*read) && cx.shared.insert(*read) {
-                        cx.jobs.share_record(interest);
+                        cx.jobs.share_as(*read, Arc::clone(bytes));
                     }
                 }
                 Shading::Making {
                     record,
-                    interest: cx.jobs.start(&SHADING, input, want.priority),
+                    work: cx.jobs.start(&SHADING, input, want.priority, Ok),
                     reads,
                 }
             } else {
                 Shading::Looking {
                     record,
-                    interest: cx.jobs.look(&SHADING, &input, want.priority),
+                    work: cx.jobs.look(&SHADING, &input, want.priority, Ok),
                 }
             };
             self.tiles.insert(key, tile);
@@ -426,16 +429,6 @@ pub(crate) fn cook(world: &World, asks: &mut CookAsks<'_>) {
             }
         }
     }
-}
-
-fn missing(error: &Error) -> bool {
-    error.code == ErrorCode::InvalidRecord
-        && error
-            .detail
-            .got
-            .as_ref()
-            .and_then(serde_json::Value::as_str)
-            == Some(MISSING_RECORD)
 }
 
 struct Follow<'a, 'w, 's> {

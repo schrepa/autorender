@@ -7,7 +7,7 @@ use std::{collections::BTreeMap, io::Write};
 use bevy_ecs::prelude::{Component, Entity, Resource, World};
 use engine_core::{
     AssetLibrary, Drawn, Engine, FixedTime, FrameTime, GlobalTransforms, JobExchange,
-    MaterialHandle, MeshHandle, Mover, Pace, Parent, PresentationState, TextureHandle, Transform,
+    MaterialHandle, GeometryHandle, Mover, Pace, Parent, PresentationState, TextureHandle, Transform,
 };
 use engine_registry::{BrickRecord, OperationEntry, OperationScene, Registry};
 use engine_scene::{SceneEntity, SceneInstance, SceneMaterial, TextureOrigin};
@@ -951,7 +951,7 @@ fn assets(world: &World, context: Context<'_>) -> Result<AssetsResult, Error> {
 
 pub(crate) fn missing_of(
     assets: &AssetLibrary,
-    (mesh, material): (MeshHandle, Option<MaterialHandle>),
+    (mesh, material): (GeometryHandle, Option<MaterialHandle>),
 ) -> Option<&'static str> {
     let held = material.map(|material| assets.material(material));
     match held {

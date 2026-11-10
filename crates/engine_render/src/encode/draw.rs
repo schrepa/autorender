@@ -68,7 +68,7 @@ impl Run {
 
     fn mesh_variant(
         &self,
-        mesh: MeshHandle,
+        mesh: GeometryHandle,
         material: Option<MaterialHandle>,
     ) -> Option<crate::surface::MaterialVariant> {
         self.assets.meshes.get(mesh)?;

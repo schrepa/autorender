@@ -10,7 +10,7 @@ use serde_json::Value;
 use crate::{
     Call, Camera, Clear, ComponentKind, Drawn, DrawnProjection, DrawnTable, Error, ErrorCode, Lands,
     Rows,
-    Expected, GlobalTransforms, InstanceValues, Layers, List, MaterialHandle, MeshHandle, Mover,
+    Expected, GlobalTransforms, InstanceValues, Layers, List, MaterialHandle, GeometryHandle, Mover,
     Node, Parent, PassMask, Placed, Placement, Rect, Rule, SceneComponents, SceneContext, SceneCx,
     SceneForm, ScenePasses, Setting, Target, TextureHandle, View, scene_component,
     scene_components,
@@ -51,7 +51,7 @@ pub struct DrawnForm {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub mesh: Option<MeshHandle>,
+    pub mesh: Option<GeometryHandle>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub material: Option<MaterialHandle>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]

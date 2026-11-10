@@ -304,11 +304,11 @@ pub fn shaped_by(mut schema: schemars::Schema, by: &str) -> schemars::Schema {
 }
 
 pub fn access_of<P: SystemParam + 'static>(world: &mut World) -> FilteredAccessSet {
-    let mut probe = IntoSystem::into_system(probe::<P>);
-    probe.initialize(world)
+    let mut reader = IntoSystem::into_system(reads::<P>);
+    reader.initialize(world)
 }
 
-fn probe<P: SystemParam + 'static>(_: StaticSystemParam<P>) {}
+fn reads<P: SystemParam + 'static>(_: StaticSystemParam<P>) {}
 
 pub fn answer<O: Operation>(world: &mut World, request: O::Request) -> Result<O::Reply, Error> {
     let mut state = SystemState::<O::Params>::new(world);

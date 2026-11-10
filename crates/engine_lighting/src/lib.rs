@@ -9,14 +9,12 @@ mod highlights;
 mod light;
 
 use bevy_ecs::prelude::*;
-use engine_core::{
-    Brick, Bricks, MAPPED, METALLIC_ROUGHNESS_MAP, Module, OCCLUSION_MAP, Schedule, Source,
-    gpu_struct,
+use engine_core::{Brick, Bricks, MAPPED, Module, Rule, Schedule, Source, gpu_struct};
+use engine_places_rendering::lighting::{Lighting};
+use engine_places::surface::{METALLIC_ROUGHNESS_MAP, METALNESS, OCCLUSION, OCCLUSION_MAP, OCCLUSION_STRENGTH, ROUGHNESS, SurfaceValues, TRANSMISSION};
+use engine_render::{
+    Lit, MaterialValue, OpenSlot, RenderBricks, SlotModule, SurfaceKind, SurfaceTerms,
 };
-use engine_places_rendering::lighting::{
-    Lighting, METALNESS, OCCLUSION, ROUGHNESS, TRANSMISSION,
-};
-use engine_render::{Lit, OpenSlot, RenderBricks, SlotModule, SurfaceKind};
 use engine_places_rendering::sky::SkyLight;
 
 pub use highlights::Highlights;
@@ -31,7 +29,39 @@ gpu_struct! {
     }
 }
 
-const OPEN_SLOTS: [&str; 4] = [ROUGHNESS, METALNESS, OCCLUSION, TRANSMISSION];
+const UNIT: Rule = Rule::range(0.0, 1.0);
+
+const OPEN_SLOTS: [(&str, &str, &[MaterialValue]); 4] = [
+    (ROUGHNESS, "1.0", &[]),
+    (METALNESS, "0.0", &[]),
+    (
+        OCCLUSION,
+        "1.0",
+        &[MaterialValue {
+            name: OCCLUSION_STRENGTH,
+            standard: SurfaceValues::MATTE.occlusion_strength,
+            rule: UNIT,
+        }],
+    ),
+    (
+        TRANSMISSION,
+        "0.0",
+        &[MaterialValue {
+            name: TRANSMISSION,
+            standard: SurfaceValues::MATTE.transmission,
+            rule: UNIT,
+        }],
+    ),
+];
+
+const TERMS: SurfaceTerms = SurfaceTerms {
+    fields: &[
+        ("alpha", "f32"),
+        ("f0", "vec3<f32>"),
+        ("diffuse_color", "vec3<f32>"),
+    ],
+    derive: shaders::lighting_model::terms::MODULE,
+};
 
 const MAPPED_SLOTS: [(&str, &[&str]); 3] = [
     (ROUGHNESS, &[METALLIC_ROUGHNESS_MAP]),
@@ -58,13 +88,16 @@ impl Brick for LightingModelBrick {
             .fill::<Lighting>(Some(shaders::lighting_model::faces::lighting::MODULE))
             .fill::<Lit>(Some(shaders::lighting_model::faces::lighting::MODULE))
             .systems(Schedule::ViewSync, (publish_lighting, publish_piece));
-        for name in OPEN_SLOTS {
+        for (name, flat, values) in OPEN_SLOTS {
             bricks.open_slot(OpenSlot {
                 name,
                 returns: "f32",
                 standard: STANDARD,
+                flat,
+                values,
             });
         }
+        bricks.surface_terms(TERMS);
         for (slot, maps) in MAPPED_SLOTS {
             bricks.material_slot(SlotModule {
                 slot,

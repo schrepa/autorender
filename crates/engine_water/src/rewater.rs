@@ -6,7 +6,7 @@ use engine_heightfield::TILE_SAMPLES;
 use glam::Vec2;
 
 use crate::RiverFlow;
-use crate::drawn::flood_input;
+use crate::drawn::{flood_input, start_drawing};
 use crate::flow::Running;
 use crate::jobs::REWATER;
 use crate::state::{Base, Drawing, WaterState, WaterTerrain, Watered};
@@ -107,7 +107,7 @@ fn rewater_terrain(
             continue;
         };
         let input = flood_input(held, tile, (flow.0, &flow.1), reached);
-        let job = jobs.start(&REWATER, input, job_priority(VIEW_JOBS, 0));
+        let job = start_drawing(jobs, &REWATER, input, job_priority(VIEW_JOBS, 0));
         held.base = Base::Redrawing(job, Drawing::Flood(running.clone()));
         sent = true;
     }

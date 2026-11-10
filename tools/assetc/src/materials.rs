@@ -1,19 +1,27 @@
 use std::collections::BTreeMap;
 
+use engine_places::surface::{
+    METALLIC_ROUGHNESS_MAP, METALNESS, OCCLUSION, OCCLUSION_MAP, OCCLUSION_STRENGTH, ROUGHNESS,
+};
 use engine_scene::{
     SceneAlphaMode, SceneCull, SceneDocument, SceneFilter, SceneMap, SceneMaterial,
-    SceneMipmapFilter, SceneSlot, SceneSlotFill, SceneSurface, SceneTexture, SceneTextureMap,
-    SceneWrap,
+    SceneMipmapFilter, SceneSlot, SceneSlotFill, SceneTexture, SceneTextureMap, SceneWrap,
 };
 use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 use serde_json::Value;
 
 use engine_core::{
-    BASE_COLOR_MAP, EMISSIVE_MAP, Error, ErrorCode, Expected, MAPPED, MAPPED_SLOTS,
-    METALLIC_ROUGHNESS_MAP, NORMAL_MAP, OCCLUSION_MAP, SurfaceSlot,
+    BASE_COLOR_MAP, EMISSIVE_MAP, Error, ErrorCode, Expected, MAPPED, MAPPED_SLOTS, NORMAL_MAP,
+    SurfaceSlot,
 };
 
 use crate::{ImportedFile, unsupported};
+
+const GLTF_SLOTS: [(&str, &[&str]); 3] = [
+    (ROUGHNESS, &[METALLIC_ROUGHNESS_MAP]),
+    (METALNESS, &[METALLIC_ROUGHNESS_MAP]),
+    (OCCLUSION, &[OCCLUSION_MAP]),
+];
 
 const KTX2_IDENTIFIER: [u8; 12] = [
     0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a,
@@ -133,18 +141,14 @@ pub(crate) fn import(
             id: format!("{id}.material{index}"),
             provided: None,
             color: Some([red, green, blue, 1.0]),
-            surface: Some(SceneSurface {
-                roughness: pbr.roughness_factor(),
-                metalness: pbr.metallic_factor(),
-                emission: 0.0,
-            }),
+            surface: Some(BTreeMap::from([
+                (ROUGHNESS.to_owned(), pbr.roughness_factor()),
+                (METALNESS.to_owned(), pbr.metallic_factor()),
+            ])),
             opacity,
             normal_scale: normal
                 .map(|normal| normal.scale())
                 .filter(|scale| *scale != 1.0),
-            occlusion_strength: occlusion
-                .map(|occlusion| occlusion.strength())
-                .filter(|strength| *strength != 1.0),
             emissive: (emissive != [0.0; 3]).then_some(emissive),
             alpha_mode,
             alpha_cutoff,
@@ -152,9 +156,11 @@ pub(crate) fn import(
             depth_test: None,
             depth_write: None,
             depth_bias: None,
-            transmission: None,
             slots,
-            values: None,
+            values: occlusion
+                .map(|occlusion| occlusion.strength())
+                .filter(|strength| *strength != 1.0)
+                .map(|strength| BTreeMap::from([(OCCLUSION_STRENGTH.to_owned(), strength)])),
             lighting: None,
         });
     }
@@ -170,7 +176,7 @@ fn mapped_slots(
         let Some(map) = map else {
             continue;
         };
-        let reading = MAPPED_SLOTS.iter().filter(|(slot, read)| {
+        let reading = MAPPED_SLOTS.iter().chain(&GLTF_SLOTS).filter(|(slot, read)| {
             read.first() == Some(&name) && (masked || *slot != SurfaceSlot::Cutoff.name())
         });
         for (at, (slot, _)) in reading.enumerate() {

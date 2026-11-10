@@ -4,9 +4,9 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use bevy_ecs::world::World;
 use engine_core::{
-    CookAsks, DeviceLimits, Error, ErrorCode, FrameBudget, FrameTime, IDLE_JOBS, Interest,
-    JobFailures, Jobs, RecordKey, Records, Request, Requests, Ticket, VIEW_JOBS, Views,
-    job_priority,
+    Background, CookAsks, DeviceLimits, Error, ErrorCode, FrameBudget, FrameTime, Hold, IDLE_JOBS,
+    Interest, JobFailures, Jobs, RecordKey, Records, Request, Requests, Taken, Ticket, VIEW_JOBS,
+    Views, job_priority, record_missing,
 };
 use engine_heightfield::tile::Solid;
 use engine_heightfield::{Pyramid, Stamp, reaches};
@@ -59,16 +59,18 @@ pub(crate) struct Made {
 
 struct Record {
     made: Made,
-    summary: Interest<RecordKey>,
-    whole: Option<(Arc<[u8]>, Interest<RecordKey>)>,
+    _summary: Hold,
+    whole: Option<(Arc<[u8]>, Hold)>,
 }
 
 impl Record {
     fn share(&self, whole: bool) -> Option<RecordKey> {
         if whole {
-            self.whole.as_ref().map(|(_, share)| *share.key())
+            self.whole
+                .as_ref()
+                .map(|_| settled_share(self.made.record))
         } else {
-            Some(*self.summary.key())
+            Some(summary_share(self.made.record))
         }
     }
 }
@@ -84,7 +86,8 @@ struct Fetch {
     tile: TileKey,
     alone: bool,
     made: bool,
-    job: Interest<RecordKey>,
+    record: RecordKey,
+    job: Background<Arc<[u8]>>,
 }
 
 struct Settle {
@@ -123,7 +126,7 @@ struct HeldReach {
 }
 
 enum ReachPhase {
-    Asked(Interest<RecordKey>),
+    Asked(Background<WaterReach>),
     Failed,
     Held(HeldReach),
 }
@@ -185,7 +188,7 @@ pub(crate) struct Settled {
     fetches: Vec<Fetch>,
     making: Vec<Making>,
     parts: Requests<RecordKey, WaterPart>,
-    part_jobs: Vec<(TileKey, Interest<RecordKey>)>,
+    part_jobs: Vec<(TileKey, RecordKey, Background<WaterPart>)>,
     waters: Requests<RecordKey, Option<Arc<[u8]>>>,
     watering: BTreeMap<TileKey, Watering>,
     steadying: Vec<Steadying>,
@@ -590,7 +593,7 @@ fn settle(settled: &mut Settled, now: f64) {
         let records = &settled.records;
         settled
             .fetches
-            .retain(|fetch| asked_any(records, *fetch.job.key()));
+            .retain(|fetch| asked_any(records, fetch.record));
     }
     let records = &settled.records;
     settled.making.retain(|making| {
@@ -604,13 +607,13 @@ fn settle(settled: &mut Settled, now: f64) {
     if !released.is_empty() {
         settled
             .part_jobs
-            .retain(|(_, job)| !released.iter().any(|(key, _)| key == job.key()));
+            .retain(|(_, part, _)| !released.iter().any(|(key, _)| key == part));
     }
     let released = settled.waters.settle(now);
     if !released.is_empty() {
         settled
             .steadying
-            .retain(|flight| !released.iter().any(|(key, _)| key == flight.job.key()));
+            .retain(|flight| !released.iter().any(|(key, _)| *key == flight.water));
     }
 }
 
@@ -631,36 +634,31 @@ fn reset(terrain: &mut WaterTerrain, reach: Option<Reach>) {
 }
 
 fn take_reach(terrain: &mut WaterTerrain, cx: &mut Follow<'_, '_, '_>, frame: u64) {
-    let Some(reach) = terrain.settled.reach.as_mut() else {
+    let Some(reach) = terrain
+        .settled
+        .reach
+        .as_mut()
+        .filter(|reach| matches!(reach.phase, ReachPhase::Asked(_)))
+    else {
         return;
     };
-    match &reach.phase {
-        ReachPhase::Asked(ticket) => {
-            let Some(output) = cx.records.get(ticket) else {
-                return;
-            };
-            reach.phase = ReachPhase::Failed;
-            let made = output.map_err(|error| error.to_string()).and_then(|bytes| {
-                engine_codec::decode::<WaterReach>(&bytes).map_err(|error| {
-                    format!("{}: its output does not decode: {error}", REACH.name())
-                })
+    let ReachPhase::Asked(work) = std::mem::replace(&mut reach.phase, ReachPhase::Failed) else {
+        return;
+    };
+    match work.take(cx.records) {
+        Taken::Waiting(work) => reach.phase = ReachPhase::Asked(work),
+        Taken::Ready(made) => {
+            reach.phase = ReachPhase::Held(HeldReach {
+                cell: reach.wanted.1,
+                watered: made.watered.into(),
+                regions: made.regions.into(),
+                of: made.of.into(),
             });
-            match made {
-                Ok(made) => {
-                    reach.phase = ReachPhase::Held(HeldReach {
-                        cell: reach.wanted.1,
-                        watered: made.watered.into(),
-                        regions: made.regions.into(),
-                        of: made.of.into(),
-                    });
-                    terrain.touch_all();
-                }
-                Err(error) => {
-                    cx.failures.record(frame, error);
-                }
-            }
+            terrain.touch_all();
         }
-        ReachPhase::Failed | ReachPhase::Held(_) => {}
+        Taken::Failed(error) => {
+            cx.failures.record(frame, error.to_string());
+        }
     }
 }
 
@@ -743,8 +741,12 @@ fn refresh(
         .is_none_or(|reach| reach.wanted != wanted)
     {
         let input = reach_input(wanted);
-        let ticket = cx.jobs.fetch(&REACH, &input, job_priority(VIEW_JOBS, 0));
-        let phase = ReachPhase::Asked(ticket);
+        let work = cx
+            .jobs
+            .fetch(&REACH, &input, job_priority(VIEW_JOBS, 0), |bytes| {
+                engine_codec::decode::<WaterReach>(&bytes).map_err(|error| REACH.undecoded(error))
+            });
+        let phase = ReachPhase::Asked(work);
         reset(terrain, Some(Reach { wanted, phase }));
     }
     take_reach(terrain, cx, frame);
@@ -881,13 +883,14 @@ fn fetch_record(
     if !claim(records, tile, (at, record.key), whole) {
         return;
     }
-    let flying = fetches.iter().any(|fetch| *fetch.job.key() == record.key);
+    let flying = fetches.iter().any(|fetch| fetch.record == record.key);
     if !flying && asked_any(records, record.key) {
-        let job = cx.jobs.look(&SETTLED, &record.bytes, priority);
+        let job = cx.jobs.look(&SETTLED, &record.bytes, priority, Ok);
         fetches.push(Fetch {
             tile: key,
             alone,
             made,
+            record: record.key,
             job,
         });
     }
@@ -923,21 +926,29 @@ fn take_fetches(
             flying.push(fetch);
             continue;
         }
-        let output = match cx.records.request(&fetch.job) {
-            None | Some(Request::Asked(_)) => {
-                flying.push(fetch);
+        let Fetch {
+            tile,
+            alone,
+            made,
+            record,
+            job,
+        } = fetch;
+        let output = match job.take(cx.records) {
+            Taken::Waiting(job) => {
+                flying.push(Fetch {
+                    tile,
+                    alone,
+                    made,
+                    record,
+                    job,
+                });
                 continue;
             }
-            Some(Request::Ready(bytes)) => Ok(Arc::clone(bytes)),
-            Some(Request::Missing) => Err(None),
-            Some(Request::Failed(error)) => Err(Some(error.clone())),
+            Taken::Ready(bytes) => Ok(bytes),
+            Taken::Failed(error) if record_missing(&error) => Err(None),
+            Taken::Failed(error) => Err(Some(error)),
         };
         taken = true;
-        let Fetch {
-            tile, alone, job, ..
-        } = fetch;
-        let record = *job.key();
-        drop(job);
         landed.extend(arrive(
             terrain,
             cx,
@@ -1020,7 +1031,7 @@ fn land(
     if let Some(ticket) = settled.records.ticket(&thin) {
         let value = Record {
             made,
-            summary: summary.clone(),
+            _summary: summary.clone().into(),
             whole: None,
         };
         settled.records.ready(&thin, ticket, value);
@@ -1031,8 +1042,8 @@ fn land(
             .hold(cx.jobs, settled_share(record), || Arc::clone(&bytes));
         let value = Record {
             made,
-            summary,
-            whole: Some((bytes, share)),
+            _summary: summary.into(),
+            whole: Some((bytes, share.into())),
         };
         settled.records.ready(&wide, ticket, value);
     }
@@ -1134,7 +1145,7 @@ fn leave(
         fetches.retain(|fetch| {
             let leaving = fetch.made && gone(&fetch.tile);
             if leaving && let Some(tile) = tiles.get_mut(&fetch.tile) {
-                withdraw(tile, *fetch.job.key());
+                withdraw(tile, fetch.record);
             }
             stopped |= leaving;
             !leaving

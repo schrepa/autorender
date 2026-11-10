@@ -51,7 +51,7 @@ fn environment_brdf(f0: vec3<f32>, roughness: f32, n_v: f32) -> vec3<f32> {
 
 fn surface_sun(point: SurfacePoint) -> SunAt {
     return SunAt(point.world + sun_direction() * point.inputs.thickness, point.geometric,
-        point.world_dx, point.world_dy, point.inputs.sun_softness, point.kind,
+        point.world_dx, point.world_dy, point.inputs.direct_softness, point.kind,
         point.inputs.receiver_lift_first, point.inputs.receiver_lifts);
 }
 

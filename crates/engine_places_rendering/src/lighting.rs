@@ -3,11 +3,6 @@ use engine_place::{List, Slot};
 
 use crate::shadows::{DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON, DEBUG_SUN_LEVEL, DEBUG_SUN_NONE};
 
-pub const ROUGHNESS: &str = "roughness";
-pub const METALNESS: &str = "metalness";
-pub const OCCLUSION: &str = "occlusion";
-pub const TRANSMISSION: &str = "transmission";
-
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Lighting {
     pub highlights: bool,

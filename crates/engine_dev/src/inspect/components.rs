@@ -1,4 +1,4 @@
-use engine_core::{AssetResidency, Drawn, MaterialHandle, MeshHandle};
+use engine_core::{AssetResidency, Drawn, MaterialHandle, GeometryHandle};
 
 use super::*;
 
@@ -53,7 +53,7 @@ impl DevTools {
 pub(super) fn mesh_view(
     world: &World,
     assets: &AssetLibrary,
-    shown: (MeshHandle, Option<MaterialHandle>),
+    shown: (GeometryHandle, Option<MaterialHandle>),
     context: &Context<'_>,
 ) -> DrawnMeshView {
     let Context { scene, renderer } = *context;
