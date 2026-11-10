@@ -996,7 +996,7 @@ impl TerrainGpu {
                 let pipelines = &pipelines[usize::from(scene.mirrored)];
                 self.draw_surface(draw, pipelines, (*args, *meshlet))
             }
-            Joined::Elsewhere(reason) => draw.skip(*reason),
+            Joined::Elsewhere(reason) => draw.skip(reason),
         }
     }
 
