@@ -10,7 +10,9 @@ use engine_core::{
     Brick, Bricks, ComponentKind, Error, ErrorCode, Moves, Pace, Parent, Placement, Rule,
     SceneComponents, Schedule, Setting, Source, Transform, settings,
 };
-use engine_places_simulation::ground::{Ground, Grounded, GroundedAt};
+use engine_places_simulation::ground::{
+    Ground, GroundProbe, GroundSurface, Grounded, GroundedAt,
+};
 use engine_places_simulation::navigation::NavWalk;
 use glam::Vec2;
 use serde::Serialize;
@@ -56,13 +58,13 @@ impl Brick for GroundingBrick {
 #[derive(Serialize, schemars::JsonSchema)]
 pub struct GroundedView {
     pub offset: f32,
-    pub level: Option<u32>,
+    pub surface: Option<GroundSurface>,
 }
 
 fn grounded_view(grounded: &Grounded, at: Option<&GroundedAt>) -> GroundedView {
     GroundedView {
         offset: grounded.offset,
-        level: at.and_then(|at| at.level()),
+        surface: at.and_then(|at| at.surface()),
     }
 }
 
@@ -91,18 +93,80 @@ type GroundedQuery<'w, 's> = Query<
     Without<Parent>,
 >;
 
+fn holds(at: GroundedAt, (position, offset): (Vec2, f32), revision: u64) -> bool {
+    match at {
+        GroundedAt::Unsettled => false,
+        GroundedAt::Stood {
+            position: held,
+            offset: kept,
+            revision: seen,
+            ..
+        }
+        | GroundedAt::Unsupported {
+            position: held,
+            offset: kept,
+            revision: seen,
+        } => held == position && kept == offset && seen == revision,
+    }
+}
+
+fn ground_under(
+    (ground, settings): (&Ground, &Grounding),
+    (entity, at, feet): (Entity, GroundedAt, f32),
+    (position, offset): (Vec2, f32),
+    walked: Option<f32>,
+) -> Option<(GroundedAt, Option<f32>)> {
+    let revision = ground.revision();
+    if holds(at, (position, offset), revision) {
+        return None;
+    }
+    let probe = GroundProbe::at(position).excluding(entity);
+    let near = probe.below(walked.unwrap_or(feet) + settings.deck_above);
+    let floor = match ground.down(near).ready().flatten() {
+        Some(point) => Some(point),
+        None if walked.is_none() => ground.down(probe).ready().flatten(),
+        None => None,
+    };
+    let stood = match (floor, walked) {
+        (Some(point), _) => Some((point.height, Some(point.surface))),
+        (None, Some(walked)) => Some((walked, None)),
+        (None, None) => None,
+    };
+    Some(match stood {
+        Some((height, surface)) => (
+            GroundedAt::Stood {
+                position,
+                offset,
+                surface,
+                revision,
+            },
+            Some(height + offset),
+        ),
+        None => (
+            GroundedAt::Unsupported {
+                position,
+                offset,
+                revision,
+            },
+            None,
+        ),
+    })
+}
+
 fn stand(
     (ground, settings): (&Ground, &Grounding),
+    entity: Entity,
     transform: &mut Mut<'_, Transform>,
     (grounded, at): (&Grounded, &mut Mut<'_, GroundedAt>),
     walked: Option<f32>,
 ) {
     let position = Vec2::new(transform.translation.x, transform.translation.z);
-    let Some((next, height)) = at.settle(
-        ground,
+    let feet = transform.translation.y - grounded.offset;
+    let Some((next, height)) = ground_under(
+        (ground, settings),
+        (entity, **at, feet),
         (position, grounded.offset),
         walked,
-        settings.deck_above,
     ) else {
         return;
     };
@@ -133,6 +197,7 @@ fn steer(
         }
         stand(
             (&ground, &settings),
+            entity,
             &mut transform,
             (grounded, &mut at),
             Some(step.to.y),
@@ -153,6 +218,7 @@ fn settle(
         let walked = walk.and_then(|walk| walk.walked(position));
         stand(
             (&ground, &settings),
+            entity,
             &mut transform,
             (grounded, &mut at),
             walked,

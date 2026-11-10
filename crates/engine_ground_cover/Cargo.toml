@@ -10,10 +10,10 @@ engine_ecs.workspace = true
 engine_core.workspace = true
 engine_render.workspace = true
 engine_places_rendering.workspace = true
-engine_places_world.workspace = true
 engine_math.workspace = true
 serde.workspace = true
 schemars.workspace = true
+engine_open_world_kit.workspace = true
 
 [build-dependencies]
 engine_sources.workspace = true

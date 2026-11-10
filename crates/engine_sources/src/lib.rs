@@ -599,7 +599,8 @@ fn reach(dir: &Path, root: &Path, found: &mut BTreeSet<PathBuf>, every: bool) {
             let Some(reached) = read(&target.join("Cargo.toml")) else {
                 continue;
             };
-            let followed = every || matches!(kind(&reached), Some("support" | "place"));
+            let followed =
+                every || matches!(kind(&reached), Some("support" | "place" | "shared" | "kit"));
             if followed && found.insert(target.clone()) {
                 reach(&target, root, found, every);
             }

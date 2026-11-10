@@ -3,7 +3,7 @@ use std::sync::Arc;
 use bevy_ecs::prelude::{Entity, Resource};
 use engine_heightfield::HydrologyBake;
 use engine_place::{Slot, Stamp};
-use engine_places_simulation::ground::TileKey;
+use engine_tiles::TileKey;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct WaterTileErrors {

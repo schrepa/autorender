@@ -5,7 +5,6 @@ mod components;
 mod cook;
 mod dispatch;
 mod edits;
-mod ground_face;
 mod identity;
 mod inspect;
 mod lookups;
@@ -21,6 +20,7 @@ mod stats;
 mod store;
 mod streaming;
 mod surroundings;
+mod sweep;
 mod tile_map;
 
 use bakes::*;
@@ -48,6 +48,7 @@ pub use stats::*;
 use store::*;
 use streaming::*;
 pub use surroundings::*;
+pub use sweep::TerrainSweepQuery;
 use tile_map::TileMap;
 
 use engine_core::collections::{HashMap, HashSet};
@@ -74,4 +75,6 @@ use engine_heightfield::tile::{
     StackView, SurfaceData, TerrainRecipe, Tile, TileJob, TileSample,
 };
 use engine_heightfield::{covers, reaches};
-use engine_places_world::ground::{SurfaceMaterial, SurfaceProjection, TileMaterials};
+use engine_open_world_kit::ground::{SurfaceMaterial, SurfaceProjection, TileMaterials};
+
+pub const UNKNOWN_TERRAIN: ErrorCode = ErrorCode::brick("unknown_terrain");

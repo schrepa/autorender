@@ -7,7 +7,7 @@ use engine_heightfield::tile::{Generator, Recipe, Tile};
 use engine_heightfield::{
     INVALID_TERRAIN, Pyramid, Stamp, TILE_QUADS, TileKey, reaches, reaches_span,
 };
-use engine_places_world::terrain::TerrainLayers;
+use engine_open_world_kit::terrain::TerrainLayers;
 
 use bounce::{MAX_PROBES, TerrainBounce, bounce};
 use lighting::{Ground, TerrainLighting, light};

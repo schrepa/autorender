@@ -4,9 +4,9 @@ use engine_core::{GpuBits, Stamp};
 use engine_core::collections::HashMap;
 use engine_heightfield::ErrorPyramid;
 use engine_heightfield::tile::shaded_elsewhere;
-use engine_places_simulation::ground::TileKey;
-use engine_places_world::ground::{TerrainEntry, TerrainTiles, TileFace};
-use engine_places_world::water::Waterline;
+use engine_tiles::TileKey;
+use engine_open_world_kit::ground::{TerrainEntry, TerrainTiles, TileFace};
+use engine_open_world_kit::water::Waterline;
 use engine_render::{Allocation, Buffer, ComputePipeline, Count, Encode, Prepare, Texture, wgpu};
 use glam::Vec2;
 

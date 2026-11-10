@@ -40,6 +40,7 @@ engine_worker.workspace = true
 glam.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+engine_open_world_kit.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 engine_heightfield.workspace = true

@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{DeviceLimits, Error, Joined};
 use engine_places_rendering::reflections::TraceReaders;
-use engine_places_world::ground::{Cover, GroundTiles, PALETTE_ENTRIES, PlacedTiles, TerrainTiles};
+use engine_open_world_kit::ground::{Cover, GroundTiles, PALETTE_ENTRIES, PlacedTiles, TerrainTiles};
 use engine_render::{
     Bind, Buffer, ComputePipeline, Count, Encode, GpuPart, Install, Lifetime, Pass, Prepare,
 };

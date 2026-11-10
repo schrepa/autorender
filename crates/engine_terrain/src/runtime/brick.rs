@@ -2,19 +2,19 @@ use super::programs::{SurfaceEntry, SurfaceProgramGpu};
 use super::publish::publish_terrains;
 use super::solids::sync_solids;
 use super::*;
-use crate::jobs::GROUND_GRID;
 use crate::jobs::expr_layer::EXPRESSION;
-use crate::scene::{INVALID_STREAMED, TERRAIN, prefetch_kind, terrain_kind, terrain_paths};
+use crate::scene::{
+    INVALID_STREAMED, TERRAIN, focus_kind, prefetch_kind, terrain_kind, terrain_paths,
+};
 use engine_core::{
     Brick, Bricks, Cook, CookList, GpuBits, GpuStruct, JobKind, SceneComponents, Schedule, Source,
 };
 use engine_heightfield::{INVALID_TERRAIN, MISSING_LAYER, UNKNOWN_MAP, UNREADABLE_MAP};
-use engine_places_simulation::ground::{Ground, UNKNOWN_TERRAIN};
-use engine_places_world::ground::{GroundSurface, TerrainTiles};
-use engine_places_world::paths::{ScenePathSource, ScenePathSources};
+use engine_open_world_kit::ground::{GroundSurface, TerrainTiles};
+use engine_open_world_kit::paths::{ScenePathSource, ScenePathSources};
 use engine_places_world::streaming::{StreamedKey, StreamedKeys, Streams};
-use engine_places_world::terrain::TerrainLayers;
-use engine_places_world::water::Hydrology;
+use engine_open_world_kit::terrain::TerrainLayers;
+use engine_open_world_kit::water::Hydrology;
 use engine_render::RenderBricks;
 
 pub struct TerrainBrick;
@@ -35,7 +35,7 @@ const ERRORS: &[ErrorCode] = &[
 
 impl Brick for TerrainBrick {
     const SOURCE: &'static Source = &crate::SOURCE;
-    const JOBS: &'static [&'static JobKind] = &[&TILE_BUILD, &BAKE, &GROUND_GRID];
+    const JOBS: &'static [&'static JobKind] = &[&TILE_BUILD, &BAKE];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
@@ -47,12 +47,12 @@ impl Brick for TerrainBrick {
             .resource::<SurfacePrograms>()
             .resource::<TerrainBridges>()
             .resource::<TerrainRedo>()
-            .fill::<Ground>(None)
             .fill::<TerrainTiles>(None)
             .fill::<Hydrology>(None)
             .fill::<GroundSurface>(Some(crate::shaders::terrain::faces::surface::MODULE))
             .join::<SceneComponents>(terrain_kind(), None)
             .join::<SceneComponents>(prefetch_kind(), None)
+            .join::<SceneComponents>(focus_kind(), None)
             .join::<StreamedKeys>(
                 StreamedKey {
                     key: TERRAIN,
@@ -83,6 +83,7 @@ impl Brick for TerrainBrick {
             .observation::<TerrainInspect>()
             .observation::<TerrainLayerSweep>()
             .observation::<TerrainListing>()
+            .observation::<TerrainSweepQuery>()
             .part::<SurfaceProgramGpu>();
     }
 }

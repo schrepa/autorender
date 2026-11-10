@@ -1,6 +1,5 @@
 use super::*;
 use engine_core::SceneIds;
-use engine_places_simulation::ground::UNKNOWN_TERRAIN;
 
 #[derive(Serialize, schemars::JsonSchema)]
 #[serde(untagged)]

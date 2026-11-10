@@ -5,7 +5,7 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use bytemuck::Zeroable;
 use engine_core::{DeviceLimits, Error, GpuBits, Jobs, Readable, Readback};
-use engine_places_world::ground::GroundTiles;
+use engine_open_world_kit::ground::GroundTiles;
 use engine_render::{
     AfterRead, Allocation, ComputePipeline, Count, Encode, Install, Pass, Prepare,
 };

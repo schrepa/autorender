@@ -38,7 +38,6 @@ engine_fly_camera.workspace = true
 engine_physics.workspace = true
 engine_places_rendering.workspace = true
 engine_places_simulation.workspace = true
-engine_places_world.workspace = true
 engine_render.workspace = true
 engine_standard.workspace = true
 engine_worker.workspace = true
@@ -46,6 +45,7 @@ glam.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+engine_open_world_kit.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 engine_native.workspace = true

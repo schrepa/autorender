@@ -1,6 +1,6 @@
 use glam::Vec2;
 
-pub use engine_places_simulation::ground::{MAX_LEVEL, Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey};
+pub use engine_tiles::{MAX_LEVEL, Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey};
 
 use crate::layers::Stamp;
 

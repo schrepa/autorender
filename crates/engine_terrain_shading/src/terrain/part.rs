@@ -5,8 +5,8 @@ use engine_core::{
 };
 use engine_places_rendering::probes::{MIRRORED, ProbeCaptures};
 use engine_places_rendering::shadows::{CasterMap, KeptRefresh, Refresh, ShadowMaps};
-use engine_places_world::ground::{Cover, GroundTiles, TerrainTiles};
-use engine_places_world::water::Waterline;
+use engine_open_world_kit::ground::{Cover, GroundTiles, TerrainTiles};
+use engine_open_world_kit::water::Waterline;
 use engine_render::{
     Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, DEBUG_BLEND,
     DEBUG_TARGETS, DepthUse, Draw, DrawInput, Encode,

@@ -7,7 +7,7 @@ use bytemuck::Zeroable;
 use engine_core::{Cut, Error, FrameTime, GpuBits, Readable, Readback, RecordKey, Views};
 use engine_heightfield::TileKey;
 use engine_places_simulation::water::{WaterObstacle, WaterObstacles};
-use engine_places_world::ground::{GroundBaking, GroundTiles, TerrainTiles};
+use engine_open_world_kit::ground::{GroundBaking, GroundTiles, TerrainTiles};
 use engine_render::{Allocation, ComputePipeline, Count, Encode, Install, Pass, Prepare};
 use glam::{Mat3, Vec2, Vec3};
 

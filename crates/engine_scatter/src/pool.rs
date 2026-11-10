@@ -5,7 +5,7 @@ use bevy_ecs::prelude::Entity;
 use engine_core::Stamp;
 use engine_heightfield::tile::Placed;
 use engine_math::collections::HashMap;
-use engine_places_simulation::ground::TileKey;
+use engine_tiles::TileKey;
 use glam::Vec3;
 
 use crate::groups::Groups;

@@ -15,7 +15,7 @@ use engine_heightfield::layer::{
 };
 use engine_heightfield::layers::reaches;
 use engine_heightfield::{INVALID_TERRAIN, Stamp, StampOp};
-use engine_places_world::terrain::TerrainLayers;
+use engine_open_world_kit::terrain::TerrainLayers;
 use glam::Vec2;
 use serde_json::Value;
 

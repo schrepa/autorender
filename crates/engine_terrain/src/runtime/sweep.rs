@@ -1,14 +1,7 @@
-use bevy_ecs::prelude::*;
-use engine_core::{Error, ErrorCode, Filled, Operation, Rule, Slot, stated};
-use engine_places_simulation::ground::Ground;
-use engine_places_simulation::physics::{Collide, CollisionRay, QueryFilter};
-use glam::{Vec2, Vec3};
-use serde::{Deserialize, Serialize};
-
-use crate::bounds;
-use crate::queries::bounded;
-use crate::types::missing_brick;
-use crate::world::{CollisionWorld, Fresh};
+use super::operations::{coordinate, within};
+use super::*;
+use engine_core::{Filled, Operation, stated};
+use engine_places_simulation::physics::{Collision, CollisionRay, QueryFilter};
 
 const PLACED_RAY_HITS: usize = 16;
 const SWEEP_EXTENT: Rule = Rule::Range(0.0, 4096.0);
@@ -16,7 +9,7 @@ const SWEEP_SAMPLES: Rule = Rule::Range(2.0, 64.0);
 
 #[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub(crate) struct TerrainSweepQuery {
+pub struct TerrainSweepQuery {
     pub center: [f64; 2],
     #[serde(default = "default_half_extent")]
     #[schemars(transform = stated(SWEEP_EXTENT))]
@@ -24,50 +17,6 @@ pub(crate) struct TerrainSweepQuery {
     #[serde(default = "default_sweep_samples")]
     #[schemars(transform = stated(SWEEP_SAMPLES))]
     pub samples: u32,
-}
-
-impl Operation for TerrainSweepQuery {
-    const NAME: &'static str = "terrain_sweep";
-    const CONTROL: bool = false;
-    type Params = (
-        Fresh<'static, 'static>,
-        Res<'static, Ground>,
-        Filled<'static, Ground>,
-    );
-    type Request = Self;
-    type Reply = TerrainSweepResult;
-
-    fn run(
-        (mut fresh, ground, grounded): SystemParamItem<'_, '_, Self::Params>,
-        request: Self,
-    ) -> Result<TerrainSweepResult, Error> {
-        let Self {
-            center,
-            half_extent,
-            samples,
-        } = request;
-        let cx = coordinate(center[0], "$.center[0]")?;
-        let cz = coordinate(center[1], "$.center[1]")?;
-        bounded(
-            half_extent,
-            SWEEP_EXTENT,
-            ErrorCode::OutOfRange,
-            "$.half_extent",
-        )?;
-        bounded(
-            samples,
-            SWEEP_SAMPLES,
-            ErrorCode::OutOfRange,
-            "$.samples",
-        )?;
-        sweep(
-            Some(fresh.world()),
-            grounded.on().then_some(&*ground),
-            Vec2::new(cx, cz),
-            half_extent as f32,
-            samples,
-        )
-    }
 }
 
 fn default_half_extent() -> f64 {
@@ -78,23 +27,51 @@ fn default_sweep_samples() -> u32 {
     16
 }
 
-fn coordinate(value: f64, path: &str) -> Result<f32, Error> {
-    bounded(value, bounds::COORDINATE, ErrorCode::OutOfRange, path).map(|value| value as f32)
+impl Operation for TerrainSweepQuery {
+    const NAME: &'static str = "terrain_sweep";
+    const CONTROL: bool = false;
+    type Params = (
+        Res<'static, Terrains>,
+        Res<'static, Collision>,
+        Filled<'static, Collision>,
+    );
+    type Request = Self;
+    type Reply = TerrainSweepResult;
+
+    fn run(
+        (terrains, collision, collides): SystemParamItem<'_, '_, Self::Params>,
+        request: Self,
+    ) -> Result<TerrainSweepResult, Error> {
+        let center = Vec2::new(
+            coordinate(request.center[0], "$.center[0]")?,
+            coordinate(request.center[1], "$.center[1]")?,
+        );
+        let half_extent = within(request.half_extent, SWEEP_EXTENT, "$.half_extent")?;
+        within(
+            f64::from(request.samples),
+            SWEEP_SAMPLES,
+            "$.samples",
+        )?;
+        sweep(
+            &terrains,
+            collides.on().then_some(&*collision),
+            (center, half_extent as f32),
+            request.samples,
+        )
+    }
 }
 
 fn sweep(
-    collision: Option<&CollisionWorld>,
-    ground: Option<&Ground>,
-    center: Vec2,
-    half_extent: f32,
+    terrains: &Terrains,
+    collision: Option<&Collision>,
+    (center, half_extent): (Vec2, f32),
     samples: u32,
 ) -> Result<TerrainSweepResult, Error> {
-    let Some(ground) = ground else {
-        return Err(missing_brick(Ground::NAME, "$.op"));
-    };
-    let grounds: Vec<Entity> = collision
-        .into_iter()
-        .flat_map(CollisionWorld::ground_owners)
+    let grounds: Vec<Entity> = terrains
+        .entries
+        .iter()
+        .filter(|state| state.around.is_none())
+        .map(|state| state.entity)
         .collect();
     let mut queried = 0;
     let mut level_zero = 0;
@@ -102,11 +79,12 @@ fn sweep(
     let mut rays = Worst::default();
     let (mut ray_checks, mut ray_misses, mut placed_first) = (0, 0, 0);
     let mut collected = Vec::new();
+    let mut hits = Vec::new();
     for row in 0..samples {
         for column in 0..samples {
             let unit = Vec2::new(column as f32, row as f32) / (samples - 1) as f32 * 2.0 - 1.0;
             let point = center + unit * half_extent;
-            let Some(sample) = ground.point(point).ready() else {
+            let Some(sample) = terrains.sample(point.x, point.y) else {
                 continue;
             };
             queried += 1;
@@ -114,13 +92,12 @@ fn sweep(
                 holes += 1;
                 continue;
             }
-            level_zero += usize::from(sample.level == 0);
             if sample.level != 0 {
                 continue;
             }
+            level_zero += 1;
             if let Some(collision) = collision {
-                let mut hits = Vec::new();
-                collision.raycast_all(
+                collision.0.raycast_all(
                     CollisionRay {
                         origin: Vec3::new(point.x, sample.height + 1000.0, point.y),
                         direction: Vec3::NEG_Y,
@@ -131,7 +108,7 @@ fn sweep(
                     PLACED_RAY_HITS,
                 )?;
                 placed_first += usize::from(hits.first().is_some_and(|hit| hit.placed.is_some()));
-                let hit = hits.into_iter().find(|hit| hit.placed.is_none());
+                let hit = hits.iter().find(|hit| hit.placed.is_none());
                 match hit.filter(|hit| grounds.contains(&hit.entity)) {
                     Some(hit) => {
                         ray_checks += 1;
@@ -164,7 +141,7 @@ fn sweep(
 }
 
 #[derive(Serialize, schemars::JsonSchema)]
-pub(crate) struct TerrainSweepResult {
+pub struct TerrainSweepResult {
     points: u32,
     resident: usize,
     level_zero: usize,
