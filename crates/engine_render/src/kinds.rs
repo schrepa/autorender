@@ -83,6 +83,14 @@ impl FormSide {
         constant: 0,
         slope: 0.0,
     };
+
+    pub const fn pulled(vertex: Entry) -> Self {
+        Self {
+            vertex,
+            streams: &[],
+            depth_bias: Self::UNBIASED,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -100,6 +108,21 @@ impl KindForm {
             PassViews::Every | PassViews::Main => self.placed,
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FormDepth {
+    Written,
+    Tested,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct PassFragment {
+    pub scene: Scene,
+    pub side: Option<FormSide>,
+    pub fragment: Entry,
+    pub cull: FaceCull,
+    pub depth: FormDepth,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -213,6 +236,33 @@ fn fragment_of(role: PassRole, varyings: Varyings, views: PassViews) -> Option<F
     })
 }
 
+fn primitive(
+    topology: FormTopology,
+    mirrored: bool,
+    cull: Option<wgpu::Face>,
+) -> wgpu::PrimitiveState {
+    wgpu::PrimitiveState {
+        topology: topology.primitive(),
+        front_face: if mirrored {
+            wgpu::FrontFace::Cw
+        } else {
+            wgpu::FrontFace::Ccw
+        },
+        cull_mode: cull,
+        ..Default::default()
+    }
+}
+
+fn written(bias: DepthBias) -> DepthUse {
+    DepthUse::Write {
+        bias: wgpu::DepthBiasState {
+            constant: bias.constant,
+            slope_scale: bias.slope,
+            clamp: 0.0,
+        },
+    }
+}
+
 fn kind_program(
     form: &KindForm,
     (role, views): (PassRole, PassViews),
@@ -232,25 +282,10 @@ fn kind_program(
         vertex: side.vertex,
         fragment: Some(fragment.entry),
         vertices: side.streams.to_vec(),
-        primitive: wgpu::PrimitiveState {
-            topology: topology.primitive(),
-            front_face: if mirrored {
-                wgpu::FrontFace::Cw
-            } else {
-                wgpu::FrontFace::Ccw
-            },
-            cull_mode: fragment.cull,
-            ..Default::default()
-        },
+        primitive: primitive(topology, mirrored, fragment.cull),
         depth: match role {
             PassRole::Blended => DepthUse::Test,
-            PassRole::Lit | PassRole::Depth | PassRole::Shown => DepthUse::Write {
-                bias: wgpu::DepthBiasState {
-                    constant: side.depth_bias.constant,
-                    slope_scale: side.depth_bias.slope,
-                    clamp: 0.0,
-                },
-            },
+            PassRole::Lit | PassRole::Depth | PassRole::Shown => written(side.depth_bias),
         },
         blend: (role == PassRole::Shown).then_some(DEBUG_BLEND),
         writes,
@@ -260,9 +295,33 @@ fn kind_program(
     }))
 }
 
+fn pass_program(
+    form: &KindForm,
+    own: &PassFragment,
+    views: PassViews,
+    (mirrored, topology): (bool, FormTopology),
+) -> Program {
+    let side = own.side.unwrap_or_else(|| form.side(views));
+    Program::Render(RenderDecl {
+        vertex: side.vertex,
+        fragment: Some(own.fragment),
+        vertices: side.streams.to_vec(),
+        primitive: primitive(topology, mirrored, own.cull.face()),
+        depth: match own.depth {
+            FormDepth::Written => written(side.depth_bias),
+            FormDepth::Tested => DepthUse::Test,
+        },
+        blend: None,
+        writes: wgpu::ColorWrites::ALL,
+        targets: None,
+        samples: 1,
+        faces: Faces::Declared,
+    })
+}
+
 impl<P: GpuPart> Install<'_, P> {
     pub fn form(&mut self, form: &KindForm, bound: &[(Var, Bind<P>)]) -> Result<Form<P>, Error> {
-        self.form_built(form, &EVERY_ROLE, FormTopology::List, bound)
+        self.form_built(form, (&EVERY_ROLE, &[]), FormTopology::List, bound)
     }
 
     pub fn form_for(
@@ -271,7 +330,7 @@ impl<P: GpuPart> Install<'_, P> {
         roles: &[PassRole],
         bound: &[(Var, Bind<P>)],
     ) -> Result<Form<P>, Error> {
-        self.form_built(form, roles, FormTopology::List, bound)
+        self.form_built(form, (roles, &[]), FormTopology::List, bound)
     }
 
     pub fn form_shaped(
@@ -280,13 +339,22 @@ impl<P: GpuPart> Install<'_, P> {
         topology: FormTopology,
         bound: &[(Var, Bind<P>)],
     ) -> Result<Form<P>, Error> {
-        self.form_built(form, &EVERY_ROLE, topology, bound)
+        self.form_built(form, (&EVERY_ROLE, &[]), topology, bound)
+    }
+
+    pub fn form_owning(
+        &mut self,
+        form: &KindForm,
+        owns: &[PassFragment],
+        bound: &[(Var, Bind<P>)],
+    ) -> Result<Form<P>, Error> {
+        self.form_built(form, (&EVERY_ROLE, owns), FormTopology::List, bound)
     }
 
     fn form_built(
         &mut self,
         form: &KindForm,
-        roles: &[PassRole],
+        (roles, owns): (&[PassRole], &[PassFragment]),
         topology: FormTopology,
         bound: &[(Var, Bind<P>)],
     ) -> Result<Form<P>, Error> {
@@ -299,6 +367,13 @@ impl<P: GpuPart> Install<'_, P> {
             .filter(|listed| listed.bit.is_some() && self.core.passes.takes(listed, form.kind))
             .copied()
             .collect();
+        let joined = |own: &&PassFragment| {
+            listed.iter().any(|listed| listed.name == own.scene.name())
+        };
+        if let Some(stray) = owns.iter().find(|own| !joined(own)) {
+            let path = format!("forms.{}.owns", form.kind.0);
+            return Err(Error::new(ErrorCode::PassMismatch, path).got(stray.scene.name()));
+        }
         let mut scenes = Vec::with_capacity(listed.len());
         for listed in listed {
             let facts = (listed.pass.role(), listed.pass.views);
@@ -307,22 +382,26 @@ impl<P: GpuPart> Install<'_, P> {
                 PassViews::Owned => true,
                 PassViews::Every | PassViews::Main => false,
             };
-            let built = roles.contains(&facts.0);
-            let plain = match kind_program(form, facts, (false, topology)).filter(|_| built) {
+            let own = owns.iter().find(|own| own.scene.name() == listed.name);
+            let built = own.is_some() || roles.contains(&facts.0);
+            let program_of = |mirrored: bool| match own {
+                Some(own) => Some(pass_program(form, own, facts.1, (mirrored, topology))),
+                None => kind_program(form, facts, (mirrored, topology)),
+            };
+            let plain = match program_of(false).filter(|_| built) {
                 Some(program) => {
                     let reached = self.reached(&program, &bound);
                     Some(self.core.pipeline(scope, program, reached)?)
                 }
                 None => None,
             };
-            let mirrored =
-                match kind_program(form, facts, (true, topology)).filter(|_| built && owned) {
-                    Some(program) => {
-                        let reached = self.reached(&program, &bound);
-                        Some(self.core.pipeline(scope, program, reached)?)
-                    }
-                    None => None,
-                };
+            let mirrored = match program_of(true).filter(|_| built && owned) {
+                Some(program) => {
+                    let reached = self.reached(&program, &bound);
+                    Some(self.core.pipeline(scope, program, reached)?)
+                }
+                None => None,
+            };
             scenes.push(FormScene {
                 pass: FormPass {
                     scene: Scene::named(listed.name),

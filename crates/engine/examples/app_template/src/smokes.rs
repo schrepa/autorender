@@ -2,7 +2,7 @@ use engine_core::{PassName, Smoke, SmokeFailure, SmokeSession, smoke_check};
 use engine_smoke::{above, control, counted_in_joined_passes, number, settled};
 use serde_json::{Value, json};
 
-use crate::bricks::glimmer::{GLIMMER, GlimmerPass};
+use crate::bricks::glimmer::{GLIMMER, GlimmerPass, LOOK};
 
 const FRAMES: u32 = 8;
 
@@ -14,10 +14,13 @@ pub(crate) const SMOKES: [Smoke; 1] = [Smoke {
 fn scene() -> Value {
     json!({
         "id": "glimmer-passes", "revision": 1,
-        "materials": [],
+        "materials": [{
+            "id": "disc", "color": [1.0, 1.0, 1.0, 1.0], "slots": {"opacity": LOOK},
+            "alpha_mode": "mask", "alpha_cutoff": 0.5, "cull": "none", "lighting": "unlit",
+        }],
         "meshes": [],
         "entities": [
-            {"id": "spark", "drawn": {"kind": GLIMMER.name()},
+            {"id": "spark", "drawn": {"kind": GLIMMER.name(), "material": "disc"},
              "transform": {"translation": [0.0, 1.0, 0.0]}},
             {"id": "camera", "transform": {"translation": [0.0, 3.0, 8.0], "rotation_degrees": [-20.0, 0.0, 0.0]},
              "node": {"clock": "real", "mobility": "moving"},
