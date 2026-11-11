@@ -715,7 +715,7 @@ impl Linker {
             .chain(entries)
             .collect();
         for (module, name) in &roots {
-            if mentioned(&texts, module, name) || !self.defines(module, name) {
+            if called(&texts, module, name) || !self.defines(module, name) {
                 continue;
             }
             if let Ok(composed) = self.compose_named(module, name) {
@@ -794,29 +794,40 @@ fn declares_struct(text: &str, name: &str) -> bool {
 }
 
 fn mentioned(texts: &[(String, String)], path: &str, name: &str) -> bool {
+    found(texts, (path, name), |rest| {
+        rest.chars().next().is_none_or(|character| !word(character))
+    })
+}
+
+fn called(texts: &[(String, String)], path: &str, name: &str) -> bool {
+    found(texts, (path, name), |rest| {
+        rest.trim_start().starts_with('(')
+    })
+}
+
+fn found(
+    texts: &[(String, String)],
+    (path, name): (&str, &str),
+    ends: impl Fn(&str) -> bool,
+) -> bool {
     let Ok(module) = module_path(path) else {
         return false;
     };
     let mangled = wesl::mangler::EscapeMangler.mangle(&module, name);
     texts.iter().any(|(main, text)| {
         let ident = if main == path { name } else { mangled.as_str() };
-        mentions(text, ident)
+        text.match_indices(ident).any(|(at, _)| {
+            let before = text[..at]
+                .chars()
+                .next_back()
+                .is_none_or(|character| !word(character));
+            before && ends(&text[at + ident.len()..])
+        })
     })
 }
 
-fn mentions(text: &str, ident: &str) -> bool {
-    let word = |character: char| character.is_ascii_alphanumeric() || character == '_';
-    text.match_indices(ident).any(|(at, _)| {
-        let before = text[..at]
-            .chars()
-            .next_back()
-            .is_none_or(|character| !word(character));
-        let after = text[at + ident.len()..]
-            .chars()
-            .next()
-            .is_none_or(|character| !word(character));
-        before && after
-    })
+fn word(character: char) -> bool {
+    character.is_ascii_alphanumeric() || character == '_'
 }
 
 fn items(text: &str) -> Vec<String> {
