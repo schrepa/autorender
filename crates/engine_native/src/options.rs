@@ -18,8 +18,8 @@ use crate::{
 
 const MIB: u64 = 1024 * 1024;
 
-const DEV_PARAMETERS: [&str; 8] = [
-    "size", "gpu", "workers", "jobcache", "counters", "vendor", "scene", "assets",
+const DEV_PARAMETERS: [&str; 7] = [
+    "size", "gpu", "workers", "jobcache", "counters", "vendor", "scene",
 ];
 
 const NSIGHT_SETTLE_MS: u64 = 20_000;
@@ -42,7 +42,6 @@ pub fn options() -> Vec<CommandOption> {
     };
     let mut options = vec![
         CommandOption::taking("--scene", "PATH"),
-        CommandOption::taking("--assets", "DIR"),
         CommandOption::taking("--size", "WxH").in_unit("px"),
         CommandOption::taking("--gpu", "discrete|integrated").defaults_to(gpu),
         CommandOption::taking("--workers", "N|off").defaults_to(defaults.jobs.workers),
@@ -340,7 +339,6 @@ impl HostOptions {
         let name = argument.name.as_str();
         match name {
             "--scene" => self.scene = Some(arguments.value(argument)?.into()),
-            "--assets" => self.assets = Some(arguments.value(argument)?.into()),
             "--size" => {
                 let size = arguments.value(argument)?;
                 let parsed = size
@@ -592,10 +590,7 @@ impl HostOptions {
 
     pub(crate) fn for_game<G>(&self, game: &GameEntry<G>) -> Self {
         let mut options = self.clone();
-        let assets = self
-            .assets
-            .clone()
-            .unwrap_or_else(|| default_assets(game.folder));
+        let assets = default_assets(game.folder);
         if options.jobs.packs.is_none() {
             options.jobs.packs = Some(assets.join("cooked"));
         }
