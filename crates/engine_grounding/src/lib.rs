@@ -7,9 +7,9 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Brick, Bricks, ComponentKind, Error, ErrorCode, GlobalTransforms, Mover, Moves, Pace,
-    Parent, Placement, Refusals, Rule, SceneComponents, Schedule, Setting, Settling, Source,
-    Transform, mover_of, settings,
+    Brick, Bricks, ComponentKind, Error, ErrorCode, GlobalTransforms, Mover, Moves, Pace, Parent,
+    Placement, Refusals, Rule, SceneComponents, Schedule, Setting, Settling, Source, Transform,
+    mover_of, settings,
 };
 use engine_places_simulation::ground::{
     Ground, GroundProbe, GroundRead, GroundSurface, Grounded, GroundedAt,

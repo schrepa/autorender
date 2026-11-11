@@ -3345,7 +3345,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_grounding::GroundingBrick",
-      "version": "0748eae4c8d463cba225fd5c8230a421b54eb8e336e70961d950604f0d61cfaa"
+      "version": "a821dbe0c0fe2b677ff3de669997bac398070e00819c1e36767bff1e2ff18dfc"
     },
     {
       "dependencies": [
