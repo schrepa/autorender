@@ -71,7 +71,7 @@ impl<G: Game, H: SmokeHost<G>> Runner<'_, G, H> {
         }
         let started = crate::host::now_ms();
         let elapsed = || crate::host::now_ms() - started;
-        let gpu = match self.host.open(entry.list(self.bricks), self.build).await {
+        let gpu = match self.host.open(self.bricks.clone(), self.build).await {
             Ok(gpu) => gpu,
             Err(error) => return SmokeRecord::failed(entry, elapsed(), fault("session", &error)),
         };

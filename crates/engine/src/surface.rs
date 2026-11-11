@@ -273,7 +273,6 @@ macro_rules! __export_game {
         impl $name {
             pub async fn create(
                 canvas: $crate::__private::web_sys::HtmlCanvasElement,
-                query: &str,
                 scene: Option<String>,
                 files: Option<SceneFileSet>,
                 game_files: Option<SceneFileSet>,
@@ -282,7 +281,6 @@ macro_rules! __export_game {
                     host: $crate::browser::PageHost::start(
                         canvas,
                         GAME,
-                        query,
                         scene.map(|source| (source, files.map(|set| set.files).unwrap_or_default())),
                         game_files.map(|set| set.files).unwrap_or_default(),
                     )

@@ -1,8 +1,8 @@
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 use engine_core::{
-    BrickList, Bricks, Camera, DeviceLimits, Engine, Error, ErrorCode, Smoke, Transform,
-    main_camera, place_camera,
+    BrickList, Bricks, Camera, DeviceLimits, Engine, Error, Smoke, Transform, main_camera,
+    place_camera,
 };
 use engine_render::{Renderer, wgpu};
 use engine_scene::{
@@ -171,28 +171,4 @@ pub fn built<G: Game>(
     let game = (entry.build)(engine);
     engine.app.world_mut().remove_resource::<GameFiles>();
     game
-}
-
-pub fn without(list: BrickList, names: &str, path: &str) -> crate::Result<BrickList> {
-    let packages: Vec<&'static str> = list
-        .listed()
-        .iter()
-        .map(|listed| listed.package())
-        .collect();
-    let left_out = names
-        .split(',')
-        .filter(|name| !name.is_empty())
-        .map(|name| {
-            packages
-                .iter()
-                .copied()
-                .find(|&package| package == name)
-                .ok_or_else(|| {
-                    Error::new(ErrorCode::InvalidArguments, path)
-                        .got(name)
-                        .variants(packages.iter().copied())
-                })
-        })
-        .collect::<crate::Result<Vec<&'static str>>>()?;
-    Ok(left_out.into_iter().fold(list, BrickList::without_package))
 }

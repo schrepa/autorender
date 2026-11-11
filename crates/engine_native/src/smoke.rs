@@ -56,10 +56,7 @@ pub fn run<G: Game>(
 
 pub fn of_game<G: Game>(options: &HostOptions, names: &str, game: GameEntry<G>) -> ExitCode {
     let options = &options.for_game(&game);
-    let list = match options.listed(&game) {
-        Ok(list) => list,
-        Err(error) => return crate::exit(Err(error)),
-    };
+    let list = (game.bricks)(BrickList::default());
     let entries = match engine::smokes::registered(&list) {
         Ok(entries) => entries,
         Err(error) => return crate::exit(Err(error)),

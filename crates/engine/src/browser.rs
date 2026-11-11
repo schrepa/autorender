@@ -93,15 +93,10 @@ impl<G: Game> PageHost<G> {
     pub async fn start(
         canvas: HtmlCanvasElement,
         game: GameEntry<G>,
-        query: &str,
         scene: Option<(String, SceneFiles)>,
         files: SceneFiles,
     ) -> Result<Self, JsValue> {
-        let parameters = web_sys::UrlSearchParams::new_with_str(query)?;
-        let without = parameters.get("without").unwrap_or_default();
-        let bricks =
-            crate::game::without((game.bricks)(BrickList::default()), &without, "?without")
-                .map_err(js)?;
+        let bricks = (game.bricks)(BrickList::default());
         crate::game::report_missing::<G>(&files);
         let target = engine_render::RenderTarget::Canvas(canvas);
         let mut host = GameHost::launch(

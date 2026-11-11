@@ -7,7 +7,6 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 mod ground;
 mod image;
-mod partners;
 mod poses;
 pub mod requests;
 
@@ -21,22 +20,14 @@ impl Brick for StandardSmokesBrick {
         Smoke {
             name: "drawn_poses_agree",
             run: poses::run,
-            without: &[],
         },
         Smoke {
             name: "collision_matches_drawn_ground",
             run: ground::run,
-            without: &[],
         },
         Smoke {
             name: "settled_image_repeats",
             run: image::run,
-            without: &[],
-        },
-        Smoke {
-            name: "missing_partners_are_reported",
-            run: partners::run,
-            without: &[partners::LEFT_OUT],
         },
     ];
 

@@ -18,8 +18,8 @@ use crate::{
 
 const MIB: u64 = 1024 * 1024;
 
-const DEV_PARAMETERS: [&str; 9] = [
-    "size", "gpu", "workers", "jobcache", "counters", "vendor", "scene", "assets", "without",
+const DEV_PARAMETERS: [&str; 8] = [
+    "size", "gpu", "workers", "jobcache", "counters", "vendor", "scene", "assets",
 ];
 
 const NSIGHT_SETTLE_MS: u64 = 20_000;
@@ -43,7 +43,6 @@ pub fn options() -> Vec<CommandOption> {
     let mut options = vec![
         CommandOption::taking("--scene", "PATH"),
         CommandOption::taking("--assets", "DIR"),
-        CommandOption::taking("--without", "BRICK,..."),
         CommandOption::taking("--size", "WxH").in_unit("px"),
         CommandOption::taking("--gpu", "discrete|integrated").defaults_to(gpu),
         CommandOption::taking("--workers", "N|off").defaults_to(defaults.jobs.workers),
@@ -241,7 +240,6 @@ fn folder_of(path: &Path) -> String {
 pub struct HostOptions {
     pub scene: Option<PathBuf>,
     pub assets: Option<PathBuf>,
-    pub without: String,
     pub size: Option<(u32, u32)>,
     pub gpu: GpuPreference,
     pub jobs: JobOptions,
@@ -270,7 +268,6 @@ impl Default for HostOptions {
         Self {
             scene: None,
             assets: None,
-            without: String::new(),
             size: None,
             gpu: GpuPreference::HighPerformance,
             jobs: JobOptions::default(),
@@ -344,7 +341,6 @@ impl HostOptions {
         match name {
             "--scene" => self.scene = Some(arguments.value(argument)?.into()),
             "--assets" => self.assets = Some(arguments.value(argument)?.into()),
-            "--without" => self.without = arguments.value(argument)?,
             "--size" => {
                 let size = arguments.value(argument)?;
                 let parsed = size
@@ -537,7 +533,7 @@ impl HostOptions {
 
     pub fn run<G: Game>(&self, game: GameEntry<G>) -> engine::Result<()> {
         let options = self.for_game(&game);
-        let bricks = options.listed(&game)?;
+        let bricks = (game.bricks)(BrickList::default());
         #[cfg(feature = "dev")]
         if options.schemas {
             return engine::tooling::print_schemas(move |_| bricks).map_err(|problems| {
@@ -605,14 +601,6 @@ impl HostOptions {
         }
         options.assets = Some(assets);
         options
-    }
-
-    pub fn listed<G>(&self, game: &GameEntry<G>) -> engine::Result<BrickList> {
-        engine::game::without(
-            (game.bricks)(BrickList::default()),
-            &self.without,
-            "--without",
-        )
     }
 
     fn start_scene<G>(&self, game: &GameEntry<G>) -> StartScene {

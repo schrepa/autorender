@@ -459,15 +459,6 @@ impl BrickList {
     }
 
     #[must_use]
-    pub fn without_package(mut self, package: &str) -> Self {
-        let (out, kept) = std::mem::take(&mut self.bricks)
-            .into_iter()
-            .partition::<Vec<_>, _>(|listed| listed.package() == package);
-        self.bricks = kept;
-        self.leave(out)
-    }
-
-    #[must_use]
     fn leave(mut self, out: Vec<Listed>) -> Self {
         for listed in out {
             if !self

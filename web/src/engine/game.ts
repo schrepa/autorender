@@ -27,7 +27,7 @@ export interface PlayedBindings extends GameBindings {
 }
 
 export interface Playable<T extends Runtime> {
-  create(canvas: HTMLCanvasElement, query: string, scene?: string, files?: unknown, gameFiles?: unknown): Promise<T>;
+  create(canvas: HTMLCanvasElement, scene?: string, files?: unknown, gameFiles?: unknown): Promise<T>;
   files(): string[];
 }
 
@@ -66,7 +66,7 @@ export function playGame<T extends Runtime, B extends PlayedBindings>(game: Play
     files: async (text: string, signal: AbortSignal) => loadSceneFiles(sceneUrl(), text, await bindings(), signal),
   };
   startGame<T>({
-    parameters: { scene: "PATH", without: "BRICK,..." },
+    parameters: { scene: "PATH" },
     source,
     async create(canvas, signal) {
       const loaded = await bindings();
@@ -75,7 +75,7 @@ export function playGame<T extends Runtime, B extends PlayedBindings>(game: Play
       const files = source && text !== undefined ? await source.files(text, signal) : undefined;
       const found = await gameFiles(new loaded.SceneFileSet(), played.files(), signal);
       signal.throwIfAborted();
-      const running = await played.create(canvas, location.search, text, files, found);
+      const running = await played.create(canvas, text, files, found);
       if (url !== undefined) running.set_file_root(new URL(".", sceneUrl()).href);
       return running;
     },

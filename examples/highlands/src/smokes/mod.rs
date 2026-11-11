@@ -8,7 +8,6 @@ use serde_json::json;
 pub(crate) const SMOKES: [Smoke; 1] = [Smoke {
     name: "highlands_torrent",
     run: torrent::run,
-    without: &[],
 }];
 
 fn open(session: &mut dyn SmokeSession) -> Checked<()> {
