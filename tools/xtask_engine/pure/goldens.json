@@ -51,6 +51,7 @@
     },
     "refusal entity_removed at $.args.filter.exclude": {
       "code": "entity_removed",
+      "expected": "live",
       "got": "ground",
       "path": "$.args.filter.exclude"
     },
@@ -345,6 +346,7 @@
           "Keys2",
           "Label",
           "Layers",
+          "Levels",
           "MacroCauses",
           "MeshSource",
           "Mobility",
@@ -415,7 +417,6 @@
           "SceneNavigation",
           "SceneNightSky",
           "SceneObject",
-          "SceneOcclusionCulling",
           "SceneOccupancy",
           "ScenePacing",
           "SceneParticleBlend",
@@ -438,7 +439,6 @@
           "SceneSpline",
           "SceneSpot",
           "SceneStreamed",
-          "SceneSubpixelCulling",
           "SceneSun",
           "SceneSurfaceLight",
           "SceneSurroundings",
@@ -497,7 +497,6 @@
     },
     "refusal unknown_entity at $.entity": {
       "code": "unknown_entity",
-      "expected": "entity",
       "got": "nobody",
       "path": "$.entity"
     },
@@ -587,7 +586,6 @@
           "navigation_stats",
           "night_sky",
           "node",
-          "occlusion_culling",
           "occupancy",
           "pacing",
           "particle_stats",
@@ -616,7 +614,6 @@
           "static_tables",
           "streamed",
           "streaming_focus",
-          "subpixel_culling",
           "sun",
           "surface_light",
           "temporal_antialiasing",
@@ -1324,7 +1321,7 @@
       "steepest": 0.016481399536132812,
       "tunnels": 1
     },
-    "bakes": "679b761f4684c77b",
+    "bakes": "42958025dfff0367",
     "bounce": {
       "blocks": 1024,
       "detailed blocks": 474,
@@ -1348,7 +1345,7 @@
       ],
       "texels": 65536
     },
-    "pack": "9df892e6264869ec",
+    "pack": "9bc8e2f2a6263ed6",
     "pack records": 46,
     "portals 0/0/0": "fb26e1b9f5bd9fd8",
     "portals 0/0/1": "29e88506dde27d87",

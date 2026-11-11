@@ -83,6 +83,10 @@ const UNREACHED: &[(&str, &str)] = &[
     ("game_rule", "a game's own refusal (ErrorCode::GameRule)"),
     ("import_foreign", LINKER),
     (
+        "input_unread",
+        "a startup notice for an input a listed brick sets and no listed brick reads (crates/engine_render/src/surface.rs); no request refuses with it",
+    ),
+    (
         "invalid_arguments",
         "hosts' and tools' command lines answer it (crates/engine_native/src/options.rs)",
     ),
@@ -157,6 +161,14 @@ const UNREACHED: &[(&str, &str)] = &[
     ("session_unavailable", BRIDGE),
     ("shader_link", LINKER),
     ("slot_filled_twice", APP_BUILD),
+    (
+        "slot_unopened",
+        "a startup notice for a material slot no listed brick opens (crates/engine_render/src/surface.rs); no request refuses with it",
+    ),
+    (
+        "sound_loading",
+        "sound_play answers it while the sound's file is still being read (crates/engine_places_rendering/src/audio.rs); the corpora play no sound",
+    ),
     (
         "source_changed",
         "needs another writer between a save's validation and its rename",

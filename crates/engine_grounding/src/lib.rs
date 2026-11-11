@@ -7,17 +7,21 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Brick, Bricks, ComponentKind, Error, ErrorCode, Expected, GlobalTransforms, Mover, Moves, Pace,
-    Parent, Placement, Refusals, Rule, SceneComponents, Schedule, Setting, Settling, Slot, Source,
+    Brick, Bricks, ComponentKind, Error, ErrorCode, GlobalTransforms, Mover, Moves, Pace,
+    Parent, Placement, Refusals, Rule, SceneComponents, Schedule, Setting, Settling, Source,
     Transform, mover_of, settings,
 };
 use engine_places_simulation::ground::{
-    Ground, GroundPoint, GroundProbe, GroundRead, GroundSurface, Grounded, GroundedAt,
+    Ground, GroundProbe, GroundRead, GroundSurface, Grounded, GroundedAt,
 };
 use engine_places_simulation::navigation::{NavStep, NavWalk};
 use glam::Vec2;
 use serde::Serialize;
 use serde_json::Value;
+
+mod unplaced;
+
+use unplaced::unplaced;
 
 const OFFSET: Rule = Rule::range(-10_000.0, 10_000.0);
 
@@ -137,17 +141,6 @@ struct Placed {
     at: GroundedAt,
     height: Option<f32>,
     verdict: Result<(), Error>,
-}
-
-fn unplaced(read: GroundRead<Option<GroundPoint>>, position: Vec2) -> Error {
-    match read {
-        GroundRead::Off => Error::new(ErrorCode::PlaceNotFilled, "$.grounded")
-            .expected(Expected::Present)
-            .got(Ground::NAME),
-        GroundRead::Ready(_) | GroundRead::NotLoaded => {
-            Error::new(ErrorCode::InvalidPosition, "$.grounded").got(position.to_array())
-        }
-    }
 }
 
 fn ground_under(
