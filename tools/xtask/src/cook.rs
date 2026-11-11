@@ -16,6 +16,7 @@ const PLAYER: &str = "crates/engine_player";
 
 const CHECK_FRAMES: &str = "600";
 const CHECK_SIZE: &str = "640x360";
+const PASSES: [&str; 2] = ["records", "pipelines"];
 
 const USAGE: &str = "usage: cargo xtask cook [--project DIR] [PATH.scene.json...] \
                      --limit-ms MS | --check [--sample N]";
@@ -136,7 +137,13 @@ pub fn cook(root: &Path, options: &[String]) -> Result<(), Failure> {
                     "--limit-ms",
                     &limit,
                 ]);
-                run(root, &pack.program, &arguments)?;
+                for pass in PASSES {
+                    println!(
+                        "{}",
+                        json!({ "event": "cook_pass", "pack": pack.name, "pass": pass })
+                    );
+                    run(root, &pack.program, &arguments)?;
+                }
             }
         }
     }

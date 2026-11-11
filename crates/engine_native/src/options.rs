@@ -722,9 +722,15 @@ impl HostOptions {
         let read = game.jobs_mut().packed();
         let (mut frame, mut said) = (0_u32, Instant::now());
         let (after, mut played) = (self.offscreen.unwrap_or(0), 0_u32);
+        game.host_mut().set_preparation(true);
         loop {
             game.host_mut().cook();
-            game.frame(f64::from(frame) * 1000.0 / 60.0)?;
+            let at = f64::from(frame) * 1000.0 / 60.0;
+            if game.host().preparing() {
+                game.starting(at)?;
+            } else {
+                game.frame(at)?;
+            }
             frame += 1;
             let readiness = game.host().frame_times().readiness.clone();
             if !readiness.failed.is_empty() {
@@ -732,10 +738,11 @@ impl HostOptions {
                     "failed": readiness.failed,
                 })));
             }
-            if readiness.settled() && played >= after {
+            let playing = readiness.settled() && !game.host().preparing();
+            if playing && played >= after {
                 break;
             }
-            if readiness.settled() {
+            if playing {
                 played += 1;
             }
             if started.elapsed() >= Duration::from_millis(limit) {

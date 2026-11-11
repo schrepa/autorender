@@ -256,16 +256,13 @@ impl<G: Game> Offscreen<G> {
     }
 
     pub fn prepare(&mut self, timestamp: f64) -> engine::Result<()> {
-        let (width, height) = self.size;
         let started = Instant::now();
         let mut said = started;
         self.host.set_preparation(true);
         loop {
             let began = Instant::now();
             let at = timestamp + started.elapsed().as_secs_f64() * 1000.0;
-            let phase = self.host.animation_frame(at, width, height)?;
-            self.exchange_jobs();
-            self.host.wait_for_gpu()?;
+            let phase = self.starting(at)?;
             if phase == FramePhase::Started {
                 return Ok(());
             }
@@ -289,6 +286,14 @@ impl<G: Game> Offscreen<G> {
         if let Some(rest) = interval.checked_sub(began.elapsed()) {
             std::thread::sleep(rest);
         }
+    }
+
+    pub fn starting(&mut self, timestamp: f64) -> engine::Result<FramePhase> {
+        let (width, height) = self.size;
+        let phase = self.host.animation_frame(timestamp, width, height)?;
+        self.exchange_jobs();
+        self.host.wait_for_gpu()?;
+        Ok(phase)
     }
 
     pub fn frame(&mut self, timestamp: f64) -> engine::Result<()> {
