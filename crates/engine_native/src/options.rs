@@ -71,7 +71,6 @@ pub fn options() -> Vec<CommandOption> {
         CommandOption::taking("--cook", "FILE"),
         CommandOption::flag("--dev"),
         CommandOption::taking("--smoke", "NAME,...|all|list"),
-        CommandOption::flag("--relay"),
         CommandOption::flag("--schemas"),
         CommandOption::taking("--pure", "NAME,...|all|list"),
         CommandOption::taking("--dev-artifacts", "DIR").defaults_to(default_artifacts().display()),
@@ -260,7 +259,6 @@ pub struct HostOptions {
     pub dev: bool,
     pub dev_artifacts: Option<PathBuf>,
     pub smoke: Option<String>,
-    pub relay: bool,
     pub schemas: bool,
     pub pure: Option<String>,
     pub cook: Option<PathBuf>,
@@ -290,7 +288,6 @@ impl Default for HostOptions {
             dev: false,
             dev_artifacts: None,
             smoke: None,
-            relay: false,
             schemas: false,
             pure: None,
             cook: None,
@@ -421,10 +418,6 @@ impl HostOptions {
             }
             "--dev-artifacts" => self.dev_artifacts = Some(arguments.value(argument)?.into()),
             "--smoke" => self.smoke = Some(arguments.value(argument)?),
-            "--relay" => {
-                arguments.flag(argument)?;
-                self.relay = true;
-            }
             "--schemas" => {
                 arguments.flag(argument)?;
                 self.schemas = true;
@@ -480,9 +473,6 @@ impl HostOptions {
             return Err(
                 Error::new(ErrorCode::InvalidArguments, "--smoke").expected(Expected::Supported)
             );
-        }
-        if self.relay && self.smoke.is_none() {
-            return Err(needs("--smoke"));
         }
         if self.schemas && !cfg!(feature = "dev") {
             return Err(

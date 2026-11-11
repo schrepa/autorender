@@ -21,7 +21,6 @@ interface Host {
   fail(error: unknown): void;
   stopped(): string | undefined;
   source?: { url: string; load(signal: AbortSignal): Promise<string>; files(source: string, signal: AbortSignal): Promise<unknown> };
-  filesOf?(source: string): Promise<unknown>;
   controls?: Record<string, PageControl>;
   parameters?: Record<string, string>;
 }
@@ -36,7 +35,6 @@ declare global {
     __engineDev?: {
       version: number; instance: string; controls: Record<string, string>; parameters: Record<string, string>;
       request(command: Command): Promise<Reply>;
-      play(source: string): Promise<Reply>;
       saved(path: string): string | undefined;
       waitingOnGpu(): boolean;
     };
@@ -51,7 +49,6 @@ export function connectDevelopment(host: Host): () => void {
   if (!runtime.dev_request) throw engineFailure({ code: "runtime_unavailable", path: "$", expected: "present", got: "dev_request" });
   const closed = () => disposed || host.signal.aborted;
   let gpuWaits = 0;
-  let played: string | undefined;
   const saved = new Map<string, string>();
   async function save(name: string, contents: unknown): Promise<Outcome> {
     const text = JSON.stringify(contents);
@@ -86,16 +83,6 @@ export function connectDevelopment(host: Host): () => void {
     }
     return { ok: false, error: failure };
   }
-  function thrown(cause: unknown): Reply {
-    if (closed()) return refuse(CLOSED);
-    if (fatal(cause)) {
-      host.fail(cause);
-      return { ok: false, error: { code: "runtime_panicked", path: "$", got: host.stopped() ?? String(cause) } };
-    }
-    const refused = engineError(cause);
-    if (refused) return refuse(failure(refused));
-    return refuse({ code: "browser_command_failed", path: "$", got: String(cause) });
-  }
   async function carry(effect: Effect): Promise<Step> {
     const resumed = (outcome: Outcome): Step => {
       if (closed()) throw engineFailure(CLOSED);
@@ -126,12 +113,6 @@ export function connectDevelopment(host: Host): () => void {
         return resumed(outcome);
       }
       case "source": {
-        const replayed = played;
-        if (replayed !== undefined && host.filesOf) {
-          const files = await host.filesOf(replayed);
-          if (closed()) throw engineFailure(CLOSED);
-          return parseJson(runtime.dev_reloaded!(replayed, context(), files));
-        }
         if (!host.source) return resumed({ missing: [] });
         const source = await host.source.load(host.signal);
         const files = await host.source.files(source, host.signal);
@@ -172,27 +153,14 @@ export function connectDevelopment(host: Host): () => void {
           }
           return reply;
         } catch (cause) {
-          return thrown(cause);
-        }
-      });
-      return answered ?? { ok: false, error: { code: "command_busy", path: "$" } };
-    },
-    async play(source: string): Promise<Reply> {
-      if (closed()) return refuse(CLOSED);
-      const stopped = host.stopped();
-      if (stopped) return { ok: false, error: { code: "runtime_panicked", path: "$", got: stopped } };
-      const filesOf = host.filesOf;
-      if (!filesOf) return refuse({ code: "runtime_unavailable", path: "$", expected: "present", got: "filesOf" });
-      const answered = host.exclusive(async (): Promise<Reply> => {
-        try {
-          const files = await filesOf(source);
           if (closed()) return refuse(CLOSED);
-          runtime.reload_scene(source, files);
-          played = source;
-          host.poll();
-          return { ok: true };
-        } catch (cause) {
-          return thrown(cause);
+          if (fatal(cause)) {
+            host.fail(cause);
+            return { ok: false, error: { code: "runtime_panicked", path: "$", got: host.stopped() ?? String(cause) } };
+          }
+          const thrown = engineError(cause);
+          if (thrown) return refuse(failure(thrown));
+          return refuse({ code: "browser_command_failed", path: "$", got: String(cause) });
         }
       });
       return answered ?? { ok: false, error: { code: "command_busy", path: "$" } };

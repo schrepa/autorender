@@ -68,11 +68,6 @@ export function playGame<T extends Runtime, B extends PlayedBindings>(game: Play
   startGame<T>({
     parameters: { scene: "PATH", without: "BRICK,..." },
     source,
-    async filesOf(text) {
-      const { SceneLoad } = await bindings();
-      const load = new SceneLoad(text);
-      try { return load.finish(); } finally { load.free(); }
-    },
     async create(canvas, signal) {
       const loaded = await bindings();
       const played = game.game(loaded);
