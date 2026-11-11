@@ -3,7 +3,6 @@ mod bricks;
 mod development;
 mod importing;
 mod lint;
-mod pairs;
 mod pure;
 mod rules;
 mod scaffold;
@@ -56,9 +55,6 @@ fn execute() -> Result<(), Failure> {
     }
     if task == "pure" {
         return pure::pure(&root, &options);
-    }
-    if task == "pairs" {
-        return pairs::pairs(&root, &options);
     }
     if task == "ship" {
         return ship::ship(&root, &options);
@@ -192,17 +188,6 @@ fn checking_commands() -> Vec<Command> {
                 CommandOption::taking("SCENE", "PATH.scene.json..."),
                 CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
                 CommandOption::flag("--check"),
-            ],
-        ),
-        Command::new(
-            "pairs",
-            [
-                CommandOption::taking("--limit-ms", "MS")
-                    .in_unit("ms")
-                    .required(),
-                CommandOption::taking("--at-once", "N"),
-                CommandOption::taking("--project", "DIR..."),
-                CommandOption::taking("--scene", "PATH"),
             ],
         ),
         Command::new(

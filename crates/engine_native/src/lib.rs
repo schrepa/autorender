@@ -15,8 +15,6 @@ mod live;
 mod offscreen;
 mod options;
 #[cfg(feature = "dev")]
-mod pairs;
-#[cfg(feature = "dev")]
 mod pure;
 #[cfg(feature = "dev")]
 pub mod smoke;
@@ -49,10 +47,6 @@ pub fn main<G: engine::Game>(
             #[cfg(feature = "dev")]
             if let Some(names) = &options.smoke {
                 return smoke::of_game(&options, names, game);
-            }
-            #[cfg(feature = "dev")]
-            if let Some(at_once) = options.pairs {
-                return pairs::of_game(&options, at_once, game);
             }
             exit(options.run(game))
         }

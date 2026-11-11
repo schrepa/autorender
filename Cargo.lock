@@ -1575,7 +1575,6 @@ dependencies = [
  "base64",
  "engine",
  "engine_core",
- "engine_panic",
  "engine_profiler",
  "engine_registry",
  "engine_worker",

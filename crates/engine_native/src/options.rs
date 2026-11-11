@@ -72,7 +72,6 @@ pub fn options() -> Vec<CommandOption> {
         CommandOption::flag("--dev"),
         CommandOption::taking("--smoke", "NAME,...|all|list"),
         CommandOption::flag("--relay"),
-        CommandOption::taking("--pairs", "N"),
         CommandOption::flag("--schemas"),
         CommandOption::taking("--pure", "NAME,...|all|list"),
         CommandOption::taking("--dev-artifacts", "DIR").defaults_to(default_artifacts().display()),
@@ -262,7 +261,6 @@ pub struct HostOptions {
     pub dev_artifacts: Option<PathBuf>,
     pub smoke: Option<String>,
     pub relay: bool,
-    pub pairs: Option<u32>,
     pub schemas: bool,
     pub pure: Option<String>,
     pub cook: Option<PathBuf>,
@@ -293,7 +291,6 @@ impl Default for HostOptions {
             dev_artifacts: None,
             smoke: None,
             relay: false,
-            pairs: None,
             schemas: false,
             pure: None,
             cook: None,
@@ -428,7 +425,6 @@ impl HostOptions {
                 arguments.flag(argument)?;
                 self.relay = true;
             }
-            "--pairs" => self.pairs = Some(arguments.count(argument)?),
             "--schemas" => {
                 arguments.flag(argument)?;
                 self.schemas = true;
@@ -487,11 +483,6 @@ impl HostOptions {
         }
         if self.relay && self.smoke.is_none() {
             return Err(needs("--smoke"));
-        }
-        if self.pairs.is_some() && !cfg!(feature = "dev") {
-            return Err(
-                Error::new(ErrorCode::InvalidArguments, "--pairs").expected(Expected::Supported)
-            );
         }
         if self.schemas && !cfg!(feature = "dev") {
             return Err(
