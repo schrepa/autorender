@@ -13,7 +13,6 @@ const KIND: &str = "pipeline_list";
 #[derive(Debug, Default)]
 pub(crate) struct PipelineList {
     state: State,
-    cooks: bool,
     cached: u32,
 }
 
@@ -49,10 +48,6 @@ fn key_of(identity: &[u8]) -> RecordKey {
 }
 
 impl PipelineList {
-    pub(crate) fn cook(&mut self) {
-        self.cooks = true;
-    }
-
     pub(crate) fn restart(&mut self) {
         self.state = State::Unasked;
     }
@@ -82,10 +77,6 @@ impl PipelineList {
             }
         }
         let key = key_of(&identity);
-        if self.cooks {
-            self.state = State::Making { key, kept: 0 };
-            return;
-        }
         let world = engine.app.world_mut();
         self.state = if world.contains_resource::<JobExchange>() {
             State::Asked {

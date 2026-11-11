@@ -247,7 +247,6 @@ impl AppHost {
     }
 
     pub(crate) fn cook(&mut self) {
-        self.pipeline_list.cook();
         engine_core::cook(self.engine.app.world_mut());
     }
 
