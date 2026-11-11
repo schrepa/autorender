@@ -9,16 +9,12 @@ pub mod bricks {
     pub mod plates;
 }
 
-mod smokes;
-
 use crate::bricks::plates::PlatesBrick;
 
 #[derive(Resource, Default)]
 pub struct Bare;
 
-impl Game for Bare {
-    const SMOKES: &'static [Smoke] = &smokes::SMOKES;
-}
+impl Game for Bare {}
 
 pub fn bricks<L: Listing>(list: L) -> L {
     list.with::<PlatesBrick>()

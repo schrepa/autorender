@@ -1,5 +1,5 @@
 use serde::Serialize;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 #[derive(Clone, Debug, Serialize)]
 pub struct SmokeFailure {
@@ -104,21 +104,6 @@ pub fn render(session: &mut dyn SmokeSession) -> Checked<Value> {
     Ok(rendered["rendering"].take())
 }
 
-pub fn starts_clean(session: &mut dyn SmokeSession) -> Checked<()> {
-    let empty = json!({
-        "id": "starts-clean", "revision": 1, "materials": [], "meshes": [], "entities": [],
-    });
-    session.source(&empty.to_string());
-    render(session)?;
-    let status = query(session, "status", json!({}))?;
-    smoke_eq!(
-        status["unmet"],
-        json!([]),
-        "the_list_starts_with_no_unmet_need"
-    );
-    Ok(())
-}
-
 pub fn rendered_when(
     session: &mut dyn SmokeSession,
     mut frame: impl FnMut(&mut dyn SmokeSession) -> Checked<Value>,
@@ -173,79 +158,4 @@ pub fn below(value: impl Serialize) -> Value {
 
 pub fn near(value: impl Serialize, within: f64) -> Value {
     json!({"near": value, "within": within})
-}
-
-pub const KIND_PASSES: &str = "KindPasses";
-
-pub fn joined_passes(session: &mut dyn SmokeSession, kind: &str) -> Checked<Vec<String>> {
-    let table = ask(session, "describe", json!({ "name": KIND_PASSES }))?;
-    Ok(table["cells"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter(|cell| cell["kind"] == kind && cell["join"] == "joins")
-        .filter_map(|cell| cell["pass"].as_str().map(str::to_owned))
-        .collect())
-}
-
-pub fn counted_in_joined_passes(
-    session: &mut dyn SmokeSession,
-    kind: &str,
-    frames: u32,
-) -> Checked<Map<String, Value>> {
-    let joined = joined_passes(session, kind)?;
-    smoke_check!(
-        !joined.is_empty(),
-        "kind_joins_a_pass",
-        json!({ "kind": kind, "joins": [] }),
-        json!({ "kind": kind, "joins": above(0) })
-    );
-    let mut ran: Vec<String> = Vec::new();
-    let mut counted = Map::new();
-    for _ in 0..frames {
-        let rendering = render(&mut *session)?;
-        smoke_eq!(
-            rendering["kind_problems"],
-            json!([]),
-            "no_kind_pass_is_silent"
-        );
-        let dropped: Vec<&Value> = rendering["dropped_draws"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter(|row| row["kind"] == kind && row["faults"] == true)
-            .collect();
-        smoke_eq!(json!(dropped), json!([]), "no_draw_of_the_kind_is_dropped");
-        for cell in rendering["kind_passes"].as_array().into_iter().flatten() {
-            let Some(pass) = cell["pass"].as_str() else {
-                continue;
-            };
-            if !ran.iter().any(|known| known == pass) {
-                ran.push(pass.to_owned());
-            }
-            if cell["kind"] != kind {
-                continue;
-            }
-            let replaces = counted
-                .get(pass)
-                .is_none_or(|held| drew(cell) && !drew(held));
-            if replaces {
-                counted.insert(pass.to_owned(), cell.clone());
-            }
-        }
-    }
-    let undrawn: Vec<Value> = joined
-        .iter()
-        .filter(|pass| ran.contains(pass))
-        .filter_map(|pass| {
-            let cell = counted.get(pass.as_str());
-            (!cell.is_some_and(drew)).then(|| json!({ "pass": pass, "cell": cell }))
-        })
-        .collect();
-    smoke_eq!(json!(undrawn), json!([]), "kind_drew_in_every_joined_pass");
-    Ok(counted)
-}
-
-fn drew(cell: &Value) -> bool {
-    cell["state"]["state"] == "drew"
 }

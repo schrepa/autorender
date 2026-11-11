@@ -1010,15 +1010,6 @@
       },
       "type": "object"
     },
-    "ForeignLit": {
-      "properties": {
-        "enabled": {
-          "default": false,
-          "type": "boolean"
-        }
-      },
-      "type": "object"
-    },
     "FrameBudgetSettings": {
       "properties": {
         "upload_bytes": {
@@ -3724,16 +3715,6 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneFoliage"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "foreign_lit": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/ForeignLit"
             },
             {
               "type": "null"

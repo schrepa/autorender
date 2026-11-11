@@ -26,8 +26,6 @@ engine.workspace = true
 engine_core.workspace = true
 engine_ecs.workspace = true
 engine_render.workspace = true
-engine_smoke.workspace = true
-serde_json.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 engine_native.workspace = true

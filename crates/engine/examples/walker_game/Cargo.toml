@@ -29,10 +29,8 @@ engine_ecs.workspace = true
 engine_grounding.workspace = true
 engine_navigation.workspace = true
 engine_places_simulation.workspace = true
-engine_smoke.workspace = true
 engine_solids.workspace = true
 engine_standard_rendering.workspace = true
-serde_json.workspace = true
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 engine_native.workspace = true

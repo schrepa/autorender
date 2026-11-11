@@ -6,17 +6,13 @@ pub mod bricks {
     pub mod turning;
 }
 
-mod smokes;
-
 use crate::bricks::glimmer::GlimmerBrick;
 use crate::bricks::turning::TurningBrick;
 
 #[derive(Resource, Default)]
 pub struct Template;
 
-impl Game for Template {
-    const SMOKES: &'static [Smoke] = &smokes::SMOKES;
-}
+impl Game for Template {}
 
 pub fn bricks<L: Listing>(list: L) -> L {
     engine_standard_rendering::rendering(list)

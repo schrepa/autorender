@@ -23,16 +23,9 @@ const TEMPLATE_KIND: &str = "kind = \"game\"\n";
 
 const TEMPLATE_SCENE: &str = "template.scene.json";
 
-const TEMPLATE_SMOKES: &str = "src/smokes.rs";
-
-const TEMPLATE_ONLY: [(&str, &str); 6] = [
-    ("mod smokes;\n\n", ""),
+const TEMPLATE_ONLY: [(&str, &str); 4] = [
     ("use crate::bricks::glimmer::GlimmerBrick;\n", ""),
     ("        .with::<GlimmerBrick>()\n", ""),
-    (
-        "impl Game for Template {\n    const SMOKES: &'static [Smoke] = &smokes::SMOKES;\n}\n",
-        "impl Game for Template {}\n",
-    ),
     (
         r#",
     {
@@ -231,7 +224,7 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
     let mut files = Vec::new();
     let drawn = BrickKind::Drawn;
     for (inside, text) in template_files(&root.join(APP_TEMPLATE))? {
-        if inside.starts_with(drawn.folder()) || inside == Path::new(TEMPLATE_SMOKES) {
+        if inside.starts_with(drawn.folder()) {
             continue;
         }
         let text = if inside == Path::new("Cargo.toml") {

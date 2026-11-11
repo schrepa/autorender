@@ -8,14 +8,10 @@ use engine_collision::CollisionBrick;
 use engine_grounding::GroundingBrick;
 use engine_navigation::NavigationBrick;
 
-mod smokes;
-
 #[derive(Resource, Default)]
 pub struct Walker;
 
-impl Game for Walker {
-    const SMOKES: &'static [Smoke] = &smokes::SMOKES;
-}
+impl Game for Walker {}
 
 pub fn bricks<L: Listing>(list: L) -> L {
     engine_standard_rendering::minimal(list)

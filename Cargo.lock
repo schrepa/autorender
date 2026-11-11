@@ -188,12 +188,10 @@ dependencies = [
  "engine_fly_camera",
  "engine_native",
  "engine_render",
- "engine_smoke",
  "engine_sources",
  "engine_standard_rendering",
  "glam 0.30.9",
  "serde",
- "serde_json",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
@@ -300,9 +298,7 @@ dependencies = [
  "engine_ecs",
  "engine_native",
  "engine_render",
- "engine_smoke",
  "engine_sources",
- "serde_json",
 ]
 
 [[package]]
@@ -2102,7 +2098,6 @@ version = "0.1.0"
 dependencies = [
  "engine_core",
  "engine_ecs",
- "engine_render",
  "engine_smoke",
  "engine_sources",
  "serde_json",
@@ -2395,11 +2390,8 @@ dependencies = [
  "engine_ecs",
  "engine_native",
  "engine_particles",
- "engine_smoke",
  "engine_sources",
- "engine_sprites",
  "engine_standard_rendering",
- "serde_json",
 ]
 
 [[package]]
@@ -5290,11 +5282,9 @@ dependencies = [
  "engine_native",
  "engine_navigation",
  "engine_places_simulation",
- "engine_smoke",
  "engine_solids",
  "engine_sources",
  "engine_standard_rendering",
- "serde_json",
 ]
 
 [[package]]
