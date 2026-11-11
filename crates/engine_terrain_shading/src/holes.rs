@@ -11,45 +11,21 @@ const HOLED_GROUND: &str = "holed_ground";
 const HOLED_MATERIAL: &str = "$.holed_ground.material";
 const HOLE_CUTOFF: f32 = 0.5;
 
-#[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) enum HoledState {
-    #[default]
-    Unmade,
-    Waiting(MaterialHandle),
-    Resident(MaterialHandle),
-    Failed(MaterialHandle, Error),
-    Refused(Error),
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) enum Unheld<'a> {
-    Waiting,
-    Refused(&'a Error),
-}
-
-impl HoledState {
-    fn material(&self) -> Option<MaterialHandle> {
-        match self {
-            Self::Unmade | Self::Refused(_) => None,
-            Self::Waiting(handle) | Self::Resident(handle) | Self::Failed(handle, _) => {
-                Some(*handle)
-            }
-        }
-    }
-
-    pub(crate) fn held(&self) -> Result<MaterialHandle, Unheld<'_>> {
-        match self {
-            Self::Unmade | Self::Waiting(_) => Err(Unheld::Waiting),
-            Self::Resident(handle) => Ok(*handle),
-            Self::Failed(_, error) | Self::Refused(error) => Err(Unheld::Refused(error)),
-        }
-    }
-}
-
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub(crate) struct HoledGround {
-    pub(crate) state: HoledState,
+    made: Option<Result<MaterialHandle, Error>>,
+    pub(crate) held: Result<Option<MaterialHandle>, Error>,
     uses: AssetUses,
+}
+
+impl Default for HoledGround {
+    fn default() -> Self {
+        Self {
+            made: None,
+            held: Ok(None),
+            uses: AssetUses::default(),
+        }
+    }
 }
 
 pub(crate) const SLOT_MODULE: SlotModule = SlotModule {
@@ -75,8 +51,9 @@ pub(crate) fn hold_material(
     mut ground: ResMut<HoledGround>,
 ) {
     let kept = ground
-        .state
-        .material()
+        .made
+        .as_ref()
+        .and_then(|made| made.as_ref().ok().copied())
         .filter(|&handle| library.material(handle).is_some());
     let material = match kept {
         Some(handle) => Ok(handle),
@@ -92,15 +69,12 @@ pub(crate) fn hold_material(
     if ground.uses.assets() != wanted.as_slice() {
         ground.uses = AssetUses::new(&residency, wanted);
     }
-    let state = match material {
-        Err(error) => HoledState::Refused(error),
-        Ok(handle) if residency.material_resident(handle) => HoledState::Resident(handle),
-        Ok(handle) => match residency.refusal(handle, HOLED_MATERIAL) {
-            Some(error) => HoledState::Failed(handle, error),
-            None => HoledState::Waiting(handle),
-        },
-    };
-    if ground.state != state {
-        ground.state = state;
+    let held = residency.made_material(Some(&material), HOLED_MATERIAL);
+    let made = Some(material);
+    if ground.made != made {
+        ground.made = made;
+    }
+    if ground.held != held {
+        ground.held = held;
     }
 }

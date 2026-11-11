@@ -21,31 +21,21 @@ const COVER_SLOTS: [&str; 7] = [
     SurfaceSlot::Kind.name(),
 ];
 
-#[derive(Clone, Debug, Default, PartialEq)]
-pub(crate) enum SurfaceState {
-    #[default]
-    Unmade,
-    Waiting(MaterialHandle),
-    Resident(MaterialHandle),
-    Failed(MaterialHandle, Error),
-    Refused(Error),
+#[derive(Resource)]
+pub(crate) struct CoverSurface {
+    made: Option<Result<MaterialHandle, Error>>,
+    pub(crate) held: Result<Option<MaterialHandle>, Error>,
+    uses: AssetUses,
 }
 
-impl SurfaceState {
-    fn material(&self) -> Option<MaterialHandle> {
-        match self {
-            Self::Unmade | Self::Refused(_) => None,
-            Self::Waiting(handle) | Self::Resident(handle) | Self::Failed(handle, _) => {
-                Some(*handle)
-            }
+impl Default for CoverSurface {
+    fn default() -> Self {
+        Self {
+            made: None,
+            held: Ok(None),
+            uses: AssetUses::default(),
         }
     }
-}
-
-#[derive(Resource, Default)]
-pub(crate) struct CoverSurface {
-    pub(crate) state: SurfaceState,
-    uses: AssetUses,
 }
 
 pub(crate) fn slot_modules() -> impl Iterator<Item = SlotModule> {
@@ -72,8 +62,9 @@ pub(crate) fn hold_surface(
     mut surface: ResMut<CoverSurface>,
 ) {
     let kept = surface
-        .state
-        .material()
+        .made
+        .as_ref()
+        .and_then(|made| made.as_ref().ok().copied())
         .filter(|&handle| library.material(handle).is_some());
     let material = match kept {
         Some(handle) => Ok(handle),
@@ -89,15 +80,12 @@ pub(crate) fn hold_surface(
     if surface.uses.assets() != wanted.as_slice() {
         surface.uses = AssetUses::new(&residency, wanted);
     }
-    let state = match material {
-        Err(error) => SurfaceState::Refused(error),
-        Ok(handle) if residency.material_resident(handle) => SurfaceState::Resident(handle),
-        Ok(handle) => match residency.refusal(handle, COVER_MATERIAL) {
-            Some(error) => SurfaceState::Failed(handle, error),
-            None => SurfaceState::Waiting(handle),
-        },
-    };
-    if surface.state != state {
-        surface.state = state;
+    let held = residency.made_material(Some(&material), COVER_MATERIAL);
+    let made = Some(material);
+    if surface.made != made {
+        surface.made = made;
+    }
+    if surface.held != held {
+        surface.held = held;
     }
 }

@@ -21,7 +21,7 @@ use super::surface::SurfaceTrees;
 use super::tables::TerrainTables;
 use super::{IDS_FORMAT, NEVER_BLENDS, SURFACE_SLOTS, TERRAIN, TerrainFrame, reached};
 use crate::gpu::{HEIGHT_FORMAT, SURFACE_ERROR_MIPS};
-use crate::holes::{HoledGround, HoledState, Unheld};
+use crate::holes::HoledGround;
 use crate::settings::TerrainShading;
 use crate::state::{
     Atlas, AtlasMoves, Bakes, DrawnStats, PART_STATS, PartStats, SURFACE_TOTALS, SurfaceTotals,
@@ -234,7 +234,7 @@ enum Joined {
 
 type Surface = (Pipeline<TerrainGpu, Scene>, Option<MaterialHandle>);
 
-type Surfaces<'a> = [Result<Surface, Unheld<'a>>; 2];
+type Surfaces<'a> = [Result<Surface, Option<&'a Error>>; 2];
 
 pub(crate) struct TerrainGpu {
     handles: Handles,
@@ -244,7 +244,7 @@ pub(crate) struct TerrainGpu {
     form: Form<TerrainGpu>,
     seen: [Form<TerrainGpu>; 2],
     resolves: [Form<TerrainGpu>; 2],
-    holed: HoledState,
+    holed: Result<Option<MaterialHandle>, Error>,
     joined: PerPass<Joined>,
     atlas: TileAtlas,
     tables: TerrainTables,
@@ -585,7 +585,7 @@ impl GpuPart for TerrainGpu {
             form,
             seen,
             resolves,
-            holed: HoledState::Unmade,
+            holed: Ok(None),
             joined,
             atlas: TileAtlas::default(),
             tables: TerrainTables::default(),
@@ -616,7 +616,7 @@ impl GpuPart for TerrainGpu {
         (lists, neighbors, frame, (limits, assets, holed)): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        self.holed.clone_from(&holed.state);
+        self.holed.clone_from(&holed.held);
         let (settings, tiles, atlas, bakes, ground) = lists;
         let (water, cover, shadows, captures) = neighbors;
         let main = frame.main();
@@ -968,7 +968,11 @@ impl TerrainGpu {
                 let Some(pipeline) = draw.form(&self.form) else {
                     return draw.skip(NO_FORM);
                 };
-                let holed = self.holed.held().map(|material| (pipeline, Some(material)));
+                let holed = match &self.holed {
+                    Ok(Some(material)) => Ok((pipeline, Some(*material))),
+                    Ok(None) => Err(None),
+                    Err(error) => Err(Some(error)),
+                };
                 self.draw_surface(draw, [Ok((pipeline, None)), holed], (*args, *meshlet))
             }
             Joined::Seen { args, meshlet } => {
@@ -1061,10 +1065,10 @@ impl TerrainGpu {
             }
         }
         match unheld {
-            Some(Unheld::Waiting) => {
+            Some(None) => {
                 draw.wait(HOLED_MATERIAL);
             }
-            Some(Unheld::Refused(error)) => {
+            Some(Some(error)) => {
                 draw.refuse(HOLED_MATERIAL, error);
             }
             None if draws == 0 => return draw.skip(NOT_LAID_OUT),

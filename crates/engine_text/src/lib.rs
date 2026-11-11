@@ -258,51 +258,21 @@ fn install(mut text: ResMut<Text>) {
     ensure(&mut text);
 }
 
-enum LabelSurface {
-    Unmade,
-    Made(MaterialHandle),
-    Refused(Error),
-}
-
-#[derive(Resource)]
-struct LabelMaterial(LabelSurface);
-
-impl Default for LabelMaterial {
-    fn default() -> Self {
-        Self(LabelSurface::Unmade)
-    }
-}
+#[derive(Resource, Default)]
+struct LabelMaterial(Option<Result<MaterialHandle, Error>>);
 
 impl LabelMaterial {
     fn made(&self) -> Option<MaterialHandle> {
-        match self.0 {
-            LabelSurface::Made(material) => Some(material),
-            LabelSurface::Unmade | LabelSurface::Refused(_) => None,
-        }
+        self.0.as_ref().and_then(|made| made.as_ref().ok().copied())
     }
 
-    fn held(&self, residency: &AssetResidency) -> LabelHeld {
-        match &self.0 {
-            LabelSurface::Made(made) if residency.material_resident(*made) => {
-                LabelHeld::Resident(*made)
-            }
-            LabelSurface::Made(made) => residency
-                .refusal(*made, LABEL_MATERIAL_PATH)
-                .map_or(LabelHeld::Waiting, LabelHeld::Refused),
-            LabelSurface::Unmade => LabelHeld::Waiting,
-            LabelSurface::Refused(error) => LabelHeld::Refused(error.clone()),
-        }
+    fn held(&self, residency: &AssetResidency) -> Result<Option<MaterialHandle>, Error> {
+        residency.made_material(self.0.as_ref(), LABEL_MATERIAL_PATH)
     }
 }
 
 const LABEL_MATERIAL: &str = "the label material";
 const LABEL_MATERIAL_PATH: &str = "$.label.material";
-
-enum LabelHeld {
-    Waiting,
-    Resident(MaterialHandle),
-    Refused(Error),
-}
 
 #[derive(Component)]
 struct LabelMaterialHeld;
@@ -326,18 +296,15 @@ fn hold_label_material(
     mut spawner: Spawner<TextBrick>,
 ) {
     let live = match &material.0 {
-        LabelSurface::Made(made) => assets.material(*made).is_some(),
-        LabelSurface::Refused(_) => true,
-        LabelSurface::Unmade => false,
+        Some(Ok(made)) => assets.material(*made).is_some(),
+        Some(Err(_)) => true,
+        None => false,
     };
     if !live {
         if !labels.iter().any(|(_, drawn)| drawn.kind == TEXT) {
             return;
         }
-        material.0 = match label_material().and_then(|made| assets.insert_material(made)) {
-            Ok(made) => LabelSurface::Made(made),
-            Err(error) => LabelSurface::Refused(error),
-        };
+        material.0 = Some(label_material().and_then(|made| assets.insert_material(made)));
     }
     let placed: Vec<Entity> = labels
         .iter()
@@ -346,8 +313,8 @@ fn hold_label_material(
         .collect();
     for &entity in &placed {
         let verdict = match &material.0 {
-            LabelSurface::Refused(error) => Err(error.clone()),
-            LabelSurface::Made(_) | LabelSurface::Unmade => Ok(()),
+            Some(Err(error)) => Err(error.clone()),
+            Some(Ok(_)) | None => Ok(()),
         };
         refusals.judge(entity, LABEL_PART, verdict);
     }
@@ -449,7 +416,7 @@ struct TextGpu {
     pass: Pass<Self>,
     screen: Form<Self>,
     form: Form<Self>,
-    material: LabelHeld,
+    material: Result<Option<MaterialHandle>, Error>,
     instances: Buffer<Self>,
     labels: Buffer<Self>,
     atlas: Texture<Self>,
@@ -477,9 +444,9 @@ impl TextGpu {
             return draw.skip("labels are masked, never blended");
         }
         let material = match &self.material {
-            LabelHeld::Resident(material) => *material,
-            LabelHeld::Waiting => return draw.wait(LABEL_MATERIAL),
-            LabelHeld::Refused(error) => return draw.refuse(LABEL_MATERIAL, error),
+            Ok(Some(material)) => *material,
+            Ok(None) => return draw.wait(LABEL_MATERIAL),
+            Err(error) => return draw.refuse(LABEL_MATERIAL, error),
         };
         let Some(pipeline) = draw.form(&self.form) else {
             return draw.skip("pass has no label form");
@@ -574,7 +541,7 @@ impl GpuPart for TextGpu {
             pass,
             screen,
             form,
-            material: LabelHeld::Waiting,
+            material: Ok(None),
             instances,
             labels,
             atlas,

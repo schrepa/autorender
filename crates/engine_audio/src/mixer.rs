@@ -9,9 +9,7 @@ use engine_core::{
     GlobalTransforms, Interest, Landed, Pause, Poses, Raises, Refusals, Request, Requests,
     SceneIds, Spawner, Ticket, Views,
 };
-use engine_places_rendering::audio::{
-    Bus, OneShot, SoundOrder, SoundSource, SoundStanding, Sounds, VoiceHandle,
-};
+use engine_places_rendering::audio::{Bus, OneShot, SoundOrder, SoundSource, Sounds, VoiceHandle};
 use glam::{Mat4, Vec3};
 use serde::Serialize;
 
@@ -385,12 +383,9 @@ impl Mixer {
         }
     }
 
-    fn standing(&self, source: &SoundSource) -> SoundStanding {
-        match self.verdict(source) {
-            Err(error) => SoundStanding::Refused(error),
-            Ok(()) if self.bytes_of(source).is_some() => SoundStanding::Ready,
-            Ok(()) => SoundStanding::Loading,
-        }
+    fn standing(&self, source: &SoundSource) -> Result<bool, Error> {
+        self.verdict(source)
+            .map(|()| self.bytes_of(source).is_some())
     }
 
     fn hearing(&self) -> Result<(), Error> {

@@ -128,14 +128,6 @@ pub enum SoundOrder {
     Volume(VoiceHandle, f32),
 }
 
-#[doc(hidden)]
-#[derive(Clone)]
-pub enum SoundStanding {
-    Loading,
-    Ready,
-    Refused(Error),
-}
-
 #[derive(Default)]
 enum Hearing {
     #[default]
@@ -153,7 +145,7 @@ struct Queue {
     orders: Vec<SoundOrder>,
     cut: u32,
     hearing: Hearing,
-    standing: BTreeMap<Entity, SoundStanding>,
+    standing: BTreeMap<Entity, Result<bool, Error>>,
 }
 
 #[derive(Resource, Default)]
@@ -312,7 +304,7 @@ impl Sounds {
     }
 
     #[doc(hidden)]
-    pub fn stand(&self, entity: Entity, standing: SoundStanding) {
+    pub fn stand(&self, entity: Entity, standing: Result<bool, Error>) {
         self.lock().standing.insert(entity, standing);
     }
 
@@ -351,12 +343,10 @@ impl Queue {
             return Err(Error::new(ErrorCode::QueueFull, "$").at_most(*limit as u64));
         }
         match self.standing.get(&entity) {
-            Some(SoundStanding::Refused(error)) => Err(error.clone()),
-            Some(SoundStanding::Ready) => Ok(()),
-            Some(SoundStanding::Loading) | None if source.bytes.is_some() => Ok(()),
-            Some(SoundStanding::Loading) | None => {
-                Err(Error::new(SOUND_LOADING, "$.entity").got(&source.file))
-            }
+            Some(Err(error)) => Err(error.clone()),
+            Some(Ok(true)) => Ok(()),
+            Some(Ok(false)) | None if source.bytes.is_some() => Ok(()),
+            Some(Ok(false)) | None => Err(Error::new(SOUND_LOADING, "$.entity").got(&source.file)),
         }
     }
 

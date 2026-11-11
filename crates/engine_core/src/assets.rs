@@ -417,6 +417,19 @@ impl AssetResidency {
         }
     }
 
+    pub fn made_material(
+        &self,
+        made: Option<&Result<MaterialHandle, Error>>,
+        path: &str,
+    ) -> Result<Option<MaterialHandle>, Error> {
+        match made {
+            None => Ok(None),
+            Some(Err(error)) => Err(error.clone()),
+            Some(&Ok(handle)) if self.material_resident(handle) => Ok(Some(handle)),
+            Some(&Ok(handle)) => self.refusal(handle, path).map_or(Ok(None), Err),
+        }
+    }
+
     pub fn census(&self) -> Census {
         self.wanted.census()
     }

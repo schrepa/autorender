@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine_core::{DrawKind, Error, PassRole};
+use engine_core::{DrawKind, Error, MaterialHandle, PassRole};
 use engine_open_world_kit::ground::PALETTE_ENTRIES;
 use engine_render::{
     AfterRead, Allocation, Bind, Buffer, ComputePipeline, Count, Draw, DrawInput, Encode, Form,
@@ -16,7 +16,7 @@ use crate::growth::{BLADE_BYTES, BladeCounts, CoverPlan};
 use crate::layouts::{CoverFrame, CoverMaterial, CoverTerrain, Grow};
 use crate::settings::GroundCover;
 use crate::shaders::cover::{draw, faces::cover as face, grow};
-use crate::surface::{CoverSurface, SurfaceState};
+use crate::surface::CoverSurface;
 
 const DRAW_ARGS: u64 = size_of::<wgpu::util::DrawIndirectArgs>() as u64;
 const COUNT_BYTES: u64 = 32;
@@ -49,7 +49,7 @@ pub(crate) struct CoverGpu {
     finishing: ComputePipeline<Self>,
     form: Form<Self>,
     inputs: PerPass<DrawInput<Self, Scene>>,
-    surface: SurfaceState,
+    surface: Result<Option<MaterialHandle>, Error>,
     shadows: bool,
     cells: Vec<u32>,
     blade_bytes: u64,
@@ -124,7 +124,7 @@ impl GpuPart for CoverGpu {
             finishing,
             form,
             inputs,
-            surface: SurfaceState::Unmade,
+            surface: Ok(None),
             shadows: false,
             cells: Vec::new(),
             blade_bytes: BLADE_BYTES,
@@ -138,7 +138,7 @@ impl GpuPart for CoverGpu {
         (plan, table, surface, settings): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        self.surface.clone_from(&surface.state);
+        self.surface.clone_from(&surface.held);
         self.shadows = settings.shadows;
         if table.is_changed() {
             let terrains = size_of_val(table.terrains.as_slice()) as u64;
@@ -216,11 +216,9 @@ impl CoverGpu {
             return draw.skip("no cover grows this frame");
         }
         let material = match &self.surface {
-            SurfaceState::Resident(material) => *material,
-            SurfaceState::Unmade | SurfaceState::Waiting(_) => return draw.wait(COVER_MATERIAL),
-            SurfaceState::Failed(_, error) | SurfaceState::Refused(error) => {
-                return draw.refuse(COVER_MATERIAL, error);
-            }
+            Ok(Some(material)) => *material,
+            Ok(None) => return draw.wait(COVER_MATERIAL),
+            Err(error) => return draw.refuse(COVER_MATERIAL, error),
         };
         let Some(pipeline) = draw.form(&self.form) else {
             return draw.skip("pass has no cover pipeline");
