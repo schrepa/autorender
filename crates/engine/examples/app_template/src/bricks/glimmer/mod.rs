@@ -14,8 +14,8 @@ use engine_core::{
 };
 use engine_render::{
     Allocation, Bind, Buffer, Draw, FaceCull, Form, FormColor, FormDepth, FormFragment, FormSide,
-    FragmentPass, GpuPart, Install, KindForm, Lifetime, LightingModule, PassFragment, PointInput,
-    Prepare, RenderBricks, Scene, SceneDraw, Shape, SlotModule, Varyings,
+    FragmentPass, FragmentUse, GpuPart, Install, KindForm, Lifetime, LightingModule, PassFragment,
+    PointInput, Prepare, RenderBricks, Scene, SceneDraw, Shape, SlotModule, Varyings,
 };
 
 pub const GLIMMER: DrawKind = DrawKind("glimmer");
@@ -36,7 +36,7 @@ const FORM: KindForm = KindForm {
     kind: GLIMMER,
     placed: FormSide::pulled(shaders::glimmer::draw::VS_GLIMMER),
     owned: Some(FormSide::pulled(shaders::glimmer::draw::VS_GLIMMER_VIEW)),
-    varyings: Varyings::SurfaceExtra,
+    varyings: Varyings::SurfaceExtra(FragmentUse::Masked),
 };
 
 const RING: PassFragment = PassFragment {

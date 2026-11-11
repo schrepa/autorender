@@ -13,8 +13,6 @@ use crate::{
 
 pub(crate) const KINDS_MODULE: &str = "engine::kinds";
 
-const MATERIAL_FACES: Faces = Faces::Material(FragmentUse::Always);
-
 pub(crate) const SURFACED_MODULE: &str = "generated::surfaced";
 
 const SURFACED_IMPORTS: [&str; 2] = [
@@ -24,10 +22,10 @@ const SURFACED_IMPORTS: [&str; 2] = [
 
 #[derive(Clone, Copy, Debug)]
 pub enum Varyings {
-    Surface,
-    SurfaceExtra,
-    Object,
-    ObjectExtra,
+    Surface(FragmentUse),
+    SurfaceExtra(FragmentUse),
+    Object(FragmentUse),
+    ObjectExtra(FragmentUse),
     Own(&'static OwnFragments),
     Surfaced(&'static KindSurface),
 }
@@ -73,23 +71,17 @@ impl RoleFragments {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub enum OwnFaces {
-    Culled(FaceCull),
-    Material,
-}
-
-#[derive(Clone, Copy, Debug)]
 pub struct OwnFragments {
     pub placed: RoleFragments,
     pub owned: RoleFragments,
-    pub faces: OwnFaces,
+    pub cull: FaceCull,
 }
 
 impl OwnFragments {
     pub const NONE: Self = Self {
         placed: RoleFragments::NONE,
         owned: RoleFragments::NONE,
-        faces: OwnFaces::Culled(FaceCull::Back),
+        cull: FaceCull::Back,
     };
 }
 
@@ -379,17 +371,10 @@ fn object_name(role: PassRole, extra: bool) -> &'static str {
     }
 }
 
-fn fragment_use(role: PassRole) -> FragmentUse {
+fn fragment_use(role: PassRole, depth: FragmentUse) -> FragmentUse {
     match role {
-        PassRole::Depth => FragmentUse::Masked,
+        PassRole::Depth => depth,
         PassRole::Lit | PassRole::Blended | PassRole::Shown => FragmentUse::Always,
-    }
-}
-
-fn own_faces(own: &OwnFragments) -> (Faces, Option<wgpu::Face>) {
-    match own.faces {
-        OwnFaces::Culled(cull) => (Faces::Declared, cull.face()),
-        OwnFaces::Material => (MATERIAL_FACES, Some(wgpu::Face::Back)),
     }
 }
 
@@ -398,8 +383,11 @@ fn own_fragment(own: &OwnFragments, role: PassRole, views: PassViews) -> Option<
         PassViews::Owned => &own.owned,
         PassViews::Every | PassViews::Main => &own.placed,
     };
-    let (faces, cull) = own_faces(own);
-    side.of(role).map(|entry| Fragment { entry, faces, cull })
+    side.of(role).map(|entry| Fragment {
+        entry,
+        faces: Faces::Declared,
+        cull: own.cull.face(),
+    })
 }
 
 fn surfaced_fragment(
@@ -413,8 +401,11 @@ fn surfaced_fragment(
         PassRole::Blended => surfaced.blended,
         PassRole::Depth | PassRole::Shown => return None,
     };
-    let (faces, cull) = own_faces(own);
-    Some(Fragment { entry, faces, cull })
+    Some(Fragment {
+        entry,
+        faces: Faces::Declared,
+        cull: own.cull.face(),
+    })
 }
 
 fn fragment_of(
@@ -423,11 +414,11 @@ fn fragment_of(
     views: PassViews,
     surfaced: Option<SurfacedEntries>,
 ) -> Option<Fragment> {
-    let name = match varyings {
-        Varyings::Surface => generic_name(role, false),
-        Varyings::SurfaceExtra => generic_name(role, true),
-        Varyings::Object => object_name(role, false),
-        Varyings::ObjectExtra => object_name(role, true),
+    let (name, depth) = match varyings {
+        Varyings::Surface(depth) => (generic_name(role, false), depth),
+        Varyings::SurfaceExtra(depth) => (generic_name(role, true), depth),
+        Varyings::Object(depth) => (object_name(role, false), depth),
+        Varyings::ObjectExtra(depth) => (object_name(role, true), depth),
         Varyings::Own(own) => return own_fragment(own, role, views),
         Varyings::Surfaced(surface) => {
             return own_fragment(&surface.own, role, views)
@@ -436,7 +427,7 @@ fn fragment_of(
     };
     Some(Fragment {
         entry: Entry::generated(crate::shaders::core_module(KINDS_MODULE), name),
-        faces: Faces::Material(fragment_use(role)),
+        faces: Faces::Material(fragment_use(role, depth)),
         cull: Some(wgpu::Face::Back),
     })
 }
@@ -669,10 +660,10 @@ impl<P: GpuPart> Install<'_, P> {
             Varyings::Surfaced(surface) => {
                 surfaced_entries(self.core, form.kind, surface).map(Some)
             }
-            Varyings::Surface
-            | Varyings::SurfaceExtra
-            | Varyings::Object
-            | Varyings::ObjectExtra
+            Varyings::Surface(_)
+            | Varyings::SurfaceExtra(_)
+            | Varyings::Object(_)
+            | Varyings::ObjectExtra(_)
             | Varyings::Own(_) => Ok(None),
         }
     }

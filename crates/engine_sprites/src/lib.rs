@@ -17,8 +17,8 @@ use engine_core::{
     Spawner, SurfaceSlot, TextureHandle, TextureRef, gpu_struct,
 };
 use engine_render::{
-    Allocation, Bind, Buffer, Draw, Form, FormSide, GpuPart, Install, KindForm, Lifetime, Prepare,
-    RenderBricks, Scene, SceneDraw, Shape, Varyings,
+    Allocation, Bind, Buffer, Draw, Form, FormSide, FragmentUse, GpuPart, Install, KindForm,
+    Lifetime, Prepare, RenderBricks, Scene, SceneDraw, Shape, Varyings,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -43,7 +43,7 @@ const FORM: KindForm = KindForm {
         streams: &[],
         depth_bias: FormSide::UNBIASED,
     }),
-    varyings: Varyings::SurfaceExtra,
+    varyings: Varyings::SurfaceExtra(FragmentUse::Masked),
 };
 
 #[derive(

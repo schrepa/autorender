@@ -7,8 +7,8 @@ use engine_places::meshes::LastLevels;
 use engine_places::skin::{JOINTS, WEIGHTS};
 use engine_render::{
     AttachPoint, Bind, Buffer, ComputePipeline, DrawInput, Encode, Form, FormFragment, FormSide,
-    FragmentPass, GpuPart, Install, KindForm, Lifetime, Own, Pass, PassFragment, PerPass, Prepare,
-    Scene, Scope, Varyings, VertexLayout, wgpu,
+    FragmentPass, FragmentUse, GpuPart, Install, KindForm, Lifetime, Own, Pass, PassFragment,
+    PerPass, Prepare, Scene, Scope, Varyings, VertexLayout, wgpu,
 };
 
 use crate::assets::MeshAssets;
@@ -153,7 +153,7 @@ const PLAIN_FORM: KindForm = KindForm {
         streams: VIEW_STREAMS,
         depth_bias: FormSide::UNBIASED,
     }),
-    varyings: Varyings::Surface,
+    varyings: Varyings::Surface(FragmentUse::Masked),
 };
 
 const EXTENDED_FORM: KindForm = KindForm {
@@ -168,7 +168,7 @@ const EXTENDED_FORM: KindForm = KindForm {
         streams: EXTENDED_VIEW_STREAMS,
         depth_bias: FormSide::UNBIASED,
     }),
-    varyings: Varyings::SurfaceExtra,
+    varyings: Varyings::SurfaceExtra(FragmentUse::Masked),
 };
 
 const SKIN_FORM: KindForm = KindForm {
@@ -183,7 +183,7 @@ const SKIN_FORM: KindForm = KindForm {
         streams: SKIN_VIEW_STREAMS,
         depth_bias: FormSide::UNBIASED,
     }),
-    varyings: Varyings::SurfaceExtra,
+    varyings: Varyings::SurfaceExtra(FragmentUse::Masked),
 };
 
 const OCCLUDED_PASS: &str = "occluded";

@@ -114,7 +114,7 @@ pub(crate) struct PassDecl {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum FragmentUse {
+pub enum FragmentUse {
     Always,
     Masked,
 }

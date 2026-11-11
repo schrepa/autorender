@@ -8,10 +8,10 @@ use engine_places_rendering::probes::ProbeCaptures;
 use engine_places_rendering::shadows::{CasterMap, KeptRefresh, Refresh, ShadowMaps};
 use engine_render::{
     Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, Draw, DrawInput, Encode,
-    FaceCull, Form, FormColor, FormDepth, FormFragment, FormSide, FragmentPass, GpuPart, Install,
-    KindForm, KindSurface, Lifetime, Own, OwnFragments, Pass, PassFragment, PerPass, Pipeline,
-    Prepare, RoleFragments, Sampler, Scene, SceneDraw, Shape, Texture, Varyings, VertexLayout,
-    pixels_per_meter, wgpu,
+    FaceCull, Form, FormColor, FormDepth, FormFragment, FormSide, FragmentPass, FragmentUse,
+    GpuPart, Install, KindForm, KindSurface, Lifetime, Own, OwnFragments, Pass, PassFragment,
+    PerPass, Pipeline, Prepare, RoleFragments, Sampler, Scene, SceneDraw, Shape, Texture, Varyings,
+    VertexLayout, pixels_per_meter, wgpu,
 };
 use glam::{Mat4, Vec3};
 
@@ -117,7 +117,7 @@ const TERRAIN_FORM: KindForm = KindForm {
         streams: CASTER_STREAMS,
         depth_bias: CASTER_BIAS,
     }),
-    varyings: Varyings::Object,
+    varyings: Varyings::Object(FragmentUse::Masked),
 };
 
 const SEEN_VARYINGS: &str = "TerrainOutput";
@@ -134,7 +134,7 @@ const fn seen_surface(point: &'static str, shown: Entry) -> KindSurface {
         own: OwnFragments {
             placed: roles,
             owned: roles,
-            faces: engine_render::OwnFaces::Culled(FaceCull::Back),
+            cull: FaceCull::Back,
         },
     }
 }

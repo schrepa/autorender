@@ -62,10 +62,11 @@ pub use gpu_data::{
     jitter_clip, mip_levels, pack_color, pack_surface, pixel_angle, pixels_per_meter,
     pyramid_extents,
 };
+pub use install::FragmentUse;
 pub use kinds::{
     Channels, Form, FormColor, FormDepth, FormFragment, FormPass, FormSide, FormTarget,
-    FormTopology, FragmentPass, KindForm, KindSurface, OwnFaces, OwnFragments, PassFragment,
-    PerPass, RoleFragments, Varyings,
+    FormTopology, FragmentPass, KindForm, KindSurface, OwnFragments, PassFragment, PerPass,
+    RoleFragments, Varyings,
 };
 pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
 pub use materials::gpu_format as texture_format;

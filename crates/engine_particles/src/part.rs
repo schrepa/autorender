@@ -21,7 +21,7 @@ const fn blended(fragment: Entry) -> OwnFragments {
             ..RoleFragments::NONE
         },
         owned: RoleFragments::NONE,
-        faces: engine_render::OwnFaces::Culled(FaceCull::None),
+        cull: FaceCull::None,
     }
 }
 

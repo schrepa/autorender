@@ -7,8 +7,8 @@ use engine_core::{
     Pass, PassName, PassPurpose, PassViews, SlotSet, Source, SurfaceSlot, Writes, gpu_struct,
 };
 use engine_render::{
-    Allocation, Bind, Buffer, Draw, Form, FormSide, GpuPart, Install, KindForm, Lifetime, Prepare,
-    RenderBricks, Scene, SceneDraw, Shape, SlotModule, Varyings,
+    Allocation, Bind, Buffer, Draw, Form, FormSide, FragmentUse, GpuPart, Install, KindForm,
+    Lifetime, Prepare, RenderBricks, Scene, SceneDraw, Shape, SlotModule, Varyings,
 };
 
 pub const PLATE: DrawKind = DrawKind("plate");
@@ -34,7 +34,7 @@ const FORM: KindForm = KindForm {
         depth_bias: FormSide::UNBIASED,
     },
     owned: None,
-    varyings: Varyings::Surface,
+    varyings: Varyings::Surface(FragmentUse::Masked),
 };
 
 gpu_struct! {

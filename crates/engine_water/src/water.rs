@@ -56,7 +56,7 @@ const SURFACE_FRAGMENTS: OwnFragments = OwnFragments {
         ..RoleFragments::NONE
     },
     owned: RoleFragments::NONE,
-    faces: engine_render::OwnFaces::Culled(FaceCull::None),
+    cull: FaceCull::None,
 };
 
 const FALL_FRAGMENTS: OwnFragments = OwnFragments {
@@ -66,7 +66,7 @@ const FALL_FRAGMENTS: OwnFragments = OwnFragments {
         ..RoleFragments::NONE
     },
     owned: RoleFragments::NONE,
-    faces: engine_render::OwnFaces::Culled(FaceCull::None),
+    cull: FaceCull::None,
 };
 
 const FALL_STREAMS: &[VertexLayout] = &[VertexLayout::Buffer(FALL_LAYOUT)];

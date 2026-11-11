@@ -25,9 +25,9 @@ use engine_core::{
 use engine_places_rendering::text::{DEFAULT_TEXT_SIZE, FontId, Glyph, Text, TextAlign};
 use engine_render::{
     Allocation, Attach, Bind, Buffer, Draw, Encode, FaceCull, Form, FormColor, FormDepth,
-    FormFragment, FormSide, FragmentPass, GpuPart, Install, KindForm, Lifetime, OwnFragments, Pass,
-    PassFragment, Prepare, RenderBricks, Scene, SceneDraw, Shape, SlotModule, Texture, Varyings,
-    wgpu,
+    FormFragment, FormSide, FragmentPass, FragmentUse, GpuPart, Install, KindForm, Lifetime,
+    OwnFragments, Pass, PassFragment, Prepare, RenderBricks, Scene, SceneDraw, Shape, SlotModule,
+    Texture, Varyings, wgpu,
 };
 use glam::Vec3;
 use serde::{Deserialize, Serialize};
@@ -73,7 +73,7 @@ const LABEL_FORM: KindForm = KindForm {
         streams: &[],
         depth_bias: FormSide::UNBIASED,
     }),
-    varyings: Varyings::SurfaceExtra,
+    varyings: Varyings::SurfaceExtra(FragmentUse::Masked),
 };
 
 const GENERATED: &[&str] = &[

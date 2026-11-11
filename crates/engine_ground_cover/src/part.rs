@@ -3,8 +3,8 @@ use engine_core::{DrawKind, Error, MaterialHandle, PassRole};
 use engine_open_world_kit::ground::PALETTE_ENTRIES;
 use engine_render::{
     AfterRead, Allocation, Bind, Buffer, ComputePipeline, Count, Draw, DrawInput, Encode, Form,
-    FormSide, FormTopology, GpuPart, Install, KindForm, Lifetime, Pass, PerPass, Prepare, Scene,
-    SceneDraw, Shape, Varyings, wgpu,
+    FormSide, FormTopology, FragmentUse, GpuPart, Install, KindForm, Lifetime, Pass, PerPass,
+    Prepare, Scene, SceneDraw, Shape, Varyings, wgpu,
 };
 
 pub(crate) const COVER: DrawKind = DrawKind("cover");
@@ -33,7 +33,7 @@ const COVER_FORM: KindForm = KindForm {
         depth_bias: FormSide::UNBIASED,
     },
     owned: None,
-    varyings: Varyings::ObjectExtra,
+    varyings: Varyings::ObjectExtra(FragmentUse::Masked),
 };
 
 pub(crate) struct CoverGpu {
