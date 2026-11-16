@@ -1540,7 +1540,7 @@
         }
       ],
       "type": "engine_probes::ReflectionProbesBrick",
-      "version": "7d3b8295b900d499ee625a90e2e32e1a926ff7d532af7a8794121e7a94d562eb"
+      "version": "36ac421b39e652d6bc8106c56212408c790bec4be3ef51aa205a0f32937290f3"
     },
     {
       "dependencies": [
