@@ -81,6 +81,17 @@ fn drowned_jet(
     below.surface >= crest
 }
 
+pub(crate) fn judged_at(falls: &[Fall]) -> Vec<Vec2> {
+    let mut points = Vec::new();
+    for fall in falls.iter().filter(|fall| whole(fall)) {
+        for jet in jets(fall) {
+            let (lip, foot) = (level(fall, jet.lip), level(fall, jet.landing));
+            points.extend([foot, lip, lip + lip - foot]);
+        }
+    }
+    points
+}
+
 pub(crate) fn drowned(
     falls: &[Fall],
     slowest: f32,

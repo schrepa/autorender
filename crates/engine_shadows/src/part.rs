@@ -5,14 +5,14 @@ use engine_core::{Entry, Error, PassViews, Sampler, ViewFacts, Wrap};
 use engine_places_rendering::shadows::{CasterMap, CasterView, SHADOW_REGIONS, ShadowMaps};
 use engine_render::{
     Access, Allocation, Attach, AttachPoint, Bind, Buffer, DebugShown, DepthUse, DrawInput,
-    Encode, FULLSCREEN, GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline,
-    Shape, Texture, VertexLayout, wgpu,
+    Encode, FULLSCREEN, GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, Recorded,
+    RenderPipeline, Shape, Texture, VertexLayout, wgpu,
 };
 
 use crate::ShadowPass;
 use crate::constants::SKY_LAYERS;
 use crate::gpu_layouts::{ComposeData, ShadowLevel, SkyViews};
-use crate::plan::{LOST, SKY_LOST, ShadowDrawn, ShadowPlan};
+use crate::plan::{LOST, SKY_LOST, SKY_STALE, ShadowDrawn, ShadowPlan};
 use crate::shaders;
 use crate::sky::RESOLUTION;
 
@@ -57,6 +57,10 @@ pub(crate) struct ShadowsGpu {
     sky_live: bool,
     drawing: Option<(u32, Vec<u8>)>,
     compose_bytes: u64,
+    kept: Recorded,
+    sky_drawn: Recorded,
+    stood_in: Vec<(u32, Vec<u8>)>,
+    sky_stood_in: bool,
 }
 
 fn extent(width: u32, height: u32, layers: u32) -> wgpu::Extent3d {
@@ -209,6 +213,10 @@ impl GpuPart for ShadowsGpu {
             sky_live: false,
             drawing: None,
             compose_bytes: 0,
+            kept: Recorded::Exact,
+            sky_drawn: Recorded::Exact,
+            stood_in: Vec::new(),
+            sky_stood_in: false,
         })
     }
 
@@ -217,10 +225,27 @@ impl GpuPart for ShadowsGpu {
         (maps, plan, shown): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        if let Some((layout, levels)) = self.drawing.take()
-            && !(cx.ran(self.maps) && cx.ran(self.composing_pass))
-        {
-            cx.deliver::<ShadowDrawn>(layout, levels);
+        let kept = std::mem::take(&mut self.kept);
+        if let Some((layout, levels)) = self.drawing.take() {
+            if !(cx.ran(self.maps) && cx.ran(self.composing_pass)) || kept == Recorded::Waiting {
+                cx.deliver::<ShadowDrawn>(layout, levels);
+            } else if kept == Recorded::StandIn {
+                self.stood_in.push((layout, levels));
+            }
+        }
+        let layout = u32::from(plan.layout);
+        match std::mem::take(&mut self.sky_drawn) {
+            Recorded::Waiting => cx.deliver::<ShadowDrawn>(layout, vec![SKY_STALE]),
+            Recorded::StandIn => self.sky_stood_in = true,
+            Recorded::Exact | Recorded::Refused => {}
+        }
+        if cx.warming() == 0 {
+            for (layout, levels) in self.stood_in.drain(..) {
+                cx.deliver::<ShadowDrawn>(layout, levels);
+            }
+            if std::mem::take(&mut self.sky_stood_in) {
+                cx.deliver::<ShadowDrawn>(layout, vec![SKY_STALE]);
+            }
         }
         self.sky_live = plan.sky.live && shown.owner.is_none();
         let (lost, sky_lost) = self.allocate(&plan, cx);
@@ -281,6 +306,7 @@ impl GpuPart for ShadowsGpu {
             return 0;
         }
         if pass == self.composing_pass {
+            cx.recorded();
             let vertices = [self.compose_vertices];
             for (level, instances) in &self.composed {
                 let mut layer = cx.render(Attach::Depth(self.levels, Some(*level)));
@@ -294,6 +320,7 @@ impl GpuPart for ShadowsGpu {
                     },
                 );
             }
+            self.kept = self.kept.max(cx.recorded());
             return 0;
         }
         let count = |map: CasterMap| self.at.iter().filter(|at| at.map == map).count() as u32;
@@ -301,14 +328,18 @@ impl GpuPart for ShadowsGpu {
         let moving = regions..regions + count(CasterMap::Moving);
         let sky = moving.end..moving.end + count(CasterMap::Sky);
         cx.span("shadow_regions");
+        cx.recorded();
         let mut drawn = cx.views(self, &Attach::Depth(self.regions, None), 0..regions);
+        self.kept = self.kept.max(cx.recorded());
         if !moving.is_empty() {
             cx.span("shadow_moving");
             drawn += cx.views(self, &Attach::Depth(self.levels, None), moving);
+            cx.recorded();
         }
         if !sky.is_empty() {
             cx.span("shadow_sky");
             drawn += cx.views(self, &Attach::Depth(self.sky, None), sky);
+            self.sky_drawn = cx.recorded();
         }
         drawn
     }

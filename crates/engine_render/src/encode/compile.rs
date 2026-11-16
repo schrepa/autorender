@@ -17,6 +17,19 @@ fn stage_switches(switches: &[(u32, bool)], stages: &[Stage]) -> Vec<(u32, bool)
         .collect()
 }
 
+fn stage_key(
+    stage: &Stage,
+    (entry, constants): (&str, &[(String, f64)]),
+    (layout, paired): (&str, Option<u64>),
+) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    (stage.text_key(), entry, layout, paired).hash(&mut hasher);
+    for (name, value) in constants {
+        (name, value.to_bits()).hash(&mut hasher);
+    }
+    hasher.finish()
+}
+
 fn made_by_program(
     pipelines: &[BuiltPipeline],
     program_key: u64,
@@ -357,6 +370,7 @@ struct RenderJob {
     fragment: Option<StageJob>,
     targets: Vec<Option<wgpu::ColorTargetState>>,
     cache: Option<wgpu::PipelineCache>,
+    stages: Vec<u64>,
 }
 
 struct ComputeJob {
@@ -499,7 +513,7 @@ fn note(pipelines: &mut Pipelines, compiled: Compiled, from_list: bool) {
     } else if pipelines
         .listed
         .as_ref()
-        .is_some_and(|listed| !listed.contains(&compiled))
+        .is_some_and(|listed| !listed.iter().any(|known| known.same(&compiled)))
     {
         pipelines.unlisted += 1;
     }
@@ -709,22 +723,28 @@ impl Run {
             && !self.pipelines.making.refused(made)
             && !self.pipelines.making.waits(made)
         {
+            let constants: Vec<(String, f64)> = switches
+                .iter()
+                .map(|(id, on)| (id.to_string(), f64::from(u8::from(*on))))
+                .collect();
+            let stages = vec![stage_key(
+                stage,
+                (stage.entry.name(), &constants),
+                (&built.layout_key, None),
+            )];
             let job = ComputeJob {
                 device: self.device.clone(),
                 label: self.machine.part_label(built.decl.part, stage.entry.name()),
                 layout: built.layout.clone(),
                 module: stage.shader(&self.device, &mut self.machine.shaders),
                 entry: stage.entry.name(),
-                constants: switches
-                    .iter()
-                    .map(|(id, on)| (id.to_string(), f64::from(u8::from(*on))))
-                    .collect(),
+                constants,
                 cache: self.pipelines.cache.clone(),
             };
             let pass = self.machine.pass_name(pipeline);
             self.pipelines
                 .making
-                .submit(made, (pass, None), move || job.make());
+                .submit(made, (pass, None, stages), move || job.make());
             if asked == Asked::Warmed {
                 self.pipelines.warming.fed = Some(made);
             }
@@ -859,33 +879,50 @@ impl Compiler<'_> {
         if let Some(found) = self.made(pipeline, made) {
             return Some((keyed.key, found, true));
         }
-        if self.pipelines.making.refused(made) {
+        let records = self.machine.makes_records(pipeline);
+        let refused = self.pipelines.making.refused(made);
+        if refused && records {
             return None;
         }
         let standing = self.keyed(pipeline, targets, shown, Some(dynamic))?;
-        if standing.key == keyed.key || self.machine.makes_records(pipeline) {
+        if !refused && (standing.key == keyed.key || records) {
             return self
                 .compile_with(pipeline, targets, shown, Some(specialized), Asked::Drawn)
                 .map(|(key, made)| (key, made, true));
         }
-        let warm = Warm {
-            pipeline,
-            shape: Some(WarmShape {
-                formats: targets.0.to_vec(),
-                depth: targets.1,
-                shown,
-                variant: Some(specialized),
-            }),
-            switches: self.pipelines.switches.clone(),
-            listed: false,
-        };
+        if !refused {
+            let stand_in = (standing.program, standing.key);
+            if self.pipelines.making.waits(made) && self.made(pipeline, stand_in).is_none() {
+                return None;
+            }
+            let warm = Warm {
+                pipeline,
+                shape: Some(WarmShape {
+                    formats: targets.0.to_vec(),
+                    depth: targets.1,
+                    shown,
+                    variant: Some(specialized),
+                }),
+                switches: self.pipelines.switches.clone(),
+                listed: false,
+            };
+            self.want(made, warm);
+        }
+        self.pipelines.standing = true;
+        let stood = self.compile_with(pipeline, targets, shown, Some(dynamic), Asked::Drawn);
+        self.pipelines.standing = false;
+        stood.map(|(key, made)| (key, made, false))
+    }
+
+    fn want(&mut self, made: (u64, u64), warm: Warm) {
+        if !self.pipelines.settled && !self.pipelines.wanted.contains(&made) {
+            self.pipelines.wanted.push(made);
+        }
         let warming = &mut self.pipelines.warming;
         let queued = warming.queue.iter().any(|known| known.same(&warm));
         if !queued && !self.pipelines.making.waits(made) {
             warming.queue.push_front(warm);
         }
-        self.compile_with(pipeline, targets, shown, Some(dynamic), Asked::Drawn)
-            .map(|(key, made)| (key, made, false))
     }
 
     fn keyed(
@@ -970,6 +1007,14 @@ impl Compiler<'_> {
             && !self.pipelines.making.waits(made)
         {
             let bits = keyed.bits;
+            let first = asked != Asked::Warmed
+                && !self.pipelines.settled
+                && !self.pipelines.standing;
+            let needed = if first || self.pipelines.wanted.contains(&made) {
+                Needed::First(keyed.switches.clone())
+            } else {
+                Needed::Later
+            };
             let shape = Shape {
                 formats,
                 depth,
@@ -984,7 +1029,8 @@ impl Compiler<'_> {
                 fragment: keyed.fragment,
                 faces: keyed.faces,
             };
-            let job = self.render_job(pipeline, shape)?;
+            let mut job = self.render_job(pipeline, shape)?;
+            let stages = std::mem::take(&mut job.stages);
             let noted = (!self.machine.makes_records(pipeline)).then(|| {
                 (
                     Compiled {
@@ -994,6 +1040,7 @@ impl Compiler<'_> {
                         plain,
                         main,
                         variant: bits,
+                        needed,
                     },
                     self.pipelines.listing,
                 )
@@ -1001,7 +1048,7 @@ impl Compiler<'_> {
             let pass = self.machine.pass_name(pipeline);
             self.pipelines
                 .making
-                .submit(made, (pass, noted), move || job.make());
+                .submit(made, (pass, noted, stages), move || job.make());
             if asked == Asked::Warmed {
                 self.pipelines.warming.fed = Some(made);
             }
@@ -1085,6 +1132,23 @@ impl Compiler<'_> {
         });
         let vertex_constants = constants.next().unwrap_or_default();
         let fragment_constants = constants.next().unwrap_or_default();
+        let paired = fragment_stage.zip(shape.fragment).map(|(stage, entry)| {
+            stage_key(
+                stage,
+                (entry.name(), &fragment_constants),
+                (&built.layout_key, None),
+            )
+        });
+        let vertex_stage = built.stages.first()?;
+        let mut partner = DefaultHasher::new();
+        (paired, desc.primitive.topology).hash(&mut partner);
+        let stages = std::iter::once(stage_key(
+            vertex_stage,
+            (desc.vertex.name(), &vertex_constants),
+            (&built.layout_key, Some(partner.finish())),
+        ))
+        .chain(paired)
+        .collect();
         Some(RenderJob {
             device: self.device.clone(),
             label: machine.part_label(built.decl.part, desc.vertex.name()),
@@ -1097,6 +1161,7 @@ impl Compiler<'_> {
             fragment: fragment.map(|(module, entry)| (module, entry, fragment_constants)),
             targets,
             cache: self.pipelines.cache.clone(),
+            stages,
         })
     }
 }

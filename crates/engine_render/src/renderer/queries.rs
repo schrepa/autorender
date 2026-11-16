@@ -95,6 +95,12 @@ impl Renderer {
             .map_or(0, |run| run.pipelines.warming.made())
     }
 
+    pub fn settle_pipelines(&mut self) {
+        if let Some(run) = self.run.as_mut() {
+            run.pipelines.settled = true;
+        }
+    }
+
     pub fn keep_pipeline_cache(&self) {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(kept) = &self.core.pipeline_cache {

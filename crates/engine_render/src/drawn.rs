@@ -47,6 +47,7 @@ const VARS: &str = "struct DrawnPose {
 @group(0) @binding(0) var<storage, read> drawn_previous_poses: array<DrawnPose>;
 @group(0) @binding(0) var<storage, read> drawn_marks: array<u32>;
 @group(0) @binding(0) var<storage, read> drawn_occlusion: array<u32>;
+@group(0) @binding(0) var drawn_prepass_pyramid: texture_2d<f32>;
 
 fn drawn_value(record: DrawnRecord, index: u32) -> f32 {
     if index >= record.floats {
@@ -566,16 +567,22 @@ struct Nodes {
     bits: Vec<u64>,
 }
 
-struct Occlusion {
-    pass: Pass<DrawnGpu>,
-    held: Buffer<DrawnGpu>,
-    pyramid: Texture<DrawnGpu>,
+struct Pyramid {
+    texture: Texture<DrawnGpu>,
     extents: Vec<Buffer<DrawnGpu>>,
     first: ComputePipeline<DrawnGpu>,
     down: Vec<ComputePipeline<DrawnGpu>>,
-    test: ComputePipeline<DrawnGpu>,
     written: Vec<[u32; 4]>,
+}
+
+struct Occlusion {
+    pass: Pass<DrawnGpu>,
+    held: Buffer<DrawnGpu>,
+    levels: Pyramid,
+    test: ComputePipeline<DrawnGpu>,
     running: bool,
+    prepass: Pass<DrawnGpu>,
+    prepass_levels: Pyramid,
 }
 
 pub(crate) struct DrawnGpu {
@@ -940,16 +947,19 @@ impl DrawnGpu {
         cx: &mut Prepare<'_, Self>,
     ) -> u32 {
         let occlusion = &mut self.occlusion;
+        match main {
+            Some(main) => {
+                occlusion.prepass_levels.size(main, cx);
+                cx.run(occlusion.prepass);
+            }
+            None => occlusion.prepass_levels.release(cx),
+        }
         let bytes = slots * 4;
         let fresh = cx.allocate_buffer(occlusion.held, bytes) == Allocation::Fresh;
         let Some(main) = main.filter(|_| wanted) else {
             if occlusion.running {
                 cx.clear_buffer_range(occlusion.held, 0..bytes);
-                cx.release(occlusion.pyramid);
-                for &extent in &occlusion.extents[..occlusion.written.len()] {
-                    cx.release_buffer(extent);
-                }
-                occlusion.written.clear();
+                occlusion.levels.release(cx);
                 occlusion.running = false;
             }
             return 0;
@@ -958,6 +968,68 @@ impl DrawnGpu {
             cx.clear_buffer_range(occlusion.held, 0..bytes);
         }
         occlusion.running = true;
+        let count = occlusion.levels.size(main, cx);
+        cx.run(occlusion.pass);
+        count
+    }
+}
+
+impl Pyramid {
+    fn install(
+        cx: &mut Install<'_, DrawnGpu>,
+        pass: Pass<DrawnGpu>,
+        texture: Texture<DrawnGpu>,
+        extent: &'static str,
+    ) -> Result<Self, Error> {
+        let extents: Vec<Buffer<DrawnGpu>> = (0..PYRAMID_LEVELS)
+            .map(|_| cx.buffer(extent, Lifetime::Kept))
+            .collect();
+        let entry = |name: &'static str| Entry::generated(core_module(DRAWN_CULL_MODULE), name);
+        let level = |mips: std::ops::Range<u32>| Bind::Slice {
+            texture,
+            mips,
+            layers: 0..1,
+        };
+        let first = cx.compute_pipeline(
+            pass,
+            entry("drawn_pyramid_first"),
+            &[
+                (
+                    var(DRAWN_CULL_MODULE, "source_depth"),
+                    Bind::Target(TargetName::DEPTH),
+                ),
+                (var(DRAWN_CULL_MODULE, "target_level"), level(0..1)),
+                (
+                    var(DRAWN_CULL_MODULE, "pyramid_extent"),
+                    Bind::Buffer(extents[0]),
+                ),
+            ],
+        )?;
+        let mut down = Vec::with_capacity(PYRAMID_LEVELS - 1);
+        for at in 1..PYRAMID_LEVELS as u32 {
+            down.push(cx.compute_pipeline(
+                pass,
+                entry("drawn_pyramid_down"),
+                &[
+                    (var(DRAWN_CULL_MODULE, "source_level"), level(at - 1..at)),
+                    (var(DRAWN_CULL_MODULE, "target_level"), level(at..at + 1)),
+                    (
+                        var(DRAWN_CULL_MODULE, "pyramid_extent"),
+                        Bind::Buffer(extents[at as usize]),
+                    ),
+                ],
+            )?);
+        }
+        Ok(Self {
+            texture,
+            extents,
+            first,
+            down,
+            written: Vec::new(),
+        })
+    }
+
+    fn size(&mut self, main: &ViewFacts, cx: &mut Prepare<'_, DrawnGpu>) -> u32 {
         let (display, render) = (main.size(), main.render);
         let base = (
             display.x.div_ceil(2).max(1).next_power_of_two(),
@@ -965,7 +1037,7 @@ impl DrawnGpu {
         );
         let count = mip_levels(base.0, base.1).min(PYRAMID_LEVELS as u32);
         let (Allocation::Fresh | Allocation::Kept) = cx.allocate(
-            occlusion.pyramid,
+            self.texture,
             wgpu::Extent3d {
                 width: base.0,
                 height: base.1,
@@ -977,19 +1049,49 @@ impl DrawnGpu {
             .into_iter()
             .enumerate()
         {
-            let buffer = occlusion.extents[level];
+            let buffer = self.extents[level];
             let fresh = cx.allocate_buffer(buffer, 16) == Allocation::Fresh;
-            if fresh || occlusion.written.get(level) != Some(&extent) {
+            if fresh || self.written.get(level) != Some(&extent) {
                 cx.write(buffer, 0, &extent);
             }
-            match occlusion.written.get_mut(level) {
+            match self.written.get_mut(level) {
                 Some(known) => *known = extent,
-                None => occlusion.written.push(extent),
+                None => self.written.push(extent),
             }
         }
-        occlusion.written.truncate(count as usize);
-        cx.run(occlusion.pass);
+        self.written.truncate(count as usize);
         count
+    }
+
+    fn release(&mut self, cx: &mut Prepare<'_, DrawnGpu>) {
+        if self.written.is_empty() {
+            return;
+        }
+        cx.release(self.texture);
+        for &extent in &self.extents[..self.written.len()] {
+            cx.release_buffer(extent);
+        }
+        self.written.clear();
+    }
+
+    fn encode(&self, cx: &mut Encode<'_, DrawnGpu>) {
+        for (index, &[width, height, _, _]) in self.written.iter().enumerate() {
+            let pipeline = match index.checked_sub(1) {
+                None => &self.first,
+                Some(down) => match self.down.get(down) {
+                    Some(pipeline) => pipeline,
+                    None => break,
+                },
+            };
+            cx.dispatch(
+                pipeline,
+                Count::Groups([
+                    width.div_ceil(PYRAMID_GROUP),
+                    height.div_ceil(PYRAMID_GROUP),
+                    1,
+                ]),
+            );
+        }
     }
 }
 
@@ -1007,64 +1109,10 @@ fn install_occlusion(
     let held = cx.buffer("drawn_occlusion", Lifetime::Kept);
     cx.frame(var(DRAWN_MODULE, "drawn_occlusion"), Bind::Buffer(held))?;
     let pyramid = cx.texture("drawn_depth_pyramid", PYRAMID_FORMAT, Lifetime::Kept);
-    let extents: Vec<Buffer<DrawnGpu>> = (0..PYRAMID_LEVELS)
-        .map(|_| cx.buffer("drawn_pyramid_extent", Lifetime::Kept))
-        .collect();
-    let entry = |name: &'static str| Entry::generated(core_module(DRAWN_CULL_MODULE), name);
-    let first = cx.compute_pipeline(
-        pass,
-        entry("drawn_pyramid_first"),
-        &[
-            (
-                var(DRAWN_CULL_MODULE, "source_depth"),
-                Bind::Target(TargetName::DEPTH),
-            ),
-            (
-                var(DRAWN_CULL_MODULE, "target_level"),
-                Bind::Slice {
-                    texture: pyramid,
-                    mips: 0..1,
-                    layers: 0..1,
-                },
-            ),
-            (
-                var(DRAWN_CULL_MODULE, "pyramid_extent"),
-                Bind::Buffer(extents[0]),
-            ),
-        ],
-    )?;
-    let mut down = Vec::with_capacity(PYRAMID_LEVELS - 1);
-    for level in 1..PYRAMID_LEVELS as u32 {
-        down.push(cx.compute_pipeline(
-            pass,
-            entry("drawn_pyramid_down"),
-            &[
-                (
-                    var(DRAWN_CULL_MODULE, "source_level"),
-                    Bind::Slice {
-                        texture: pyramid,
-                        mips: level - 1..level,
-                        layers: 0..1,
-                    },
-                ),
-                (
-                    var(DRAWN_CULL_MODULE, "target_level"),
-                    Bind::Slice {
-                        texture: pyramid,
-                        mips: level..level + 1,
-                        layers: 0..1,
-                    },
-                ),
-                (
-                    var(DRAWN_CULL_MODULE, "pyramid_extent"),
-                    Bind::Buffer(extents[level as usize]),
-                ),
-            ],
-        )?);
-    }
+    let levels = Pyramid::install(cx, pass, pyramid, "drawn_pyramid_extent")?;
     let test = cx.compute_pipeline(
         pass,
-        entry("drawn_occlusion_test"),
+        Entry::generated(core_module(DRAWN_CULL_MODULE), "drawn_occlusion_test"),
         &[
             (var(DRAWN_CULL_MODULE, "cull_frame"), Bind::Buffer(frame)),
             (var(DRAWN_CULL_MODULE, "cull_occlusion"), Bind::Buffer(held)),
@@ -1074,16 +1122,23 @@ fn install_occlusion(
             ),
         ],
     )?;
+    let prepass = cx
+        .pass("drawn_prepass_pyramid")
+        .at(AttachPoint::Inputs)
+        .views(PassViews::Main)
+        .label("engine/drawn-prepass-pyramid")
+        .id();
+    let early = cx.texture("drawn_prepass_pyramid", PYRAMID_FORMAT, Lifetime::Frame);
+    cx.frame(var(DRAWN_MODULE, "drawn_prepass_pyramid"), Bind::Texture(early))?;
+    let prepass_levels = Pyramid::install(cx, prepass, early, "drawn_prepass_extent")?;
     Ok(Occlusion {
         pass,
         held,
-        pyramid,
-        extents,
-        first,
-        down,
+        levels,
         test,
-        written: Vec::new(),
         running: false,
+        prepass,
+        prepass_levels,
     })
 }
 
@@ -1310,6 +1365,10 @@ impl GpuPart for DrawnGpu {
             self.encode_occlusion(cx);
             return 0;
         }
+        if pass == self.occlusion.prepass {
+            self.occlusion.prepass_levels.encode(cx);
+            return 0;
+        }
         if pass != self.cull {
             return 0;
         }
@@ -1335,23 +1394,7 @@ impl GpuPart for DrawnGpu {
 impl DrawnGpu {
     fn encode_occlusion(&self, cx: &mut Encode<'_, Self>) {
         let occlusion = &self.occlusion;
-        for (index, &[width, height, _, _]) in occlusion.written.iter().enumerate() {
-            let pipeline = match index.checked_sub(1) {
-                None => &occlusion.first,
-                Some(down) => match occlusion.down.get(down) {
-                    Some(pipeline) => pipeline,
-                    None => break,
-                },
-            };
-            cx.dispatch(
-                pipeline,
-                Count::Groups([
-                    width.div_ceil(PYRAMID_GROUP),
-                    height.div_ceil(PYRAMID_GROUP),
-                    1,
-                ]),
-            );
-        }
+        occlusion.levels.encode(cx);
         if self.slots != 0 {
             cx.dispatch(
                 &occlusion.test,

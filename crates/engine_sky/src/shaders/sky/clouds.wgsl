@@ -171,21 +171,27 @@ fn march_jitter(texel: vec2<u32>) -> f32 {
     return fract(spread + f32(clouds.layers.y) * GOLDEN);
 }
 
+fn slab_span(origin: vec3<f32>, direction: vec3<f32>, reach: f32) -> vec2<f32> {
+    let base = clouds.layer.x;
+    let top = clouds.layer.y;
+    if abs(direction.y) > 1.0e-5 {
+        let to_base = (base - origin.y) / direction.y;
+        let to_top = (top - origin.y) / direction.y;
+        return vec2<f32>(max(min(to_base, to_top), 0.0), min(max(to_base, to_top), reach));
+    } else if origin.y < base || origin.y > top {
+        return vec2<f32>(0.0);
+    }
+    return vec2<f32>(0.0, reach);
+}
+
 fn march_slab(origin: vec3<f32>, direction: vec3<f32>, texel: vec2<u32>, reach: f32,
         cone: f32) -> vec4<f32> {
     let base = clouds.layer.x;
     let top = clouds.layer.y;
     let clear = vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    var near = 0.0;
-    var far = reach;
-    if abs(direction.y) > 1.0e-5 {
-        let to_base = (base - origin.y) / direction.y;
-        let to_top = (top - origin.y) / direction.y;
-        near = max(min(to_base, to_top), 0.0);
-        far = min(max(to_base, to_top), reach);
-    } else if origin.y < base || origin.y > top {
-        return clear;
-    }
+    let span = slab_span(origin, direction, reach);
+    let near = span.x;
+    let far = span.y;
     if far <= near {
         return clear;
     }
@@ -258,14 +264,18 @@ fn march_slab(origin: vec3<f32>, direction: vec3<f32>, texel: vec2<u32>, reach: 
     return vec4<f32>(light, passing);
 }
 
-fn high_cloud(origin: vec3<f32>, direction: vec3<f32>, reach: f32, cone: f32) -> vec4<f32> {
-    let clear = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+fn high_along(origin: vec3<f32>, direction: vec3<f32>) -> f32 {
     let rise = clouds.high.y - origin.y;
     if clouds.high.x <= 0.0 || rise <= 0.0 || direction.y <= 1.0e-5 {
-        return clear;
+        return -1.0;
     }
-    let along = rise / direction.y;
-    if along >= reach {
+    return rise / direction.y;
+}
+
+fn high_cloud(origin: vec3<f32>, direction: vec3<f32>, reach: f32, cone: f32) -> vec4<f32> {
+    let clear = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    let along = high_along(origin, direction);
+    if along < 0.0 || along >= reach {
         return clear;
     }
     let p = origin + direction * along;
@@ -368,15 +378,20 @@ fn march_view(@builtin(global_invocation_id) id: vec3<u32>,
             let center = (vec2<f32>(id.xy) + 0.5) / vec2<f32>(pixels);
             let ndc = vec2<f32>(center.x * 2.0 - 1.0, 1.0 - center.y * 2.0);
             let direction = view_direction(ndc);
-            let apart = 2.0 / vec2<f32>(pixels);
-            let cone = max(length(view_direction(ndc + vec2<f32>(apart.x, 0.0)) - direction),
-                length(view_direction(ndc - vec2<f32>(0.0, apart.y)) - direction));
             var limit = CLOUD_REACH;
             if !sky {
                 let point = camera.inverse_view_projection * vec4<f32>(ndc, depth, 1.0);
                 limit = length(point.xyz / point.w - clouds.eye.xyz);
             }
-            cloud = march(clouds.eye.xyz, direction, id.xy, limit, cone);
+            let reach = min(CLOUD_REACH, limit);
+            let span = slab_span(clouds.eye.xyz, direction, reach);
+            let along = high_along(clouds.eye.xyz, direction);
+            if !(span.y <= span.x) || !(along < 0.0 || along >= reach) {
+                let apart = 2.0 / vec2<f32>(pixels);
+                let cone = max(length(view_direction(ndc + vec2<f32>(apart.x, 0.0)) - direction),
+                    length(view_direction(ndc - vec2<f32>(0.0, apart.y)) - direction));
+                cloud = march(clouds.eye.xyz, direction, id.xy, limit, cone);
+            }
         }
         if cloud.a < 0.999 {
             atomicOr(&view_clouded, VIEW_CLOUDED);

@@ -149,6 +149,9 @@ pub(crate) struct Pipelines {
     pub(crate) refused: Vec<String>,
     pub(crate) cache: Option<wgpu::PipelineCache>,
     pub(crate) warming: super::warming::Warming,
+    pub(crate) settled: bool,
+    pub(crate) standing: bool,
+    pub(crate) wanted: Vec<(u64, u64)>,
 }
 
 pub(crate) struct Planning {
@@ -170,6 +173,7 @@ pub(crate) struct Tallies {
     pub(crate) rebuilt: Rebuilt,
     pub(crate) uploads: Uploads,
     pub(crate) kinds: KindTallies,
+    pub(crate) worst: crate::Recorded,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

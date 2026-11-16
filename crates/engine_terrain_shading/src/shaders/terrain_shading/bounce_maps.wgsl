@@ -64,8 +64,10 @@ fn bounce_ground(@builtin(global_invocation_id) id: vec3<u32>) {
         let lod = max(log2(f32(textureDimensions(bounce_macro).x) / f32(side)), 0.0);
         colors = textureSampleLevel(bounce_macro, bounce_sampler, uv, terrain.grid.w - 1u, lod);
     }
-    let ground = mix(bounce_albedo(terrain, surface.x, world, normal, colors.a),
-        bounce_albedo(terrain, surface.y, world, normal, colors.a), blend);
+    var ground = bounce_albedo(terrain, surface.x, world, normal, colors.a);
+    if blend != 0.0 {
+        ground = mix(ground, bounce_albedo(terrain, surface.y, world, normal, colors.a), blend);
+    }
     var albedo = ground.rgb;
     if terrain.grid.w > 0u {
         albedo *= (macro_color(colors) * cover_tint(colors.a, ground.w));

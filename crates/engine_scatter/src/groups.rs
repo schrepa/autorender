@@ -49,6 +49,23 @@ fn reach_of(material: &Material) -> f32 {
     }
 }
 
+fn box_of(asset: &Resolved<'_>) -> [[f32; 4]; 2] {
+    let (low, high) = asset.meshes().map(|mesh| mesh.mesh.bounds()).fold(
+        (Vec3::INFINITY, Vec3::NEG_INFINITY),
+        |(low, high), held| (low.min(held.min()), high.max(held.max())),
+    );
+    let reach = std::iter::once(asset.material.material)
+        .chain(asset.parts.iter().map(|part| part.material.material))
+        .map(reach_of)
+        .fold(0.0, engine_math::max);
+    let middle = (low + high) * 0.5;
+    let half = (high - low) * 0.5;
+    [
+        [middle.x, middle.y, middle.z, reach],
+        [half.x, half.y, half.z, 0.0],
+    ]
+}
+
 fn origin_tint(origin: Vec3) -> u32 {
     let cell = |value: f32| (value * 4.0).floor() as i32 as u32;
     let mut hash =
@@ -226,6 +243,7 @@ pub(crate) struct DrawGroup {
     pub(crate) sway: f32,
     pub(crate) look: [u32; 2],
     pub(crate) sphere: (Vec3, f32),
+    pub(crate) bounds: [[f32; 4]; 2],
     pub(crate) objects: u32,
     pub(crate) part: Option<usize>,
     pub(crate) count: u32,
@@ -288,6 +306,7 @@ impl Groups {
                     (low + high) * 0.5,
                     (high - low).length() * 0.5 + reach_of(material),
                 );
+                let boxed = box_of(asset);
                 groups.push(DrawGroup {
                     meshes,
                     material: asset.material.handle,
@@ -298,6 +317,7 @@ impl Groups {
                     sway: asset.sway,
                     look: plant_look(material),
                     sphere,
+                    bounds: boxed,
                     objects,
                     part: None,
                     count: 0,
@@ -334,6 +354,7 @@ impl Groups {
                         sway: asset.sway,
                         look: plant_look(rendered.material.material),
                         sphere,
+                        bounds: boxed,
                         objects,
                         part: Some(part),
                         count: 0,
@@ -361,6 +382,7 @@ impl Groups {
                 a.color == b.color
                     && a.sway == b.sway
                     && a.sphere == b.sphere
+                    && a.bounds == b.bounds
                     && a.objects == b.objects
                     && a.grounding == b.grounding
             })

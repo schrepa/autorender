@@ -167,6 +167,7 @@ impl Run {
         for built in &mut self.machine.pipelines {
             built.ready.clear();
         }
+        self.compile_first();
         self.at_reached_switches(|run| {
             run.compile_listed();
             run.queue_reached();
@@ -208,6 +209,9 @@ impl Run {
             listed: false,
         };
         let (formats, depth, shown) = self.pass_formats(pass);
+        if self.mesh_drawn(pipeline, shown.0) {
+            return Vec::new();
+        }
         let mut warms = Vec::new();
         for layered in self.layered_formats(pipeline, pass, formats.len()) {
             if self.writes_fit(pipeline, &layered) {
@@ -219,7 +223,7 @@ impl Run {
                 })));
             }
         }
-        if self.writes_fit(pipeline, &formats) {
+        if warms.is_empty() && self.writes_fit(pipeline, &formats) {
             warms.insert(
                 0,
                 warm(Some(WarmShape {
@@ -231,6 +235,27 @@ impl Run {
             );
         }
         warms
+    }
+
+    fn mesh_drawn(&self, pipeline: usize, plain: bool) -> bool {
+        let Some(built) = self.machine.pipelines.get(pipeline) else {
+            return false;
+        };
+        let Program::Render(desc) = &built.decl.program else {
+            return false;
+        };
+        let used = crate::surface::MaterialVariant::PLAIN
+            .constants()
+            .iter()
+            .any(|&offered| {
+                built
+                    .stages
+                    .iter()
+                    .any(|stage| !stage.composed.constants(&[offered]).is_empty())
+            });
+        let styled = !plain && !desc.writes.is_empty();
+        let faced = desc.faces != Faces::Declared;
+        !built.geometry.is_empty() && (used || styled || faced)
     }
 
     fn reached_warms(&self) -> Vec<Warm> {
@@ -317,6 +342,41 @@ impl Run {
             work(self);
         }
         self.pipelines.switches = real;
+    }
+
+    pub(super) fn compile_first(&mut self) {
+        if self.pipelines.settled {
+            return;
+        }
+        let Some(keys) = self.pipelines.listed.take() else {
+            return;
+        };
+        for key in &keys {
+            let Needed::First(switches) = &key.needed else {
+                continue;
+            };
+            let found = self
+                .machine
+                .pipelines
+                .iter()
+                .position(|built| built.program_key == key.program)
+                .filter(|&at| self.pipeline_reached(at));
+            if let Some(pipeline) = found {
+                let warm = Warm {
+                    pipeline: pipeline as u32,
+                    shape: Some(WarmShape {
+                        formats: key.formats.clone(),
+                        depth: key.depth,
+                        shown: (key.plain, key.main),
+                        variant: specialized(key),
+                    }),
+                    switches: switches.clone(),
+                    listed: true,
+                };
+                self.make_warm(warm, Asked::Drawn);
+            }
+        }
+        self.pipelines.listed = Some(keys);
     }
 
     pub(super) fn compile_listed(&mut self) {

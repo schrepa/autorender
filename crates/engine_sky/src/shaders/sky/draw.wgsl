@@ -317,7 +317,10 @@ fn with_night_sky(light: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
     }
     let disc = moon_disc(ray, sky_piece.moon.xyz, sun_direction());
     beyond = mix(beyond, disc.rgb * night.y, disc.a);
-    let glow = moon_glow(ray, sky_piece.moon.xyz, night.w) * (night.y * dark);
+    var glow = vec3<f32>(0.0);
+    if dark > 0.0 {
+        glow = moon_glow(ray, sky_piece.moon.xyz, night.w) * (night.y * dark);
+    }
     var sky = light;
     if any(beyond + glow > vec3<f32>(0.0)) {
         sky += (beyond + glow) * beyond_air(ray);

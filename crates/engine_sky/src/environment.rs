@@ -2,7 +2,7 @@ use bevy_ecs::prelude::Resource;
 use engine_core::{Error, Readable, Readback, Settling, StoreId};
 use engine_render::{
     Allocation, Attach, Bind, Copied, CopyRegion, DepthUse, Encode, Install, Lifetime, Own, Pass,
-    Pipeline, Prepare, RenderPipeline, Shape, Texture, mip_levels, wgpu,
+    Pipeline, Prepare, Recorded, RenderPipeline, Shape, Texture, mip_levels, wgpu,
 };
 
 use crate::gpu_layouts::SkyAir;
@@ -117,6 +117,7 @@ pub(crate) struct Environment {
     image: u64,
     step: Option<u32>,
     asked: Option<u32>,
+    drawn: Recorded,
 }
 
 impl Environment {
@@ -206,6 +207,7 @@ impl Environment {
             image: 0,
             step: None,
             asked: None,
+            drawn: Recorded::Exact,
         })
     }
 
@@ -225,7 +227,8 @@ impl Environment {
             cx.deliver::<EnvironmentSteps>(LOST, Vec::new());
         }
         if let Some(asked) = self.asked.take() {
-            self.step = match (cx.ran(self.pass), asked == LAST_STEP) {
+            let drawn = std::mem::take(&mut self.drawn) != Recorded::Waiting;
+            self.step = match (cx.ran(self.pass) && drawn, asked == LAST_STEP) {
                 (false, _) => Some(asked),
                 (true, false) => Some(asked + 1),
                 (true, true) => {
@@ -255,7 +258,8 @@ impl Environment {
         self.asked = Some(step);
     }
 
-    pub(crate) fn encode(&self, cx: &mut Encode<'_, SkyGpu>) -> u32 {
+    pub(crate) fn encode(&mut self, cx: &mut Encode<'_, SkyGpu>) -> u32 {
+        let _ = cx.recorded();
         match self.asked {
             None => {}
             Some(0) => {
@@ -277,6 +281,7 @@ impl Environment {
                 }
             }
         }
+        self.drawn = cx.recorded();
         0
     }
 }

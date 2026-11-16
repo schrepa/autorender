@@ -1,4 +1,4 @@
-import { type Distribution, FRAME_PHASES, HOST_PAUSES } from "../generated/host";
+import { type Distribution, FRAME_INTERVAL_MS, FRAME_PHASES, HOST_PAUSES } from "../generated/host";
 import { engineError, engineFailure } from "../generated/errors";
 import { parseJson, type Runtime } from "../generated/runtime";
 import type { FrameStats } from "../generated/stats";
@@ -124,6 +124,76 @@ class FrameHud {
   }
 }
 
+// Starts a frame once the GPU is done when the browser holds the animation frame past a refresh.
+class GpuPace {
+  private drawn = 0;
+  private since = 0;
+  private done = false;
+  private shown = true;
+  private refresh = FRAME_INTERVAL_MS;
+  private animated: number | undefined;
+  private stamp = -Infinity;
+  private posted = 0;
+  private tick = 0;
+  private readonly channel = new MessageChannel();
+
+  constructor(private readonly canvas: HTMLCanvasElement, early: () => void) {
+    this.channel.port1.onmessage = (event: MessageEvent<number>) => {
+      if (event.data !== this.posted) return;
+      this.posted = 0;
+      early();
+    };
+  }
+
+  animation(timestamp: number): boolean {
+    if (this.animated !== undefined && timestamp > this.animated) {
+      this.refresh = Math.min(this.refresh, timestamp - this.animated);
+    }
+    this.animated = timestamp;
+    if (this.shown) return false;
+    this.shown = true;
+    this.offer();
+    return true;
+  }
+
+  time(timestamp: number): number {
+    this.stamp = Math.max(this.stamp, timestamp);
+    return this.stamp;
+  }
+
+  submitted(since: number, early: boolean) {
+    const drawn = ++this.drawn;
+    this.since = since;
+    this.done = false;
+    this.shown = !early;
+    this.posted = 0;
+    const queue = (this.canvas.getContext("webgpu") as GPUCanvasContext | null)?.getConfiguration()?.device.queue;
+    void queue?.onSubmittedWorkDone().then(() => {
+      if (drawn !== this.drawn) return;
+      this.done = true;
+      this.offer();
+    }, () => undefined);
+  }
+
+  stop() {
+    this.drawn++;
+    this.done = false;
+    this.shown = true;
+    this.posted = 0;
+  }
+
+  dispose() {
+    this.stop();
+    this.channel.port1.close();
+  }
+
+  private offer() {
+    if (!this.done || !this.shown || this.posted || performance.now() - this.since < this.refresh) return;
+    this.posted = ++this.tick;
+    this.channel.port2.postMessage(this.posted);
+  }
+}
+
 export interface GameOptions<T extends Runtime> {
   create(canvas: HTMLCanvasElement, signal: AbortSignal): Promise<T>;
   controls?: Record<string, { values: string; run(game: T, args: Record<string, unknown>): unknown }>;
@@ -162,6 +232,10 @@ let state: HostState<T> = { kind: "starting" };
 let disposeDevelopment: (() => void) | undefined;
 let request = 0;
 const hud = new FrameHud(canvas);
+const pace = new GpuPace(canvas, () => {
+  const current = live();
+  if (current?.kind === "playing" && !current.paused && !document.hidden) run(current, performance.now(), true);
+});
 let jobs: JobPool | undefined;
 const ticks = new MessageChannel();
 let tickCount = 0;
@@ -236,6 +310,7 @@ window.addEventListener("resize", resize, listenerOptions);
 function halt() {
   if (request > 0) cancelAnimationFrame(request);
   request = 0;
+  pace.stop();
   hud.reset();
 }
 
@@ -296,13 +371,24 @@ function frame(timestamp: number) {
   request = 0;
   const current = live();
   if (!current || current.paused || document.hidden) return;
+  if (current.kind === "playing" && pace.animation(timestamp)) {
+    request = requestAnimationFrame(frame);
+    return;
+  }
+  run(current, timestamp, false);
+}
+
+function run(current: Live<T>, at: number, early: boolean) {
   if (panicReport()) { fail(engineFailure({ code: "runtime_panicked", path: "$" })); return; }
   const game = current.game;
+  const since = performance.now();
+  const timestamp = current.kind === "playing" ? pace.time(at) : at;
   try {
     if (current.kind === "playing") options.beforeFrame?.(game, timestamp);
     jobs?.exchange();
     input.pollPads();
     const phase = game.animation_frame(timestamp, pixelWidth, pixelHeight);
+    if (phase === FRAME_PHASES.playing) pace.submitted(since, early);
     input.setCursorMode(game.cursor_mode());
     jobs?.exchange();
     if (current.kind === "preparing") hud.preparing(game, phase);
@@ -314,10 +400,11 @@ function frame(timestamp: number) {
       if (hud.frame(game, timestamp)) options.poll?.(game);
       options.afterHostFrame?.(game, timestamp);
     } else if (phase === FRAME_PHASES.idle) {
+      pace.stop();
       hud.reset();
       return;
     }
-    if (live()) schedule(phase);
+    if (live() && !request) schedule(phase);
   } catch (error) { fail(error); }
 }
 
@@ -470,7 +557,7 @@ if (import.meta.hot) import.meta.hot.dispose(() => {
   jobs?.detach();
   disposeDevelopment?.();
   lifecycle.abort();
-  stopClock(); observer.disconnect(); input.dispose(); ticks.port1.close();
+  stopClock(); observer.disconnect(); input.dispose(); ticks.port1.close(); pace.dispose();
   state = { kind: "disposed" };
   current?.game.free();
 });

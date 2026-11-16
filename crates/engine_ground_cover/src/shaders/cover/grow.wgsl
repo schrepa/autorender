@@ -4,24 +4,25 @@ import package::cover::faces::cover::{COVER_EDGE_ON, COVER_NO_LAYER, COVER_UNBOU
     cover_densest, cover_depth, cover_drawn, cover_fall, cover_growth, cover_header,
     cover_layer, cover_leaves, cover_limits, cover_look, cover_patch, cover_patch_point,
     cover_patch_range, cover_patch_reach, cover_row, cover_seen, cover_shape, cover_stand,
-    cover_tall, cover_tint, cover_view, cover_cell};
-import package::cover::laws::{BLADE_HALF, BLADE_SIZE, BLADE_UPPER, CARD_CELL, CARD_JOINTS,
-    CARD_MIRRORED, CARD_TINT_RANGE, COVER_DRAW_VERTICES, FLAT_JOINTS, STRAIGHT_JOINTS,
+    cover_tall, cover_tint, cover_view};
+import package::cover::casts::{BLADE_KINDS, blade_bounds, card_bounds, cast_cell, cover_casts,
+    hold_casts, mark_casts};
+import package::cover::laws::{BLADE_HALF, BLADE_SIZE, BLADE_UPPER, CARD_JOINTS,
+    CARD_MIRRORED, CARD_TINT_RANGE, COVER_DRAW_VERTICES, FLAT_JOINTS, ROUNDING, STRAIGHT_JOINTS,
     blade_form, grounded_tilt, pack_color, unorm8};
 import package::engine::detail::{ViewDetail, across, fits, handover, seen_share};
-import package::engine::drawn::{drawn_view_sees, drawn_views};
+import package::engine::drawn::drawn_view_sees;
 import package::engine::math::{PI, unit};
 import package::face::ground_tiles::{GroundMaterial, GroundTerrain, GroundTile, LevelTile,
     NOT_RESIDENT, TILE_QUADS, ground_colors, ground_extent, ground_tile, level_tile,
-    macro_color, material_look, site_shift, terrain_info, tile_height, tile_material, tile_site,
-    true_height};
-import package::cover::ground::{Between, CellSamples, TILE_SPAN, cell_samples,
-    ground_at, ground_normal, height_on, ordered_height, ordered_to_height, site_between,
-    site_lush, summed_under, tile_between};
+    macro_color, material_look, site_shift, terrain_info, tile_height, tile_material, tile_site};
+import package::cover::ground::{Between, CellSamples, SITE_HELD, TILE_SPAN, cell_samples,
+    ground_at, ground_normal, height_on, held_height, hold_heights, ordered_height,
+    ordered_to_height, site_between, site_lush, summed_under, tile_between};
 import package::cover::order::{hash, order_tail, ordered_cell, quad_order};
 import package::face::view_wind::wind_sway;
 import package::generated::cover::{COVER_CELL_ROWS, CoverBlade, CoverCard, CoverMaterial, Grow,
-    GrowSpot, ShapeRows, cover_facing, cover_lean};
+    GrowSpot, cover_facing, cover_lean};
 
 struct Counts {
     appended: atomic<u32>,
@@ -50,13 +51,10 @@ struct DrawArgs {
 @group(1) @binding(4) var<storage, read_write> cards: array<CoverCard>;
 @group(1) @binding(5) var<storage, read_write> grow_spots: array<GrowSpot>;
 @group(1) @binding(6) var<storage, read_write> grow_runs: array<atomic<u32>>;
-@group(1) @binding(7) var<uniform> grow_row: vec4<u32>;
-@group(1) @binding(8) var<storage, read_write> cover_casts: array<atomic<u32>>;
 
 const LATTICE_TURN: f32 = 0.618034;
 const WIND_SHOWN: f32 = 1.0e9;
 const LANE_LEVELS: u32 = 3u;
-const ROUNDING: f32 = 1.0e-3;
 const REACH_ROUNDING: f32 = 0.01;
 const PATCH_POINTS: u32 = 9u;
 const CLUMP_REACH: f32 = 1.4143;
@@ -66,9 +64,6 @@ const CELL_LEFT: u32 = 0u;
 const CELL_SUMMED: u32 = 1u;
 const CELL_UNSUMMED: u32 = 2u;
 const CORNER_LANE: u32 = 60u;
-const PLACE_ROUNDING: f32 = 1.0e-5;
-const LEAN_LEAST: f32 = 1.0e-4;
-const BLADE_KINDS: u32 = 2u;
 
 fn blade_room(least: vec3<f32>, error: f32, lush: f32) -> f32 {
     let finer = least.z * error;
@@ -80,7 +75,6 @@ const SOIL_LEAST: f32 = 1.0e-4;
 const MIXED: u32 = 0xffffffffu;
 const GROUND_HELD: u32 = 64u;
 const GROUND_ID: u32 = 0xfffu;
-const SITE_HELD: u32 = 25u;
 
 fn hold_corner(terrain: GroundTerrain, corner: vec2<f32>, spacing: f32, middle: f32,
         index: u32) {
@@ -775,49 +769,6 @@ fn spec_look(at: u32, density: f32) -> CoverMaterial {
     return spec;
 }
 
-struct Bounds {
-    low: vec3<f32>,
-    high: vec3<f32>,
-}
-
-fn bounds_around(root: vec3<f32>, low: vec3<f32>, high: vec3<f32>) -> Bounds {
-    let margin = PLACE_ROUNDING * max(max(abs(root.x), abs(root.y)), abs(root.z))
-        + ROUNDING * max(high.x - low.x, high.y - low.y);
-    return Bounds(root + low - vec3<f32>(margin), root + high + vec3<f32>(margin));
-}
-
-fn blade_bounds(blade: CoverBlade, shape: ShapeRows) -> Bounds {
-    let size = unpack2x16float(blade.size & BLADE_SIZE);
-    let most = max(shape.bends.x, shape.bends.z);
-    let out = size.x * shape.arc.z * most + 0.5 * size.y;
-    let dip = min(size.x * (1.0 - shape.arc.y * most * most), 0.0);
-    return bounds_around(blade.root, vec3<f32>(-out, dip, -out), vec3<f32>(out, size.x, out));
-}
-
-fn card_bounds(card: CoverCard, shape: ShapeRows) -> Bounds {
-    let size = unpack2x16float(card.size);
-    let span = cover_cell(card.cell & CARD_CELL).span;
-    let bend = abs(size.y) * max(shape.bends.x, LEAN_LEAST);
-    let tip = max(1.0, abs(1.0 - shape.arc.y * bend * bend)) + bend * shape.arc.z;
-    let out = size.x * (max(max(shape.arc.x, tip), abs(span.z))
-        + max(abs(span.x), abs(span.y)));
-    return bounds_around(card.root, vec3<f32>(-out), vec3<f32>(out));
-}
-
-fn mark_casts(bounds: Bounds, kind: u32, first: u32, last: u32) {
-    let room = grows[0].room;
-    let views = min(room.w, arrayLength(&drawn_views));
-    let kinds = BLADE_KINDS + room.z;
-    for (var view = 0u; view < views; view++) {
-        if drawn_views[view].owned == 0u || !drawn_view_sees(view, bounds.low, bounds.high) {
-            continue;
-        }
-        let at = 2u * (view * kinds + kind);
-        atomicMax(&cover_casts[at], ~first);
-        atomicMax(&cover_casts[at + 1u], last + 1u);
-    }
-}
-
 struct Candidate {
     rank: f32,
     seed: u32,
@@ -1007,7 +958,7 @@ fn grow_candidate(at: vec2<u32>, order: u32, candidate: u32, owner: vec3<u32>) {
         }
     }
     let root = vec3<f32>(run.grow.origin.x + rooted.x, run.grow.origin.y
-        + true_height(run.terrain, rooted, stand.level, stand.tile) + ROOT_LIFT,
+        + held_height(run.terrain, rooted, stand.level, stand.tile, run.quads) + ROOT_LIFT,
         run.grow.origin.z + rooted.y);
     let away = distance(root, eye);
     if away > outer || away < inner {
@@ -1098,8 +1049,8 @@ fn grow_candidate(at: vec2<u32>, order: u32, candidate: u32, owner: vec3<u32>) {
             card.cell = (spec.cells.x + COVER_CELL_ROWS * (roll % spec.cells.y))
                 | (hash(roll ^ 0x27d4eb2fu) & CARD_MIRRORED);
             if placed + leaf < run.grow.room.y {
-                mark_casts(card_bounds(card, shape), BLADE_KINDS + bin, placed + leaf,
-                    placed + leaf);
+                mark_casts(grows[0].room, card_bounds(card, shape), BLADE_KINDS + bin,
+                    placed + leaf, placed + leaf);
                 cards[bin * run.grow.room.y + placed + leaf] = card;
             }
         }
@@ -1129,12 +1080,12 @@ fn grow_candidate(at: vec2<u32>, order: u32, candidate: u32, owner: vec3<u32>) {
     }
     if flattened {
         let flat = atomicAdd(&counts.flat, 1u);
-        mark_casts(blade_bounds(blade, cover_shape()), 1u, flat, flat);
+        hold_casts(blade_bounds(blade, cover_shape()), 1u, flat, flat);
         blades[run.grow.room.x - 1u - flat] = blade;
         return;
     }
     let first = atomicAdd(&counts.whole, pieces);
-    mark_casts(blade_bounds(blade, cover_shape()), 0u, first, first + pieces - 1u);
+    hold_casts(blade_bounds(blade, cover_shape()), 0u, first, first + pieces - 1u);
     if pieces == 2u {
         blade.size |= BLADE_HALF;
         var upper = blade;
@@ -1303,29 +1254,65 @@ fn walk_next(walk: ptr<function, Walk>, planned: vec4<u32>, cell: vec2<u32>, lan
     return made;
 }
 
+@compute @workgroup_size(1)
+fn gather_cells() {
+    let rows = grows[0].cells.w;
+    let widest = atomicLoad(&grow_runs[3u * rows]);
+    var total = 0u;
+    for (var row = 0u; row < rows; row++) {
+        atomicStore(&grow_runs[3u * row + 1u], total);
+        total += atomicLoad(&grow_runs[3u * row]);
+    }
+    atomicStore(&grow_runs[3u * rows], min(total, widest));
+    atomicStore(&grow_runs[3u * rows + 1u], (total + widest - 1u) / widest);
+    atomicStore(&grow_runs[3u * rows + 2u], 1u);
+}
+
+fn take_spot(index: u32) {
+    var low = 0u;
+    var high = grows[0].cells.w - 1u;
+    while low < high {
+        let middle = (low + high + 1u) / 2u;
+        if atomicLoad(&grow_runs[3u * middle + 1u]) <= index {
+            low = middle;
+        } else {
+            high = middle - 1u;
+        }
+    }
+    let at = index - atomicLoad(&grow_runs[3u * low + 1u]);
+    if at >= atomicLoad(&grow_runs[3u * low]) {
+        cell_found = vec4<u32>(low, CELL_LEFT, 0u, 0u);
+        return;
+    }
+    let cells = grows[low].cells;
+    let held = grow_spots[cells.x + at];
+    cell_fine = held.fine;
+    cell_coarse = held.coarse.xyz;
+    cell_seat = held.seat;
+    atomicStore(&cell_low, held.under.x);
+    atomicStore(&cell_high, held.under.y);
+    atomicStore(&cell_named, held.under.z);
+    atomicStore(&cell_driest, held.lush.x);
+    atomicStore(&cell_lushest, held.lush.y);
+    atomicStore(&cell_driest_near, held.lush.z);
+    atomicStore(&cell_lushest_near, held.lush.w);
+    let local = held.under.w;
+    let cell = vec2<u32>(grows[low].grid.xy + vec2<i32>(vec2<u32>(local % cells.y,
+        local / cells.y)));
+    cell_found = vec4<u32>(low, held.coarse.w, cell);
+}
+
 @compute @workgroup_size(64)
 fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
+        @builtin(num_workgroups) groups: vec3<u32>,
         @builtin(local_invocation_index) lane: u32) {
     if lane == 0u {
-        let row = grow_row.x;
-        let cells = grows[row].cells;
-        let held = grow_spots[cells.x + group.x];
-        cell_fine = held.fine;
-        cell_coarse = held.coarse.xyz;
-        cell_seat = held.seat;
-        atomicStore(&cell_low, held.under.x);
-        atomicStore(&cell_high, held.under.y);
-        atomicStore(&cell_named, held.under.z);
-        atomicStore(&cell_driest, held.lush.x);
-        atomicStore(&cell_lushest, held.lush.y);
-        atomicStore(&cell_driest_near, held.lush.z);
-        atomicStore(&cell_lushest_near, held.lush.w);
-        let local = held.under.w;
-        let cell = vec2<u32>(grows[row].grid.xy + vec2<i32>(vec2<u32>(local % cells.y,
-            local / cells.y)));
-        cell_found = vec4<u32>(row, held.coarse.w, cell);
+        take_spot(group.y * groups.x + group.x);
     }
     let found = workgroupUniformLoad(&cell_found);
+    if found.y == CELL_LEFT {
+        return;
+    }
     let grow = grows[found.x];
     let scale = grow.tier.y;
     let side = u32(scale);
@@ -1364,6 +1351,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
     }
     let quads = cell_quads(grow, fine, cell);
     hold_sites(fine, quads, lane);
+    hold_heights(LevelTile(fine.x, fine.yz), quads, lane);
     var grounds = cell_samples(grow, corner, spacing, fine.w, fine.yz, ring);
     if planned.y != MIXED || side > TILE_QUADS
             || grounds.count.x * grounds.count.y > GROUND_HELD {
@@ -1441,6 +1429,8 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
     if lane_grew {
         count_grown();
     }
+    workgroupBarrier();
+    cast_cell(grows[0].room, lane);
 }
 
 fn cast_args(at: u32, vertices: u32, local: u32, locals: u32) -> DrawArgs {

@@ -46,6 +46,8 @@ gpu_struct! {
         pub record: u32,
         pub parts: u32,
         pub pad: [u32; 2],
+        pub middle: [f32; 4],
+        pub half: [f32; 4],
     }
 }
 
@@ -106,11 +108,24 @@ pub(crate) struct ScatterTerrain {
     pub(crate) hidden: bool,
 }
 
+#[gpu_bits]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct ChosenEntry {
+    pub(crate) meshes: bool,
+    pub(crate) fading: bool,
+    pub(crate) card: bool,
+    #[bits(5)]
+    pub(crate) level: u32,
+    #[bits(7)]
+    pub(crate) step: u32,
+}
+
 pub(crate) const TERRAIN_INDEX: u32 = 0x1ff;
 
 pub(crate) const GENERATED: &[&str] = &[
     WGSL,
     <ScatterTerrain as GpuBits>::WGSL,
+    <ChosenEntry as GpuBits>::WGSL,
     <CullFrame as engine_core::GpuStruct>::WGSL,
     <CullView as engine_core::GpuStruct>::WGSL,
     <PlacedValues as engine_core::GpuStruct>::WGSL,

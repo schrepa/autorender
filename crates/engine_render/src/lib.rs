@@ -850,6 +850,10 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.set().ran.contains(pass.0 as usize)
     }
 
+    pub fn warming(&self) -> u32 {
+        self.core.pipelines.warming.left()
+    }
+
     pub fn view_index(&self) -> u32 {
         self.core.uniforms.camera_slot
     }
@@ -1084,6 +1088,10 @@ impl<P: GpuPart> Encode<'_, P> {
         self.core.uniforms.camera_slot
     }
 
+    pub fn recorded(&mut self) -> Recorded {
+        std::mem::take(&mut self.core.tallies.worst)
+    }
+
     pub fn span(&mut self, name: &'static str) {
         self.core.close_encode_span(self.timer);
         self.core.timed.asked = Some(name);
@@ -1167,12 +1175,13 @@ impl<P: GpuPart> Encode<'_, P> {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Recorded {
+    #[default]
     Exact,
+    Refused,
     StandIn,
     Waiting,
-    Refused,
 }
 
 pub struct Draw<'e, P, S> {

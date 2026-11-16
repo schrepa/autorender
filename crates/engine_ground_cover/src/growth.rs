@@ -42,7 +42,6 @@ pub(crate) struct CoverPlan {
     pub(crate) capacity: u32,
     pub(crate) cards: u32,
     pub(crate) bins: u32,
-    pub(crate) views: u32,
     pub(crate) thin: f32,
     pub(crate) room: u64,
     pub(crate) shown: bool,
@@ -50,7 +49,7 @@ pub(crate) struct CoverPlan {
     reach: f32,
     tiers: u32,
     groups: u32,
-    widest: u32,
+    pub(crate) widest: u32,
 }
 
 #[derive(Resource, Default)]
@@ -253,7 +252,6 @@ pub(crate) fn plan_cover(
             0.0,
         ],
     };
-    plan.views = views.drawn().len() as u32;
     if !plan.grow(&cover, &table, (&tiles, &ground), (main, counts.demand), common) {
         counts.latest = Some(Cut::default());
         counts.cards = Some(Cut::default());
@@ -372,7 +370,7 @@ impl CoverPlan {
         let seen = common.seen.map_or(-1, |_| rows as i32);
         let mut spots = 0_u32;
         for (row, &[across, along, _]) in self.rows.iter_mut().zip(&self.cells) {
-            row.room = [capacity, cards, self.bins, self.views];
+            row.room = [capacity, cards, self.bins, 0];
             row.detail[3] = thin;
             row.grid[2] = seen;
             row.cells = [spots, across, 0, rows];
