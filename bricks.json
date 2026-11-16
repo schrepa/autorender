@@ -2445,7 +2445,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "082e2febf687ff787a9f5ff103ba5bee8a24b7a59befe63dbb2afd9b3c888487"
+      "version": "ae78b093d4d1a52517e2f18a7700138f87ff48e29a070ca7be6c9882028b646e"
     },
     {
       "dependencies": [
@@ -5769,5 +5769,22 @@
       ]
     }
   ],
-  "unmet": []
+  "unmet": [
+    {
+      "code": "read_before_write",
+      "got": {
+        "before": "depth",
+        "listed_writers": [
+          "engine_render",
+          "engine_water",
+          "engine_meshes",
+          "engine_impostors",
+          "engine_sky",
+          "engine_reflections",
+          "engine_terrain_shading"
+        ]
+      },
+      "path": "$.bricks.engine_terrain_shading.passes.terrain_leaf_lists.reads.color"
+    }
+  ]
 }
