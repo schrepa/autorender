@@ -157,7 +157,7 @@ impl GpuPart for CoverGpu {
                 (grow::COUNTS, Bind::Buffer(counts)),
                 (grow::CARDS, Bind::Buffer(cards)),
                 (grow::GROW_SPOTS, Bind::Buffer(spots)),
-                (grow::GROW_RUNS, Bind::Buffer(runs)),
+                (grow::GROW_STARTS, Bind::Buffer(runs)),
                 (casts::COVER_CASTS, Bind::Buffer(casts)),
             ],
         )?;

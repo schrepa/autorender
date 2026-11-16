@@ -51,6 +51,7 @@ struct DrawArgs {
 @group(1) @binding(4) var<storage, read_write> cards: array<CoverCard>;
 @group(1) @binding(5) var<storage, read_write> grow_spots: array<GrowSpot>;
 @group(1) @binding(6) var<storage, read_write> grow_runs: array<atomic<u32>>;
+@group(1) @binding(7) var<storage, read> grow_starts: array<u32>;
 
 const LATTICE_TURN: f32 = 0.618034;
 const WIND_SHOWN: f32 = 1.0e9;
@@ -1273,14 +1274,14 @@ fn take_spot(index: u32) {
     var high = grows[0].cells.w - 1u;
     while low < high {
         let middle = (low + high + 1u) / 2u;
-        if atomicLoad(&grow_runs[3u * middle + 1u]) <= index {
+        if grow_starts[3u * middle + 1u] <= index {
             low = middle;
         } else {
             high = middle - 1u;
         }
     }
-    let at = index - atomicLoad(&grow_runs[3u * low + 1u]);
-    if at >= atomicLoad(&grow_runs[3u * low]) {
+    let at = index - grow_starts[3u * low + 1u];
+    if at >= grow_starts[3u * low] {
         cell_found = vec4<u32>(low, CELL_LEFT, 0u, 0u);
         return;
     }
