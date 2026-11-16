@@ -438,17 +438,10 @@ fn own_writes(decl: &PipelineDecl, reached: &Reached, linker: &Linker) -> Vec<Ha
         .collect()
 }
 
-fn attachments(
-    pass: &PassDecl,
-    outputs: &[OutputDecl],
-    depth_writes: bool,
-    doubled: &[bool],
-) -> Vec<Handle> {
+fn attachments(pass: &PassDecl, outputs: &[OutputDecl], depth_writes: bool) -> Vec<Handle> {
     let mut found = Vec::new();
     for &(texture, _) in pass.colors.iter().chain(&pass.depths) {
-        if !doubled.get(texture as usize).copied().unwrap_or(false) {
-            found.push(Handle::whole(texture));
-        }
+        found.push(Handle::whole(texture));
     }
     if pass_layer(pass).is_some() {
         for (target, ..) in pass_set(outputs, pass) {
@@ -659,7 +652,7 @@ impl Machine {
                     }
                     let depth = depth_writes.get(index).copied().unwrap_or(true);
                     written.extend(
-                        attachments(pass, &outputs, depth, &doubled)
+                        attachments(pass, &outputs, depth)
                             .into_iter()
                             .map(|handle| (handle, Usage::Attached)),
                     );
@@ -685,12 +678,6 @@ impl Machine {
                     None if linker.is_core(path) => core_target(name).map(Handle::Target),
                     None => None,
                 };
-                let handle = handle.filter(|handle| match handle {
-                    Handle::Texture { texture, .. } => {
-                        !doubled.get(*texture as usize).copied().unwrap_or(false)
-                    }
-                    Handle::Buffer(_) | Handle::Target(_) => true,
-                });
                 handle.map(|handle| (handle, *ty))
             })
             .collect();
@@ -928,7 +915,13 @@ impl Machine {
             });
         }
         let view_copies = copies(&declared, &pipelines, &depth_writes);
-        let (graph, ids) = match graph_of(&declared, &outputs, &pipelines, &depth_writes) {
+        let (graph, ids) = match graph_of(
+            &declared,
+            &outputs,
+            &pipelines,
+            &depth_writes,
+            &doubled,
+        ) {
             Ok(built) => built,
             Err(error) => {
                 problems.push(error);
@@ -1148,6 +1141,7 @@ fn graph_of(
     outputs: &[OutputDecl],
     pipelines: &[BuiltPipeline],
     depth_writes: &[bool],
+    doubled: &[bool],
 ) -> Result<(StaticGraph, Ids), Error> {
     let mut resources = Vec::new();
     let mut ids = Ids {
@@ -1155,11 +1149,11 @@ fn graph_of(
         buffers: Vec::new(),
         targets: Vec::new(),
     };
-    for texture in &declared.textures {
+    for (texture, &doubled) in declared.textures.iter().zip(doubled) {
         ids.textures.push(ResourceId::new(resources.len()));
         resources.push(ResourceEntry {
             label: texture.label,
-            life: life(texture.lifetime),
+            life: if doubled { Life::Kept } else { life(texture.lifetime) },
             view: false,
         });
     }

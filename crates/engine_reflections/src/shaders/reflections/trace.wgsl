@@ -1,6 +1,7 @@
 import package::engine::geometry::vertex::octahedral_normal;
 import package::engine::post::frame::{depth_texture, drawn_uv, linear, post};
 import package::engine::screen_points::{depth_normal, world_at};
+import package::engine::transparency::cover;
 import package::face::sky::{environment_levels, environment_sample};
 import package::face::trace_depths::{TRACE_DEPTH_OPAQUE, TRACE_DEPTH_SOLID, TRACE_DEPTH_THIN};
 import package::face::trace_source::{trace_holds, trace_world};
@@ -14,6 +15,7 @@ import package::generated::pieces::reflections::piece;
 @group(1) @binding(5) var far_light: texture_2d<f32>;
 @group(1) @binding(6) var far_reach: texture_2d<f32>;
 @group(1) @binding(7) var far_traced: texture_2d<f32>;
+@group(1) @binding(8) var blended_mask: texture_2d<f32>;
 
 const REFLECTION_STEPS: u32 = 96u;
 const REFLECTION_THIN: f32 = 0.05;
@@ -773,23 +775,28 @@ fn answer_of(gathered: Gathered, beyond: vec3<f32>, answered: f32, lobe: Lobe, c
     return answer;
 }
 
+fn added(pixel: vec2<i32>, stored: vec4<f32>, traced: vec4<f32>) -> vec4<f32> {
+    let seen = (1.0 - cover(blended_mask, pixel)) * piece().applied.y;
+    return vec4<f32>((traced.rgb - stored.rgb * traced.a) * seen, 0.0);
+}
+
 @fragment
 fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(position.xy);
     let stored = textureLoad(reflected_target, pixel, 0);
     if stored.a < 0.01 {
-        return vec4<f32>(0.0);
+        discard;
     }
     let mirroring = mirroring_at(pixel);
     let reflectivity = stored.a * mirroring.kept;
     if reflectivity < 0.01 {
-        return vec4<f32>(0.0);
+        discard;
     }
     let limit = piece().surface;
     let rough = 1.0 - saturate((1.0 - mirroring.roughness.x / limit.x) / limit.y);
     let center = world_at(pixel);
     if center.w == 0.0 {
-        return vec4<f32>(0.0);
+        discard;
     }
     let p = center.xyz;
     let eye = post.eye.xyz;
@@ -801,7 +808,7 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     let start = screen_point(p);
     let seen = sight(p, lobe.mean, start.w, reach);
     if !(start.w > 0.0 && seen.end.w > 0.0) {
-        return vec4<f32>(0.0);
+        discard;
     }
     let origin = start.xyz;
     let ray = seen.end.xyz - origin;
@@ -811,7 +818,7 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     let mirror = mirror_of(plane, normal);
     if walk.met {
         if reflects_itself(pixel, p, plane, walk.point.xy) {
-            return vec4<f32>(0.0);
+            discard;
         }
         let travelled = distance(world_point(walk.point.xy, walk.point.z), p);
         let gathered = gather(lobe, p, plane, travelled, walk.point.xy, true, reach);
@@ -821,8 +828,9 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
         }
         let found = answer_of(gathered, beyond.light, beyond.cover, lobe, coarsest,
             reflectivity);
-        return vec4<f32>(found.light * reflectivity + stored.rgb * found.sky * mirroring.kept,
-            mirroring.kept * found.cover);
+        return added(pixel, stored, vec4<f32>(
+            found.light * reflectivity + stored.rgb * found.sky * mirroring.kept,
+            mirroring.kept * found.cover));
     }
     let sharp = 1.0 - rough;
     var light = vec3<f32>(0.0);
@@ -888,8 +896,8 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
         light += found.rgb * rough;
         cover += found.a * rough;
     }
-    return vec4<f32>(light * reflectivity + stored.rgb * sky * mirroring.kept,
-        mirroring.kept * cover);
+    return added(pixel, stored, vec4<f32>(light * reflectivity + stored.rgb * sky * mirroring.kept,
+        mirroring.kept * cover));
 }
 
 @fragment

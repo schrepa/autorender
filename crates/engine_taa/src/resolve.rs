@@ -12,7 +12,6 @@ const RESOLVED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 pub(crate) struct ResolveGpu {
     resolve: Pass<Self>,
-    resolved: Texture<Self>,
     history: Texture<Self>,
     view: Buffer<Self>,
     resolving: Pipeline<Self, Own>,
@@ -23,17 +22,15 @@ impl GpuPart for ResolveGpu {
     type Reads = ();
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        let resolved_texture = cx.view_texture("resolved", RESOLVED_FORMAT, Lifetime::Frame);
         let history = cx.view_texture("history", RESOLVED_FORMAT, Lifetime::Previous);
         let view = cx.view_buffer("taa_view", Lifetime::Kept);
-        cx.frame(resolved::RESOLVED_COLOR, Bind::Texture(resolved_texture))?;
+        cx.frame(resolved::RESOLVED_COLOR, Bind::Texture(history))?;
         let resolve_pass = cx
             .pass(RESOLVE_PASS)
             .at(AttachPoint::Post)
             .views(PassViews::Main)
             .label("engine/taa-resolve")
             .span("taa_resolve")
-            .color(resolved_texture, Access::Clear)
             .color(history, Access::Clear)
             .id();
         let resolving = cx.render_pipeline(
@@ -55,7 +52,6 @@ impl GpuPart for ResolveGpu {
         )?;
         Ok(Self {
             resolve: resolve_pass,
-            resolved: resolved_texture,
             history,
             view,
             resolving,
@@ -67,7 +63,7 @@ impl GpuPart for ResolveGpu {
 
     fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
         let Some(offset) = view.jitter else {
-            cx.release(self.resolved);
+            cx.release(self.history);
             return;
         };
         let display = view.size();
@@ -86,7 +82,6 @@ impl GpuPart for ResolveGpu {
             cx.allocate_buffer(self.view, size_of::<TaaView>().next_multiple_of(16) as u64);
         cx.write(self.view, 0, &[values]);
         self.whole = (whole.width, whole.height);
-        let (Allocation::Fresh | Allocation::Kept) = cx.allocate(self.resolved, whole, 1);
         cx.run(self.resolve);
     }
 

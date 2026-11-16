@@ -330,7 +330,7 @@ impl Run {
                     ),
                     1 => Resolved::Buffer(self.uniforms.pieces.clone()),
                     _ => match self.machine.frame_bound.get(&binding).cloned() {
-                        Some(bound) => self.resource(&bound, ty, true),
+                        Some(bound) => self.resource(&bound, ty, false),
                         None => self.core_frame(binding, ty),
                     },
                 };

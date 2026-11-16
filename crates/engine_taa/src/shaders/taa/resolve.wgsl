@@ -12,11 +12,6 @@ import package::generated::taa::TaaView;
 
 const STILL_PIXELS: f32 = 0.015625f;
 
-struct Resolved {
-    @location(0) color: vec4<f32>,
-    @location(1) kept: vec4<f32>,
-}
-
 struct Centre {
     screen: vec2<f32>,
     rendered: vec2<f32>,
@@ -112,7 +107,7 @@ fn centre(position: vec2<f32>) -> Centre {
 }
 
 @fragment
-fn fs_temporal_resolve(@builtin(position) position: vec4<f32>) -> Resolved {
+fn fs_temporal_resolve(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let tap = centre(position.xy);
     let screen = tap.screen;
     let rendered = tap.rendered;
@@ -162,6 +157,5 @@ fn fs_temporal_resolve(@builtin(position) position: vec4<f32>) -> Resolved {
         }
         color = mix(rgb(clamp(ycocg(past), low, high)), current, weight);
     }
-    let resolved = vec4<f32>(unweighed(max(color, vec3<f32>(0.0))), 1.0);
-    return Resolved(resolved, resolved);
+    return vec4<f32>(unweighed(max(color, vec3<f32>(0.0))), 1.0);
 }

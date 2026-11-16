@@ -7,7 +7,7 @@ use engine_render::{
 };
 
 use crate::gpu::{PYRAMID_GROUP, PyramidExtent};
-use crate::shaders::reflections::{blend, far, levels, nearest, trace};
+use crate::shaders::reflections::{far, levels, nearest, trace};
 use crate::{Reflections, ReflectionsPass};
 
 const SCENE_LEVELS: u32 = 6;
@@ -25,8 +25,6 @@ pub(crate) struct TraceGpu {
     spread: Pass<Self>,
     own: Pass<Self>,
     reflect: Pass<Self>,
-    blend: Pass<Self>,
-    reflected: Texture<Self>,
     levels: Texture<Self>,
     pyramid: Texture<Self>,
     cells: Texture<Self>,
@@ -41,7 +39,6 @@ pub(crate) struct TraceGpu {
     spreading: Vec<ComputePipeline<Self>>,
     owning: Pipeline<Self, Own>,
     tracing: Pipeline<Self, Own>,
-    blending: Pipeline<Self, Own>,
     count: u32,
     cell: u32,
     render: (u32, u32),
@@ -58,7 +55,6 @@ impl GpuPart for TraceGpu {
     const LABELS: &'static [&'static str] = &["engine/reflections-"];
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        let reflected = cx.view_texture("reflections", REFLECTION_FORMAT, Lifetime::Frame);
         let levels_texture = cx.view_texture("scene_levels", SCENE_FORMAT, Lifetime::Frame);
         let pyramid = cx.view_texture("nearest_depth", NEAREST_FORMAT, Lifetime::Frame);
         let cells = cx.view_texture("far_cells", CELL_FORMAT, Lifetime::Frame);
@@ -117,15 +113,6 @@ impl GpuPart for TraceGpu {
             .after(chain)
             .after(spread)
             .after(own)
-            .color(reflected, Access::Clear)
-            .id();
-        let blend = cx
-            .pass("reflections_blend")
-            .at(at)
-            .views(views)
-            .label("engine/post-reflections-blend")
-            .span(SPAN)
-            .after(reflect)
             .target(TargetName::COLOR)
             .id();
         let mut reductions = Vec::new();
@@ -213,7 +200,10 @@ impl GpuPart for TraceGpu {
         }
         let tracing = cx.render_pipeline(
             reflect,
-            &screen(trace::FS_REFLECTIONS),
+            &RenderPipeline {
+                blend: Some(ADDED_COLOR),
+                ..screen(trace::FS_REFLECTIONS)
+            },
             &[
                 (trace::NEAREST_DEPTH, Bind::Texture(pyramid)),
                 (trace::SCENE_LEVELS, Bind::Texture(levels_texture)),
@@ -222,18 +212,7 @@ impl GpuPart for TraceGpu {
                 (trace::FAR_LIGHT, Bind::Texture(far_light)),
                 (trace::FAR_REACH, Bind::Texture(far_reach)),
                 (trace::FAR_TRACED, Bind::Texture(traced)),
-            ],
-        )?;
-        let blending = cx.render_pipeline(
-            blend,
-            &RenderPipeline {
-                blend: Some(ADDED_COLOR),
-                ..screen(blend::FS_REFLECTIONS_BLEND)
-            },
-            &[
-                (blend::REFLECTIONS, Bind::Texture(reflected)),
-                (blend::REFLECTED_TARGET, Bind::Target(crate::REFLECTED.name)),
-                (blend::BLENDED_MASK, Bind::Target(TargetName::TRANSPARENCY)),
+                (trace::BLENDED_MASK, Bind::Target(TargetName::TRANSPARENCY)),
             ],
         )?;
         Ok(Self {
@@ -243,8 +222,6 @@ impl GpuPart for TraceGpu {
             spread,
             own,
             reflect,
-            blend,
-            reflected,
             levels: levels_texture,
             pyramid,
             cells,
@@ -259,7 +236,6 @@ impl GpuPart for TraceGpu {
             spreading,
             owning,
             tracing,
-            blending,
             count: 0,
             cell: 1,
             render: (0, 0),
@@ -288,7 +264,6 @@ impl GpuPart for TraceGpu {
             *drawn = level_region(view, level);
         }
         let whole = extent(display.x, display.y);
-        let (Allocation::Fresh | Allocation::Kept) = cx.allocate(self.reflected, whole, 1);
         cx.run(self.reflect);
         let coarse = (display.x.div_ceil(self.cell), display.y.div_ceil(self.cell));
         let (Allocation::Fresh | Allocation::Kept) =
@@ -334,7 +309,6 @@ impl GpuPart for TraceGpu {
                 cx.write(*buffer, 0, &[*written]);
             }
         }
-        cx.run(self.blend);
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
@@ -379,14 +353,9 @@ impl GpuPart for TraceGpu {
             draw.draw(&self.owning, TRIANGLE);
             return 0;
         }
-        let pipeline = if pass == self.reflect {
-            &self.tracing
-        } else {
-            &self.blending
-        };
         let mut draw = cx.render(Attach::Declared);
         draw.within(self.render);
-        draw.draw(pipeline, TRIANGLE);
+        draw.draw(&self.tracing, TRIANGLE);
         0
     }
 }
