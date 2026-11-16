@@ -266,12 +266,14 @@ impl GpuPart for SkinGpu {
         (skins, table): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
+        let live = table.records().len().max(1);
         self.table.clear();
         self.table
-            .resize(table.records().len().max(1), SkinSlot::default());
+            .resize(live.max(self.uploaded.len()), SkinSlot::default());
         for &(part, slot) in &skins.parts {
             if let Some(held) = table
                 .slot(part)
+                .filter(|&at| (at as usize) < live)
                 .and_then(|at| self.table.get_mut(at as usize))
             {
                 *held = slot;

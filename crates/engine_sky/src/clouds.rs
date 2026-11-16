@@ -595,6 +595,7 @@ pub(crate) struct CloudPass {
     stepped: Option<(CloudStep, bool, bool)>,
     dispatched: [bool; 2],
     run: CloudRun,
+    tile_bytes: u64,
 }
 
 fn composite_pipeline(
@@ -773,6 +774,7 @@ impl CloudPass {
             stepped: None,
             dispatched: [false; 2],
             run: CloudRun::default(),
+            tile_bytes: 0,
         })
     }
 
@@ -828,8 +830,10 @@ impl CloudPass {
             cx.write(self.view_clouds, 0, &[plan.view_clouds]);
             cx.write(self.composite_args, 0, &COMPOSITE_ARGS);
             let tiles = pixels.map(|side| side.div_ceil(CLOUD_GROUP));
+            let bytes = u64::from(tiles[0] * tiles[1]).max(1) * 4;
+            self.tile_bytes = self.tile_bytes.max(bytes);
             let (Allocation::Fresh | Allocation::Kept) =
-                cx.allocate_buffer(self.view_tiles, u64::from(tiles[0] * tiles[1]).max(1) * 4);
+                cx.allocate_buffer(self.view_tiles, self.tile_bytes);
             self.run.view = pixels;
             let (Allocation::Fresh | Allocation::Kept) = cx.allocate(self.view_texture, size, 1);
         }

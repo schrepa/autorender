@@ -125,8 +125,3 @@ impl FrameRegion {
         )
     }
 }
-
-pub fn draw_within(pass: &mut wgpu::RenderPass<'_>, (width, height): (u32, u32)) {
-    pass.set_viewport(0.0, 0.0, width as f32, height as f32, 0.0, 1.0);
-    pass.set_scissor_rect(0, 0, width, height);
-}
