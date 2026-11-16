@@ -19,6 +19,11 @@ struct Crossing {
     tangled: f32,
 }
 
+struct Lighted {
+    shaded: Shaded,
+    reflecting: Reflecting,
+}
+
 fn transmitted(point: SurfacePoint) -> vec3<f32> {
     let strength = point.transmission * piece().model.w;
     if strength <= 0.0 {
@@ -133,13 +138,11 @@ fn reflected(point: SurfacePoint) -> Reflecting {
     return result;
 }
 
-fn shade_surface(point: SurfacePoint, pixel: vec2<f32>, crossing: Crossing, local: vec3<f32>)
-        -> Shaded {
+fn sun_term(point: SurfacePoint, crossing: Crossing, inside: f32) -> vec3<f32> {
     let normal = point.normal;
     let view = point.view;
     let sun = sun_direction();
     let n_l = dot(normal, sun);
-    let specular = piece().model.z;
     var facing = 1.0;
     var back = 0.0;
     if any(crossing.face != vec3<f32>(0.0)) {
@@ -155,8 +158,9 @@ fn shade_surface(point: SurfacePoint, pixel: vec2<f32>, crossing: Crossing, loca
     let lambert = max(n_l, 0.0);
     let around = saturate(point.transmission);
     let wrapped = lambert + (max((n_l + around) / (1.0 + around), 0.0) - lambert) * facing;
+    let shine = piece().model.z * PI * point.direct_share.y;
     var highlight = vec3<f32>(0.0);
-    if n_l > 0.0 {
+    if n_l > 0.0 && shine != 0.0 {
         if sized_highlights() {
             highlight = sun_highlight(point, sun, n_l);
         } else {
@@ -166,8 +170,24 @@ fn shade_surface(point: SurfacePoint, pixel: vec2<f32>, crossing: Crossing, loca
                 * (distribution(n_h, point.alpha) * visibility(point.n_v, n_l, point.alpha) * n_l);
         }
     }
+    var sunlit = (point.diffuse_color * (wrapped * point.direct_share.x) + highlight * shine
+        + transmitted(point)) * sun_color();
+    if crossing.passes && back > 0.0 {
+        sunlit += crossing.light * sun_color() * back;
+    }
+    var visible = 1.0;
+    if any(sunlit != vec3<f32>(0.0)) && !point.direct_known {
+        visible = sun_visibility(surface_sun(point));
+    }
+    return sunlit * visible * (1.0 - point.direct_blocked) * inside;
+}
+
+fn shade_surface(point: SurfacePoint, pixel: vec2<f32>, crossing: Crossing, local: vec3<f32>)
+        -> Lighted {
+    let view = point.view;
     let light = environment_of(point);
-    let reflection = environment_specular(light) * environment_reflectance(point);
+    let reflectance = environment_reflectance(point);
+    let reflection = environment_specular(light) * reflectance;
     let grazing = 1.0 - max(dot(point.geometric, view), 0.0);
     let rim = (grazing * grazing) * (grazing * grazing) * piece().model.x
         * (1.0 - abs(point.geometric.y));
@@ -182,19 +202,15 @@ fn shade_surface(point: SurfacePoint, pixel: vec2<f32>, crossing: Crossing, loca
     let sky_light = (point.diffuse_color * (ambient_light(light) + light.horizon * rim)
         * inside.x * sky_seen + reflection * seen) * point.occlusion * open
         + point.diffuse_color * bounce * open * inside.x * bounce_seen;
-    var sunlit = (point.diffuse_color * (wrapped * point.direct_share.x)
-        + highlight * (specular * PI * point.direct_share.y) + transmitted(point)) * sun_color();
-    if crossing.passes && back > 0.0 {
-        sunlit += crossing.light * sun_color() * back;
+    var sun_light = vec3<f32>(0.0);
+    if point.direct_blocked != 1.0 && inside.y != 0.0 {
+        sun_light = sun_term(point, crossing, inside.y);
     }
-    var visible = 1.0;
-    if any(sunlit != vec3<f32>(0.0)) && point.direct_blocked != 1.0 && !point.direct_known
-        && inside.y != 0.0 {
-        visible = sun_visibility(surface_sun(point));
-    }
-    let sun_light = sunlit * visible * (1.0 - point.direct_blocked) * inside.y;
     let emitted = point.emissive * piece().model.y;
-    var shaded: Shaded;
-    shaded.linear = sky_light + sun_light + emitted + local;
-    return shaded;
+    var lighted: Lighted;
+    lighted.shaded.linear = sky_light + sun_light + emitted + local;
+    lighted.reflecting.across = point.roughness - point.smoother_across;
+    lighted.reflecting.light = reflection * (point.occlusion * open);
+    lighted.reflecting.share = saturate(luminance(reflectance));
+    return lighted;
 }

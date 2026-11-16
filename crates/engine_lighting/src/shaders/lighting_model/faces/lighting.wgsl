@@ -134,15 +134,53 @@ fn widened(point: SurfacePoint) -> SurfacePoint {
     return result;
 }
 
+struct ReflectingKey {
+    world: vec3<u32>,
+    normal: vec3<u32>,
+    normal_dx: vec3<u32>,
+    normal_dy: vec3<u32>,
+    view: vec3<u32>,
+    bend: vec3<u32>,
+    f0: vec3<u32>,
+    terms: vec4<u32>,
+    kind: u32,
+}
+
+var<private> held_reflecting: Reflecting;
+var<private> held_reflecting_key: ReflectingKey;
+var<private> reflecting_held: bool;
+
+fn reflecting_key(point: SurfacePoint) -> ReflectingKey {
+    return ReflectingKey(bitcast<vec3<u32>>(point.world), bitcast<vec3<u32>>(point.normal),
+        bitcast<vec3<u32>>(point.normal_dx), bitcast<vec3<u32>>(point.normal_dy),
+        bitcast<vec3<u32>>(point.view), bitcast<vec3<u32>>(point.ambient_bend),
+        bitcast<vec3<u32>>(point.f0), bitcast<vec4<u32>>(vec4<f32>(point.alpha,
+        point.smoother_across, point.occlusion, point.n_v)), point.kind);
+}
+
+fn same_reflecting_key(a: ReflectingKey, b: ReflectingKey) -> bool {
+    return all(a.world == b.world) && all(a.normal == b.normal)
+        && all(a.normal_dx == b.normal_dx) && all(a.normal_dy == b.normal_dy)
+        && all(a.view == b.view) && all(a.bend == b.bend) && all(a.f0 == b.f0)
+        && all(a.terms == b.terms) && a.kind == b.kind;
+}
+
 fn reflecting(point: SurfacePoint) -> Reflecting {
+    if reflecting_held && same_reflecting_key(reflecting_key(point), held_reflecting_key) {
+        return held_reflecting;
+    }
     return reflected(widened(point));
 }
 
 fn lit(surface: SurfacePoint, pixel: vec2<f32>) -> Shaded {
     let point = widened(surface);
     let crossing = crossing_of(point);
-    return shade_surface(point, pixel, crossing,
+    let lighted = shade_surface(point, pixel, crossing,
         local_light(point, pixel, crossing) + point.added_light);
+    held_reflecting = lighted.reflecting;
+    held_reflecting_key = reflecting_key(surface);
+    reflecting_held = true;
+    return lighted.shaded;
 }
 
 fn given_reflectance(point: SurfacePoint, reflectance: vec3<f32>, diffuse: vec3<f32>)
