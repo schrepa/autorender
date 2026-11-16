@@ -252,6 +252,7 @@ gpu_struct! {
         pub absorption: [f32; 4],
         pub sediment: [f32; 4],
         pub terrains: [u32; 4],
+        pub reach: [f32; 4],
         pub waves: WaterWavesLook,
         pub flow: WaterFlowLook,
         pub ripples: WaterRippleLook,

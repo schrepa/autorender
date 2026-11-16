@@ -82,6 +82,23 @@ impl Swell {
         height
     }
 
+    pub(crate) fn reach(&self) -> f32 {
+        let look = &self.look;
+        let gust = std::f32::consts::SQRT_2 / WATER_NOISE_REACH;
+        let lift = max(
+            gust * (look.gusts[0][3].abs() + look.gusts[1][3].abs()),
+            (look.calmest - 1.0).abs(),
+        );
+        self.rows
+            .iter()
+            .map(|WaterWaveRow { wave, .. }| {
+                let grouped = gust * (wave.group[0].abs() + wave.group[1].abs());
+                let open = max(1.0 + lift * wave.gusted.abs() + grouped, look.calmest.abs());
+                open * wave.steep.abs() / wave.number.abs()
+            })
+            .sum()
+    }
+
     pub(crate) fn errors(&self, still: &[u16], water: &TileWater, spacing: f32) -> Arc<[u16]> {
         let cells = ERROR_CELLS as usize;
         let mut calm: Vec<f32> = (0..cells * cells)

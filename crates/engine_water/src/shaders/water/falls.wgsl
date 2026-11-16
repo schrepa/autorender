@@ -7,6 +7,7 @@ import package::engine::view::{camera, detail_across, eye_world, stable_normaliz
 import package::face::ground_tiles::{detail_resolved, detail_span};
 import package::face::heightfield::{terrain_uniform, use_terrain};
 import package::face::lighting::{environment_brdf, given_reflectance, sun_visibility};
+import package::face::sky::{ambient, sky_average};
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
 import package::generated::water::{WATER_NOISE_REACH, WATER_NOISE_WRAP};
@@ -272,8 +273,9 @@ fn shade_fall(input: FallOutput, held: f32) -> FallShade {
     point = given_reflectance(derived(point), f0, albedo * scattering.y);
     point.n_v = max(abs(dot(shaped, view)), 1.0e-4);
     let reflectance = luminance(environment_brdf(f0, roughness, point.n_v));
+    let sky = sky_average(vec3<f32>(0.0, 1.0, 0.0)) * ambient();
     let body = own * (vec3<f32>(1.0) - clarity)
-        * water_scattered(view, sunlight, seen)
+        * water_scattered(view, sunlight, seen, sky)
         * ((1.0 - reflectance) * scattering.x * input.sky);
     point = set_added_light(point, body + glow);
     var shade: FallShade;
