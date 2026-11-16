@@ -25,6 +25,7 @@ use crate::shaders::scatter::{
     cards as card_shaders, casters as caster_shaders, draw as object_shaders, laid as laid_shaders,
     matched as matched_shaders,
 };
+use crate::snapping::{SnapHeld, SnapInputs};
 use crate::systems::{ScatterFeedback, ScatterState};
 
 const IDS: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
@@ -252,10 +253,8 @@ struct Held {
     ids_room: u64,
     cards_room: u64,
     uploaded: Option<u64>,
-    snapped: Option<u64>,
-    snap_again: bool,
-    slots_written: bool,
-    snapping: bool,
+    slot_sizes: [u64; 4],
+    snap: SnapHeld,
     prepared: bool,
     cards: bool,
     atlas: bool,
@@ -499,7 +498,7 @@ fn levels_reached(
 
 pub(crate) struct ScatterGpu {
     scatter: Pass<Self>,
-    snap_uniform: Buffer<Self>,
+    snap_list: Buffer<Self>,
     frame: Buffer<Self>,
     views: Buffer<Self>,
     records: Buffer<Self>,
@@ -682,26 +681,30 @@ impl ScatterGpu {
         }
     }
 
-    fn write_slot(&self, cx: &mut Prepare<'_, Self>, write: &SlotWrite, objects: u32) -> bool {
+    fn write_slot(
+        &self,
+        cx: &mut Prepare<'_, Self>,
+        write: &SlotWrite,
+        objects: u32,
+    ) -> Option<std::ops::Range<u32>> {
         match write {
             SlotWrite::Dead(slots) => {
                 let slots = slots.start.min(objects)..slots.end.min(objects);
-                if slots.is_empty() {
-                    return false;
+                if !slots.is_empty() {
+                    cx.write(
+                        self.records,
+                        u64::from(slots.start) * size_of::<PlacedRecord>() as u64,
+                        &vec![dead(); (slots.end - slots.start) as usize],
+                    );
                 }
-                cx.write(
-                    self.records,
-                    u64::from(slots.start) * size_of::<PlacedRecord>() as u64,
-                    &vec![dead(); (slots.end - slots.start) as usize],
-                );
-                true
+                None
             }
-            SlotWrite::Objects(start, (poses, colors, records, values)) => {
-                let count = objects.saturating_sub(*start).min(records.len() as u32) as usize;
+            SlotWrite::Objects(first, (poses, colors, records, values)) => {
+                let count = objects.saturating_sub(*first).min(records.len() as u32) as usize;
                 if count == 0 {
-                    return false;
+                    return None;
                 }
-                let start = u64::from(*start);
+                let start = u64::from(*first);
                 cx.write(
                     self.poses,
                     start * size_of::<PoseData>() as u64,
@@ -722,7 +725,7 @@ impl ScatterGpu {
                     start * size_of::<PlacedValues>() as u64,
                     &values[..count],
                 );
-                true
+                Some(*first..*first + count as u32)
             }
         }
     }
@@ -736,22 +739,34 @@ impl ScatterGpu {
             size_of::<PlacedValues>(),
         ];
         let mut fresh = false;
-        for ((buffer, bytes), stride) in buffers.into_iter().zip(state.slot_bytes).zip(strides) {
-            fresh |= cx.allocate_buffer(buffer, bytes.max(stride as u64)) == Allocation::Fresh;
+        let sizes = self.held.slot_sizes.iter_mut();
+        for (((buffer, bytes), stride), size) in
+            buffers.into_iter().zip(state.slot_bytes).zip(strides).zip(sizes)
+        {
+            let bytes = bytes.max(stride as u64);
+            let copied = *size > 0 && bytes > *size && bytes.is_power_of_two();
+            let allocation = if copied {
+                cx.grow_buffer(buffer, bytes)
+            } else {
+                cx.allocate_buffer(buffer, bytes)
+            };
+            fresh |= allocation == Allocation::Fresh;
+            *size = bytes;
         }
         let objects = state.objects;
         if fresh || self.held.uploaded != Some(state.slot_sequence) {
-            let mut wrote = false;
             let missed = self.held.uploaded.map(|seen| seen + 1) != Some(state.slot_sequence);
-            if fresh || missed || state.whole {
+            if fresh || missed {
                 for write in state.pool.whole(&state.groups) {
-                    wrote |= self.write_slot(cx, &write, objects);
+                    self.write_slot(cx, &write, objects);
                 }
+                self.held.snap.wrote_whole();
             }
             for write in &state.pool.writes {
-                wrote |= self.write_slot(cx, write, objects);
+                if let Some(slots) = self.write_slot(cx, write, objects) {
+                    self.held.snap.wrote(slots);
+                }
             }
-            self.held.slots_written |= wrote;
         }
         self.held.uploaded = Some(state.slot_sequence);
         self.held.objects = objects;
@@ -784,38 +799,39 @@ impl ScatterGpu {
     fn prepare_snap(
         &mut self,
         cx: &mut Prepare<'_, Self>,
-        state: &ScatterState,
+        (state, residency): (&ScatterState, &AssetResidency),
         (tiles, ground, baking): (
             &Res<'_, TerrainTiles>,
             &Res<'_, GroundTiles>,
             &Res<'_, engine_open_world_kit::ground::GroundBaking>,
         ),
     ) {
-        let held = &mut self.held;
-        held.snapping = false;
+        let objects = self.held.objects;
+        let snap = &mut self.held.snap;
+        snap.snapping = false;
         let terrains = tiles.terrains.len() as u32;
-        if cx.allocate_buffer(self.snap_uniform, size_of::<Snap>() as u64) == Allocation::Fresh {
-            held.snapped = None;
+        if cx.grow_buffer(self.snap_list, 2 * size_of::<Snap>() as u64) == Allocation::Fresh {
+            snap.snapped = None;
         }
         if ground.layers == 0 || terrains == 0 || state.resident == 0 {
             return;
         }
-        let changed = tiles.is_changed()
-            || ground.is_changed()
-            || baking.is_changed()
-            || held.slots_written
-            || held.snapped != Some(state.generation);
-        if !changed && !held.snap_again {
+        let inputs = SnapInputs {
+            tiles,
+            ground,
+            baking,
+            assets: (state.library, residency.revision()),
+            changed: tiles.is_changed() || ground.is_changed() || baking.is_changed(),
+        };
+        let planned = snap.plan(&inputs, (&state.pool, state.generation, objects));
+        if planned.is_empty() {
             return;
         }
-        held.snap_again = changed;
-        held.snapped = Some(state.generation);
-        held.slots_written = false;
-        let snap = Snap {
-            counts: [held.objects, terrains, 0, 0],
-        };
-        cx.write(self.snap_uniform, 0, &[snap]);
-        held.snapping = true;
+        let words = snap.words(&planned, terrains);
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.grow_buffer(self.snap_list, std::mem::size_of_val(words.as_slice()) as u64);
+        cx.write(self.snap_list, 0, &words);
+        snap.snapping = true;
     }
 
     fn prepare_cull(
@@ -1109,7 +1125,7 @@ impl ScatterGpu {
             )
         };
         let Some((cards, offset)) = self.card_source(view) else {
-            return draws;
+            return (draws, empty);
         };
         let record = DrawRecord::of(DrawKind::PlacedCard, 0);
         for (card, what) in [first, second].into_iter().flatten() {
@@ -1210,7 +1226,7 @@ impl GpuPart for ScatterGpu {
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use crate::shaders::scatter::{cull, faces, snap, values as placed};
-        let snap_uniform = cx.buffer("snap", Lifetime::Kept);
+        let snap_list = cx.buffer("snap", Lifetime::Kept);
         let frame = cx.buffer("frame", Lifetime::Kept);
         let views = cx.buffer("views", Lifetime::Kept);
         let records = cx.buffer("records", Lifetime::Kept);
@@ -1237,7 +1253,7 @@ impl GpuPart for ScatterGpu {
             scatter,
             snap::SNAP_SCATTER,
             &[
-                (snap::SNAP, Bind::Buffer(snap_uniform)),
+                (snap::SNAP, Bind::Buffer(snap_list)),
                 (snap::RECORDS, Bind::Buffer(records)),
                 (snap::POSES, Bind::Buffer(poses)),
                 (snap::VALUES, Bind::Buffer(values)),
@@ -1277,7 +1293,7 @@ impl GpuPart for ScatterGpu {
         let joined = Self::scenes(cx, &forms, (ids, draws, debug_records, cards, card_args));
         Ok(Self {
             scatter,
-            snap_uniform,
+            snap_list,
             frame,
             views,
             records,
@@ -1335,12 +1351,12 @@ impl GpuPart for ScatterGpu {
         self.list_draws(&state, &residency);
         self.write_placed_groups(cx, &state);
         self.canopy.prepare(cx, &canopy);
-        self.prepare_snap(cx, &state, (&tiles, &ground, &baking));
+        self.prepare_snap(cx, (&state, &residency), (&tiles, &ground, &baking));
         self.prepare_cull(cx, &state, (&*views, &*table));
         if self.held.prepared && self.held.objects > 0 {
             cx.run(self.scatter);
-        } else if self.held.snapping {
-            self.held.snapped = None;
+        } else if self.held.snap.snapping {
+            self.held.snap.snapped = None;
         }
     }
 
@@ -1374,10 +1390,12 @@ impl GpuPart for ScatterGpu {
             return 0;
         }
         if pass == self.scatter {
-            let groups = [self.held.objects.div_ceil(SCATTER_GROUP), 1, 1];
-            if self.held.snapping && cx.dispatch(&self.snapping, Count::Groups(groups)) == 0 {
-                self.held.snapped = None;
+            let snap = &mut self.held.snap;
+            let snapped = [snap.threads.div_ceil(SCATTER_GROUP), 1, 1];
+            if snap.snapping && cx.dispatch(&self.snapping, Count::Groups(snapped)) == 0 {
+                snap.snapped = None;
             }
+            let groups = [self.held.objects.div_ceil(SCATTER_GROUP), 1, 1];
             cx.dispatch(&self.culling, Count::Groups(groups));
         }
         0

@@ -12,6 +12,7 @@ mod jobs;
 mod layouts;
 mod pool;
 mod settings;
+mod snapping;
 mod systems;
 
 use engine_core::{

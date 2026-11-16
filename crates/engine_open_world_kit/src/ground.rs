@@ -257,6 +257,7 @@ pub struct GroundBakes {
 #[derive(Resource, Clone, Debug, Default, PartialEq, Eq)]
 pub struct GroundBaking {
     pub terrains: Vec<GroundBakes>,
+    pub shaded: Vec<(Entity, TileKey)>,
 }
 
 impl Slot for GroundBaking {

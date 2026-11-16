@@ -621,7 +621,7 @@ pub(crate) fn place_tiles(
     ),
     bakes: Res<Bakes>,
     mut atlas: ResMut<Atlas>,
-    mut ground: ResMut<GroundTiles>,
+    (mut ground, mut baking): (ResMut<GroundTiles>, ResMut<GroundBaking>),
 ) {
     let atlas = &mut *atlas;
     atlas.now = time.real_elapsed as f32;
@@ -665,6 +665,9 @@ pub(crate) fn place_tiles(
             palette,
             whole,
         });
+        if !baking.shaded.is_empty() {
+            baking.shaded.clear();
+        }
         return;
     }
     atlas.capacity = capacity;
@@ -726,6 +729,10 @@ pub(crate) fn place_tiles(
         })
         .collect();
     held.sort_unstable_by_key(|tile| (tile.terrain, tile.key.level, tile.key.x, tile.key.z));
+    let shaded = shaded_tiles(&tiles, &bakes, &held);
+    if baking.shaded != shaded {
+        baking.shaded = shaded;
+    }
     let published = GroundTiles {
         held,
         layers: atlas.capacity,
@@ -734,6 +741,24 @@ pub(crate) fn place_tiles(
         whole,
     };
     ground.set_if_neq(published);
+}
+
+fn shaded_tiles(tiles: &TerrainTiles, bakes: &Bakes, held: &[HeldTile]) -> Vec<(Entity, TileKey)> {
+    held.iter()
+        .filter(|tile| {
+            let Some(entry) = tiles.terrains.iter().find(|entry| entry.terrain == tile.terrain)
+            else {
+                return false;
+            };
+            listed_tile(&entry.tiles, tile.key).is_some_and(|face| {
+                bakes
+                    .of(tile.terrain)
+                    .and_then(|baked| baked.shading(face))
+                    .is_some()
+            })
+        })
+        .map(|tile| (tile.terrain, tile.key))
+        .collect()
 }
 
 pub(crate) fn listed_tile(tiles: &[TileFace], key: TileKey) -> Option<&TileFace> {
@@ -885,7 +910,9 @@ pub(crate) fn bake(
             })
         })
         .collect();
-    baking.set_if_neq(GroundBaking { terrains });
+    if baking.terrains != terrains {
+        baking.terrains = terrains;
+    }
 }
 
 fn macro_texels(settings: &TerrainShading) -> u32 {

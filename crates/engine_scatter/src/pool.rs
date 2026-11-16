@@ -6,7 +6,7 @@ use engine_core::Stamp;
 use engine_heightfield::tile::Placed;
 use engine_math::collections::HashMap;
 use engine_tiles::TileKey;
-use glam::Vec3;
+use glam::{Vec2, Vec3};
 
 use crate::groups::Groups;
 use engine_core::GpuBits;
@@ -31,6 +31,7 @@ pub(crate) struct Pooled {
     pub(crate) origin: Vec3,
     pub(crate) slots: Range<u32>,
     bounds: Option<(Vec3, Vec3)>,
+    stands: (Vec2, Vec2),
     groups: Vec<(u32, u32)>,
     far: u32,
 }
@@ -162,6 +163,7 @@ impl ScatterPool {
         }
         self.far += far;
         let reach = bounds(&objects.2);
+        let stands = stands(&objects.0);
         self.moved.extend(reach);
         self.writes.push(SlotWrite::Objects(slots.start, objects));
         self.tiles.insert(
@@ -172,10 +174,33 @@ impl ScatterPool {
                 origin,
                 slots,
                 bounds: reach,
+                stands,
                 groups,
                 far,
             },
         );
+    }
+
+    pub(crate) fn standing_in<'a>(
+        &'a self,
+        rects: &'a [(Entity, Vec2, Vec2)],
+    ) -> impl Iterator<Item = (Range<u32>, bool)> + 'a {
+        self.tiles
+            .iter()
+            .filter(|((terrain, _), pooled)| {
+                let (low, high) = pooled.stands;
+                rects.iter().any(|&(held, from, to)| {
+                    held == *terrain
+                        && low.x <= to.x
+                        && high.x >= from.x
+                        && low.y <= to.y
+                        && high.y >= from.y
+                })
+            })
+            .map(|(_, pooled)| {
+                let (low, high) = pooled.stands;
+                (pooled.slots.clone(), low.is_finite() && high.is_finite())
+            })
     }
 
     pub(crate) fn whole<'a>(&'a self, groups: &'a Groups) -> impl Iterator<Item = SlotWrite> + 'a {
@@ -299,6 +324,20 @@ fn bounds(records: &[PlacedRecord]) -> Option<(Vec3, Vec3)> {
             (center - reach, center + reach)
         })
         .reduce(|(low, high), (min, max)| (low.min(min), high.max(max)))
+}
+
+fn stands(poses: &[PoseData]) -> (Vec2, Vec2) {
+    let mut low = Vec2::INFINITY;
+    let mut high = Vec2::NEG_INFINITY;
+    for pose in poses {
+        let at = Vec2::new(pose[0][3], pose[2][3]);
+        if !at.is_finite() {
+            return (Vec2::NEG_INFINITY, Vec2::INFINITY);
+        }
+        low = low.min(at);
+        high = high.max(at);
+    }
+    (low, high)
 }
 
 fn stands_far(record: &PlacedRecord) -> bool {
