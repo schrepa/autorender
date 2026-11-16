@@ -5,8 +5,8 @@ import package::face::debug::debug_record_with_kind;
 import package::face::instances::{DEBUG_LEVEL_AT, LAST_LEVEL, instance_color, instance_pose,
     instance_previous_pose, last_entry, last_fading_entry, last_late_entry};
 import package::generated::writes::{DepthOutputs, depth_outputs};
-import package::impostors::faces::impostors::{CardSun, card_debug, card_depth, card_level,
-    card_lit, card_point, card_previous, card_sun_frames, posed_card};
+import package::impostors::faces::impostors::{CardSun, card_debug, card_depth, card_depth_point,
+    card_level, card_lit, card_point, card_previous, card_sun_frames, posed_card};
 import package::place::impostors::{CardDebugTargets, CardVertex, DEBUG_CARD, ImpostorRecord};
 
 @group(1) @binding(0) var<storage, read> card_records: array<ImpostorRecord>;
@@ -97,7 +97,7 @@ fn fs_card_depth(input: CardOutput) -> @builtin(frag_depth) f32 {
     let card = card_vertex(input);
     let fade = drawn_fade(input.slot_sun.x);
     let record = card_records[input.batch];
-    return card_depth(card, card_point(card, record, fade, card_level(card, record)),
+    return card_depth(card, card_depth_point(card, record, fade, card_level(card, record)),
         fade_word_on(fade));
 }
 

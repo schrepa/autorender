@@ -387,6 +387,16 @@ fn card_quad_any(here: bool) -> bool {
 
 fn card_point(input: CardVertex, record: ImpostorRecord, fade: u32, level: f32)
         -> SurfacePoint {
+    return card_point_of(input, record, fade, level, false);
+}
+
+fn card_depth_point(input: CardVertex, record: ImpostorRecord, fade: u32, level: f32)
+        -> SurfacePoint {
+    return card_point_of(input, record, fade, level, true);
+}
+
+fn card_point_of(input: CardVertex, record: ImpostorRecord, fade: u32, level: f32,
+        alone: bool) -> SurfacePoint {
     let weights = vec3<f32>(input.normal_x.w, input.normal_y.w,
         1.0 - input.normal_x.w - input.normal_y.w);
     let packed = input.material.w;
@@ -419,7 +429,7 @@ fn card_point(input: CardVertex, record: ImpostorRecord, fade: u32, level: f32)
     var texel_a = vec4<f32>(0.0);
     var texel_b = vec4<f32>(0.0);
     var texel_c = vec4<f32>(0.0);
-    if card_quad_any(!empty) {
+    if select(card_quad_any(!empty), !empty, alone) {
         var met = 0.0;
         met += weights.x * tap_met(a, impostor_geometry(probe_a, layer, level).w, covered.x);
         met += weights.y * tap_met(b, impostor_geometry(probe_b, layer, level).w, covered.y);
@@ -448,7 +458,8 @@ fn card_point(input: CardVertex, record: ImpostorRecord, fade: u32, level: f32)
     let slot_surface = unpack4x8unorm(input.material.z);
     let emits = any(record.emissive != vec3<f32>(0.0));
     var sampled = CardSample(vec3<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), 0.0);
-    if card_quad_any(!(empty || cut || faded)) {
+    let hidden = empty || cut || faded;
+    if select(card_quad_any(!hidden), !hidden, alone) {
         sampled = card_sample(sampled, a, uv_a, weights.x, texel_a.a, layer, level, emits);
         sampled = card_sample(sampled, b, uv_b, weights.y, texel_b.a, layer, level, emits);
         sampled = card_sample(sampled, c, uv_c, weights.z, texel_c.a, layer, level, emits);
@@ -488,7 +499,7 @@ fn card_point(input: CardVertex, record: ImpostorRecord, fade: u32, level: f32)
     point = set_occlusion(point, surface.z * unpremultiply);
     point = set_transmission(point, 0.0);
     var made = derived(point);
-    if empty || cut || faded {
+    if hidden {
         made.opacity = CARD_HIDDEN;
     }
     return made;
@@ -629,7 +640,8 @@ fn placed_card_lit(input: CardVertex, impostor: ImpostorRecord, point: SurfacePo
 
 fn placed_card_depth(input: CardVertex, impostor: ImpostorRecord) -> f32 {
     let level = card_level(input, impostor);
-    return card_depth(input, placed_card_point(input, impostor, level), false);
+    return card_depth(input, card_depth_point(input, impostor, faded_entry_fade(input.batch), level),
+        false);
 }
 
 fn placed_card_pixel(input: CardVertex) -> ViewPixel {
