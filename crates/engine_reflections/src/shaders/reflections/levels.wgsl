@@ -7,6 +7,7 @@ fn fs_levels_scene(@builtin(position) position: vec4<f32>) -> @location(0) vec4<
     let pixel = vec2<i32>(position.xy);
     if !(textureLoad(depth_texture, pixel, 0) > 0.0) {
         discard;
+        return vec4<f32>(0.0);
     }
     return vec4<f32>(textureLoad(scene, pixel, 0).rgb, 1.0);
 }
@@ -14,16 +15,13 @@ fn fs_levels_scene(@builtin(position) position: vec4<f32>) -> @location(0) vec4<
 @fragment
 fn fs_levels_first(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let center = position.xy * 2.0;
-    var colors: array<vec4<f32>, 5>;
-    for (var i = 0u; i < 5u; i++) {
-        var offset = vec2<f32>(0.0);
-        if i > 0u {
-            offset = vec2<f32>(f32(i & 1u) * 2.0 - 1.0, f32((i >> 1u) & 1u) * 2.0 - 1.0);
-        }
-        let at = drawn_uv(center + offset, post);
-        colors[i] = textureSampleLevel(source, linear, at, 0.0);
-    }
-    return (colors[0] * 4.0 + colors[4] + colors[3] + colors[1] + colors[2]) * 0.125;
+    return (first_tap(center, vec2<f32>(0.0)) * 4.0 + first_tap(center, vec2<f32>(-1.0, -1.0))
+        + first_tap(center, vec2<f32>(1.0, 1.0)) + first_tap(center, vec2<f32>(1.0, -1.0))
+        + first_tap(center, vec2<f32>(-1.0, 1.0))) * 0.125;
+}
+
+fn first_tap(center: vec2<f32>, offset: vec2<f32>) -> vec4<f32> {
+    return textureSampleLevel(source, linear, drawn_uv(center + offset, post), 0.0);
 }
 
 fn level_tap(at: vec2<f32>, drawn: vec2<f32>, size: vec2<f32>) -> vec4<f32> {

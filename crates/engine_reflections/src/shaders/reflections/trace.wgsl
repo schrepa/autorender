@@ -32,14 +32,18 @@ const WALK_FORWARD: u32 = 0u;
 const WALK_EDGE: u32 = 1u;
 const UNSEEN: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, -1.0);
 
-fn nearest_depth_at(cell: vec2<i32>, mip: i32) -> f32 {
+fn nearest_depth_in(cell: vec2<i32>, mip: i32, size: vec2<i32>) -> f32 {
     if mip == 0 {
-        let last = vec2<i32>(post.size.xy) - 1;
+        let last = size - 1;
         return textureLoad(depth_texture, clamp(cell, vec2<i32>(0), last), 0);
     }
     let span = 1 << u32(mip);
-    let last = max((vec2<i32>(post.size.xy) + span - 1) / span, vec2<i32>(1)) - 1;
+    let last = max((size + span - 1) >> vec2<u32>(u32(mip)), vec2<i32>(1)) - 1;
     return textureLoad(nearest_depth, clamp(cell, vec2<i32>(0), last), mip - 1).r;
+}
+
+fn nearest_depth_at(cell: vec2<i32>, mip: i32) -> f32 {
+    return nearest_depth_in(cell, mip, vec2<i32>(post.size.xy));
 }
 
 fn screen_point(world: vec3<f32>) -> vec4<f32> {
@@ -281,13 +285,18 @@ fn screen_walk(origin: vec3<f32>, ray: vec3<f32>, mode: u32, rung: i32, budget: 
     var behind = 0u;
     var asked = false;
     var candidate = vec3<f32>(0.0);
-    for (; walk.turns < budget; walk.turns += 1u) {
+    let screen = vec2<i32>(post.size.xy);
+    for (var turn = 0u; turn <= REFLECTION_STEPS; turn++) {
+        walk.turns = turn;
+        if turn >= budget {
+            break;
+        }
         if t > 1.0 || any(point.xy < vec2<f32>(0.0)) || any(point.xy >= post.size.xy) {
             break;
         }
         let size = exp2(f32(mip));
         let cell = floor(point.xy / size);
-        let surface = nearest_depth_at(vec2<i32>(cell), mip);
+        let surface = nearest_depth_in(vec2<i32>(cell), mip, screen);
         let edges = select(vec2<f32>(FLOAT_MAX), ((cell + ahead) * size + past - origin.xy) / rate,
             moving);
         let leave = min(edges.x, edges.y);
@@ -377,7 +386,7 @@ fn screen_walk(origin: vec3<f32>, ray: vec3<f32>, mode: u32, rung: i32, budget: 
         point = origin + ray * t;
     }
     if asked {
-        let surface = nearest_depth_at(vec2<i32>(floor(candidate.xy)), 0);
+        let surface = nearest_depth_in(vec2<i32>(floor(candidate.xy)), 0, screen);
         if trace_holds(world_point(candidate.xy, surface), world_point(candidate.xy, candidate.z)) {
             walk.met = true;
             walk.point = candidate;
@@ -585,7 +594,10 @@ fn far_spread(pixel: vec2<i32>, p: vec3<f32>, mirror: vec3<f32>, lobe: Lobe, rea
     var tap = lobe_tap(lobe, 0u, count);
     var earlier = tap;
     var later = second_tap(lobe, tap, count);
-    for (var index = 0u; index < count; index++) {
+    for (var index = 0u; index < REFLECTION_MOST_TAPS; index++) {
+        if index >= count {
+            break;
+        }
         if !(tap.weight <= 0.0) {
             total += tap.weight;
             let world = p + reflect(tap.toward, mirror) * s;
@@ -679,7 +691,10 @@ fn gather(lobe: Lobe, p: vec3<f32>, plane: vec3<f32>, travelled: f32, center: ve
     var tap = lobe_tap(lobe, 0u, count);
     var earlier = tap;
     var later = second_tap(lobe, tap, count);
-    for (var index = 0u; index < count; index++) {
+    for (var index = 0u; index < REFLECTION_MOST_TAPS; index++) {
+        if index >= count {
+            break;
+        }
         if !(tap.weight <= 0.0) {
             let before = max(index, 1u) - 1u;
             let after = min(index + 1u, count - 1u);
@@ -935,12 +950,15 @@ fn far_cell(position: vec4<f32>) -> vec4<u32> {
     let last = vec2<i32>(post.size.xy) - 1;
     let block = vec2<i32>(position.xy) * i32(side);
     let looks = min(side, 2u);
-    let apart = max(side / 2u, 1u);
+    let apart = max(side >> 1u, 1u);
     var pixel = min(block, last);
     var shine = 0.0;
-    for (var at = 0u; at < looks * looks; at++) {
+    for (var at = 0u; at < 4u; at++) {
+        if at >= looks * looks {
+            break;
+        }
         let cell = min(block
-            + vec2<i32>(vec2<u32>(at % looks, at / looks) * apart + side / 4u), last);
+            + vec2<i32>(vec2<u32>(at & 1u, at >> 1u) * apart + (side >> 2u)), last);
         let stored = textureLoad(reflected_target, cell, 0).a;
         if stored > shine {
             shine = stored;

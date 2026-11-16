@@ -12,7 +12,7 @@ fn far_blurred(source: texture_2d<f32>, base: vec2<i32>) -> vec4<f32> {
     let size = vec2<i32>(textureDimensions(source));
     var sum = vec4<f32>(0.0);
     for (var at = 0; at < FAR_ACROSS * FAR_ACROSS; at++) {
-        let aside = vec2<i32>(at % FAR_ACROSS, at / FAR_ACROSS);
+        let aside = vec2<i32>(at & (FAR_ACROSS - 1), at >> 2u);
         let cell = base + aside - 1;
         if any(cell < vec2<i32>(0)) || any(cell >= size) {
             continue;

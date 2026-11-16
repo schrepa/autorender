@@ -98,7 +98,10 @@ fn sun_depth_steps(p: vec3<f32>, weather: Weather, first: u32, last: u32) -> f32
     var depth = 0.0;
     var along = 0.0;
     var step = clouds.sampling.y;
-    for (var index = 0u; index < last; index++) {
+    for (var index = 0u; index < LIGHT_STEPS; index++) {
+        if index >= last {
+            break;
+        }
         if index >= first {
             let at = p + clouds.sun.xyz * (along + step * 0.5);
             let height = (at.y - clouds.layer.x) / (clouds.layer.y - clouds.layer.x);

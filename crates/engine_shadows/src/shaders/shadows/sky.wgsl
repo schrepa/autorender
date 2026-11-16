@@ -6,13 +6,13 @@ import package::generated::shadows::{SKY_DIRECTIONS, SkyViews};
 @group(0) @binding(0) var sky_sampler: sampler_comparison;
 @group(0) @binding(0) var<uniform> sky_views: SkyViews;
 
-fn sky_seen(layer: u32, p: vec3<f32>, normal: vec3<f32>, texel: f32) -> vec2<f32> {
-    let toward = sky_views.directions[layer];
+fn sky_seen(layer: u32, toward: vec4<f32>, clips: mat4x4<f32>, p: vec3<f32>,
+        normal: vec3<f32>, texel: f32) -> vec2<f32> {
     if toward.w <= 0.0 {
         return vec2<f32>(1.0, 0.0);
     }
     let lifted = p + normal * (1.5 * texel) + toward.xyz * texel;
-    let clip = sky_views.clips[layer] * vec4<f32>(lifted, 1.0);
+    let clip = clips * vec4<f32>(lifted, 1.0);
     let edge = max(abs(clip.x), abs(clip.y));
     let counted = toward.w * (1.0 - smoothstep(0.85, 1.0, edge)) * select(1.0, 0.0, clip.z >= 1.0);
     if counted <= 0.0 {
@@ -30,12 +30,19 @@ fn sky_occlusion(p: vec3<f32>, normal: vec3<f32>) -> f32 {
     }
     var sum = 0.0;
     var total = 0.0;
-    for (var direction = 0u; direction < count; direction++) {
-        let weight = max(dot(normal, sky_views.directions[direction].xyz), 0.0) + 0.05;
-        let near = sky_seen(direction, p, normal, sky_views.counts.y);
+    for (var direction = 0u; direction < SKY_DIRECTIONS; direction++) {
+        if direction >= count {
+            break;
+        }
+        let toward = sky_views.directions[direction];
+        let weight = max(dot(normal, toward.xyz), 0.0) + 0.05;
+        let near = sky_seen(direction, toward, sky_views.clips[direction], p, normal,
+            sky_views.counts.y);
         var seen = near.x;
         if near.y < 1.0 {
-            let far = sky_seen(direction + SKY_DIRECTIONS, p, normal, sky_views.counts.z);
+            let beyond = direction + SKY_DIRECTIONS;
+            let far = sky_seen(beyond, sky_views.directions[beyond], sky_views.clips[beyond], p,
+                normal, sky_views.counts.z);
             seen = mix(mix(1.0, far.x, far.y), near.x, near.y);
         }
         sum += weight * seen;

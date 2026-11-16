@@ -9,6 +9,7 @@ fn fs_transparency(@builtin(position) position: vec4<f32>) -> @location(0) vec4<
     let covered = cover(transparency_cover, pixel);
     if covered <= 0.0 {
         discard;
+        return vec4<f32>(0.0);
     }
     let held = min(pixel, vec2<i32>(textureDimensions(transparency_sum)) - 1);
     let sum = textureLoad(transparency_sum, held, 0);
