@@ -2,10 +2,11 @@ use std::ops::Range;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
-use engine_core::math::max;
+use engine_core::math::{max, min};
+use engine_core::presentation_bounds::ROUNDING_MARGIN;
 use engine_core::{
     AssetLibrary, DrawKind, Entry, Error, KindDecl, PassName, PassPurpose, PassViews, SlotSet, Var,
-    Writes,
+    ViewFacts, Views, Writes,
 };
 use engine_heightfield::Fall;
 use engine_open_world_kit::ground::{GroundTiles, Heightfield};
@@ -14,14 +15,14 @@ use engine_render::{
     FaceCull, Form, FormSide, GpuPart, Install, KindForm, Lifetime, OwnFragments, Pass, PerPass,
     Prepare, RoleFragments, Scene, SceneDraw, Shape, TargetName, Varyings, VertexLayout,
 };
-use glam::Vec3;
+use glam::{DVec2, DVec3, DVec4, UVec2, Vec3};
 
 use crate::Water;
 use crate::gpu::{FallVertex, WATER_LEAF_FIRST, WaterUniform};
 use crate::look::looked;
 use crate::settings::WaterFallSheets;
 use crate::state::WaterState;
-use crate::water_blocks::{BlocksGpu, INFO_FORMAT, SURFACE_FORMAT};
+use crate::water_blocks::{BlocksGpu, INFO_FORMAT, SURFACE_FORMAT, surface_reach};
 use crate::water_detail::DetailGpu;
 use crate::water_falls::{FALL_LAYOUT, sheets};
 use crate::waves::{Waves, WavesGpu};
@@ -120,7 +121,7 @@ pub(crate) struct WaterGpu {
     fall_indices: Buffer<Self>,
     count_leaves: Pass<Self>,
     counting: ComputePipeline<Self>,
-    surface: Form<Self>,
+    form: Form<Self>,
     falls: Form<Self>,
     leaves: PerPass<Leaves>,
     sheets: PerPass<Sheets>,
@@ -133,6 +134,7 @@ pub(crate) struct WaterGpu {
     indices: Vec<u32>,
     pattern_written: Option<Arc<[u32]>>,
     drawn: bool,
+    surface: bool,
 }
 
 impl GpuPart for WaterGpu {
@@ -143,6 +145,7 @@ impl GpuPart for WaterGpu {
         Res<'static, Heightfield>,
         Res<'static, AssetLibrary>,
         Res<'static, Waves>,
+        Res<'static, Views>,
     );
     const NAME: &'static str = "water";
 
@@ -208,7 +211,7 @@ impl GpuPart for WaterGpu {
             fall_indices,
             count_leaves,
             counting,
-            surface: surface_form,
+            form: surface_form,
             falls: fall_form,
             leaves,
             sheets,
@@ -221,6 +224,7 @@ impl GpuPart for WaterGpu {
             indices: Vec::new(),
             pattern_written: None,
             drawn: false,
+            surface: false,
         })
     }
 
@@ -229,7 +233,7 @@ impl GpuPart for WaterGpu {
         reads: SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        let (water, state, ground, heightfield, assets, waves) = reads;
+        let (water, state, ground, heightfield, assets, waves, views) = reads;
         let pattern = &heightfield.leaf_indices;
         let made = cx.allocate_buffer(
             self.leaf_pattern,
@@ -251,7 +255,8 @@ impl GpuPart for WaterGpu {
         self.blocks
             .prepare(&state.blocks, (&ground, &state.terrains), cx);
         self.detail.prepare(&water, &assets, cx);
-        let waves = self.waves.prepare(&waves, cx);
+        let swell = waves;
+        let waves = self.waves.prepare(&swell, cx);
         let watering = !state.watered.is_empty();
         self.prepare_falls(&state, &ground, &water.fall_sheets, cx);
         let terrains = ground.tables.len() as u32;
@@ -261,8 +266,13 @@ impl GpuPart for WaterGpu {
         );
         self.drawn = watering;
         if !self.drawn {
+            self.surface = false;
             return;
         }
+        let reach = surface_reach(&state, &ground, swell.swell().reach());
+        self.surface = views
+            .main()
+            .is_none_or(|view| surface_seen(view, state.blocks.areas(), reach));
         let [red, green, blue] = water.color;
         let sediment = water.sediment_color;
         let frame = WaterUniform {
@@ -270,12 +280,15 @@ impl GpuPart for WaterGpu {
             absorption: absorption(water.color, water.clarity),
             sediment: [sediment[0], sediment[1], sediment[2], water.sediment],
             terrains: [terrains, 0, 0, 0],
+            reach,
             waves,
             ..WaterUniform::default()
         };
         let look = looked(&water, self.detail.measured(), frame);
         cx.write(self.uniform, 0, &[look]);
-        cx.run(self.count_leaves);
+        if self.surface {
+            cx.run(self.count_leaves);
+        }
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
@@ -292,9 +305,9 @@ impl WaterGpu {
             return draw.skip("no water is drawn");
         }
         let mut draws = 0;
-        let leaves = draw.per_pass(&self.leaves);
-        if let (Some(pipeline), Some(leaves)) = (draw.form(&self.surface), leaves) {
-            draw.draw(
+        let leaves = draw.per_pass(&self.leaves).filter(|_| self.surface);
+        if let (Some(pipeline), Some(leaves)) = (draw.form(&self.form), leaves) {
+            draw.draw_timed(
                 &pipeline,
                 Shape::Indirect {
                     vertices: &[],
@@ -303,6 +316,7 @@ impl WaterGpu {
                     offset: 0,
                     material: None,
                 },
+                || "water surface".to_owned(),
             );
             draws += 1;
         }
@@ -312,7 +326,7 @@ impl WaterGpu {
                 if drawn.is_none() || run.is_empty() {
                     continue;
                 }
-                draw.draw(
+                draw.draw_timed(
                     &pipeline,
                     Shape::Buffers {
                         vertices: &[sheets.vertices],
@@ -320,6 +334,7 @@ impl WaterGpu {
                         elements: run.clone(),
                         instances: 0..1,
                     },
+                    || "water falls".to_owned(),
                 );
                 draws += 1;
             }
@@ -393,6 +408,50 @@ impl WaterGpu {
         let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.fall_indices, bytes);
         cx.write(self.fall_indices, 0, &self.indices);
     }
+}
+
+fn surface_seen(
+    view: &ViewFacts,
+    mut areas: impl Iterator<Item = [f32; 4]>,
+    [low, high, known, _]: [f32; 4],
+) -> bool {
+    if known == 0.0 {
+        return true;
+    }
+    let (low, high) = (
+        f64::from(min(low, view.eye.y)),
+        f64::from(max(high, view.eye.y)),
+    );
+    let size = view.render.min(view.size()).max(UVec2::ONE).as_dvec2();
+    let jitter = view
+        .jitter
+        .map_or(DVec2::ZERO, |offset| 2.0 * offset.as_dvec2().abs() / size);
+    let clip = view.view_projection.as_dmat4().transpose();
+    let planes = [
+        DVec4::new(1.0, 0.0, 0.0, 1.0 + jitter.x),
+        DVec4::new(-1.0, 0.0, 0.0, 1.0 + jitter.x),
+        DVec4::new(0.0, 1.0, 0.0, 1.0 + jitter.y),
+        DVec4::new(0.0, -1.0, 0.0, 1.0 + jitter.y),
+        DVec4::new(0.0, 0.0, -1.0, 1.0),
+        DVec4::new(0.0, 0.0, 1.0, 0.0),
+    ]
+    .map(|plane| clip * plane);
+    let margin = f64::from(ROUNDING_MARGIN);
+    areas.any(|area| {
+        if !area.iter().all(|edge| edge.is_finite()) {
+            return true;
+        }
+        let [x0, z0, x1, z1] = area.map(f64::from);
+        let slack = margin * (x0.abs().max(x1.abs()) + z0.abs().max(z1.abs()));
+        let corner_low = DVec3::new(x0 - slack, low, z0 - slack);
+        let corner_high = DVec3::new(x1 + slack, high, z1 + slack);
+        let extent = corner_low.abs().max(corner_high.abs());
+        planes.iter().all(|plane| {
+            let facing = plane.truncate();
+            let support = DVec3::select(facing.cmpge(DVec3::ZERO), corner_high, corner_low);
+            facing.dot(support) + plane.w >= -margin * (facing.abs().dot(extent) + plane.w.abs())
+        })
+    })
 }
 
 fn absorption(color: [f32; 3], clarity: f32) -> [f32; 4] {

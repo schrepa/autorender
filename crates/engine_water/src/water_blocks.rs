@@ -2,18 +2,20 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
+use engine_core::math::{max, min};
 use engine_core::{Cursor, DeviceLimits, FrameBudget, RecordKey, Since};
 use engine_heightfield::TileKey;
 use engine_heightfield::tile::PATCHES_PER_TILE;
 use engine_open_world_kit::ground::{GroundTiles, HeldTile};
 use engine_render::{Allocation, Buffer, Prepare, Texture, wgpu};
+use glam::{Vec2, Vec3};
 
 use crate::TileWater;
 use crate::gpu::{
     NO_WATER_BLOCK, WATER_BLOCKS_SIDE as SIDE, WATER_TILE_WORDS as TILE_WORDS, WATER_WAITING,
 };
 use crate::jobs::drawn::{DrawnWater, INFO_BYTES, PATCH_BYTES, SURFACE_BYTES};
-use crate::jobs::gpu::WATER_BLOCK as BLOCK;
+use crate::jobs::gpu::{NO_WATER_SURFACE, WATER_BLOCK as BLOCK};
 use crate::state::{HeldWater, WaterState, WaterTerrain};
 use crate::water::WaterGpu;
 
@@ -91,6 +93,117 @@ fn knows(terrains: &[WaterTerrain], terrain: Entity) -> bool {
     terrains.iter().any(|held| held.entity == terrain)
 }
 
+#[derive(Clone, Copy)]
+struct TileArea {
+    base: Vec3,
+    corner: Vec2,
+    size: f32,
+}
+
+fn tile_area(terrains: &[WaterTerrain], (terrain, key): Slot) -> Option<TileArea> {
+    let held = terrains.iter().find(|held| held.entity == terrain)?;
+    Some(TileArea {
+        base: held.origin,
+        corner: held.pyramid.tile_origin(key),
+        size: held.pyramid.tile_size(u32::from(key.level)),
+    })
+}
+
+#[derive(Clone, Copy)]
+struct Placed {
+    heights: [f32; 2],
+    area: [f32; 4],
+}
+
+const UNPLACED: Placed = Placed {
+    heights: [f32::NEG_INFINITY, f32::INFINITY],
+    area: [
+        f32::NEG_INFINITY,
+        f32::NEG_INFINITY,
+        f32::INFINITY,
+        f32::INFINITY,
+    ],
+};
+
+fn placed(area: Option<TileArea>, (px, pz): (usize, usize), surfaces: &[u8]) -> Placed {
+    let Some(area) = area else {
+        return UNPLACED;
+    };
+    let step = area.size / PATCHES_PER_TILE as f32;
+    let low = area.corner + Vec2::new(px as f32, pz as f32) * step;
+    let high = low + Vec2::splat(step);
+    Placed {
+        heights: texel_heights(surfaces, area.base.y),
+        area: [
+            area.base.x + low.x,
+            area.base.z + low.y,
+            area.base.x + high.x,
+            area.base.z + high.y,
+        ],
+    }
+}
+
+const NO_HEIGHTS: [f32; 2] = [f32::INFINITY, f32::NEG_INFINITY];
+
+fn widen([low, high]: [f32; 2], [from, to]: [f32; 2]) -> [f32; 2] {
+    [min(low, from), max(high, to)]
+}
+
+fn texel_heights(surfaces: &[u8], base: f32) -> [f32; 2] {
+    surfaces
+        .as_chunks::<{ SURFACE_BYTES as usize }>()
+        .0
+        .iter()
+        .map(|texel| {
+            let [water, ground] = bytemuck::cast::<_, [f32; 2]>(*texel);
+            let height = if water > NO_WATER_SURFACE * 0.5 {
+                water
+            } else {
+                ground
+            };
+            base + height
+        })
+        .fold(NO_HEIGHTS, |range, height| widen(range, [height, height]))
+}
+
+pub(crate) fn surface_reach(state: &WaterState, ground: &GroundTiles, swell: f32) -> [f32; 4] {
+    let Some(heights) = ground_heights(ground, &state.terrains, &state.watered) else {
+        return [0.0; 4];
+    };
+    let [low, high] = widen(heights, state.blocks.heights());
+    if !(low <= high && low.is_finite() && high.is_finite() && swell.is_finite()) {
+        return [0.0; 4];
+    }
+    [low - swell, high + swell, 1.0, 0.0]
+}
+
+fn ground_heights(
+    ground: &GroundTiles,
+    terrains: &[WaterTerrain],
+    watered: &[Entity],
+) -> Option<[f32; 2]> {
+    let mut range = NO_HEIGHTS;
+    for terrain in terrains
+        .iter()
+        .filter(|terrain| watered.contains(&terrain.entity))
+    {
+        let mut faces = terrain.held.iter().peekable();
+        for tile in ground
+            .held
+            .iter()
+            .filter(|tile| tile.terrain == terrain.entity)
+        {
+            while faces.next_if(|(key, _)| **key < tile.key).is_some() {}
+            let (_, held) = faces
+                .peek()
+                .filter(|(key, held)| **key == tile.key && held.face.stamp == tile.stamp)?;
+            let (low, high) = held.face.bounds;
+            range = widen(range, [terrain.origin.y + low.y, terrain.origin.y + high.y]);
+        }
+    }
+    Some(range)
+}
+
 fn ground_tile(ground: &GroundTiles, slot: Slot) -> Option<&HeldTile> {
     ground
         .held
@@ -161,11 +274,31 @@ pub(crate) struct Blocks {
     dirty: BTreeSet<Slot>,
     frames: u64,
     cursors: BTreeMap<Entity, Cursor>,
+    placed: Vec<Option<Placed>>,
 }
 
 impl Blocks {
     pub(crate) fn resident(&self) -> u32 {
         self.next - self.free.len() as u32
+    }
+
+    pub(crate) fn heights(&self) -> [f32; 2] {
+        self.placed
+            .iter()
+            .flatten()
+            .map(|placed| placed.heights)
+            .fold(NO_HEIGHTS, widen)
+    }
+
+    pub(crate) fn areas(&self) -> impl Iterator<Item = [f32; 4]> + '_ {
+        self.placed.iter().flatten().map(|placed| placed.area)
+    }
+
+    fn release(&mut self, block: u32) {
+        self.free.push(block);
+        if let Some(placed) = self.placed.get_mut(block as usize) {
+            *placed = None;
+        }
     }
 
     fn held(&self, slot: Slot) -> Option<&TileBlocks> {
@@ -277,7 +410,8 @@ impl Blocks {
             uploaded = true;
             changed = true;
             let before = self.tiles.remove(&slot).and_then(TileState::into_held);
-            let blocks = self.upload(water, before, max_layers);
+            let area = tile_area(terrains, slot);
+            let blocks = self.upload(water, before, (max_layers, area));
             self.tiles.insert(slot, TileState::Held(blocks));
             if let Some(tile) = ground_tile(ground, slot) {
                 self.layer_writes.push((tile.layer, slot));
@@ -292,7 +426,7 @@ impl Blocks {
             uploaded = true;
             changed = true;
             let since = self.tiles.remove(&slot).and_then(|state| state.since());
-            let blocks = self.upload(water, None, max_layers);
+            let blocks = self.upload(water, None, (max_layers, tile_area(terrains, slot)));
             self.count_wait(slot, since, &blocks.blocks);
             self.tiles.insert(slot, TileState::Held(blocks));
             if let Some(tile) = ground_tile(ground, slot) {
@@ -314,12 +448,9 @@ impl Blocks {
         let Some(gone) = self.tiles.remove(&slot).and_then(TileState::into_held) else {
             return false;
         };
-        self.free.extend(
-            gone.blocks
-                .iter()
-                .copied()
-                .filter(|&block| block != NO_WATER_BLOCK),
-        );
+        for &block in gone.blocks.iter().filter(|&&block| block != NO_WATER_BLOCK) {
+            self.release(block);
+        }
         if let Some(tile) = tile {
             self.layer_writes.push((tile.layer, slot));
             if knows(terrains, slot.0) {
@@ -371,7 +502,7 @@ impl Blocks {
         &mut self,
         tile: &HeldWater,
         before: Option<TileBlocks>,
-        max_layers: u32,
+        (max_layers, area): (u32, Option<TileArea>),
     ) -> TileBlocks {
         let patches = PATCHES_PER_TILE as usize;
         let stamp = tile.face.stamp;
@@ -392,7 +523,7 @@ impl Blocks {
                     .flatten();
                 let Some(drawn) = drawn else {
                     if blocks[index] != NO_WATER_BLOCK {
-                        self.free.push(blocks[index]);
+                        self.release(blocks[index]);
                         blocks[index] = NO_WATER_BLOCK;
                     }
                     continue;
@@ -413,6 +544,11 @@ impl Blocks {
                     block => block,
                 };
                 self.writes.push((block, Arc::clone(drawn), at));
+                let slot = block as usize;
+                if self.placed.len() <= slot {
+                    self.placed.resize(slot + 1, None);
+                }
+                self.placed[slot] = Some(placed(area, (px, pz), drawn.surfaces(at)));
                 blocks[index] = block;
                 self.uploads += 1;
             }

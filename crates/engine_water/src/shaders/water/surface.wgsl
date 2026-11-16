@@ -1,5 +1,6 @@
 import package::engine::color::luminance;
 import package::engine::math::{PI, pcg, unit};
+import package::engine::presentation::ROUNDING_MARGIN;
 import package::engine::shading::{Shaded, SurfacePoint};
 import package::engine::slots::{derived, set_added_light, set_direct_blocked, set_metalness,
     set_mirrored_rough, set_occlusion, set_roughness, set_smoother_across, set_transmission,
@@ -7,8 +8,9 @@ import package::engine::slots::{derived, set_added_light, set_direct_blocked, se
 import package::engine::surfaces::SURFACE_WATER;
 import package::engine::view::{camera, detail_across, detail_level, eye_world, stable_normalize,
     view_pixel};
-import package::face::heightfield::{SURFACE_LEAF_INDICES, surface_drawn, surface_leaf,
-    surface_leaf_count, surface_vertex, terrain_level_height, terrain_uniform,
+import package::face::ground_tiles::{GroundTerrain, NOT_RESIDENT, level_tiles, tile_layer};
+import package::face::heightfield::{SURFACE_LEAF_INDICES, TERRAIN_GRID, surface_drawn,
+    surface_leaf, surface_leaf_count, surface_vertex, terrain_level_height, terrain_uniform,
     terrain_view_uniform, use_terrain};
 import package::face::lighting::{distribution, environment_brdf, fresnel, given_reflectance,
     highlights, specular, sun_visibility, visibility};
@@ -17,7 +19,8 @@ import package::face::sky::{ambient, sky_average};
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
 import package::generated::writes::{Outputs, outputs};
-import package::generated::water::{FROUDE_GUARD_DEPTH, GRAVITY, NO_WATER_BLOCK, WATER_LEAF_FIRST};
+import package::generated::water::{FROUDE_GUARD_DEPTH, GRAVITY, NO_WATER_BLOCK, WATER_LEAF_FIRST,
+    WATER_TILE_PATCHES};
 import package::place::water::{WATER_HELD, WaterAt, WaterCell};
 import package::water::faces::water::{water_cell, water_read};
 import package::water::flow::{water_relief, water_stirring, water_stream};
@@ -137,12 +140,66 @@ fn water_relative(local: vec2<f32>, height: f32) -> vec3<f32> {
         local.y + from_eye.y) + terrain_view_uniform().eye_offset.xyz;
 }
 
+fn water_leaf_grounded(low: vec2<f32>, high: vec2<f32>) -> bool {
+    let terrain = terrain_uniform();
+    let ground = GroundTerrain(terrain.directory.x, terrain.directory.y, terrain.anchor.w);
+    let level = ground.levels - 1u;
+    let tiles = level_tiles(ground, level);
+    let span = ground.spacing * f32(1u << level) * f32(WATER_TILE_PATCHES * (TERRAIN_GRID - 1u));
+    let slack = ROUNDING_MARGIN * max(max(abs(low.x), abs(low.y)), max(abs(high.x), abs(high.y)));
+    let first = min(vec2<u32>(max(low - slack, vec2<f32>(0.0)) / span), tiles - vec2<u32>(1u));
+    let last = min(vec2<u32>(max(high + slack, vec2<f32>(0.0)) / span), tiles - vec2<u32>(1u));
+    for (var z = first.y; z <= last.y; z++) {
+        for (var x = first.x; x <= last.x; x++) {
+            if tile_layer(ground, level, vec2<u32>(x, z)) == NOT_RESIDENT {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+fn water_leaf_seen(corner_low: vec2<f32>, corner_high: vec2<f32>) -> bool {
+    if water.reach.z == 0.0 {
+        return true;
+    }
+    let terrain = terrain_uniform();
+    if terrain.directory.y == 0u || !water_leaf_grounded(corner_low, corner_high) {
+        return true;
+    }
+    let placed = abs(terrain.origin.xz) + abs(terrain.eye.xz) + max(abs(corner_low),
+        abs(corner_high));
+    let moved = vec2<f32>(abs(terrain.relief.x) * (1.0 + ROUNDING_MARGIN)
+        + ROUNDING_MARGIN * (placed.x + placed.y));
+    let low = water_relative(corner_low - moved, water.reach.x - terrain.origin.y);
+    let high = water_relative(corner_high + moved, water.reach.y - terrain.origin.y);
+    let clip = terrain_view_uniform().relative_view_projection;
+    return !(water_beyond(vec4<f32>(1.0, 0.0, 0.0, 1.0) * clip, low, high)
+        || water_beyond(vec4<f32>(-1.0, 0.0, 0.0, 1.0) * clip, low, high)
+        || water_beyond(vec4<f32>(0.0, 1.0, 0.0, 1.0) * clip, low, high)
+        || water_beyond(vec4<f32>(0.0, -1.0, 0.0, 1.0) * clip, low, high)
+        || water_beyond(vec4<f32>(0.0, 0.0, -1.0, 1.0) * clip, low, high)
+        || water_beyond(vec4<f32>(0.0, 0.0, 1.0, 0.0) * clip, low, high));
+}
+
+fn water_beyond(plane: vec4<f32>, low: vec3<f32>, high: vec3<f32>) -> bool {
+    let support = select(low, high, plane.xyz >= vec3<f32>(0.0));
+    let size = max(abs(low), abs(high));
+    let margin = ROUNDING_MARGIN * (dot(abs(plane.xyz), size) + abs(plane.w));
+    return dot(plane.xyz, support) + plane.w < -margin;
+}
+
 fn water_output(vertex: u32, instance: u32) -> WaterOutput {
     let leaf = water_leaf_terrain(instance);
     use_terrain(leaf.x);
     let triangle = surface_leaf(leaf.y);
-    let local = surface_vertex(triangle, vertex);
     var output: WaterOutput;
+    if !water_leaf_seen(min(min(triangle.a, triangle.b), triangle.c),
+            max(max(triangle.a, triangle.b), triangle.c)) {
+        output.clip_position = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        return output;
+    }
+    let local = surface_vertex(triangle, vertex);
     output.terrain = leaf.x;
     let ground = terrain_level_height(local, 0u);
     if !ground.found {
@@ -252,9 +309,8 @@ fn water_phase(cosine: f32) -> f32 {
     return (1.0 - g * g) / (denominator * sqrt(denominator)) / water.optics.phase_mean;
 }
 
-fn water_scattered(view: vec3<f32>, sunlight: vec3<f32>, plane: vec3<f32>) -> vec3<f32> {
-    let up = vec3<f32>(0.0, 1.0, 0.0);
-    let sky = sky_average(up) * ambient();
+fn water_scattered(view: vec3<f32>, sunlight: vec3<f32>, plane: vec3<f32>, sky: vec3<f32>)
+        -> vec3<f32> {
     let sun = sun_direction();
     let sun_in = dot(sun, plane);
     if sun_in <= 0.0 || dot(view, plane) <= 0.0 {
@@ -379,9 +435,9 @@ fn water_light(surface: WaterSurface, pixel: vec2<f32>) -> WaterLit {
                 * water_visibility(n_v, n_l, view * tangents, sun * tangents, widened) * n_l
                 * (specular() * PI));
     }
-    let body = surface.scatter * (vec3<f32>(1.0) - surface.transmit)
-        * water_scattered(view, sunk, surface.plane) * (1.0 - reflectance);
     let sky = sky_average(up) * ambient();
+    let body = surface.scatter * (vec3<f32>(1.0) - surface.transmit)
+        * water_scattered(view, sunk, surface.plane, sky) * (1.0 - reflectance);
     let around = sun_color() * (water.foam.around.x * saturate(sun.y))
         + sky * water.foam.around.y;
     let foam_n_l = dot(surface.normal, sun);
@@ -643,11 +699,11 @@ fn fs_water(input: WaterOutput) -> Outputs {
     if shallow {
         discard;
     }
-    use_terrain(input.terrain);
     let pixel = input.clip_position.xy;
     var at: WaterAt;
     var still = vec3<f32>(0.0);
     if water_quad_any(!shallow) {
+        use_terrain(input.terrain);
         at = water_drawn(input.relative);
         still = water_on_surface(input.relative, at);
     }
