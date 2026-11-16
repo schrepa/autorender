@@ -413,12 +413,15 @@ fn terrain_waterline(drawn: vec3<f32>, site: TerrainSite) -> f32 {
     let height = drawn.y - terrain.origin.y;
     let rise = -site.geometric.xz / max(site.geometric.y, 1.0e-3);
     let picked = detail_level(site.footprint.resolved, terrain.anchor.w, terrain.directory.y);
-    let cell = water_cell(local, picked.level);
-    var waterline = terrain_waterline_at(cell, height, rise);
-    if picked.blend > 0.0 && cell.level == picked.level {
-        let coarser = terrain_waterline_at(water_cell(local, picked.level + 1u), height, rise);
-        waterline.above = mix(waterline.above, coarser.above, picked.blend);
-        waterline.rise = mix(waterline.rise, coarser.rise, picked.blend);
+    var waterline: TerrainWaterline;
+    for (var walk = 0u; walk < 2u; walk++) {
+        let cell = water_cell(local, picked.level + walk);
+        let at = terrain_waterline_at(cell, height, rise);
+        waterline.above = select(at.above, mix(waterline.above, at.above, picked.blend), walk > 0u);
+        waterline.rise = select(at.rise, mix(waterline.rise, at.rise, picked.blend), walk > 0u);
+        if walk > 0u || !(picked.blend > 0.0 && cell.level == picked.level) {
+            break;
+        }
     }
     let half = 0.5 * length(waterline.rise) * sqrt(site.across * site.footprint.along);
     if half < 1.0e-3 * terrain_look.shore.x {
@@ -774,10 +777,6 @@ fn terrain_rough(material: u32, at: vec3<f32>) -> vec2<f32> {
         mix(terrain_rough_word(far + ROUGH_SUN), terrain_rough_word(far + ROUGH_SUN + 1u),
             f.x), f.y);
     return mix(first, second, f.z);
-}
-
-fn terrain_across(world: vec3<f32>) -> f32 {
-    return detail_across(world);
 }
 
 struct TerrainSlot {
@@ -1571,7 +1570,7 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
         relief = terrain_parallax(site, blend, rises, look.dither, dot(lift, geometric));
     }
     site.colors = terrain_macro_colors(site);
-    site.across = terrain_across(world);
+    site.across = detail_across(world);
     site.bedding = terrain_bedding(world, geometric);
     site.world = relief.world;
     return TerrainSeen(site, shading, blend, relief.beyond, relief.moved);

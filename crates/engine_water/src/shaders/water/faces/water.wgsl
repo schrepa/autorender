@@ -50,14 +50,21 @@ fn water_level(cell: WaterCell) -> WaterLevel {
         return level;
     }
     let origin = water_texel(cell.block, cell.first - vec2<u32>(1u));
-    let held = array<vec2<f32>, 16>(
-        water_held(origin, 0, 0), water_held(origin, 1, 0), water_held(origin, 2, 0),
-        water_held(origin, 3, 0), water_held(origin, 0, 1), water_held(origin, 1, 1),
-        water_held(origin, 2, 1), water_held(origin, 3, 1), water_held(origin, 0, 2),
-        water_held(origin, 1, 2), water_held(origin, 2, 2), water_held(origin, 3, 2),
-        water_held(origin, 0, 3), water_held(origin, 1, 3), water_held(origin, 2, 3),
-        water_held(origin, 3, 3));
-    return water_smooth(held, cell.within, terrain_uniform().anchor.w * f32(1u << cell.level));
+    let along = water_spline(cell.within.x);
+    let across = water_spline(cell.within.y);
+    let counted = water_height(water_held(origin, 1, 1));
+    var sum: WaterSmoothing;
+    var rows = mat4x4<f32>();
+    for (var row = 0u; row < 4u; row++) {
+        let at = i32(row);
+        sum = water_smooth_row(sum, water_held(origin, 0, at), water_held(origin, 1, at),
+            water_held(origin, 2, at), water_held(origin, 3, at), along, across.weights[row],
+            across.rates[row], counted);
+        rows = mat4x4<f32>(select(rows[0], sum.row, row == 0u),
+            select(rows[1], sum.row, row == 1u), select(rows[2], sum.row, row == 2u),
+            select(rows[3], sum.row, row == 3u));
+    }
+    return water_smoothed(sum, rows, counted, terrain_uniform().anchor.w * f32(1u << cell.level));
 }
 
 fn water_held(origin: vec3<i32>, column: i32, row: i32) -> vec2<f32> {
@@ -196,13 +203,18 @@ fn water_smooth(surfaces: array<vec2<f32>, 16>, within: vec2<f32>, spacing: f32)
     let third = sum.row;
     sum = water_smooth_row(sum, surfaces[12], surfaces[13], surfaces[14], surfaces[15], along,
         across.weights.w, across.rates.w, counted);
+    return water_smoothed(sum, mat4x4<f32>(first, second, third, sum.row), counted, spacing);
+}
+
+fn water_smoothed(sum: WaterSmoothing, rows: mat4x4<f32>, counted: f32, spacing: f32)
+        -> WaterLevel {
     var level: WaterLevel;
     level.surface = counted + sum.raised;
     level.slope = -sum.rises / spacing;
     level.depth = sum.depth;
     level.held = sum.held;
     level.held_rate = sum.wet_rates / spacing;
-    level.shares = mat4x4<f32>(first, second, third, sum.row);
+    level.shares = rows;
     if sum.total > 0.0 {
         level.shares = level.shares * (1.0 / sum.total);
     }
