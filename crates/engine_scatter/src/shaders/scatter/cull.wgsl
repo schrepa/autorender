@@ -121,7 +121,7 @@ fn chosen(view: u32, fading: u32, id: u32, record: Record, group: CullGroup, wan
     let near = mix(record.center, wanted.eye.xyz, min(record.radius / max(away, 1.0e-3), 1.0));
     var level = 0u;
     for (var l = 1u; l < group.camera; l++) {
-        if fits(detail, group.errors[l - 1u] * record.scale, near) {
+        if fits(detail, groups[record.group].errors[l - 1u] * record.scale, near) {
             level = l;
         }
     }
