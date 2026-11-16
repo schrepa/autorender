@@ -86,6 +86,7 @@ pub(crate) struct ScatterState {
     pub(crate) left_objects: u32,
     pub(crate) moved: Vec<(Entity, Reach)>,
     pub(crate) restyled: bool,
+    pub(crate) released: bool,
     pub(crate) impostors: Vec<ImpostorRecord>,
     pub(crate) impostor_generation: u64,
     pub(crate) impostor_live: u32,
@@ -117,6 +118,7 @@ impl Default for ScatterState {
             left_objects: 0,
             moved: Vec::new(),
             restyled: false,
+            released: false,
             impostors: Vec::new(),
             impostor_generation: 0,
             impostor_live: 0,
@@ -402,11 +404,16 @@ fn set_groups(state: &mut ScatterState) {
         ids += count * layout.levels.len() as u32;
     }
     held.ids_per_view = ids;
-    if grow(
+    let before = state.group_bytes;
+    if state.released {
+        state.group_bytes = GROUPS_FIRST;
+    }
+    grow(
         &mut state.group_bytes,
         (held.data.len() * size_of::<CullGroup>()) as u64,
         state.room,
-    ) {
+    );
+    if state.group_bytes != before {
         state.generation += 1;
     }
     state.resident = state
@@ -428,6 +435,10 @@ fn write_slots(state: &mut ScatterState) {
         .unwrap_or(0);
     let held = u64::from(end).min(room) as u32;
     state.left_objects = end - held;
+    state.released = state.refilled || held == 0;
+    if state.released {
+        state.slot_bytes = SLOT_FIRST;
+    }
     for (bytes, stride) in state.slot_bytes.iter_mut().zip(SLOT_STRIDES) {
         grow(bytes, u64::from(held) * stride, state.room);
     }
@@ -492,15 +503,6 @@ pub(crate) fn place_pool(
         * 16;
     state.group_data.first_instance = limits.indirect_first_instance;
     state.pool.settle();
-    let placing = tiles
-        .terrains
-        .iter()
-        .any(|terrain| !terrain.placement.is_empty());
-    if !placing && (state.slot_bytes != SLOT_FIRST || state.group_bytes != GROUPS_FIRST) {
-        state.slot_bytes = SLOT_FIRST;
-        state.group_bytes = GROUPS_FIRST;
-        state.generation += 1;
-    }
     let revisions = (library.revision(), residency.revision());
     state.library = revisions.0;
     let placed = tiles.is_changed() && !same_placing(&state.placing, &tiles);
@@ -510,6 +512,7 @@ pub(crate) fn place_pool(
     let derived =
         landed || placed || settings.is_changed() || state.revisions != Some(revisions);
     state.refilled = false;
+    state.released = false;
     if derived || foliage.is_changed() || maps.whole() != ground.whole {
         let (resolved, kept) = resolve_all(&tiles, (&settings, &state.authored), &library);
         state.kept = kept;
@@ -599,7 +602,7 @@ pub(crate) fn plan_cull(
             state.group_data.ids_per_view,
             group_count * LEVELS,
             u32::from(plan.cards),
-            state.objects,
+            state.resident,
         ],
         drawn: [0; 4],
     });

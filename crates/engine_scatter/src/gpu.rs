@@ -259,6 +259,8 @@ struct Held {
     left_out: bool,
     fading_view: usize,
     objects: u32,
+    card_stride: u32,
+    view_peak: u32,
     ids_room: u64,
     cards_room: u64,
     uploaded: Option<u64>,
@@ -920,18 +922,22 @@ impl ScatterGpu {
         held.atlas = plan.atlas;
         held.views.clear();
         held.views.extend(listed.iter().map(|(view, _)| *view));
-        if state.objects == 0 {
+        if state.released {
             held.sizes = Sizes::default();
         }
         let view_count = listed.len() as u32;
-        let lists = u64::from(view_count) + 3;
-        let ids = u64::from(state.group_data.ids_per_view) * lists * 4;
+        held.view_peak = held.view_peak.max(view_count);
+        let needs = |count: u32| {
+            let ids = u64::from(state.group_data.ids_per_view) * (u64::from(count) + 3) * 4;
+            (ids, u64::from(state.resident) * (u64::from(count) + 1) * 8)
+        };
+        let lists = u64::from(held.view_peak) + 3;
+        let (ids, cards) = needs(held.view_peak);
         let draws = u64::from(held.group_count * LEVELS) * lists * size_of::<DrawArgs>() as u64;
-        let cards = u64::from(state.objects) * (u64::from(view_count) + 1) * 8;
         let sizes = &mut held.sizes;
         grow(
             &mut sizes.views,
-            u64::from(view_count) * size_of::<CullView>() as u64,
+            u64::from(held.view_peak) * size_of::<CullView>() as u64,
             state.room,
         );
         grow(&mut sizes.ids, ids, state.room);
@@ -950,13 +956,14 @@ impl ScatterGpu {
             (self.cards, sizes.cards),
             (self.card_args, sizes.card_args),
             (self.frame, size_of::<CullFrame>() as u64),
-            (self.hidden.picks, u64::from(state.objects).max(4) * 4),
+            (self.hidden.picks, state.slot_bytes[1] / size_of::<SlotColor>() as u64 * 4),
         ];
         for (buffer, bytes) in rebuilt {
             let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, bytes);
         }
         held.ids_room = sizes.ids;
         held.cards_room = sizes.cards;
+        held.card_stride = state.resident;
         if !state.group_data.data.is_empty() {
             cx.write(self.groups, 0, &state.group_data.data);
         }
@@ -985,6 +992,7 @@ impl ScatterGpu {
         if !held.args.is_empty() {
             cx.write(self.draws, 0, &held.args);
         }
+        let (ids, cards) = needs(view_count);
         let left = ids > state.room || cards > state.room;
         if (left || held.left_out) && held.objects > 0 {
             let at = (u64::from(view_count) + 1) * 16;
@@ -1004,7 +1012,7 @@ impl ScatterGpu {
     }
 
     fn card_source(&self, view: usize) -> Option<(u64, u64)> {
-        let start = view as u64 * u64::from(self.held.objects) * 8;
+        let start = view as u64 * u64::from(self.held.card_stride) * 8;
         (start < self.held.cards_room).then_some((start, view as u64 * 16))
     }
 
