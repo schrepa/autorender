@@ -278,6 +278,17 @@ pub(crate) struct Pipelines {
     pub(crate) cache: Option<wgpu::PipelineCache>,
     pub(crate) warming: super::warming::Warming,
     pub(crate) settled: bool,
+    pub(crate) standing: Vec<(u64, u64)>,
+}
+
+impl Pipelines {
+    pub(crate) fn stood_in(&self) -> u32 {
+        let left = self
+            .standing
+            .iter()
+            .filter(|&&made| !self.making.waits(made) || self.warming.fed == Some(made));
+        u32::try_from(left.count()).unwrap_or(u32::MAX)
+    }
 }
 
 pub(crate) struct Planning {

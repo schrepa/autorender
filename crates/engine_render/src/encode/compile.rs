@@ -591,6 +591,8 @@ impl Run {
             .compiled
             .retain(|compiled| programs.contains(&compiled.program));
         pipelines.making.forget_refused();
+        let making = &pipelines.making;
+        pipelines.standing.retain(|&made| making.waits(made));
         self.pipelines = pipelines;
     }
 
@@ -785,10 +787,13 @@ impl Compiler<'_> {
 
     pub(crate) fn collect(&mut self, waited: Option<(u64, u64)>) {
         for finished in self.pipelines.making.take(waited) {
-            let warmed = self.pipelines.warming.fed == Some((finished.program, finished.key));
+            let done = (finished.program, finished.key);
+            let warmed = self.pipelines.warming.fed == Some(done);
             if warmed {
                 self.pipelines.warming.fed = None;
             }
+            let stood = self.pipelines.standing.contains(&done);
+            self.pipelines.standing.retain(|known| *known != done);
             let made = match finished.made {
                 Ok(made) => made,
                 Err(error) => {
@@ -813,13 +818,15 @@ impl Compiler<'_> {
             }
             if warmed {
                 self.pipelines.warming.made += 1;
+            } else {
+                crate::pipelines::count(finished.pass, 1);
+            }
+            if warmed || stood {
                 for built in &mut self.machine.pipelines {
                     if built.program_key == finished.program {
                         built.ready.clear();
                     }
                 }
-            } else {
-                crate::pipelines::count(finished.pass, 1);
             }
             if let Some((compiled, from_list)) = finished.noted {
                 note(self.pipelines, compiled, from_list);
@@ -936,6 +943,9 @@ impl Compiler<'_> {
                 .map(|(_, made)| (made, true));
         }
         if !refused {
+            if !self.pipelines.standing.contains(&made) {
+                self.pipelines.standing.push(made);
+            }
             let warm = Warm {
                 pipeline,
                 shape: Some(WarmShape {
@@ -1058,7 +1068,10 @@ impl Compiler<'_> {
                 fragment: keyed.fragment,
                 faces: keyed.faces,
             };
-            let mut job = self.render_job(pipeline, shape)?;
+            let Some(mut job) = self.render_job(pipeline, shape) else {
+                self.pipelines.standing.retain(|known| *known != made);
+                return None;
+            };
             let stages = std::mem::take(&mut job.stages);
             let noted = (!self.machine.makes_records(pipeline)).then(|| {
                 (
