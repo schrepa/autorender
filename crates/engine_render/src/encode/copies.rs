@@ -26,6 +26,18 @@ fn to_buffer_copy(
     );
 }
 
+fn drawn_extent(source: &wgpu::Texture, region: Option<(u32, u32)>) -> wgpu::Extent3d {
+    let whole = source.size();
+    match region {
+        Some((width, height)) if !source.format().is_depth_stencil_format() => wgpu::Extent3d {
+            width: width.clamp(1, whole.width),
+            height: height.clamp(1, whole.height),
+            ..whole
+        },
+        Some(_) | None => whole,
+    }
+}
+
 impl Run {
     pub(super) fn copied_texture(&self, copied: Copied) -> Option<wgpu::Texture> {
         match copied {
@@ -193,13 +205,14 @@ impl Run {
             .iter()
             .find(|(known, _)| *known == Target::Copy(layer, view))
             .map(|(_, made)| made.texture.clone());
+        let region = self.region;
         if let (Some(source), Some(target), Some(encoder)) =
             (source, target, self.recording.encoder())
         {
             encoder.copy_texture_to_texture(
                 source.as_image_copy(),
                 target.as_image_copy(),
-                source.size(),
+                drawn_extent(&source, region),
             );
         }
     }
