@@ -1167,6 +1167,14 @@ impl<P: GpuPart> Encode<'_, P> {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Recorded {
+    Exact,
+    StandIn,
+    Waiting,
+    Refused,
+}
+
 pub struct Draw<'e, P, S> {
     raw: RawDraw<'e>,
     view: Option<encode::OwnedDraw>,
@@ -1183,8 +1191,8 @@ fn streams<P, S>(streams: &[(DrawInput<P, S>, u64)]) -> encode::Streams {
 }
 
 impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
-    pub fn draw(&mut self, pipeline: &Pipeline<P, S>, shape: Shape<'_, P, S>) {
-        self.issue(pipeline, shape, None);
+    pub fn draw(&mut self, pipeline: &Pipeline<P, S>, shape: Shape<'_, P, S>) -> Recorded {
+        self.issue(pipeline, shape, None)
     }
 
     pub fn draw_timed<'l>(
@@ -1192,11 +1200,11 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
         pipeline: &Pipeline<P, S>,
         shape: Shape<'_, P, S>,
         label: impl FnOnce() -> String + 'l,
-    ) {
+    ) -> Recorded {
         let timer = self.raw.timer();
         let mut label = Some(label);
         let mut named = || label.take().map_or_else(String::new, |label| label());
-        self.issue(pipeline, shape, Some((timer, &mut named)));
+        self.issue(pipeline, shape, Some((timer, &mut named)))
     }
 
     fn issue(
@@ -1204,7 +1212,7 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
         pipeline: &Pipeline<P, S>,
         shape: Shape<'_, P, S>,
         timed: encode::TimedDraw<'_>,
-    ) {
+    ) -> Recorded {
         let shape = match shape {
             Shape::Pulled {
                 vertices,
@@ -1276,7 +1284,7 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
         let part = self.raw.part();
         let run = self.raw.run();
         let point = run.point;
-        run.draw(part, point, pipeline.0, shape, timed);
+        run.draw(part, point, pipeline.0, shape, timed)
     }
 }
 

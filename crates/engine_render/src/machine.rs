@@ -98,6 +98,7 @@ pub(crate) struct Ready {
     pub(crate) bits: Option<crate::surface::MaterialVariant>,
     pub(crate) key: u64,
     pub(crate) made: wgpu::RenderPipeline,
+    pub(crate) exact: bool,
 }
 
 pub(crate) struct BuiltPipeline {

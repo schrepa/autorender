@@ -637,9 +637,11 @@ impl Run {
                 .split()
                 .0
                 .standing_in(pipeline, targets, shown, variants),
-            None => self.compile(pipeline, targets, shown, variant),
+            None => self
+                .compile(pipeline, targets, shown, variant)
+                .map(|(key, made)| (key, made, true)),
         };
-        let Some((key, made)) = found else {
+        let Some((key, made, exact)) = found else {
             return Err(if self.pipelines.making.program_waits(program) {
                 DropReason::PipelineCompiling
             } else {
@@ -657,6 +659,7 @@ impl Run {
             bits,
             key,
             made,
+            exact,
         });
         Ok(built.ready.len() - 1)
     }
@@ -849,19 +852,21 @@ impl Compiler<'_> {
             crate::surface::MaterialVariant,
             crate::surface::MaterialVariant,
         ),
-    ) -> Option<(u64, wgpu::RenderPipeline)> {
+    ) -> Option<(u64, wgpu::RenderPipeline, bool)> {
         self.collect(None);
         let keyed = self.keyed(pipeline, targets, shown, Some(specialized))?;
         let made = (keyed.program, keyed.key);
         if let Some(found) = self.made(pipeline, made) {
-            return Some((keyed.key, found));
+            return Some((keyed.key, found, true));
         }
         if self.pipelines.making.refused(made) {
             return None;
         }
         let standing = self.keyed(pipeline, targets, shown, Some(dynamic))?;
         if standing.key == keyed.key {
-            return self.compile_with(pipeline, targets, shown, Some(specialized), Asked::Drawn);
+            return self
+                .compile_with(pipeline, targets, shown, Some(specialized), Asked::Drawn)
+                .map(|(key, made)| (key, made, true));
         }
         let warm = Warm {
             pipeline,
@@ -880,6 +885,7 @@ impl Compiler<'_> {
             warming.queue.push_front(warm);
         }
         self.compile_with(pipeline, targets, shown, Some(dynamic), Asked::Drawn)
+            .map(|(key, made)| (key, made, false))
     }
 
     fn keyed(
