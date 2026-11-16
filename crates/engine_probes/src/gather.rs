@@ -22,10 +22,6 @@ pub(crate) struct ProbeList {
     nearest: Nearest,
 }
 
-pub(crate) fn probes_placed(probes: Query<(), With<ReflectionProbe>>) -> bool {
-    !probes.is_empty()
-}
-
 pub(crate) fn gather_probes(
     settings: Res<ReflectionProbeSettings>,
     views: Res<Views>,

@@ -135,11 +135,8 @@ impl Brick for ReflectionProbesBrick {
                     .schema(component::schema),
                 None,
             )
-            .within(gather::probes_placed, |bricks| {
-                bricks
-                    .join::<Ambient>((), Some(shaders::probes::ambient::MODULE))
-                    .join::<Interiors>((), Some(shaders::probes::interior::MODULE));
-            })
+            .join::<Ambient>((), Some(shaders::probes::ambient::MODULE))
+            .join::<Interiors>((), Some(shaders::probes::interior::MODULE))
             .fill::<ProbeCaptures>(None)
             .systems(
                 Schedule::ViewSync,
