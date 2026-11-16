@@ -585,12 +585,12 @@ impl GpuPart for TerrainGpu {
             (PassRole::Depth, false) => Joined::Ground {
                 args: cx.args_input(pass.scene, h.args),
                 meshlet: cx.draw_input(pass.scene, h.meshlet),
-                lists: cx.draw_input(pass.scene, h.counters),
+                lists: cx.args_input(pass.scene, h.counters),
             },
             (PassRole::Lit | PassRole::Shown, _) => Joined::Seen {
                 args: cx.args_input(pass.scene, h.args),
                 meshlet: cx.draw_input(pass.scene, h.meshlet),
-                lists: cx.draw_input(pass.scene, h.counters),
+                lists: cx.args_input(pass.scene, h.counters),
             },
             (PassRole::Blended, _) => Joined::Elsewhere(NEVER_BLENDS),
         });
@@ -598,7 +598,7 @@ impl GpuPart for TerrainGpu {
             args: cx.args_input(ids_pass, h.args),
             meshlet: cx.draw_input(ids_pass, h.meshlet),
             subdivision_args: cx.draw_input(tree.subdivide, h.args),
-            lists: cx.draw_input(ids_pass, h.counters),
+            lists: cx.args_input(ids_pass, h.counters),
             listed: [
                 cx.draw_input(tree.list_drawn, h.args),
                 cx.draw_input(tree.list_seen, h.args),

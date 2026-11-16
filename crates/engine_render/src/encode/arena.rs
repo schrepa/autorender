@@ -8,13 +8,17 @@ pub(crate) struct Arena {
 }
 
 impl Arena {
-    pub(crate) fn args(&self, buffer: u32, offset: u64) -> Option<(&wgpu::Buffer, u64)> {
+    pub(crate) fn args(
+        &self,
+        buffer: u32,
+        (offset, size): (u64, u64),
+    ) -> Option<(&wgpu::Buffer, u64)> {
         if self.owed.contains(&buffer) {
             return None;
         }
         let (held, _) = self.held.as_ref()?;
-        let (at, _) = (*self.slices.get(buffer as usize)?)?;
-        Some((held, at + offset))
+        let (at, laid) = (*self.slices.get(buffer as usize)?)?;
+        (offset + size <= laid).then_some((held, at + offset))
     }
 
     pub(crate) fn owed_after(&mut self, buffer: u32) {
@@ -96,7 +100,7 @@ impl Run {
             let held = self.tables.buffers.get(at).and_then(Option::as_ref);
             let slice = self.arena.slices.get(at).copied().flatten();
             let copied = match (held, slice) {
-                (Some((made, bytes)), Some((_, laid))) if *bytes == laid => Some(made.clone()),
+                (Some((made, bytes)), Some((_, laid))) if *bytes >= laid => Some(made.clone()),
                 (_, _) => None,
             };
             let (Some(made), Some((into, laid)), Some(encoder)) =
