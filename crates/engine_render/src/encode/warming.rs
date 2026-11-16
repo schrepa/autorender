@@ -164,6 +164,8 @@ impl Run {
         warming.queue.clear();
         warming.passes = passes;
         warming.running.clear();
+        let making = &self.pipelines.making;
+        self.pipelines.standing.retain(|&made| making.waits(made));
         for built in &mut self.machine.pipelines {
             built.ready.clear();
         }
