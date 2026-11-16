@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
-use engine_core::{AttachPoint, Entry, Error, ErrorCode};
+use engine_core::{AttachPoint, Entry, Error, ErrorCode, PassViews};
 use wgpu::ShaderStages;
 
 use crate::frame_group::{Class, FrameVariable, Reach};
@@ -158,7 +158,7 @@ pub(crate) struct Machine {
     pub(crate) switches: Vec<(u32, engine_registry::GateId)>,
     pub(crate) view_copies: Vec<(AttachPoint, ViewTarget)>,
     pub(crate) doubled: Vec<bool>,
-    pub(crate) depth_writes: Vec<bool>,
+    pub(crate) direct_depth: Vec<bool>,
     pub(crate) binding_bytes: BTreeMap<(Option<usize>, u32, u32), u64>,
     pub(crate) linker: Linker,
     pub(crate) over_limit: Vec<(u32, Error)>,
@@ -341,8 +341,41 @@ fn depth_writes_of(declared: &Declared) -> Vec<bool> {
         .collect()
 }
 
-pub(crate) fn reads_depth_direct(pass: &PassDecl, depth_writes: bool) -> bool {
-    !shared(pass) && pass_layer(pass).is_some() && !depth_writes
+fn depth_direct_of(declared: &Declared, depth_writes: &[bool]) -> Vec<bool> {
+    let writes = |index: usize| depth_writes.get(index).copied().unwrap_or(true);
+    let passes = &declared.passes;
+    passes
+        .iter()
+        .enumerate()
+        .map(|(index, pass)| {
+            let Some(layer) = pass_layer(pass) else {
+                return false;
+            };
+            if writes(index) {
+                return false;
+            }
+            if !shared(pass) {
+                return true;
+            }
+            let mut writers = passes
+                .iter()
+                .enumerate()
+                .filter(|&(other, _)| other != index && writes(other))
+                .map(|(_, other)| other);
+            writers
+                .clone()
+                .all(|other| pass_layer(other) != Some(layer))
+                && writers.any(|other| {
+                    shared(other)
+                        && pass_layer(other).is_some_and(|at| at < layer)
+                        && (other.views == PassViews::Every || other.views == pass.views)
+                })
+        })
+        .collect()
+}
+
+pub(crate) fn reads_depth_direct(direct: &[bool], pass: usize) -> bool {
+    direct.get(pass).copied().unwrap_or(false)
 }
 
 const EVERY: [u32; 2] = [0, u32::MAX];
@@ -914,14 +947,10 @@ impl Machine {
                 skipped,
             });
         }
-        let view_copies = copies(&declared, &pipelines, &depth_writes);
-        let (graph, ids) = match graph_of(
-            &declared,
-            &outputs,
-            &pipelines,
-            &depth_writes,
-            &doubled,
-        ) {
+        let direct_depth = depth_direct_of(&declared, &depth_writes);
+        let view_copies = copies(&declared, &pipelines, &direct_depth);
+        let (graph, ids) = match graph_of(&declared, &outputs, &pipelines, &direct_depth, &doubled)
+        {
             Ok(built) => built,
             Err(error) => {
                 problems.push(error);
@@ -958,7 +987,7 @@ impl Machine {
             switches,
             view_copies,
             doubled,
-            depth_writes,
+            direct_depth,
             binding_bytes,
             linker,
             over_limit,
@@ -1140,7 +1169,7 @@ fn graph_of(
     declared: &Declared,
     outputs: &[OutputDecl],
     pipelines: &[BuiltPipeline],
-    depth_writes: &[bool],
+    direct: &[bool],
     doubled: &[bool],
 ) -> Result<(StaticGraph, Ids), Error> {
     let mut resources = Vec::new();
@@ -1182,7 +1211,7 @@ fn graph_of(
         );
     }
     target(Target::Canvas, "canvas", false, Life::Output, &mut ids);
-    let copied = copies(declared, pipelines, depth_writes);
+    let copied = copies(declared, pipelines, direct);
     for &(layer, view) in &copied {
         target(
             Target::Copy(layer, view),
@@ -1208,8 +1237,7 @@ fn graph_of(
                 .any(|pipeline| composes(&pipeline.decl.program)),
         };
         let scene = pass_layer(pass);
-        let depth_written = depth_writes.get(index).copied().unwrap_or(true);
-        let direct_depth = reads_depth_direct(pass, depth_written);
+        let direct_depth = reads_depth_direct(direct, index);
         let mut reads = Vec::new();
         let mut writes = Vec::new();
         let mut colors = Vec::new();
@@ -1298,12 +1326,12 @@ fn graph_of(
                 }
             }
             if let Some(id) = ids.target(Target::Depth) {
-                let access = if entry.shared {
-                    GraphAccess::Draw(Clear::Depth(FAR))
-                } else if depth_written {
-                    GraphAccess::Load
-                } else {
+                let access = if direct_depth {
                     GraphAccess::ReadOnly
+                } else if entry.shared {
+                    GraphAccess::Draw(Clear::Depth(FAR))
+                } else {
+                    GraphAccess::Load
                 };
                 depth = Some((id, access));
             }
@@ -1424,15 +1452,14 @@ fn composes(program: &Program) -> bool {
 fn copies(
     declared: &Declared,
     pipelines: &[BuiltPipeline],
-    depth_writes: &[bool],
+    direct: &[bool],
 ) -> Vec<(AttachPoint, ViewTarget)> {
     let mut found: Vec<(AttachPoint, ViewTarget)> = Vec::new();
     for (index, pass) in declared.passes.iter().enumerate() {
         let Some(layer) = pass_layer(pass) else {
             continue;
         };
-        let direct_depth =
-            reads_depth_direct(pass, depth_writes.get(index).copied().unwrap_or(true));
+        let direct_depth = reads_depth_direct(direct, index);
         for pipeline in pipelines
             .iter()
             .filter(|pipeline| in_pass(pipeline, index as u32, pass))

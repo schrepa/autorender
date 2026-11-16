@@ -780,7 +780,7 @@
         }
       ],
       "type": "engine_sky::SkyBrick",
-      "version": "e0cda38c7c27a03d0c0476783f61021295399c9dff592a17716eacc3ff8e47f3"
+      "version": "cf493d2a7264bbcb91054f8c021c465c3944e034979c47be8004888611aae6b7"
     },
     {
       "dependencies": [
@@ -1683,7 +1683,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_reflections::ReflectionsBrick",
-      "version": "ab5a8dcbcac562c8d42caffd8384083d74d4dea6406b469bbb685b83d0d244c8"
+      "version": "dae4b7feac72a964d3bc07f0e752444fe1fa83d5b8f974bf1d6203b356c15179"
     },
     {
       "dependencies": [
@@ -2428,7 +2428,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "60f66972e0f47f96fe65f01cde259f3ce639e3dbd2eb6ecaed55d6a615611686"
+      "version": "d9ac230c03b5915a6f99cca2b61d6d1cb0d0d5d6e9e4976f813839521abe8f82"
     },
     {
       "dependencies": [

@@ -279,6 +279,7 @@ fn screen_walk(origin: vec3<f32>, ray: vec3<f32>, mode: u32, rung: i32, budget: 
     var entered = vec2<f32>(-1.0);
     var behind = 0u;
     var asked = false;
+    var candidate = vec3<f32>(0.0);
     for (; walk.turns < budget; walk.turns += 1u) {
         if t > 1.0 || any(point.xy < vec2<f32>(0.0)) || any(point.xy >= post.size.xy) {
             break;
@@ -316,7 +317,7 @@ fn screen_walk(origin: vec3<f32>, ray: vec3<f32>, mode: u32, rung: i32, budget: 
             } else {
                 walk.met = t <= 1.0 && surface > 0.0;
                 walk.point = point;
-                return walk;
+                break;
             }
             continue;
         }
@@ -337,7 +338,7 @@ fn screen_walk(origin: vec3<f32>, ray: vec3<f32>, mode: u32, rung: i32, budget: 
         if body == TRACE_DEPTH_OPAQUE {
             walk.met = true;
             walk.point = point;
-            return walk;
+            break;
         }
         let ray_point = world_point(point.xy, point.z);
         let shown = world_point(point.xy, surface);
@@ -357,15 +358,14 @@ fn screen_walk(origin: vec3<f32>, ray: vec3<f32>, mode: u32, rung: i32, budget: 
             thickness = distance(point.xy, entered) * distance(shown, post.eye.xyz) / post.eye.w;
         }
         let gap = distance(ray_point, shown);
-        var held = gap <= thickness + spans;
-        if !held && body == TRACE_DEPTH_THIN && !asked {
-            asked = true;
-            held = trace_holds(shown, ray_point);
-        }
-        if held {
+        if gap <= thickness + spans {
             walk.met = true;
             walk.point = point;
-            return walk;
+            break;
+        }
+        if body == TRACE_DEPTH_THIN && !asked {
+            asked = true;
+            candidate = point;
         }
         behind += 1u;
         if (body != TRACE_DEPTH_SOLID && body != TRACE_DEPTH_THIN)
@@ -374,6 +374,13 @@ fn screen_walk(origin: vec3<f32>, ray: vec3<f32>, mode: u32, rung: i32, budget: 
         }
         t = leave;
         point = origin + ray * t;
+    }
+    if asked {
+        let surface = nearest_depth_at(vec2<i32>(floor(candidate.xy)), 0);
+        if trace_holds(world_point(candidate.xy, surface), world_point(candidate.xy, candidate.z)) {
+            walk.met = true;
+            walk.point = candidate;
+        }
     }
     return walk;
 }
@@ -443,15 +450,25 @@ struct Beyond {
     known: bool,
 }
 
-fn lobe_taps(lobe: Lobe, count: u32) -> array<Tap, REFLECTION_MOST_TAPS> {
-    var taps: array<Tap, REFLECTION_MOST_TAPS>;
-    for (var index = 0u; index < count; index++) {
-        taps[index] = Tap(lobe.mean, 1.0, lobe.across);
-        if count > 1u {
-            taps[index] = tap_at(lobe.facets, tap_offset(index, count));
-        }
+fn lobe_tap(lobe: Lobe, index: u32, count: u32) -> Tap {
+    if count > 1u {
+        return tap_at(lobe.facets, tap_offset(index, count));
     }
-    return taps;
+    return Tap(lobe.mean, 1.0, lobe.across);
+}
+
+fn second_tap(lobe: Lobe, first: Tap, count: u32) -> Tap {
+    if count > 1u {
+        return lobe_tap(lobe, 1u, count);
+    }
+    return first;
+}
+
+fn tap_after(lobe: Lobe, index: u32, count: u32, next: Tap) -> Tap {
+    if index + 2u < count {
+        return lobe_tap(lobe, index + 2u, count);
+    }
+    return next;
 }
 
 fn tap_angle(lobe: Lobe, before: Tap, tap: Tap, after: Tap, between: u32) -> f32 {
@@ -560,32 +577,34 @@ fn far_spread(pixel: vec2<i32>, p: vec3<f32>, mirror: vec3<f32>, lobe: Lobe, rea
     }
     let most = clamp(piece().counts.x, 1u, REFLECTION_MOST_TAPS);
     let count = clamp(u32(ceil(long / max(wide, scale * exp2(least)))), 1u, most);
-    var taps = lobe_taps(lobe, count);
     var lit = vec4<f32>(0.0);
     var held = 0.0;
     var known = 0.0;
     var total = 0.0;
+    var tap = lobe_tap(lobe, 0u, count);
+    var earlier = tap;
+    var later = second_tap(lobe, tap, count);
     for (var index = 0u; index < count; index++) {
-        let tap = taps[index];
-        if tap.weight <= 0.0 {
-            continue;
+        if !(tap.weight <= 0.0) {
+            total += tap.weight;
+            let world = p + reflect(tap.toward, mirror) * s;
+            let spot = screen_point(world);
+            if spot.w > 0.0 && dot(tap.toward, mirror) > 0.0 {
+                let before = max(index, 1u) - 1u;
+                let after = min(index + 1u, count - 1u);
+                let footprint = tap_angle(lobe, earlier, tap, later, after - before) * s
+                    * post.eye.w / max(distance(world, eye), 1.0e-4);
+                let level = far_level(footprint / scale, least);
+                let at = far_uv(spot.xy);
+                let reached = textureSampleLevel(far_reach, linear, at, level).rg;
+                lit += textureSampleLevel(far_light, linear, at, level) * tap.weight;
+                held += reached.r * tap.weight;
+                known += reached.g * tap.weight;
+            }
         }
-        total += tap.weight;
-        let world = p + reflect(tap.toward, mirror) * s;
-        let spot = screen_point(world);
-        if !(spot.w > 0.0 && dot(tap.toward, mirror) > 0.0) {
-            continue;
-        }
-        let before = max(index, 1u) - 1u;
-        let after = min(index + 1u, count - 1u);
-        let footprint = tap_angle(lobe, taps[before], tap, taps[after], after - before) * s
-            * post.eye.w / max(distance(world, eye), 1.0e-4);
-        let level = far_level(footprint / scale, least);
-        let at = far_uv(spot.xy);
-        let reached = textureSampleLevel(far_reach, linear, at, level).rg;
-        lit += textureSampleLevel(far_light, linear, at, level) * tap.weight;
-        held += reached.r * tap.weight;
-        known += reached.g * tap.weight;
+        earlier = tap;
+        tap = later;
+        later = tap_after(lobe, index, count, later);
     }
     if known < FAR_LEAST * total {
         return beyond;
@@ -651,78 +670,81 @@ fn gather(lobe: Lobe, p: vec3<f32>, plane: vec3<f32>, travelled: f32, center: ve
     }
     let most = clamp(piece().counts.x, 1u, REFLECTION_MOST_TAPS);
     let count = clamp(u32(ceil(longer)), 1u, most);
-    var taps = lobe_taps(lobe, count);
     let no_plane = all(plane == vec3<f32>(0.0));
     let fade = reach_fade(travelled, reach);
     var gathered: Gathered;
     gathered.count = count;
     var central = 0.0;
+    var tap = lobe_tap(lobe, 0u, count);
+    var earlier = tap;
+    var later = second_tap(lobe, tap, count);
     for (var index = 0u; index < count; index++) {
-        let tap = taps[index];
-        if tap.weight <= 0.0 {
-            continue;
-        }
-        let before = max(index, 1u) - 1u;
-        let after = min(index + 1u, count - 1u);
-        let angle = tap_angle(lobe, taps[before], tap, taps[after], after - before);
-        let lean = tap.toward - lobe.mean;
-        let spanned = dot(lean, lean);
-        var covered = vec4<f32>(0.0);
-        var own = 0.0;
-        let world = p + tap.toward * travelled;
-        let spot = screen_point(world);
-        if spot.w > 0.0 && (no_plane || dot(tap.toward, plane) > 0.0) {
-            var at = spot.xy;
-            if count == 1u && met {
-                at = center;
-            }
-            let footprint = max(angle * travelled * post.eye.w
-                / max(distance(world, eye), 1.0e-4), 1.0);
-            let share = saturate(inside_screen(at) / footprint + 0.5);
-            if share > 0.0 {
-                let held = held_at(at, p, plane, tap.toward, angle);
-                if held.x >= 0.0 {
-                    var jump = 0.0;
-                    var deeper = vec2<f32>(0.0);
-                    var breadth = 1.0;
-                    if held.x < 1.0 && held.y > travelled {
-                        let beyond = p + tap.toward * held.y;
-                        let spotted = screen_point(beyond);
-                        if spotted.w > 0.0 && inside_screen(spotted.xy) > 0.0 {
-                            let deep = held_at(spotted.xy, p, plane, tap.toward, angle);
-                            if deep.z > 0.0 {
-                                deeper = spotted.xy;
-                                breadth = max(angle * held.y * post.eye.w
-                                    / max(distance(beyond, eye), 1.0e-4), 1.0);
-                                jump = (1.0 - held.x) * max(deep.x, 0.0);
+        if !(tap.weight <= 0.0) {
+            let before = max(index, 1u) - 1u;
+            let after = min(index + 1u, count - 1u);
+            let angle = tap_angle(lobe, earlier, tap, later, after - before);
+            let lean = tap.toward - lobe.mean;
+            let spanned = dot(lean, lean);
+            var covered = vec4<f32>(0.0);
+            var own = 0.0;
+            let world = p + tap.toward * travelled;
+            let spot = screen_point(world);
+            if spot.w > 0.0 && (no_plane || dot(tap.toward, plane) > 0.0) {
+                var at = spot.xy;
+                if count == 1u && met {
+                    at = center;
+                }
+                let footprint = max(angle * travelled * post.eye.w
+                    / max(distance(world, eye), 1.0e-4), 1.0);
+                let share = saturate(inside_screen(at) / footprint + 0.5);
+                if share > 0.0 {
+                    let held = held_at(at, p, plane, tap.toward, angle);
+                    if held.x >= 0.0 {
+                        var jump = 0.0;
+                        var deeper = vec2<f32>(0.0);
+                        var breadth = 1.0;
+                        if held.x < 1.0 && held.y > travelled {
+                            let beyond = p + tap.toward * held.y;
+                            let spotted = screen_point(beyond);
+                            if spotted.w > 0.0 && inside_screen(spotted.xy) > 0.0 {
+                                let deep = held_at(spotted.xy, p, plane, tap.toward, angle);
+                                if deep.z > 0.0 {
+                                    deeper = spotted.xy;
+                                    breadth = max(angle * held.y * post.eye.w
+                                        / max(distance(beyond, eye), 1.0e-4), 1.0);
+                                    jump = (1.0 - held.x) * max(deep.x, 0.0);
+                                }
                             }
                         }
+                        if held.x > 0.0 {
+                            covered = blurred_scene(at, log2(footprint)) * (fade * held.x);
+                        }
+                        if jump > 0.0 {
+                            covered += blurred_scene(deeper, log2(breadth))
+                                * (reach_fade(held.y, reach) * jump);
+                        }
+                        covered *= share * tap.weight;
+                        own = share * tap.weight * (held.x + jump);
                     }
-                    if held.x > 0.0 {
-                        covered = blurred_scene(at, log2(footprint)) * (fade * held.x);
-                    }
-                    if jump > 0.0 {
-                        covered += blurred_scene(deeper, log2(breadth))
-                            * (reach_fade(held.y, reach) * jump);
-                    }
-                    covered *= share * tap.weight;
-                    own = share * tap.weight * (held.x + jump);
                 }
             }
+            var rest = own - covered.a;
+            if met {
+                central += tap.weight - own;
+            } else {
+                rest += tap.weight - own;
+            }
+            gathered.sum += covered;
+            gathered.total += tap.weight;
+            gathered.open += rest;
+            gathered.leaning += lean * tap.weight;
+            gathered.leaning_open += lean * rest;
+            gathered.width += spanned * tap.weight;
+            gathered.width_open += spanned * rest;
         }
-        var rest = own - covered.a;
-        if met {
-            central += tap.weight - own;
-        } else {
-            rest += tap.weight - own;
-        }
-        gathered.sum += covered;
-        gathered.total += tap.weight;
-        gathered.open += rest;
-        gathered.leaning += lean * tap.weight;
-        gathered.leaning_open += lean * rest;
-        gathered.width += spanned * tap.weight;
-        gathered.width_open += spanned * rest;
+        earlier = tap;
+        tap = later;
+        later = tap_after(lobe, index, count, later);
     }
     if met && gathered.total <= 0.0 {
         gathered.total = 1.0;

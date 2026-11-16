@@ -36,6 +36,70 @@ impl Run {
         }
     }
 
+    pub(crate) fn start_runs(&mut self) {
+        let graph = &self.machine.graph;
+        self.planning.runs = Bits::of(graph.passes());
+        for at in self.machine.declared.passes.len()..graph.passes() {
+            if !graph.starved(at) {
+                self.planning.runs.insert(at);
+            }
+        }
+        self.planning.idle.clear();
+    }
+
+    pub(crate) fn skip_kind(&mut self, kind: engine_core::DrawKind, reason: &'static str) {
+        let part = self.part;
+        if !self
+            .planning
+            .idle
+            .iter()
+            .any(|&(known, held, _)| known == part && held == kind)
+        {
+            self.planning.idle.push((part, kind, reason));
+        }
+    }
+
+    pub(crate) fn drop_idle_scenes(&mut self) {
+        if self.planning.idle.is_empty() {
+            return;
+        }
+        for (index, pass) in self.machine.declared.passes.iter().enumerate() {
+            let Some(scene) = pass.scene.filter(|scene| scene.core) else {
+                continue;
+            };
+            if !self.planning.runs.contains(index) {
+                continue;
+            }
+            let skipped: Option<Vec<(engine_core::DrawKind, &'static str)>> = self
+                .installs
+                .draw_entries
+                .iter()
+                .filter(|member| {
+                    pass.members.contains(&member.part)
+                        && member.kind.joins(scene.name, &scene.pass)
+                })
+                .map(|member| {
+                    self.planning
+                        .idle
+                        .iter()
+                        .find(|&&(part, kind, _)| part == member.part && kind == member.kind.kind)
+                        .map(|&(_, kind, reason)| (kind, reason))
+                })
+                .collect();
+            let Some(skipped) = skipped.filter(|skipped| !skipped.is_empty()) else {
+                continue;
+            };
+            self.planning.runs.remove(index);
+            let kinds = &mut self.tallies.kinds;
+            kinds.scened(scene.name);
+            for (kind, reason) in skipped {
+                kinds.begin(kind, scene.name);
+                kinds.skip(reason);
+                kinds.end();
+            }
+        }
+    }
+
     pub(crate) fn label_of(&self, pass: u32) -> Option<&'static str> {
         let declared = self.machine.declared.passes.get(pass as usize)?;
         Some(declared.label.unwrap_or(declared.name))
@@ -249,7 +313,8 @@ impl Run {
                                 store: true,
                             }))
                             .map(|ops| carried(Target::Depth, ops));
-                        depth = Some((key(Target::Depth), made.clone(), DEPTH_FORMAT, ops, true));
+                        let attached = key(Target::Depth) | u64::from(ops.is_none());
+                        depth = Some((attached, made.clone(), DEPTH_FORMAT, ops, true));
                     }
                 }
                 if crate::shared::draws_canvas(&pass) {

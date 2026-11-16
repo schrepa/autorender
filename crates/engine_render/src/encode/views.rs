@@ -107,17 +107,7 @@ impl Run {
     }
 
     pub(super) fn reads_direct(&self) -> bool {
-        let index = self.pass as usize;
-        self.machine.declared.passes.get(index).is_some_and(|pass| {
-            reads_depth_direct(
-                pass,
-                self.machine
-                    .depth_writes
-                    .get(index)
-                    .copied()
-                    .unwrap_or(true),
-            )
-        })
+        reads_depth_direct(&self.machine.direct_depth, self.pass as usize)
     }
 
     pub(super) fn view_of(&self, target: Target) -> Option<&wgpu::TextureView> {

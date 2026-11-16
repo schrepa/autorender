@@ -379,12 +379,7 @@ impl Renderer {
         let profile_writes = engine_profile::span("render", "queue_writes");
         let row_writes = engine_profile::timed(engine_profile::row("render.writes"));
         run.uniforms.cameras = weighted(world, cameras);
-        run.planning.runs = Bits::of(run.machine.graph.passes());
-        for at in run.machine.declared.passes.len()..run.machine.graph.passes() {
-            if !run.machine.graph.starved(at) {
-                run.planning.runs.insert(at);
-            }
-        }
+        run.start_runs();
         for index in 0..run.parts.len() {
             if !run.drawable(index as u32) {
                 continue;
@@ -1173,6 +1168,7 @@ fn keep_eligible(
             run.planning.runs.remove(index);
         }
     }
+    run.drop_idle_scenes();
 }
 
 fn union(first: &Bits, second: &Bits) -> Bits {

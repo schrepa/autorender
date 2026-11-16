@@ -160,6 +160,7 @@ pub(crate) struct Planning {
     pub(crate) live: Vec<bool>,
     pub(crate) merge: bool,
     pub(crate) labelled: Option<u32>,
+    pub(crate) idle: Vec<(u32, engine_core::DrawKind, &'static str)>,
 }
 
 #[derive(Default)]
@@ -478,6 +479,7 @@ impl Run {
                 live,
                 merge: true,
                 labelled: None,
+                idle: Vec::new(),
             },
             tallies: Tallies {
                 part_draws: vec![0; count],

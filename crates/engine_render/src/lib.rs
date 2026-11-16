@@ -842,6 +842,10 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.run_pass(pass.0);
     }
 
+    pub fn skip_kind(&mut self, kind: engine_core::DrawKind, reason: &'static str) {
+        self.core.skip_kind(kind, reason);
+    }
+
     pub fn ran(&self, pass: Pass<P>) -> bool {
         self.core.set().ran.contains(pass.0 as usize)
     }
