@@ -229,7 +229,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_lighting::LightingModelBrick",
-      "version": "2730292a8294a1238d5dc5ea792ead17f19cf99502363a7f82c97cb54ee9d861"
+      "version": "fc5024063bdfc2fb1e275f13cbec3b5f78aa8cee6ebc94a4f58ae1c002829e6f"
     },
     {
       "dependencies": [
@@ -427,7 +427,7 @@
         }
       ],
       "type": "engine_impostors::ImpostorsBrick",
-      "version": "592c4be9bb153c151abb4e3e081d0164fec79e497ced0648e3cc90c28f6d34ff"
+      "version": "5b49e82c71b6b4dcfedc2cbb5bdbee91b9d6960a88320e9d07e52c9b6f59acf1"
     },
     {
       "dependencies": [
@@ -2428,7 +2428,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "a1c89adb03310bd61573206083660cd898783910a05f37f3f10a2df20118100e"
+      "version": "2d7254bb0ee2e2f8ffcf8ce8d0bfb79cdd043ded0a8d8b55edaa120391a7fd96"
     },
     {
       "dependencies": [
@@ -2458,7 +2458,8 @@
         {
           "part": "engine_scatter::gpu::ScatterGpu",
           "passes": [
-            "scatter"
+            "scatter",
+            "scatter_laid"
           ]
         }
       ],
@@ -2570,6 +2571,20 @@
             "engine_wind"
           ],
           "required": false
+        },
+        {
+          "kind": "target",
+          "place": "depth",
+          "providers": [
+            "engine_render",
+            "engine_prepass",
+            "engine_debug_view",
+            "engine_water",
+            "engine_meshes",
+            "engine_impostors",
+            "engine_terrain_shading"
+          ],
+          "required": true
         }
       ],
       "resources": [
@@ -2604,7 +2619,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "e68af2caecb112c169a5059e005f601a05cde87b8627220894ab6deeddb9b1bd"
+      "version": "fc0f0c0132532d40e163963dafc9f3f82b5a949928f47847cb0fd58fa7e0a44a"
     },
     {
       "dependencies": [
@@ -2892,6 +2907,14 @@
         },
         {
           "kind": "face",
+          "place": "sky",
+          "providers": [
+            "engine_sky"
+          ],
+          "required": false
+        },
+        {
+          "kind": "face",
           "place": "sun",
           "providers": [
             "engine_sun"
@@ -2903,14 +2926,6 @@
           "place": "shadows",
           "providers": [
             "engine_shadows"
-          ],
-          "required": false
-        },
-        {
-          "kind": "face",
-          "place": "sky",
-          "providers": [
-            "engine_sky"
           ],
           "required": false
         },
@@ -2964,7 +2979,7 @@
         }
       ],
       "type": "engine_water::WaterBrick",
-      "version": "fe3b443bb2df1ca469bbb062e513285fe2c0dd9a5feda883857ad751a8b58b6d"
+      "version": "1b41fee1a8cb9f339b8976221bde0c50d2b1118a36793bef9aa6a6233bd8ad06"
     },
     {
       "dependencies": [
@@ -3372,7 +3387,7 @@
   ],
   "frame": {
     "frame_variants": 53,
-    "layouts": 113,
+    "layouts": 115,
     "pieces": [
       {
         "brick": "engine_sun",
