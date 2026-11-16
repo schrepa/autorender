@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Cursor, Since, Spawner};
-use engine_heightfield::{Fall, TileKey};
+use engine_heightfield::{Fall, Pyramid, TileKey};
 use glam::{Vec2, Vec3};
 
 use crate::jobs::tile_water::point;
@@ -23,6 +23,7 @@ pub(crate) struct Emitters {
     falls: Option<Falls>,
     cursor: Cursor,
     look: Option<FallLook>,
+    pyramid: Option<Pyramid>,
 }
 
 fn drawn_water(terrain: &WaterTerrain, at: Vec2) -> Option<WaterPoint> {
@@ -82,9 +83,10 @@ impl Emitters {
             }
             self.look = Some(*look);
         }
+        let tiled = self.pyramid.replace(terrain.pyramid) != Some(terrain.pyramid);
         let touched = match terrain.touched.since(&mut self.cursor) {
-            Since::Same => false,
-            Since::Listed(keys) => touches_falls(terrain, keys),
+            Since::Same => tiled,
+            Since::Listed(keys) => tiled || touches_falls(terrain, keys),
             Since::All => true,
         };
         self.follow_falls(terrain, touched, look, spawner);
