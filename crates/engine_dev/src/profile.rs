@@ -43,9 +43,7 @@ pub fn profiled(frames: &[BrickCosts], request: &ProfileRequest) -> (ProfileResu
                 .allocations_per_frame
                 .map(|mean| mean + row.allocations as f64 / count);
             brick.gpu_bytes = Some(row.gpu_bytes);
-            brick.created_after_warmup = brick
-                .created_after_warmup
-                .map(|sum| sum + row.created_after_warmup);
+            brick.created_after_warmup = Some(row.created_after_warmup);
             brick.duplicate_upload_bytes = brick
                 .duplicate_upload_bytes
                 .map(|sum| sum + row.duplicate_upload_bytes);
