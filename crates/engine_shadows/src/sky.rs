@@ -108,6 +108,12 @@ impl SkyMaps {
         self.layers = [Layer::default(); LAYERS];
     }
 
+    pub(crate) fn stale(&mut self) {
+        for layer in &mut self.layers {
+            layer.stale |= layer.drawn.is_some();
+        }
+    }
+
     pub(crate) fn release(&mut self) {
         self.live = false;
         self.layers = [Layer::default(); LAYERS];

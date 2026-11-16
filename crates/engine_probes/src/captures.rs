@@ -2,7 +2,7 @@ use bevy_ecs::prelude::*;
 use engine_core::{DeviceLimits, Error, StoreId};
 use engine_render::{
     Access, Allocation, Attach, Bind, Buffer, DEPTH_FORMAT, DepthUse, Encode, GpuPart, Install,
-    Lifetime, Own, Pass, Pipeline, Prepare, RenderPipeline, Shape, Texture, wgpu,
+    Lifetime, Own, Pass, Pipeline, Prepare, Recorded, RenderPipeline, Shape, Texture, wgpu,
 };
 
 use crate::probes::{
@@ -42,6 +42,8 @@ pub(crate) struct ProbesGpu {
     timed: bool,
     levels: u32,
     grid: u64,
+    drawn: Recorded,
+    stood_in: Vec<(usize, u64)>,
 }
 
 fn texel_bytes(format: wgpu::TextureFormat) -> u64 {
@@ -188,6 +190,8 @@ impl GpuPart for ProbesGpu {
             timed: false,
             levels: 1,
             grid: 0,
+            drawn: Recorded::Exact,
+            stood_in: Vec::new(),
         })
     }
 
@@ -196,12 +200,21 @@ impl GpuPart for ProbesGpu {
         (state, words, limits): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
+        let drawn = std::mem::take(&mut self.drawn);
         if let Some(taken) = self.taken.take() {
             let filtered = cx.ran(self.filter) && cx.ran(self.prefiltering);
             let ran = (!taken.drew || cx.ran(self.captures))
                 && cx.ran(self.light)
-                && (!taken.finished || filtered);
+                && (!taken.finished || filtered)
+                && drawn != Recorded::Waiting;
+            if ran && drawn == Recorded::StandIn {
+                self.stood_in.extend_from_slice(&taken.slots);
+            }
             cx.deliver::<ProbeAcks>(CAPTURED_ACK, captured_bytes(ran, &taken.slots));
+        }
+        if !self.stood_in.is_empty() && cx.warming() == 0 {
+            cx.deliver::<ProbeAcks>(CAPTURED_ACK, captured_bytes(false, &self.stood_in));
+            self.stood_in.clear();
         }
         self.allocate(&state, cx);
         if words.is_changed() {
@@ -242,6 +255,36 @@ impl GpuPart for ProbesGpu {
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
+        cx.recorded();
+        let drawn = self.encode_pass(pass, cx);
+        self.drawn = self.drawn.max(cx.recorded());
+        drawn
+    }
+}
+
+fn extent(size: u32, layers: u32) -> wgpu::Extent3d {
+    wgpu::Extent3d {
+        width: size,
+        height: size,
+        depth_or_array_layers: layers,
+    }
+}
+
+fn held(
+    cx: &mut Prepare<'_, ProbesGpu>,
+    (texture, levels): (Texture<ProbesGpu>, u32),
+    size: wgpu::Extent3d,
+    kept: bool,
+) -> Allocation {
+    if kept {
+        cx.grow(texture, size, levels)
+    } else {
+        cx.allocate(texture, size, levels)
+    }
+}
+
+impl ProbesGpu {
+    fn encode_pass(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
         if pass == self.filter {
             if let Some((_, set)) = self.finished {
                 self.down_cube(set, cx);
@@ -283,30 +326,7 @@ impl GpuPart for ProbesGpu {
         }
         drawn
     }
-}
 
-fn extent(size: u32, layers: u32) -> wgpu::Extent3d {
-    wgpu::Extent3d {
-        width: size,
-        height: size,
-        depth_or_array_layers: layers,
-    }
-}
-
-fn held(
-    cx: &mut Prepare<'_, ProbesGpu>,
-    (texture, levels): (Texture<ProbesGpu>, u32),
-    size: wgpu::Extent3d,
-    kept: bool,
-) -> Allocation {
-    if kept {
-        cx.grow(texture, size, levels)
-    } else {
-        cx.allocate(texture, size, levels)
-    }
-}
-
-impl ProbesGpu {
     fn allocate(&mut self, state: &ProbeState, cx: &mut Prepare<'_, Self>) {
         let size = state.size;
         self.levels = mip_levels(size);

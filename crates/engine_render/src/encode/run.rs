@@ -170,6 +170,7 @@ pub(crate) struct Tallies {
     pub(crate) rebuilt: Rebuilt,
     pub(crate) uploads: Uploads,
     pub(crate) kinds: KindTallies,
+    pub(crate) worst: crate::Recorded,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

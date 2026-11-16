@@ -139,7 +139,7 @@ impl Run {
     ) -> crate::Recorded {
         let _row = engine_profile::timed(engine_profile::row("render.draw"));
         let handles = handles_of(&shape);
-        match self.issue_draw(part, point, handle, shape, timed) {
+        let recorded = match self.issue_draw(part, point, handle, shape, timed) {
             Ok(recorded) => {
                 self.tallies.kinds.reached();
                 recorded
@@ -164,7 +164,9 @@ impl Run {
                     crate::Recorded::Waiting
                 }
             }
-        }
+        };
+        self.tallies.worst = self.tallies.worst.max(recorded);
+        recorded
     }
 
     fn drawn_variant(&self, shape: &RawShape) -> Result<Painted, DropReason> {
