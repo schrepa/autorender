@@ -720,8 +720,9 @@ fn fs_water(input: WaterOutput) -> Outputs {
         rise = water_rise(still, at, water_ground(pixel), world_dx, world_dy);
     }
     let standing_change = fwidth(rise.standing);
+    let risen = water_quad_any(live && rise.standing > 0.0);
     var flowing: WaterFlowing;
-    if live {
+    if risen {
         flowing = water_flowing(world, at, rise, world_dx, world_dy, standing_change);
     }
     let face = water_face(rise, flowing, world_dx, world_dy, standing_change,
@@ -729,7 +730,7 @@ fn fs_water(input: WaterOutput) -> Outputs {
     let gathered = water_gathered(face);
     let held_change = fwidth(at.held);
     var targets: Outputs;
-    if live {
+    if risen {
         let behind = water_behind(face.point, face.normal, face.view, pixel, water_ground(pixel),
             face.plane);
         let shade = shade_water(pixel, at, face, behind, vec2<f32>(0.0), gathered, held_change);
