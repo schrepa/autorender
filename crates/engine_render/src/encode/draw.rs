@@ -136,11 +136,14 @@ impl Run {
         handle: u32,
         shape: RawShape,
         timed: TimedDraw<'_>,
-    ) {
+    ) -> crate::Recorded {
         let _row = engine_profile::timed(engine_profile::row("render.draw"));
         let handles = handles_of(&shape);
         match self.issue_draw(part, point, handle, shape, timed) {
-            Ok(()) => self.tallies.kinds.reached(),
+            Ok(recorded) => {
+                self.tallies.kinds.reached();
+                recorded
+            }
             Err(reason) => {
                 let pass = self
                     .machine
@@ -152,6 +155,14 @@ impl Run {
                 self.tallies
                     .kinds
                     .drop_draws((part, pass), (reason, asset), 1);
+                if matches!(
+                    reason,
+                    DropReason::PipelineRefused | DropReason::PipelineOverLimit
+                ) {
+                    crate::Recorded::Refused
+                } else {
+                    crate::Recorded::Waiting
+                }
             }
         }
     }
@@ -198,7 +209,7 @@ impl Run {
         handle: u32,
         shape: RawShape,
         timed: TimedDraw<'_>,
-    ) -> Result<(), DropReason> {
+    ) -> Result<crate::Recorded, DropReason> {
         let (pipeline, filled) = self
             .pipeline_of(handle)
             .ok_or(DropReason::UnknownPipeline)?;
@@ -219,7 +230,7 @@ impl Run {
         let (variant, painted) = self.drawn_variant(&shape)?;
         let ready = self.render_pipeline(pipeline, variant)?;
         if self.recording.collecting() {
-            return Ok(());
+            return Ok(crate::Recorded::Waiting);
         }
         let Self {
             machine,
@@ -243,6 +254,11 @@ impl Run {
         let open = recording.open_mut().ok_or(DropReason::NoRenderPass)?;
         let built = &machine.pipelines[pipeline as usize];
         let chosen = &built.ready[ready];
+        let recorded = if chosen.exact {
+            crate::Recorded::Exact
+        } else {
+            crate::Recorded::StandIn
+        };
         let render = &mut open.pass;
         if open.set.pipeline.is_none() {
             bound.vertex.clear();
@@ -445,7 +461,7 @@ impl Run {
                 });
             }
         }
-        Ok(())
+        Ok(recorded)
     }
 
     pub(super) fn fill_groups(&mut self, pipeline: u32, filled: Option<usize>) {

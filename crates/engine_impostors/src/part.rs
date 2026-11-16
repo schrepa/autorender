@@ -9,8 +9,8 @@ use engine_core::{
 use engine_render::{
     AfterRead, Allocation, Attach, Bind, Buffer, Copied, CopyRegion, Encode, FaceCull, Form,
     FormColor, FormDepth, FormFragment, FormSide, FragmentPass, GpuPart, Install, KindForm,
-    Lifetime, OwnFragments, Pass, PassFragment, Prepare, Shape, Texture, Varyings, VertexLayout,
-    wgpu,
+    Lifetime, OwnFragments, Pass, PassFragment, Prepare, Recorded, Shape, Texture, Varyings,
+    VertexLayout, wgpu,
 };
 
 use crate::books::{
@@ -137,6 +137,7 @@ struct Drawn {
     shape: AtlasShape,
     draws: Vec<(GeometryHandle, Option<MaterialHandle>, usize)>,
     skipped: bool,
+    refused: bool,
     baked: bool,
 }
 
@@ -340,6 +341,7 @@ impl ImpostorGpu {
             shape,
             draws,
             skipped: false,
+            refused: false,
             baked: false,
         });
         for texture in self.colors {
@@ -489,6 +491,9 @@ impl GpuPart for ImpostorGpu {
         }
         let mut drawn = self.drawing.take();
         let ran = cx.ran(self.baking);
+        if let Some(failed) = drawn.take_if(|drawn| !drawn.baked && drawn.refused) {
+            cx.deliver::<BakeReads>(failed.asked.serial, Vec::new());
+        }
         if let Some(again) = drawn.take_if(|drawn| !drawn.baked && (drawn.skipped || !ran)) {
             self.asked.push_front(again.asked);
         }
@@ -530,20 +535,23 @@ impl GpuPart for ImpostorGpu {
         };
         let frames = drawn.shape.frames * drawn.shape.frames;
         let mut draw = cx.render(Attach::Declared);
+        let mut recorded = 0;
         for &(mesh, material, index) in &drawn.draws {
             let Some(pipeline) = draw.form(&self.bake_forms[index]) else {
                 drawn.skipped = true;
                 continue;
             };
-            draw.draw(
-                &pipeline,
-                Shape::Mesh {
-                    mesh,
-                    material,
-                    instances: 0..frames,
-                },
-            );
+            let shape = Shape::Mesh {
+                mesh,
+                material,
+                instances: 0..frames,
+            };
+            match draw.draw(&pipeline, shape) {
+                Recorded::Exact => recorded += 1,
+                Recorded::StandIn | Recorded::Waiting => drawn.skipped = true,
+                Recorded::Refused => drawn.refused = true,
+            }
         }
-        u32::try_from(drawn.draws.len()).unwrap_or(u32::MAX)
+        recorded
     }
 }

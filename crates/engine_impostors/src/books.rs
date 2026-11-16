@@ -271,11 +271,28 @@ impl Assembly {
         self.at += stride as usize * rows as usize;
         self.region += 1;
     }
+
+    fn blank(&self) -> bool {
+        let (rows, stride, row) = level_rows(self.shape, 0, self.alignment);
+        (0..rows as usize).all(|at| {
+            let start = ASSEMBLY_HEADER + at * stride as usize;
+            self.input[start..start + row as usize]
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .all(|texel| texel[3] == 0)
+        })
+    }
 }
 
 impl Job for Assembly {
     fn step(&mut self, _: u64, _: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
         let levels = self.shape.levels();
+        if self.region == 0 && self.blank() {
+            return Err(
+                Error::new(ErrorCode::RenderFailed, "$.jobs.impostors::assembly").got("blank")
+            );
+        }
         if self.region < self.kinds * levels {
             self.level(self.region % levels);
         }
