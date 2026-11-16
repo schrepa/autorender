@@ -42,7 +42,8 @@ pub(crate) fn keep_pipeline_cache() {
         .ok()
         .and_then(|program| Some(program.parent()?.join("engine-pipeline-cache")));
     if let Some(folder) = folder {
-        engine::keep_pipeline_cache_in(folder);
+        let most = engine::host::policy::PIPELINE_CACHE_MIB * 1024 * 1024;
+        engine::keep_pipeline_cache_in(folder, most);
     }
 }
 

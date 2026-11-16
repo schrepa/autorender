@@ -30,6 +30,8 @@ export const FRAME_CORES = 2;
 
 export const JOB_CACHE_MIB = 1024;
 
+export const PIPELINE_CACHE_MIB = 256;
+
 export const PACK_CACHE_MIB = 1024;
 
 export const WHEEL_PIXELS = 100.0;

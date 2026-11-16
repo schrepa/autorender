@@ -74,16 +74,19 @@ pub fn start_native_instances_with(start: fn(wgpu::InstanceDescriptor) -> wgpu::
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-static PIPELINE_CACHE_FOLDER: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+static PIPELINE_CACHE_FOLDER: std::sync::OnceLock<(std::path::PathBuf, u64)> =
+    std::sync::OnceLock::new();
 
 #[cfg(not(target_arch = "wasm32"))]
-pub fn keep_pipeline_cache_in(folder: std::path::PathBuf) -> bool {
-    PIPELINE_CACHE_FOLDER.set(folder).is_ok()
+pub fn keep_pipeline_cache_in(folder: std::path::PathBuf, most_bytes: u64) -> bool {
+    PIPELINE_CACHE_FOLDER.set((folder, most_bytes)).is_ok()
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn pipeline_cache_folder() -> Option<&'static std::path::Path> {
-    PIPELINE_CACHE_FOLDER.get().map(std::path::PathBuf::as_path)
+pub(crate) fn pipeline_cache_folder() -> Option<(&'static std::path::Path, u64)> {
+    PIPELINE_CACHE_FOLDER
+        .get()
+        .map(|(folder, most)| (folder.as_path(), *most))
 }
 
 #[cfg(not(target_arch = "wasm32"))]
