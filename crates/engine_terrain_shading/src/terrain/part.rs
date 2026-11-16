@@ -1026,7 +1026,7 @@ impl TerrainGpu {
                 let Some(offset) = self.surface.draw_offset(terrain.terrain) else {
                     continue;
                 };
-                draw.draw(
+                draw.draw_timed(
                     &pipeline,
                     Shape::Indirect {
                         vertices: &[],
@@ -1035,6 +1035,7 @@ impl TerrainGpu {
                         offset,
                         material: None,
                     },
+                    || drawn_label(IDS_PASS, None, holes, terrain.terrain),
                 );
                 draws += 1;
             }
@@ -1081,7 +1082,11 @@ impl TerrainGpu {
                     Ok(None) => Err(None),
                     Err(error) => Err(Some(error)),
                 };
-                self.draw_surface(draw, [Ok((pipeline, None)), holed], (*args, *meshlet))
+                self.draw_surface(
+                    (scene, draw),
+                    [Ok((pipeline, None)), holed],
+                    (*args, *meshlet),
+                )
             }
             Joined::Seen { args, meshlet } => {
                 if !self.drawn {
@@ -1092,7 +1097,7 @@ impl TerrainGpu {
                     return draw.skip(NO_FORM);
                 };
                 self.draw_surface(
-                    draw,
+                    (scene, draw),
                     [Ok((plain, None)), Ok((holes, None))],
                     (*args, *meshlet),
                 )
@@ -1110,7 +1115,7 @@ impl TerrainGpu {
                 let Some(pipeline) = draw.form(&self.form) else {
                     return draw.skip(NO_FORM);
                 };
-                draw.draw(
+                draw.draw_timed(
                     &pipeline,
                     Shape::Buffers {
                         vertices: &[*patches],
@@ -1118,6 +1123,7 @@ impl TerrainGpu {
                         elements: 0..self.patches.index_count(),
                         instances: range,
                     },
+                    || caster_label(scene),
                 );
                 1
             }
@@ -1135,7 +1141,7 @@ impl TerrainGpu {
 
     fn draw_surface(
         &self,
-        draw: &mut Draw<'_, Self, Scene>,
+        (scene, draw): (&SceneDraw, &mut Draw<'_, Self, Scene>),
         surfaces: Surfaces<'_>,
         (args, meshlet): (DrawInput<Self, Scene>, DrawInput<Self, Scene>),
     ) -> u32 {
@@ -1159,7 +1165,7 @@ impl TerrainGpu {
                         continue;
                     }
                 };
-                draw.draw(
+                draw.draw_timed(
                     &pipeline,
                     Shape::Indirect {
                         vertices: &[],
@@ -1168,6 +1174,7 @@ impl TerrainGpu {
                         offset,
                         material,
                     },
+                    || drawn_label(scene.pass.name(), scene.view, holes, terrain.terrain),
                 );
                 draws += 1;
             }
@@ -1186,7 +1193,23 @@ impl TerrainGpu {
     }
 }
 
-type SummaryPipelines = [ComputePipeline<TerrainGpu>; SUMMARY_MIPS as usize];
+fn caster_label(scene: &SceneDraw) -> String {
+    let pass = scene.pass.name();
+    match scene.view {
+        Some(view) => format!("terrain {pass} casters view {view}"),
+        None => format!("terrain {pass} casters"),
+    }
+}
+
+fn drawn_label(pass: &str, view: Option<u32>, holes: bool, terrain: usize) -> String {
+    let cut = if holes { "holes" } else { "plain" };
+    match view {
+        Some(view) => format!("terrain {pass} {cut} terrain {terrain} view {view}"),
+        None => format!("terrain {pass} {cut} terrain {terrain}"),
+    }
+}
+
+type SummaryPipelines =[ComputePipeline<TerrainGpu>; SUMMARY_MIPS as usize];
 
 fn install_summaries(
     cx: &mut Install<'_, TerrainGpu>,
