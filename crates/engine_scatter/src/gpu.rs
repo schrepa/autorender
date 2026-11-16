@@ -1077,7 +1077,8 @@ impl ScatterGpu {
                 empty += 1;
                 continue;
             }
-            let record = DrawRecord::of(DrawKind::Placed, level);
+            let shown = if scene.role == PassRole::Shown { level } else { 0 };
+            let record = DrawRecord::of(DrawKind::Placed, shown);
             draw.draw_timed(
                 pipeline,
                 Shape::MeshIndirect {
