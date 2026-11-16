@@ -6218,6 +6218,9 @@
         4.0
       ]
     },
+    "culling": {
+      "occlusion": false
+    },
     "dynamic_resolution": {
       "enabled": true
     },

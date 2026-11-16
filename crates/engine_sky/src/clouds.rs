@@ -22,7 +22,7 @@ const ENVIRONMENT_EVERY: u64 = 16;
 const LIGHT_EXTENT: f32 = 24_000.0;
 const LIGHT_RECENTER: f32 = 2_000.0;
 const LIGHT_ROW_BYTES: u64 = CLOUD_LIGHT_BYTES as u64 / LIGHT_TEXELS as u64;
-const COMPOSITE_ARGS: [u32; 4] = [0, 1, 0, 0];
+const COMPOSITE_ARGS: [u32; 4] = [0; 4];
 const BUDGET: &str = "clouds";
 
 pub(crate) type CloudLight<'a> = (&'a Sun, &'a SkyPiece);
@@ -522,6 +522,12 @@ impl CloudPlan {
         self.view_pixels = render.x * render.y;
     }
 
+    pub(crate) fn marched_layer(&self) -> Option<u32> {
+        self.job
+            .filter(|&(_, _, count)| count > 0 && self.dome_size.is_some())
+            .map(|(target, _, _)| DOME_FIRST + target as u32 * DOME_LAYERS)
+    }
+
     pub(crate) fn frame(&self) -> Option<CloudFrame> {
         let dome = self.job.is_some() && self.dome_size.is_some();
         let view = self.view_job.is_some();
@@ -575,6 +581,7 @@ pub(crate) struct CloudPass {
     uniform: Buffer<SkyGpu>,
     view_clouds: Buffer<SkyGpu>,
     composite_args: Buffer<SkyGpu>,
+    view_tiles: Buffer<SkyGpu>,
     light_pass: Pass<SkyGpu>,
     march_pass: Pass<SkyGpu>,
     view_pass: Pass<SkyGpu>,
@@ -586,19 +593,20 @@ pub(crate) struct CloudPass {
     composite_draws: DrawInput<SkyGpu, Own>,
     noise: Option<u64>,
     stepped: Option<(CloudStep, bool, bool)>,
+    dispatched: [bool; 2],
     run: CloudRun,
 }
 
 fn composite_pipeline(
     cx: &mut Install<'_, SkyGpu>,
     pass: Pass<SkyGpu>,
-    view_texture: Texture<SkyGpu>,
+    (view_texture, view_tiles): (Texture<SkyGpu>, Buffer<SkyGpu>),
 ) -> Result<Pipeline<SkyGpu, Own>, Error> {
     use crate::shaders::sky::draw;
     cx.render_pipeline(
         pass,
         &RenderPipeline {
-            vertex: draw::VS_SKY,
+            vertex: draw::VS_CLOUD_TILE,
             fragment: Some(draw::FS_VIEW_CLOUDS_POST),
             vertices: &[],
             primitive: wgpu::PrimitiveState::default(),
@@ -617,7 +625,10 @@ fn composite_pipeline(
             }),
             writes: wgpu::ColorWrites::ALL,
         },
-        &[(draw::VIEW_CLOUDS, Bind::Texture(view_texture))],
+        &[
+            (draw::VIEW_CLOUDS, Bind::Texture(view_texture)),
+            (draw::CLOUD_TILES, Bind::Buffer(view_tiles)),
+        ],
     )
 }
 
@@ -697,6 +708,7 @@ impl CloudPass {
         let uniform = cx.buffer("cloud_uniform", Lifetime::Kept);
         let view_clouds = cx.buffer("cloud_view_march", Lifetime::Kept);
         let composite_args = cx.buffer("cloud_composite_draw", Lifetime::Kept);
+        let view_tiles = cx.buffer("cloud_view_tiles", Lifetime::Kept);
         let [dome_sampler, noise_sampler] = samplers(cx);
         cx.frame(light::SKY_CLOUD_SAMPLER, Bind::Sampler(dome_sampler))?;
         let [light_pass, march_pass, view_pass, composite_pass] =
@@ -733,10 +745,11 @@ impl CloudPass {
             (clouds::VIEW_DEPTH, Bind::Target(TargetName::DEPTH)),
             (clouds::VIEW_OUT, Bind::Texture(view_texture)),
             (clouds::COMPOSITE_DRAW, Bind::Buffer(composite_args)),
+            (clouds::VIEW_TILES, Bind::Buffer(view_tiles)),
         ];
         viewed.extend(lit());
         let viewing = cx.compute_pipeline(view_pass, clouds::MARCH_VIEW, &viewed)?;
-        let compositing = composite_pipeline(cx, composite_pass, view_texture)?;
+        let compositing = composite_pipeline(cx, composite_pass, (view_texture, view_tiles))?;
         let composite_draws = cx.draw_input(composite_pass, composite_args);
         Ok(Self {
             noise_shape,
@@ -746,6 +759,7 @@ impl CloudPass {
             uniform,
             view_clouds,
             composite_args,
+            view_tiles,
             light_pass,
             march_pass,
             view_pass,
@@ -757,6 +771,7 @@ impl CloudPass {
             composite_draws,
             noise: None,
             stepped: None,
+            dispatched: [false; 2],
             run: CloudRun::default(),
         })
     }
@@ -783,7 +798,8 @@ impl CloudPass {
         (frame, fresh): (Option<CloudFrame>, bool),
     ) {
         if let Some((step, light, march)) = self.stepped.take() {
-            let ran = (!light || cx.ran(self.light_pass)) && (!march || cx.ran(self.march_pass));
+            let ran = (!light || (cx.ran(self.light_pass) && self.dispatched[0]))
+                && (!march || (cx.ran(self.march_pass) && self.dispatched[1]));
             cx.deliver::<CloudSteps>(0, step.bytes(ran));
         }
         self.allocate(cx);
@@ -811,6 +827,9 @@ impl CloudPass {
             };
             cx.write(self.view_clouds, 0, &[plan.view_clouds]);
             cx.write(self.composite_args, 0, &COMPOSITE_ARGS);
+            let tiles = pixels.map(|side| side.div_ceil(CLOUD_GROUP));
+            let (Allocation::Fresh | Allocation::Kept) =
+                cx.allocate_buffer(self.view_tiles, u64::from(tiles[0] * tiles[1]).max(1) * 4);
             self.run.view = pixels;
             let (Allocation::Fresh | Allocation::Kept) = cx.allocate(self.view_texture, size, 1);
         }
@@ -822,6 +841,7 @@ impl CloudPass {
             self.run.width = size[0];
             self.run.count = count;
             self.stepped = Some((plan.step, plan.light.job > 0, count > 0));
+            self.dispatched = [false; 2];
             if plan.light.job > 0 {
                 cx.run(self.light_pass);
             }
@@ -842,26 +862,26 @@ impl CloudPass {
             || pass == self.composite_pass
     }
 
-    pub(crate) fn encode(&self, pass: Pass<SkyGpu>, cx: &mut Encode<'_, SkyGpu>) -> u32 {
+    pub(crate) fn encode(&mut self, pass: Pass<SkyGpu>, cx: &mut Encode<'_, SkyGpu>) -> u32 {
         let run = self.run;
         if pass == self.light_pass {
-            cx.dispatch(
+            self.dispatched[0] = cx.dispatch(
                 &self.lighting,
                 Count::Groups([
                     LIGHT_TEXELS.div_ceil(CLOUD_GROUP),
                     run.light_rows.div_ceil(CLOUD_GROUP),
                     1,
                 ]),
-            );
+            ) != 0;
         } else if pass == self.march_pass {
-            cx.dispatch(
+            self.dispatched[1] = cx.dispatch(
                 &self.marching,
                 Count::Groups([
                     run.width.div_ceil(CLOUD_GROUP),
                     run.count.div_ceil(CLOUD_GROUP),
                     DOME_LAYERS,
                 ]),
-            );
+            ) != 0;
         } else if pass == self.view_pass {
             cx.dispatch(
                 &self.viewing,

@@ -327,6 +327,15 @@ pub(crate) struct AirTables {
     deriving: ComputePipeline<SkyGpu>,
     copies: Vec<Pass<SkyGpu>>,
     uploaded: Option<u64>,
+    built: Option<(u64, SkyAir)>,
+    derived_from: Option<(SkyAir, SkyDomes)>,
+    marched: Option<u32>,
+    build: Option<(u64, SkyAir)>,
+    derive: Option<(SkyAir, SkyDomes)>,
+}
+
+fn same<T: bytemuck::Pod>(a: &T, b: &T) -> bool {
+    bytemuck::bytes_of(a) == bytemuck::bytes_of(b)
 }
 
 impl AirTables {
@@ -375,6 +384,11 @@ impl AirTables {
             deriving,
             copies: Vec::new(),
             uploaded: None,
+            built: None,
+            derived_from: None,
+            marched: None,
+            build: None,
+            derive: None,
         })
     }
 
@@ -439,7 +453,8 @@ impl AirTables {
         &mut self,
         cx: &mut Prepare<'_, SkyGpu>,
         (plan, tables): (&AirPlan, Option<&StaticTable<SkyTables>>),
-        domes: SkyDomes,
+        (air, domes): (&SkyAir, SkyDomes),
+        (fresh, marched): (bool, Option<u32>),
     ) {
         let shown = plan.shown();
         let transmittance = cx.allocate(self.transmittance, extent(TRANSMITTANCE_SIZE), 1);
@@ -447,21 +462,49 @@ impl AirTables {
         if transmittance == Allocation::Fresh || multiple == Allocation::Fresh {
             self.uploaded = None;
         }
-        let (Allocation::Fresh | Allocation::Kept) =
-            cx.allocate_buffer(self.derived, DERIVED_BYTES);
+        if fresh {
+            self.built = None;
+        }
+        if cx.allocate_buffer(self.derived, DERIVED_BYTES) == Allocation::Fresh {
+            self.derived_from = None;
+        }
         let (Allocation::Fresh | Allocation::Kept) =
             cx.allocate_buffer(self.domes, size_of::<SkyDomes>() as u64);
         cx.write(self.domes, 0, &[domes]);
-        if shown.is_none() {
+        let written = [self.marched, marched]
+            .into_iter()
+            .flatten()
+            .any(|layer| layer == domes.layers[0] || layer == domes.layers[1]);
+        self.marched = marched;
+        self.build = None;
+        self.derive = None;
+        let Some(id) = shown else {
             return;
-        }
-        if let Some(tables) = tables.filter(|tables| Some(tables.id) == shown)
+        };
+        if let Some(tables) = tables.filter(|tables| tables.id == id)
             && self.uploaded != shown
         {
             self.upload(cx, &tables.table);
             self.uploaded = shown;
+            self.built = None;
         }
-        cx.run(self.pass);
+        let table = SkyAir {
+            moon: [0.0; 4],
+            ..*air
+        };
+        let build = self
+            .built
+            .is_none_or(|(held, built)| held != id || !same(&built, &table));
+        let derive = build
+            || written
+            || self
+                .derived_from
+                .is_none_or(|(held, lit)| !same(&held, air) || !same(&lit, &domes));
+        self.build = build.then_some((id, table));
+        self.derive = derive.then_some((*air, domes));
+        if derive {
+            cx.run(self.pass);
+        }
         cx.read_back::<SkyLightLevel>(0, self.derived, 0..DERIVED_BYTES, AfterRead::Keep);
         let regions = [
             Vec::from(piece_regions()),
@@ -473,16 +516,22 @@ impl AirTables {
         }
     }
 
-    fn encode(&self, cx: &mut Encode<'_, SkyGpu>) -> u32 {
-        cx.dispatch(
-            &self.building,
-            Count::Groups([
+    fn encode(&mut self, cx: &mut Encode<'_, SkyGpu>) -> u32 {
+        if let Some(built) = self.build.take() {
+            let groups = [
                 VIEW_SIZE.0.div_ceil(SKY_TABLE_GROUP),
                 VIEW_SIZE.1.div_ceil(SKY_TABLE_GROUP),
                 1,
-            ]),
-        );
-        cx.dispatch(&self.deriving, Count::Groups([1, 1, 1]));
+            ];
+            if cx.dispatch(&self.building, Count::Groups(groups)) != 0 {
+                self.built = Some(built);
+            }
+        }
+        if let Some(lit) = self.derive.take()
+            && cx.dispatch(&self.deriving, Count::Groups([1, 1, 1])) != 0
+        {
+            self.derived_from = Some(lit);
+        }
         0
     }
 }
@@ -574,8 +623,12 @@ impl GpuPart for SkyGpu {
         };
         let fresh =
             cx.allocate(self.layers, plan.clouds.layers_extent(view), 1) == Allocation::Fresh;
-        self.tables
-            .prepare(cx, (&plan.tables, tables.sky()), plan.domes);
+        self.tables.prepare(
+            cx,
+            (&plan.tables, tables.sky()),
+            (&plan.air, plan.domes),
+            (fresh, plan.clouds.marched_layer()),
+        );
         self.clouds.prepare(
             cx,
             (&plan.clouds, tables.cloud_noise()),

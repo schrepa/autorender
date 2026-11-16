@@ -202,6 +202,7 @@ struct Level {
     level: u32,
     extended: bool,
     masked: bool,
+    fades: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -508,6 +509,10 @@ impl ScatterGpu {
             }
             let resident = residency.material_resident(drawn.material);
             let uncut = drawn.masked && !resident;
+            let fades = data
+                .data
+                .get(drawn.objects as usize)
+                .is_some_and(|main| main.impostor > 0.0);
             held.cast_waiting |= uncut;
             for (level, &mesh) in drawn.meshes.iter().enumerate() {
                 if !residency.resident(mesh) {
@@ -525,6 +530,7 @@ impl ScatterGpu {
                     level: level as u32,
                     extended: drawn.extended,
                     masked: drawn.masked,
+                    fades,
                 };
                 if !uncut {
                     held.cast.push(Level {
@@ -846,13 +852,13 @@ impl ScatterGpu {
 
     fn draw_levels(
         &self,
-        (view, items): (usize, &[Level]),
+        (view, items, fading): (usize, &[Level], bool),
         draw: &mut Draw<'_, Self, Scene>,
         inputs: &Streams,
         pipelines: [&Pair; 2],
     ) -> u32 {
         let mut draws = 0;
-        for item in items {
+        for item in items.iter().filter(|item| !fading || item.fades) {
             let pair = pipelines[usize::from(item.masked)];
             let Some(pipeline) = &pair[usize::from(item.extended)] else {
                 continue;
@@ -899,17 +905,16 @@ impl ScatterGpu {
         } else {
             [plain, fading]
         };
-        let lists: &[(usize, [&Pair; 2])] = if view == 0 {
-            &[
-                (0, [&plain, &cut]),
-                (held.fading_view, [&fading, &cut_fading]),
-            ]
-        } else {
-            &[(view, [&plain, &cut])]
+        let lists: &[(usize, bool, [&Pair; 2])] = match (view, held.cards) {
+            (0, true) => &[
+                (0, false, [&plain, &cut]),
+                (held.fading_view, true, [&fading, &cut_fading]),
+            ],
+            _ => &[(view, false, [&plain, &cut])],
         };
         let mut draws = 0;
-        for &(list, pipelines) in lists {
-            draws += self.draw_levels((list, &held.lit), draw, inputs, pipelines);
+        for &(list, fades, pipelines) in lists {
+            draws += self.draw_levels((list, &held.lit, fades), draw, inputs, pipelines);
         }
         if !held.cards {
             return draws;
@@ -942,7 +947,7 @@ impl ScatterGpu {
             draw.form(&self.forms.plain),
             draw.form(&self.forms.extended),
         ];
-        let mut draws = self.draw_levels((view, items), draw, inputs, [&chosen; 2]);
+        let mut draws = self.draw_levels((view, items, false), draw, inputs, [&chosen; 2]);
         let card = draw.form(&self.forms.casters).filter(|_| held.atlas);
         if let (Some(card), Some((cards, offset))) = (card, self.card_source(view)) {
             draw.draw(
@@ -1081,14 +1086,16 @@ impl GpuPart for ScatterGpu {
         self.prepare_cull(cx, &state, (&*views, &*table));
         if self.held.prepared && self.held.objects > 0 {
             cx.run(self.scatter);
+        } else if self.held.snapping {
+            self.held.snapped = None;
         }
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
         if pass == self.scatter {
             let groups = [self.held.objects.div_ceil(SCATTER_GROUP), 1, 1];
-            if self.held.snapping {
-                cx.dispatch(&self.snapping, Count::Groups(groups));
+            if self.held.snapping && cx.dispatch(&self.snapping, Count::Groups(groups)) == 0 {
+                self.held.snapped = None;
             }
             cx.dispatch(&self.culling, Count::Groups(groups));
         }

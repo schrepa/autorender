@@ -19,6 +19,7 @@ import package::sky::piece::sky_air;
 @group(1) @binding(12) var cloud_transmittance: texture_2d<f32>;
 @group(1) @binding(13) var cloud_table_sampler: sampler;
 @group(1) @binding(14) var<storage, read_write> light_cells: array<u32>;
+@group(1) @binding(15) var<storage, read_write> view_tiles: array<u32>;
 
 const LIGHT_WORDS: u32 = LIGHT_HEIGHTS - 1u;
 const LIGHT_EDGE: f32 = 16.0;
@@ -344,19 +345,24 @@ fn view_direction(ndc: vec2<f32>) -> vec3<f32> {
     return normalize(far.xyz / far.w - clouds.eye.xyz);
 }
 
+const VIEW_CLOUDED: u32 = 1u;
+const VIEW_SHOWN: u32 = 2u;
+
 var<workgroup> view_clouded: atomic<u32>;
 
 @compute @workgroup_size(CLOUD_GROUP, CLOUD_GROUP)
 fn march_view(@builtin(global_invocation_id) id: vec3<u32>,
-        @builtin(local_invocation_index) lane: u32) {
+        @builtin(local_invocation_index) lane: u32,
+        @builtin(workgroup_id) tile: vec3<u32>) {
     if lane == 0u {
         atomicStore(&view_clouded, 0u);
     }
     workgroupBarrier();
     let pixels = max(vec2<u32>(camera.region.xy), vec2<u32>(1u));
-    if all(id.xy < pixels) {
+    let inside = all(id.xy < pixels);
+    var cloud = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+    if inside {
         let depth = textureLoad(view_depth, id.xy, 0);
-        var cloud = vec4<f32>(0.0, 0.0, 0.0, 1.0);
         let sky = depth <= 0.0;
         if !sky || clouds.eye.w != 0.0 {
             let center = (vec2<f32>(id.xy) + 0.5) / vec2<f32>(pixels);
@@ -372,13 +378,25 @@ fn march_view(@builtin(global_invocation_id) id: vec3<u32>,
             }
             cloud = march(clouds.eye.xyz, direction, id.xy, limit, cone);
         }
-        textureStore(view_out, id.xy, cloud);
         if cloud.a < 0.999 {
-            atomicStore(&view_clouded, 1u);
+            atomicOr(&view_clouded, VIEW_CLOUDED);
+        }
+        if !(cloud.a >= 1.0) {
+            atomicOr(&view_clouded, VIEW_SHOWN);
         }
     }
     workgroupBarrier();
-    if lane == 0u && atomicLoad(&view_clouded) != 0u {
-        atomicStore(&composite_draw[0], 3u);
+    let seen = atomicLoad(&view_clouded);
+    if (seen & VIEW_SHOWN) == 0u {
+        return;
+    }
+    if inside {
+        textureStore(view_out, id.xy, cloud);
+    }
+    if lane == 0u {
+        if (seen & VIEW_CLOUDED) != 0u {
+            atomicStore(&composite_draw[0], 6u);
+        }
+        view_tiles[atomicAdd(&composite_draw[1], 1u)] = (tile.x << 16u) | tile.y;
     }
 }

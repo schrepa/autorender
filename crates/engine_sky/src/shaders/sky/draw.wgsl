@@ -5,6 +5,7 @@ import package::engine::slots::flat_point;
 import package::engine::view::{camera, stable_normalize, view_detail};
 import package::face::sun::sun_direction;
 import package::face::tonemap::exposure;
+import package::generated::sky::CLOUD_GROUP;
 import package::generated::writes::{Outputs, outputs};
 import package::sky::common::{air_disc, air_radius, air_transmittance};
 import package::sky::light::{clouded, sky_air_light, sky_table_sampler};
@@ -313,6 +314,24 @@ fn sky_ray(ndc: vec2<f32>) -> vec3<f32> {
 }
 
 @group(1) @binding(46) var view_clouds: texture_2d<f32>;
+@group(1) @binding(47) var<storage, read> cloud_tiles: array<u32>;
+
+@vertex
+fn vs_cloud_tile(@builtin(vertex_index) index: u32, @builtin(instance_index) item: u32)
+        -> SkyOutput {
+    let pixels = max(camera.region.xy, vec2<f32>(1.0));
+    let packed = cloud_tiles[item];
+    let tile = vec2<u32>(packed >> 16u, packed & 0xffffu);
+    let corner = vec2<u32>(select(0u, 1u, index == 1u || index >= 4u),
+        select(0u, 1u, index == 2u || index == 3u || index == 5u));
+    let pixel = min(vec2<f32>((tile + corner) * CLOUD_GROUP), pixels);
+    let at = pixel / pixels;
+    let ndc = vec2<f32>(at.x * 2.0 - 1.0, 1.0 - at.y * 2.0);
+    var output: SkyOutput;
+    output.clip_position = vec4<f32>(ndc, 0.0, 1.0);
+    output.ndc = ndc;
+    return output;
+}
 
 @fragment
 fn fs_view_clouds_post(input: SkyOutput) -> @location(0) vec4<f32> {
