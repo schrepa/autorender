@@ -2158,7 +2158,7 @@
         }
       ],
       "type": "engine_terrain::runtime::brick::TerrainBrick",
-      "version": "9af791fdf8826eebbaa18d00ae5ca6429b9c8e3d2e3fdf6d07a92bdf4581c57c"
+      "version": "3dd7b583129be62bd68e647af34ba6abc98be70b7c68f7f48f2005fbe700e033"
     },
     {
       "dependencies": [
@@ -2424,6 +2424,7 @@
         "engine_terrain_shading::state::Atlas",
         "engine_terrain_shading::state::SurfaceTotals",
         "engine_terrain_shading::state::PartStats",
+        "engine_terrain_shading::state::Derived",
         "engine_terrain_shading::state::RecordsSettling",
         "engine_terrain_shading::terrain_sun::SunPlan",
         "engine_terrain_shading::holes::HoledGround",
@@ -2444,7 +2445,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "e5b5e016fc66e4d6b1db756dde542e868858dc1d69ae92e0b0be490d8b01cd29"
+      "version": "082e2febf687ff787a9f5ff103ba5bee8a24b7a59befe63dbb2afd9b3c888487"
     },
     {
       "dependencies": [
@@ -2610,6 +2611,7 @@
         "engine_scatter::settings::ScatterStats",
         "engine_scatter::systems::ScatterState",
         "engine_scatter::systems::ScatterFeedback",
+        "engine_scatter::systems::Resnapped",
         "engine_scatter::far_cover::CanopyMaps",
         "engine_scatter::layouts::CanopyPiece"
       ],
@@ -2635,7 +2637,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "e549ec1ce2620a7f9acadadbc97e2d6befb0fd7f126d51f4362b46140ccbe456"
+      "version": "aff53df833eea655724f49b497b6944b5c372f51d0bff64916eb56533570e4bf"
     },
     {
       "dependencies": [
@@ -2769,7 +2771,7 @@
         }
       ],
       "type": "engine_ground_cover::GroundCoverBrick",
-      "version": "d2252bfec5776ca23c7227443221d7c6c23897e4a8e1a0beff82b51d8e815378"
+      "version": "98e20b7ee6df272038f1a29d38f3d578df6c627c211821dbe4133e81113c8db1"
     },
     {
       "dependencies": [
@@ -2996,7 +2998,7 @@
         }
       ],
       "type": "engine_water::WaterBrick",
-      "version": "edef52bdb8d0ebc8ec46b9d33978d43deee95a3a359f65155719ee5a53c5a02c"
+      "version": "7846a6bc92bdc650aa96f0585a0ff4775ef9f6654e04a94d1572d0e08bef7254"
     },
     {
       "dependencies": [
@@ -3022,7 +3024,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_noise::LayerNoiseBrick",
-      "version": "eb74bd8e016b8f7694e834807a5d08a65be758005022e567b6789801443a17df"
+      "version": "e734f470425f2143cbed68d15a6903196b2e166f1ff07ec435ac6a4be9442626"
     },
     {
       "dependencies": [
@@ -3048,7 +3050,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_stamps::LayerStampsBrick",
-      "version": "eb57861f12b35cd450f32c4477632a9bf47735cba6c8384fadec7b9ea1d0b86e"
+      "version": "e383e7c176b86b3a8ddf34fe0db3599ee4f1190f41fcf1c4e6dc98d9385a8825"
     },
     {
       "dependencies": [
@@ -3075,7 +3077,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_heightmap::LayerHeightmapBrick",
-      "version": "d5cee4c0bb16fdfd4a410ced11feac7b53334cf35a3257303e4e9ba4bdbf5598"
+      "version": "f2a7f016f0e786b3b740fa892927c6ca3c1260924856a4662b37650cfce8fc79"
     },
     {
       "dependencies": [
@@ -3101,7 +3103,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_paths::LayerPathsBrick",
-      "version": "3a37d3c5307a76ad77b95b8c46ad510e954698c7f2c25ac6c0a54a91c15ca987"
+      "version": "428ed05f8edbacad0a1626699861f25d315d8b9183adab69e0a76ea3594b72cd"
     },
     {
       "dependencies": [
@@ -3127,7 +3129,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_erosion::LayerErosionBrick",
-      "version": "f2477d2d03af183ca85a3896449f0d8e248ab800f7d79ea72384cd6fec2472d7"
+      "version": "f181f3d563f55bbe6fe1f7210e24cca3f956af0cfc6ebf09db23904bb837b82e"
     },
     {
       "dependencies": [
@@ -3154,7 +3156,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_hydrology::LayerHydrologyBrick",
-      "version": "2c470dd46f3ce77640180ed4739cb3f06b98c648b5dff19de48fb4aa8d08e5d6"
+      "version": "7504e3b8c9dc49ed849160e54abcd92cb5a03822a4eab3713a7e814946a89575"
     },
     {
       "dependencies": [
@@ -3183,7 +3185,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_relief::LayerReliefBrick",
-      "version": "09f2d8f9ccb30794990d8fd0e05d9efb6b36100fb8089dbef6ab50fd0a367f48"
+      "version": "f967ea45ca6757df939a11ea8f14e93d660c54896aa8624bae7fcac95438ca02"
     },
     {
       "dependencies": [
@@ -3290,7 +3292,7 @@
         }
       ],
       "type": "engine_world_streaming::WorldStreamingBrick",
-      "version": "0871eafe4b84aae6b126114e4eb84a5011e415352b7153024276faf85d366a4d"
+      "version": "1852838ceaed41ad728641d78bbcde66c232ff8ca88636c8282b4391d5baacd4"
     },
     {
       "dependencies": [
