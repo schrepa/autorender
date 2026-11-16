@@ -11,11 +11,10 @@ gpu_consts! {
     pub const WATER_BLOCKS_SIDE: u32 = 16;
     pub const WATER_TILE_PATCHES: u32 = 16;
     pub const WATER_TILE_WORDS: u32 = WATER_TILE_PATCHES * WATER_TILE_PATCHES;
-    pub const WATER_LEAF_UNLISTED: u32 = 5;
-    pub const WATER_LEAF_TOTAL: u32 = 10;
-    pub const WATER_LEAF_DISPATCH: u32 = 11;
-    pub const WATER_LEAF_FIRST: u32 = 14;
-    pub const WATER_LIST_ORDER: u32 = 8;
+    pub const WATER_LEAF_TOTAL: u32 = 5;
+    pub const WATER_LEAF_GROUPS: u32 = 6;
+    pub const WATER_LEAF_FIRST: u32 = 7;
+    pub const WATER_LEAF_DRAW_WORDS: u32 = 5;
     pub const WATER_LIST_GROUP: u32 = 64;
     pub const WATER_LIST_GROUPS: u32 = 65535;
     pub const WATER_SCAN_GROUP: u32 = 256;
