@@ -450,10 +450,78 @@ fn output_type(format: wgpu::TextureFormat) -> String {
     }
 }
 
-pub(crate) fn pass_module(colored: bool, written: &[&OutputDecl]) -> (String, String) {
+const SHADED: &str = "
+fn point_shaded(point: SurfacePoint, pixel: vec2<f32>) -> Shaded {
+    return shade(point, pixel);
+}
+
+fn slot_shaded(input: SurfaceInput, point: SurfacePoint, pixel: vec2<f32>) -> Shaded {
+    return slot_output(input, point, shade(point, pixel));
+}
+";
+
+const UNSHADED: &str = "
+fn point_shaded(point: SurfacePoint, pixel: vec2<f32>) -> Shaded {
+    var unread: Shaded;
+    return unread;
+}
+
+fn slot_shaded(input: SurfaceInput, point: SurfacePoint, pixel: vec2<f32>) -> Shaded {
+    var unread: Shaded;
+    return unread;
+}
+";
+
+pub(crate) fn reads_shaded(text: &str, name: &str) -> bool {
+    let Some(at) = text.find(&format!("fn {name}(")) else {
+        return true;
+    };
+    let rest = &text[at..];
+    let Some(open) = rest.find('{') else {
+        return true;
+    };
+    let mut depth = 0_usize;
+    let mut end = rest.len();
+    for (index, character) in rest[open..].char_indices() {
+        match character {
+            '{' => depth += 1,
+            '}' => {
+                depth -= 1;
+                if depth == 0 {
+                    end = open + index;
+                    break;
+                }
+            }
+            _ => {}
+        }
+    }
+    let ident = |character: char| character.is_ascii_alphanumeric() || character == '_';
+    let body = &rest[open..end];
+    body.match_indices("shaded").any(|(found, word)| {
+        let before = body[..found]
+            .chars()
+            .next_back()
+            .is_none_or(|character| !ident(character));
+        let after = body[found + word.len()..]
+            .chars()
+            .next()
+            .is_none_or(|character| !ident(character));
+        before && after
+    })
+}
+
+pub(crate) fn pass_module(
+    colored: bool,
+    written: &[&OutputDecl],
+    shades: bool,
+) -> (String, String) {
     let mut key = String::new();
-    let mut imports =
-        String::from("import package::engine::shading::{Shaded, SurfacePoint, ViewPixel};\n");
+    let mut imports = String::from(
+        "import package::engine::shading::{Shaded, SurfaceInput, SurfacePoint, ViewPixel};\n",
+    );
+    if shades {
+        imports.push_str("import package::engine::slots::{shade, slot_output};\n");
+    }
     let (mut fields, mut filled) = (String::new(), String::new());
     let (mut copied, mut blended) = (String::new(), String::new());
     let (mut covered, mut added) = (String::new(), String::new());
@@ -490,7 +558,8 @@ pub(crate) fn pass_module(colored: bool, written: &[&OutputDecl]) -> (String, St
         }
     }
     let text = format!(
-        "{imports}\nstruct Outputs {{\n{fields}}}\n\nstruct DepthOutputs {{\n{fields}    @builtin(frag_depth) depth: f32,\n}}\n\nfn outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written: Outputs;\n{filled}    return written;\n}}\n\nfn blended_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written = outputs(point, shaded, at);\n{blended}    return written;\n}}\n\nfn covered_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written = outputs(point, shaded, at);\n{covered}    return written;\n}}\n\nfn added_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written: Outputs;\n{added}    return written;\n}}\n\nfn depth_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel, depth: f32) -> DepthOutputs {{\n    let written = outputs(point, shaded, at);\n    var out: DepthOutputs;\n{copied}    out.depth = depth;\n    return out;\n}}\n"
+        "{imports}\nstruct Outputs {{\n{fields}}}\n\nstruct DepthOutputs {{\n{fields}    @builtin(frag_depth) depth: f32,\n}}\n\nfn outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written: Outputs;\n{filled}    return written;\n}}\n\nfn blended_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written = outputs(point, shaded, at);\n{blended}    return written;\n}}\n\nfn covered_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written = outputs(point, shaded, at);\n{covered}    return written;\n}}\n\nfn added_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> Outputs {{\n    var written: Outputs;\n{added}    return written;\n}}\n\nfn depth_outputs(point: SurfacePoint, shaded: Shaded, at: ViewPixel, depth: f32) -> DepthOutputs {{\n    let written = outputs(point, shaded, at);\n    var out: DepthOutputs;\n{copied}    out.depth = depth;\n    return out;\n}}\n{}",
+        if shades { SHADED } else { UNSHADED }
     );
     (key, text)
 }

@@ -15,10 +15,8 @@ pub(crate) const KINDS_MODULE: &str = "engine::kinds";
 
 pub(crate) const SURFACED_MODULE: &str = "generated::surfaced";
 
-const SURFACED_IMPORTS: [&str; 2] = [
-    "import package::engine::slots::shade;",
-    "import package::generated::writes::{Outputs, blended_outputs, outputs};",
-];
+const SURFACED_IMPORTS: [&str; 1] =
+    ["import package::generated::writes::{Outputs, blended_outputs, outputs, point_shaded};"];
 
 #[derive(Clone, Copy, Debug)]
 pub enum Varyings {
@@ -769,7 +767,10 @@ fn surfaced_entries(
             let _ = writeln!(text, "\n@fragment");
             let _ = writeln!(text, "fn {entry}(input: {shape}) -> Outputs {{");
             let _ = writeln!(text, "    let seen = {made}(input);");
-            let _ = writeln!(text, "    let shaded = shade(seen.point, seen.pixel);");
+            let _ = writeln!(
+                text,
+                "    let shaded = point_shaded(seen.point, seen.pixel);"
+            );
             let _ = writeln!(text, "    return {written}(seen.point, shaded, seen.at);");
             let _ = writeln!(text, "}}");
         }
