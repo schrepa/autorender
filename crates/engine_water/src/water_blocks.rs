@@ -5,7 +5,7 @@ use bevy_ecs::prelude::*;
 use engine_core::math::{max, min};
 use engine_core::{Cursor, DeviceLimits, FrameBudget, RecordKey, Since};
 use engine_heightfield::TileKey;
-use engine_heightfield::tile::PATCHES_PER_TILE;
+use engine_heightfield::tile::{PATCH_QUADS, PATCHES_PER_TILE};
 use engine_open_world_kit::ground::{GroundTiles, HeldTile};
 use engine_render::{Allocation, Buffer, Prepare, Texture, wgpu};
 use glam::{Vec2, Vec3};
@@ -13,6 +13,7 @@ use glam::{Vec2, Vec3};
 use crate::TileWater;
 use crate::gpu::{
     NO_WATER_BLOCK, WATER_BLOCKS_SIDE as SIDE, WATER_TILE_WORDS as TILE_WORDS, WATER_WAITING,
+    WATER_WET_AREAS as WET_AREAS,
 };
 use crate::jobs::drawn::{DrawnWater, INFO_BYTES, PATCH_BYTES, SURFACE_BYTES};
 use crate::jobs::gpu::{NO_WATER_SURFACE, WATER_BLOCK as BLOCK};
@@ -113,6 +114,7 @@ fn tile_area(terrains: &[WaterTerrain], (terrain, key): Slot) -> Option<TileArea
 struct Placed {
     heights: [f32; 2],
     area: [f32; 4],
+    wet: u32,
 }
 
 const UNPLACED: Placed = Placed {
@@ -123,6 +125,7 @@ const UNPLACED: Placed = Placed {
         f32::INFINITY,
         f32::INFINITY,
     ],
+    wet: u32::MAX,
 };
 
 fn placed(area: Option<TileArea>, (px, pz): (usize, usize), surfaces: &[u8]) -> Placed {
@@ -140,7 +143,34 @@ fn placed(area: Option<TileArea>, (px, pz): (usize, usize), surfaces: &[u8]) -> 
             area.base.x + high.x,
             area.base.z + high.y,
         ],
+        wet: wet_areas(surfaces),
     }
+}
+
+fn wet_areas(surfaces: &[u8]) -> u32 {
+    let side = BLOCK as usize;
+    let areas = WET_AREAS as usize;
+    let cells = (PATCH_QUADS / WET_AREAS) as usize;
+    let reach = (BLOCK - PATCH_QUADS) as usize;
+    let mut wet = 0;
+    let texels = surfaces.as_chunks::<{ SURFACE_BYTES as usize }>().0;
+    for (at, texel) in texels.iter().enumerate() {
+        let [water, ground] = bytemuck::cast::<_, [f32; 2]>(*texel);
+        if !(water > NO_WATER_SURFACE * 0.5 && water > ground) {
+            continue;
+        }
+        let read = |texel: usize| {
+            let first = texel.saturating_sub(reach + cells - 1).div_ceil(cells);
+            (first, (texel / cells).min(areas - 1))
+        };
+        let ((first_x, last_x), (first_z, last_z)) = (read(at % side), read(at / side));
+        for z in first_z..=last_z {
+            for x in first_x..=last_x {
+                wet |= 1 << (z * areas + x);
+            }
+        }
+    }
+    wet
 }
 
 const NO_HEIGHTS: [f32; 2] = [f32::INFINITY, f32::NEG_INFINITY];
@@ -290,8 +320,22 @@ impl Blocks {
             .fold(NO_HEIGHTS, widen)
     }
 
-    pub(crate) fn areas(&self) -> impl Iterator<Item = [f32; 4]> + '_ {
-        self.placed.iter().flatten().map(|placed| placed.area)
+    pub(crate) fn wet_areas(&self) -> impl Iterator<Item = [f32; 4]> + '_ {
+        self.placed
+            .iter()
+            .flatten()
+            .filter(|placed| placed.wet != 0)
+            .map(|placed| placed.area)
+    }
+
+    fn wet_words(&self) -> Vec<u32> {
+        let mut words: Vec<u32> = self
+            .placed
+            .iter()
+            .map(|placed| placed.map_or(0, |placed| placed.wet))
+            .collect();
+        words.resize((self.next as usize).max(words.len()).max(1), 0);
+        words
     }
 
     fn release(&mut self, block: u32) {
@@ -640,18 +684,28 @@ pub(crate) struct BlocksGpu {
     pub(crate) surface: Texture<WaterGpu>,
     pub(crate) info: Texture<WaterGpu>,
     pub(crate) directory: Buffer<WaterGpu>,
+    pub(crate) wet: Buffer<WaterGpu>,
 }
 
 impl BlocksGpu {
     pub(crate) fn new(
-        surface: Texture<WaterGpu>,
-        info: Texture<WaterGpu>,
+        (surface, info): (Texture<WaterGpu>, Texture<WaterGpu>),
         directory: Buffer<WaterGpu>,
+        wet: Buffer<WaterGpu>,
     ) -> Self {
         Self {
             surface,
             info,
             directory,
+            wet,
+        }
+    }
+
+    fn prepare_wet(&self, blocks: &Blocks, cx: &mut Prepare<'_, WaterGpu>) {
+        let words = blocks.wet_words();
+        let made = cx.allocate_buffer(self.wet, (words.len() * 4) as u64);
+        if made == Allocation::Fresh || !blocks.writes.is_empty() {
+            cx.write(self.wet, 0, &words);
         }
     }
 
@@ -675,6 +729,7 @@ impl BlocksGpu {
         let info = cx.grow(self.info, extent, 1);
         let refilled = (surface == Allocation::Fresh || info == Allocation::Fresh)
             .then(|| blocks.all_writes());
+        self.prepare_wet(blocks, cx);
         let block = wgpu::Extent3d {
             width: BLOCK,
             height: BLOCK,
