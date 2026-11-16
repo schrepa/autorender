@@ -2633,7 +2633,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "2d85853af6e84b5b5522fd57404b3db627c7786840986018fc32c2bf5f6ce2ac"
+      "version": "38ef08cf23afa4bd7dd65cc31436ca3ab2da67d747a9ed85ba63717fd7871845"
     },
     {
       "dependencies": [
@@ -3400,8 +3400,8 @@
     }
   ],
   "frame": {
-    "frame_variants": 53,
-    "layouts": 115,
+    "frame_variants": 54,
+    "layouts": 116,
     "pieces": [
       {
         "brick": "engine_sun",
