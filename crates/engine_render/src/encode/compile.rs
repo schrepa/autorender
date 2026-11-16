@@ -499,7 +499,7 @@ fn note(pipelines: &mut Pipelines, compiled: Compiled, from_list: bool) {
     } else if pipelines
         .listed
         .as_ref()
-        .is_some_and(|listed| !listed.contains(&compiled))
+        .is_some_and(|listed| !listed.iter().any(|known| known.same(&compiled)))
     {
         pipelines.unlisted += 1;
     }
@@ -970,6 +970,11 @@ impl Compiler<'_> {
             && !self.pipelines.making.waits(made)
         {
             let bits = keyed.bits;
+            let needed = if asked == Asked::Warmed || self.pipelines.warming.opened() {
+                Needed::Later
+            } else {
+                Needed::First(keyed.switches.clone())
+            };
             let shape = Shape {
                 formats,
                 depth,
@@ -994,6 +999,7 @@ impl Compiler<'_> {
                         plain,
                         main,
                         variant: bits,
+                        needed,
                     },
                     self.pipelines.listing,
                 )
