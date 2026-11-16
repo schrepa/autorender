@@ -1,15 +1,16 @@
 import package::cover::faces::cover::{COVER_EDGE_ON, COVER_NO_LAYER, COVER_UNBOUND, CoverClump,
-    CoverPatchRange, cover_accent, cover_accent_row, cover_bound, cover_bounds, cover_clump,
+    CoverPatchRange, cover_accent_row, cover_bound, cover_bounds, cover_clump,
     cover_clump_point, cover_clump_seed, cover_clump_size, cover_clumped, cover_dense,
     cover_densest, cover_depth, cover_drawn, cover_fall, cover_growth, cover_header,
     cover_layer, cover_leaves, cover_limits, cover_look, cover_patch, cover_patch_point,
     cover_patch_range, cover_patch_reach, cover_row, cover_seen, cover_shape, cover_stand,
-    cover_tall, cover_tint, cover_view};
-import package::cover::laws::{BLADE_HALF, BLADE_SIZE, BLADE_UPPER, CARD_JOINTS, CARD_MIRRORED,
+    cover_tall, cover_tint, cover_view, cover_cell};
+import package::cover::laws::{BLADE_HALF, BLADE_SIZE, BLADE_UPPER, CARD_CELL, CARD_JOINTS,
+    CARD_MIRRORED,
     CARD_TINT_RANGE, COVER_DRAW_VERTICES, FLAT_JOINTS, FOLD_STEPS, FOLD_WIDEST,
     STRAIGHT_JOINTS};
 import package::engine::detail::{ViewDetail, across, fits, handover, seen_share};
-import package::engine::drawn::drawn_view_sees;
+import package::engine::drawn::{drawn_view_sees, drawn_views};
 import package::engine::math::{PI, unit};
 import package::face::ground_tiles::{GroundMaterial, GroundTerrain, GroundTile, LevelTile,
     NOT_RESIDENT, TILE_QUADS, ground_colors, ground_extent, ground_tile, level_tile,
@@ -17,7 +18,7 @@ import package::face::ground_tiles::{GroundMaterial, GroundTerrain, GroundTile, 
     tile_material, tile_site, tile_summary, true_height};
 import package::face::view_wind::wind_sway;
 import package::generated::cover::{COVER_CELL_ROWS, CoverBlade, CoverCard, CoverMaterial, Grow,
-    GrowSpot, cover_facing, cover_lean};
+    GrowSpot, ShapeRows, cover_facing, cover_lean};
 
 struct Counts {
     appended: atomic<u32>,
@@ -47,6 +48,7 @@ struct DrawArgs {
 @group(1) @binding(5) var<storage, read_write> grow_spots: array<GrowSpot>;
 @group(1) @binding(6) var<storage, read_write> grow_runs: array<atomic<u32>>;
 @group(1) @binding(7) var<uniform> grow_row: vec4<u32>;
+@group(1) @binding(8) var<storage, read_write> cover_casts: array<atomic<u32>>;
 
 const LATTICE_TURN: f32 = 0.618034;
 const WIND_SHOWN: f32 = 1.0e9;
@@ -62,6 +64,9 @@ const CELL_LEFT: u32 = 0u;
 const CELL_SUMMED: u32 = 1u;
 const CELL_UNSUMMED: u32 = 2u;
 const CORNER_LANE: u32 = 60u;
+const PLACE_ROUNDING: f32 = 1.0e-5;
+const LEAN_LEAST: f32 = 1.0e-4;
+const BLADE_KINDS: u32 = 2u;
 
 fn hash(value: u32) -> u32 {
     var h = value * 0x9e3779b1u;
@@ -322,6 +327,9 @@ var<workgroup> cell_run: vec4<u32>;
 var<workgroup> cell_plan: CellPlan;
 var<workgroup> cell_ground: array<u32, GROUND_HELD>;
 var<workgroup> cell_site: array<u32, SITE_HELD>;
+var<workgroup> cell_passing: atomic<u32>;
+var<workgroup> cell_made: atomic<u32>;
+var<workgroup> cell_round: u32;
 
 fn held_ground(tile: LevelTile, sample: vec2<u32>, grounds: CellSamples) -> GroundMaterial {
     let within = sample - grounds.first;
@@ -379,37 +387,58 @@ fn site_near(tile: LevelTile, at: Between, quads: vec4<u32>) -> vec4<f32> {
     return mix(low, high, at.f.y);
 }
 
+struct Tussock {
+    kept: f32,
+    most: f32,
+    other: u32,
+}
+
+fn tussock_weigh(held: Tussock, ground: GroundMaterial, f: vec2<f32>, index: u32, own: u32)
+        -> Tussock {
+    var weighed = held;
+    let weight = mix(1.0 - f.x, f.x, f32(index & 1u)) * mix(1.0 - f.y, f.y, f32(index >> 1u));
+    let second = weight * f32(ground.share) * (1.0 / 255.0);
+    let first = weight - second;
+    if ground.first == own {
+        weighed.kept += first;
+    } else if first > weighed.most {
+        weighed.most = first;
+        weighed.other = ground.first;
+    }
+    if ground.second == own {
+        weighed.kept += second;
+    } else if second > weighed.most {
+        weighed.most = second;
+        weighed.other = ground.second;
+    }
+    return weighed;
+}
+
+fn pick_ground(low: GroundMaterial, high: GroundMaterial, upper: bool) -> GroundMaterial {
+    return GroundMaterial(select(low.first, high.first, upper),
+        select(low.second, high.second, upper), select(low.share, high.share, upper));
+}
+
 fn tussock_material(grow: Grow, tile: LevelTile, samples: vec2<f32>, pick: f32,
         grounds: CellSamples, quads: vec4<u32>) -> u32 {
     let at = tile_between(tile, samples);
     let corner = at.corner;
     let f = at.f;
-    var held: array<GroundMaterial, 4>;
-    for (var index = 0u; index < 4u; index++) {
-        held[index] = held_ground(tile, corner + vec2<u32>(index & 1u, index >> 1u), grounds);
-    }
-    let closest = held[u32(round(f.x)) + 2u * u32(round(f.y))];
+    let held_0 = held_ground(tile, corner, grounds);
+    let held_1 = held_ground(tile, corner + vec2<u32>(1u, 0u), grounds);
+    let held_2 = held_ground(tile, corner + vec2<u32>(0u, 1u), grounds);
+    let held_3 = held_ground(tile, corner + vec2<u32>(1u, 1u), grounds);
+    let right = round(f.x) != 0.0;
+    let closest = pick_ground(pick_ground(held_0, held_1, right),
+        pick_ground(held_2, held_3, right), round(f.y) != 0.0);
     let own = select(closest.first, closest.second, closest.share > 127u);
-    var kept = 0.0;
-    var most = 0.0;
-    var other = own;
-    for (var index = 0u; index < 4u; index++) {
-        let weight = mix(1.0 - f.x, f.x, f32(index & 1u)) * mix(1.0 - f.y, f.y, f32(index >> 1u));
-        let second = weight * f32(held[index].share) * (1.0 / 255.0);
-        let first = weight - second;
-        if held[index].first == own {
-            kept += first;
-        } else if first > most {
-            most = first;
-            other = held[index].first;
-        }
-        if held[index].second == own {
-            kept += second;
-        } else if second > most {
-            most = second;
-            other = held[index].second;
-        }
-    }
+    var weighed = Tussock(0.0, 0.0, own);
+    weighed = tussock_weigh(weighed, held_0, f, 0u, own);
+    weighed = tussock_weigh(weighed, held_1, f, 1u, own);
+    weighed = tussock_weigh(weighed, held_2, f, 2u, own);
+    weighed = tussock_weigh(weighed, held_3, f, 3u, own);
+    var kept = weighed.kept;
+    let other = weighed.other;
     if other != own {
         let bare = look_stand(grow, own) <= 0.0;
         if bare != (look_stand(grow, other) <= 0.0) {
@@ -710,11 +739,13 @@ fn scan_under(grow: Grow, fine: vec4<u32>, coarse: vec3<u32>, corner: vec2<f32>,
             all(sample - inside.first < inside.count)), span));
         let ids = grown_on(tile_material(tile, sample));
         named |= (1u << min(ids.x, UNNAMED_MATERIALS)) | (1u << min(ids.y, UNNAMED_MATERIALS));
-        for (var turn = 0u; turn < 2u; turn++) {
-            if ids[turn] >= UNNAMED_MATERIALS && ids[turn] != known {
-                known = ids[turn];
-                looks = with_look(looks, grow, known, closest, growth);
-            }
+        if ids.x >= UNNAMED_MATERIALS && ids.x != known {
+            known = ids.x;
+            looks = with_look(looks, grow, known, closest, growth);
+        }
+        if ids.y >= UNNAMED_MATERIALS && ids.y != known {
+            known = ids.y;
+            looks = with_look(looks, grow, known, closest, growth);
         }
     }
     if coarse.x != NOT_RESIDENT {
@@ -768,7 +799,7 @@ fn range_patches(grow: Grow, corner: vec2<f32>, lane: u32) {
     if look == 1u && alone.x == alone.y {
         return;
     }
-    let row = look_row(grow, alone[look]);
+    let row = look_row(grow, select(alone.x, alone.y, look == 1u));
     if row == COVER_NO_LAYER || cover_dense(row) <= 0.0 {
         return;
     }
@@ -791,6 +822,39 @@ fn patch_span(at: u32) -> vec4<f32> {
         ordered_to_height(atomicLoad(&cell_patches[at + 3u])));
 }
 
+struct PlanLook {
+    row: u32,
+    reach: vec4<f32>,
+    dense: f32,
+    room: f32,
+    walks: bool,
+}
+
+const NO_LOOK: PlanLook = PlanLook(COVER_NO_LAYER, vec4<f32>(0.0), 0.0, COVER_UNBOUND, true);
+
+fn plan_look(grow: Grow, material: u32, at: u32, growth: vec4<f32>, closest: f32) -> PlanLook {
+    let row = look_row(grow, material);
+    if row == COVER_NO_LAYER || cover_dense(row) <= 0.0 {
+        return NO_LOOK;
+    }
+    let reach = cover_patch_range(row, patch_span(at), patch_span(at + 4u));
+    let bounds = cover_bounds(row, growth, reach, closest);
+    if bounds.dense <= 0.0 {
+        return NO_LOOK;
+    }
+    let size = cover_clump_size(row);
+    let visited = (3.0 * size + grow.origin.w) / size;
+    return PlanLook(row, vec4<f32>(reach.density, reach.low, reach.high, 0.0), bounds.dense,
+        bounds.room, bounds.base <= 0.0 && bounds.share * visited * visited < 1.0);
+}
+
+fn with_plan(looks: CellLooks, look: PlanLook) -> CellLooks {
+    if look.row == COVER_NO_LAYER {
+        return looks;
+    }
+    return CellLooks(max(looks.dense, look.dense), min(looks.room, look.room));
+}
+
 fn plan_cell(grow: Grow, cell: vec2<u32>, cell_center: vec3<f32>, closest: f32,
         unsummed: bool) {
     let side = u32(grow.tier.y);
@@ -809,8 +873,8 @@ fn plan_cell(grow: Grow, cell: vec2<u32>, cell_center: vec3<f32>, closest: f32,
     let others = named & ~((1u << alone.x) | (1u << alone.y));
     let mixed = others != 0u || (named >> UNNAMED_MATERIALS) != 0u;
     var looks = CellLooks(0.0, COVER_UNBOUND);
-    var rows = array<u32, 2>(COVER_NO_LAYER, COVER_NO_LAYER);
-    var reaches: array<vec4<f32>, 2>;
+    var first = NO_LOOK;
+    var second = NO_LOOK;
     var walked = scanned && !mixed;
     if scanned {
         let unnamed = bitcast<f32>(atomicLoad(&cell_dense));
@@ -820,24 +884,12 @@ fn plan_cell(grow: Grow, cell: vec2<u32>, cell_center: vec3<f32>, closest: f32,
         for (var rest = others; rest != 0u; rest &= rest - 1u) {
             looks = with_look(looks, grow, countTrailingZeros(rest), closest, growth);
         }
-        for (var index = 0u; index < select(2u, 1u, alone.x == alone.y); index++) {
-            let row = look_row(grow, alone[index]);
-            if row == COVER_NO_LAYER || cover_dense(row) <= 0.0 {
-                continue;
-            }
-            let reach = cover_patch_range(row, patch_span(8u * index),
-                patch_span(8u * index + 4u));
-            let bounds = cover_bounds(row, growth, reach, closest);
-            if bounds.dense <= 0.0 {
-                continue;
-            }
-            looks = CellLooks(max(looks.dense, bounds.dense), min(looks.room, bounds.room));
-            let size = cover_clump_size(row);
-            let visited = (3.0 * size + grow.origin.w) / size;
-            walked = walked && bounds.base <= 0.0 && bounds.share * visited * visited < 1.0;
-            rows[index] = row;
-            reaches[index] = vec4<f32>(reach.density, reach.low, reach.high, 0.0);
+        first = plan_look(grow, alone.x, 0u, growth, closest);
+        if alone.x != alone.y {
+            second = plan_look(grow, alone.y, 8u, growth, closest);
         }
+        looks = with_plan(with_plan(looks, first), second);
+        walked = walked && first.walks && second.walks;
         if looks.dense <= 0.0 {
             return;
         }
@@ -867,11 +919,12 @@ fn plan_cell(grow: Grow, cell: vec2<u32>, cell_center: vec3<f32>, closest: f32,
         room = looks.room;
     }
     var total = 0u;
+    var rows = vec2<u32>(COVER_NO_LAYER);
     if walked {
-        cell_plan.reaches = reaches;
+        cell_plan.reaches = array<vec4<f32>, 2>(first.reach, second.reach);
+        rows = vec2<u32>(first.row, second.row);
     } else {
         total = u32(ceil(f32(side * side) * min(crowd, stacked / room)));
-        rows = array<u32, 2>(COVER_NO_LAYER, COVER_NO_LAYER);
     }
     cell_plan.lie = vec4<f32>(normal, order_tail(cell, u32(grow.terms.w), grow.counts.w));
     cell_plan.growth = growth;
@@ -881,7 +934,7 @@ fn plan_cell(grow: Grow, cell: vec2<u32>, cell_center: vec3<f32>, closest: f32,
     atomicAdd(&counts.tried, total);
     atomicAdd(&counts.ran, select(min(total, 1u), 1u, walked));
     cell_run = vec4<u32>(total, select(MIXED, alone.x, scanned && alone.x == alone.y && !mixed),
-        rows[0], rows[1]);
+        rows.x, rows.y);
 }
 
 struct Run {
@@ -924,14 +977,78 @@ struct Run {
 var<private> run: Run;
 var<private> lane_material: u32;
 var<private> lane_row: u32;
-var<private> lane_limits: vec4<f32>;
-var<private> lane_densest: f32;
-var<private> lane_leaves: f32;
-var<private> lane_based: u32;
-var<private> lane_base: CoverMaterial;
 var<private> lane_grew: bool;
 
-fn grow_candidate(at: vec2<u32>, order: u32, candidate: u32, owner: vec3<u32>) {
+fn spec_look(at: u32, density: f32) -> CoverMaterial {
+    var spec = cover_look(at);
+    spec.shape.x = density;
+    return spec;
+}
+
+struct Bounds {
+    low: vec3<f32>,
+    high: vec3<f32>,
+}
+
+fn bounds_around(root: vec3<f32>, low: vec3<f32>, high: vec3<f32>) -> Bounds {
+    let margin = PLACE_ROUNDING * max(max(abs(root.x), abs(root.y)), abs(root.z))
+        + ROUNDING * max(high.x - low.x, high.y - low.y);
+    return Bounds(root + low - vec3<f32>(margin), root + high + vec3<f32>(margin));
+}
+
+fn blade_bounds(blade: CoverBlade, shape: ShapeRows) -> Bounds {
+    let size = unpack2x16float(blade.size & BLADE_SIZE);
+    let most = max(shape.bends.x, shape.bends.z);
+    let out = size.x * shape.arc.z * most + 0.5 * size.y;
+    let dip = min(size.x * (1.0 - shape.arc.y * most * most), 0.0);
+    return bounds_around(blade.root, vec3<f32>(-out, dip, -out), vec3<f32>(out, size.x, out));
+}
+
+fn card_bounds(card: CoverCard, shape: ShapeRows) -> Bounds {
+    let size = unpack2x16float(card.size);
+    let span = cover_cell(card.cell & CARD_CELL).span;
+    let bend = abs(size.y) * max(shape.bends.x, LEAN_LEAST);
+    let tip = max(1.0, abs(1.0 - shape.arc.y * bend * bend)) + bend * shape.arc.z;
+    let out = size.x * (max(max(shape.arc.x, tip), abs(span.z))
+        + max(abs(span.x), abs(span.y)));
+    return bounds_around(card.root, vec3<f32>(-out), vec3<f32>(out));
+}
+
+fn mark_casts(bounds: Bounds, kind: u32, first: u32, last: u32) {
+    let room = grows[0].room;
+    let views = min(room.w, arrayLength(&drawn_views));
+    let kinds = BLADE_KINDS + room.z;
+    for (var view = 0u; view < views; view++) {
+        if drawn_views[view].owned == 0u || !drawn_view_sees(view, bounds.low, bounds.high) {
+            continue;
+        }
+        let at = 2u * (view * kinds + kind);
+        atomicMax(&cover_casts[at], ~first);
+        atomicMax(&cover_casts[at + 1u], last + 1u);
+    }
+}
+
+var<workgroup> cell_passed: array<Pick, 64>;
+
+struct Candidate {
+    rank: f32,
+    seed: u32,
+    local: vec2<f32>,
+    world_xz: vec2<f32>,
+    probe: vec3<f32>,
+    error: f32,
+    sight: vec2<f32>,
+    deep: f32,
+    found: GroundTile,
+    material: u32,
+    turf: f32,
+    tussock: CoverClump,
+    row: u32,
+    kept: bool,
+}
+
+fn candidate_at(at: vec2<u32>, order: u32, candidate: u32) -> Candidate {
+    var picked: Candidate;
     let slot = run.slot;
     let lattice = run.lattice;
     let held = lattice * lattice;
@@ -953,23 +1070,23 @@ fn grow_candidate(at: vec2<u32>, order: u32, candidate: u32, owner: vec3<u32>) {
     let probe = vec3<f32>(world_xz.x, run.height, world_xz.y);
     let afar = distance(probe, eye);
     if afar > outer + run.slack || afar + run.slack < inner {
-        return;
+        return picked;
     }
     let error = across(run.view, probe) * run.view.pixel_error;
     let sight = cover_view(run.normal, normalize(eye - probe));
     let deep = run.area * run.layers * sight.x * thin / sight.y;
     if rank >= min(f32(held) * grow_share(run.grow, distance(world_xz, run.grow.eye.xz)),
             deep / blade_room(run.grow.least.xyz, error, run.lush)) {
-        return;
+        return picked;
     }
     if any(local > run.extent) {
-        return;
+        return picked;
     }
     var found = run.whole;
     if run.side > TILE_QUADS {
         found = ground_tile(run.terrain, local, 0u);
         if !found.found {
-            return;
+            return picked;
         }
     }
     var material = run.alone;
@@ -995,50 +1112,77 @@ fn grow_candidate(at: vec2<u32>, order: u32, candidate: u32, owner: vec3<u32>) {
     if material != lane_material {
         lane_material = material;
         lane_row = look_row(run.grow, material);
-        if lane_row != COVER_NO_LAYER {
-            lane_limits = cover_limits(lane_row);
-            lane_densest = cover_densest(lane_row);
-            lane_leaves = cover_leaves(cover_row(run.grow.counts.z, material));
-        }
     }
     let row = lane_row;
-    if row == COVER_NO_LAYER || lane_limits.x <= 0.5 * error
-            || rank >= min(lane_densest * run.crowd,
-            deep / blade_room(lane_limits.yzw, error, run.lush)) {
+    if row == COVER_NO_LAYER {
+        return picked;
+    }
+    let limits = cover_limits(row);
+    if limits.x <= 0.5 * error || rank >= min(cover_densest(row) * run.crowd,
+            deep / blade_room(limits.yzw, error, run.lush)) {
+        return picked;
+    }
+    picked = Candidate(rank, seed, local, world_xz, probe, error, sight, deep, found, material,
+        turf, tussock, row, true);
+    return picked;
+}
+
+fn grow_candidate(at: vec2<u32>, order: u32, candidate: u32, owner: vec3<u32>) {
+    let picked = candidate_at(at, order, candidate);
+    if !picked.kept {
         return;
     }
+    let slot = run.slot;
+    let quad = run.grow.origin.w;
+    let eye = run.grow.eye.xyz;
+    let outer = run.grow.eye.w;
+    let inner = run.grow.tier.x;
+    let thin = run.grow.detail.w;
+    let rank = picked.rank;
+    let seed = picked.seed;
+    let local = picked.local;
+    let world_xz = picked.world_xz;
+    let error = picked.error;
+    let sight = picked.sight;
+    let found = picked.found;
+    let material = picked.material;
+    let turf = picked.turf;
+    let tussock = picked.tussock;
+    let row = picked.row;
     let owned = owner.x != COVER_NO_LAYER;
     if owned && owner.x != row {
         return;
     }
-    if row != lane_based {
-        lane_based = row;
-        lane_base = cover_look(row);
-    }
-    let base = lane_base;
-    let accented = base.accents.y > 0u;
-    if base.shape.x <= 0.0 || (owned && !accented) {
+    let density = cover_dense(row);
+    let accents = cover_look(row).accents;
+    let accented = accents.y > 0u;
+    if density <= 0.0 || (owned && !accented) {
         return;
     }
     var clump: CoverClump;
-    var spec = base;
+    var at_spec = row;
     if accented {
-        clump = cover_clump(world_xz, base.clump.x, 2u * slot);
+        clump = cover_clump(world_xz, cover_clump_size(row), 2u * slot);
         if owned && any(bitcast<vec2<u32>>(clump.cell) != owner.yz) {
             return;
         }
-        spec = cover_accent(base, unit(hash(clump.seed ^ 0x9e3779b9u)));
+        let accent = cover_accent_row(accents, unit(hash(clump.seed ^ 0x9e3779b9u)));
+        at_spec = select(accent, row, accent == COVER_NO_LAYER);
     }
+    let spec = spec_look(at_spec, density);
+    let base_patches = cover_look(row).patches;
     let pulled = spec.tuft.z > 0.0 || spec.fans.y > 0.0;
     let grown = select(run.growth.xy, run.growth.zw, pulled);
     let finer = error * spec.tuft.w;
     let mean = 0.5 * (spec.shape.y + spec.shape.z);
-    let reached = (1.0 + base.patches.z) * grown.y;
-    if rank >= spec.shape.x * (1.0 + base.patches.y) * run.sown * grown.y
+    let reached = (1.0 + base_patches.z) * grown.y;
+    if rank >= spec.shape.x * (1.0 + base_patches.y) * run.sown * grown.y
             * min(spec.shape.w * reached / finer, 1.0) * seen_share(mean * reached / finer) {
         return;
     }
-    let patches = cover_patch(world_xz, base, 0.0, 2u * slot);
+    var patched: CoverMaterial;
+    patched.patches = base_patches;
+    let patches = cover_patch(world_xz, patched, 0.0, 2u * slot);
     let low = patches.height * grown.x;
     let high = patches.height * grown.y;
     let own = spec.shape.x * run.density * run.area * patches.density;
@@ -1082,7 +1226,7 @@ fn grow_candidate(at: vec2<u32>, order: u32, candidate: u32, owner: vec3<u32>) {
         return;
     }
     if !accented {
-        clump = cover_clump(world_xz, base.clump.x, 2u * slot);
+        clump = cover_clump(world_xz, cover_clump_size(row), 2u * slot);
     }
     let site = site_near(stand.tile, tile_between(stand.tile,
         rooted / (quad * f32(1u << stand.level))), run.quads);
@@ -1102,7 +1246,10 @@ fn grow_candidate(at: vec2<u32>, order: u32, candidate: u32, owner: vec3<u32>) {
         return;
     }
     let rise = saturate((keep - rank) / max(run.grow_in * keep, 1.0e-4));
-    let clumped = cover_clumped(spec, cover_tall(clump, base, scale, 0.0));
+    var tall: CoverMaterial;
+    tall.patches = cover_look(row).patches;
+    tall.clump = cover_look(row).clump;
+    let clumped = cover_clumped(spec, cover_tall(clump, tall, scale, 0.0));
     let width = spec.shape.w * scale * clumped.height;
     let height = mix(spec.shape.y, spec.shape.z, unit(hash(seed ^ 0xc2b2ae35u)))
         * width / spec.shape.w * rise;
@@ -1134,7 +1281,8 @@ fn grow_candidate(at: vec2<u32>, order: u32, candidate: u32, owner: vec3<u32>) {
     let leaned = cover_lean(unorm8(lean.x * 0.5 + 0.5), unorm8(lean.y * 0.5 + 0.5),
         unorm8(gusts.x), unorm8(gusts.y));
     let left = select(0.0, 1.0 - shown / drawn.x, drawn.x > 0.0);
-    let fall = cover_fall(0.5 * lane_leaves * run.density * patches.density * growth
+    let fall = cover_fall(0.5 * cover_leaves(cover_row(run.grow.counts.z, material))
+        * run.density * patches.density * growth
         * clumped.height * clumped.height * scale * scale);
     let seen = cover_seen(cover_depth(dense * (drawn.x - shown) * spec.shape.w * scale
         * mean * scale, sight.x), fall);
@@ -1147,6 +1295,7 @@ fn grow_candidate(at: vec2<u32>, order: u32, candidate: u32, owner: vec3<u32>) {
         let made = fewest + dice % ((spec.cells.w >> 16u) - fewest + 1u);
         let bin = spec.cells.z;
         let placed = atomicAdd(&counts.carded[bin], made);
+        let shape = cover_shape();
         var card: CoverCard;
         card.size = pack2x16float(vec2<f32>(height, spec.drift.w));
         card.lean = leaned;
@@ -1161,6 +1310,8 @@ fn grow_candidate(at: vec2<u32>, order: u32, candidate: u32, owner: vec3<u32>) {
             card.cell = (spec.cells.x + COVER_CELL_ROWS * (roll % spec.cells.y))
                 | (hash(roll ^ 0x27d4eb2fu) & CARD_MIRRORED);
             if placed + leaf < run.grow.room.y {
+                mark_casts(card_bounds(card, shape), BLADE_KINDS + bin, placed + leaf,
+                    placed + leaf);
                 cards[bin * run.grow.room.y + placed + leaf] = card;
             }
         }
@@ -1189,10 +1340,13 @@ fn grow_candidate(at: vec2<u32>, order: u32, candidate: u32, owner: vec3<u32>) {
         return;
     }
     if flattened {
-        blades[run.grow.room.x - 1u - atomicAdd(&counts.flat, 1u)] = blade;
+        let flat = atomicAdd(&counts.flat, 1u);
+        mark_casts(blade_bounds(blade, cover_shape()), 1u, flat, flat);
+        blades[run.grow.room.x - 1u - flat] = blade;
         return;
     }
     let first = atomicAdd(&counts.whole, pieces);
+    mark_casts(blade_bounds(blade, cover_shape()), 0u, first, first + pieces - 1u);
     if pieces == 2u {
         blade.size |= BLADE_HALF;
         var upper = blade;
@@ -1202,59 +1356,156 @@ fn grow_candidate(at: vec2<u32>, order: u32, candidate: u32, owner: vec3<u32>) {
     blades[first] = blade;
 }
 
-fn walk_clumps(row: u32, reach: vec4<f32>, cell: vec2<u32>, lane: u32) -> u32 {
+struct Pick {
+    at: vec2<u32>,
+    order: u32,
+    candidate: u32,
+    owner: vec3<u32>,
+}
+
+const WALK_LOOK: u32 = 0u;
+const WALK_CLUMP: u32 = 1u;
+const WALK_QUAD: u32 = 2u;
+const WALK_TRY: u32 = 3u;
+
+struct Walk {
+    stage: u32,
+    look: u32,
+    row: u32,
+    accents: vec4<u32>,
+    density: f32,
+    size: f32,
+    patches: CoverPatchRange,
+    first: vec2<i32>,
+    wide: u32,
+    count: u32,
+    clump: u32,
+    id: vec2<i32>,
+    limit: u32,
+    point: vec2<f32>,
+    lowest: vec2<i32>,
+    highest: vec2<i32>,
+    quad: vec2<i32>,
+    spot: vec2<u32>,
+    order: u32,
+    next: u32,
+    tried: u32,
+    pick: Pick,
+}
+
+fn walk_look(walk: ptr<function, Walk>, row: u32, reach: vec4<f32>, lane: u32) {
     let look = cover_look(row);
     let size = look.clump.x;
-    let quad = run.grow.origin.w;
-    let patches = CoverPatchRange(reach.x, reach.y, reach.z);
     let low = run.grow.origin.xz + run.corner - REACH_ROUNDING;
     let high = low + run.spacing + 2.0 * REACH_ROUNDING;
     let first = vec2<i32>(floor(low / size)) - vec2<i32>(1);
     let last = vec2<i32>(floor(high / size)) + vec2<i32>(1);
-    let wide = u32(last.x - first.x + 1);
-    let count = wide * u32(last.y - first.y + 1);
+    (*walk).row = row;
+    (*walk).accents = look.accents;
+    (*walk).density = look.shape.x;
+    (*walk).size = size;
+    (*walk).patches = CoverPatchRange(reach.x, reach.y, reach.z);
+    (*walk).first = first;
+    (*walk).wide = u32(last.x - first.x + 1);
+    (*walk).count = (*walk).wide * u32(last.y - first.y + 1);
+    (*walk).clump = lane;
+    (*walk).stage = WALK_CLUMP;
+}
+
+fn walk_clump(walk: ptr<function, Walk>, cell: vec2<u32>) -> bool {
+    let index = (*walk).clump;
+    (*walk).clump += 64u;
+    let size = (*walk).size;
+    let quad = run.grow.origin.w;
+    let id = (*walk).first + vec2<i32>(vec2<u32>(index % (*walk).wide, index / (*walk).wide));
+    let kind = cover_accent_row((*walk).accents,
+        unit(hash(cover_clump_seed(id, 2u * run.slot) ^ 0x9e3779b9u)));
+    if kind == COVER_NO_LAYER {
+        return false;
+    }
+    let bound = cover_bound(kind, run.growth, (*walk).patches, run.closest);
+    if bound.x <= 0.0 {
+        return false;
+    }
     let start = vec2<i32>(cell * run.side);
     let end = start + vec2<i32>(i32(run.side) - 1);
-    var tried = 0u;
-    for (var index = lane; index < count; index += 64u) {
-        let id = first + vec2<i32>(vec2<u32>(index % wide, index / wide));
-        let kind = cover_accent_row(look.accents,
-            unit(hash(cover_clump_seed(id, 2u * run.slot) ^ 0x9e3779b9u)));
-        if kind == COVER_NO_LAYER {
-            continue;
-        }
-        let bound = cover_bound(kind, run.growth, patches, run.closest);
-        if bound.x <= 0.0 {
-            continue;
-        }
-        let limit = u32(ceil(f32(run.finest) * min(run.tiered, min((1.0 + ROUNDING)
-            * look.shape.x * bound.x * run.sown, run.stacked / bound.y))));
-        let near = (vec2<f32>(id - vec2<i32>(1)) * size - run.grow.origin.xz - REACH_ROUNDING)
-            / quad;
-        let far = (vec2<f32>(id + vec2<i32>(2)) * size - run.grow.origin.xz + REACH_ROUNDING)
-            / quad;
-        let from_quad = max(vec2<i32>(floor(near)), start);
-        let to_quad = min(vec2<i32>(floor(far)), end);
-        let point = cover_clump_point(id, size, 2u * run.slot) - run.grow.origin.xz;
-        let furthest = CLUMP_REACH * size + REACH_ROUNDING;
-        for (var y = from_quad.y; y <= to_quad.y; y++) {
-            for (var x = from_quad.x; x <= to_quad.x; x++) {
-                let at = vec2<u32>(vec2<i32>(x, y));
-                let gap = max(abs((vec2<f32>(at) + 0.5) * quad - point) - 0.5 * quad,
-                    vec2<f32>(0.0));
-                if dot(gap, gap) > furthest * furthest {
-                    continue;
-                }
-                let order = quad_order(at, run.depth, run.slot, limit);
-                for (var next = order; next < limit; next += run.finest) {
-                    tried += 1u;
-                    grow_candidate(at, order, next / run.finest,
-                        vec3<u32>(row, bitcast<vec2<u32>>(id)));
-                }
+    let near = (vec2<f32>(id - vec2<i32>(1)) * size - run.grow.origin.xz - REACH_ROUNDING)
+        / quad;
+    let far = (vec2<f32>(id + vec2<i32>(2)) * size - run.grow.origin.xz + REACH_ROUNDING)
+        / quad;
+    (*walk).lowest = max(vec2<i32>(floor(near)), start);
+    (*walk).highest = min(vec2<i32>(floor(far)), end);
+    if any((*walk).lowest > (*walk).highest) {
+        return false;
+    }
+    (*walk).id = id;
+    (*walk).limit = u32(ceil(f32(run.finest) * min(run.tiered, min((1.0 + ROUNDING)
+        * (*walk).density * bound.x * run.sown, run.stacked / bound.y))));
+    (*walk).point = cover_clump_point(id, size, 2u * run.slot) - run.grow.origin.xz;
+    (*walk).quad = (*walk).lowest;
+    return true;
+}
+
+fn walk_quad(walk: ptr<function, Walk>) -> bool {
+    let quad = run.grow.origin.w;
+    let at = vec2<u32>((*walk).quad);
+    (*walk).quad.x += 1;
+    if (*walk).quad.x > (*walk).highest.x {
+        (*walk).quad = vec2<i32>((*walk).lowest.x, (*walk).quad.y + 1);
+    }
+    let furthest = CLUMP_REACH * (*walk).size + REACH_ROUNDING;
+    let gap = max(abs((vec2<f32>(at) + 0.5) * quad - (*walk).point) - 0.5 * quad,
+        vec2<f32>(0.0));
+    if dot(gap, gap) > furthest * furthest {
+        return false;
+    }
+    (*walk).spot = at;
+    (*walk).order = quad_order(at, run.depth, run.slot, (*walk).limit);
+    (*walk).next = (*walk).order;
+    return true;
+}
+
+fn walk_next(walk: ptr<function, Walk>, planned: vec4<u32>, cell: vec2<u32>, lane: u32)
+        -> bool {
+    var made = false;
+    loop {
+        let stage = (*walk).stage;
+        if stage == WALK_LOOK {
+            if (*walk).look >= 2u {
+                break;
+            }
+            let look = (*walk).look;
+            (*walk).look += 1u;
+            let row = select(planned.z, planned.w, look == 1u);
+            if row != COVER_NO_LAYER {
+                walk_look(walk, row, cell_plan.reaches[look], lane);
+            }
+        } else if stage == WALK_CLUMP {
+            if (*walk).clump >= (*walk).count {
+                (*walk).stage = WALK_LOOK;
+            } else if walk_clump(walk, cell) {
+                (*walk).stage = WALK_QUAD;
+            }
+        } else if stage == WALK_QUAD {
+            if (*walk).quad.y > (*walk).highest.y {
+                (*walk).stage = WALK_CLUMP;
+            } else if walk_quad(walk) {
+                (*walk).stage = WALK_TRY;
+            }
+        } else {
+            if (*walk).next >= (*walk).limit {
+                (*walk).stage = WALK_QUAD;
+            } else {
+                (*walk).pick = Pick((*walk).spot, (*walk).order, (*walk).next / run.finest,
+                    vec3<u32>((*walk).row, bitcast<vec2<u32>>((*walk).id)));
+                (*walk).next += run.finest;
+                (*walk).tried += 1u;
+                made = true;
+                break;
             }
         }
     }
-    return tried;
+    return made;
 }
 
 @compute @workgroup_size(64)
@@ -1365,28 +1616,70 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
     run.turn = clamp(u32(round(f32(lattice) * LATTICE_TURN)), 1u, max(lattice, 2u) - 1u);
     run.alone = planned.y;
     lane_material = MIXED;
-    lane_based = COVER_NO_LAYER;
     lane_grew = false;
     let lane_levels = min(depth, LANE_LEVELS);
     let below = depth - lane_levels;
     let home = ordered_cell(cell, depth, lane_levels, lane, slot);
-    for (var index = lane; index < total; index += 64u) {
-        let order = index % finest;
-        grow_candidate(ordered_cell(home, below, below, order >> (2u * lane_levels), slot),
-            order, index / finest, NO_OWNER);
-    }
-    var walked = 0u;
-    for (var index = 0u; index < 2u; index++) {
-        if planned[2u + index] != COVER_NO_LAYER {
-            walked += walk_clumps(planned[2u + index], cell_plan.reaches[index], cell, lane);
+    let walking = any(planned.zw != vec2<u32>(COVER_NO_LAYER));
+    var walk: Walk;
+    var plain = lane;
+    var listed = 0u;
+    loop {
+        var pick: Pick;
+        var made = false;
+        if walking {
+            made = walk_next(&walk, planned, cell, lane);
+            pick = walk.pick;
+        } else if plain < total {
+            let order = plain % finest;
+            pick = Pick(ordered_cell(home, below, below, order >> (2u * lane_levels), slot), order,
+                plain / finest, NO_OWNER);
+            plain += 64u;
+            made = true;
+        }
+        if made {
+            atomicAdd(&cell_made, 1u);
+            if candidate_at(pick.at, pick.order, pick.candidate).kept {
+                cell_passed[atomicAdd(&cell_passing, 1u) - listed] = pick;
+            }
+        }
+        workgroupBarrier();
+        if lane == 0u {
+            cell_round = atomicExchange(&cell_made, 0u);
+        }
+        let round = workgroupUniformLoad(&cell_round);
+        let passing = atomicLoad(&cell_passing);
+        let mine = lane < passing - listed;
+        if mine {
+            pick = cell_passed[lane];
+        }
+        listed = passing;
+        workgroupBarrier();
+        if mine {
+            grow_candidate(pick.at, pick.order, pick.candidate, pick.owner);
+        }
+        if round == 0u {
+            break;
         }
     }
-    if walked > 0u {
-        atomicAdd(&counts.tried, walked);
+    if walk.tried > 0u {
+        atomicAdd(&counts.tried, walk.tried);
     }
     if lane_grew {
         count_grown();
     }
+}
+
+fn cast_args(at: u32, vertices: u32, local: u32, locals: u32) -> DrawArgs {
+    let end = atomicLoad(&cover_casts[at + 1u]);
+    if end == 0u {
+        return DrawArgs(vertices, 0u, local * COVER_DRAW_VERTICES, 0u);
+    }
+    var first = ~atomicLoad(&cover_casts[at]);
+    if first > (0xffffffffu / COVER_DRAW_VERTICES) / locals - 1u {
+        first = 0u;
+    }
+    return DrawArgs(vertices, end - first, (first * locals + local) * COVER_DRAW_VERTICES, 0u);
 }
 
 @compute @workgroup_size(1)
@@ -1397,6 +1690,17 @@ fn finish_cover() {
     for (var bin = 0u; bin < room.z; bin++) {
         args[2u + bin] = DrawArgs(2u * CARD_JOINTS, min(atomicLoad(&counts.carded[bin]), room.y),
             bin * COVER_DRAW_VERTICES, 0u);
+    }
+    let kinds = BLADE_KINDS + room.z;
+    for (var view = 0u; view < room.w; view++) {
+        let at = kinds * (view + 1u);
+        let ranges = 2u * kinds * view;
+        args[at] = cast_args(ranges, 2u * STRAIGHT_JOINTS, 0u, BLADE_KINDS);
+        args[at + 1u] = cast_args(ranges + 2u, 2u * FLAT_JOINTS, 1u, BLADE_KINDS);
+        for (var bin = 0u; bin < room.z; bin++) {
+            args[at + 2u + bin] = cast_args(ranges + 2u * (2u + bin), 2u * CARD_JOINTS, bin,
+                room.z);
+        }
     }
     counts.capacity = room.x;
     counts.card_capacity = room.y;

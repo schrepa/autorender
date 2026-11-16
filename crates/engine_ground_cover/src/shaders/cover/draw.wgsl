@@ -141,14 +141,14 @@ fn cover_color(blade: CoverBlade, along: f32, reach: f32) -> vec3<f32> {
     return mix(root * root, tip * tip, smoothstep(0.0, reach, along));
 }
 
-fn cover_varyings(instance: u32, vertex: u32) -> CoverVaryings {
+fn cover_varyings(instance: u32, vertex: u32, moved: bool) -> CoverVaryings {
     let shape = cover_shape();
     let at = blade_vertex(instance, vertex);
     let wind = cover_lean_wind(at.blade.lean);
     let before = cover_lean_wind_before(at.blade.lean);
     let point = cover_point(at, shape, f32(wind) / 127.5);
     var previous = point.world;
-    if before != wind {
+    if moved && before != wind {
         previous = cover_point(at, shape, f32(before) / 127.5).world;
     }
     var output: CoverVaryings;
@@ -171,7 +171,26 @@ fn cover_varyings(instance: u32, vertex: u32) -> CoverVaryings {
 @vertex
 fn vs_cover(@builtin(instance_index) instance: u32, @builtin(vertex_index) vertex: u32)
         -> CoverVaryings {
-    return cover_varyings(instance, vertex);
+    return cover_varyings(instance, vertex, true);
+}
+
+struct CastVertex {
+    instance: u32,
+    vertex: u32,
+}
+
+fn cast_vertex(instance: u32, vertex: u32, locals: u32) -> CastVertex {
+    let slot = vertex / COVER_DRAW_VERTICES;
+    let local = slot % locals;
+    return CastVertex(slot / locals + instance,
+        local * COVER_DRAW_VERTICES + vertex % COVER_DRAW_VERTICES);
+}
+
+@vertex
+fn vs_cover_cast(@builtin(instance_index) instance: u32, @builtin(vertex_index) vertex: u32)
+        -> CoverVaryings {
+    let placed = cast_vertex(instance, vertex, 2u);
+    return cover_varyings(placed.instance, placed.vertex, false);
 }
 
 struct CardCorner {
@@ -229,9 +248,7 @@ fn card_point(card: CoverCard, corner: CardCorner, shape: ShapeRows, form: vec4<
     return point;
 }
 
-@vertex
-fn vs_card(@builtin(instance_index) instance: u32, @builtin(vertex_index) vertex: u32)
-        -> CoverVaryings {
+fn card_varyings(instance: u32, vertex: u32, moved: bool) -> CoverVaryings {
     let shape = cover_shape();
     let form = cover_card_look().form;
     let bin = vertex / COVER_DRAW_VERTICES;
@@ -241,7 +258,7 @@ fn vs_card(@builtin(instance_index) instance: u32, @builtin(vertex_index) vertex
     let before = cover_lean_wind_before(card.lean);
     let point = card_point(card, corner, shape, form, f32(wind) / 127.5);
     var previous = point.world;
-    if before != wind {
+    if moved && before != wind {
         previous = card_point(card, corner, shape, form, f32(before) / 127.5).world;
     }
     let tint = unpack4x8unorm(card.tint).rgb;
@@ -254,4 +271,17 @@ fn vs_card(@builtin(instance_index) instance: u32, @builtin(vertex_index) vertex
     output.color = vec4<f32>(tint * tint / CARD_TINT_RANGE, saturate(corner.along));
     output.object = vec4<u32>(0u, 0u, 0u, KIND_COVER);
     return output;
+}
+
+@vertex
+fn vs_card(@builtin(instance_index) instance: u32, @builtin(vertex_index) vertex: u32)
+        -> CoverVaryings {
+    return card_varyings(instance, vertex, true);
+}
+
+@vertex
+fn vs_card_cast(@builtin(instance_index) instance: u32, @builtin(vertex_index) vertex: u32)
+        -> CoverVaryings {
+    let placed = cast_vertex(instance, vertex, max(cover_frame.blades.z, 1u));
+    return card_varyings(placed.instance, placed.vertex, false);
 }
