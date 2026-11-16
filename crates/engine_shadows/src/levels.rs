@@ -6,6 +6,7 @@ use crate::changes::ShadowChange;
 use crate::constants::LEVEL_SNAP;
 
 const LOW_SUN: f32 = 0.1;
+const SPACING_SLACK: f32 = 1.0625;
 
 pub(crate) type Rect = [i32; 4];
 
@@ -242,10 +243,12 @@ impl Levels {
         restart
     }
 
-    pub(crate) fn change(&mut self, change: &ShadowChange, sample_texels: f32) {
+    pub(crate) fn change(&mut self, change: &ShadowChange, pixel: f32) {
         for level in &mut self.levels {
             let touched = match *change {
-                ShadowChange::Box { min, max, spacing } if spacing >= sample_texels * level.texel => {
+                ShadowChange::Box { min, max, spacing }
+                    if pixel * level.texel <= spacing * SPACING_SLACK =>
+                {
                     let (low, high) = level.basis.bounds(min, max);
                     let at = |value: f32| (value / level.texel).floor() as i32;
                     [at(low.x), at(-high.y), at(high.x) + 1, at(-low.y) + 1]

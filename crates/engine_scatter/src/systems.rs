@@ -81,7 +81,7 @@ pub(crate) struct ScatterState {
     pub(crate) slot_sequence: u64,
     pub(crate) library: (u64, u64),
     pub(crate) left_objects: u32,
-    pub(crate) moved: Vec<(Vec3, Vec3)>,
+    pub(crate) moved: Vec<crate::pool::Reach>,
     pub(crate) restyled: bool,
     pub(crate) impostors: Vec<ImpostorRecord>,
     pub(crate) impostor_generation: u64,
@@ -692,11 +692,11 @@ pub(crate) fn publish_tiles(state: Res<ScatterState>, mut placed: ResMut<PlacedT
 }
 
 pub(crate) fn publish_changes(state: Res<ScatterState>, mut areas: ResMut<DrawnAreas>) {
-    for &(min, max) in &state.moved {
+    for &(min, max, widest) in &state.moved {
         areas.push(DrawnArea::Box {
             min,
             max,
-            spacing: f32::INFINITY,
+            spacing: widest,
         });
     }
     if state.restyled {
