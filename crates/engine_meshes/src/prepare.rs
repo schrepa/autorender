@@ -489,12 +489,12 @@ impl MeshesGpu {
         cx.deliver::<PresentationTotals>(VIEWS, bytemuck::cast_slice(&counts).to_vec());
         if !frames.is_empty() {
             let presented = &self.presented;
+            let room = &mut self.state.view_room;
+            room[0] = room[0].max(frames.len() as u64 * VIEW_FRAME_BYTES);
+            room[1] = room[1].max(storage_bytes(ids * 4));
             let rebuilt = [
-                (
-                    presented.view_frames,
-                    frames.len() as u64 * VIEW_FRAME_BYTES,
-                ),
-                (presented.view_visible, storage_bytes(ids * 4)),
+                (presented.view_frames, room[0]),
+                (presented.view_visible, room[1]),
                 (presented.view_draws, storage_bytes(args * DRAW_ARGS_BYTES)),
             ];
             for (buffer, bytes) in rebuilt {

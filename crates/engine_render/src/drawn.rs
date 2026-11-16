@@ -583,6 +583,8 @@ struct Occlusion {
     levels: Pyramid,
     test: ComputePipeline<DrawnGpu>,
     running: bool,
+    bytes: u64,
+    room: u64,
     prepass: Pass<DrawnGpu>,
     prepass_levels: Pyramid,
 }
@@ -964,16 +966,19 @@ impl DrawnGpu {
             }
         };
         let bytes = slots * 4;
-        let fresh = cx.allocate_buffer(occlusion.held, bytes) == Allocation::Fresh;
+        let resized = std::mem::replace(&mut occlusion.bytes, bytes) != bytes;
+        occlusion.room = occlusion.room.max(bytes);
+        let room = occlusion.room;
+        let fresh = cx.allocate_buffer(occlusion.held, room) == Allocation::Fresh || resized;
         if main.is_none() || !wanted {
             if occlusion.running {
-                cx.clear_buffer_range(occlusion.held, 0..bytes);
+                cx.clear_buffer_range(occlusion.held, 0..room);
                 occlusion.running = false;
             }
             return 0;
         }
         if fresh || !occlusion.running {
-            cx.clear_buffer_range(occlusion.held, 0..bytes);
+            cx.clear_buffer_range(occlusion.held, 0..room);
         }
         occlusion.running = true;
         cx.run(occlusion.pass);
@@ -1042,7 +1047,9 @@ impl Pyramid {
             display.x.div_ceil(2).max(1).next_power_of_two(),
             display.y.div_ceil(2).max(1).next_power_of_two(),
         );
-        let count = mip_levels(base.0, base.1).min(PYRAMID_LEVELS as u32);
+        let count = mip_levels(base.0, base.1)
+            .min(covering_levels(render.x.max(render.y)))
+            .min(PYRAMID_LEVELS as u32);
         let (Allocation::Fresh | Allocation::Kept) = cx.allocate(
             self.texture,
             wgpu::Extent3d {
@@ -1102,6 +1109,11 @@ impl Pyramid {
     }
 }
 
+fn covering_levels(widest: u32) -> u32 {
+    let last = widest.max(1) - 1;
+    (u32::BITS - last.leading_zeros()).max(2) - 1
+}
+
 fn install_occlusion(
     cx: &mut Install<'_, DrawnGpu>,
     cull: Pass<DrawnGpu>,
@@ -1151,6 +1163,8 @@ fn install_occlusion(
         levels,
         test,
         running: false,
+        bytes: 0,
+        room: 0,
         prepass,
         prepass_levels,
     })

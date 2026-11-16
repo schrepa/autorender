@@ -289,11 +289,11 @@ pub(crate) fn plan_shadows(
         Since::Listed(listed) => {
             for change in listed {
                 casters_changed |= *change == ShadowChange::Casters;
-                plan.levels.change(change, settings.sample_texels);
+                plan.levels.change(change, DETAIL_PIXELS);
             }
         }
         Since::All => {
-            plan.levels.change(&ShadowChange::All, settings.sample_texels);
+            plan.levels.change(&ShadowChange::All, DETAIL_PIXELS);
             casters_changed = true;
         }
     }

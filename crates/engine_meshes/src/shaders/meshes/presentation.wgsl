@@ -92,7 +92,10 @@ fn chosen(batch: Batch, model: mat4x4<f32>) -> Chosen {
     let placed = center - frame.eye.xyz;
     let away = length(placed);
     let near = select(vec3<f32>(0.0), placed * ((away - radius) / away), away > radius);
-    for (var l = 1u; l < levels; l++) {
+    for (var l = 1u; l < LOD_LEVELS; l++) {
+        if l >= levels {
+            break;
+        }
         if fits(seen, select(batch.lod_errors.y, batch.lod_errors.x, l == 1u) * scale, near) {
             picked.level = l;
             if level_indices(batch, l) == 0u {

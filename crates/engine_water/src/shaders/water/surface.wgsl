@@ -20,9 +20,9 @@ import package::face::sky::{ambient, sky_average};
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
 import package::generated::writes::{Outputs, outputs};
-import package::generated::water::{FROUDE_GUARD_DEPTH, GRAVITY, NO_WATER_BLOCK, WATER_LEAF_DISPATCH,
-    WATER_LEAF_FIRST, WATER_LEAF_TOTAL, WATER_LEAF_UNLISTED, WATER_LIST_GROUP, WATER_LIST_GROUPS,
-    WATER_LIST_ORDER, WATER_RAW_VERTEX, WATER_SCAN_GROUP, WATER_TILE_PATCHES};
+import package::generated::water::{FROUDE_GUARD_DEPTH, GRAVITY, NO_WATER_BLOCK,
+    WATER_LEAF_DRAW_WORDS, WATER_LEAF_FIRST, WATER_LEAF_GROUPS, WATER_LEAF_TOTAL, WATER_LIST_GROUP,
+    WATER_LIST_GROUPS, WATER_RAW_VERTEX, WATER_SCAN_GROUP, WATER_TILE_PATCHES};
 import package::place::water::{WATER_HELD, WaterAt, WaterCell};
 import package::water::faces::water::{water_cell, water_read};
 import package::water::flow::{water_relief, water_stirring, water_stream};
@@ -248,7 +248,7 @@ fn water_output(index: u32, instance: u32) -> WaterOutput {
     let vertex = select(index, index - WATER_RAW_VERTEX, raw);
     var listed = instance;
     if !raw {
-        listed = water_leaf_order[WATER_LIST_ORDER + instance];
+        listed = water_leaf_order[instance];
     }
     let leaf = water_leaf_terrain(listed);
     use_terrain(leaf.x);
@@ -811,14 +811,7 @@ fn water_eddy_froude(speed: f32, slope: f32, depth: f32) -> f32 {
 
 @group(1) @binding(0) var<storage, read_write> water_leaf_args: array<u32>;
 @group(1) @binding(60) var<storage, read_write> water_leaf_list: array<u32>;
-
-fn water_leaf_draw(at: u32, instances: u32, first: u32) {
-    water_leaf_args[at] = SURFACE_LEAF_INDICES;
-    water_leaf_args[at + 1u] = instances;
-    water_leaf_args[at + 2u] = first;
-    water_leaf_args[at + 3u] = 0u;
-    water_leaf_args[at + 4u] = 0u;
-}
+@group(1) @binding(61) var<storage, read_write> water_leaf_draw: array<u32, WATER_LEAF_DRAW_WORDS>;
 
 @compute @workgroup_size(1)
 fn cs_water_leaf_args() {
@@ -832,12 +825,13 @@ fn cs_water_leaf_args() {
     }
     let groups = total / WATER_LIST_GROUP + u32(total % WATER_LIST_GROUP != 0u);
     let listed = total <= water.terrains.y && groups <= WATER_LIST_GROUPS;
-    water_leaf_draw(0u, total, SURFACE_LEAF_INDICES);
-    water_leaf_draw(WATER_LEAF_UNLISTED, select(total, 0u, listed), SURFACE_LEAF_INDICES);
+    water_leaf_args[0] = SURFACE_LEAF_INDICES;
+    water_leaf_args[1] = total;
+    water_leaf_args[2] = SURFACE_LEAF_INDICES;
+    water_leaf_args[3] = 0u;
+    water_leaf_args[4] = 0u;
     water_leaf_args[WATER_LEAF_TOTAL] = total;
-    water_leaf_args[WATER_LEAF_DISPATCH] = select(0u, groups, listed);
-    water_leaf_args[WATER_LEAF_DISPATCH + 1u] = 1u;
-    water_leaf_args[WATER_LEAF_DISPATCH + 2u] = 1u;
+    water_leaf_args[WATER_LEAF_GROUPS] = select(0u, groups, listed);
 }
 
 fn water_leaf_drawn(leaf: u32) -> bool {
@@ -849,7 +843,7 @@ fn water_leaf_drawn(leaf: u32) -> bool {
 }
 
 fn water_list_masks() -> u32 {
-    return WATER_LIST_ORDER + water.terrains.y;
+    return water.terrains.y;
 }
 
 fn water_list_offsets() -> u32 {
@@ -861,6 +855,9 @@ var<workgroup> water_marks: array<atomic<u32>, 2>;
 @compute @workgroup_size(WATER_LIST_GROUP)
 fn cs_water_leaf_mark(@builtin(local_invocation_index) lane: u32,
         @builtin(workgroup_id) group: vec3<u32>) {
+    if group.x >= water_leaf_spans[WATER_LEAF_GROUPS] {
+        return;
+    }
     let leaf = group.x * WATER_LIST_GROUP + lane;
     if leaf < water_leaf_spans[WATER_LEAF_TOTAL] && water_leaf_drawn(leaf) {
         atomicOr(&water_marks[lane / 32u], 1u << (lane % 32u));
@@ -879,23 +876,23 @@ fn water_chunk_marked(chunk: u32) -> u32 {
     return countOneBits(water_leaf_list[masks]) + countOneBits(water_leaf_list[masks + 1u]);
 }
 
-fn water_listed_draw(instances: u32) {
-    water_leaf_list[0] = SURFACE_LEAF_INDICES;
-    water_leaf_list[1] = instances;
-    water_leaf_list[2] = 0u;
-    water_leaf_list[3] = 0u;
-    water_leaf_list[4] = 0u;
+fn water_drawn_leaves(instances: u32, first: u32) {
+    water_leaf_draw[0] = SURFACE_LEAF_INDICES;
+    water_leaf_draw[1] = instances;
+    water_leaf_draw[2] = first;
+    water_leaf_draw[3] = 0u;
+    water_leaf_draw[4] = 0u;
 }
 
 @compute @workgroup_size(WATER_SCAN_GROUP)
 fn cs_water_leaf_scan(@builtin(local_invocation_index) lane: u32) {
     if lane == 0u {
-        water_scan_chunks = water_leaf_spans[WATER_LEAF_DISPATCH];
+        water_scan_chunks = water_leaf_spans[WATER_LEAF_GROUPS];
     }
     let chunks = workgroupUniformLoad(&water_scan_chunks);
     if chunks == 0u {
         if lane == 0u {
-            water_listed_draw(0u);
+            water_drawn_leaves(water_leaf_spans[WATER_LEAF_TOTAL], SURFACE_LEAF_INDICES);
         }
         return;
     }
@@ -921,13 +918,16 @@ fn cs_water_leaf_scan(@builtin(local_invocation_index) lane: u32) {
         offset += water_chunk_marked(chunk);
     }
     if lane == WATER_SCAN_GROUP - 1u {
-        water_listed_draw(water_sums[lane]);
+        water_drawn_leaves(water_sums[lane], 0u);
     }
 }
 
 @compute @workgroup_size(WATER_LIST_GROUP)
 fn cs_water_leaf_list(@builtin(local_invocation_index) lane: u32,
         @builtin(workgroup_id) group: vec3<u32>) {
+    if group.x >= water_leaf_spans[WATER_LEAF_GROUPS] {
+        return;
+    }
     let masks = water_list_masks() + 2u * group.x;
     let low = water_leaf_list[masks];
     let high = water_leaf_list[masks + 1u];
@@ -938,6 +938,6 @@ fn cs_water_leaf_list(@builtin(local_invocation_index) lane: u32,
     }
     let before = select(countOneBits(low & below), countOneBits(low) + countOneBits(high & below),
         lane >= 32u);
-    let at = WATER_LIST_ORDER + water_leaf_list[water_list_offsets() + group.x] + before;
-    water_leaf_list[at] = group.x * WATER_LIST_GROUP + lane;
+    water_leaf_list[water_leaf_list[water_list_offsets() + group.x] + before] =
+        group.x * WATER_LIST_GROUP + lane;
 }

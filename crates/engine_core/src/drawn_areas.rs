@@ -5,6 +5,7 @@ use crate::{Cursor, DrawnSettings, Feed, Since};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DrawnArea {
+    // spacing: the widest view pixel, in metres, at which anything in the box still draws
     Box { min: Vec3, max: Vec3, spacing: f32 },
     All,
 }

@@ -106,6 +106,7 @@ pub(crate) struct CoverGpu {
     blade_bytes: u64,
     card_bytes: u64,
     row_bytes: u64,
+    cast_bytes: u64,
     drawn: bool,
 }
 
@@ -156,7 +157,7 @@ impl GpuPart for CoverGpu {
                 (grow::COUNTS, Bind::Buffer(counts)),
                 (grow::CARDS, Bind::Buffer(cards)),
                 (grow::GROW_SPOTS, Bind::Buffer(spots)),
-                (grow::GROW_RUNS, Bind::Buffer(runs)),
+                (grow::GROW_STARTS, Bind::Buffer(runs)),
                 (casts::COVER_CASTS, Bind::Buffer(casts)),
             ],
         )?;
@@ -227,6 +228,7 @@ impl GpuPart for CoverGpu {
             blade_bytes: BLADE_BYTES,
             card_bytes: CARD_BYTES,
             row_bytes: ROW_BYTES,
+            cast_bytes: WORD,
             drawn: false,
         })
     }
@@ -293,10 +295,12 @@ impl GpuPart for CoverGpu {
             }
         }
         let counted = (COUNT_WORDS + bins) * WORD;
+        let casts = 2 * kinds * u64::from(self.views) * WORD;
+        self.cast_bytes = self.cast_bytes.max(casts);
         let sizes = [
             (self.counts, counted),
             (self.args, (kinds * (1 + u64::from(self.views))).max(BLADE_DRAWS + bins) * DRAW_ARGS),
-            (self.casts, (2 * kinds * u64::from(self.views) * WORD).max(WORD)),
+            (self.casts, self.cast_bytes),
             (self.frame, FRAME_BYTES),
             (self.blades, self.blade_bytes),
             (self.cards, self.card_bytes),

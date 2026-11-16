@@ -1,6 +1,6 @@
 import package::engine::view::{DetailLevel, detail_across, detail_level};
 import package::generated::pieces::shadows::piece;
-import package::generated::shadows::{LEVEL_MARGIN, ShadowLevel};
+import package::generated::shadows::{LEVEL_MARGIN, SOFT_GATHERS, ShadowLevel};
 import package::place::sun_blockers::SunAt;
 
 @group(0) @binding(0) var shadow_levels: texture_depth_2d_array;
@@ -126,6 +126,60 @@ fn lifted_space(level: ShadowLevel, index: u32, sun: SunAt, blend: f32) -> vec3<
         + up * level_lift(index, sun);
 }
 
+fn gather_at(first: vec2<f32>, column: u32, row: u32) -> vec2<f32> {
+    return first + 2.0 * vec2<f32>(f32(column), f32(row));
+}
+
+fn blocking_of(texels: Texels, gap: vec4<f32>, most: vec2<f32>) -> vec2<f32> {
+    let share = box_shares(texels, most);
+    return vec2<f32>(dot(share, gap), dot(share, sign(gap)));
+}
+
+fn filter_width(level: ShadowLevel, blocking: vec2<f32>, slope: vec2<f32>, blend: f32,
+        most: vec2<f32>) -> vec2<f32> {
+    let penumbra = 2.0 * sun_spread() * blocking.x
+        / (max(blocking.y, 1.0e-6) * level.band.y * level.band.x);
+    let lean = slope / (level.band.x * level.band.y);
+    let stretch = sqrt(vec2<f32>(1.0) + lean * lean);
+    return clamp(penumbra * max(stretch.yx / stretch.xy, vec2<f32>(1.0)),
+        vec2<f32>(1.0 + blend), most);
+}
+
+fn gap_lit(gap: vec4<f32>, soft: f32) -> vec4<f32> {
+    var lit = vec4<f32>(1.0) - sign(gap);
+    if soft > 0.0 {
+        lit = exp2(-gap / soft);
+    }
+    return lit;
+}
+
+fn paired_visibility(index: u32, level: ShadowLevel, light: vec3<f32>, slope: vec2<f32>,
+        first: vec2<f32>, blend: f32, softness: f32) -> f32 {
+    let most = vec2<f32>(soft_texels());
+    let point = light.xy;
+    let a = gather_at(first, 0u, 0u);
+    let b = gather_at(first, 1u, 0u);
+    let c = gather_at(first, 0u, 1u);
+    let d = gather_at(first, 1u, 1u);
+    let gap_a = receiver_gaps(index, level.moving, a, gather_texels(a, point), light.z, slope);
+    let gap_b = receiver_gaps(index, level.moving, b, gather_texels(b, point), light.z, slope);
+    let gap_c = receiver_gaps(index, level.moving, c, gather_texels(c, point), light.z, slope);
+    let gap_d = receiver_gaps(index, level.moving, d, gather_texels(d, point), light.z, slope);
+    var blocking = vec2<f32>(0.0);
+    blocking += blocking_of(gather_texels(a, point), gap_a, most);
+    blocking += blocking_of(gather_texels(b, point), gap_b, most);
+    blocking += blocking_of(gather_texels(c, point), gap_c, most);
+    blocking += blocking_of(gather_texels(d, point), gap_d, most);
+    let width = filter_width(level, blocking, slope, blend, most);
+    let soft = crown_softness(softness, level.band.y);
+    var visible = 0.0;
+    visible += dot(box_shares(gather_texels(a, point), width), gap_lit(gap_a, soft));
+    visible += dot(box_shares(gather_texels(b, point), width), gap_lit(gap_b, soft));
+    visible += dot(box_shares(gather_texels(c, point), width), gap_lit(gap_c, soft));
+    visible += dot(box_shares(gather_texels(d, point), width), gap_lit(gap_d, soft));
+    return visible;
+}
+
 fn level_visibility(index: u32, sun: SunAt, blend: f32) -> f32 {
     let level = shadow_level_data[index];
     let light = lifted_space(level, index, sun, blend);
@@ -136,33 +190,43 @@ fn level_visibility(index: u32, sun: SunAt, blend: f32) -> f32 {
     let slope = texel_slope(rows_turn(level.rows, sun.world_dx),
         rows_turn(level.rows, sun.world_dy), level.band.w);
     let first = gather_corner(light.xy) - vec2<f32>(f32(gathers) - 1.0);
+    if gathers == 2u {
+        return paired_visibility(index, level, light, slope, first, blend, sun.softness);
+    }
     let most = vec2<f32>(soft_texels());
     var blocking = vec2<f32>(0.0);
-    for (var row = 0u; row < gathers; row++) {
-        for (var column = 0u; column < gathers; column++) {
+    for (var row = 0u; row < SOFT_GATHERS; row++) {
+        if row >= gathers {
+            break;
+        }
+        for (var column = 0u; column < SOFT_GATHERS; column++) {
+            if column >= gathers {
+                break;
+            }
             let corner = first + 2.0 * vec2<f32>(f32(column), f32(row));
             let texels = gather_texels(corner, light.xy);
             let gap = receiver_gaps(index, level.moving, corner, texels, light.z, slope);
-            let share = box_shares(texels, most);
-            blocking += vec2<f32>(dot(share, gap), dot(share, sign(gap)));
+            blocking += blocking_of(texels, gap, most);
         }
     }
-    let penumbra = 2.0 * sun_spread() * blocking.x
-        / (max(blocking.y, 1.0e-6) * level.band.y * level.band.x);
-    let lean = slope / (level.band.x * level.band.y);
-    let stretch = sqrt(vec2<f32>(1.0) + lean * lean);
-    let width = clamp(penumbra * max(stretch.yx / stretch.xy, vec2<f32>(1.0)),
-        vec2<f32>(1.0 + blend), most);
+    let width = filter_width(level, blocking, slope, blend, most);
     let soft = crown_softness(sun.softness, level.band.y);
+    let blocked = blocking.y != 0.0;
     var visible = 0.0;
-    for (var row = 0u; row < gathers; row++) {
-        for (var column = 0u; column < gathers; column++) {
+    for (var row = 0u; row < SOFT_GATHERS; row++) {
+        if row >= gathers {
+            break;
+        }
+        for (var column = 0u; column < SOFT_GATHERS; column++) {
+            if column >= gathers {
+                break;
+            }
             let corner = first + 2.0 * vec2<f32>(f32(column), f32(row));
             let texels = gather_texels(corner, light.xy);
-            let gap = receiver_gaps(index, level.moving, corner, texels, light.z, slope);
-            var lit = vec4<f32>(1.0) - sign(gap);
-            if soft > 0.0 {
-                lit = exp2(-gap / soft);
+            var lit = vec4<f32>(1.0);
+            if blocked {
+                lit = gap_lit(receiver_gaps(index, level.moving, corner, texels, light.z,
+                    slope), soft);
             }
             visible += dot(box_shares(texels, width), lit);
         }

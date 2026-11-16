@@ -59,16 +59,20 @@ fn bound_input<'b>(
 fn indirect_args<'b>(
     (machine, arena): (&Machine, &'b Arena),
     input: impl Fn(u32) -> Option<&'b wgpu::Buffer>,
-    (args, offset): (u32, u64),
+    (args, offset, indexed): (u32, u64, bool),
 ) -> Result<(&'b wgpu::Buffer, u64), DropReason> {
     let direct = bound_input(input, args)?;
+    let size = if indexed { INDEXED_ARGS } else { PLAIN_ARGS };
     let laid = machine
         .declared
         .inputs
         .get(args as usize)
-        .and_then(|decl| arena.args(decl.buffer, offset));
+        .and_then(|decl| arena.args(decl.buffer, (offset, size)));
     Ok(laid.unwrap_or((direct, offset)))
 }
+
+const INDEXED_ARGS: u64 = 20;
+const PLAIN_ARGS: u64 = 16;
 
 fn index_input<'b>(
     input: impl Fn(u32) -> Option<&'b wgpu::Buffer>,
@@ -277,37 +281,21 @@ impl Run {
             crate::Recorded::StandIn
         };
         let render = &mut open.pass;
-        if open.set.pipeline.is_none() {
-            bound.vertex.clear();
-            bound.index = None;
-        }
-        if open.set.pipeline != Some((pipeline, chosen.key)) {
-            render.set_pipeline(&chosen.made);
-            open.set.pipeline = Some((pipeline, chosen.key));
-            open.set.frame = None;
-        }
-        if open.set.frame != Some((built.variant, open.offset)) {
-            let group = frame_groups
+        let frame = frame_groups
+            .get(built.variant as usize)
+            .and_then(|groups| held_group(groups, set, Holder::Frame(built.variant), parity))
+            .ok_or(DropReason::MissingBindGroup)?;
+        let camera = usize::from(
+            machine
+                .variants
                 .get(built.variant as usize)
-                .and_then(|groups| held_group(groups, set, Holder::Frame(built.variant), parity))
-                .ok_or(DropReason::MissingBindGroup)?;
-            let camera = usize::from(
-                machine
-                    .variants
-                    .get(built.variant as usize)
-                    .is_some_and(|found| found.camera),
-            );
-            render.set_bind_group(0, group, &[open.offset][..camera]);
-            open.set.frame = Some((built.variant, open.offset));
-        }
+                .is_some_and(|found| found.camera),
+        );
+        bound.draw_pipeline(render, &chosen.made);
+        bound.draw_group(render, 0, frame, &[open.offset][..camera]);
         let held = [0_u32; MOST_OFFSETS];
         for (at, group) in built.groups.iter().enumerate() {
             let dynamic = &held[..group.windows.min(MOST_OFFSETS)];
-            let holding = (pipeline, filled, at);
-            let slot = group.index as usize;
-            if group.windows == 0 && open.set.own.get(slot).copied().flatten() == Some(holding) {
-                continue;
-            }
             let filled_group = filled.and_then(|filled| {
                 fills[filled]
                     .groups
@@ -322,13 +310,7 @@ impl Run {
                 parity,
             );
             let made = filled_group.or(owned).ok_or(DropReason::MissingBindGroup)?;
-            render.set_bind_group(group.index, made, dynamic);
-            if let Some(known) = open.set.own.get_mut(slot) {
-                *known = Some(holding);
-            }
-            if group.index == 1 {
-                open.set.material = None;
-            }
+            bound.draw_group(render, group.index, made, dynamic);
         }
         if let Some(material) = painted
             && built.material
@@ -337,13 +319,7 @@ impl Run {
                 .materials
                 .group(material)
                 .ok_or(DropReason::MaterialNotResident)?;
-            if open.set.material != Some(material) {
-                render.set_bind_group(1, group, &[]);
-                open.set.material = Some(material);
-                if let Some(known) = open.set.own.get_mut(1) {
-                    *known = None;
-                }
-            }
+            bound.draw_group(render, 1, group, &[]);
         }
         let input = |input: u32| input_of(machine, (&*tables, set), part, input);
         let geometry = &built.geometry;
@@ -382,7 +358,8 @@ impl Run {
                 offset,
                 ..
             } => {
-                let (args, offset) = indirect_args((machine, arena), input, (args, offset))?;
+                let (args, offset) =
+                    indirect_args((machine, arena), input, (args, offset, indices.is_some()))?;
                 let indexed = index_input(input, indices)?;
                 for (slot, (stream, _)) in vertices.listed().iter().enumerate() {
                     let buffer = bound_input(input, *stream)?;
@@ -404,7 +381,8 @@ impl Run {
                 args,
                 offset,
             } => {
-                let (args, offset) = indirect_args((machine, arena), input, (args, offset))?;
+                let (args, offset) =
+                    indirect_args((machine, arena), input, (args, offset, indices.is_some()))?;
                 let indexed = index_input(input, indices)?;
                 for (slot, (stream, start)) in vertices.listed().iter().enumerate() {
                     let buffer = bound_input(input, *stream)?;
@@ -432,12 +410,8 @@ impl Run {
                     .materials
                     .group(material)
                     .ok_or(DropReason::MaterialNotResident)?;
-                let (args, offset) = indirect_args((machine, arena), input, (args, offset))?;
-                if open.set.material != Some(material) {
-                    render.set_bind_group(1, group, &[]);
-                    open.set.material = Some(material);
-                    open.set.own[1] = None;
-                }
+                let (args, offset) = indirect_args((machine, arena), input, (args, offset, true))?;
+                bound.draw_group(render, 1, group, &[]);
                 let buffers = geometry.iter().filter_map(|&stream| draw.stream(stream));
                 for (slot, buffer) in buffers.enumerate() {
                     bound.vertex_buffer(render, slot as u32, buffer, 0);
@@ -462,11 +436,7 @@ impl Run {
                     .materials
                     .group(material)
                     .ok_or(DropReason::MaterialNotResident)?;
-                if open.set.material != Some(material) {
-                    render.set_bind_group(1, group, &[]);
-                    open.set.material = Some(material);
-                    open.set.own[1] = None;
-                }
+                bound.draw_group(render, 1, group, &[]);
                 let buffers = geometry.iter().filter_map(|&stream| draw.stream(stream));
                 for (slot, buffer) in buffers.enumerate() {
                     bound.vertex_buffer(render, slot as u32, buffer, 0);
@@ -519,22 +489,20 @@ impl Run {
 
     pub(crate) fn scissor(&mut self, rect: [u32; 4]) {
         if let Some(open) = self.recording.open_mut() {
-            open.pass
-                .set_scissor_rect(rect[0], rect[1], rect[2], rect[3]);
+            self.bound.scissor(&mut open.pass, rect);
         }
     }
 
-    pub(crate) fn view_rect(&mut self, [x, y, width, height]: [u32; 4]) {
+    pub(crate) fn view_rect(&mut self, rect: [u32; 4]) {
         if let Some(open) = self.recording.open_mut() {
-            open.pass
-                .set_viewport(x as f32, y as f32, width as f32, height as f32, 0.0, 1.0);
-            open.pass.set_scissor_rect(x, y, width, height);
+            self.bound.viewport(&mut open.pass, rect);
+            self.bound.scissor(&mut open.pass, rect);
         }
     }
 
     pub(crate) fn within(&mut self, size: (u32, u32)) {
         if let Some(open) = self.recording.open_mut() {
-            crate::targets::draw_within(&mut open.pass, size);
+            self.bound.within(&mut open.pass, size);
         }
     }
 
@@ -548,7 +516,7 @@ impl Run {
             self.recording.open_mut().filter(|open| open.layered),
             self.region.or(size),
         ) {
-            open.pass.set_scissor_rect(0, 0, width, height);
+            self.bound.scissor(&mut open.pass, [0, 0, width, height]);
         }
     }
 
@@ -595,6 +563,7 @@ impl Run {
                 .forget_lifetime();
             self.recording
                 .transition(Step::Compute(current, Box::new(begun)));
+            self.bound.forget();
         }
         let offset = self.uniforms.camera_slot * CAMERA_STRIDE as u32;
         let Self {
@@ -609,6 +578,7 @@ impl Run {
             tables,
             sets,
             frames,
+            bound,
             ..
         } = self;
         let parity = frames.parity;
@@ -620,7 +590,7 @@ impl Run {
         let Some(compute) = built.compute_ready.as_ref() else {
             return 0;
         };
-        pass.set_pipeline(compute);
+        bound.dispatch_pipeline(pass, compute);
         if let Some(group) = frame_groups
             .get(built.variant as usize)
             .and_then(|groups| held_group(groups, set, Holder::Frame(built.variant), parity))
@@ -631,7 +601,7 @@ impl Run {
                     .get(built.variant as usize)
                     .is_some_and(|found| found.camera),
             );
-            pass.set_bind_group(0, group, &[offset][..camera]);
+            bound.dispatch_group(pass, 0, group, &[offset][..camera]);
         }
         let mut given = offsets;
         let mut held = [0_u32; MOST_OFFSETS];
@@ -639,7 +609,7 @@ impl Run {
             let dynamic = offsets_of(group.windows, &mut given, &mut held);
             let holder = Holder::Own(handle, at as u32);
             if let Some(made) = held_group(&own_groups[handle as usize][at], set, holder, parity) {
-                pass.set_bind_group(group.index, made, dynamic);
+                bound.dispatch_group(pass, group.index, made, dynamic);
             }
         }
         match count {

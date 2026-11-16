@@ -118,7 +118,9 @@ fn near_frames(d: vec3<f32>, frames: u32, hemisphere: bool) -> NearFrames {
 }
 
 fn frame_cell(frame: u32, frames: u32) -> vec2<f32> {
-    return vec2<f32>(f32(frame % frames), f32(frame / frames));
+    let count = f32(frames);
+    let row = floor((f32(frame) + 0.5) / count);
+    return vec2<f32>(f32(frame) - row * count, row);
 }
 
 fn impostor_basis(d: vec3<f32>) -> ImpostorBasis {

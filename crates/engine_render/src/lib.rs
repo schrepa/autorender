@@ -1309,10 +1309,6 @@ impl<P: GpuPart> Draw<'_, P, Own> {
     pub fn within(&mut self, size: (u32, u32)) {
         self.raw.run().within(size);
     }
-
-    pub fn pipelines_settled(&mut self) -> bool {
-        self.raw.run().pipelines.settled
-    }
 }
 
 fn raw_attach<P>(attach: &Attach<P>) -> encode::AttachRaw {

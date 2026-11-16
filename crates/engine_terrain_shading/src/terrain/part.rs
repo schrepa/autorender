@@ -583,7 +583,7 @@ impl GpuPart for TerrainGpu {
             (PassRole::Lit | PassRole::Shown, _) => Joined::Seen {
                 args: cx.args_input(pass.scene, h.args),
                 meshlet: cx.draw_input(pass.scene, h.meshlet),
-                lists: cx.draw_input(pass.scene, h.counters),
+                lists: cx.args_input(pass.scene, h.counters),
             },
             (PassRole::Blended, _) => Joined::Elsewhere(NEVER_BLENDS),
         });
@@ -591,7 +591,7 @@ impl GpuPart for TerrainGpu {
             args: cx.args_input(ids_pass, h.args),
             meshlet: cx.draw_input(ids_pass, h.meshlet),
             subdivision_args: cx.draw_input(tree.subdivide, h.args),
-            lists: cx.draw_input(ids_pass, h.counters),
+            lists: cx.args_input(ids_pass, h.counters),
             listed: cx.draw_input(tree.listed, h.args),
         };
         let sources = BounceSources {
@@ -1159,12 +1159,7 @@ impl TerrainGpu {
                 instances: index..index + 1,
                 material: None,
             };
-            let split = if draw.pipelines_settled() {
-                draw.draw(&far, shape(WHOLE_SCREEN))
-            } else {
-                Recorded::Waiting
-            };
-            let vertices = match split {
+            let vertices = match draw.draw(&far, shape(WHOLE_SCREEN)) {
                 Recorded::Exact => WHOLE_SCREEN,
                 Recorded::StandIn | Recorded::Waiting | Recorded::Refused => UNSPLIT_SCREEN,
             };
