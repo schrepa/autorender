@@ -19,7 +19,34 @@ pub(super) struct Prepared {
     pub(super) pieces: Vec<(String, String, String)>,
 }
 
-pub(super) type Parsed = HashMap<(usize, Option<String>), TranslationUnit>;
+#[derive(Default)]
+pub(super) struct Parsed {
+    stamp: u64,
+    units: HashMap<(ModulePath, Option<String>), Unit>,
+}
+
+struct Unit {
+    source: String,
+    stamp: u64,
+    syntax: TranslationUnit,
+}
+
+impl Parsed {
+    pub(super) fn changed(&mut self) {
+        self.stamp += 1;
+    }
+}
+
+#[derive(Default)]
+struct Names(Vec<(Ident, String)>);
+
+impl Drop for Names {
+    fn drop(&mut self) {
+        for (ident, name) in &mut self.0 {
+            ident.rename(std::mem::take(name));
+        }
+    }
+}
 
 struct Texts<'a> {
     prepared: &'a Prepared,
@@ -51,6 +78,7 @@ struct Linking<'a> {
     texts: Texts<'a>,
     parsed: &'a mut Parsed,
     features: Features,
+    names: Names,
 }
 
 fn declared(declaration: &GlobalDeclaration) -> Option<&Ident> {
@@ -59,18 +87,6 @@ fn declared(declaration: &GlobalDeclaration) -> Option<&Ident> {
         GlobalDeclaration::TypeAlias(item) => Some(&item.ident),
         GlobalDeclaration::Struct(item) => Some(&item.ident),
         GlobalDeclaration::Function(item) => Some(&item.ident),
-        GlobalDeclaration::Void
-        | GlobalDeclaration::ConstAssert(_)
-        | GlobalDeclaration::Compound(_) => None,
-    }
-}
-
-fn declared_mut(declaration: &mut GlobalDeclaration) -> Option<&mut Ident> {
-    match declaration {
-        GlobalDeclaration::Declaration(item) => Some(&mut item.ident),
-        GlobalDeclaration::TypeAlias(item) => Some(&mut item.ident),
-        GlobalDeclaration::Struct(item) => Some(&mut item.ident),
-        GlobalDeclaration::Function(item) => Some(&mut item.ident),
         GlobalDeclaration::Void
         | GlobalDeclaration::ConstAssert(_)
         | GlobalDeclaration::Compound(_) => None,
@@ -107,20 +123,36 @@ impl CompilerDriver for Linking<'_> {
         let Some(at) = self.texts.prepared.at.get(path).copied() else {
             return pass::load_module(path, &self.texts);
         };
-        let key = (at, self.texts.written(at).map(str::to_owned));
-        if !self.parsed.contains_key(&key) {
-            let mut module = pass::load_module(path, &self.texts)?;
-            pass::condcomp(&mut module, &self.features)?;
-            self.parsed.insert(key.clone(), module);
+        let written = self.texts.written(at);
+        let source = written.unwrap_or(&self.texts.prepared.texts[at]);
+        let key = (path.clone(), written.map(str::to_owned));
+        let stamp = self.parsed.stamp;
+        let kept = match self.parsed.units.get_mut(&key) {
+            Some(unit) if unit.stamp == stamp => true,
+            Some(unit) if unit.source == source => {
+                unit.stamp = stamp;
+                true
+            }
+            Some(_) | None => false,
+        };
+        if !kept {
+            let mut syntax = pass::load_module(path, &self.texts)?;
+            pass::condcomp(&mut syntax, &self.features)?;
+            pass::retarget_idents(&mut syntax);
+            let source = source.to_owned();
+            let unit = Unit {
+                source,
+                stamp,
+                syntax,
+            };
+            self.parsed.units.insert(key.clone(), unit);
         }
-        let mut module = self.parsed[&key].clone();
-        for declaration in &mut module.global_declarations {
-            if let Some(ident) = declared_mut(declaration.node_mut()) {
-                let name = ident.name().clone();
-                *ident = Ident::new(name);
+        let module = self.parsed.units[&key].syntax.clone();
+        for declaration in &module.global_declarations {
+            if let Some(ident) = declared(declaration.node()) {
+                self.names.0.push((ident.clone(), ident.name().clone()));
             }
         }
-        pass::retarget_idents(&mut module);
         Ok(module)
     }
 
@@ -143,7 +175,7 @@ impl CompilerDriver for Linking<'_> {
     }
 }
 
-pub(super) fn sort(modules: &mut [Module], main: &ModulePath, prepared: &Prepared) {
+fn sort(modules: &mut [Module], main: &ModulePath, prepared: &Prepared) {
     modules.sort_by_key(|module| {
         if module.path == *main {
             return 0;
@@ -190,7 +222,7 @@ impl Linked {
     }
 }
 
-pub(super) fn linked(unit: &TranslationUnit) -> Linked {
+fn linked(unit: &TranslationUnit) -> Linked {
     let mut linked = Linked {
         text: unit.to_string(),
         ..Linked::default()
@@ -201,6 +233,63 @@ pub(super) fn linked(unit: &TranslationUnit) -> Linked {
         }
     }
     linked
+}
+
+fn assemble(modules: &mut [Module], used: Option<&UsedItems>) -> TranslationUnit {
+    let mut unit = TranslationUnit::default();
+    for module in modules {
+        let declarations = std::mem::take(&mut module.syntax.global_declarations);
+        let path = &module.path;
+        unit.global_declarations
+            .extend(declarations.into_iter().filter(|declaration| {
+                used.is_none_or(|used| {
+                    declaration.is_const_assert()
+                        || declared(declaration.node())
+                            .is_some_and(|ident| used.get_ident(path, ident).is_some())
+                })
+            }));
+        unit.global_directives
+            .append(&mut module.syntax.global_directives);
+    }
+    pass::strip_visibility(&mut unit);
+    unit.global_directives.dedup();
+    unit
+}
+
+pub(super) fn linked_entry(
+    main: &ModulePath,
+    kept: Option<&str>,
+    texts: (&Prepared, Option<&str>),
+    parsed: &mut Parsed,
+) -> Result<Linked, Error> {
+    let (result, _names) = compile(main, kept, texts, parsed);
+    let mut result = result?;
+    sort(&mut result.modules, main, texts.0);
+    Ok(linked(&assemble(
+        &mut result.modules,
+        Some(&result.used_items),
+    )))
+}
+
+pub(super) fn bindings(
+    main: &ModulePath,
+    kept: &str,
+    texts: (&Prepared, Option<&str>),
+    parsed: &mut Parsed,
+) -> Result<Vec<String>, Error> {
+    let (result, _names) = compile(main, Some(kept), texts, parsed);
+    let result = result?;
+    let mut linked = Linked::default();
+    for module in &result.modules {
+        for declaration in &module.syntax.global_declarations {
+            if let Some(ident) = declared(declaration.node())
+                && result.used_items.get_ident(&module.path, ident).is_some()
+            {
+                linked.note(declaration.node(), &ident.name());
+            }
+        }
+    }
+    Ok(linked.bindings)
 }
 
 pub(super) enum Slot {
@@ -247,7 +336,8 @@ fn whole(
     texts: (&Prepared, Option<&str>),
     parsed: &mut Parsed,
 ) -> Option<Whole> {
-    let mut result = compile(main, None, texts, parsed).ok()?;
+    let (result, _names) = compile(main, None, texts, parsed);
+    let mut result = result.ok()?;
     let plain = result.modules.iter().all(|module| {
         module.syntax.global_directives.is_empty()
             && !module
@@ -261,9 +351,9 @@ fn whole(
     }
     sort(&mut result.modules, main, texts.0);
     let main = result.modules.first()?.syntax.global_declarations.len();
-    let unit = pass::link(&result.modules, None);
+    let unit = assemble(&mut result.modules, None);
     let mut at: HashMap<Ident, usize> = HashMap::default();
-    let mut declarations = Vec::with_capacity(unit.global_declarations.len());
+    let mut names = Vec::with_capacity(unit.global_declarations.len());
     let mut roles = Vec::with_capacity(unit.global_declarations.len());
     for (index, declaration) in unit.global_declarations.iter().enumerate() {
         let ident = declared(declaration.node());
@@ -272,10 +362,7 @@ fn whole(
             at.entry(ident.clone()).or_insert(index);
             role.note(declaration.node(), &ident.name());
         }
-        let text = ident
-            .as_ref()
-            .map_or_else(String::new, |_| declaration.to_string());
-        declarations.push((text, ident.map(|ident| ident.name().clone())));
+        names.push(ident.map(|ident| ident.name().clone()));
         roles.push(role);
     }
     let mut uses = Vec::with_capacity(unit.global_declarations.len());
@@ -291,6 +378,20 @@ fn whole(
         uses.push(used);
         qualified.push(pathed);
     }
+    let reached = reached(&uses, 0..main);
+    let declarations = unit
+        .global_declarations
+        .iter()
+        .zip(names)
+        .enumerate()
+        .map(|(index, (declaration, name))| {
+            let text = match &name {
+                Some(_) if reached[index] => declaration.to_string(),
+                Some(_) | None => String::new(),
+            };
+            (text, name)
+        })
+        .collect();
     Some(Whole {
         declarations,
         roles,
@@ -298,6 +399,17 @@ fn whole(
         qualified,
         main,
     })
+}
+
+fn reached(uses: &[Vec<usize>], starts: std::ops::Range<usize>) -> Vec<bool> {
+    let mut reached = vec![false; uses.len()];
+    let mut stack: Vec<usize> = starts.collect();
+    while let Some(index) = stack.pop() {
+        if !std::mem::replace(&mut reached[index], true) {
+            stack.extend(&uses[index]);
+        }
+    }
+    reached
 }
 
 impl Whole {
@@ -331,12 +443,12 @@ impl Whole {
     }
 }
 
-pub(super) fn compile(
+fn compile(
     main: &ModulePath,
     kept: Option<&str>,
     (prepared, writes): (&Prepared, Option<&str>),
     parsed: &mut Parsed,
-) -> Result<CompileResult, Error> {
+) -> (Result<CompileResult, Error>, Names) {
     let mut features = Features::new();
     features.default = Feature::Error;
     let mut linking = Linking {
@@ -345,8 +457,10 @@ pub(super) fn compile(
         texts: Texts { prepared, writes },
         parsed,
         features,
+        names: Names::default(),
     };
-    linking.compile()
+    let result = linking.compile();
+    (result, linking.names)
 }
 
 pub(super) fn mangled(path: &ModulePath, name: &str) -> String {
