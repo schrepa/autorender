@@ -259,6 +259,7 @@ pub struct GroundBaking {
     pub terrains: Vec<GroundBakes>,
     pub shaded: Vec<(Entity, TileKey)>,
     pub derived: Vec<(Entity, TileKey, u32)>,
+    pub looks: u64,
 }
 
 impl Slot for GroundBaking {
