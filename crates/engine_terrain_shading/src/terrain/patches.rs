@@ -144,9 +144,10 @@ pub(super) fn view_uniforms(
     views: &TerrainViews<'_>,
     captures: &ProbeCaptures,
 ) -> Vec<ViewUniform> {
+    let temporal = if views.temporal { 1.0 } else { 0.0 };
     let mut written = vec![ViewUniform {
         relative_view_projection: views.camera.to_cols_array_2d(),
-        eye_offset: [0.0; 4],
+        eye_offset: [0.0, 0.0, 0.0, temporal],
         inverse_relative_view_projection: views
             .camera
             .as_dmat4()
@@ -169,7 +170,7 @@ pub(super) fn view_uniforms(
             relative_view_projection: relative.to_cols_array_2d(),
             eye_offset: (views.eye.as_dvec3() - face.center.as_dvec3())
                 .as_vec3()
-                .extend(0.0)
+                .extend(temporal)
                 .to_array(),
         };
     }
