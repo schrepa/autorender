@@ -1,3 +1,5 @@
+const FOLD_COST: u32 = 0u;
+
 struct SunAt {
     world: vec3<f32>,
     normal: vec3<f32>,

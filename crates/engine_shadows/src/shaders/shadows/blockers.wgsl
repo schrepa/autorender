@@ -3,6 +3,7 @@ import package::place::sun_blockers::{DEBUG_SUN_BEYOND, DEBUG_SUN_HORIZON, DEBUG
 import package::generated::shadows::{sun_shown, sun_shown_source};
 import package::shadows::sample::{air_visibility, map_lookup, map_visibility, sun_shadowed};
 
+const FOLD_COST: u32 = 1u;
 const SHADOWED_BELOW: f32 = 0.5;
 
 fn sun_open(open: f32, at: SunAt) -> f32 {
@@ -17,10 +18,14 @@ fn sun_open(open: f32, at: SunAt) -> f32 {
 }
 
 fn sun_air(open: f32, world: vec3<f32>) -> f32 {
-    if !sun_shadowed() || open <= 0.0 {
+    if !sun_shadowed() || bitcast<u32>(open) == 0u {
         return open;
     }
-    return min(open, air_visibility(world));
+    let seen = min(1.0, air_visibility(world));
+    if seen <= 0.0 {
+        return seen;
+    }
+    return min(seen, open);
 }
 
 fn sun_flags(flags: u32, at: SunAt) -> u32 {

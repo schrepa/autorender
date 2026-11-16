@@ -9,7 +9,7 @@ use super::*;
 use crate::install::{InstallCore, PartInfo, Reinstall};
 use crate::linker::{CORE_PACKAGE, Linker, Part};
 use crate::machine::{Machine, OutputDecl};
-use crate::places::{Answered, Fed, checked, face_module, face_source, place_module};
+use crate::places::{Answered, Fed, checked, face_module, face_source, fold_cost, place_module};
 use crate::registration::{Generated, Installed, KindDraw, KindMember, PartRecord};
 
 struct Listed {
@@ -205,6 +205,23 @@ fn wgsl_of(wgsl: Option<&(dyn std::any::Any + Send + Sync)>) -> Option<&Module> 
     wgsl.and_then(|wgsl| wgsl.downcast_ref::<Module>())
 }
 
+fn cheapest_first(source: &str, members: Vec<(Option<&Module>, Fed)>) -> Vec<Fed> {
+    let Some(least) = fold_cost(source) else {
+        return members.into_iter().map(|(_, member)| member).collect();
+    };
+    let mut costed: Vec<(u32, Fed)> = members
+        .into_iter()
+        .map(|(module, member)| {
+            let text =
+                module.and_then(|module| module.source().modules().get(module.index() as usize));
+            let cost = text.and_then(|text| fold_cost(text.text()));
+            (cost.unwrap_or(least), member)
+        })
+        .collect();
+    costed.sort_by_key(|&(cost, _)| cost);
+    costed.into_iter().map(|(_, member)| member).collect()
+}
+
 fn add_face_sources(registry: &Registry, linker: &mut Linker) {
     for (_, record) in registry.iter() {
         for filled in record.fills() {
@@ -316,10 +333,9 @@ fn faces(
                         .iter()
                         .filter(|joined| joined.list == decl.type_id())
                     {
-                        if let Some(member) =
-                            fed(brick, joined.scope, wgsl_of(joined.wgsl.as_deref()))
-                        {
-                            members.push(member);
+                        let wgsl = wgsl_of(joined.wgsl.as_deref());
+                        if let Some(member) = fed(brick, joined.scope, wgsl) {
+                            members.push((wgsl, member));
                             bricks.push(record.package);
                         }
                     }
@@ -327,7 +343,7 @@ fn faces(
                 links
                     .lists
                     .push((name, Box::leak(bricks.into_boxed_slice())));
-                Answered::Members(members)
+                Answered::Members(cheapest_first(source, members))
             }
         };
         linker.add_generated(

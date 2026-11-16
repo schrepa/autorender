@@ -4,12 +4,13 @@ use engine_core::{Error, ErrorCode};
 use engine_place::PlaceKind;
 use wesl::syntax::{
     AssignmentOperator, Attribute, DeclarationKind, Expression, Function, GlobalDeclaration,
-    ImportContent, ImportStatement, PathOrigin, Statement, TranslationUnit, TypeExpression,
-    UnaryOperator,
+    ImportContent, ImportStatement, LiteralExpression, PathOrigin, Statement, TranslationUnit,
+    TypeExpression, UnaryOperator,
 };
 
 pub const PLACE_ROOT: &str = "place";
 pub const FACE_ROOT: &str = "face";
+const FOLD_COST: &str = "FOLD_COST";
 
 const CONSTRUCTED: [&str; 17] = [
     "bool", "i32", "u32", "f32", "f16", "vec2", "vec3", "vec4", "mat2x2", "mat2x3", "mat2x4",
@@ -96,6 +97,28 @@ fn parsed(source: &str) -> Result<TranslationUnit, String> {
 fn words(text: &str) -> impl Iterator<Item = &str> {
     text.split(|letter: char| !(letter.is_ascii_alphanumeric() || letter == '_'))
         .filter(|word| !word.is_empty())
+}
+
+pub fn fold_cost(source: &str) -> Option<u32> {
+    let unit = parsed(source).ok()?;
+    unit.global_declarations.iter().find_map(|declaration| {
+        let GlobalDeclaration::Declaration(item) = declaration.node() else {
+            return None;
+        };
+        if item.ident.to_string() != FOLD_COST {
+            return None;
+        }
+        let Expression::Literal(literal) = item.initializer.as_ref()?.node() else {
+            return None;
+        };
+        if let LiteralExpression::U32(cost) = literal {
+            return Some(*cost);
+        }
+        if let LiteralExpression::AbstractInt(cost) = literal {
+            return u32::try_from(*cost).ok();
+        }
+        None
+    })
 }
 
 pub fn contract(source: &str) -> Result<Contract, String> {
