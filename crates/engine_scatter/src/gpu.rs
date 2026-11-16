@@ -1,7 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     AssetResidency, AttachPoint, DrawnTable, DrawnView, Entry, Error, GeometryHandle,
-    GeometryStream, InstanceInput, MaterialHandle, Mobility, PassBit, PassRole, TargetName, Views,
+    GeometryStream, InstanceInput, MaterialHandle, Mobility, PassBit, PassRole, PassViews,
+    TargetName, Var, ViewFacts, Views,
 };
 use engine_open_world_kit::ground::{GroundTiles, TerrainTiles};
 use engine_places_rendering::impostors::IMPOSTOR_VERTICES;
@@ -9,19 +10,19 @@ use engine_render::{
     AfterRead, Allocation, Bind, Buffer, ComputePipeline, Count, Draw, DrawInput, Encode, FaceCull,
     Form, FormColor, FormDepth, FormFragment, FormPass, FormSide, FragmentPass, FragmentUse,
     GpuPart, Install, KindForm, Lifetime, OwnFragments, Pass, PassFragment, PerPass, Pipeline,
-    Prepare, RoleFragments, Scene, SceneDraw, Shape, Varyings, VertexLayout, wgpu,
+    Prepare, RoleFragments, Scene, SceneDraw, Shape, Texture, Varyings, VertexLayout, wgpu,
 };
 use glam::Vec3;
 
 use crate::far_cover::{CanopyGpu, CanopyMaps};
 use crate::layouts::{
-    CullFrame, CullGroup, CullView, DrawArgs, DrawKind, DrawRecord, LEVELS, PlacedGroup,
-    PlacedRecord, PlacedValues, PoseData, SCATTER_GROUP, SlotColor, Snap, placed_group,
-    record_words,
+    CullFrame, CullGroup, CullView, DrawArgs, DrawKind, DrawRecord, LAID_GROUP, LEVELS,
+    PlacedGroup, PlacedRecord, PlacedValues, PoseData, SCATTER_GROUP, SlotColor, Snap,
+    placed_group, record_words,
 };
 use crate::pool::{SlotWrite, dead};
 use crate::shaders::scatter::{
-    cards as card_shaders, casters as caster_shaders, draw as object_shaders,
+    cards as card_shaders, casters as caster_shaders, draw as object_shaders, laid as laid_shaders,
     matched as matched_shaders,
 };
 use crate::systems::{ScatterFeedback, ScatterState};
@@ -280,6 +281,7 @@ struct Forms {
     extended_fading: Form<ScatterGpu>,
     matched: [Form<ScatterGpu>; 4],
     cards: Form<ScatterGpu>,
+    laid_cards: Form<ScatterGpu>,
     casters: Form<ScatterGpu>,
 }
 
@@ -400,6 +402,11 @@ pub(crate) struct ScatterGpu {
     canopy: CanopyGpu,
     snapping: ComputePipeline<Self>,
     culling: ComputePipeline<Self>,
+    lay: Pass<Self>,
+    laid: Texture<Self>,
+    laying: ComputePipeline<Self>,
+    laid_size: (u32, u32),
+    laid_copied: Option<u32>,
     forms: Forms,
     joined: PerPass<Option<Joined>>,
     records_written: bool,
@@ -416,7 +423,7 @@ fn grow(held: &mut u64, bytes: u64, room: u64) {
 impl ScatterGpu {
     fn forms(
         cx: &mut Install<'_, Self>,
-        (poses, colors): (Buffer<Self>, Buffer<Self>),
+        (poses, colors, laid): (Buffer<Self>, Buffer<Self>, Texture<Self>),
     ) -> Result<Forms, Error> {
         let placed = [
             (object_shaders::POSES, Bind::Buffer(poses)),
@@ -424,37 +431,40 @@ impl ScatterGpu {
         ];
         let plain = cx.form(&PLAIN_FORM, &placed)?;
         let following: Vec<FormPass> = plain.passes().filter(|pass| follows(cx, *pass)).collect();
-        let mut matched = |index: usize| {
-            let (form, entry) = &MATCHED_FORMS[index];
-            let owns: Vec<PassFragment> = following
+        let owning = |entry: Entry, depth: FormDepth| -> Vec<PassFragment> {
+            following
                 .iter()
                 .map(|pass| PassFragment {
                     pass: FragmentPass::Scene(pass.scene),
                     side: None,
                     fragment: FormFragment::Entry {
-                        entry: *entry,
+                        entry,
                         cull: FaceCull::None,
-                        depth: FormDepth::Matched,
+                        depth,
                         color: FormColor::Written,
                     },
                 })
-                .collect();
-            cx.form_owning(form, &owns, &placed)
+                .collect()
+        };
+        let mut matched = |index: usize| {
+            let (form, entry) = &MATCHED_FORMS[index];
+            cx.form_owning(form, &owning(*entry, FormDepth::Matched), &placed)
         };
         let matched = [matched(0)?, matched(1)?, matched(2)?, matched(3)?];
+        let card_bound: [(Var, Bind<ScatterGpu>); 3] = [
+            (card_shaders::POSES, Bind::Buffer(poses)),
+            (card_shaders::COLORS, Bind::Buffer(colors)),
+            (card_shaders::LAID_DEPTH, Bind::Texture(laid)),
+        ];
+        let laid = owning(card_shaders::FS_PLACED_CARD_LAID, FormDepth::Written);
         Ok(Forms {
             plain,
             matched,
             extended: cx.form(&EXTENDED_FORM, &placed)?,
             fading: cx.form(&FADING_FORM, &placed)?,
             extended_fading: cx.form(&EXTENDED_FADING_FORM, &placed)?,
-            cards: cx.form(
-                &CARD_FORM,
-                &[
-                    (card_shaders::POSES, Bind::Buffer(poses)),
-                    (card_shaders::COLORS, Bind::Buffer(colors)),
-                ],
-            )?,
+            cards: cx.form(&CARD_FORM, &card_bound[..2])?,
+            laid_cards: cx.form_owning(&CARD_FORM, &laid, &card_bound)?,
             casters: cx.form(
                 &CASTER_FORM,
                 &[(caster_shaders::POSES, Bind::Buffer(poses))],
@@ -859,7 +869,16 @@ impl ScatterGpu {
         pipelines: [&Pair; 2],
     ) -> u32 {
         let mut draws = 0;
-        for item in items.iter().filter(|item| !fading || item.fades) {
+        let turns: &[Option<bool>] = match scene.role {
+            PassRole::Depth => &[Some(false), Some(true)],
+            PassRole::Lit | PassRole::Blended | PassRole::Shown => &[None],
+        };
+        let listed = turns.iter().flat_map(|turn| {
+            items.iter().filter(move |item| {
+                (!fading || item.fades) && turn.is_none_or(|masked| item.masked == masked)
+            })
+        });
+        for item in listed {
             let pair = pipelines[usize::from(item.masked)];
             let Some(pipeline) = &pair[usize::from(item.extended)] else {
                 continue;
@@ -894,10 +913,7 @@ impl ScatterGpu {
         let held = &self.held;
         let forms = &self.forms;
         let plain = [draw.form(&forms.plain), draw.form(&forms.extended)];
-        let fading = [
-            draw.form(&forms.fading),
-            draw.form(&forms.extended_fading),
-        ];
+        let fading = [draw.form(&forms.fading), draw.form(&forms.extended_fading)];
         let [cut, cut_fading] = if matched {
             let cut = &forms.matched;
             [
@@ -927,7 +943,12 @@ impl ScatterGpu {
         if !held.cards {
             return draws;
         }
-        let card = draw.form(&self.forms.cards);
+        let laid = matched && self.laid_copied.is_some() && self.laid_copied == scene.index;
+        let card = draw.form(if laid {
+            &self.forms.laid_cards
+        } else {
+            &self.forms.cards
+        });
         if let (Some(card), Some((cards, offset))) = (card, self.card_source(view)) {
             let record = DrawRecord::of(DrawKind::PlacedCard, 0);
             draw.draw_timed(
@@ -938,7 +959,7 @@ impl ScatterGpu {
                     args: inputs.card_args,
                     offset,
                 },
-                || scene_label(scene, "cards"),
+                || scene_label(scene, if laid { "cards laid" } else { "cards" }),
             );
             draws += 1;
         }
@@ -1074,7 +1095,23 @@ impl GpuPart for ScatterGpu {
                 (cull::CARD_ARGS, Bind::Buffer(card_args)),
             ],
         )?;
-        let forms = Self::forms(cx, (poses, colors))?;
+        let laid = cx.view_texture("laid_depth", wgpu::TextureFormat::R32Float, Lifetime::Kept);
+        let lay = cx
+            .pass("scatter_laid")
+            .at(AttachPoint::Inputs)
+            .views(PassViews::Main)
+            .label("engine/scatter-laid")
+            .span("scatter_laid")
+            .id();
+        let laying = cx.compute_pipeline(
+            lay,
+            laid_shaders::COPY_LAID,
+            &[
+                (laid_shaders::SCENE_DEPTH, Bind::Target(TargetName::DEPTH)),
+                (laid_shaders::LAID_OUT, Bind::Texture(laid)),
+            ],
+        )?;
+        let forms = Self::forms(cx, (poses, colors, laid))?;
         let joined = Self::scenes(cx, &forms, (ids, draws, debug_records, cards, card_args));
         Ok(Self {
             scatter,
@@ -1095,6 +1132,11 @@ impl GpuPart for ScatterGpu {
             canopy,
             snapping,
             culling,
+            lay,
+            laid,
+            laying,
+            laid_size: (0, 0),
+            laid_copied: None,
             forms,
             joined,
             records_written: false,
@@ -1114,6 +1156,7 @@ impl GpuPart for ScatterGpu {
         if state.is_added() {
             self.held = Held::default();
         }
+        self.laid_copied = None;
         let words = record_words();
         let records = cx.allocate_buffer(
             self.debug_records,
@@ -1139,7 +1182,35 @@ impl GpuPart for ScatterGpu {
         }
     }
 
+    fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
+        let index = cx.view_index();
+        let held = &self.held;
+        let laid = held
+            .views
+            .iter()
+            .any(|listed| listed.drawn == index && listed.laid);
+        if !(held.prepared && held.cards && laid) {
+            return;
+        }
+        let size = view.size();
+        let extent = wgpu::Extent3d {
+            width: size.x,
+            height: size.y,
+            depth_or_array_layers: 1,
+        };
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate(self.laid, extent, 1);
+        self.laid_size = (size.x, size.y);
+        cx.run(self.lay);
+    }
+
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
+        if pass == self.lay {
+            let (width, height) = self.laid_size;
+            let groups = [width.div_ceil(LAID_GROUP), height.div_ceil(LAID_GROUP), 1];
+            let copied = cx.dispatch(&self.laying, Count::Groups(groups)) != 0;
+            self.laid_copied = copied.then(|| cx.view_index());
+            return 0;
+        }
         if pass == self.scatter {
             let groups = [self.held.objects.div_ceil(SCATTER_GROUP), 1, 1];
             if self.held.snapping && cx.dispatch(&self.snapping, Count::Groups(groups)) == 0 {
