@@ -863,7 +863,7 @@ impl Compiler<'_> {
             return None;
         }
         let standing = self.keyed(pipeline, targets, shown, Some(dynamic))?;
-        if standing.key == keyed.key {
+        if standing.key == keyed.key || self.machine.makes_records(pipeline) {
             return self
                 .compile_with(pipeline, targets, shown, Some(specialized), Asked::Drawn)
                 .map(|(key, made)| (key, made, true));
