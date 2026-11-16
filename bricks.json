@@ -568,7 +568,7 @@
         }
       ],
       "type": "engine_shadows::ShadowsBrick",
-      "version": "6472ff2ef6dc1d165dea80ec41fde0e6bb214b0b3171500a5dbee630fe3f4403"
+      "version": "6c323ba779f29f1605a41caff5768cacf4db7a344aaf38e73a22a9a8ff3b506d"
     },
     {
       "dependencies": [
@@ -2622,7 +2622,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "4989a142928a2ed161be12e09758e41be3742777feab4cf49ca1e68b774fc5f4"
+      "version": "3f660781101ed03b655a797522f539f5735d731202b0532330c562a329fdcb18"
     },
     {
       "dependencies": [

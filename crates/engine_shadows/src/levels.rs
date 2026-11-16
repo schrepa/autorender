@@ -253,7 +253,14 @@ impl Levels {
                     let at = |value: f32| (value / level.texel).floor() as i32;
                     [at(low.x), at(-high.y), at(high.x) + 1, at(-low.y) + 1]
                 }
-                ShadowChange::Box { .. } | ShadowChange::Casters => continue,
+                ShadowChange::Coarse { pixel: least }
+                    if pixel * level.texel * SPACING_SLACK >= least =>
+                {
+                    level.window
+                }
+                ShadowChange::Box { .. } | ShadowChange::Coarse { .. } | ShadowChange::Casters => {
+                    continue;
+                }
                 ShadowChange::All => level.window,
             };
             level.redraw = join(level.redraw, meet(touched, level.window));

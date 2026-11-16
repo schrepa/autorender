@@ -7,6 +7,8 @@ use crate::{Cursor, DrawnSettings, Feed, Since};
 pub enum DrawnArea {
     // spacing: the widest view pixel, in metres, at which anything in the box still draws
     Box { min: Vec3, max: Vec3, spacing: f32 },
+    // pixel: the narrowest view pixel, in metres, at which anything anywhere may draw differently
+    Coarse { pixel: f32 },
     All,
 }
 

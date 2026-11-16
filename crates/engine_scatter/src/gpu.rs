@@ -447,7 +447,7 @@ fn listed_view(
     ))
 }
 
-const SLACK: f32 = 1.0 / 1024.0;
+pub(crate) const SLACK: f32 = 1.0 / 1024.0;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum List {
