@@ -581,6 +581,8 @@ struct Occlusion {
     levels: Pyramid,
     test: ComputePipeline<DrawnGpu>,
     running: bool,
+    bytes: u64,
+    room: u64,
     prepass: Pass<DrawnGpu>,
     prepass_levels: Pyramid,
 }
@@ -955,17 +957,20 @@ impl DrawnGpu {
             None => occlusion.prepass_levels.release(cx),
         }
         let bytes = slots * 4;
-        let fresh = cx.allocate_buffer(occlusion.held, bytes) == Allocation::Fresh;
+        let resized = std::mem::replace(&mut occlusion.bytes, bytes) != bytes;
+        occlusion.room = occlusion.room.max(bytes);
+        let room = occlusion.room;
+        let fresh = cx.allocate_buffer(occlusion.held, room) == Allocation::Fresh || resized;
         let Some(main) = main.filter(|_| wanted) else {
             if occlusion.running {
-                cx.clear_buffer_range(occlusion.held, 0..bytes);
+                cx.clear_buffer_range(occlusion.held, 0..room);
                 occlusion.levels.release(cx);
                 occlusion.running = false;
             }
             return 0;
         };
         if fresh || !occlusion.running {
-            cx.clear_buffer_range(occlusion.held, 0..bytes);
+            cx.clear_buffer_range(occlusion.held, 0..room);
         }
         occlusion.running = true;
         let count = occlusion.levels.size(main, cx);
@@ -1137,6 +1142,8 @@ fn install_occlusion(
         levels,
         test,
         running: false,
+        bytes: 0,
+        room: 0,
         prepass,
         prepass_levels,
     })
