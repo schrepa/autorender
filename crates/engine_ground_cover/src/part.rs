@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     AttachPoint, DrawKind, Entry, Error, MaterialHandle, PassRole, PassViews, ScenePass,
-    ScenePasses, TargetName,
+    ScenePasses, TargetName, Views,
 };
 use engine_open_world_kit::ground::PALETTE_ENTRIES;
 use engine_render::{
@@ -23,7 +23,7 @@ use crate::layouts::{
     LightRows, SeenRows, ShapeRows,
 };
 use crate::settings::GroundCover;
-use crate::shaders::cover::{draw, faces::cover as face, grow, matched};
+use crate::shaders::cover::{casts, draw, faces::cover as face, grow, matched};
 use crate::surface::CoverSurface;
 
 const DRAW_ARGS: u64 = size_of::<wgpu::util::DrawIndirectArgs>() as u64;
@@ -46,6 +46,7 @@ const THIN_AT: u64 = SHAPE_AT - size_of::<f32>() as u64;
 const LIGHT_AT: u64 = SHAPE_AT + size_of::<ShapeRows>() as u64;
 const SEEN_AT: u64 = LIGHT_AT + size_of::<LightRows>() as u64;
 const CARDS_AT: u64 = SEEN_AT + size_of::<SeenRows>() as u64;
+const VIEWS_AT: u64 = (std::mem::offset_of!(Grow, room) + 3 * size_of::<u32>()) as u64;
 
 const BLADE_FORM: KindForm = KindForm {
     kind: COVER,
@@ -104,7 +105,7 @@ pub(crate) struct CoverGpu {
     card: Vec<Held>,
     shadows: bool,
     bins: usize,
-    views: u64,
+    views: u32,
     cells: Vec<[u32; 3]>,
     spans: Vec<&'static str>,
     blade_bytes: u64,
@@ -119,6 +120,7 @@ impl GpuPart for CoverGpu {
         Res<'static, CoverTable>,
         Res<'static, CoverSurface>,
         Res<'static, GroundCover>,
+        Res<'static, Views>,
     );
     const NAME: &'static str = "ground_cover";
 
@@ -157,7 +159,7 @@ impl GpuPart for CoverGpu {
                 (grow::CARDS, Bind::Buffer(cards)),
                 (grow::GROW_SPOTS, Bind::Buffer(spots)),
                 (grow::GROW_ROW, Bind::Buffer(windows)),
-                (grow::COVER_CASTS, Bind::Buffer(casts)),
+                (casts::COVER_CASTS, Bind::Buffer(casts)),
             ],
         )?;
         let running = cx.draw_input(grow_pass, runs);
@@ -168,7 +170,7 @@ impl GpuPart for CoverGpu {
                 (grow::GROWS, Bind::Buffer(rows)),
                 (grow::COUNTS, Bind::Buffer(counts)),
                 (grow::ARGS, Bind::Buffer(args)),
-                (grow::COVER_CASTS, Bind::Buffer(casts)),
+                (casts::COVER_CASTS, Bind::Buffer(casts)),
             ],
         )?;
         let blade_form = cx.form_shaped(
@@ -235,7 +237,7 @@ impl GpuPart for CoverGpu {
 
     fn prepare(
         &mut self,
-        (plan, table, surface, settings): SystemParamItem<'_, '_, Self::Reads>,
+        (plan, table, surface, settings, views): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
         self.blade.clone_from(&surface.blade);
@@ -273,7 +275,7 @@ impl GpuPart for CoverGpu {
         self.drawn = plan.drawn && !plan.rows.is_empty();
         cx.write(self.table, THIN_AT, &[if self.drawn { plan.thin } else { 0.0 }]);
         self.bins = plan.bins as usize;
-        self.views = u64::from(plan.views);
+        self.views = views.drawn().len() as u32;
         let bins = u64::from(plan.bins.max(1));
         let kinds = BLADE_DRAWS + u64::from(plan.bins);
         let grown = plan.cells.len() as u64;
@@ -299,8 +301,8 @@ impl GpuPart for CoverGpu {
         let counted = (COUNT_WORDS + bins) * WORD;
         let sizes = [
             (self.counts, counted),
-            (self.args, (kinds * (1 + self.views)).max(BLADE_DRAWS + bins) * DRAW_ARGS),
-            (self.casts, (2 * kinds * self.views * WORD).max(WINDOW_BYTES)),
+            (self.args, (kinds * (1 + u64::from(self.views))).max(BLADE_DRAWS + bins) * DRAW_ARGS),
+            (self.casts, (2 * kinds * u64::from(self.views) * WORD).max(WINDOW_BYTES)),
             (self.frame, FRAME_BYTES),
             (self.blades, self.blade_bytes),
             (self.cards, self.card_bytes),
@@ -326,6 +328,7 @@ impl GpuPart for CoverGpu {
             return;
         }
         cx.write(self.rows, 0, &plan.rows);
+        cx.write(self.rows, VIEWS_AT, &[self.views]);
         cx.write(self.frame, 0, &[plan.frame]);
         lists.started.clear();
         lists.started.resize(plan.cells.len(), RUN);
@@ -393,7 +396,7 @@ impl CoverGpu {
         };
         let kinds = BLADE_DRAWS + self.bins as u64;
         let first = match (scene.view, scene.index) {
-            (Some(_), Some(index)) if u64::from(index) < self.views => {
+            (Some(_), Some(index)) if index < self.views => {
                 (1 + u64::from(index)) * kinds
             }
             (Some(_) | None, _) => 0,
