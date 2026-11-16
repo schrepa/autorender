@@ -1,6 +1,6 @@
 use crate::{AllocationSnapshot, MAX_EVENTS, allocation_snapshot};
 use serde::Serialize;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::{marker::PhantomData, rc::Rc};
 
 #[derive(Debug, Serialize)]
@@ -112,6 +112,19 @@ pub fn current_frame() -> u64 {
 }
 pub fn set_frame(frame: u64) {
     COLLECTOR.with_borrow_mut(|collector| collector.frame = frame);
+}
+
+thread_local! { static RECORDED_FOR: Cell<Option<u64>> = const { Cell::new(None) }; }
+
+pub fn recording_frame() -> u64 {
+    RECORDED_FOR.get().unwrap_or_else(current_frame)
+}
+
+pub fn record_for<R>(frame: u64, record: impl FnOnce() -> R) -> R {
+    let previous = RECORDED_FOR.replace(Some(frame));
+    let recorded = record();
+    RECORDED_FOR.set(previous);
+    recorded
 }
 
 pub fn start(max_events: usize) -> Result<u64, &'static str> {

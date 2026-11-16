@@ -1,8 +1,9 @@
 #![expect(unsafe_code, reason = "Vulkan's layer entry points and calls")]
 
 use engine::collections::HashMap;
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::ffi::{CStr, c_char, c_void};
+use std::ops::Range;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 
@@ -51,12 +52,21 @@ pub(crate) fn begin() {
         let mut state = counting.state();
         state.results.clear();
         state.skipped = 0;
+        state.short.clear();
+        let frame = engine::profiling::current_frame();
+        let begun = state.labelled.is_some_and(|labelled| labelled >= frame);
+        state.whole = frame + u64::from(begun)..u64::MAX;
         ACTIVE.store(true, Ordering::Release);
     }
 }
 
 pub(crate) fn end() -> Option<Value> {
     SELECTION.get()?;
+    if let Some(counting) = COUNTING.get() {
+        let mut state = counting.state();
+        let ended = engine::profiling::current_frame() + 1;
+        state.whole.end = ended.max(state.whole.start);
+    }
     ACTIVE.store(false, Ordering::Release);
     let Some(counting) = COUNTING.get() else {
         let error = lock(&UNAVAILABLE).clone().unwrap_or_else(|| {
@@ -464,7 +474,9 @@ struct State {
     next_reset: usize,
     results: Vec<(Pass, Vec<f64>)>,
     skipped: u64,
-    instances: u64,
+    labelled: Option<u64>,
+    whole: Range<u64>,
+    short: BTreeSet<u64>,
     destroyed: bool,
 }
 
@@ -477,7 +489,7 @@ struct Pool {
 #[derive(Clone)]
 struct Pass {
     groups: Vec<String>,
-    instance: u64,
+    frame: u64,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -781,27 +793,13 @@ impl Counting {
                 })
                 .collect()
         };
-        let mut nodes: BTreeMap<&str, Instances> = BTreeMap::new();
-        let mut parts: BTreeMap<&str, BTreeMap<String, Instances>> = BTreeMap::new();
-        for (pass, values) in &state.results {
-            let Some(node) = pass.groups.first() else {
-                continue;
-            };
-            nodes
-                .entry(node)
-                .or_default()
-                .entry(pass.instance)
-                .or_default()
-                .push(values);
-            parts
-                .entry(node)
-                .or_default()
-                .entry(pass.groups[1..].join(" > "))
-                .or_default()
-                .entry(pass.instance)
-                .or_default()
-                .push(values);
-        }
+        let (nodes, parts, frames) = grouped(&state);
+        let per_frame = |frames: &Frames| -> Vec<Vec<f64>> {
+            frames
+                .values()
+                .map(|instances| combine(instances))
+                .collect()
+        };
         let named = |values: &[f64]| -> serde_json::Map<String, Value> {
             counters
                 .iter()
@@ -813,33 +811,35 @@ impl Counting {
             Some(time) => b[time].total_cmp(&a[time]),
             None => std::cmp::Ordering::Equal,
         };
-        let mut rows: Vec<(&str, Vec<f64>, usize)> = nodes
+        let instances = |frames: &Frames| frames.values().map(Vec::len).sum::<usize>();
+        let mut rows: Vec<(&str, Vec<f64>, usize, usize)> = nodes
             .iter()
-            .map(|(node, instances)| {
-                let combined: Vec<Vec<f64>> =
-                    instances.values().map(|parts| combine(parts)).collect();
-                (*node, medians(&combined), combined.len())
+            .map(|(node, frames)| {
+                let summed = per_frame(frames);
+                (*node, medians(&summed), instances(frames), summed.len())
             })
             .collect();
         rows.sort_by(|a, b| by_time(&a.1, &b.1));
         let passes: Vec<Value> = rows
             .iter()
-            .map(|(node, values, instances)| {
-                let mut inner: Vec<(&String, Vec<f64>)> = parts[node]
+            .map(|(node, values, counted, summed)| {
+                let mut inner: Vec<(&String, Vec<f64>, usize, usize)> = parts[node]
                     .iter()
-                    .map(|(part, instances)| {
-                        let combined: Vec<Vec<f64>> =
-                            instances.values().map(|parts| combine(parts)).collect();
-                        (part, medians(&combined))
+                    .map(|(part, frames)| {
+                        let summed = per_frame(frames);
+                        (part, medians(&summed), instances(frames), summed.len())
                     })
                     .collect();
                 inner.sort_by(|a, b| by_time(&a.1, &b.1));
                 json!({
                     "pass": node,
-                    "instances": instances,
+                    "instances": counted,
+                    "frames": summed,
                     "median": named(values),
-                    "parts": inner.iter().take(8).map(|(part, values)| json!({
+                    "parts": inner.iter().take(8).map(|(part, values, counted, summed)| json!({
                         "part": if part.is_empty() { "between_passes" } else { part.as_str() },
+                        "instances": counted,
+                        "frames": summed,
                         "median": named(values),
                     })).collect::<Vec<_>>(),
                 })
@@ -861,12 +861,37 @@ impl Counting {
                 "unknown": self.plan.unknown,
             },
             "passes_not_counted": state.skipped,
+            "frames": frames,
             "passes": passes,
         })
     }
 }
 
-type Instances<'a> = BTreeMap<u64, Vec<&'a Vec<f64>>>;
+type Frames<'a> = BTreeMap<u64, Vec<&'a Vec<f64>>>;
+type Nodes<'a, T> = BTreeMap<&'a str, T>;
+
+fn grouped(
+    state: &State,
+) -> (
+    Nodes<'_, Frames<'_>>,
+    Nodes<'_, BTreeMap<String, Frames<'_>>>,
+    usize,
+) {
+    let whole = |frame: &u64| state.whole.contains(frame) && !state.short.contains(frame);
+    let mut nodes: Nodes<'_, Frames<'_>> = BTreeMap::new();
+    let mut parts: Nodes<'_, BTreeMap<String, Frames<'_>>> = BTreeMap::new();
+    for (pass, values) in &state.results {
+        let Some(node) = pass.groups.first().filter(|_| whole(&pass.frame)) else {
+            continue;
+        };
+        let frames = nodes.entry(node).or_default();
+        frames.entry(pass.frame).or_default().push(values);
+        let part = parts.entry(node).or_default();
+        let frames = part.entry(pass.groups[1..].join(" > ")).or_default();
+        frames.entry(pass.frame).or_default().push(values);
+    }
+    (nodes, parts, state.whole.clone().filter(whole).count())
+}
 
 fn counting() -> &'static Counting {
     COUNTING.get().expect("counting_functions_hooked")
@@ -951,19 +976,21 @@ unsafe extern "system" fn begin_label(
     let Some(recording) = state.recording.get_mut(&buffer) else {
         return;
     };
+    let frame = engine::profiling::recording_frame();
     if recording.groups.is_empty() {
-        state.instances += 1;
+        state.labelled = Some(frame);
     }
     recording.groups.push(name);
     let pass = Pass {
         groups: recording.groups.clone(),
-        instance: state.instances,
+        frame,
     };
     if recording.groups.len() > 1 || recording.render_pass || !ACTIVE.load(Ordering::Acquire) {
         return;
     }
     let Some((pool, query)) = counting.take(state, buffer, pass) else {
         state.skipped += 1;
+        state.short.insert(frame);
         return;
     };
     if let Some(recording) = state.recording.get_mut(&buffer) {
