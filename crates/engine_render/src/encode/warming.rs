@@ -64,10 +64,6 @@ impl Warming {
         self.open = open;
     }
 
-    pub(super) fn opened(&self) -> bool {
-        self.open
-    }
-
     pub(super) fn promote(&mut self, made: (u64, u64)) {
         if self.fed == Some(made) {
             self.fed = None;
@@ -325,7 +321,7 @@ impl Run {
     }
 
     pub(super) fn compile_first(&mut self) {
-        if self.pipelines.warming.open {
+        if self.pipelines.settled {
             return;
         }
         let Some(keys) = self.pipelines.listed.take() else {

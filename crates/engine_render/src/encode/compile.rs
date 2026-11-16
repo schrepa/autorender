@@ -859,33 +859,50 @@ impl Compiler<'_> {
         if let Some(found) = self.made(pipeline, made) {
             return Some((keyed.key, found, true));
         }
-        if self.pipelines.making.refused(made) {
+        let records = self.machine.makes_records(pipeline);
+        let refused = self.pipelines.making.refused(made);
+        if refused && records {
             return None;
         }
         let standing = self.keyed(pipeline, targets, shown, Some(dynamic))?;
-        if standing.key == keyed.key || self.machine.makes_records(pipeline) {
+        if !refused && (standing.key == keyed.key || records) {
             return self
                 .compile_with(pipeline, targets, shown, Some(specialized), Asked::Drawn)
                 .map(|(key, made)| (key, made, true));
         }
-        let warm = Warm {
-            pipeline,
-            shape: Some(WarmShape {
-                formats: targets.0.to_vec(),
-                depth: targets.1,
-                shown,
-                variant: Some(specialized),
-            }),
-            switches: self.pipelines.switches.clone(),
-            listed: false,
-        };
+        if !refused {
+            let stand_in = (standing.program, standing.key);
+            if self.pipelines.making.waits(made) && self.made(pipeline, stand_in).is_none() {
+                return None;
+            }
+            let warm = Warm {
+                pipeline,
+                shape: Some(WarmShape {
+                    formats: targets.0.to_vec(),
+                    depth: targets.1,
+                    shown,
+                    variant: Some(specialized),
+                }),
+                switches: self.pipelines.switches.clone(),
+                listed: false,
+            };
+            self.want(made, warm);
+        }
+        self.pipelines.standing = true;
+        let stood = self.compile_with(pipeline, targets, shown, Some(dynamic), Asked::Drawn);
+        self.pipelines.standing = false;
+        stood.map(|(key, made)| (key, made, false))
+    }
+
+    fn want(&mut self, made: (u64, u64), warm: Warm) {
+        if !self.pipelines.settled && !self.pipelines.wanted.contains(&made) {
+            self.pipelines.wanted.push(made);
+        }
         let warming = &mut self.pipelines.warming;
         let queued = warming.queue.iter().any(|known| known.same(&warm));
         if !queued && !self.pipelines.making.waits(made) {
             warming.queue.push_front(warm);
         }
-        self.compile_with(pipeline, targets, shown, Some(dynamic), Asked::Drawn)
-            .map(|(key, made)| (key, made, false))
     }
 
     fn keyed(
@@ -970,10 +987,13 @@ impl Compiler<'_> {
             && !self.pipelines.making.waits(made)
         {
             let bits = keyed.bits;
-            let needed = if asked == Asked::Warmed || self.pipelines.warming.opened() {
-                Needed::Later
-            } else {
+            let first = asked != Asked::Warmed
+                && !self.pipelines.settled
+                && !self.pipelines.standing;
+            let needed = if first || self.pipelines.wanted.contains(&made) {
                 Needed::First(keyed.switches.clone())
+            } else {
+                Needed::Later
             };
             let shape = Shape {
                 formats,
