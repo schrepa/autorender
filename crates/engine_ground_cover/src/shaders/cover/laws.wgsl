@@ -1,3 +1,6 @@
+import package::cover::order::hash;
+import package::engine::math::unit;
+
 const STRAIGHT_JOINTS: u32 = 3u;
 const FLAT_JOINTS: u32 = 2u;
 const CARD_JOINTS: u32 = 4u;
@@ -35,3 +38,23 @@ fn blade_above(pointed: f32, along: f32) -> f32 {
 const CARD_MIRRORED: u32 = 0x80000000u;
 const CARD_CELL: u32 = 0x7fffffffu;
 const CARD_TINT_RANGE: f32 = 0.5;
+
+fn grounded_tilt(normal: vec3<f32>) -> vec2<u32> {
+    return vec2<u32>(round((clamp(normal.xz, vec2<f32>(-1.0), vec2<f32>(1.0)) * 0.5
+        + 0.5) * 255.0));
+}
+
+fn unorm8(value: f32) -> u32 {
+    return u32(floor(0.5 + 255.0 * saturate(value)));
+}
+
+fn pack_color(color: vec3<f32>, w: f32) -> u32 {
+    return pack4x8unorm(vec4<f32>(sqrt(saturate(color)), saturate(w)));
+}
+
+fn blade_form(form: vec4<f32>, dice: u32) -> u32 {
+    let blunt = u32(unit(dice) < form.x);
+    let bent = u32(unit(hash(dice ^ 0x2545f491u)) < form.y);
+    let fold = u32(round(saturate(form.z / FOLD_WIDEST) * FOLD_STEPS));
+    return blunt | (bent << 1u) | (fold << 2u);
+}
