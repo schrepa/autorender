@@ -49,7 +49,7 @@ pub(crate) struct CoverPlan {
     reach: f32,
     tiers: u32,
     groups: u32,
-    widest: u32,
+    pub(crate) widest: u32,
 }
 
 #[derive(Resource, Default)]
