@@ -30,14 +30,20 @@ fn tonemap(color: vec3<f32>) -> vec3<f32> {
     let shown = curved(vec3<f32>(peak)).r;
     let faded = 1.0 - 1.0 / (piece().grade.z * max(peak - shown, 0.0) + 1.0);
     let kept = mix(exposed * (shown / max(peak, 1.0e-6)), vec3<f32>(shown), faded);
-    var mapped = mix(kept, curved(exposed), piece().grade.w);
+    var mapped = kept;
+    if piece().grade.w != 0.0 {
+        mapped = mix(kept, curved(exposed), piece().grade.w);
+    }
     let tone = smoothstep(piece().shadow_tint.w, piece().highlight_tint.w,
         sqrt(luminance(mapped)));
     mapped *= mix(piece().shadow_tint.rgb, piece().highlight_tint.rgb, tone);
-    let top = max(mapped.r, max(mapped.g, mapped.b));
-    let bottom = min(mapped.r, min(mapped.g, mapped.b));
-    let muted = 1.0 - (top - bottom) / max(top, 1.0e-6);
-    let amount = piece().grade.y + piece().grade.x * muted;
+    var amount = piece().grade.y;
+    if piece().grade.x != 0.0 {
+        let top = max(mapped.r, max(mapped.g, mapped.b));
+        let bottom = min(mapped.r, min(mapped.g, mapped.b));
+        let muted = 1.0 - (top - bottom) / max(top, 1.0e-6);
+        amount = piece().grade.y + piece().grade.x * muted;
+    }
     return saturate(mix(vec3<f32>(luminance(mapped)), mapped, amount));
 }
 

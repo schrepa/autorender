@@ -1199,7 +1199,7 @@ impl GpuPart for ScatterGpu {
             depth_or_array_layers: 1,
         };
         let (Allocation::Fresh | Allocation::Kept) = cx.allocate(self.laid, extent, 1);
-        self.laid_size = (size.x, size.y);
+        self.laid_size = (view.render.x, view.render.y);
         cx.run(self.lay);
     }
 
