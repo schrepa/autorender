@@ -212,10 +212,11 @@ fn terrain_gradient_between(texels: vec4<u32>, f: vec2<f32>) -> vec2<f32> {
 }
 
 fn terrain_surface_normal(local: vec2<f32>, shading: TerrainShadingLevel) -> vec3<f32> {
-    var gradient = terrain_level_gradient(local, shading.level);
-    if shading.blend > 0.0 {
-        gradient = mix(gradient, terrain_level_gradient(local, shading.level + 1u),
-            shading.blend);
+    var gradient = vec2<f32>(0.0);
+    let last = select(1u, 2u, shading.blend > 0.0);
+    for (var walk = 0u; walk < last; walk++) {
+        let found = terrain_level_gradient(local, shading.level + walk);
+        gradient = select(found, mix(gradient, found, shading.blend), walk == 1u);
     }
     return normalize(vec3<f32>(-gradient.x, 1.0, -gradient.y));
 }
@@ -381,11 +382,10 @@ fn terrain_blend(local: vec2<f32>, normal: vec3<f32>, shading: TerrainShadingLev
         terrain_steep_blend(&blend, normal);
         level = 1u;
     }
-    if near > 0.0 {
-        terrain_level_blend(&blend, local, level, near);
-    }
-    if shading.blend > 0.0 {
-        terrain_level_blend(&blend, local, shading.level + 1u, shading.blend);
+    let last = select(1u, 2u, shading.blend > 0.0);
+    for (var walk = select(0u, 1u, !(near > 0.0)); walk < last; walk++) {
+        terrain_level_blend(&blend, local, select(level, shading.level + 1u, walk == 1u),
+            select(near, shading.blend, walk == 1u));
     }
     if !averaged {
         terrain_steep_blend(&blend, normal);
@@ -1558,15 +1558,16 @@ fn terrain_forward_look(relative: vec3<f32>) -> TerrainLook {
 struct TerrainSeen {
     site: TerrainSite,
     shading: TerrainShadingLevel,
-    local: vec2<f32>,
+    blend: TerrainBlend,
     beyond: f32,
-    wet: f32,
     moved: f32,
 }
 
 fn terrain_ground_blend(seen: TerrainSeen, site: TerrainSite) -> TerrainBlend {
-    return terrain_blend(select(site.world.xz - terrain.origin.xz, seen.local,
-        seen.moved < TERRAIN_BAND_PIXELS), site.geometric, seen.shading);
+    if seen.moved < TERRAIN_BAND_PIXELS {
+        return seen.blend;
+    }
+    return terrain_blend(site.world.xz - terrain.origin.xz, site.geometric, seen.shading);
 }
 
 fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
@@ -1611,7 +1612,7 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     site.across = terrain_across(world);
     site.bedding = terrain_bedding(world, geometric);
     site.world = relief.world;
-    return TerrainSeen(site, shading, local, relief.beyond, blend.wet, relief.moved);
+    return TerrainSeen(site, shading, blend, relief.beyond, relief.moved);
 }
 
 fn terrain_point_seen(relative: vec3<f32>, seen: TerrainSeen, marched: bool) -> SurfacePoint {
@@ -1640,7 +1641,7 @@ fn terrain_point_seen(relative: vec3<f32>, seen: TerrainSeen, marched: bool) -> 
     if bare != 0.0 && open != 0.0 {
         let depth_point = select(relative,
             relative + relative * (seen.beyond / max(length(relative), 1.0e-6)), marched);
-        wet = max(seen.wet, terrain_waterline(eye_world(depth_point), site)) * bare * open;
+        wet = max(seen.blend.wet, terrain_waterline(eye_world(depth_point), site)) * bare * open;
     }
     if wet > 0.0 {
         let soaked = terrain_wet_ground(roughness, wet);
