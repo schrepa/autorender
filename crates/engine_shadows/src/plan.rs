@@ -57,7 +57,7 @@ pub(crate) struct ShadowPlan {
     pub(crate) layout: u8,
     pub(crate) restarted: bool,
     pub(crate) sky: SkyMaps,
-    pub(crate) sky_draw: Option<SkyDraw>,
+    pub(crate) sky_draws: Vec<SkyDraw>,
     pub(crate) views: Vec<MapView>,
     placed: Vec<Placed>,
     pub(crate) level_data: Vec<ShadowLevel>,
@@ -97,7 +97,7 @@ impl ShadowPlan {
     fn idle(&mut self) {
         self.levels.idle();
         self.sky.idle();
-        self.sky_draw = None;
+        self.sky_draws.clear();
         self.views.clear();
         self.placed.clear();
         self.composes.clear();
@@ -299,15 +299,16 @@ pub(crate) fn plan_shadows(
     plan.moving = if changes.moving > 0 { key.moving } else { 0 };
     let quiet = readiness.loading.total == 0 && readiness.compiling == 0;
     let occludes = occluding.on();
-    plan.sky_draw = plan.sky.prepare(
+    plan.sky.prepare(
         (&sky, occludes),
         (eye, time.real_elapsed),
         (casters_changed, quiet),
+        &mut plan.sky_draws,
     );
     crate::regions::views(
         &plan.levels,
         (plan.moving, key.side, settings.sample_texels),
-        plan.sky_draw.as_ref(),
+        &plan.sky_draws,
         (&mut plan.views, &mut plan.placed),
     );
     crate::regions::composes(

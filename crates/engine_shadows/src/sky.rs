@@ -121,10 +121,12 @@ impl SkyMaps {
         (settings, occludes): (&SkyOcclusion, bool),
         (eye, now): (Vec3, f64),
         (changed, quiet): (bool, bool),
-    ) -> Option<SkyDraw> {
+        draws: &mut Vec<SkyDraw>,
+    ) {
+        draws.clear();
         if !occludes {
             self.release();
-            return None;
+            return;
         }
         if !self.live {
             self.live = true;
@@ -144,10 +146,10 @@ impl SkyMaps {
             }
         }
         let reaches = [near * SPAN, far * SPAN];
-        let draw = self
-            .choose(count as usize, eye, reaches, quiet)
-            .map(|layer| self.redraw(layer, count, (eye, now), reaches));
-        self.drawn = u32::from(draw.is_some());
+        for layer in self.choose(count as usize, eye, reaches, quiet) {
+            draws.push(self.redraw(layer, count, (eye, now), reaches));
+        }
+        self.drawn = draws.len() as u32;
         self.ready = self
             .layers
             .iter()
@@ -162,7 +164,6 @@ impl SkyMaps {
             })
             .count() as u32;
         self.write(count, reaches, settings, now);
-        draw
     }
 
     fn write(&mut self, count: u32, reaches: [f32; 2], settings: &SkyOcclusion, now: f64) {
@@ -184,13 +185,16 @@ impl SkyMaps {
         *self.uniform = uniform;
     }
 
-    fn choose(&self, count: usize, eye: Vec3, reaches: [f32; 2], quiet: bool) -> Option<usize> {
+    fn choose(&self, count: usize, eye: Vec3, reaches: [f32; 2], quiet: bool) -> Vec<usize> {
+        let missing: Vec<usize> = in_use(count)
+            .filter(|&layer| quiet && self.layers[layer].drawn.is_none())
+            .collect();
+        if !missing.is_empty() {
+            return missing;
+        }
         let mut best: Option<(usize, f32)> = None;
         for layer in in_use(count) {
             let Some((center, _)) = self.layers[layer].drawn else {
-                if quiet {
-                    return Some(layer);
-                }
                 continue;
             };
             let stray = center.distance(eye) / (STRAY * reaches[layer / DIRECTIONS]);
@@ -199,12 +203,15 @@ impl SkyMaps {
             }
         }
         if let Some((layer, _)) = best {
-            return Some(layer);
+            return vec![layer];
         }
         if !quiet {
-            return None;
+            return Vec::new();
         }
-        in_use(count).find(|&layer| self.layers[layer].stale)
+        in_use(count)
+            .find(|&layer| self.layers[layer].stale)
+            .into_iter()
+            .collect()
     }
 
     fn redraw(

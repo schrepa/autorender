@@ -1,6 +1,6 @@
 import package::engine::view::{DetailLevel, detail_across, detail_level};
 import package::generated::pieces::shadows::piece;
-import package::generated::shadows::{LEVEL_MARGIN, SOFT_READS, ShadowLevel};
+import package::generated::shadows::{LEVEL_MARGIN, ShadowLevel};
 import package::place::sun_blockers::SunAt;
 
 @group(0) @binding(0) var shadow_levels: texture_depth_2d_array;
@@ -73,6 +73,16 @@ fn gather_texels(corner: vec2<f32>, point: vec2<f32>) -> Texels {
         apart.y + vec4<f32>(0.5, 0.5, -0.5, -0.5));
 }
 
+fn receiver_gaps(level: u32, moving: vec4<f32>, corner: vec2<f32>, texels: Texels, depth: f32,
+        slope: vec2<f32>) -> vec4<f32> {
+    var depths = still_depths(level, corner);
+    if moving.z != 0.0 {
+        depths = min(depths, moving_depths(level, corner - moving.xy));
+    }
+    let plane = depth + slope.x * texels.across + slope.y * texels.down - RECEIVER_MARGIN;
+    return max(plane - depths, vec4<f32>(0.0));
+}
+
 fn box_shares(texels: Texels, width: vec2<f32>) -> vec4<f32> {
     let across = saturate(vec4<f32>(0.5 * width.x + 0.5) - abs(texels.across));
     let down = saturate(vec4<f32>(0.5 * width.y + 0.5) - abs(texels.down));
@@ -101,7 +111,9 @@ fn level_lift(level: u32, at: SunAt) -> f32 {
     if level < at.lift_first || level - at.lift_first >= 4u {
         return 0.0;
     }
-    return at.lifts[level - at.lift_first];
+    let lift = level - at.lift_first;
+    return select(select(select(at.lifts.w, at.lifts.z, lift == 2u), at.lifts.y, lift == 1u),
+        at.lifts.x, lift == 0u);
 }
 
 fn sun_spread() -> f32 {
@@ -125,22 +137,14 @@ fn level_visibility(index: u32, sun: SunAt, blend: f32) -> f32 {
         rows_turn(level.rows, sun.world_dy), level.band.w);
     let first = gather_corner(light.xy) - vec2<f32>(f32(gathers) - 1.0);
     let most = vec2<f32>(soft_texels());
-    var gaps: array<vec4<f32>, SOFT_READS>;
     var blocking = vec2<f32>(0.0);
     for (var row = 0u; row < gathers; row++) {
         for (var column = 0u; column < gathers; column++) {
             let corner = first + 2.0 * vec2<f32>(f32(column), f32(row));
-            var depths = still_depths(index, corner);
-            if level.moving.z != 0.0 {
-                depths = min(depths, moving_depths(index, corner - level.moving.xy));
-            }
             let texels = gather_texels(corner, light.xy);
-            let plane = light.z + slope.x * texels.across + slope.y * texels.down
-                - RECEIVER_MARGIN;
-            let gap = max(plane - depths, vec4<f32>(0.0));
+            let gap = receiver_gaps(index, level.moving, corner, texels, light.z, slope);
             let share = box_shares(texels, most);
             blocking += vec2<f32>(dot(share, gap), dot(share, sign(gap)));
-            gaps[row * gathers + column] = gap;
         }
     }
     let penumbra = 2.0 * sun_spread() * blocking.x
@@ -154,12 +158,13 @@ fn level_visibility(index: u32, sun: SunAt, blend: f32) -> f32 {
     for (var row = 0u; row < gathers; row++) {
         for (var column = 0u; column < gathers; column++) {
             let corner = first + 2.0 * vec2<f32>(f32(column), f32(row));
-            let gap = gaps[row * gathers + column];
+            let texels = gather_texels(corner, light.xy);
+            let gap = receiver_gaps(index, level.moving, corner, texels, light.z, slope);
             var lit = vec4<f32>(1.0) - sign(gap);
             if soft > 0.0 {
                 lit = exp2(-gap / soft);
             }
-            visible += dot(box_shares(gather_texels(corner, light.xy), width), lit);
+            visible += dot(box_shares(texels, width), lit);
         }
     }
     return visible;

@@ -10,8 +10,17 @@ fn kept_texels(world: vec3<f32>) -> KeptTexels {
     var kept: KeptTexels;
     kept.first = shadow_level(world).level;
     kept.count = level_count();
-    for (var index = 0u; index < 4u && kept.first + index < kept.count; index++) {
-        kept.texels[index] = level_texel(kept.first + index);
+    if kept.first < kept.count {
+        kept.texels.x = level_texel(kept.first);
+    }
+    if kept.first + 1u < kept.count {
+        kept.texels.y = level_texel(kept.first + 1u);
+    }
+    if kept.first + 2u < kept.count {
+        kept.texels.z = level_texel(kept.first + 2u);
+    }
+    if kept.first + 3u < kept.count {
+        kept.texels.w = level_texel(kept.first + 3u);
     }
     return kept;
 }

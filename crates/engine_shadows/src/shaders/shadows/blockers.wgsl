@@ -6,10 +6,14 @@ import package::shadows::sample::{air_visibility, map_lookup, map_visibility, su
 const SHADOWED_BELOW: f32 = 0.5;
 
 fn sun_open(open: f32, at: SunAt) -> f32 {
-    if !sun_shadowed() || open <= 0.0 {
+    if !sun_shadowed() || bitcast<u32>(open) == 0u {
         return open;
     }
-    return min(open, map_visibility(at));
+    let seen = min(1.0, map_visibility(at));
+    if seen <= 0.0 {
+        return seen;
+    }
+    return min(seen, open);
 }
 
 fn sun_air(open: f32, world: vec3<f32>) -> f32 {

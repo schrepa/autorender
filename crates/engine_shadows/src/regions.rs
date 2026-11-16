@@ -46,7 +46,7 @@ fn level_view(level: &Level, rect: Rect, map: CasterMap, sample_texels: f32) -> 
 pub(crate) fn views(
     levels: &Levels,
     (moving, side, sample_texels): (u32, u32, f32),
-    sky: Option<&SkyDraw>,
+    sky: &[SkyDraw],
     (views, placed): (&mut Vec<MapView>, &mut Vec<Placed>),
 ) {
     views.clear();
@@ -75,7 +75,7 @@ pub(crate) fn views(
             clear: Clear::DepthOnly,
         });
     }
-    if let Some(draw) = sky {
+    for draw in sky {
         let rows = draw.rows.map(|row| Vec4::from_array(row).truncate());
         views.push(MapView {
             view: draw.clip,
