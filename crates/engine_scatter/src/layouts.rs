@@ -46,6 +46,8 @@ gpu_struct! {
         pub record: u32,
         pub parts: u32,
         pub pad: [u32; 2],
+        pub middle: [f32; 4],
+        pub half: [f32; 4],
     }
 }
 

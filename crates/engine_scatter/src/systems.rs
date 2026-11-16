@@ -353,6 +353,8 @@ fn set_groups(state: &mut ScatterState) {
             record: layout.impostor.1,
             parts: layout.parts,
             pad: [0; 2],
+            middle: group.bounds[0],
+            half: group.bounds[1],
         });
         held.lists.push(GroupLists { ids, count });
         for level in 0..LEVELS as usize {
