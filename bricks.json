@@ -427,7 +427,7 @@
         }
       ],
       "type": "engine_impostors::ImpostorsBrick",
-      "version": "96cd6cfa7a7f6d5dff688c9f323f659ff7ebe284c4bb83af5414c8eb3acbd01f"
+      "version": "e9dcfe479dd2ffaf92096c9aeb648f618b31c38ae75c61bec6ac895f2cf086bd"
     },
     {
       "dependencies": [
@@ -865,7 +865,7 @@
         }
       ],
       "type": "engine_ambient_occlusion::AmbientOcclusionBrick",
-      "version": "75040ead31ba951de8c948f3c820275322e97a4f482697876eb5e15fc316c8d1"
+      "version": "873614aeba02caa2a4dcaaf4965d79452804632374d256e60e71bd4449335631"
     },
     {
       "dependencies": [
@@ -2445,7 +2445,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "88525c487894b50f41aa4f724d229826beb504983d1d996fa1c405f31f663ca6"
+      "version": "f9d71d6598cdddd6b31ccfb0fe3ee5fc18e095db04cc3a0f721b99c2e4d9533e"
     },
     {
       "dependencies": [
