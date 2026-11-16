@@ -327,9 +327,6 @@ var<workgroup> cell_run: vec4<u32>;
 var<workgroup> cell_plan: CellPlan;
 var<workgroup> cell_ground: array<u32, GROUND_HELD>;
 var<workgroup> cell_site: array<u32, SITE_HELD>;
-var<workgroup> cell_passing: atomic<u32>;
-var<workgroup> cell_made: atomic<u32>;
-var<workgroup> cell_round: u32;
 
 fn held_ground(tile: LevelTile, sample: vec2<u32>, grounds: CellSamples) -> GroundMaterial {
     let within = sample - grounds.first;
@@ -1028,8 +1025,6 @@ fn mark_casts(bounds: Bounds, kind: u32, first: u32, last: u32) {
     }
 }
 
-var<workgroup> cell_passed: array<Pick, 64>;
-
 struct Candidate {
     rank: f32,
     seed: u32,
@@ -1630,43 +1625,22 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
     let walking = any(planned.zw != vec2<u32>(COVER_NO_LAYER));
     var walk: Walk;
     var plain = lane;
-    var listed = 0u;
     loop {
         var pick: Pick;
-        var made = false;
         if walking {
-            made = walk_next(&walk, planned, cell, lane, &pick);
-        } else if plain < total {
+            if !walk_next(&walk, planned, cell, lane, &pick) {
+                break;
+            }
+        } else {
+            if plain >= total {
+                break;
+            }
             let order = plain % finest;
             pick = Pick(ordered_cell(home, below, below, order >> (2u * lane_levels), slot), order,
                 plain / finest, NO_OWNER);
             plain += 64u;
-            made = true;
         }
-        if made {
-            atomicAdd(&cell_made, 1u);
-            if candidate_at(pick.at, pick.order, pick.candidate).kept {
-                cell_passed[atomicAdd(&cell_passing, 1u) - listed] = pick;
-            }
-        }
-        workgroupBarrier();
-        if lane == 0u {
-            cell_round = atomicExchange(&cell_made, 0u);
-        }
-        let round = workgroupUniformLoad(&cell_round);
-        let passing = atomicLoad(&cell_passing);
-        let mine = lane < passing - listed;
-        if mine {
-            pick = cell_passed[lane];
-        }
-        listed = passing;
-        workgroupBarrier();
-        if mine {
-            grow_candidate(pick.at, pick.order, pick.candidate, pick.owner);
-        }
-        if round == 0u {
-            break;
-        }
+        grow_candidate(pick.at, pick.order, pick.candidate, pick.owner);
     }
     if walk.tried > 0u {
         atomicAdd(&counts.tried, walk.tried);
