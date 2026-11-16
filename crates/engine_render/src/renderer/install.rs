@@ -990,6 +990,7 @@ fn install_with(
             .collect();
         problems.extend(machine.linker.unused(&composed, &roots));
     }
+    machine.linker.forget_wholes();
     let pass_gates = pass_gates(registry, &machine.declared.passes);
     if problems.is_empty() {
         Ok(Built {

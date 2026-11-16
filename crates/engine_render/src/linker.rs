@@ -144,6 +144,7 @@ pub(crate) struct Linker {
     kept: Vec<(String, String)>,
     prepared: Option<Result<driver::Prepared, String>>,
     parsed: driver::Parsed,
+    wholes: engine_core::collections::HashMap<(String, String), driver::Slot>,
 }
 
 pub(crate) fn path_of(var_or_entry: (engine_core::Module, &str)) -> (&'static str, String) {
@@ -210,10 +211,15 @@ impl Linker {
         self.changed();
     }
 
+    pub(crate) fn forget_wholes(&mut self) {
+        self.wholes.clear();
+    }
+
     fn changed(&mut self) {
         self.composed.clear();
         self.prepared = None;
         self.parsed.clear();
+        self.wholes.clear();
     }
 
     pub(crate) fn hand(&mut self, path: String, package: &'static str, parts: Vec<Part>) {
@@ -517,28 +523,31 @@ impl Linker {
             .map_err(|error| failed(error))?;
         let main = module_path(module).map_err(|error| failed(&error))?;
         let writes = pass.map(|(_, text)| text.as_str());
-        let mut result = driver::compile(&main, kept, (prepared, writes), &mut self.parsed)
-            .map_err(|error| failed(&error))?;
-        let order = |path: &wesl::syntax::ModulePath| {
-            if *path == main {
-                return 0;
+        let whole = kept.and_then(|entry| {
+            let key = (module.to_owned(), written.to_owned());
+            let texts = (prepared, writes);
+            driver::entry(
+                &mut self.wholes,
+                (key, entry),
+                (&main, texts, &mut self.parsed),
+            )
+        });
+        let linked = match whole {
+            Some(linked) => linked,
+            None => {
+                let mut result = driver::compile(&main, kept, (prepared, writes), &mut self.parsed)
+                    .map_err(|error| failed(&error))?;
+                driver::sort(&mut result.modules, &main, prepared);
+                driver::linked(&wesl::pass::link(&result.modules, Some(&result.used_items)))
             }
-            1 + prepared
-                .named
-                .get(&path.to_string())
-                .copied()
-                .unwrap_or(self.modules.len())
         };
-        result.modules.sort_by_key(|module| order(&module.path));
-        let linked = wesl::pass::link(&result.modules, Some(&result.used_items));
-        let bindings = bound_vars(&linked);
-        let text = pieces_read_in_place(&prepared.pieces, linked.to_string());
+        let text = pieces_read_in_place(&prepared.pieces, linked.text, &linked.functions);
         let switches = switch_ids(&text);
         let mut overrides = Vec::new();
         for (source, names) in self.modules.iter().zip(&prepared.overrides) {
             for (name, other) in names {
                 let mangled = if source.path == module { name } else { other };
-                if declares_override(&text, mangled) {
+                if linked.overrides.contains(mangled) {
                     overrides.push((name.clone(), mangled.clone()));
                 }
             }
@@ -546,7 +555,7 @@ impl Linker {
         let composed = Arc::new(Composed {
             module: module.to_owned(),
             text,
-            bindings,
+            bindings: linked.bindings,
             switches,
             overrides,
         });
@@ -771,8 +780,18 @@ fn pieces_read(modules: &[Module]) -> Vec<(String, String, String)> {
     read
 }
 
-fn pieces_read_in_place(pieces: &[(String, String, String)], mut text: String) -> String {
+fn pieces_read_in_place(
+    pieces: &[(String, String, String)],
+    mut text: String,
+    functions: &[String],
+) -> String {
     for (declaration, call, replacement) in pieces {
+        let named = call
+            .strip_suffix("()")
+            .is_some_and(|name| functions.iter().any(|known| known == name));
+        if !named {
+            continue;
+        }
         let Some(at) = text.find(declaration.as_str()) else {
             continue;
         };
@@ -953,22 +972,6 @@ fn defines_function(text: &str, name: &str) -> bool {
     })
 }
 
-fn bound_vars(unit: &wesl::syntax::TranslationUnit) -> Vec<String> {
-    use wesl::syntax::{Attribute, GlobalDeclaration};
-    unit.global_declarations
-        .iter()
-        .filter_map(|declaration| {
-            let GlobalDeclaration::Declaration(item) = declaration.node() else {
-                return None;
-            };
-            item.attributes
-                .iter()
-                .any(|attribute| matches!(attribute.node(), Attribute::Binding(_)))
-                .then(|| item.ident.to_string())
-        })
-        .collect()
-}
-
 fn declared_overrides(text: &str) -> Vec<String> {
     text.lines()
         .filter_map(|line| line.trim_start().strip_prefix("override "))
@@ -980,14 +983,6 @@ fn declared_overrides(text: &str) -> Vec<String> {
             (!name.is_empty()).then_some(name)
         })
         .collect()
-}
-
-fn declares_override(text: &str, name: &str) -> bool {
-    let declaration = format!("override {name}");
-    text.match_indices(&declaration).any(|(at, _)| {
-        !text[at + declaration.len()..]
-            .starts_with(|character: char| character.is_ascii_alphanumeric() || character == '_')
-    })
 }
 
 fn switch_ids(text: &str) -> Vec<u32> {

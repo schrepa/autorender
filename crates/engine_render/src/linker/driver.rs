@@ -2,8 +2,11 @@ use engine_core::collections::HashMap;
 use std::borrow::Cow;
 
 use wesl::error::{Error, ResolveError, UsageError};
-use wesl::pass::{self, CompileResult, CompilerDriver, Module, UsedItems};
-use wesl::syntax::{GlobalDeclaration, Ident, ModulePath, TranslationUnit};
+use wesl::pass::{self, CompileResult, CompilerDriver, Module, UsedItems, Visit};
+use wesl::syntax::{
+    Attribute, DeclarationKind, GlobalDeclaration, Ident, ModulePath, TranslationUnit,
+    TypeExpression,
+};
 use wesl::{Feature, Features, Mangler as _, Resolver};
 
 pub(super) struct Prepared {
@@ -136,7 +139,195 @@ impl CompilerDriver for Linking<'_> {
                 );
             }
         }
-        Ok(pass::link(modules, Some(used_items)))
+        Ok(TranslationUnit::default())
+    }
+}
+
+pub(super) fn sort(modules: &mut [Module], main: &ModulePath, prepared: &Prepared) {
+    modules.sort_by_key(|module| {
+        if module.path == *main {
+            return 0;
+        }
+        1 + prepared
+            .named
+            .get(&module.path.to_string())
+            .copied()
+            .unwrap_or(prepared.texts.len())
+    });
+}
+
+#[derive(Default)]
+pub(super) struct Linked {
+    pub(super) text: String,
+    pub(super) bindings: Vec<String>,
+    pub(super) overrides: Vec<String>,
+    pub(super) functions: Vec<String>,
+}
+
+impl Linked {
+    fn note(&mut self, declaration: &GlobalDeclaration, name: &str) {
+        let list = match declaration {
+            GlobalDeclaration::Declaration(item) if item.kind == DeclarationKind::Override => {
+                &mut self.overrides
+            }
+            GlobalDeclaration::Declaration(item)
+                if item
+                    .attributes
+                    .iter()
+                    .any(|attribute| matches!(attribute.node(), Attribute::Binding(_))) =>
+            {
+                &mut self.bindings
+            }
+            GlobalDeclaration::Function(_) => &mut self.functions,
+            GlobalDeclaration::Void
+            | GlobalDeclaration::Declaration(_)
+            | GlobalDeclaration::TypeAlias(_)
+            | GlobalDeclaration::Struct(_)
+            | GlobalDeclaration::ConstAssert(_)
+            | GlobalDeclaration::Compound(_) => return,
+        };
+        list.push(name.to_owned());
+    }
+}
+
+pub(super) fn linked(unit: &TranslationUnit) -> Linked {
+    let mut linked = Linked {
+        text: unit.to_string(),
+        ..Linked::default()
+    };
+    for declaration in &unit.global_declarations {
+        if let Some(ident) = declared(declaration.node()) {
+            linked.note(declaration.node(), &ident.name());
+        }
+    }
+    linked
+}
+
+pub(super) enum Slot {
+    Seen,
+    Whole(Whole),
+    Refused,
+}
+
+pub(super) struct Whole {
+    declarations: Vec<(String, Option<String>)>,
+    roles: Vec<Linked>,
+    uses: Vec<Vec<usize>>,
+    qualified: Vec<bool>,
+    main: usize,
+}
+
+pub(super) fn entry(
+    slots: &mut HashMap<(String, String), Slot>,
+    (key, name): ((String, String), &str),
+    (main, texts, parsed): (&ModulePath, (&Prepared, Option<&str>), &mut Parsed),
+) -> Option<Linked> {
+    match slots.get_mut(&key) {
+        None => {
+            slots.insert(key, Slot::Seen);
+            return None;
+        }
+        Some(slot @ Slot::Seen) => {
+            *slot = whole(main, texts, parsed).map_or(Slot::Refused, Slot::Whole);
+        }
+        Some(Slot::Whole(_) | Slot::Refused) => {}
+    }
+    match slots.get(&key)? {
+        Slot::Whole(whole) => whole.entry(name),
+        Slot::Seen | Slot::Refused => None,
+    }
+}
+
+#[expect(
+    clippy::mutable_key_type,
+    reason = "identifiers hash and compare by address, as the wesl passes key them"
+)]
+fn whole(
+    main: &ModulePath,
+    texts: (&Prepared, Option<&str>),
+    parsed: &mut Parsed,
+) -> Option<Whole> {
+    let mut result = compile(main, None, texts, parsed).ok()?;
+    let plain = result.modules.iter().all(|module| {
+        module.syntax.global_directives.is_empty()
+            && !module
+                .syntax
+                .global_declarations
+                .iter()
+                .any(|declaration| declaration.is_const_assert())
+    });
+    if !plain {
+        return None;
+    }
+    sort(&mut result.modules, main, texts.0);
+    let main = result.modules.first()?.syntax.global_declarations.len();
+    let unit = pass::link(&result.modules, None);
+    let mut at: HashMap<Ident, usize> = HashMap::default();
+    let mut declarations = Vec::with_capacity(unit.global_declarations.len());
+    let mut roles = Vec::with_capacity(unit.global_declarations.len());
+    for (index, declaration) in unit.global_declarations.iter().enumerate() {
+        let ident = declared(declaration.node());
+        let mut role = Linked::default();
+        if let Some(ident) = ident {
+            at.entry(ident.clone()).or_insert(index);
+            role.note(declaration.node(), &ident.name());
+        }
+        let text = ident
+            .as_ref()
+            .map_or_else(String::new, |_| declaration.to_string());
+        declarations.push((text, ident.map(|ident| ident.name().clone())));
+        roles.push(role);
+    }
+    let mut uses = Vec::with_capacity(unit.global_declarations.len());
+    let mut qualified = Vec::with_capacity(unit.global_declarations.len());
+    for declaration in &unit.global_declarations {
+        let (mut used, mut pathed) = (Vec::new(), false);
+        Visit::<TypeExpression>::visit_rec(declaration.node(), &mut |ty: &TypeExpression| {
+            pathed |= ty.path.is_some();
+            if let Some(&index) = at.get(&ty.ident) {
+                used.push(index);
+            }
+        });
+        uses.push(used);
+        qualified.push(pathed);
+    }
+    Some(Whole {
+        declarations,
+        roles,
+        uses,
+        qualified,
+        main,
+    })
+}
+
+impl Whole {
+    fn entry(&self, name: &str) -> Option<Linked> {
+        let start =
+            (0..self.main).find(|&index| self.declarations[index].1.as_deref() == Some(name))?;
+        let mut used = vec![false; self.declarations.len()];
+        let mut stack = vec![start];
+        while let Some(index) = stack.pop() {
+            if std::mem::replace(&mut used[index], true) {
+                continue;
+            }
+            if self.qualified[index] {
+                return None;
+            }
+            stack.extend(&self.uses[index]);
+        }
+        let mut linked = Linked::default();
+        for (index, _) in used.iter().enumerate().filter(|(_, used)| **used) {
+            if !linked.text.is_empty() {
+                linked.text.push_str("\n\n");
+            }
+            linked.text.push_str(&self.declarations[index].0);
+            let role = &self.roles[index];
+            linked.bindings.extend(role.bindings.iter().cloned());
+            linked.overrides.extend(role.overrides.iter().cloned());
+            linked.functions.extend(role.functions.iter().cloned());
+        }
+        linked.text.push('\n');
+        Some(linked)
     }
 }
 
