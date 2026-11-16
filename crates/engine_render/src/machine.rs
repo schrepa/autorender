@@ -67,15 +67,19 @@ pub(crate) struct Stage {
 }
 
 impl Stage {
+    pub(crate) fn text_key(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.composed.text.hash(&mut hasher);
+        hasher.finish()
+    }
+
     pub(crate) fn shader(
         &self,
         device: &wgpu::Device,
         shaders: &mut BTreeMap<u64, wgpu::ShaderModule>,
     ) -> wgpu::ShaderModule {
-        let mut hasher = DefaultHasher::new();
-        self.composed.text.hash(&mut hasher);
         shaders
-            .entry(hasher.finish())
+            .entry(self.text_key())
             .or_insert_with(|| {
                 device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some(self.entry.name()),
