@@ -6,6 +6,7 @@ const FLAT_JOINTS: u32 = 2u;
 const CARD_JOINTS: u32 = 4u;
 
 const COVER_DRAW_VERTICES: u32 = 64u;
+const ROUNDING: f32 = 1.0e-3;
 
 const BLADE_SIZE: u32 = 0x7fff7fffu;
 const BLADE_HALF: u32 = 0x80000000u;

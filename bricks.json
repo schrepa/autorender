@@ -2767,7 +2767,7 @@
         }
       ],
       "type": "engine_ground_cover::GroundCoverBrick",
-      "version": "30ae7bc03d19918b4c45ef0616e22be54b6c840823ff6e4cf7accf91c07e2941"
+      "version": "4787d25498a39aa09a9d02c0ea7dd5566c8502b5972e3e6f658b5b36cdd0ee53"
     },
     {
       "dependencies": [
