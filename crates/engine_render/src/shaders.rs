@@ -165,7 +165,7 @@ pub fn generated_core() -> [(&'static str, String); 14] {
         ),
         (
             crate::shared::WRITES_MODULE,
-            crate::shared::pass_module(true, &[]).1,
+            crate::shared::pass_module(true, &[], true).1,
         ),
     ]
 }

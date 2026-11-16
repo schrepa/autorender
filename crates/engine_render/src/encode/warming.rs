@@ -208,6 +208,9 @@ impl Run {
             listed: false,
         };
         let (formats, depth, shown) = self.pass_formats(pass);
+        if self.mesh_drawn(pipeline, shown.0) {
+            return Vec::new();
+        }
         let mut warms = Vec::new();
         for layered in self.layered_formats(pipeline, pass, formats.len()) {
             if self.writes_fit(pipeline, &layered) {
@@ -219,7 +222,7 @@ impl Run {
                 })));
             }
         }
-        if self.writes_fit(pipeline, &formats) {
+        if warms.is_empty() && self.writes_fit(pipeline, &formats) {
             warms.insert(
                 0,
                 warm(Some(WarmShape {
@@ -231,6 +234,27 @@ impl Run {
             );
         }
         warms
+    }
+
+    fn mesh_drawn(&self, pipeline: usize, plain: bool) -> bool {
+        let Some(built) = self.machine.pipelines.get(pipeline) else {
+            return false;
+        };
+        let Program::Render(desc) = &built.decl.program else {
+            return false;
+        };
+        let used = crate::surface::MaterialVariant::PLAIN
+            .constants()
+            .iter()
+            .any(|&offered| {
+                built
+                    .stages
+                    .iter()
+                    .any(|stage| !stage.composed.constants(&[offered]).is_empty())
+            });
+        let styled = !plain && !desc.writes.is_empty();
+        let faced = desc.faces != Faces::Declared;
+        !built.geometry.is_empty() && (used || styled || faced)
     }
 
     fn reached_warms(&self) -> Vec<Warm> {
