@@ -28,6 +28,7 @@ mod recording;
 mod resources;
 mod run;
 mod views;
+mod warming;
 
 pub(crate) use compile::Compiler;
 pub(crate) use recording::{Ended, Recording, Step};

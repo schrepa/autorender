@@ -11,8 +11,8 @@ use serde::Deserialize;
 
 use super::sprays::{self, Sheet, Source};
 use super::sprigs::Atlas;
-use crate::sources::sets::{ATLAS_PARTS, BARK_PARTS, cells_file, map_files, spray_files};
-use crate::sources::{self, Sources};
+use crate::jobs::sources::sets::{ATLAS_PARTS, BARK_PARTS, cells_file, map_files, spray_files};
+use crate::jobs::sources::{self, Sources};
 
 pub(crate) const FILES: [&str; 3] = [
     "highlands/plants/spruce_twigs.json",

@@ -9,6 +9,7 @@ pub(crate) mod ground;
 pub(crate) mod photographs;
 pub(crate) mod random;
 mod rocks;
+pub(crate) mod sources;
 pub(crate) mod sprays;
 pub(crate) mod sprigs;
 pub(crate) mod trees;

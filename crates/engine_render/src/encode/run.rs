@@ -148,7 +148,7 @@ pub(crate) struct Pipelines {
     pub(crate) making: super::making::Making,
     pub(crate) refused: Vec<String>,
     pub(crate) cache: Option<wgpu::PipelineCache>,
-    pub(crate) warming: super::compile::Warming,
+    pub(crate) warming: super::warming::Warming,
 }
 
 pub(crate) struct Planning {

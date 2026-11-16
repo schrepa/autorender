@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use engine::prelude::{TextureSource, TextureUsage};
 
-use crate::sources::{self, Sources};
+use crate::jobs::sources::{self, Sources};
 
 const SIZE: u32 = 1024;
 

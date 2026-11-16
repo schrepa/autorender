@@ -7,9 +7,9 @@ use glam::Vec3;
 
 use crate::bricks::game::HighlandsStats;
 use crate::jobs::photographs::{ATLAS_MAPS, BARK_MAPS, Photographs};
+use crate::jobs::sources::sets::{ATLASES, BARKS, LEAVES};
 use crate::jobs::trees::{self, PLANTS};
 use crate::jobs::{BOULDER, CAVE_POINTS, PLANT, sprays};
-use crate::sources::sets::{ATLASES, BARKS, LEAVES};
 
 const BOULDERS: u32 = 5;
 

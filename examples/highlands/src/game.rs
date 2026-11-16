@@ -7,9 +7,9 @@ use serde_json::json;
 
 use crate::bricks::game::HighlandsControl;
 use crate::jobs::photographs::{self, Photographs};
+use crate::jobs::sources::Sources;
 use crate::land::{self, RockMaps, WaterMaps};
 use crate::scene;
-use crate::sources::Sources;
 
 const ROCK_FOLDER: &str = "highlands/";
 

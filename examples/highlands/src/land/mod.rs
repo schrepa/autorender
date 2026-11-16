@@ -12,8 +12,8 @@ use serde_json::Value;
 
 use crate::bricks::game::HighlandsControl;
 use crate::jobs::ground;
+use crate::jobs::sources::{self, Sources};
 use crate::records;
-use crate::sources::{self, Sources};
 
 pub type RockMaps = HashMap<String, Image>;
 

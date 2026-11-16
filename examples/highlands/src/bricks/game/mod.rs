@@ -43,7 +43,7 @@ impl Brick for HighlandsBrick {
             .systems(
                 Schedule::Presentation,
                 (
-                    crate::sources::read,
+                    crate::jobs::sources::read,
                     content::arrive,
                     views::watch,
                     cave::open,

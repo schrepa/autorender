@@ -2,7 +2,7 @@ use std::fmt::Write;
 use std::fs;
 use std::path::PathBuf;
 
-#[path = "src/sources/sets.rs"]
+#[path = "src/jobs/sources/sets.rs"]
 mod sets;
 
 const FOLDERS: [&str; 3] = ["ground", "plants", "bark"];
