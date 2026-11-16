@@ -1,5 +1,6 @@
 import package::engine::detail::{ViewDetail, fits, handover};
-import package::engine::drawn::{drawn_in_view, drawn_view_sees, drawn_views};
+import package::engine::drawn::{drawn_in_view, drawn_prepass_pyramid, drawn_view_sees,
+    drawn_views};
 import package::engine::geometry::declarations::{FADE_LEVEL_MAX, faded_slot, faded_slot_slot};
 import package::engine::view::seen_share;
 import package::generated::scatter::{
@@ -42,7 +43,6 @@ struct CardArgs {
 @group(1) @binding(6) var<storage, read_write> cards: array<vec2<u32>>;
 @group(1) @binding(7) var<storage, read_write> card_args: array<CardArgs>;
 @group(1) @binding(8) var<storage, read_write> picks: array<u32>;
-@group(1) @binding(9) var hidden_pyramid: texture_2d<f32>;
 
 fn append(view: u32, index: u32, drawn: CullGroup, level: u32, entry: u32) {
     if level >= drawn.levels {
@@ -127,7 +127,7 @@ fn chosen(view: u32, fading: u32, id: u32, record: Record, group: CullGroup, wan
     let near = mix(record.center, wanted.eye.xyz, min(record.radius / max(away, 1.0e-3), 1.0));
     var level = 0u;
     for (var l = 1u; l < group.camera; l++) {
-        if fits(detail, group.errors[l - 1u] * record.scale, near) {
+        if fits(detail, groups[record.group].errors[l - 1u] * record.scale, near) {
             level = l;
         }
     }
@@ -203,14 +203,16 @@ const DEPTH_SHARE: f32 = 2.44140625e-4; // optics: 2^-12, far above either side'
 const DEPTH_FLOOR: f32 = 9.5367431640625e-7; // optics: 2^-20, rounding next to the far plane
 
 fn pyramid_texel(at: vec2<u32>, level: u32) -> f32 {
-    return textureLoad(hidden_pyramid, at, level).r;
+    return textureLoad(drawn_prepass_pyramid, at, level).r;
 }
 
 fn pyramid_hidden(center: vec3<f32>, extent: vec3<f32>) -> bool {
-    let levels = min(frame.drawn.w, textureNumLevels(hidden_pyramid));
-    let size = vec2<f32>(frame.drawn.yz);
+    let levels = textureNumLevels(drawn_prepass_pyramid);
+    let render = frame.drawn.yz;
+    let size = vec2<f32>(render);
     let drawn = views[0].shape.w;
-    if levels == 0u || any(size < vec2<f32>(1.0)) || drawn >= arrayLength(&drawn_views) {
+    if any(render == vec2<u32>(0u)) || drawn >= arrayLength(&drawn_views)
+            || any(textureDimensions(drawn_prepass_pyramid, 0u) * 2u < render) {
         return false;
     }
     let clip_from = drawn_views[drawn].rasterized;

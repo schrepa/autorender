@@ -30,6 +30,7 @@ const FAR_NONE: f32 = -1.0;
 const FAR_ALIKE: f32 = -2.0;
 const WALK_FORWARD: u32 = 0u;
 const WALK_EDGE: u32 = 1u;
+const UNSEEN: vec4<f32> = vec4<f32>(0.0, 0.0, 0.0, -1.0);
 
 fn nearest_depth_at(cell: vec2<i32>, mip: i32) -> f32 {
     if mip == 0 {
@@ -802,23 +803,21 @@ fn added(pixel: vec2<i32>, stored: vec4<f32>, traced: vec4<f32>) -> vec4<f32> {
     return vec4<f32>((traced.rgb - stored.rgb * traced.a) * seen, 0.0);
 }
 
-@fragment
-fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let pixel = vec2<i32>(position.xy);
+fn reflected(pixel: vec2<i32>) -> vec4<f32> {
     let stored = textureLoad(reflected_target, pixel, 0);
     if stored.a < 0.01 {
-        discard;
+        return UNSEEN;
     }
     let mirroring = mirroring_at(pixel);
     let reflectivity = stored.a * mirroring.kept;
     if reflectivity < 0.01 {
-        discard;
+        return UNSEEN;
     }
     let limit = piece().surface;
     let rough = 1.0 - saturate((1.0 - mirroring.roughness.x / limit.x) / limit.y);
     let center = world_at(pixel);
     if center.w == 0.0 {
-        discard;
+        return UNSEEN;
     }
     let p = center.xyz;
     let eye = post.eye.xyz;
@@ -830,7 +829,7 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     let start = screen_point(p);
     let seen = sight(p, lobe.mean, start.w, reach);
     if !(start.w > 0.0 && seen.end.w > 0.0) {
-        discard;
+        return UNSEEN;
     }
     let origin = start.xyz;
     let ray = seen.end.xyz - origin;
@@ -840,7 +839,7 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
     let mirror = mirror_of(plane, normal);
     if walk.met {
         if reflects_itself(pixel, p, plane, walk.point.xy) {
-            discard;
+            return UNSEEN;
         }
         let travelled = distance(world_point(walk.point.xy, walk.point.z), p);
         let gathered = gather(lobe, p, plane, travelled, walk.point.xy, true, reach);
@@ -923,7 +922,15 @@ fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f
 }
 
 @fragment
-fn fs_far(@builtin(position) position: vec4<f32>) -> @location(0) vec4<u32> {
+fn fs_reflections(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let light = reflected(vec2<i32>(position.xy));
+    if light.a < 0.0 {
+        discard;
+    }
+    return light;
+}
+
+fn far_cell(position: vec4<f32>) -> vec4<u32> {
     let side = piece().counts.y;
     let last = vec2<i32>(post.size.xy) - 1;
     let block = vec2<i32>(position.xy) * i32(side);
@@ -987,8 +994,15 @@ fn fs_far(@builtin(position) position: vec4<f32>) -> @location(0) vec4<u32> {
 }
 
 @fragment
-fn fs_far_own(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let pixel = vec2<i32>(position.xy);
+fn fs_far(@builtin(position) position: vec4<f32>) -> @location(0) vec4<u32> {
+    let cell = far_cell(position);
+    if all(cell == vec4<u32>(0u)) {
+        discard;
+    }
+    return cell;
+}
+
+fn far_owned(pixel: vec2<i32>) -> vec4<f32> {
     let shine = textureLoad(reflected_target, pixel, 0).a;
     if shine < 0.01 || !(piece().trace.y > 0.0) {
         return vec4<f32>(0.0);
@@ -1046,4 +1060,13 @@ fn fs_far_own(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> 
     }
     return vec4<f32>(clamp(traced.light, vec3<f32>(0.0), vec3<f32>(FAR_MOST)),
         min(traced.s, FAR_MOST));
+}
+
+@fragment
+fn fs_far_own(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
+    let owned = far_owned(vec2<i32>(position.xy));
+    if all(owned == vec4<f32>(0.0)) {
+        discard;
+    }
+    return owned;
 }

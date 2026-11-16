@@ -18,18 +18,19 @@ fn occlusion_radius() -> f32 {
     return piece().occlusion.x;
 }
 
-fn ambient_visibility(pixel: vec2<i32>, p: vec3<f32>, normal: vec3<f32>, distance: f32,
-        noise: f32) -> f32 {
-    if piece().occlusion.w == 0.0 {
-        return 1.0;
+fn occluding_pixels(distance: f32) -> f32 {
+    let pixels = min(occlusion_radius() * post.eye.w / distance, MAX_PIXELS);
+    if piece().occlusion.w == 0.0 || piece().occlusion.y <= 0.0 || pixels < 1.0 {
+        return 0.0;
     }
+    return pixels;
+}
+
+fn ambient_visibility(pixel: vec2<i32>, p: vec3<f32>, normal: vec3<f32>, distance: f32,
+        pixels: f32, noise: f32) -> f32 {
     let last = vec2<i32>(post.size.xy) - 1;
     let radius = occlusion_radius();
     let strength = piece().occlusion.y;
-    let pixels = min(radius * post.eye.w / distance, MAX_PIXELS);
-    if strength <= 0.0 || pixels < 1.0 {
-        return 1.0;
-    }
     let turn = vec2<f32>(cos(noise * TAU), sin(noise * TAU));
     let radius2 = radius * radius;
     let bias = 0.002 * distance;
@@ -60,12 +61,16 @@ fn fs_occlusion(@builtin(position) position: vec4<f32>) -> @location(0) vec2<f32
     }
     let p = center.xyz;
     let distance = length(post.eye.xyz - p);
+    let pixels = occluding_pixels(distance);
+    if pixels == 0.0 {
+        return vec2<f32>(1.0, distance);
+    }
     let normal = depth_normal(pixel, p);
     if all(normal == vec3<f32>(0.0)) {
         return vec2<f32>(1.0, distance);
     }
     let noise = fract(52.9829189 * fract(dot(position.xy, vec2<f32>(0.06711056, 0.00583715))));
-    return vec2<f32>(ambient_visibility(pixel, p, normal, distance, noise), distance);
+    return vec2<f32>(ambient_visibility(pixel, p, normal, distance, pixels, noise), distance);
 }
 
 const OCCLUSION_PLANE: f32 = 0.01;

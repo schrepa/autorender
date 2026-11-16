@@ -115,6 +115,10 @@ fn placed_card_vertex(vertex: u32, batch: u32, pose: AffinePose, previous: Affin
     return card;
 }
 
+fn placed_card_reach(pose: AffinePose, impostor: ImpostorRecord, margin: f32) -> f32 {
+    return -1.0;
+}
+
 fn placed_card_level(input: CardVertex, impostor: ImpostorRecord) -> f32 {
     return 0.0;
 }

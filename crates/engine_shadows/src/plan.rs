@@ -28,6 +28,7 @@ use crate::{ShadowPass, ShadowSettings, ShadowStats, ShadowsBrick, SkyOcclusion}
 pub(crate) const SKIPPED: u8 = 0;
 pub(crate) const LOST: u8 = 1;
 pub(crate) const SKY_LOST: u8 = 2;
+pub(crate) const SKY_STALE: u8 = 3;
 
 #[derive(Resource, Default)]
 pub(crate) struct ShadowDrawn {
@@ -89,6 +90,7 @@ impl ShadowPlan {
             match status {
                 LOST => self.levels.forget(None),
                 SKY_LOST => self.sky.forget(),
+                SKY_STALE => self.sky.stale(),
                 _ => self.levels.forget(Some(&levels)),
             }
         }

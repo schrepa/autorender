@@ -167,6 +167,7 @@ impl Run {
         for built in &mut self.machine.pipelines {
             built.ready.clear();
         }
+        self.compile_first();
         self.at_reached_switches(|run| {
             run.compile_listed();
             run.queue_reached();
@@ -317,6 +318,41 @@ impl Run {
             work(self);
         }
         self.pipelines.switches = real;
+    }
+
+    pub(super) fn compile_first(&mut self) {
+        if self.pipelines.settled {
+            return;
+        }
+        let Some(keys) = self.pipelines.listed.take() else {
+            return;
+        };
+        for key in &keys {
+            let Needed::First(switches) = &key.needed else {
+                continue;
+            };
+            let found = self
+                .machine
+                .pipelines
+                .iter()
+                .position(|built| built.program_key == key.program)
+                .filter(|&at| self.pipeline_reached(at));
+            if let Some(pipeline) = found {
+                let warm = Warm {
+                    pipeline: pipeline as u32,
+                    shape: Some(WarmShape {
+                        formats: key.formats.clone(),
+                        depth: key.depth,
+                        shown: (key.plain, key.main),
+                        variant: specialized(key),
+                    }),
+                    switches: switches.clone(),
+                    listed: true,
+                };
+                self.make_warm(warm, Asked::Drawn);
+            }
+        }
+        self.pipelines.listed = Some(keys);
     }
 
     pub(super) fn compile_listed(&mut self) {

@@ -611,6 +611,9 @@ impl AppHost {
             bricks_cost: None,
             bricks: std::collections::BTreeMap::new(),
         };
+        if acquired && picture == Picture::Shown && self.engine.readiness().settled() {
+            self.renderer.settle_pipelines();
+        }
         self.pipeline_list
             .after_frame(&mut self.engine, &self.renderer);
         Ok(acquired)

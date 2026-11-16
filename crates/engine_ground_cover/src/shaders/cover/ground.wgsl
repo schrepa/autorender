@@ -1,10 +1,14 @@
 import package::cover::faces::cover::COVER_UNBOUND;
 import package::face::ground_tiles::{GroundTerrain, LevelTile, NOT_RESIDENT, TILE_QUADS,
-    ground_extent, level_tile, tile_gradient, tile_height, tile_site, tile_summary};
+    ground_extent, level_tile, tile_gradient, tile_height, tile_site, tile_summary,
+    triangle_height, true_height};
 import package::generated::cover::Grow;
 
 const TILE_SPAN: f32 = f32(TILE_QUADS);
 const TILE_LAST: u32 = TILE_QUADS - 1u;
+const SITE_HELD: u32 = 25u;
+
+var<workgroup> cell_heights: array<f32, SITE_HELD>;
 
 struct Ground {
     height: f32,
@@ -37,6 +41,27 @@ fn ground_at(terrain: GroundTerrain, local: vec2<f32>) -> Ground {
         return ground;
     }
     return ground;
+}
+
+fn hold_heights(tile: LevelTile, quads: vec4<u32>, lane: u32) {
+    if quads.w != NOT_RESIDENT && lane < quads.z * quads.z {
+        cell_heights[lane] = tile_height(tile,
+            quads.xy + vec2<u32>(lane % quads.z, lane / quads.z));
+    }
+}
+
+fn held_height(terrain: GroundTerrain, local: vec2<f32>, level: u32, tile: LevelTile,
+        quads: vec4<u32>) -> f32 {
+    let samples = max(local / (terrain.spacing * f32(1u << level)), vec2<f32>(0.0));
+    let within = clamp(samples - vec2<f32>(tile.first), vec2<f32>(0.0), vec2<f32>(TILE_SPAN));
+    let cell = min(vec2<u32>(within), vec2<u32>(TILE_LAST));
+    let held = tile.first + cell - quads.xy;
+    if tile.layer != quads.w || any(held >= vec2<u32>(quads.z - 1u)) {
+        return true_height(terrain, local, level, tile);
+    }
+    let at = held.y * quads.z + held.x;
+    return triangle_height(cell_heights[at], cell_heights[at + 1u], cell_heights[at + quads.z],
+        cell_heights[at + quads.z + 1u], within - vec2<f32>(cell));
 }
 
 fn ordered_height(height: f32) -> u32 {

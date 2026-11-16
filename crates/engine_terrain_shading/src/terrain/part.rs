@@ -11,8 +11,8 @@ use engine_render::{
     Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, Draw, DrawInput, Encode,
     FaceCull, Form, FormColor, FormDepth, FormFragment, FormSide, FragmentPass, FragmentUse,
     GpuPart, Install, KindForm, KindSurface, Lifetime, Own, OwnFragments, Pass, PassFragment,
-    PerPass, Pipeline, Prepare, RoleFragments, Sampler, Scene, SceneDraw, Shape, Texture, Varyings,
-    VertexLayout, wgpu,
+    PerPass, Pipeline, Prepare, Recorded, RoleFragments, Sampler, Scene, SceneDraw, Shape, Texture,
+    Varyings, VertexLayout, wgpu,
 };
 use glam::{Mat4, Vec3};
 
@@ -20,7 +20,9 @@ use super::atlas::TileAtlas;
 use super::patches::{PATCH_STREAM, PatchDraws, view_uniforms};
 use super::surface::SurfaceTrees;
 use super::tables::TerrainTables;
-use super::{IDS_FORMAT, NEVER_BLENDS, SURFACE_SLOTS, TERRAIN, TerrainFrame, reached};
+use super::{
+    FrameTerrain, IDS_FORMAT, NEVER_BLENDS, SURFACE_SLOTS, TERRAIN, TerrainFrame, reached,
+};
 use crate::gpu::{HEIGHT_FORMAT, SUMMARY_FORMAT, SUMMARY_MIPS, SURFACE_ERROR_MIPS};
 use crate::holes::HoledGround;
 use crate::settings::TerrainShading;
@@ -194,28 +196,60 @@ const IDS: PassFragment = ids_fragment(crate::shaders::terrain_shading::draw::FS
 const IDS_HOLES: PassFragment =
     ids_fragment(crate::shaders::terrain_shading::draw::FS_TERRAIN_IDS_HOLES);
 
-const RESOLVE_FORM: KindForm = KindForm {
-    kind: TERRAIN,
-    placed: FormSide::pulled(crate::shaders::terrain_shading::draw::VS_TERRAIN_RESOLVE),
-    owned: None,
-    varyings: Varyings::Own(&OwnFragments::NONE),
-};
+const fn resolve_form(vertex: Entry) -> KindForm {
+    KindForm {
+        kind: TERRAIN,
+        placed: FormSide::pulled(vertex),
+        owned: None,
+        varyings: Varyings::Own(&OwnFragments::NONE),
+    }
+}
 
-const fn resolve_fragment(entry: Entry) -> PassFragment {
+const RESOLVE_FORMS: [KindForm; 2] = [
+    resolve_form(crate::shaders::terrain_shading::resolve::VS_TERRAIN_RESOLVE_FAR),
+    resolve_form(crate::shaders::terrain_shading::resolve::VS_TERRAIN_RESOLVE),
+];
+
+const fn resolve_fragment(entry: Entry, depth: FormDepth) -> PassFragment {
     PassFragment {
         pass: FragmentPass::Own(RESOLVE_PASS),
         side: None,
         fragment: FormFragment::Entry {
             entry,
             cull: FaceCull::None,
-            depth: FormDepth::Overwritten,
+            depth,
             color: FormColor::Written,
         },
     }
 }
 
-const RESOLVE: PassFragment =
-    resolve_fragment(crate::shaders::terrain_shading::draw::FS_TERRAIN_RESOLVE);
+const RESOLVES: [PassFragment; 2] = [
+    resolve_fragment(
+        crate::shaders::terrain_shading::resolve::FS_TERRAIN_RESOLVE_FAR,
+        FormDepth::Tested,
+    ),
+    resolve_fragment(
+        crate::shaders::terrain_shading::resolve::FS_TERRAIN_RESOLVE,
+        FormDepth::Overwritten,
+    ),
+];
+
+const WHOLE_SCREEN: std::ops::Range<u32> = 0..3;
+const UNSPLIT_SCREEN: std::ops::Range<u32> = 3..6;
+
+fn resolve_forms(
+    cx: &mut Install<'_, TerrainGpu>,
+    ids: Texture<TerrainGpu>,
+) -> Result<[Form<TerrainGpu>; 2], Error> {
+    let bound = [(
+        crate::shaders::terrain_shading::resolve::TERRAIN_IDS_TEXTURE,
+        Bind::Texture(ids),
+    )];
+    Ok([
+        cx.form_owning(&RESOLVE_FORMS[0], &[RESOLVES[0]], &bound)?,
+        cx.form_owning(&RESOLVE_FORMS[1], &[RESOLVES[1]], &bound)?,
+    ])
+}
 
 const NO_FORM: &str = "terrain has no form in this pass";
 const TERRAIN_TILES: &str = "the terrain tiles";
@@ -250,7 +284,7 @@ pub(crate) struct TerrainGpu {
     inputs: Inputs,
     form: Form<TerrainGpu>,
     seen: [Form<TerrainGpu>; 2],
-    resolve: Form<TerrainGpu>,
+    resolve: [Form<TerrainGpu>; 2],
     holed: Result<Option<MaterialHandle>, Error>,
     joined: PerPass<Joined>,
     atlas: TileAtlas,
@@ -547,8 +581,7 @@ impl GpuPart for TerrainGpu {
             let bound = reached(cx, subdivision::SUBDIVIDE_APPLY, slot_binds(slot));
             applies.push(cx.compute_pipeline(subdivide, subdivision::SUBDIVIDE_APPLY, &bound)?);
         }
-        let resolve_bound = [(draw::TERRAIN_IDS_TEXTURE, Bind::Texture(h.ids))];
-        let resolve = cx.form_owning(&RESOLVE_FORM, &[RESOLVE], &resolve_bound)?;
+        let resolve = resolve_forms(cx, h.ids)?;
         let form = cx.form_for(&TERRAIN_FORM, &[PassRole::Depth], &[])?;
         let seen = [
             cx.form_owning(&SEEN_FORM, &[IDS], &[])?,
@@ -1010,38 +1043,59 @@ impl TerrainGpu {
 
     fn draw_ids(&self, draw: &mut Draw<'_, Self, Own>) -> u32 {
         let mut draws = 0;
+        let pipelines = [draw.form(&self.seen[0]), draw.form(&self.seen[1])];
         for holes in [false, true] {
-            let Some(pipeline) = draw.form(&self.seen[usize::from(holes)]) else {
-                continue;
-            };
             for terrain in self
                 .frame
                 .terrains
                 .iter()
                 .filter(|terrain| terrain.holes == holes)
             {
-                let Some(offset) = self.surface.draw_offset(terrain.terrain) else {
-                    continue;
-                };
-                draw.draw_timed(
-                    &pipeline,
-                    Shape::Indirect {
-                        vertices: &[],
-                        indices: Some(self.inputs.meshlet),
-                        args: self.inputs.args,
-                        offset,
-                        material: None,
-                    },
-                    || drawn_label(IDS_PASS, None, holes, terrain.terrain),
-                );
-                draws += 1;
+                for (pipeline, offset, cut) in self.split_draws(terrain, pipelines) {
+                    draw.draw_timed(
+                        &pipeline,
+                        Shape::Indirect {
+                            vertices: &[],
+                            indices: Some(self.inputs.meshlet),
+                            args: self.inputs.args,
+                            offset,
+                            material: None,
+                        },
+                        || drawn_label(IDS_PASS, None, cut, terrain.terrain),
+                    );
+                    draws += 1;
+                }
             }
         }
         draws
     }
 
+    fn split_draws<T: Copy>(
+        &self,
+        terrain: &FrameTerrain,
+        [plain, holed]: [Option<T>; 2],
+    ) -> Vec<(T, u64, bool)> {
+        let Some(offset) = self.surface.draw_offset(terrain.terrain) else {
+            return Vec::new();
+        };
+        if !terrain.holes {
+            return plain
+                .map(|plain| (plain, offset, false))
+                .into_iter()
+                .collect();
+        }
+        let Some(holed) = holed else {
+            return Vec::new();
+        };
+        match (plain, self.surface.split_offsets(terrain.terrain)) {
+            (Some(plain), Some([whole, cut])) => vec![(plain, whole, false), (holed, cut, true)],
+            _ => vec![(holed, offset, true)],
+        }
+    }
+
     fn draw_resolve(&self, draw: &mut Draw<'_, Self, Own>) -> u32 {
-        let Some(pipeline) = draw.form(&self.resolve) else {
+        let (Some(far), Some(near)) = (draw.form(&self.resolve[0]), draw.form(&self.resolve[1]))
+        else {
             return 0;
         };
         let mut draws = 0;
@@ -1051,15 +1105,18 @@ impl TerrainGpu {
             };
             draw.scissor(rect);
             let index = terrain.terrain as u32;
-            draw.draw(
-                &pipeline,
-                Shape::Pulled {
-                    vertices: 0..3,
-                    instances: index..index + 1,
-                    material: None,
-                },
-            );
-            draws += 1;
+            let shape = |vertices| Shape::Pulled {
+                vertices,
+                instances: index..index + 1,
+                material: None,
+            };
+            let split = draw.draw(&far, shape(WHOLE_SCREEN));
+            let vertices = match split {
+                Recorded::Exact => WHOLE_SCREEN,
+                Recorded::StandIn | Recorded::Waiting | Recorded::Refused => UNSPLIT_SCREEN,
+            };
+            draw.draw(&near, shape(vertices));
+            draws += 2;
         }
         draw.scissor([0, 0, self.render.0, self.render.1]);
         draws
@@ -1144,36 +1201,34 @@ impl TerrainGpu {
     ) -> u32 {
         let mut draws = 0;
         let mut unheld = None;
+        let pipelines = [surfaces[0].ok(), surfaces[1].ok()];
         for holes in [false, true] {
-            let drawn = surfaces[usize::from(holes)];
             for terrain in self
                 .frame
                 .terrains
                 .iter()
                 .filter(|terrain| terrain.holes == holes)
             {
-                let Some(offset) = self.surface.draw_offset(terrain.terrain) else {
+                if let Err(reason) = surfaces[usize::from(holes)]
+                    && self.surface.draw_offset(terrain.terrain).is_some()
+                {
+                    unheld = Some(reason);
                     continue;
-                };
-                let (pipeline, material) = match drawn {
-                    Ok(drawn) => drawn,
-                    Err(reason) => {
-                        unheld = Some(reason);
-                        continue;
-                    }
-                };
-                draw.draw_timed(
-                    &pipeline,
-                    Shape::Indirect {
-                        vertices: &[],
-                        indices: Some(meshlet),
-                        args,
-                        offset,
-                        material,
-                    },
-                    || drawn_label(scene.pass.name(), scene.view, holes, terrain.terrain),
-                );
-                draws += 1;
+                }
+                for ((pipeline, material), offset, cut) in self.split_draws(terrain, pipelines) {
+                    draw.draw_timed(
+                        &pipeline,
+                        Shape::Indirect {
+                            vertices: &[],
+                            indices: Some(meshlet),
+                            args,
+                            offset,
+                            material,
+                        },
+                        || drawn_label(scene.pass.name(), scene.view, cut, terrain.terrain),
+                    );
+                    draws += 1;
+                }
             }
         }
         match unheld {

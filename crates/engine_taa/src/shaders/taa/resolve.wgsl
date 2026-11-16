@@ -70,6 +70,9 @@ fn nearest_motion(pixel: vec2<i32>, last: vec2<i32>) -> vec2<f32> {
     var depth = textureLoad(depth_texture, pixel, 0);
     for (var y = -1; y <= 1; y++) {
         for (var x = -1; x <= 1; x++) {
+            if x == 0 && y == 0 {
+                continue;
+            }
             let at = clamp(pixel + vec2<i32>(x, y), vec2<i32>(0), last);
             let here = textureLoad(depth_texture, at, 0);
             if here > depth {
@@ -122,9 +125,11 @@ fn fs_temporal_resolve(@builtin(position) position: vec4<f32>) -> @location(0) v
     if near < 1.0 {
         color = weighed(upsampled(jittered, last));
     }
-    var offset = textureLoad(motion_vectors, pixel, 0).xy;
+    var offset: vec2<f32>;
     if piece().options.x != 0.0 {
         offset = nearest_motion(pixel, last);
+    } else {
+        offset = textureLoad(motion_vectors, pixel, 0).xy;
     }
     let uv = screen + offset;
     if taa_view.history != 0u && all(uv >= vec2<f32>(0.0)) && all(uv <= vec2<f32>(1.0)) {

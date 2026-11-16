@@ -15,13 +15,13 @@ use engine_render::{
 use glam::Vec3;
 
 use crate::far_cover::{CanopyGpu, CanopyMaps};
-use crate::hidden::{Hidden, levels};
+use crate::hidden::Hidden;
 use crate::layouts::{
     CullFrame, CullGroup, CullView, DrawArgs, DrawKind, DrawRecord, LAID_GROUP, LEVELS,
     PlacedGroup, PlacedRecord, PlacedValues, PoseData, SCATTER_GROUP, SlotColor, Snap,
     placed_group, record_words,
 };
-use crate::pool::{SlotWrite, dead};
+use crate::pool::{SlotWrite, Spread, dead};
 use crate::shaders::scatter::{
     cards as card_shaders, casters as caster_shaders, draw as object_shaders, laid as laid_shaders,
     matched as matched_shaders,
@@ -268,11 +268,45 @@ struct Held {
     prepared: bool,
     cards: bool,
     atlas: bool,
+    pyramid: bool,
     placed_groups: Vec<PlacedGroup>,
     culling: Vec<(Listed, CullView)>,
     culled: Vec<CullView>,
+    reached: Vec<u32>,
     card_args: Vec<[u32; 4]>,
     args: Vec<DrawArgs>,
+}
+
+impl Held {
+    fn reach(&mut self, state: &ScatterState) {
+        let lists = self.culled.len();
+        let main = self.culled[0];
+        let nearest = state.pool.nearest(Vec3::from_slice(&main.eye[..3]));
+        self.reached.clear();
+        for at in 0..=lists {
+            let (list, view) = match at {
+                0 => (List::Main, main),
+                _ if at == lists => (List::Fading, main),
+                _ => (List::Own, self.culled[at]),
+            };
+            self.reached.extend(state.groups.groups.iter().map(|drawn| {
+                let owner = drawn.objects as usize;
+                let near = match list {
+                    List::Main | List::Fading => nearest.get(owner).copied().unwrap_or(0.0),
+                    List::Own => 0.0,
+                };
+                match (
+                    state.group_data.data.get(owner),
+                    state.pool.spreads.get(owner),
+                ) {
+                    (Some(group), Some(&spread)) => {
+                        levels_reached(&view, (group, spread, near), list, self.cards)
+                    }
+                    _ => u32::MAX,
+                }
+            }));
+        }
+    }
 }
 
 type DrawBuffers = (
@@ -290,7 +324,8 @@ struct Forms {
     extended_fading: Form<ScatterGpu>,
     matched: [Form<ScatterGpu>; 4],
     cards: Form<ScatterGpu>,
-    laid_cards: Form<ScatterGpu>,
+    tested_cards: Form<ScatterGpu>,
+    crossing_cards: Form<ScatterGpu>,
     casters: Form<ScatterGpu>,
 }
 
@@ -392,6 +427,86 @@ fn listed_view(
     ))
 }
 
+const SLACK: f32 = 1.0 / 1024.0;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum List {
+    Main,
+    Fading,
+    Own,
+}
+
+fn levels_reached(
+    view: &CullView,
+    (group, spread, near): (&CullGroup, Spread, f32),
+    list: List,
+    cards: bool,
+) -> u32 {
+    let camera = group.camera.clamp(1, LEVELS) as usize;
+    let every = (1 << camera) - 1;
+    let pixels = view.eye[3];
+    let errors = &group.errors[..camera - 1];
+    let known = pixels.is_finite()
+        && near >= 0.0
+        && spread.low > 0.0
+        && spread.low <= spread.high
+        && spread.high.is_finite()
+        && errors
+            .iter()
+            .all(|error| *error >= 0.0 && error.is_finite());
+    if !known {
+        return every;
+    }
+    if pixels <= 0.0 {
+        return u32::from(list != List::Fading);
+    }
+    let impostor = group.impostor;
+    let cards = cards && view.shape[1] != 0 && impostor > 0.0;
+    if list == List::Fading && !cards {
+        return 0;
+    }
+    let mut reached = every;
+    if cards {
+        for (at, error) in errors.iter().enumerate() {
+            if *error > impostor * (1.0 + SLACK) {
+                reached &= !(2 << at);
+            }
+        }
+        if list == List::Fading {
+            let fits = impostor * std::f32::consts::FRAC_1_SQRT_2 * (1.0 - SLACK);
+            let finest = errors
+                .iter()
+                .rposition(|error| *error <= fits)
+                .map_or(0, |at| at + 1);
+            reached &= !((1 << finest) - 1);
+        }
+    }
+    let flat = view.shape[0] == 0;
+    if flat && list == List::Own && spread.radius * pixels < 1.0 - SLACK {
+        return 0;
+    }
+    let step = 1.0 / pixels;
+    let least = if flat { step } else { near * step } * (1.0 - SLACK);
+    if cards && least >= impostor * spread.high * (1.0 + SLACK) {
+        return 0;
+    }
+    let low = if flat && cards {
+        engine_math::max(spread.low, step / impostor * (1.0 - SLACK))
+    } else {
+        spread.low
+    };
+    for level in 0..camera {
+        let reaches = !flat || level == 0 || errors[level - 1] * low <= step * (1.0 + SLACK);
+        let stays = errors[level..]
+            .iter()
+            .all(|error| *error * spread.high > least);
+        if !reaches || !stays {
+            reached &= !(1 << level);
+        }
+    }
+    reached
+}
+
 pub(crate) struct ScatterGpu {
     scatter: Pass<Self>,
     snap_uniform: Buffer<Self>,
@@ -441,24 +556,25 @@ impl ScatterGpu {
         ];
         let plain = cx.form(&PLAIN_FORM, &placed)?;
         let following: Vec<FormPass> = plain.passes().filter(|pass| follows(cx, *pass)).collect();
-        let owning = |entry: Entry, depth: FormDepth| -> Vec<PassFragment> {
-            following
-                .iter()
-                .map(|pass| PassFragment {
-                    pass: FragmentPass::Scene(pass.scene),
-                    side: None,
-                    fragment: FormFragment::Entry {
-                        entry,
-                        cull: FaceCull::None,
-                        depth,
-                        color: FormColor::Written,
-                    },
-                })
-                .collect()
-        };
+        let owning =
+            |side: Option<FormSide>, entry: Entry, depth: FormDepth| -> Vec<PassFragment> {
+                following
+                    .iter()
+                    .map(|pass| PassFragment {
+                        pass: FragmentPass::Scene(pass.scene),
+                        side,
+                        fragment: FormFragment::Entry {
+                            entry,
+                            cull: FaceCull::None,
+                            depth,
+                            color: FormColor::Written,
+                        },
+                    })
+                    .collect()
+            };
         let mut matched = |index: usize| {
             let (form, entry) = &MATCHED_FORMS[index];
-            cx.form_owning(form, &owning(*entry, FormDepth::Matched), &placed)
+            cx.form_owning(form, &owning(None, *entry, FormDepth::Matched), &placed)
         };
         let matched = [matched(0)?, matched(1)?, matched(2)?, matched(3)?];
         let card_bound: [(Var, Bind<ScatterGpu>); 3] = [
@@ -466,7 +582,20 @@ impl ScatterGpu {
             (card_shaders::COLORS, Bind::Buffer(colors)),
             (card_shaders::LAID_DEPTH, Bind::Texture(laid)),
         ];
-        let laid = owning(card_shaders::FS_PLACED_CARD_LAID, FormDepth::Written);
+        let card_side = |vertex: Entry| FormSide {
+            vertex,
+            ..CARD_FORM.placed
+        };
+        let tested = owning(
+            Some(card_side(card_shaders::VS_PLACED_CARD_TESTED)),
+            card_shaders::FS_PLACED_CARD_TESTED,
+            FormDepth::Tested,
+        );
+        let crossing = owning(
+            Some(card_side(card_shaders::VS_PLACED_CARD_CROSSING)),
+            card_shaders::FS_PLACED_CARD_LAID,
+            FormDepth::Written,
+        );
         Ok(Forms {
             plain,
             matched,
@@ -474,7 +603,8 @@ impl ScatterGpu {
             fading: cx.form(&FADING_FORM, &placed)?,
             extended_fading: cx.form(&EXTENDED_FADING_FORM, &placed)?,
             cards: cx.form(&CARD_FORM, &card_bound[..2])?,
-            laid_cards: cx.form_owning(&CARD_FORM, &laid, &card_bound)?,
+            tested_cards: cx.form_owning(&CARD_FORM, &tested, &card_bound)?,
+            crossing_cards: cx.form_owning(&CARD_FORM, &crossing, &card_bound)?,
             casters: cx.form(
                 &CASTER_FORM,
                 &[(caster_shaders::POSES, Bind::Buffer(poses))],
@@ -741,6 +871,7 @@ impl ScatterGpu {
         }
         held.prepared = false;
         held.cards = plan.cards;
+        held.pyramid = views.main().is_some();
         held.atlas = plan.atlas;
         held.views.clear();
         held.views.extend(listed.iter().map(|(view, _)| *view));
@@ -792,7 +923,7 @@ impl ScatterGpu {
         }
         frame.counts[3] = view_count;
         let render = views.drawn().first().map_or(glam::UVec2::ZERO, |view| view.size);
-        frame.drawn = [drawn, render.x, render.y, levels(render)];
+        frame.drawn = [drawn, render.x, render.y, 0];
         held.fading_view = listed.len();
         let card_args = &mut held.card_args;
         card_args.clear();
@@ -818,6 +949,7 @@ impl ScatterGpu {
             cx.read_back::<ScatterFeedback>(LEFT_OUT, self.card_args, at..at + 16, AfterRead::Keep);
         }
         held.left_out = left;
+        held.reach(state);
         held.prepared = true;
     }
 
@@ -853,7 +985,7 @@ impl ScatterGpu {
             return draw.skip("view has no visible list");
         };
         let streams = &joined.streams;
-        let drawn = if joined.owned {
+        let (drawn, empty) = if joined.owned {
             self.draw_views((scene, view), draw, streams)
         } else {
             let matched = joined.follows && self.held.views[view].laid;
@@ -864,11 +996,11 @@ impl ScatterGpu {
         } else {
             self.held.lit_waiting
         };
-        match (drawn, &self.held.refused, waiting) {
-            (0, Some(error), _) => draw.refuse(PLACED_MESHES, error),
-            (0, None, true) => draw.wait(PLACED_MESHES),
-            (0, None, false) => draw.skip("nothing placed reaches this view"),
-            (drawn, _, _) => drawn,
+        match (drawn, empty, &self.held.refused, waiting) {
+            (0, 0, Some(error), _) => draw.refuse(PLACED_MESHES, error),
+            (0, 0, None, true) => draw.wait(PLACED_MESHES),
+            (0, _, _, _) => draw.skip("nothing placed reaches this view"),
+            (drawn, ..) => drawn,
         }
     }
 
@@ -879,8 +1011,16 @@ impl ScatterGpu {
         draw: &mut Draw<'_, Self, Scene>,
         inputs: &Streams,
         pipelines: [&Pair; 2],
-    ) -> u32 {
+    ) -> (u32, u32) {
         let mut draws = 0;
+        let mut empty = 0;
+        let fading_view = self.held.fading_view;
+        let source = match view.checked_sub(fading_view + 1) {
+            Some(0) => 0,
+            Some(_) => fading_view,
+            None => view,
+        };
+        let reached = self.held.group_count as usize * source;
         let turns: &[Option<bool>] = match scene.role {
             PassRole::Depth => &[Some(false), Some(true)],
             PassRole::Lit | PassRole::Blended | PassRole::Shown => &[None],
@@ -901,6 +1041,16 @@ impl ScatterGpu {
             let Some((ids, offset)) = self.draw_source(view, item.group as usize, level) else {
                 continue;
             };
+            let at = reached + item.group as usize;
+            if self
+                .held
+                .reached
+                .get(at)
+                .is_some_and(|bits| bits >> level & 1 == 0)
+            {
+                empty += 1;
+                continue;
+            }
             let record = DrawRecord::of(DrawKind::Placed, level);
             draw.draw_timed(
                 pipeline,
@@ -915,7 +1065,7 @@ impl ScatterGpu {
             );
             draws += 1;
         }
-        draws
+        (draws, empty)
     }
 
     fn draw_objects(
@@ -923,7 +1073,7 @@ impl ScatterGpu {
         (scene, view, matched): (&SceneDraw, usize, bool),
         draw: &mut Draw<'_, Self, Scene>,
         inputs: &Streams,
-    ) -> u32 {
+    ) -> (u32, u32) {
         let held = &self.held;
         let forms = &self.forms;
         let plain = [draw.form(&forms.plain), draw.form(&forms.extended)];
@@ -952,27 +1102,45 @@ impl ScatterGpu {
             _ => &[(view, false, [&plain, &cut])],
         };
         let mut draws = 0;
+        let mut empty = 0;
         for &(list, fades, pipelines) in lists {
-            draws += self.draw_levels(
+            let (drawn, skipped) = self.draw_levels(
                 (list, &held.lit, fades),
                 (scene, matched),
                 draw,
                 inputs,
                 pipelines,
             );
+            draws += drawn;
+            empty += skipped;
         }
         if !held.cards {
-            return draws;
+            return (draws, empty);
         }
         let laid = matched && self.laid_copied.is_some() && self.laid_copied == scene.index;
-        let card = draw.form(if laid {
-            &self.forms.laid_cards
+        let (first, second) = if laid {
+            match (
+                draw.form(&self.forms.tested_cards),
+                draw.form(&self.forms.crossing_cards),
+            ) {
+                (Some(tested), Some(crossing)) => (
+                    Some((tested, "cards tested")),
+                    Some((crossing, "cards crossing")),
+                ),
+                _ => (None, None),
+            }
         } else {
-            &self.forms.cards
-        });
+            (
+                draw.form(&self.forms.cards).map(|card| (card, "cards")),
+                None,
+            )
+        };
         let listed = if coloured { held.fading_view } else { view };
-        if let (Some(card), Some((cards, offset))) = (card, self.card_source(listed)) {
-            let record = DrawRecord::of(DrawKind::PlacedCard, 0);
+        let Some((cards, offset)) = self.card_source(listed) else {
+            return (draws, empty);
+        };
+        let record = DrawRecord::of(DrawKind::PlacedCard, 0);
+        for (card, what) in [first, second].into_iter().flatten() {
             draw.draw_timed(
                 &card,
                 Shape::IndirectAt {
@@ -981,11 +1149,11 @@ impl ScatterGpu {
                     args: inputs.card_args,
                     offset,
                 },
-                || scene_label(scene, if laid { "cards laid" } else { "cards" }),
+                || scene_label(scene, what),
             );
             draws += 1;
         }
-        draws
+        (draws, empty)
     }
 
     fn draw_views(
@@ -993,7 +1161,7 @@ impl ScatterGpu {
         (scene, view): (&SceneDraw, usize),
         draw: &mut Draw<'_, Self, Scene>,
         inputs: &Streams,
-    ) -> u32 {
+    ) -> (u32, u32) {
         let held = &self.held;
         let items = if held.views[view].casts {
             &held.cast
@@ -1004,7 +1172,7 @@ impl ScatterGpu {
             draw.form(&self.forms.plain),
             draw.form(&self.forms.extended),
         ];
-        let mut draws = self.draw_levels(
+        let (mut draws, empty) = self.draw_levels(
             (view, items, false),
             (scene, false),
             draw,
@@ -1025,7 +1193,7 @@ impl ScatterGpu {
             );
             draws += 1;
         }
-        draws
+        (draws, empty)
     }
 }
 
@@ -1216,18 +1384,16 @@ impl GpuPart for ScatterGpu {
         if !(laid && (held.cards || main)) {
             return;
         }
-        if held.cards {
-            let size = view.size();
-            let extent = wgpu::Extent3d {
-                width: size.x,
-                height: size.y,
-                depth_or_array_layers: 1,
-            };
-            let (Allocation::Fresh | Allocation::Kept) = cx.allocate(self.laid, extent, 1);
-            self.laid_size = (size.x, size.y);
-        }
-        if main {
-            self.hidden.prepare_view(cx, (index, view.render));
+        let size = view.size();
+        let extent = wgpu::Extent3d {
+            width: size.x,
+            height: size.y,
+            depth_or_array_layers: 1,
+        };
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate(self.laid, extent, 1);
+        self.laid_size = (view.render.x, view.render.y);
+        if main && held.pyramid {
+            self.hidden.view = Some(index);
         }
         cx.run(self.lay);
     }
