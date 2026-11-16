@@ -427,7 +427,7 @@
         }
       ],
       "type": "engine_impostors::ImpostorsBrick",
-      "version": "e9dcfe479dd2ffaf92096c9aeb648f618b31c38ae75c61bec6ac895f2cf086bd"
+      "version": "e218ae446b238af146f8086f2cb1e00064838a04e0e9e54a2f4ee0d08de3e3a7"
     },
     {
       "dependencies": [

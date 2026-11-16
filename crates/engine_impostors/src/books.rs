@@ -450,6 +450,7 @@ type ImpostorKey = (GeometryHandle, Option<MaterialHandle>, bool);
 struct Baked {
     record: ImpostorRecord,
     material: Option<Material>,
+    content: (u128, u128),
 }
 
 struct Supply {
@@ -659,10 +660,11 @@ impl Book {
         }
     }
 
-    fn record(&self, key: ImpostorKey, material: Option<&Material>) -> Option<ImpostorRecord> {
+    fn record(&self, key: ImpostorKey, bake: &Bake<'_>) -> Option<ImpostorRecord> {
         self.baked
             .get(&key)
-            .filter(|baked| baked.material.as_ref() == material)
+            .filter(|baked| baked.material.as_ref() == bake.material)
+            .filter(|baked| baked.content == bake.content)
             .map(|baked| baked.record)
     }
 
@@ -673,8 +675,11 @@ impl Book {
         bake: &Bake<'_>,
         budget: Option<u32>,
     ) -> Supplied {
-        if let Some(resident) = self.record(key, bake.material) {
+        if let Some(resident) = self.record(key, bake) {
             return Supplied::Resident(resident);
+        }
+        if let Some(stale) = self.baked.remove(&key) {
+            self.layers.release(stale.record.layer);
         }
         self.supplied.insert(key);
         let budget = budget.filter(|_| !cx.cooking);
@@ -682,13 +687,13 @@ impl Book {
             self.supplies.remove(&key);
             return Supplied::Refused;
         }
+        let identity = identity(self.shape.facing(key.2), bake.content);
         let asked = self
             .supplies
             .get(&key)
             .filter(|supply| supply.material.as_ref() == bake.material)
-            .map(|supply| supply.identity);
-        let Some(identity) = asked else {
-            let identity = identity(self.shape.facing(key.2), bake.content);
+            .filter(|supply| supply.identity == identity);
+        if asked.is_none() {
             let fetch = cx
                 .jobs
                 .look(&BAKE, &identity, job_priority(VIEW_JOBS, 0), Ok);
@@ -700,7 +705,7 @@ impl Book {
             };
             self.supplies.insert(key, supply);
             return Supplied::Coming;
-        };
+        }
         match self.answers.get(&identity) {
             Some(Request::Ready(bytes)) => {
                 if !cx.budget.spend("impostors", bytes.len() as u64) {
@@ -724,7 +729,7 @@ impl Book {
     }
 
     fn supplied(&self, key: ImpostorKey, bake: &Bake<'_>) -> Supplied {
-        self.record(key, bake.material)
+        self.record(key, bake)
             .map_or(Supplied::Refused, Supplied::Resident)
     }
 
@@ -806,6 +811,7 @@ impl Book {
             Baked {
                 record,
                 material: bake.material.cloned(),
+                content: bake.content,
             },
         );
     }
@@ -1290,9 +1296,6 @@ fn supply_key(
         return Supplied::Waiting;
     }
     let material = ask.material.and_then(current_material(sources));
-    if let Some(resident) = book.record(key, material) {
-        return Supplied::Resident(resident);
-    }
     let Some(bake) = bake_of(sources, ask, material) else {
         return Supplied::Waiting;
     };
