@@ -27,7 +27,8 @@ use crate::gpu::{HEIGHT_FORMAT, SUMMARY_FORMAT, SUMMARY_MIPS, SURFACE_ERROR_MIPS
 use crate::holes::HoledGround;
 use crate::settings::TerrainShading;
 use crate::state::{
-    Atlas, AtlasMoves, Bakes, DrawnStats, PART_STATS, PartStats, SURFACE_TOTALS, SurfaceTotals,
+    Atlas, AtlasMoves, Bakes, Derived, DrawnStats, PART_STATS, PartStats, SURFACE_TOTALS,
+    SurfaceTotals,
 };
 use crate::terrain_bounce::{Bounce, BounceSources};
 use crate::terrain_horizons::Horizons;
@@ -745,6 +746,10 @@ impl GpuPart for TerrainGpu {
             cx.ran(p.summaries) && !short[4],
         ];
         let subdivided = cx.ran(p.subdivide) && self.subdivision_recorded;
+        let derived_layers = self.atlas.derived_layers(ran);
+        if !derived_layers.is_empty() {
+            cx.deliver::<Derived>(0, bytemuck::cast_slice(&derived_layers).to_vec());
+        }
         let uploaded = self.atlas.upload(
             cx,
             h,

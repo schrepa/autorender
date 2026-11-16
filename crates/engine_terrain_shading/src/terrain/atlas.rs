@@ -62,6 +62,20 @@ impl TileAtlas {
         self.control_jobs.len()
     }
 
+    pub(super) fn derived_layers(&self, ran: [bool; 5]) -> Vec<u32> {
+        let mut layers: Vec<u32> = ran[1]
+            .then_some(&self.control_jobs)
+            .into_iter()
+            .flat_map(|jobs| jobs.iter().map(|job| job.layer))
+            .chain(ran[3].then_some(&self.control_ancestors).into_iter().flat_map(|jobs| {
+                jobs.iter().map(|job| job.layer)
+            }))
+            .collect();
+        layers.sort_unstable();
+        layers.dedup();
+        layers
+    }
+
     pub(super) fn peak_jobs(&self) -> usize {
         self.peak_layers.len()
     }

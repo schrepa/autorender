@@ -6,9 +6,9 @@ use engine_core::Stamp;
 use engine_math::collections::{HashMap, HashSet};
 use engine_open_world_kit::ground::{GroundBaking, GroundTiles, TerrainEntry, TerrainTiles};
 use engine_tiles::TileKey;
-use glam::Vec2;
+use glam::{Vec2, Vec3};
 
-use crate::pool::ScatterPool;
+use crate::pool::{Reach, ScatterPool};
 
 type TileId = (Entity, TileKey);
 
@@ -44,6 +44,8 @@ pub(crate) struct Span {
 pub(crate) struct Planned {
     spans: Vec<Span>,
     rects: Vec<[f32; 4]>,
+    boxes: Vec<Reach>,
+    full: bool,
 }
 
 impl Planned {
@@ -56,11 +58,13 @@ impl Planned {
 pub(crate) struct SnapHeld {
     pub(crate) snapped: Option<u64>,
     pub(crate) snapping: bool,
+    pub(crate) dispatched: bool,
     pub(crate) threads: u32,
     written: Vec<Range<u32>>,
     whole: bool,
     again: Planned,
     seen: Option<Seen>,
+    running: Option<(bool, Vec<Reach>)>,
 }
 
 impl SnapHeld {
@@ -72,6 +76,18 @@ impl SnapHeld {
 
     pub(crate) fn wrote_whole(&mut self) {
         self.whole = true;
+    }
+
+    pub(crate) fn executed(&mut self) -> Option<(bool, Vec<Reach>)> {
+        let ran = self.snapping && std::mem::take(&mut self.dispatched);
+        if self.snapping && !ran {
+            self.snapped = None;
+        }
+        self.running.take().filter(|_| ran)
+    }
+
+    pub(crate) fn running(&mut self, planned: &Planned) {
+        self.running = Some((planned.full, planned.boxes.clone()));
     }
 
     pub(crate) fn plan(
@@ -111,6 +127,8 @@ impl SnapHeld {
                 filtered: false,
             });
             now.rects.clear();
+            now.boxes.clear();
+            now.full = true;
         }
         let now = merged(now, objects);
         let again = std::mem::replace(&mut self.again, now.clone());
@@ -166,6 +184,10 @@ impl Seen {
         let shaded: HashSet<TileId> = self.baking.shaded.iter().copied().collect();
         let shading: HashSet<TileId> = now.baking.shaded.iter().copied().collect();
         changed.extend(shaded.symmetric_difference(&shading).copied());
+        let derived: HashSet<_> = self.baking.derived.iter().copied().collect();
+        let deriving: HashSet<_> = now.baking.derived.iter().copied().collect();
+        let derivations = derived.symmetric_difference(&deriving);
+        changed.extend(derivations.map(|&(terrain, key, _)| (terrain, key)));
         Moved::Tiles(changed)
     }
 }
@@ -224,10 +246,10 @@ fn region(
             + Vec2::new(f32::from(key.x), f32::from(key.z)) * size;
         rects.push((terrain, low - margin, low + Vec2::splat(size) + margin));
     }
-    planned.spans.extend(
-        pool.standing_in(&rects)
-            .map(|(slots, filtered)| Span { slots, filtered }),
-    );
+    for (slots, filtered, bounds) in pool.standing_in(&rects) {
+        planned.spans.push(Span { slots, filtered });
+        planned.boxes.extend(bounds.map(|bounds| widened(tiles, bounds)));
+    }
     planned
         .rects
         .extend(rects.iter().map(|&(_, low, high)| [low.x, low.y, high.x, high.y]));
@@ -261,4 +283,16 @@ fn merged(mut planned: Planned, objects: u32) -> Planned {
         planned.rects.clear();
     }
     planned
+}
+
+pub(crate) fn widened(
+    tiles: &TerrainTiles,
+    (terrain, (low, high, widest)): (Entity, Reach),
+) -> Reach {
+    let slack: f32 = tiles
+        .terrains
+        .iter()
+        .find(|entry| entry.terrain == terrain)
+        .map_or(0.0, |entry| entry.level_errors.iter().sum());
+    (low - Vec3::Y * slack, high + Vec3::Y * slack, widest)
 }

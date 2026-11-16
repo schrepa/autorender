@@ -16,6 +16,8 @@ use engine_tiles::{Pyramid, TileKey};
 use glam::Vec3;
 
 use crate::ScatterBrick;
+use crate::pool::Reach;
+use crate::snapping::widened;
 use crate::far_cover::{CanopyMaps, wanted};
 use crate::gpu::PLACED;
 use crate::groups::{Groups, Kept, Resolved, resolve};
@@ -82,7 +84,7 @@ pub(crate) struct ScatterState {
     pub(crate) slot_sequence: u64,
     pub(crate) library: (u64, u64),
     pub(crate) left_objects: u32,
-    pub(crate) moved: Vec<crate::pool::Reach>,
+    pub(crate) moved: Vec<(Entity, Reach)>,
     pub(crate) restyled: bool,
     pub(crate) impostors: Vec<ImpostorRecord>,
     pub(crate) impostor_generation: u64,
@@ -693,15 +695,54 @@ pub(crate) fn publish_tiles(state: Res<ScatterState>, mut placed: ResMut<PlacedT
         }));
 }
 
-pub(crate) fn publish_changes(state: Res<ScatterState>, mut areas: ResMut<DrawnAreas>) {
-    for &(min, max, widest) in &state.moved {
+#[derive(Resource, Default)]
+pub(crate) struct Resnapped {
+    full: bool,
+    boxes: Vec<Reach>,
+}
+
+impl Readable for Resnapped {
+    fn arrived(&mut self, _tag: u32, read: Readback<&[u8]>) {
+        let Some((full, boxes)) = read.value.split_first_chunk::<4>() else {
+            return;
+        };
+        self.full |= u32::from_le_bytes(*full) != 0;
+        let words: Vec<f32> = boxes
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|word| f32::from_le_bytes(*word))
+            .collect();
+        self.boxes.extend(words.as_chunks::<7>().0.iter().map(|at| {
+            (Vec3::new(at[0], at[1], at[2]), Vec3::new(at[3], at[4], at[5]), at[6])
+        }));
+    }
+}
+
+pub(crate) fn resnapped_bytes((full, boxes): (bool, Vec<Reach>)) -> Vec<u8> {
+    let mut bytes = u32::from(full).to_le_bytes().to_vec();
+    for (low, high, widest) in boxes {
+        for word in [low.x, low.y, low.z, high.x, high.y, high.z, widest] {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+    }
+    bytes
+}
+
+pub(crate) fn publish_changes(
+    (state, tiles): (Res<ScatterState>, Res<TerrainTiles>),
+    mut resnapped: ResMut<Resnapped>,
+    mut areas: ResMut<DrawnAreas>,
+) {
+    let moved = state.moved.iter().map(|&moved| widened(&tiles, moved));
+    for (min, max, widest) in moved.chain(resnapped.boxes.drain(..)) {
         areas.push(DrawnArea::Box {
             min,
             max,
             spacing: widest,
         });
     }
-    if state.restyled {
+    if state.restyled || std::mem::take(&mut resnapped.full) {
         areas.push(DrawnArea::All);
     }
 }

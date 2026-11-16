@@ -386,6 +386,7 @@ struct PlacedTile {
     low: f32,
     high: f32,
     control: bool,
+    derived: u32,
 }
 
 #[derive(Resource)]
@@ -553,11 +554,31 @@ impl Atlas {
                 low: tile.bounds.0.y,
                 high: tile.bounds.1.y,
                 control: tile.control.is_some(),
+                derived: 0,
             },
         );
         self.changes.push(AtlasChange::Moved(id));
         self.changes
             .push(AtlasChange::Placed(id, layer, Upload::Whole));
+    }
+
+    fn derived(&self, held: &[HeldTile]) -> Vec<(Entity, TileKey, u32)> {
+        held.iter()
+            .filter_map(|tile| {
+                let placed = self.placed.get(&(tile.terrain, tile.key))?;
+                (placed.derived != 0).then_some((tile.terrain, tile.key, placed.derived))
+            })
+            .collect()
+    }
+
+    fn derive(&mut self, layers: &[u32]) {
+        for (id, layer) in &self.slots {
+            if layers.binary_search(layer).is_ok()
+                && let Some(placed) = self.placed.get_mut(id)
+            {
+                placed.derived = placed.derived.wrapping_add(1);
+            }
+        }
     }
 
     fn show_shading(&mut self, id: TileId, layer: u32) {
@@ -619,11 +640,12 @@ pub(crate) fn place_tiles(
         Res<FrameTime>,
         Res<TerrainShading>,
     ),
-    bakes: Res<Bakes>,
+    (bakes, mut derived): (Res<Bakes>, ResMut<Derived>),
     mut atlas: ResMut<Atlas>,
     (mut ground, mut baking): (ResMut<GroundTiles>, ResMut<GroundBaking>),
 ) {
     let atlas = &mut *atlas;
+    let layers = std::mem::take(&mut derived.layers);
     atlas.now = time.real_elapsed as f32;
     atlas.changes.resize(settings.tile_feed as usize);
     let attached = |entry: &TerrainEntry| {
@@ -638,6 +660,7 @@ pub(crate) fn place_tiles(
         && capacity == atlas.capacity
         && whole == ground.whole
         && (atlas.unplaced.is_empty() || !atlas.has_room())
+        && layers.is_empty()
         && tiles
             .terrains
             .iter()
@@ -665,9 +688,7 @@ pub(crate) fn place_tiles(
             palette,
             whole,
         });
-        if !baking.shaded.is_empty() {
-            baking.shaded.clear();
-        }
+        publish_baking(&mut baking, (Vec::new(), Vec::new()));
         return;
     }
     atlas.capacity = capacity;
@@ -715,6 +736,7 @@ pub(crate) fn place_tiles(
             }
         }
     }
+    atlas.derive(&layers);
     let mut held: Vec<HeldTile> = atlas
         .placed
         .iter()
@@ -730,9 +752,7 @@ pub(crate) fn place_tiles(
         .collect();
     held.sort_unstable_by_key(|tile| (tile.terrain, tile.key.level, tile.key.x, tile.key.z));
     let shaded = shaded_tiles(&tiles, &bakes, &held);
-    if baking.shaded != shaded {
-        baking.shaded = shaded;
-    }
+    publish_baking(&mut baking, (shaded, atlas.derived(&held)));
     let published = GroundTiles {
         held,
         layers: atlas.capacity,
@@ -741,6 +761,20 @@ pub(crate) fn place_tiles(
         whole,
     };
     ground.set_if_neq(published);
+}
+
+type Listed = Vec<(Entity, TileKey)>;
+
+fn publish_baking(
+    baking: &mut ResMut<'_, GroundBaking>,
+    (shaded, derived): (Listed, Vec<(Entity, TileKey, u32)>),
+) {
+    if baking.shaded != shaded {
+        baking.shaded = shaded;
+    }
+    if baking.derived != derived {
+        baking.derived = derived;
+    }
 }
 
 fn shaded_tiles(tiles: &TerrainTiles, bakes: &Bakes, held: &[HeldTile]) -> Vec<(Entity, TileKey)> {
@@ -1129,6 +1163,20 @@ pub(crate) struct PartStats {
     drawn: DrawnStats,
     pool: engine_core::Cut,
     turns: engine_core::Cut,
+}
+
+#[derive(Resource, Default)]
+pub(crate) struct Derived {
+    layers: Vec<u32>,
+}
+
+impl Readable for Derived {
+    fn arrived(&mut self, _tag: u32, read: Readback<&[u8]>) {
+        let layers = read.value.as_chunks::<4>().0.iter();
+        self.layers.extend(layers.map(|word| u32::from_le_bytes(*word)));
+        self.layers.sort_unstable();
+        self.layers.dedup();
+    }
 }
 
 impl Readable for PartStats {

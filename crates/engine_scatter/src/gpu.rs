@@ -27,7 +27,7 @@ use crate::shaders::scatter::{
     matched as matched_shaders,
 };
 use crate::snapping::{SnapHeld, SnapInputs};
-use crate::systems::{GroupData, ScatterFeedback, ScatterState};
+use crate::systems::{GroupData, Resnapped, ScatterFeedback, ScatterState, resnapped_bytes};
 
 const IDS: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
     array_stride: 4,
@@ -842,6 +842,9 @@ impl ScatterGpu {
     ) {
         let objects = self.held.objects;
         let snap = &mut self.held.snap;
+        if let Some(resnapped) = snap.executed() {
+            cx.deliver::<Resnapped>(0, resnapped_bytes(resnapped));
+        }
         snap.snapping = false;
         let terrains = tiles.terrains.len() as u32;
         if cx.grow_buffer(self.snap_list, 2 * size_of::<Snap>() as u64) == Allocation::Fresh {
@@ -866,6 +869,7 @@ impl ScatterGpu {
             cx.grow_buffer(self.snap_list, std::mem::size_of_val(words.as_slice()) as u64);
         cx.write(self.snap_list, 0, &words);
         snap.snapping = true;
+        snap.running(&planned);
     }
 
     fn prepare_cull(
@@ -1419,8 +1423,6 @@ impl GpuPart for ScatterGpu {
         self.prepare_cull(cx, &state, (&*views, &*table));
         if self.held.prepared && self.held.objects > 0 {
             cx.run(self.scatter);
-        } else if self.held.snap.snapping {
-            self.held.snap.snapped = None;
         }
     }
 
@@ -1460,8 +1462,8 @@ impl GpuPart for ScatterGpu {
         if pass == self.scatter {
             let snap = &mut self.held.snap;
             let snapped = [snap.threads.div_ceil(SCATTER_GROUP), 1, 1];
-            if snap.snapping && cx.dispatch(&self.snapping, Count::Groups(snapped)) == 0 {
-                snap.snapped = None;
+            if snap.snapping {
+                snap.dispatched = cx.dispatch(&self.snapping, Count::Groups(snapped)) != 0;
             }
             let groups = [self.held.objects.div_ceil(SCATTER_GROUP), 1, 1];
             self.hidden.culled = cx.dispatch(&self.culling, Count::Groups(groups)) != 0;
