@@ -363,12 +363,7 @@ fn written(step: &engine_dev::Step) -> String {
 }
 
 fn shared(bytes: &js_sys::Uint8Array) -> std::sync::Arc<[u8]> {
-    let mut shared: std::sync::Arc<[u8]> =
-        std::iter::repeat_n(0, bytes.length() as usize).collect();
-    if let Some(target) = std::sync::Arc::get_mut(&mut shared) {
-        bytes.copy_to(target);
-    }
-    shared
+    std::sync::Arc::from(bytes.to_vec())
 }
 
 fn job_id(id: f64) -> Option<JobId> {
