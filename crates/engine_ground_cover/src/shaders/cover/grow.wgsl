@@ -51,7 +51,6 @@ struct DrawArgs {
 @group(1) @binding(4) var<storage, read_write> cards: array<CoverCard>;
 @group(1) @binding(5) var<storage, read_write> grow_spots: array<GrowSpot>;
 @group(1) @binding(6) var<storage, read_write> grow_runs: array<atomic<u32>>;
-@group(1) @binding(7) var<uniform> grow_row: vec4<u32>;
 
 const LATTICE_TURN: f32 = 0.618034;
 const WIND_SHOWN: f32 = 1.0e9;
@@ -1255,29 +1254,65 @@ fn walk_next(walk: ptr<function, Walk>, planned: vec4<u32>, cell: vec2<u32>, lan
     return made;
 }
 
+@compute @workgroup_size(1)
+fn gather_cells() {
+    let rows = grows[0].cells.w;
+    let widest = atomicLoad(&grow_runs[3u * rows]);
+    var total = 0u;
+    for (var row = 0u; row < rows; row++) {
+        atomicStore(&grow_runs[3u * row + 1u], total);
+        total += atomicLoad(&grow_runs[3u * row]);
+    }
+    atomicStore(&grow_runs[3u * rows], min(total, widest));
+    atomicStore(&grow_runs[3u * rows + 1u], (total + widest - 1u) / widest);
+    atomicStore(&grow_runs[3u * rows + 2u], 1u);
+}
+
+fn take_spot(index: u32) {
+    var low = 0u;
+    var high = grows[0].cells.w - 1u;
+    while low < high {
+        let middle = (low + high + 1u) / 2u;
+        if atomicLoad(&grow_runs[3u * middle + 1u]) <= index {
+            low = middle;
+        } else {
+            high = middle - 1u;
+        }
+    }
+    let at = index - atomicLoad(&grow_runs[3u * low + 1u]);
+    if at >= atomicLoad(&grow_runs[3u * low]) {
+        cell_found = vec4<u32>(low, CELL_LEFT, 0u, 0u);
+        return;
+    }
+    let cells = grows[low].cells;
+    let held = grow_spots[cells.x + at];
+    cell_fine = held.fine;
+    cell_coarse = held.coarse.xyz;
+    cell_seat = held.seat;
+    atomicStore(&cell_low, held.under.x);
+    atomicStore(&cell_high, held.under.y);
+    atomicStore(&cell_named, held.under.z);
+    atomicStore(&cell_driest, held.lush.x);
+    atomicStore(&cell_lushest, held.lush.y);
+    atomicStore(&cell_driest_near, held.lush.z);
+    atomicStore(&cell_lushest_near, held.lush.w);
+    let local = held.under.w;
+    let cell = vec2<u32>(grows[low].grid.xy + vec2<i32>(vec2<u32>(local % cells.y,
+        local / cells.y)));
+    cell_found = vec4<u32>(low, held.coarse.w, cell);
+}
+
 @compute @workgroup_size(64)
 fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
+        @builtin(num_workgroups) groups: vec3<u32>,
         @builtin(local_invocation_index) lane: u32) {
     if lane == 0u {
-        let row = grow_row.x;
-        let cells = grows[row].cells;
-        let held = grow_spots[cells.x + group.x];
-        cell_fine = held.fine;
-        cell_coarse = held.coarse.xyz;
-        cell_seat = held.seat;
-        atomicStore(&cell_low, held.under.x);
-        atomicStore(&cell_high, held.under.y);
-        atomicStore(&cell_named, held.under.z);
-        atomicStore(&cell_driest, held.lush.x);
-        atomicStore(&cell_lushest, held.lush.y);
-        atomicStore(&cell_driest_near, held.lush.z);
-        atomicStore(&cell_lushest_near, held.lush.w);
-        let local = held.under.w;
-        let cell = vec2<u32>(grows[row].grid.xy + vec2<i32>(vec2<u32>(local % cells.y,
-            local / cells.y)));
-        cell_found = vec4<u32>(row, held.coarse.w, cell);
+        take_spot(group.y * groups.x + group.x);
     }
     let found = workgroupUniformLoad(&cell_found);
+    if found.y == CELL_LEFT {
+        return;
+    }
     let grow = grows[found.x];
     let scale = grow.tier.y;
     let side = u32(scale);

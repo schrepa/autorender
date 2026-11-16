@@ -1,3 +1,6 @@
+use std::cmp::Reverse;
+use std::collections::BinaryHeap;
+
 use super::*;
 use engine_core::{
     Detail, DeviceLimits, FrameBudget, FrameTime, GlobalTransforms, Joined, ViewDetail, ViewFacts,
@@ -195,7 +198,7 @@ impl Terrains {
             .map(|state| state.store.cached_bytes())
             .sum();
         if cached > settings.cache_bytes {
-            let mut oldest: Vec<(u64, usize, TileKey)> = self
+            let mut oldest: BinaryHeap<Reverse<(u64, usize, TileKey)>> = self
                 .entries
                 .iter()
                 .enumerate()
@@ -203,15 +206,14 @@ impl Terrains {
                     state
                         .store
                         .kept()
-                        .map(move |(left, key)| (left, index, key))
+                        .map(move |(left, key)| Reverse((left, index, key)))
                 })
                 .collect();
-            oldest.sort_unstable();
             let mut over = cached - settings.cache_bytes;
-            for (_, index, key) in oldest {
-                if over == 0 {
+            while over > 0 {
+                let Some(Reverse((_, index, key))) = oldest.pop() else {
                     break;
-                }
+                };
                 let store = &mut self.entries[index].store;
                 let before = store.cached_bytes();
                 store.forget(key);
