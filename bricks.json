@@ -2214,6 +2214,8 @@
             "subdivision_begin",
             "subdivision_args",
             "terrain_subdivision",
+            "terrain_leaf_lists",
+            "terrain_seen_lists",
             "bounce",
             "terrain_sun",
             "terrain_ids",
@@ -2442,7 +2444,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "27b71ec67f00d0219b01378c0de9d3b61f191fd52223441018cf6151ecfdbcaa"
+      "version": "616ef745d4cd6660f35a16a23f92ce46096b47518cfa89a6eb993f09c005268b"
     },
     {
       "dependencies": [
@@ -3401,7 +3403,7 @@
   ],
   "frame": {
     "frame_variants": 54,
-    "layouts": 117,
+    "layouts": 118,
     "pieces": [
       {
         "brick": "engine_sun",
