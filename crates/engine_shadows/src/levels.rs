@@ -268,7 +268,7 @@ impl Levels {
         }
     }
 
-    pub(crate) fn plan(&mut self, cameras: usize) {
+    pub(crate) fn plan(&mut self, cameras: usize, held_redraws: bool) {
         let Self {
             levels,
             regions,
@@ -293,6 +293,7 @@ impl Levels {
                 }
             }
         }
+        let room = if held_redraws { 0 } else { room };
         for (level, held) in levels.iter_mut().enumerate().rev() {
             if empty(held.redraw) {
                 continue;
