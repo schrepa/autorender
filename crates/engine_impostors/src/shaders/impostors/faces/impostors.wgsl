@@ -265,7 +265,9 @@ fn card_previous(local: vec3<f32>, pose: AffinePose, color: SlotColor) -> vec3<f
     return (camera.previous_view_projection * world).xyw;
 }
 
-fn card_level(input: CardVertex, frames: u32, texels: u32) -> f32 {
+fn card_level(input: CardVertex, record: ImpostorRecord) -> f32 {
+    let frames = impostor_frames(record.flags);
+    let texels = impostor_flags_texels(record.flags);
     let footprint = max(length(dpdx(input.frames_ab.xy)), length(dpdy(input.frames_ab.xy)))
         * f32(frames * texels) * material_detail();
     let coarsest = f32(countTrailingZeros(texels) - 1u);
@@ -314,14 +316,14 @@ fn card_sample(held: CardSample, tap: CardTap, uv: vec2<f32>, weight: f32, cover
     return next;
 }
 
-fn card_point(input: CardVertex, record: ImpostorRecord, fade: u32) -> SurfacePoint {
+fn card_point(input: CardVertex, record: ImpostorRecord, fade: u32, level: f32)
+        -> SurfacePoint {
     let weights = vec3<f32>(input.normal_x.w, input.normal_y.w,
         1.0 - input.normal_x.w - input.normal_y.w);
     let packed = input.material.w;
     let frames = impostor_frames(record.flags);
     let texels = impostor_flags_texels(record.flags);
     let size = f32(frames * texels);
-    let level = card_level(input, frames, texels);
     let inset = 0.5 * exp2(ceil(level)) / size;
     let span = 1.0 / f32(frames);
     let scale = 1.0 + MASK_MIP_SCALE * level;
@@ -472,12 +474,11 @@ fn sun_reaching(look: SunLook, frame: u32) -> f32 {
     return sun_through(below, look.softness, look.grain);
 }
 
-fn card_sun(input: CardVertex, record: ImpostorRecord, point: SurfacePoint, sun: CardSun)
-        -> f32 {
+fn card_sun(input: CardVertex, record: ImpostorRecord, point: SurfacePoint, sun: CardSun,
+        level: f32) -> f32 {
     let frames = impostor_frames(record.flags);
     let texels = impostor_flags_texels(record.flags);
     let hemisphere = impostor_flags_hemisphere(record.flags);
-    let level = card_level(input, frames, texels);
     let inset = 0.5 * exp2(ceil(level)) / f32(frames * texels);
     let span = 1.0 / f32(frames);
     let texel = 2.0 * exp2(level) / f32(texels);
@@ -500,8 +501,8 @@ fn card_sun(input: CardVertex, record: ImpostorRecord, point: SurfacePoint, sun:
 }
 
 fn card_lit(input: CardVertex, record: ImpostorRecord, point: SurfacePoint, over: bool,
-        sun: CardSun) -> CardShaded {
-    let open = (1.0 - point.direct_blocked) * card_sun(input, record, point, sun);
+        sun: CardSun, level: f32) -> CardShaded {
+    let open = (1.0 - point.direct_blocked) * card_sun(input, record, point, sun, level);
     let lit = set_direct_blocked(point, 1.0 - open);
     let shaded = shade(lit, input.clip_position.xy);
     return CardShaded(lit, shaded, card_depth(input, lit, over));
@@ -515,8 +516,12 @@ fn card_debug(input: CardVertex, point: SurfacePoint, ids: vec2<u32>, index: u32
         card_depth(input, point, over));
 }
 
-fn placed_card_point(input: CardVertex, impostor: ImpostorRecord) -> SurfacePoint {
-    return card_point(input, impostor, faded_entry_fade(input.batch));
+fn placed_card_level(input: CardVertex, impostor: ImpostorRecord) -> f32 {
+    return card_level(input, impostor);
+}
+
+fn placed_card_point(input: CardVertex, impostor: ImpostorRecord, level: f32) -> SurfacePoint {
+    return card_point(input, impostor, faded_entry_fade(input.batch), level);
 }
 
 fn placed_card_vertex(vertex: u32, batch: u32, pose: AffinePose, previous: AffinePose,
@@ -527,13 +532,14 @@ fn placed_card_vertex(vertex: u32, batch: u32, pose: AffinePose, previous: Affin
     return output;
 }
 
-fn placed_card_lit(input: CardVertex, impostor: ImpostorRecord, point: SurfacePoint)
-        -> CardShaded {
-    return card_lit(input, impostor, point, false, card_sun_frames(input, impostor));
+fn placed_card_lit(input: CardVertex, impostor: ImpostorRecord, point: SurfacePoint,
+        level: f32) -> CardShaded {
+    return card_lit(input, impostor, point, false, card_sun_frames(input, impostor), level);
 }
 
 fn placed_card_depth(input: CardVertex, impostor: ImpostorRecord) -> f32 {
-    return card_depth(input, placed_card_point(input, impostor), false);
+    let level = card_level(input, impostor);
+    return card_depth(input, placed_card_point(input, impostor, level), false);
 }
 
 fn placed_card_pixel(input: CardVertex) -> ViewPixel {

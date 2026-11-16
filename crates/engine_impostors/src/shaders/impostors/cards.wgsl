@@ -5,8 +5,8 @@ import package::face::debug::debug_record_with_kind;
 import package::face::instances::{DEBUG_LEVEL_AT, LAST_LEVEL, instance_color, instance_pose,
     instance_previous_pose, last_entry, last_fading_entry, last_late_entry};
 import package::generated::writes::{DepthOutputs, depth_outputs};
-import package::impostors::faces::impostors::{CardSun, card_debug, card_depth, card_lit,
-    card_point, card_previous, card_sun_frames, posed_card};
+import package::impostors::faces::impostors::{CardSun, card_debug, card_depth, card_level,
+    card_lit, card_point, card_previous, card_sun_frames, posed_card};
 import package::place::impostors::{CardDebugTargets, CardVertex, DEBUG_CARD, ImpostorRecord};
 
 @group(1) @binding(0) var<storage, read> card_records: array<ImpostorRecord>;
@@ -80,7 +80,9 @@ fn fs_card(input: CardOutput) -> DepthOutputs {
     let fade = drawn_fade(input.slot_sun.x);
     let record = card_records[input.batch];
     let sun = CardSun(input.slot_sun.y, input.sun.xyz, input.sun.w);
-    let shaded = card_lit(card, record, card_point(card, record, fade), fade_word_on(fade), sun);
+    let level = card_level(card, record);
+    let shaded = card_lit(card, record, card_point(card, record, fade, level), fade_word_on(fade),
+        sun, level);
     return depth_outputs(shaded.point, shaded.shaded,
         view_pixel(input.clip_position, vec4<f32>(input.previous.xy, 0.0, input.previous.z)),
         shaded.depth);
@@ -90,7 +92,9 @@ fn fs_card(input: CardOutput) -> DepthOutputs {
 fn fs_card_depth(input: CardOutput) -> @builtin(frag_depth) f32 {
     let card = card_vertex(input);
     let fade = drawn_fade(input.slot_sun.x);
-    return card_depth(card, card_point(card, card_records[input.batch], fade), fade_word_on(fade));
+    let record = card_records[input.batch];
+    return card_depth(card, card_point(card, record, fade, card_level(card, record)),
+        fade_word_on(fade));
 }
 
 @fragment
@@ -99,6 +103,7 @@ fn fs_debug_card(input: CardOutput) -> CardDebugTargets {
     let slot = input.slot_sun.x;
     let fade = drawn_fade(slot);
     let record = debug_record_with_kind(CARD_RECORD, drawn_records[slot].kind);
-    return card_debug(card, card_point(card, card_records[input.batch], fade),
+    let impostor = card_records[input.batch];
+    return card_debug(card, card_point(card, impostor, fade, card_level(card, impostor)),
         vec2<u32>(record, slot), input.batch, fade, fade_word_on(fade));
 }

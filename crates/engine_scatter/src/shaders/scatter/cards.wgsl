@@ -2,8 +2,8 @@ import package::engine::shading::{SurfaceInput, SurfacePoint};
 import package::engine::slots::{derived, set_direct_softness, set_metalness, set_roughness,
     set_transmission};
 import package::face::impostors::{CardDebugTargets, CardVertex, ImpostorRecord,
-    placed_card_debug, placed_card_depth, placed_card_lit, placed_card_pixel, placed_card_point,
-    placed_card_vertex};
+    placed_card_debug, placed_card_depth, placed_card_level, placed_card_lit, placed_card_pixel,
+    placed_card_point, placed_card_vertex};
 import package::face::instances::{AffinePose, SlotColor};
 import package::face::lighting::SURFACE_THIN;
 import package::engine::drawn::{INPUT_BATCH, INPUT_DRAW, INPUT_SLOT};
@@ -83,8 +83,9 @@ fn vs_placed_card(@builtin(vertex_index) vertex: u32, @location(INPUT_SLOT) slot
 fn fs_placed_card(input: PlacedCardVertex) -> DepthOutputs {
     let card = card_of(input);
     let impostor = placed_impostor(faded_slot_slot(card.batch));
+    let level = placed_card_level(card, impostor);
     let shaded = placed_card_lit(card, impostor,
-        plant_point(placed_card_point(card, impostor), input.object.y));
+        plant_point(placed_card_point(card, impostor, level), input.object.y), level);
     return depth_outputs(shaded.point, shaded.shaded, placed_card_pixel(card),
         shaded.depth);
 }
@@ -93,7 +94,8 @@ fn fs_placed_card(input: PlacedCardVertex) -> DepthOutputs {
 fn fs_placed_card_laid(input: PlacedCardVertex) -> DepthOutputs {
     let card = card_of(input);
     let impostor = placed_impostor(faded_slot_slot(card.batch));
-    let baked = placed_card_point(card, impostor);
+    let level = placed_card_level(card, impostor);
+    let baked = placed_card_point(card, impostor, level);
     let clip = camera.view_projection * vec4<f32>(baked.world, 1.0);
     let depth = saturate(clip.z / clip.w);
     let seen = depth >= textureLoad(laid_depth, vec2<i32>(input.clip_position.xy), 0).r;
@@ -102,7 +104,7 @@ fn fs_placed_card_laid(input: PlacedCardVertex) -> DepthOutputs {
     }
     var written: DepthOutputs;
     if seen {
-        let shaded = placed_card_lit(card, impostor, plant_point(baked, input.object.y));
+        let shaded = placed_card_lit(card, impostor, plant_point(baked, input.object.y), level);
         written = depth_outputs(shaded.point, shaded.shaded, placed_card_pixel(card), depth);
     }
     return written;
@@ -118,7 +120,8 @@ fn fs_placed_card_depth(input: PlacedCardVertex) -> @builtin(frag_depth) f32 {
 fn fs_debug_placed_card(input: PlacedCardVertex) -> CardDebugTargets {
     let card = card_of(input);
     let impostor = placed_impostor(faded_slot_slot(card.batch));
-    let point = plant_point(placed_card_point(card, impostor), input.object.y);
+    let level = placed_card_level(card, impostor);
+    let point = plant_point(placed_card_point(card, impostor, level), input.object.y);
     return placed_card_debug(card, point, debug_record_with_kind(input.object.x, KIND_PLACED),
         input.object.y);
 }
