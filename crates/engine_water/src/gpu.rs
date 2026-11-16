@@ -28,6 +28,7 @@ gpu_consts! {
     pub const WATER_GUST_FINE_SALT: u32 = 0x2545f491;
     pub const WATER_PUSH_SALT: u32 = 0x9e3779b1;
     pub const WATER_PUSH_FINE_SALT: u32 = 0x7f4a7c15;
+    pub const WATER_WAVES_MOST: u32 = 256;
 }
 
 pub(crate) type RippleKept = [[f32; 4]; 8];

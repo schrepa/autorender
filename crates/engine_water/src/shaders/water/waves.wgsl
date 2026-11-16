@@ -1,6 +1,6 @@
 import package::engine::math::PI;
 import package::generated::water::{WATER_GUST_FINE_SALT, WATER_GUST_SALT, WATER_NOISE_REACH,
-    WATER_NOISE_WRAP, WATER_PUSH_FINE_SALT, WATER_PUSH_SALT, WATER_STEEPEST, WaterWaveRow};
+    WATER_NOISE_WRAP, WATER_PUSH_FINE_SALT, WATER_PUSH_SALT, WATER_STEEPEST, WATER_WAVES_MOST, WaterWaveRow};
 import package::water::flow::{water_noise, water_noise_gradient};
 import package::water::footprint::water_spread;
 import package::water::uniforms::water;
@@ -107,7 +107,10 @@ fn water_rest(index: u32, lift: f32, gusts: vec2<f32>) -> vec3<f32> {
 fn water_piece(allowed: f32) -> f32 {
     let look = water.waves;
     var coarser = vec2<f32>(0.0);
-    for (var index = 0u; index < look.count; index++) {
+    for (var index = 0u; index < WATER_WAVES_MOST; index++) {
+        if index >= look.count {
+            break;
+        }
         let wave = water_waves[index].wave;
         let finer = vec2<f32>(wave.wavelength / look.shown.x, wave.left);
         if finer.y <= allowed {
@@ -154,7 +157,10 @@ fn water_swell(spot: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, shortest: f32, dep
     let band = 1.0 / max(look.shown.y - look.shown.x, 1.0e-6);
     let coarsest_squared = coarsest * coarsest;
     var at = push.at;
-    for (var index = 0u; index < look.count; index++) {
+    for (var index = 0u; index < WATER_WAVES_MOST; index++) {
+        if index >= look.count {
+            break;
+        }
         let wave = water_waves[index].wave;
         let open = calm
             * max(1.0 + lift * wave.gusted + dot(gusts, wave.group), look.calmest) * wave.steep;

@@ -23,7 +23,7 @@ fields! {
     #[serde(default, deny_unknown_fields)]
     #[schemars(rename = "WaterWaves")]
     pub struct WaterWaves {
-        pub count: u32 = 40 => range(1, 256),
+        pub count: u32 = 40 => range(1, crate::gpu::WATER_WAVES_MOST),
         pub longest: f32 = 6.0 => range(0.01, 1000.0),
         pub shortest: f32 = 0.05 => range(0.01, 1000.0),
         pub steepness: f32 = 0.2 => range(0.0, 1.0),
