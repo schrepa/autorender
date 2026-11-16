@@ -710,11 +710,14 @@ fn terrain_ends(entry: PaletteEntry, material: u32, resolved: vec2<f32>) -> Terr
     var ends: TerrainEnds;
     ends.maps = 1.0;
     ends.albedo = 1.0;
-    if !terrain_detailed || entry.params.w <= 0.0 {
+    if entry.params.w <= 0.0 {
         return ends;
     }
-    ends.albedo = terrain_gone(resolved.x, entry.params.x, terrain_look.reach.z);
-    ends.maps = max(terrain_gone(resolved.x, entry.params.x, terrain_look.reach.y), ends.albedo);
+    if terrain_detailed {
+        ends.albedo = terrain_gone(resolved.x, entry.params.x, terrain_look.reach.z);
+        ends.maps = max(terrain_gone(resolved.x, entry.params.x, terrain_look.reach.y),
+            ends.albedo);
+    }
     ends.rungs = terrain_rungs(material);
     let tilings = ends.rungs.tilings;
     ends.shown = select(vec2<f32>(0.0),
@@ -855,7 +858,7 @@ fn terrain_slot_rank(held: TerrainSlot, material: u32, site: TerrainSite, contes
         let fine = terrain_material(material).params.x;
         for (var rung = 0u; rung < 2u; rung++) {
             let part = held.chain[rung];
-            if !terrain_detailed || part <= 0.0 {
+            if part <= 0.0 {
                 continue;
             }
             let mapping = terrain_rung_mapping(held, rung);
@@ -959,7 +962,7 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
         }
     }
     for (var rung = 0u; rung < 2u; rung++) {
-        if !terrain_detailed || slot.shown[rung] <= 0.0 {
+        if slot.shown[rung] <= 0.0 {
             continue;
         }
         let mapping = terrain_rung_mapping(slot, rung);
@@ -1170,7 +1173,7 @@ fn terrain_shared_ground(shares: TerrainShares, site: TerrainSite) -> TerrainGro
         held.opened = !(terrain_marked(shares.marks, TERRAIN_MARK_REACHED + slot)
             && held.far < 1.0);
         held.lush = shares.lush;
-        if terrain_marked(shares.marks, TERRAIN_MARK_EDGED) {
+        if terrain_detailed && terrain_marked(shares.marks, TERRAIN_MARK_EDGED) {
             let present = select(0.0, 1.0,
                 terrain_marked(shares.marks, TERRAIN_MARK_PRESENT + slot));
             let soft = present * select(0.0, 1.0, held.depth > 0.0);

@@ -1165,12 +1165,7 @@ impl TerrainGpu {
                 instances: index..index + 1,
                 material: None,
             };
-            let split = if draw.pipelines_settled() {
-                draw.draw(&far, shape(WHOLE_SCREEN))
-            } else {
-                Recorded::Waiting
-            };
-            let vertices = match split {
+            let vertices = match draw.draw(&far, shape(WHOLE_SCREEN)) {
                 Recorded::Exact => WHOLE_SCREEN,
                 Recorded::StandIn | Recorded::Waiting | Recorded::Refused => UNSPLIT_SCREEN,
             };

@@ -2,14 +2,12 @@ import package::engine::math::maximum_abs;
 import package::engine::shading::{Shaded, SurfacePoint, ViewPixel};
 import package::engine::slots::shade;
 import package::engine::view::{FLOAT_GAP, camera, eye_world, fade_noise, view_pixel};
-import package::generated::terrain_shading::{RUNG_WORDS, TABLE_RUNGS};
 import package::generated::writes::{DepthOutputs, Outputs, depth_outputs, outputs};
 import package::place::ground_tiles::PALETTE_ENTRIES;
 import package::terrain_shading::draw::{TERRAIN_BAND_PIXELS, TerrainLook, terrain_detailed,
     terrain_palette, terrain_point_seen, terrain_seen};
 import package::terrain_shading::faces::heightfield::{terrain, terrain_look, terrain_view,
     use_terrain};
-import package::terrain_shading::tables::table_floats;
 
 @group(1) @binding(0) var terrain_ids_texture: texture_2d<u32>;
 
@@ -35,8 +33,7 @@ fn terrain_split_finest() -> f32 {
     for (var entry = 0u; entry < PALETTE_ENTRIES; entry++) {
         let held = terrain_palette[entry];
         if held.params.w > 0.0 {
-            let tilings = table_floats(TABLE_RUNGS + entry * RUNG_WORDS).xy;
-            finest = max(finest, max(held.params.x, max(tilings.x, tilings.y)));
+            finest = max(finest, held.params.x);
         }
     }
     return finest;
