@@ -3,12 +3,23 @@ import package::engine::view::{camera, detail_across};
 import package::place::heightfield::SurfaceTriangle;
 import package::terrain_shading::faces::heightfield::{terrain, terrain_level_height, terrain_surface_leaves, terrain_view};
 import package::terrain_shading::tables::{table_floats, terrain_tables};
-import package::generated::terrain_shading::{SURFACE_ERROR_MIPS, SURFACE_MESHLET_LEVEL};
+import package::generated::terrain_shading::{SURFACE_ERROR_MIPS, SURFACE_LISTED, SURFACE_LISTS,
+    SURFACE_LIST_SHIFT, SURFACE_MESHLET_LEVEL, SURFACE_ROLE_SHIFT};
 
 const SURFACE_WHOLE: u32 = 0x80000000u;
 
+@group(0) @binding(0) var<storage, read> terrain_leaf_lists: array<u32>;
+
 fn surface_stored(leaf: u32) -> SurfaceTriangle {
     return terrain_surface_leaves[terrain.surface.x + leaf];
+}
+
+fn surface_listed(leaf: u32, vertex: u32) -> u32 {
+    if (vertex >> SURFACE_ROLE_SHIFT) != SURFACE_LISTED {
+        return leaf;
+    }
+    let list = (vertex >> SURFACE_LIST_SHIFT) & (SURFACE_LISTS - 1u);
+    return terrain_leaf_lists[(terrain.surface.x + leaf) * SURFACE_LISTS + list];
 }
 
 fn surface_whole(stored: SurfaceTriangle) -> bool {

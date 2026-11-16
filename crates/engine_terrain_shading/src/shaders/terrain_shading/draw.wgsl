@@ -27,13 +27,13 @@ import package::terrain_shading::holes::terrain_holed;
 import package::engine::kinds::KindPoint;
 import package::generated::kinds::KIND_TERRAIN;
 import package::terrain_shading::sky::terrain_sky_map;
-import package::terrain_shading::surface::{surface_kept, surface_seen, surface_stored,
-    surface_whole};
+import package::terrain_shading::surface::{surface_kept, surface_listed, surface_seen,
+    surface_stored, surface_whole};
 import package::terrain_shading::tables::{table_fades, table_floats, terrain_tables};
 import package::generated::terrain_shading::{CONTROL_PLANE, NORMAL_PLANE, PaletteEntry,
     ROUGH_SUN, ROUGH_TURN, ROUGH_UNIT, ROUGH_VIEW, ROUGH_WORDS,
-    RUNG_WORDS, SITE_PLANE, SURFACE_MESHLET_LEVEL, SURFACE_ROLE_SHIFT, SURFACE_VERTEX_STRIDE,
-    TABLE_RUNGS,
+    RUNG_WORDS, SITE_PLANE, SURFACE_LISTED, SURFACE_LIST_SHIFT, SURFACE_MESHLET_LEVEL,
+    SURFACE_ROLE_SHIFT, SURFACE_VERTEX_STRIDE, TABLE_RUNGS,
     TILE_PLANES,
     control_a, control_b, control_blend, control_wet};
 import package::place::ground_tiles::PALETTE_ENTRIES;
@@ -88,13 +88,14 @@ struct TerrainOutput {
 
 fn terrain_output(leaf: u32, vertex: u32) -> TerrainOutput {
     var output: TerrainOutput;
-    output.terrain = (vertex & ((1u << SURFACE_ROLE_SHIFT) - 1u)) / SURFACE_VERTEX_STRIDE;
+    output.terrain = (vertex & ((1u << SURFACE_LIST_SHIFT) - 1u)) / SURFACE_VERTEX_STRIDE;
     use_terrain(output.terrain);
-    let stored = surface_stored(leaf);
+    let stored = surface_stored(surface_listed(leaf, vertex));
     let triangle = surface_kept(stored);
     output.whole = select(0u, 1u, surface_whole(stored));
     let role = vertex >> SURFACE_ROLE_SHIFT;
-    if (role != 0u && role != 2u - output.whole) || !surface_seen(triangle) {
+    if role != SURFACE_LISTED
+            && ((role != 0u && role != 2u - output.whole) || !surface_seen(triangle)) {
         output.clip_position = vec4<f32>(2.0, 2.0, 2.0, 1.0);
         return output;
     }

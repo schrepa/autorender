@@ -8,8 +8,9 @@ use glam::{Mat4, Vec3};
 use super::part::{Handles, TerrainGpu, TerrainViews};
 use super::{SLOT, SURFACE_SLOTS};
 use crate::gpu::{
-    SUBDIVISION_ARGS, SUBDIVISION_COUNTED, SUBDIVISION_DRAW, SUBDIVISION_HOLED, SUBDIVISION_WHOLE,
-    SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES, SubdivisionUniform,
+    SUBDIVISION_ARGS, SUBDIVISION_COUNTED, SUBDIVISION_DRAW, SUBDIVISION_HOLED, SUBDIVISION_LISTED,
+    SUBDIVISION_LISTS, SUBDIVISION_WHOLE, SURFACE_LISTS, SURFACE_MESHLET_INDICES,
+    SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES, SubdivisionUniform,
 };
 
 const LEAF_BYTES: u64 = 24;
@@ -102,6 +103,18 @@ impl SurfaceTrees {
         ])
     }
 
+    pub(super) fn list_offsets(&self, index: usize, seen: bool) -> Option<[u64; 2]> {
+        let first = SUBDIVISION_LISTS + 10 * u32::from(seen);
+        Some([
+            self.record_offset(index, first)?,
+            self.record_offset(index, first + 5)?,
+        ])
+    }
+
+    pub(super) fn listed_offset(&self, slot: usize) -> u64 {
+        self.args_offset(slot) + u64::from(SUBDIVISION_LISTED) * 4
+    }
+
     fn record_offset(&self, index: usize, record: u32) -> Option<u64> {
         self.subdivided(index)
             .map(|subdivided| subdivided.slot as u64 * ARGS_BYTES + u64::from(record) * 4)
@@ -159,6 +172,10 @@ impl SurfaceTrees {
         self.leaves_bytes = self.leaves_bytes.max(leaves * LEAF_BYTES);
         let sizes = [
             (handles.leaves, self.leaves_bytes.max(LEAF_BYTES)),
+            (
+                handles.lists,
+                (self.leaves_bytes / LEAF_BYTES * u64::from(SURFACE_LISTS) * 4).max(4),
+            ),
             (handles.nodes, (leaves * NODE_BYTES).max(NODE_BYTES)),
             (handles.watered, (leaves * NODE_BYTES).max(NODE_BYTES)),
             (handles.counters, SURFACE_SLOTS as u64 * ARGS_BYTES),
