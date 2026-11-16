@@ -65,6 +65,7 @@ pub(crate) struct GroupData {
     pub(crate) template: Vec<DrawArgs>,
     pub(crate) lists: Vec<GroupLists>,
     pub(crate) ids_per_view: u32,
+    pub(crate) first_instance: bool,
 }
 
 #[derive(Resource)]
@@ -487,6 +488,7 @@ pub(crate) fn place_pool(
         room => room,
     } / 16
         * 16;
+    state.group_data.first_instance = limits.indirect_first_instance;
     state.pool.settle();
     let placing = tiles
         .terrains
