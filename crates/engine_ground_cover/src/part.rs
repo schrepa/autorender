@@ -158,6 +158,7 @@ impl GpuPart for CoverGpu {
                 (grow::CARDS, Bind::Buffer(cards)),
                 (grow::GROW_SPOTS, Bind::Buffer(spots)),
                 (grow::GROW_STARTS, Bind::Buffer(runs)),
+                (grow::GROW_FRAME, Bind::Buffer(frame)),
                 (casts::COVER_CASTS, Bind::Buffer(casts)),
             ],
         )?;
@@ -167,6 +168,7 @@ impl GpuPart for CoverGpu {
             grow::FINISH_COVER,
             &[
                 (grow::GROWS, Bind::Buffer(rows)),
+                (grow::BLADES, Bind::Buffer(blades)),
                 (grow::COUNTS, Bind::Buffer(counts)),
                 (grow::ARGS, Bind::Buffer(args)),
                 (casts::COVER_CASTS, Bind::Buffer(casts)),
@@ -277,7 +279,7 @@ impl GpuPart for CoverGpu {
         let kinds = BLADE_DRAWS + u64::from(plan.bins);
         let grown = plan.cells.len() as u64;
         if self.drawn {
-            let blades = u64::from(plan.capacity) * BLADE_BYTES;
+            let blades = (u64::from(plan.capacity) + 1) * BLADE_BYTES;
             let blades = blades.next_multiple_of(MEGABYTE).min(plan.room);
             self.blade_bytes = self.blade_bytes.max(blades);
             let cards = bins * u64::from(plan.cards) * CARD_BYTES;

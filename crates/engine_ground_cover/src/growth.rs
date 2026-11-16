@@ -345,7 +345,7 @@ impl CoverPlan {
             return false;
         }
         let turn = turn_share(main.view_projection);
-        let room = (self.room / BLADE_BYTES).min(u64::from(u32::MAX)) as u32;
+        let room = (self.room / BLADE_BYTES).saturating_sub(1).min(u64::from(u32::MAX)) as u32;
         let seen = (most[0] * turn).ceil() as u32;
         let screen = (cover.layers * main.render.x as f32 * main.render.y as f32) as u32;
         let capacity = cover
