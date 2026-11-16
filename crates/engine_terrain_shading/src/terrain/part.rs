@@ -20,7 +20,9 @@ use super::atlas::TileAtlas;
 use super::patches::{PATCH_STREAM, PatchDraws, view_uniforms};
 use super::surface::SurfaceTrees;
 use super::tables::TerrainTables;
-use super::{IDS_FORMAT, NEVER_BLENDS, SURFACE_SLOTS, TERRAIN, TerrainFrame, reached};
+use super::{
+    FrameTerrain, IDS_FORMAT, NEVER_BLENDS, SURFACE_SLOTS, TERRAIN, TerrainFrame, reached,
+};
 use crate::gpu::{HEIGHT_FORMAT, SUMMARY_FORMAT, SUMMARY_MIPS, SURFACE_ERROR_MIPS};
 use crate::holes::HoledGround;
 use crate::settings::TerrainShading;
@@ -1010,34 +1012,54 @@ impl TerrainGpu {
 
     fn draw_ids(&self, draw: &mut Draw<'_, Self, Own>) -> u32 {
         let mut draws = 0;
+        let pipelines = [draw.form(&self.seen[0]), draw.form(&self.seen[1])];
         for holes in [false, true] {
-            let Some(pipeline) = draw.form(&self.seen[usize::from(holes)]) else {
-                continue;
-            };
             for terrain in self
                 .frame
                 .terrains
                 .iter()
                 .filter(|terrain| terrain.holes == holes)
             {
-                let Some(offset) = self.surface.draw_offset(terrain.terrain) else {
-                    continue;
-                };
-                draw.draw_timed(
-                    &pipeline,
-                    Shape::Indirect {
-                        vertices: &[],
-                        indices: Some(self.inputs.meshlet),
-                        args: self.inputs.args,
-                        offset,
-                        material: None,
-                    },
-                    || drawn_label(IDS_PASS, None, holes, terrain.terrain),
-                );
-                draws += 1;
+                for (pipeline, offset, cut) in self.split_draws(terrain, pipelines) {
+                    draw.draw_timed(
+                        &pipeline,
+                        Shape::Indirect {
+                            vertices: &[],
+                            indices: Some(self.inputs.meshlet),
+                            args: self.inputs.args,
+                            offset,
+                            material: None,
+                        },
+                        || drawn_label(IDS_PASS, None, cut, terrain.terrain),
+                    );
+                    draws += 1;
+                }
             }
         }
         draws
+    }
+
+    fn split_draws<T: Copy>(
+        &self,
+        terrain: &FrameTerrain,
+        [plain, holed]: [Option<T>; 2],
+    ) -> Vec<(T, u64, bool)> {
+        let Some(offset) = self.surface.draw_offset(terrain.terrain) else {
+            return Vec::new();
+        };
+        if !terrain.holes {
+            return plain
+                .map(|plain| (plain, offset, false))
+                .into_iter()
+                .collect();
+        }
+        let Some(holed) = holed else {
+            return Vec::new();
+        };
+        match (plain, self.surface.split_offsets(terrain.terrain)) {
+            (Some(plain), Some([whole, cut])) => vec![(plain, whole, false), (holed, cut, true)],
+            _ => vec![(holed, offset, true)],
+        }
     }
 
     fn draw_resolve(&self, draw: &mut Draw<'_, Self, Own>) -> u32 {
@@ -1144,36 +1166,34 @@ impl TerrainGpu {
     ) -> u32 {
         let mut draws = 0;
         let mut unheld = None;
+        let pipelines = [surfaces[0].ok(), surfaces[1].ok()];
         for holes in [false, true] {
-            let drawn = surfaces[usize::from(holes)];
             for terrain in self
                 .frame
                 .terrains
                 .iter()
                 .filter(|terrain| terrain.holes == holes)
             {
-                let Some(offset) = self.surface.draw_offset(terrain.terrain) else {
+                if let Err(reason) = surfaces[usize::from(holes)]
+                    && self.surface.draw_offset(terrain.terrain).is_some()
+                {
+                    unheld = Some(reason);
                     continue;
-                };
-                let (pipeline, material) = match drawn {
-                    Ok(drawn) => drawn,
-                    Err(reason) => {
-                        unheld = Some(reason);
-                        continue;
-                    }
-                };
-                draw.draw_timed(
-                    &pipeline,
-                    Shape::Indirect {
-                        vertices: &[],
-                        indices: Some(meshlet),
-                        args,
-                        offset,
-                        material,
-                    },
-                    || drawn_label(scene.pass.name(), scene.view, holes, terrain.terrain),
-                );
-                draws += 1;
+                }
+                for ((pipeline, material), offset, cut) in self.split_draws(terrain, pipelines) {
+                    draw.draw_timed(
+                        &pipeline,
+                        Shape::Indirect {
+                            vertices: &[],
+                            indices: Some(meshlet),
+                            args,
+                            offset,
+                            material,
+                        },
+                        || drawn_label(scene.pass.name(), scene.view, cut, terrain.terrain),
+                    );
+                    draws += 1;
+                }
             }
         }
         match unheld {

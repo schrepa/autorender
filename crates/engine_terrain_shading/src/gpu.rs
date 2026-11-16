@@ -15,13 +15,16 @@ gpu_consts! {
     pub const SURFACE_VERTEX_STRIDE: u32 = 16;
     pub const SURFACE_ERROR_MIPS: u32 = 8;
     pub const SUBDIVISION_GROUP: u32 = 64;
-    pub const SUBDIVISION_ARGS: u32 = 16;
+    pub const SUBDIVISION_ARGS: u32 = 32;
     pub const SUBDIVISION_LEAVES: u32 = 3;
     pub const SUBDIVISION_DRAW: u32 = 4;
     pub const SUBDIVISION_RESERVED: u32 = 9;
     pub const SUBDIVISION_REFUSED: u32 = 10;
     pub const SUBDIVISION_COUNTED: u32 = 8;
     pub const SUBDIVISION_WATERED: u32 = 11;
+    pub const SUBDIVISION_WHOLE: u32 = 16;
+    pub const SUBDIVISION_HOLED: u32 = 21;
+    pub const SURFACE_ROLE_SHIFT: u32 = 28;
 
     pub const HORIZON_DIRECTIONS: u32 = 16;
     pub const HORIZON_LAYERS: u32 = 1;
@@ -103,7 +106,9 @@ const _: () = assert!(
     SUBDIVISION_WATERED > SUBDIVISION_DRAW + 4
         && SUBDIVISION_WATERED != SUBDIVISION_RESERVED
         && SUBDIVISION_WATERED != SUBDIVISION_REFUSED
-        && SUBDIVISION_WATERED < SUBDIVISION_ARGS,
+        && SUBDIVISION_WATERED < SUBDIVISION_WHOLE
+        && SUBDIVISION_WHOLE + 5 <= SUBDIVISION_HOLED
+        && SUBDIVISION_HOLED + 5 <= SUBDIVISION_ARGS,
     "subdivision_counters_keep_their_words"
 );
 

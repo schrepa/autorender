@@ -5,8 +5,78 @@ import package::terrain_shading::faces::heightfield::{terrain, terrain_level_hei
 import package::terrain_shading::tables::{table_floats, terrain_tables};
 import package::generated::terrain_shading::{SURFACE_ERROR_MIPS, SURFACE_MESHLET_LEVEL};
 
-fn surface_leaf(leaf: u32) -> SurfaceTriangle {
+const SURFACE_WHOLE: u32 = 0x80000000u;
+
+fn surface_stored(leaf: u32) -> SurfaceTriangle {
     return terrain_surface_leaves[terrain.surface.x + leaf];
+}
+
+fn surface_whole(stored: SurfaceTriangle) -> bool {
+    return (bitcast<u32>(stored.a.x) & SURFACE_WHOLE) != 0u;
+}
+
+fn surface_kept(stored: SurfaceTriangle) -> SurfaceTriangle {
+    return SurfaceTriangle(vec2<f32>(abs(stored.a.x), stored.a.y), stored.b, stored.c);
+}
+
+fn surface_marked(triangle: SurfaceTriangle, whole: bool) -> SurfaceTriangle {
+    let mark = select(0u, SURFACE_WHOLE, whole);
+    return SurfaceTriangle(vec2<f32>(bitcast<f32>(bitcast<u32>(triangle.a.x) | mark),
+        triangle.a.y), triangle.b, triangle.c);
+}
+
+fn surface_bounds() -> vec4<f32> {
+    let header = terrain.directory.x + 4u * (terrain.directory.y - 1u);
+    return table_floats(terrain_tables[header]
+        + terrain_tables[header + 1u] * terrain_tables[header + 2u]);
+}
+
+fn surface_cut(triangle: SurfaceTriangle) -> bool {
+    let levels = terrain.directory.y;
+    if levels == 0u {
+        return true;
+    }
+    let margin = surface_bounds().w;
+    if !(margin > 0.0) {
+        return true;
+    }
+    let low = min(min(triangle.a, triangle.b), triangle.c) / terrain.anchor.w;
+    let high = max(max(triangle.a, triangle.b), triangle.c) / terrain.anchor.w;
+    let size = max(abs(low), abs(high));
+    let pad = vec2<f32>(margin * max(size.x, size.y));
+    let first = low - pad;
+    let last = high + pad;
+    var nested = true;
+    for (var index = 0u; index < levels; index++) {
+        let header = terrain.directory.x + index * 4u;
+        let tiles = vec2<u32>(terrain_tables[header + 1u], terrain_tables[header + 2u]);
+        let scale = f32(1u << index);
+        let lowest = min(vec2<u32>(max(first / scale, vec2<f32>(0.0)) / 256.0), tiles - 1u);
+        let highest = min(vec2<u32>(max(last / scale, vec2<f32>(0.0)) / 256.0), tiles - 1u);
+        if any(highest > lowest + 1u) {
+            nested = false;
+            continue;
+        }
+        let reach = select(highest + 1u, highest, nested);
+        if any(reach >= tiles) {
+            return true;
+        }
+        var resident = true;
+        for (var z = lowest.y; z <= reach.y; z++) {
+            for (var x = lowest.x; x <= reach.x; x++) {
+                let layer = terrain_tables[terrain_tables[header] + z * tiles.x + x];
+                if layer == 0xffffffffu {
+                    resident = false;
+                } else if terrain_tables[terrain.surface.y + layer] != 0xffffffffu {
+                    return true;
+                }
+            }
+        }
+        if resident {
+            return false;
+        }
+    }
+    return true;
 }
 
 fn surface_half(triangle: SurfaceTriangle, half: u32) -> SurfaceTriangle {
@@ -43,9 +113,7 @@ fn surface_seen(triangle: SurfaceTriangle) -> bool {
     if levels == 0u {
         return true;
     }
-    let header = terrain.directory.x + 4u * (levels - 1u);
-    let bounds = table_floats(terrain_tables[header]
-        + terrain_tables[header + 1u] * terrain_tables[header + 2u]);
+    let bounds = surface_bounds();
     let margin = bounds.w;
     if !(margin > 0.0) {
         return true;

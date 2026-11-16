@@ -3,7 +3,7 @@ import package::place::heightfield::{SurfaceTriangle, TerrainGroundRise, Terrain
 import package::engine::view::{camera, eye_world};
 import package::terrain_shading::draw::{TerrainBlend, terrain_band_rise, terrain_control_sampler, terrain_controls_blend, terrain_displacement, terrain_gradient_between, terrain_layer_fades, terrain_material, terrain_material_rises, terrain_steep_blend, terrain_tile_maps};
 import package::terrain_shading::field::{surface_along, terrain_load};
-import package::terrain_shading::surface::{surface_height, surface_relative};
+import package::terrain_shading::surface::{surface_height, surface_kept, surface_relative};
 import package::terrain_shading::tables::{table_look, table_terrain, table_view, terrain_tables};
 import package::generated::terrain_shading::{CONTROL_PLANE, LookUniform, NORMAL_PLANE, PATCH_GRID, TABLE_LOOK, SUBDIVISION_ARGS, SUBDIVISION_WATERED, SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES, TILE_PLANES};
 
@@ -41,7 +41,7 @@ fn terrain_view_uniform() -> TerrainView {
 }
 
 fn surface_leaf(index: u32) -> SurfaceTriangle {
-    return terrain_surface_leaves[terrain_watered_leaves[terrain.surface.x + index]];
+    return surface_kept(terrain_surface_leaves[terrain_watered_leaves[terrain.surface.x + index]]);
 }
 
 fn surface_drawn(triangle: SurfaceTriangle, local: vec2<f32>) -> vec3<f32> {
