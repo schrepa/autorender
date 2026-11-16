@@ -30,6 +30,7 @@ pub(crate) struct Run {
     pub(crate) tallies: Tallies,
     pub(crate) reading: Reading,
     pub(crate) bound: Bound,
+    pub(crate) arena: Arena,
 }
 
 #[derive(Default)]
@@ -492,6 +493,7 @@ impl Run {
                 ..Reading::default()
             },
             bound: Bound::default(),
+            arena: Arena::default(),
         }
     }
 }

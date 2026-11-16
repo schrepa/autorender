@@ -190,7 +190,7 @@ impl GpuPart for CoverGpu {
             ],
         )?;
         let inputs = PerPass::of(blade_form.passes(), |pass| {
-            cx.draw_input(pass.scene, args)
+            cx.args_input(pass.scene, args)
         });
         Ok(Self {
             grow: grow_pass,

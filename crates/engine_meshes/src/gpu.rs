@@ -538,7 +538,7 @@ fn streams<S: Scope<MeshesGpu> + Copy>(
 ) -> Streams<S::Tag> {
     Streams {
         ids: cx.draw_input(scope, presented.visible[phase]),
-        args: cx.draw_input(scope, presented.draws[phase]),
+        args: cx.args_input(scope, presented.draws[phase]),
         records: cx.draw_input(scope, instances.records),
     }
 }
@@ -559,7 +559,7 @@ fn install_scenes(
             (PassRole::Lit | PassRole::Depth | PassRole::Shown, true) => {
                 Drawing::Views(ViewStreams {
                     ids: cx.draw_input(scene, presented.view_visible),
-                    args: cx.draw_input(scene, presented.view_draws),
+                    args: cx.args_input(scene, presented.view_draws),
                 })
             }
             (PassRole::Lit | PassRole::Depth | PassRole::Shown, false) => {

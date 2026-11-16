@@ -649,6 +649,10 @@ impl<P: GpuPart> Install<'_, P> {
         DrawInput(self.core.draw_input(scoped(&scope), buffer.0), PhantomData)
     }
 
+    pub fn args_input<S: Scope<P>>(&mut self, scope: S, buffer: Buffer<P>) -> DrawInput<P, S::Tag> {
+        DrawInput(self.core.args_input(scoped(&scope), buffer.0), PhantomData)
+    }
+
     pub fn scene<N: PassName>(&mut self) -> PassBuilder<'_, P> {
         let pass = self.core.pass(N::NAME, install::Work::Render);
         self.core.draws_scene(pass, N::NAME, N::PASS);

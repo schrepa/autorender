@@ -274,7 +274,7 @@ impl GpuPart for WaterGpu {
         let surface_form = cx.form(&SURFACE_FORM, &behind())?;
         let fall_form = cx.form(&FALL_FORM, &behind())?;
         let leaves = PerPass::of(surface_form.passes(), |pass| Leaves {
-            leaves: cx.draw_input(pass.scene, leaf_args),
+            leaves: cx.args_input(pass.scene, leaf_args),
             pattern: cx.draw_input(pass.scene, leaf_pattern),
             listed: (pass.scene.name() == WaterPass::NAME)
                 .then(|| cx.draw_input(pass.scene, listing.list)),

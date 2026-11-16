@@ -750,7 +750,7 @@ impl CloudPass {
         viewed.extend(lit());
         let viewing = cx.compute_pipeline(view_pass, clouds::MARCH_VIEW, &viewed)?;
         let compositing = composite_pipeline(cx, composite_pass, (view_texture, view_tiles))?;
-        let composite_draws = cx.draw_input(composite_pass, composite_args);
+        let composite_draws = cx.args_input(composite_pass, composite_args);
         Ok(Self {
             noise_shape,
             noise_detail,
