@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::Entity;
 use engine_core::AssetLibrary;
+use engine_core::presentation_bounds::ROUNDING_MARGIN;
 use engine_heightfield::tile::shaded_elsewhere;
 use engine_open_world_kit::ground::{
     PALETTE_ENTRIES, PaletteEntry, SurfaceMaps, SurfaceMaterial, SurfaceProjection, TerrainEntry,
@@ -60,8 +61,11 @@ pub(crate) struct TerrainTables {
     palette: Vec<PaletteEntry>,
     rungs: Vec<Rungs>,
     rough: Vec<Shares>,
+    lifted: f32,
     pub(crate) dropped_materials: u32,
 }
+
+const BOUND_WORDS: u32 = 4;
 
 type Rungs = [f32; RUNG_WORDS as usize];
 type Shares = Option<Arc<[u32]>>;
@@ -136,7 +140,7 @@ impl TerrainTables {
         for terrain in tiles.terrains.iter() {
             self.directory_bases.push(words);
             let pyramid = &terrain.pyramid;
-            words += 4 * pyramid.levels() + tiles_below(pyramid, pyramid.levels());
+            words += 4 * pyramid.levels() + tiles_below(pyramid, pyramid.levels()) + BOUND_WORDS;
         }
         self.directory_room = self.directory_room.max(words);
     }
@@ -167,6 +171,7 @@ impl TerrainTables {
                     }
                 }
             }
+            words.extend([0; BOUND_WORDS as usize]);
         }
         if !words.is_empty() {
             cx.write(handles.tables, u64::from(DIRECTORY_AT) * 4, &words);
@@ -383,7 +388,7 @@ impl TerrainTables {
         &mut self,
         cx: &mut Prepare<'_, TerrainGpu>,
         handles: &Handles,
-        (tiles, layout): (&TerrainTiles, &[(Entity, Option<u32>)]),
+        (tiles, layout, atlas): (&TerrainTiles, &[(Entity, Option<u32>)], &Atlas),
         (maps, assets, lights): (&TerrainMaps, &AssetLibrary, &RoughLights),
     ) {
         self.palette.clear();
@@ -420,12 +425,16 @@ impl TerrainTables {
                 (*held, *rungs, *shares) = entry;
             }
         }
-        let (Allocation::Fresh | Allocation::Kept) =
-            cx.allocate_buffer(handles.palette, crate::gpu::PALETTE_BYTES as u64);
+        if cx.allocate_buffer(handles.palette, crate::gpu::PALETTE_BYTES as u64)
+            == Allocation::Fresh
+        {
+            self.lifted = 0.0;
+        }
         if !self.palette.is_empty() {
             cx.write(handles.palette, 0, &self.palette);
             cx.write(handles.tables, u64::from(TABLE_RUNGS) * 4, &self.rungs);
         }
+        self.write_bounds(cx, handles, tiles, atlas);
         self.rough.resize(rough.len(), None);
         for (index, (held, shares)) in self.rough.iter_mut().zip(rough).enumerate() {
             let same = match (&*held, &shares) {
@@ -441,6 +450,35 @@ impl TerrainTables {
                 cx.write(handles.tables, u64::from(at) * 4, &shares[..]);
             }
             *held = shares;
+        }
+    }
+
+    fn write_bounds(
+        &mut self,
+        cx: &mut Prepare<'_, TerrainGpu>,
+        handles: &Handles,
+        tiles: &TerrainTiles,
+        atlas: &Atlas,
+    ) {
+        self.lifted = self
+            .palette
+            .iter()
+            .filter(|entry| entry.relief[0] > 0.0 && entry.params[3] > 0.0)
+            .fold(self.lifted, |most, entry| engine_math::max(most, entry.relief[0]));
+        for (index, terrain) in tiles.terrains.iter().enumerate() {
+            let pyramid = &terrain.pyramid;
+            let top = pyramid.levels().saturating_sub(1);
+            let root = (terrain.terrain, TileKey::new(top as u8, 0, 0));
+            let (mut low, mut high) = atlas.heights_of(terrain.terrain);
+            if !atlas.slots.contains_key(&root) {
+                low = engine_math::min(low, 0.0);
+                high = engine_math::max(high, 0.0);
+            }
+            let at = self.directory_base(index)
+                + 4 * pyramid.levels()
+                + tiles_below(pyramid, pyramid.levels());
+            let bounds = [low, high, self.lifted, ROUNDING_MARGIN];
+            cx.write(handles.tables, u64::from(at) * 4, &bounds);
         }
     }
 
