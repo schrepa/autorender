@@ -589,7 +589,7 @@ impl Run {
         ),
         shown: (bool, bool),
         variant: Option<crate::surface::MaterialVariant>,
-    ) -> Option<(u64, wgpu::RenderPipeline)> {
+    ) -> Option<wgpu::RenderPipeline> {
         self.split().0.compile(pipeline, targets, shown, variant)
     }
 
@@ -639,9 +639,9 @@ impl Run {
                 .standing_in(pipeline, targets, shown, variants),
             None => self
                 .compile(pipeline, targets, shown, variant)
-                .map(|(key, made)| (key, made, true)),
+                .map(|made| (made, true)),
         };
-        let Some((key, made, exact)) = found else {
+        let Some((made, exact)) = found else {
             return Err(if self.pipelines.making.program_waits(program) {
                 DropReason::PipelineCompiling
             } else {
@@ -657,7 +657,6 @@ impl Run {
         built.ready.push(Ready {
             layout,
             bits,
-            key,
             made,
             exact,
         });
@@ -823,8 +822,9 @@ impl Compiler<'_> {
         ),
         shown: (bool, bool),
         variant: Option<crate::surface::MaterialVariant>,
-    ) -> Option<(u64, wgpu::RenderPipeline)> {
+    ) -> Option<wgpu::RenderPipeline> {
         self.compile_with(pipeline, targets, shown, variant, Asked::Drawn)
+            .map(|(_, made)| made)
     }
 
     pub(crate) fn compile_now(
@@ -852,12 +852,12 @@ impl Compiler<'_> {
             crate::surface::MaterialVariant,
             crate::surface::MaterialVariant,
         ),
-    ) -> Option<(u64, wgpu::RenderPipeline, bool)> {
+    ) -> Option<(wgpu::RenderPipeline, bool)> {
         self.collect(None);
         let keyed = self.keyed(pipeline, targets, shown, Some(specialized))?;
         let made = (keyed.program, keyed.key);
         if let Some(found) = self.made(pipeline, made) {
-            return Some((keyed.key, found, true));
+            return Some((found, true));
         }
         let records = self.machine.makes_records(pipeline);
         let refused = self.pipelines.making.refused(made);
@@ -868,7 +868,7 @@ impl Compiler<'_> {
         if !refused && (standing.key == keyed.key || records) {
             return self
                 .compile_with(pipeline, targets, shown, Some(specialized), Asked::Drawn)
-                .map(|(key, made)| (key, made, true));
+                .map(|(_, made)| (made, true));
         }
         if !refused {
             let stand_in = (standing.program, standing.key);
@@ -891,7 +891,7 @@ impl Compiler<'_> {
         self.pipelines.standing = true;
         let stood = self.compile_with(pipeline, targets, shown, Some(dynamic), Asked::Drawn);
         self.pipelines.standing = false;
-        stood.map(|(key, made)| (key, made, false))
+        stood.map(|(_, made)| (made, false))
     }
 
     fn want(&mut self, made: (u64, u64), warm: Warm) {

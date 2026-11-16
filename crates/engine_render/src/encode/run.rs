@@ -32,13 +32,131 @@ pub(crate) struct Run {
     pub(crate) bound: Bound,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Offsets {
+    held: [u32; MOST_OFFSETS],
+    count: usize,
+}
+
+impl Offsets {
+    fn of(given: &[u32]) -> Option<Self> {
+        let mut held = [0; MOST_OFFSETS];
+        held.get_mut(..given.len())?.copy_from_slice(given);
+        Some(Self {
+            held,
+            count: given.len(),
+        })
+    }
+
+    fn listed(&self) -> &[u32] {
+        &self.held[..self.count]
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Bound {
-    pub(crate) vertex: Vec<Option<(wgpu::Buffer, u64)>>,
-    pub(crate) index: Option<wgpu::Buffer>,
+    vertex: Vec<Option<(wgpu::Buffer, u64)>>,
+    index: Option<wgpu::Buffer>,
+    groups: [Option<(wgpu::BindGroup, Offsets)>; MOST_GROUPS],
+    render: Option<wgpu::RenderPipeline>,
+    compute: Option<wgpu::ComputePipeline>,
+    viewport: Option<[u32; 4]>,
+    scissor: Option<[u32; 4]>,
 }
 
 impl Bound {
+    pub(crate) fn forget(&mut self) {
+        self.vertex.clear();
+        self.index = None;
+        self.groups = Default::default();
+        self.render = None;
+        self.compute = None;
+        self.viewport = None;
+        self.scissor = None;
+    }
+
+    fn holds(&self, index: u32, group: &wgpu::BindGroup, offsets: &[u32]) -> bool {
+        self.groups
+            .get(index as usize)
+            .and_then(Option::as_ref)
+            .is_some_and(|(held, at)| held == group && at.listed() == offsets)
+    }
+
+    fn hold(&mut self, index: u32, group: &wgpu::BindGroup, offsets: &[u32]) {
+        if let Some(slot) = self.groups.get_mut(index as usize) {
+            *slot = Offsets::of(offsets).map(|offsets| (group.clone(), offsets));
+        }
+    }
+
+    pub(crate) fn draw_group(
+        &mut self,
+        render: &mut wgpu::RenderPass<'static>,
+        index: u32,
+        group: &wgpu::BindGroup,
+        offsets: &[u32],
+    ) {
+        if self.holds(index, group, offsets) {
+            return;
+        }
+        render.set_bind_group(index, group, offsets);
+        self.hold(index, group, offsets);
+    }
+
+    pub(crate) fn dispatch_group(
+        &mut self,
+        pass: &mut wgpu::ComputePass<'static>,
+        index: u32,
+        group: &wgpu::BindGroup,
+        offsets: &[u32],
+    ) {
+        if self.holds(index, group, offsets) {
+            return;
+        }
+        pass.set_bind_group(index, group, offsets);
+        self.hold(index, group, offsets);
+    }
+
+    pub(crate) fn draw_pipeline(
+        &mut self,
+        render: &mut wgpu::RenderPass<'static>,
+        pipeline: &wgpu::RenderPipeline,
+    ) {
+        if self.render.as_ref() == Some(pipeline) {
+            return;
+        }
+        render.set_pipeline(pipeline);
+        self.render = Some(pipeline.clone());
+    }
+
+    pub(crate) fn dispatch_pipeline(
+        &mut self,
+        pass: &mut wgpu::ComputePass<'static>,
+        pipeline: &wgpu::ComputePipeline,
+    ) {
+        if self.compute.as_ref() == Some(pipeline) {
+            return;
+        }
+        pass.set_pipeline(pipeline);
+        self.compute = Some(pipeline.clone());
+    }
+
+    pub(crate) fn viewport(&mut self, render: &mut wgpu::RenderPass<'static>, rect: [u32; 4]) {
+        if self.viewport == Some(rect) {
+            return;
+        }
+        let [x, y, width, height] = rect.map(|value| value as f32);
+        render.set_viewport(x, y, width, height, 0.0, 1.0);
+        self.viewport = Some(rect);
+    }
+
+    pub(crate) fn scissor(&mut self, render: &mut wgpu::RenderPass<'static>, rect: [u32; 4]) {
+        if self.scissor == Some(rect) {
+            return;
+        }
+        render.set_scissor_rect(rect[0], rect[1], rect[2], rect[3]);
+        self.scissor = Some(rect);
+    }
+
     pub(crate) fn vertex_buffer(
         &mut self,
         render: &mut wgpu::RenderPass<'static>,
@@ -56,6 +174,15 @@ impl Bound {
             self.vertex.resize(at + 1, None);
         }
         self.vertex[at] = Some((buffer.clone(), start));
+    }
+
+    pub(crate) fn within(
+        &mut self,
+        render: &mut wgpu::RenderPass<'static>,
+        (width, height): (u32, u32),
+    ) {
+        self.viewport(render, [0, 0, width, height]);
+        self.scissor(render, [0, 0, width, height]);
     }
 
     pub(crate) fn index_buffer(

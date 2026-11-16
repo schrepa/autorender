@@ -96,7 +96,6 @@ pub(crate) struct OwnGroup {
 pub(crate) struct Ready {
     pub(crate) layout: crate::encode::PassLayout,
     pub(crate) bits: Option<crate::surface::MaterialVariant>,
-    pub(crate) key: u64,
     pub(crate) made: wgpu::RenderPipeline,
     pub(crate) exact: bool,
 }

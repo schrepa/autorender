@@ -495,10 +495,7 @@ impl Run {
             && is_shared
             && open.attachments == attachments
         {
-            if open.offset != offset {
-                open.offset = offset;
-                open.set.frame = None;
-            }
+            open.offset = offset;
             if GROUPED && open.label != Some(self.pass) && self.planning.labelled != Some(self.pass)
             {
                 if open.label.is_some() {
@@ -567,11 +564,12 @@ impl Run {
                 multiview_mask: None,
             })
             .forget_lifetime();
+        self.bound.forget();
         if layer.is_some()
             && !lone
             && let Some(region) = self.region
         {
-            crate::targets::draw_within(&mut render, region);
+            self.bound.within(&mut render, region);
         }
         self.recording.transition(Step::Render(Box::new(Open {
             pass: render,
@@ -581,7 +579,6 @@ impl Run {
             shared: is_shared,
             layered: layer.is_some(),
             label: None,
-            set: Set::default(),
         })));
         colors.clear();
         self.spare.colors = colors;
