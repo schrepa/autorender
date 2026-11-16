@@ -1372,7 +1372,7 @@ fn install_subdivision(
     let list_drawn = cx
         .pass("terrain_leaf_lists")
         .label("engine/terrain-leaf-lists")
-        .at(AttachPoint::Depth)
+        .at(AttachPoint::Inputs)
         .views(PassViews::Main)
         .after(subdivide)
         .id();
