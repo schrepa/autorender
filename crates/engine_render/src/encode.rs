@@ -207,6 +207,33 @@ pub(crate) struct Compiled {
     plain: bool,
     main: bool,
     variant: Option<crate::surface::MaterialVariant>,
+    needed: Needed,
+}
+
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+enum Needed {
+    Later,
+    First(Vec<(u32, bool)>),
+}
+
+impl Compiled {
+    fn same(&self, other: &Self) -> bool {
+        (
+            self.program,
+            &self.formats,
+            self.depth,
+            self.plain,
+            self.main,
+            self.variant,
+        ) == (
+            other.program,
+            &other.formats,
+            other.depth,
+            other.plain,
+            other.main,
+            other.variant,
+        )
+    }
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -636,6 +663,7 @@ impl Run {
         self.pipelines.listed = Some(keys);
         self.pipelines.unlisted = 0;
         if self.reached.generation.is_some() {
+            self.compile_first();
             self.at_reached_switches(Self::compile_listed);
         }
         Ok(())
