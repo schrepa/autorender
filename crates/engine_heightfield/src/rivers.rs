@@ -315,25 +315,7 @@ impl Rivers {
         let corner = low - Vec2::splat(reach);
         let columns = (((high.x + reach - corner.x) / CELL).ceil() as usize).max(1);
         let rows = (((high.y + reach - corner.y) / CELL).ceil() as usize).max(1);
-        let mut lists: Vec<Vec<[u32; 2]>> = vec![Vec::new(); columns * rows];
-        for (index, river) in rivers.iter().enumerate() {
-            for segment in 0..river.points.len().saturating_sub(1) {
-                let (along, across) =
-                    listing((corner, columns, rows), (river, spans[index]), segment);
-                for row in across.0..=across.1 {
-                    for column in along.0..=along.1 {
-                        lists[row * columns + column].push([index as u32, segment as u32]);
-                    }
-                }
-            }
-        }
-        let mut starts = Vec::with_capacity(lists.len() + 1);
-        let mut segments = Vec::new();
-        for list in lists {
-            starts.push(segments.len() as u32);
-            segments.extend(list);
-        }
-        starts.push(segments.len() as u32);
+        let (starts, segments) = cell_segments((corner, columns, rows), &rivers, &spans);
         Self {
             rivers,
             form,
@@ -762,6 +744,38 @@ fn span(river: &River) -> f32 {
         .fold(0.0, |widest, (plain, reach)| {
             max(widest, max(reach[0] + plain[0], reach[1] + plain[1]))
         })
+}
+
+fn cell_segments(
+    grid: (Vec2, usize, usize),
+    rivers: &[River],
+    spans: &[f32],
+) -> (Vec<u32>, Vec<[u32; 2]>) {
+    let columns = grid.1;
+    let visit = |cell: &mut dyn FnMut(usize, [u32; 2])| {
+        for (index, river) in rivers.iter().enumerate() {
+            for segment in 0..river.points.len().saturating_sub(1) {
+                let (along, across) = listing(grid, (river, spans[index]), segment);
+                for row in across.0..=across.1 {
+                    for column in along.0..=along.1 {
+                        cell(row * columns + column, [index as u32, segment as u32]);
+                    }
+                }
+            }
+        }
+    };
+    let mut starts = vec![0_u32; columns * grid.2 + 1];
+    visit(&mut |at, _| starts[at + 1] += 1);
+    for at in 1..starts.len() {
+        starts[at] += starts[at - 1];
+    }
+    let mut cursors = starts.clone();
+    let mut segments = vec![[0_u32; 2]; starts.last().copied().unwrap_or(0) as usize];
+    visit(&mut |at, pair| {
+        segments[cursors[at] as usize] = pair;
+        cursors[at] += 1;
+    });
+    (starts, segments)
 }
 
 fn listing(
