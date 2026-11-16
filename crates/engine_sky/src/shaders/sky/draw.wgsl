@@ -199,25 +199,42 @@ fn moon_place(longitude: f32, latitude: f32) -> vec3<f32> {
     return vec3<f32>(cos(lat) * sin(lon), sin(lat), cos(lat) * cos(lon));
 }
 
+fn sea_dark(dark: f32, place: vec3<f32>, wander: f32, sea: vec4<f32>) -> f32 {
+    let reach = radians(sea.z);
+    let along = acos(clamp(dot(place, moon_place(sea.x, sea.y)), -1.0, 1.0)) + wander;
+    return max(dark, sea.w * (1.0 - smoothstep(reach - 0.14, reach + 0.14, along)));
+}
+
+fn crater_bright(bright: f32, place: vec3<f32>, crater: vec4<f32>) -> f32 {
+    let apart = acos(clamp(dot(place, moon_place(crater.x, crater.y)), -1.0, 1.0));
+    let spot = apart / radians(crater.z);
+    return bright + crater.w * exp(-spot * spot);
+}
+
 fn moon_albedo(place: vec3<f32>, local: vec2<f32>) -> f32 {
-    var seas = MOON_SEAS;
     let wander = 0.16 * (sky_noise(place.xy * 2.5 + 11.0, 5u) - 0.5)
         + 0.08 * (sky_noise(place.xy * 6.0 + 3.0, 6u) - 0.5);
     var dark = 0.0;
-    for (var index = 0u; index < 15u; index++) {
-        let sea = seas[index];
-        let reach = radians(sea.z);
-        let along = acos(clamp(dot(place, moon_place(sea.x, sea.y)), -1.0, 1.0)) + wander;
-        dark = max(dark, sea.w * (1.0 - smoothstep(reach - 0.14, reach + 0.14, along)));
-    }
-    var craters = MOON_CRATERS;
+    dark = sea_dark(dark, place, wander, MOON_SEAS[0]);
+    dark = sea_dark(dark, place, wander, MOON_SEAS[1]);
+    dark = sea_dark(dark, place, wander, MOON_SEAS[2]);
+    dark = sea_dark(dark, place, wander, MOON_SEAS[3]);
+    dark = sea_dark(dark, place, wander, MOON_SEAS[4]);
+    dark = sea_dark(dark, place, wander, MOON_SEAS[5]);
+    dark = sea_dark(dark, place, wander, MOON_SEAS[6]);
+    dark = sea_dark(dark, place, wander, MOON_SEAS[7]);
+    dark = sea_dark(dark, place, wander, MOON_SEAS[8]);
+    dark = sea_dark(dark, place, wander, MOON_SEAS[9]);
+    dark = sea_dark(dark, place, wander, MOON_SEAS[10]);
+    dark = sea_dark(dark, place, wander, MOON_SEAS[11]);
+    dark = sea_dark(dark, place, wander, MOON_SEAS[12]);
+    dark = sea_dark(dark, place, wander, MOON_SEAS[13]);
+    dark = sea_dark(dark, place, wander, MOON_SEAS[14]);
     var bright = 0.0;
-    for (var index = 0u; index < 4u; index++) {
-        let crater = craters[index];
-        let apart = acos(clamp(dot(place, moon_place(crater.x, crater.y)), -1.0, 1.0));
-        let spot = apart / radians(crater.z);
-        bright += crater.w * exp(-spot * spot);
-    }
+    bright = crater_bright(bright, place, MOON_CRATERS[0]);
+    bright = crater_bright(bright, place, MOON_CRATERS[1]);
+    bright = crater_bright(bright, place, MOON_CRATERS[2]);
+    bright = crater_bright(bright, place, MOON_CRATERS[3]);
     let tycho = moon_place(-11.2, -43.3);
     let east = normalize(cross(vec3<f32>(0.0, 1.0, 0.0), tycho));
     let north = cross(tycho, east);

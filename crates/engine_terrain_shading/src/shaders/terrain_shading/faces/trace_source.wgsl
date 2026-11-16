@@ -176,12 +176,12 @@ fn ray_footprint(spread: vec2<f32>, s: f32) -> f32 {
 
 fn ground_meet(tile: LevelTile, first: vec2<u32>, o: vec3<f32>, direction: vec3<f32>,
         span: vec2<f32>, spacing: f32, cutout: vec4<f32>) -> vec4<f32> {
-    var h: array<f32, 9>;
-    for (var z = 0u; z < 3u; z++) {
-        for (var x = 0u; x < 3u; x++) {
-            h[z * 3u + x] = tile_height(tile, first + vec2<u32>(x, z));
-        }
-    }
+    let row0 = vec3<f32>(tile_height(tile, first), tile_height(tile, first + vec2<u32>(1u, 0u)),
+        tile_height(tile, first + vec2<u32>(2u, 0u)));
+    let row1 = vec3<f32>(tile_height(tile, first + vec2<u32>(0u, 1u)),
+        tile_height(tile, first + vec2<u32>(1u, 1u)), tile_height(tile, first + vec2<u32>(2u, 1u)));
+    let row2 = vec3<f32>(tile_height(tile, first + vec2<u32>(0u, 2u)),
+        tile_height(tile, first + vec2<u32>(1u, 2u)), tile_height(tile, first + vec2<u32>(2u, 2u)));
     let start = o.xz / spacing - vec2<f32>(first);
     let rate = direction.xz / spacing;
     var s = span.x;
@@ -191,11 +191,13 @@ fn ground_meet(tile: LevelTile, first: vec2<u32>, o: vec3<f32>, direction: vec3<
         }
         let quad = min(vec2<u32>(max(floor(start + rate * s), vec2<f32>(0.0))), vec2<u32>(1u));
         let leave = min(square_exit(start, rate, vec2<f32>(quad), 1.0), span.y);
-        let corner = quad.y * 3u + quad.x;
-        let a = h[corner];
-        let b = h[corner + 1u];
-        let c = h[corner + 3u];
-        let d = h[corner + 4u];
+        let top = select(row1, row0, quad.y == 0u);
+        let bottom = select(row2, row1, quad.y == 0u);
+        let left = quad.x == 0u;
+        let a = select(top.y, top.x, left);
+        let b = select(top.z, top.y, left);
+        let c = select(bottom.y, bottom.x, left);
+        let d = select(bottom.z, bottom.y, left);
         let f0 = start - vec2<f32>(quad);
         let across = rate.x + rate.y;
         var split = leave;
