@@ -135,7 +135,7 @@ impl LeafList {
     fn install(
         cx: &mut Install<'_, WaterGpu>,
         uniform: Buffer<WaterGpu>,
-        (leaf_args, wet): (Buffer<WaterGpu>, Buffer<WaterGpu>),
+        (leaf_args, wet, heights): (Buffer<WaterGpu>, Buffer<WaterGpu>, Buffer<WaterGpu>),
     ) -> Result<Self, Error> {
         use crate::shaders::water::{surface, uniforms};
         let count = cx.pass("water_leaf_args").id();
@@ -158,6 +158,7 @@ impl LeafList {
                     (surface::WATER_LEAF_LIST, Bind::Buffer(list)),
                     (surface::WATER_LEAF_DRAW, Bind::Buffer(draw)),
                     (surface::WATER_BLOCK_WET, Bind::Buffer(wet)),
+                    (surface::WATER_PATCH_HEIGHTS, Bind::Buffer(heights)),
                 ],
             );
             cx.compute_pipeline(pass, entry, &bound)
@@ -258,14 +259,17 @@ impl GpuPart for WaterGpu {
                 cx.texture("water_info", INFO_FORMAT, Lifetime::Kept),
             ),
             cx.buffer("water_directory", Lifetime::Kept),
-            cx.buffer("water_block_wet", Lifetime::Kept),
+            (
+                cx.buffer("water_block_wet", Lifetime::Kept),
+                cx.buffer("water_patch_heights", Lifetime::Kept),
+            ),
         );
         cx.frame(face::WATER_SURFACE, Bind::Texture(blocks.surface))?;
         cx.frame(face::WATER_INFO, Bind::Texture(blocks.info))?;
         cx.frame(face::WATER_DIRECTORY, Bind::Buffer(blocks.directory))?;
         let detail = DetailGpu::install(cx);
         let waves = WavesGpu::install(cx);
-        let listing = LeafList::install(cx, uniform, (leaf_args, blocks.wet))?;
+        let listing = LeafList::install(cx, uniform, (leaf_args, blocks.wet, blocks.heights))?;
         let behind = || {
             let mut all = vec![
                 (uniforms::WATER, Bind::Buffer(uniform)),

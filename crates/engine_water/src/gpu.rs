@@ -20,6 +20,7 @@ gpu_consts! {
     pub const WATER_SCAN_GROUP: u32 = 256;
     pub const WATER_RAW_VERTEX: u32 = 65536;
     pub const WATER_WET_AREAS: u32 = 4;
+    pub const WATER_UNKNOWN_HEIGHT: f32 = -1.0e30;
     pub const DEBUG_SPAN_STEPS: f32 = 254.0;
     pub const WATER_RIPPLE_LEVELS: u32 = 16;
     pub const WATER_NOISE_WRAP: i32 = 256;
