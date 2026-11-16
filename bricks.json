@@ -427,7 +427,7 @@
         }
       ],
       "type": "engine_impostors::ImpostorsBrick",
-      "version": "17af9e968db259c9a805d5afb8205889fa9b35ae92636ca08491bab2cf256d58"
+      "version": "e218ae446b238af146f8086f2cb1e00064838a04e0e9e54a2f4ee0d08de3e3a7"
     },
     {
       "dependencies": [
@@ -568,7 +568,7 @@
         }
       ],
       "type": "engine_shadows::ShadowsBrick",
-      "version": "5a791f5c8b7da6570446c4609bcc661ce2cb70bf6acdbcf4c47003a6d4b59845"
+      "version": "6472ff2ef6dc1d165dea80ec41fde0e6bb214b0b3171500a5dbee630fe3f4403"
     },
     {
       "dependencies": [
@@ -865,7 +865,7 @@
         }
       ],
       "type": "engine_ambient_occlusion::AmbientOcclusionBrick",
-      "version": "75040ead31ba951de8c948f3c820275322e97a4f482697876eb5e15fc316c8d1"
+      "version": "873614aeba02caa2a4dcaaf4965d79452804632374d256e60e71bd4449335631"
     },
     {
       "dependencies": [
@@ -2158,7 +2158,7 @@
         }
       ],
       "type": "engine_terrain::runtime::brick::TerrainBrick",
-      "version": "9af791fdf8826eebbaa18d00ae5ca6429b9c8e3d2e3fdf6d07a92bdf4581c57c"
+      "version": "5fe5bae2f0e59e0dcb6d9794627d935e10cb6451148c4031c6ab820fcb3a2953"
     },
     {
       "dependencies": [
@@ -2215,7 +2215,6 @@
             "subdivision_args",
             "terrain_subdivision",
             "terrain_leaf_lists",
-            "terrain_seen_lists",
             "bounce",
             "terrain_sun",
             "terrain_ids",
@@ -2401,20 +2400,6 @@
             "engine_scatter"
           ],
           "required": false
-        },
-        {
-          "kind": "target",
-          "place": "depth",
-          "providers": [
-            "engine_render",
-            "engine_prepass",
-            "engine_debug_view",
-            "engine_water",
-            "engine_meshes",
-            "engine_impostors",
-            "engine_terrain_shading"
-          ],
-          "required": true
         }
       ],
       "resources": [
@@ -2424,6 +2409,7 @@
         "engine_terrain_shading::state::Atlas",
         "engine_terrain_shading::state::SurfaceTotals",
         "engine_terrain_shading::state::PartStats",
+        "engine_terrain_shading::state::Derived",
         "engine_terrain_shading::state::RecordsSettling",
         "engine_terrain_shading::terrain_sun::SunPlan",
         "engine_terrain_shading::holes::HoledGround",
@@ -2444,7 +2430,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "afa5624b8a61fafac45fc010d684a87b986071f0b8bc1023b589624eec1ce38c"
+      "version": "5fa3940a547d08617b6fc57969ad2ecec5fa6ac9a6ab7c9f2f1e4cdda65aaced"
     },
     {
       "dependencies": [
@@ -2610,6 +2596,7 @@
         "engine_scatter::settings::ScatterStats",
         "engine_scatter::systems::ScatterState",
         "engine_scatter::systems::ScatterFeedback",
+        "engine_scatter::systems::Resnapped",
         "engine_scatter::far_cover::CanopyMaps",
         "engine_scatter::layouts::CanopyPiece"
       ],
@@ -2635,7 +2622,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "e549ec1ce2620a7f9acadadbc97e2d6befb0fd7f126d51f4362b46140ccbe456"
+      "version": "e9143fad66d918da3cf6f61d880661bd8814cfacfa1a49d35032a8e90b6ca41d"
     },
     {
       "dependencies": [
@@ -2769,7 +2756,7 @@
         }
       ],
       "type": "engine_ground_cover::GroundCoverBrick",
-      "version": "c1acc8a57b254381cd8379325c62a3398a232226cad5d59350d35f282005bacc"
+      "version": "29fd1514e5b918d1595dfc241385f3870317e38efb013f370417ee0572671cb0"
     },
     {
       "dependencies": [
@@ -2996,7 +2983,7 @@
         }
       ],
       "type": "engine_water::WaterBrick",
-      "version": "491b9b0fc58dbc7240325b0db5cd3c52dda21bf3c90c9b4ee229a91b17538553"
+      "version": "4f8d01904973be6d9513fd2425091d1f6347bcbb724abccdba15b46395942759"
     },
     {
       "dependencies": [
@@ -3022,7 +3009,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_noise::LayerNoiseBrick",
-      "version": "eb74bd8e016b8f7694e834807a5d08a65be758005022e567b6789801443a17df"
+      "version": "549aa22d92a1ca68b4fba057f6d644609b0716e0254181d82062c9c2153dfb08"
     },
     {
       "dependencies": [
@@ -3048,7 +3035,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_stamps::LayerStampsBrick",
-      "version": "eb57861f12b35cd450f32c4477632a9bf47735cba6c8384fadec7b9ea1d0b86e"
+      "version": "b8fd5e2ecc7caaef0a43fa812d53ef85424d1042e19141ba938602ca5033cdad"
     },
     {
       "dependencies": [
@@ -3075,7 +3062,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_heightmap::LayerHeightmapBrick",
-      "version": "d5cee4c0bb16fdfd4a410ced11feac7b53334cf35a3257303e4e9ba4bdbf5598"
+      "version": "956b865c3a7950ea0a96161784a30ad740d083109c9af4dda458f25336c97b72"
     },
     {
       "dependencies": [
@@ -3101,7 +3088,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_paths::LayerPathsBrick",
-      "version": "3a37d3c5307a76ad77b95b8c46ad510e954698c7f2c25ac6c0a54a91c15ca987"
+      "version": "fdbb1c0ff4d1c3c5728d86740d92c389317879814422fdf48f7e2a2d9d3eae7f"
     },
     {
       "dependencies": [
@@ -3127,7 +3114,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_erosion::LayerErosionBrick",
-      "version": "f2477d2d03af183ca85a3896449f0d8e248ab800f7d79ea72384cd6fec2472d7"
+      "version": "ec76c9a1339c53c6a4d91d57ccd3a3b54994a2493a170aeaa5192aa179093fc7"
     },
     {
       "dependencies": [
@@ -3154,7 +3141,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_hydrology::LayerHydrologyBrick",
-      "version": "2c470dd46f3ce77640180ed4739cb3f06b98c648b5dff19de48fb4aa8d08e5d6"
+      "version": "5c8216b0424d07aaf036bd74265c8f9edb8c0081bbef7957827d8518f97c112a"
     },
     {
       "dependencies": [
@@ -3183,7 +3170,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_relief::LayerReliefBrick",
-      "version": "09f2d8f9ccb30794990d8fd0e05d9efb6b36100fb8089dbef6ab50fd0a367f48"
+      "version": "1197cec84751770a85acb4293a4a0f4f7992c6996e7780724dfd3e4576f0dfab"
     },
     {
       "dependencies": [
@@ -3290,7 +3277,7 @@
         }
       ],
       "type": "engine_world_streaming::WorldStreamingBrick",
-      "version": "0871eafe4b84aae6b126114e4eb84a5011e415352b7153024276faf85d366a4d"
+      "version": "769e7dac56c6757c77a377106c9bd4e0ee97d2e1bc1322d80600f74025376ca4"
     },
     {
       "dependencies": [
