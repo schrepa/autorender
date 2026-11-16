@@ -204,11 +204,18 @@ fn card_frame(shown: u32, frames: u32, hemisphere: bool, dir: vec3<f32>, across:
         dot(across, d) / radius);
 }
 
-fn posed_card(vertex: u32, batch: u32, pose: AffinePose, color: SlotColor,
-        record: ImpostorRecord) -> Card {
+struct CardFacing {
+    model: mat4x4<f32>,
+    turned: mat3x3<f32>,
+    dir: vec3<f32>,
+    basis: ImpostorBasis,
+    outline: vec2<f32>,
+    support: f32,
+}
+
+fn card_facing(pose: AffinePose, record: ImpostorRecord) -> CardFacing {
     let model = posed(pose);
     let center = record.sphere.xyz;
-    let radius = record.sphere.w;
     let inverse_scale = 1.0 / max(maximum_abs(model[0].xyz),
         max(maximum_abs(model[1].xyz), maximum_abs(model[2].xyz)));
     let x = model[0].xyz * inverse_scale;
@@ -221,15 +228,28 @@ fn posed_card(vertex: u32, batch: u32, pose: AffinePose, color: SlotColor,
     let toward = toward_viewer((model * vec4<f32>(center, 1.0)).xyz);
     let dir = stable_normalize(vec3<f32>(dot(yz, toward), dot(zx, toward), dot(xy, toward))
         * orientation);
+    let basis = impostor_basis(dir);
+    let half = record.extent;
+    return CardFacing(model, mat3x3<f32>(yz * orientation, zx * orientation, xy * orientation),
+        dir, basis, vec2<f32>(dot(abs(basis.right), half), dot(abs(basis.up), half)),
+        dot(abs(dir), half));
+}
+
+fn posed_card(vertex: u32, batch: u32, pose: AffinePose, color: SlotColor,
+        record: ImpostorRecord) -> Card {
+    let facing = card_facing(pose, record);
+    let model = facing.model;
+    let center = record.sphere.xyz;
+    let radius = record.sphere.w;
+    let dir = facing.dir;
     let hemisphere = impostor_flags_hemisphere(record.flags);
     let frames = impostor_frames(record.flags);
     let near = near_frames(dir, frames, hemisphere);
     let shown = near.shown;
     let weights = near.weights;
-    let basis = impostor_basis(dir);
-    let half = record.extent;
-    let support = dot(abs(dir), half);
-    let outline = vec2<f32>(dot(abs(basis.right), half), dot(abs(basis.up), half));
+    let basis = facing.basis;
+    let support = facing.support;
+    let outline = facing.outline;
     let corner = card_corner(vertex);
     let across = basis.right * (corner.x * outline.x) + basis.up * (corner.y * outline.y);
     let local = center + dir * support + across;
@@ -245,9 +265,9 @@ fn posed_card(vertex: u32, batch: u32, pose: AffinePose, color: SlotColor,
     output.frames_ab = vec4<f32>(a.uv, b.uv);
     output.frame_c = c.uv;
     output.world = world.xyz;
-    output.normal_x = vec4<f32>(yz * orientation, weights.x);
-    output.normal_y = vec4<f32>(zx * orientation, weights.y);
-    output.normal_z = xy * orientation;
+    output.normal_x = vec4<f32>(facing.turned[0], weights.x);
+    output.normal_y = vec4<f32>(facing.turned[1], weights.y);
+    output.normal_z = facing.turned[2];
     let axis = model[0].xyz * dir.x + model[1].xyz * dir.y + model[2].xyz * dir.z;
     output.depth_axis = vec4<f32>(axis * radius, support / radius);
     output.material = vec4<u32>(color.color, color.surface, packed_frames);
@@ -256,6 +276,43 @@ fn posed_card(vertex: u32, batch: u32, pose: AffinePose, color: SlotColor,
     output.slopes_ab = vec4<f32>(a.slope, b.slope);
     output.slope_c = c.slope;
     return Card(local, output);
+}
+
+fn card_reach(facing: CardFacing, record: ImpostorRecord, margin: f32) -> f32 {
+    let projection = camera.view_projection;
+    let model = facing.model;
+    let center = record.sphere.xyz + facing.dir * facing.support;
+    let axis = (model[0].xyz * facing.dir.x + model[1].xyz * facing.dir.y
+        + model[2].xyz * facing.dir.z) * record.sphere.w;
+    let ends = vec2<f32>(facing.support / record.sphere.w - 1.0,
+        facing.support / record.sphere.w + 1.0);
+    var corners: array<vec3<f32>, 4>;
+    var reach = vec3<f32>(0.0);
+    for (var vertex = 0u; vertex < 4u; vertex++) {
+        let corner = card_corner(vertex);
+        let across = facing.basis.right * (corner.x * facing.outline.x)
+            + facing.basis.up * (corner.y * facing.outline.y);
+        corners[vertex] = (model * vec4<f32>(center + across, 1.0)).xyz;
+        reach = max(reach, abs(corners[vertex]));
+    }
+    reach += abs(axis) * (abs(ends.y) + 1.0);
+    let rows = transpose(projection);
+    let span = vec2<f32>(dot(abs(rows[2]), vec4<f32>(reach, 1.0)),
+        dot(abs(rows[3]), vec4<f32>(reach, 1.0))) * margin;
+    var nearest = 0.0;
+    var held = true;
+    for (var vertex = 0u; vertex < 4u; vertex++) {
+        let drawn = projection * vec4<f32>(corners[vertex], 1.0);
+        held = held && drawn.z >= span.x && drawn.z + span.x <= drawn.w - span.y;
+        for (var end = 0u; end < 2u; end++) {
+            let clip = projection * vec4<f32>(corners[vertex] - axis * ends[end], 1.0);
+            let w = clip.w - span.y;
+            held = held && w > 0.0;
+            nearest = max(nearest, max(clip.z + span.x, 0.0) / w);
+        }
+    }
+    let bound = nearest * (1.0 + margin);
+    return select(-1.0, bound, held && bound < 1.0);
 }
 
 fn card_previous(local: vec3<f32>, pose: AffinePose, color: SlotColor) -> vec3<f32> {
@@ -514,6 +571,10 @@ fn card_debug(input: CardVertex, point: SurfacePoint, ids: vec2<u32>, index: u32
     let targets = debug_targets(record, ids.y, index, point.normal, point_source(0u, point));
     return CardDebugTargets(targets.ids, targets.count, targets.words,
         card_depth(input, point, over));
+}
+
+fn placed_card_reach(pose: AffinePose, impostor: ImpostorRecord, margin: f32) -> f32 {
+    return card_reach(card_facing(pose, impostor), impostor, margin);
 }
 
 fn placed_card_level(input: CardVertex, impostor: ImpostorRecord) -> f32 {

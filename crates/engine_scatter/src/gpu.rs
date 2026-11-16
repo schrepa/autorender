@@ -314,7 +314,8 @@ struct Forms {
     extended_fading: Form<ScatterGpu>,
     matched: [Form<ScatterGpu>; 4],
     cards: Form<ScatterGpu>,
-    laid_cards: Form<ScatterGpu>,
+    tested_cards: Form<ScatterGpu>,
+    crossing_cards: Form<ScatterGpu>,
     casters: Form<ScatterGpu>,
 }
 
@@ -544,24 +545,25 @@ impl ScatterGpu {
         ];
         let plain = cx.form(&PLAIN_FORM, &placed)?;
         let following: Vec<FormPass> = plain.passes().filter(|pass| follows(cx, *pass)).collect();
-        let owning = |entry: Entry, depth: FormDepth| -> Vec<PassFragment> {
-            following
-                .iter()
-                .map(|pass| PassFragment {
-                    pass: FragmentPass::Scene(pass.scene),
-                    side: None,
-                    fragment: FormFragment::Entry {
-                        entry,
-                        cull: FaceCull::None,
-                        depth,
-                        color: FormColor::Written,
-                    },
-                })
-                .collect()
-        };
+        let owning =
+            |side: Option<FormSide>, entry: Entry, depth: FormDepth| -> Vec<PassFragment> {
+                following
+                    .iter()
+                    .map(|pass| PassFragment {
+                        pass: FragmentPass::Scene(pass.scene),
+                        side,
+                        fragment: FormFragment::Entry {
+                            entry,
+                            cull: FaceCull::None,
+                            depth,
+                            color: FormColor::Written,
+                        },
+                    })
+                    .collect()
+            };
         let mut matched = |index: usize| {
             let (form, entry) = &MATCHED_FORMS[index];
-            cx.form_owning(form, &owning(*entry, FormDepth::Matched), &placed)
+            cx.form_owning(form, &owning(None, *entry, FormDepth::Matched), &placed)
         };
         let matched = [matched(0)?, matched(1)?, matched(2)?, matched(3)?];
         let card_bound: [(Var, Bind<ScatterGpu>); 3] = [
@@ -569,7 +571,20 @@ impl ScatterGpu {
             (card_shaders::COLORS, Bind::Buffer(colors)),
             (card_shaders::LAID_DEPTH, Bind::Texture(laid)),
         ];
-        let laid = owning(card_shaders::FS_PLACED_CARD_LAID, FormDepth::Written);
+        let card_side = |vertex: Entry| FormSide {
+            vertex,
+            ..CARD_FORM.placed
+        };
+        let tested = owning(
+            Some(card_side(card_shaders::VS_PLACED_CARD_TESTED)),
+            card_shaders::FS_PLACED_CARD_TESTED,
+            FormDepth::Tested,
+        );
+        let crossing = owning(
+            Some(card_side(card_shaders::VS_PLACED_CARD_CROSSING)),
+            card_shaders::FS_PLACED_CARD_LAID,
+            FormDepth::Written,
+        );
         Ok(Forms {
             plain,
             matched,
@@ -577,7 +592,8 @@ impl ScatterGpu {
             fading: cx.form(&FADING_FORM, &placed)?,
             extended_fading: cx.form(&EXTENDED_FADING_FORM, &placed)?,
             cards: cx.form(&CARD_FORM, &card_bound[..2])?,
-            laid_cards: cx.form_owning(&CARD_FORM, &laid, &card_bound)?,
+            tested_cards: cx.form_owning(&CARD_FORM, &tested, &card_bound)?,
+            crossing_cards: cx.form_owning(&CARD_FORM, &crossing, &card_bound)?,
             casters: cx.form(
                 &CASTER_FORM,
                 &[(caster_shaders::POSES, Bind::Buffer(poses))],
@@ -1075,13 +1091,28 @@ impl ScatterGpu {
             return (draws, empty);
         }
         let laid = matched && self.laid_copied.is_some() && self.laid_copied == scene.index;
-        let card = draw.form(if laid {
-            &self.forms.laid_cards
+        let (first, second) = if laid {
+            match (
+                draw.form(&self.forms.tested_cards),
+                draw.form(&self.forms.crossing_cards),
+            ) {
+                (Some(tested), Some(crossing)) => (
+                    Some((tested, "cards tested")),
+                    Some((crossing, "cards crossing")),
+                ),
+                _ => (None, None),
+            }
         } else {
-            &self.forms.cards
-        });
-        if let (Some(card), Some((cards, offset))) = (card, self.card_source(view)) {
-            let record = DrawRecord::of(DrawKind::PlacedCard, 0);
+            (
+                draw.form(&self.forms.cards).map(|card| (card, "cards")),
+                None,
+            )
+        };
+        let Some((cards, offset)) = self.card_source(view) else {
+            return draws;
+        };
+        let record = DrawRecord::of(DrawKind::PlacedCard, 0);
+        for (card, what) in [first, second].into_iter().flatten() {
             draw.draw_timed(
                 &card,
                 Shape::IndirectAt {
@@ -1090,7 +1121,7 @@ impl ScatterGpu {
                     args: inputs.card_args,
                     offset,
                 },
-                || scene_label(scene, if laid { "cards laid" } else { "cards" }),
+                || scene_label(scene, what),
             );
             draws += 1;
         }
