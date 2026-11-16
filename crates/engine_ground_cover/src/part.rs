@@ -33,10 +33,7 @@ const WORD: u64 = size_of::<u32>() as u64;
 const MEGABYTE: u64 = 1 << 20;
 const ROW_BYTES: u64 = size_of::<Grow>() as u64;
 const SPOT_BYTES: u64 = size_of::<GrowSpot>() as u64;
-const RUN: [u32; 3] = [0, 1, 1];
 const RUN_BYTES: u64 = size_of::<[u32; 3]>() as u64;
-const WINDOW_BYTES: u64 = size_of::<[u32; 4]>() as u64;
-const WINDOW_STRIDE: u64 = 256;
 const FRAME_BYTES: u64 = size_of::<CoverFrame>() as u64;
 const TERRAIN_BYTES: u64 = size_of::<CoverTerrain>() as u64;
 const HEADER_BYTES: u64 = COVER_HEADER_ROWS as u64 * size_of::<[u32; 4]>() as u64;
@@ -75,14 +72,13 @@ type Held = Result<Option<MaterialHandle>, Error>;
 struct SpotLists {
     spots: Buffer<CoverGpu>,
     runs: Buffer<CoverGpu>,
-    windows: Buffer<CoverGpu>,
     running: DrawInput<CoverGpu, Own>,
     finding: ComputePipeline<CoverGpu>,
+    gathering: ComputePipeline<CoverGpu>,
     found: [u32; 3],
     started: Vec<[u32; 3]>,
     spot_bytes: u64,
     run_bytes: u64,
-    window_bytes: u64,
 }
 
 pub(crate) struct CoverGpu {
@@ -106,8 +102,7 @@ pub(crate) struct CoverGpu {
     shadows: bool,
     bins: usize,
     views: u32,
-    cells: Vec<[u32; 3]>,
-    spans: Vec<&'static str>,
+    row_count: u64,
     blade_bytes: u64,
     card_bytes: u64,
     row_bytes: u64,
@@ -128,8 +123,6 @@ impl GpuPart for CoverGpu {
         let rows = cx.buffer("cover_grow", Lifetime::Kept);
         let spots = cx.buffer("cover_spots", Lifetime::Kept);
         let runs = cx.buffer("cover_runs", Lifetime::Kept);
-        let windows = cx.buffer("cover_windows", Lifetime::Kept);
-        cx.window(windows, WINDOW_BYTES);
         let blades = cx.buffer("cover_blades", Lifetime::Kept);
         let cards = cx.buffer("cover_cards", Lifetime::Kept);
         let counts = cx.buffer("cover_counts", Lifetime::Kept);
@@ -149,6 +142,11 @@ impl GpuPart for CoverGpu {
                 (grow::GROW_RUNS, Bind::Buffer(runs)),
             ],
         )?;
+        let gathering = cx.compute_pipeline(
+            grow_pass,
+            grow::GATHER_CELLS,
+            &[(grow::GROWS, Bind::Buffer(rows)), (grow::GROW_RUNS, Bind::Buffer(runs))],
+        )?;
         let growing = cx.compute_pipeline(
             grow_pass,
             grow::GROW_COVER,
@@ -158,7 +156,7 @@ impl GpuPart for CoverGpu {
                 (grow::COUNTS, Bind::Buffer(counts)),
                 (grow::CARDS, Bind::Buffer(cards)),
                 (grow::GROW_SPOTS, Bind::Buffer(spots)),
-                (grow::GROW_ROW, Bind::Buffer(windows)),
+                (grow::GROW_RUNS, Bind::Buffer(runs)),
                 (casts::COVER_CASTS, Bind::Buffer(casts)),
             ],
         )?;
@@ -200,14 +198,13 @@ impl GpuPart for CoverGpu {
             lists: SpotLists {
                 spots,
                 runs,
-                windows,
                 running,
                 finding,
+                gathering,
                 found: [0; 3],
                 started: Vec::new(),
                 spot_bytes: SPOT_BYTES,
                 run_bytes: RUN_BYTES,
-                window_bytes: WINDOW_STRIDE,
             },
             blades,
             cards,
@@ -226,8 +223,7 @@ impl GpuPart for CoverGpu {
             shadows: false,
             bins: 0,
             views: 0,
-            cells: Vec::new(),
-            spans: Vec::new(),
+            row_count: 0,
             blade_bytes: BLADE_BYTES,
             card_bytes: CARD_BYTES,
             row_bytes: ROW_BYTES,
@@ -270,7 +266,6 @@ impl GpuPart for CoverGpu {
             self.row_bytes = ROW_BYTES;
             self.lists.spot_bytes = SPOT_BYTES;
             self.lists.run_bytes = RUN_BYTES;
-            self.lists.window_bytes = WINDOW_STRIDE;
         }
         self.drawn = plan.drawn && !plan.rows.is_empty();
         cx.write(self.table, THIN_AT, &[if self.drawn { plan.thin } else { 0.0 }]);
@@ -289,8 +284,7 @@ impl GpuPart for CoverGpu {
             let needed = [
                 (&mut self.row_bytes, size_of_val(plan.rows.as_slice()) as u64),
                 (&mut self.lists.spot_bytes, u64::from(plan.spots) * SPOT_BYTES),
-                (&mut self.lists.run_bytes, grown * RUN_BYTES),
-                (&mut self.lists.window_bytes, grown * WINDOW_STRIDE),
+                (&mut self.lists.run_bytes, (grown + 1) * RUN_BYTES),
             ];
             for (held, bytes) in needed {
                 if bytes > *held {
@@ -302,7 +296,7 @@ impl GpuPart for CoverGpu {
         let sizes = [
             (self.counts, counted),
             (self.args, (kinds * (1 + u64::from(self.views))).max(BLADE_DRAWS + bins) * DRAW_ARGS),
-            (self.casts, (2 * kinds * u64::from(self.views) * WORD).max(WINDOW_BYTES)),
+            (self.casts, (2 * kinds * u64::from(self.views) * WORD).max(WORD)),
             (self.frame, FRAME_BYTES),
             (self.blades, self.blade_bytes),
             (self.cards, self.card_bytes),
@@ -314,16 +308,6 @@ impl GpuPart for CoverGpu {
             let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, bytes);
         }
         let lists = &mut self.lists;
-        if let Allocation::Fresh = cx.allocate_buffer(lists.windows, lists.window_bytes) {
-            let stride = (WINDOW_STRIDE / WINDOW_BYTES) as usize;
-            let rows = (lists.window_bytes / WINDOW_STRIDE) as u32;
-            let mut windows = vec![[0_u32; 4]; rows as usize * stride];
-            for (row, window) in (0..rows).zip(windows.iter_mut().step_by(stride)) {
-                window[0] = row;
-            }
-            cx.write(lists.windows, 0, &windows);
-        }
-        self.cells.clear();
         if !self.drawn {
             return;
         }
@@ -331,16 +315,11 @@ impl GpuPart for CoverGpu {
         cx.write(self.rows, VIEWS_AT, &[self.views]);
         cx.write(self.frame, 0, &[plan.frame]);
         lists.started.clear();
-        lists.started.resize(plan.cells.len(), RUN);
+        lists.started.resize(plan.cells.len(), [0; 3]);
+        lists.started.push([plan.widest, 0, 0]);
         cx.write(lists.runs, 0, &lists.started);
         lists.found = plan.finding;
-        self.cells.extend_from_slice(&plan.cells);
-        for &[.., tier] in &self.cells {
-            while self.spans.len() <= tier as usize {
-                let name = format!("ground_cover_tier_{}", self.spans.len());
-                self.spans.push(Box::leak(name.into_boxed_str()));
-            }
-        }
+        self.row_count = grown;
         cx.run(self.grow);
         let thin = plan.thin.to_bits();
         cx.read_back::<BladeCounts>(thin, self.counts, 0..counted, AfterRead::Keep);
@@ -353,18 +332,9 @@ impl GpuPart for CoverGpu {
         cx.clear(self.counts);
         cx.clear(self.casts);
         cx.dispatch(&self.lists.finding, Count::Groups(self.lists.found));
-        let mut timed = None;
-        for (index, &[.., tier]) in self.cells.iter().enumerate() {
-            if timed != Some(tier) {
-                timed = Some(tier);
-                if let Some(&name) = self.spans.get(tier as usize) {
-                    cx.span(name);
-                }
-            }
-            let run = Count::Indirect(self.lists.running, index as u64 * RUN_BYTES);
-            let window = (index as u64 * WINDOW_STRIDE) as u32;
-            cx.dispatch_at(&self.growing, run, &[window]);
-        }
+        cx.dispatch(&self.lists.gathering, Count::Groups([1, 1, 1]));
+        let run = Count::Indirect(self.lists.running, self.row_count * RUN_BYTES);
+        cx.dispatch(&self.growing, run);
         cx.dispatch(&self.finishing, Count::Groups([1, 1, 1]));
         0
     }

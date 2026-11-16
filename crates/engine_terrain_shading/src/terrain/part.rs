@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     AssetLibrary, Cursor, DepthBias, Detail, DeviceLimits, Entry, Error, MaterialHandle, PassRole,
-    ProvidedAssets, Views,
+    PassViews, ProvidedAssets, Views,
 };
 use engine_open_world_kit::ground::{GroundTiles, TerrainTiles};
 use engine_open_world_kit::water::Waterline;
@@ -11,8 +11,8 @@ use engine_render::{
     Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, Draw, DrawInput, Encode,
     FaceCull, Form, FormColor, FormDepth, FormFragment, FormSide, FragmentPass, FragmentUse,
     GpuPart, Install, KindForm, KindSurface, Lifetime, Own, OwnFragments, Pass, PassFragment,
-    PerPass, Pipeline, Prepare, RoleFragments, Sampler, Scene, SceneDraw, Shape, Texture, Varyings,
-    VertexLayout, wgpu,
+    PerPass, Pipeline, Prepare, Recorded, RoleFragments, Sampler, Scene, SceneDraw, Shape, Texture,
+    Varyings, VertexLayout, wgpu,
 };
 use glam::{Mat4, Vec3};
 
@@ -58,6 +58,7 @@ pub(crate) struct Handles {
     pub(crate) tables: Buffer<TerrainGpu>,
     pub(crate) palette: Buffer<TerrainGpu>,
     pub(crate) leaves: Buffer<TerrainGpu>,
+    pub(crate) lists: Buffer<TerrainGpu>,
     pub(crate) nodes: Buffer<TerrainGpu>,
     pub(crate) watered: Buffer<TerrainGpu>,
     pub(crate) counters: Buffer<TerrainGpu>,
@@ -86,6 +87,7 @@ struct Passes {
     begin: Pass<TerrainGpu>,
     copy_args: Pass<TerrainGpu>,
     subdivide: Pass<TerrainGpu>,
+    listed: [Pass<TerrainGpu>; 2],
     bounce: Pass<TerrainGpu>,
     sun: Pass<TerrainGpu>,
     ids: Pass<TerrainGpu>,
@@ -101,12 +103,37 @@ struct Pipelines {
     begin: [ComputePipeline<TerrainGpu>; SURFACE_SLOTS],
     decide: [ComputePipeline<TerrainGpu>; SURFACE_SLOTS],
     apply: [ComputePipeline<TerrainGpu>; SURFACE_SLOTS],
+    listed: [[ComputePipeline<TerrainGpu>; SURFACE_SLOTS]; 2],
 }
 
 struct Inputs {
     args: DrawInput<TerrainGpu, Own>,
     meshlet: DrawInput<TerrainGpu, Own>,
     subdivision_args: DrawInput<TerrainGpu, Own>,
+    lists: DrawInput<TerrainGpu, Own>,
+    listed: [DrawInput<TerrainGpu, Own>; 2],
+}
+
+#[derive(Default)]
+struct Listing {
+    main: bool,
+    built: [bool; 2],
+}
+
+impl Listing {
+    fn ready(&self, list: usize) -> bool {
+        self.main && self.built[list]
+    }
+}
+
+struct SubdivisionInstall {
+    clear_counters: Pass<TerrainGpu>,
+    begin: Pass<TerrainGpu>,
+    copy_args: Pass<TerrainGpu>,
+    subdivide: Pass<TerrainGpu>,
+    list_drawn: Pass<TerrainGpu>,
+    list_seen: Pass<TerrainGpu>,
+    pipelines: [[ComputePipeline<TerrainGpu>; SURFACE_SLOTS]; 5],
 }
 
 const CASTER_STREAMS: &[VertexLayout] = &[PATCH_STREAM];
@@ -196,28 +223,60 @@ const IDS: PassFragment = ids_fragment(crate::shaders::terrain_shading::draw::FS
 const IDS_HOLES: PassFragment =
     ids_fragment(crate::shaders::terrain_shading::draw::FS_TERRAIN_IDS_HOLES);
 
-const RESOLVE_FORM: KindForm = KindForm {
-    kind: TERRAIN,
-    placed: FormSide::pulled(crate::shaders::terrain_shading::draw::VS_TERRAIN_RESOLVE),
-    owned: None,
-    varyings: Varyings::Own(&OwnFragments::NONE),
-};
+const fn resolve_form(vertex: Entry) -> KindForm {
+    KindForm {
+        kind: TERRAIN,
+        placed: FormSide::pulled(vertex),
+        owned: None,
+        varyings: Varyings::Own(&OwnFragments::NONE),
+    }
+}
 
-const fn resolve_fragment(entry: Entry) -> PassFragment {
+const RESOLVE_FORMS: [KindForm; 2] = [
+    resolve_form(crate::shaders::terrain_shading::resolve::VS_TERRAIN_RESOLVE_FAR),
+    resolve_form(crate::shaders::terrain_shading::resolve::VS_TERRAIN_RESOLVE),
+];
+
+const fn resolve_fragment(entry: Entry, depth: FormDepth) -> PassFragment {
     PassFragment {
         pass: FragmentPass::Own(RESOLVE_PASS),
         side: None,
         fragment: FormFragment::Entry {
             entry,
             cull: FaceCull::None,
-            depth: FormDepth::Overwritten,
+            depth,
             color: FormColor::Written,
         },
     }
 }
 
-const RESOLVE: PassFragment =
-    resolve_fragment(crate::shaders::terrain_shading::draw::FS_TERRAIN_RESOLVE);
+const RESOLVES: [PassFragment; 2] = [
+    resolve_fragment(
+        crate::shaders::terrain_shading::resolve::FS_TERRAIN_RESOLVE_FAR,
+        FormDepth::Tested,
+    ),
+    resolve_fragment(
+        crate::shaders::terrain_shading::resolve::FS_TERRAIN_RESOLVE,
+        FormDepth::Overwritten,
+    ),
+];
+
+const WHOLE_SCREEN: std::ops::Range<u32> = 0..3;
+const UNSPLIT_SCREEN: std::ops::Range<u32> = 3..6;
+
+fn resolve_forms(
+    cx: &mut Install<'_, TerrainGpu>,
+    ids: Texture<TerrainGpu>,
+) -> Result<[Form<TerrainGpu>; 2], Error> {
+    let bound = [(
+        crate::shaders::terrain_shading::resolve::TERRAIN_IDS_TEXTURE,
+        Bind::Texture(ids),
+    )];
+    Ok([
+        cx.form_owning(&RESOLVE_FORMS[0], &[RESOLVES[0]], &bound)?,
+        cx.form_owning(&RESOLVE_FORMS[1], &[RESOLVES[1]], &bound)?,
+    ])
+}
 
 const NO_FORM: &str = "terrain has no form in this pass";
 const TERRAIN_TILES: &str = "the terrain tiles";
@@ -229,10 +288,12 @@ enum Joined {
     Ground {
         args: DrawInput<TerrainGpu, Scene>,
         meshlet: DrawInput<TerrainGpu, Scene>,
+        lists: DrawInput<TerrainGpu, Scene>,
     },
     Seen {
         args: DrawInput<TerrainGpu, Scene>,
         meshlet: DrawInput<TerrainGpu, Scene>,
+        lists: DrawInput<TerrainGpu, Scene>,
     },
     Casters {
         patches: DrawInput<TerrainGpu, Scene>,
@@ -252,7 +313,7 @@ pub(crate) struct TerrainGpu {
     inputs: Inputs,
     form: Form<TerrainGpu>,
     seen: [Form<TerrainGpu>; 2],
-    resolve: Form<TerrainGpu>,
+    resolve: [Form<TerrainGpu>; 2],
     holed: Result<Option<MaterialHandle>, Error>,
     joined: PerPass<Joined>,
     atlas: TileAtlas,
@@ -275,6 +336,7 @@ pub(crate) struct TerrainGpu {
     deferred: bool,
     temporal: bool,
     render: (u32, u32),
+    listing: Listing,
 }
 
 type Lists = (
@@ -315,8 +377,7 @@ impl GpuPart for TerrainGpu {
     )]
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use crate::shaders::terrain_shading::{
-            ancestors, control, draw, faces, field, horizons, normals, peaks, sky, subdivision,
-            surface, tables,
+            ancestors, control, draw, faces, field, horizons, normals, peaks, sky, surface, tables,
         };
         let handles = Handles {
             heights: cx.texture("heights", HEIGHT_FORMAT, Lifetime::Kept),
@@ -333,6 +394,7 @@ impl GpuPart for TerrainGpu {
             tables: cx.buffer("tables", Lifetime::Kept),
             palette: cx.buffer("palette", Lifetime::Kept),
             leaves: cx.buffer("leaves", Lifetime::Kept),
+            lists: cx.buffer("leaf_lists", Lifetime::Kept),
             nodes: cx.buffer("nodes", Lifetime::Kept),
             watered: cx.buffer("watered_leaves", Lifetime::Kept),
             counters: cx.buffer("counters", Lifetime::Kept),
@@ -387,6 +449,7 @@ impl GpuPart for TerrainGpu {
         cx.frame(sky::TERRAIN_SKY_SAMPLER, Bind::Sampler(h.linear))?;
         cx.frame(surface::TERRAIN_ERRORS, Bind::Texture(h.errors))?;
         cx.frame(surface::WATER_ERRORS, Bind::Texture(h.water_errors))?;
+        cx.frame(surface::TERRAIN_LEAF_LISTS, Bind::Buffer(h.lists))?;
         cx.frame(
             horizons::TERRAIN_HORIZONS,
             Bind::Texture(horizon_maps.texture),
@@ -423,28 +486,8 @@ impl GpuPart for TerrainGpu {
             .id();
         let (summaries_pass, summary_pipelines) =
             install_summaries(cx, h, [control_pass, ancestors_pass])?;
-        let clear_counters = cx.clear("clear_surface_counters", h.counters);
-        let begin = cx
-            .pass("subdivision_begin")
-            .label("engine/terrain-subdivision-arguments")
-            .after(clear_counters)
-            .after(control_pass)
-            .after(normals_pass)
-            .after(peaks_pass)
-            .after(ancestors_pass)
-            .id();
-        let copy_args = cx.copy(
-            "subdivision_args",
-            engine_render::Copied::Buffer(h.counters),
-            engine_render::Copied::Buffer(h.args),
-        );
-        let subdivide = cx
-            .pass("terrain_subdivision")
-            .label("engine/terrain-subdivision")
-            .span("terrain_subdivision")
-            .after(copy_args)
-            .after(begin)
-            .id();
+        let after = [control_pass, normals_pass, peaks_pass, ancestors_pass];
+        let tree = install_subdivision(cx, h, after)?;
         let bounce_pass = cx
             .pass("bounce")
             .label("engine/terrain-bounce")
@@ -461,6 +504,7 @@ impl GpuPart for TerrainGpu {
             .pass(IDS_PASS)
             .label("engine/terrain-ids")
             .at(AttachPoint::Opaque)
+            .after(tree.list_seen)
             .color(h.ids, engine_render::Access::Clear)
             .id();
         let resolve_pass = cx
@@ -527,30 +571,7 @@ impl GpuPart for TerrainGpu {
                 ],
             )?,
         ];
-        let slot_binds = |slot: usize| {
-            let (uniform, tree) = h.slots[slot];
-            [
-                (subdivision::SUBDIVISION, Bind::Buffer(uniform)),
-                (subdivision::SUBDIVISION_TREE, Bind::Buffer(tree)),
-                (subdivision::SUBDIVISION_NODES, Bind::Buffer(h.nodes)),
-                (subdivision::SUBDIVISION_LEAVES, Bind::Buffer(h.leaves)),
-                (subdivision::SUBDIVISION_ARGS, Bind::Buffer(h.counters)),
-                (subdivision::SUBDIVISION_WATERED, Bind::Buffer(h.watered)),
-            ]
-        };
-        let mut begins = Vec::with_capacity(SURFACE_SLOTS);
-        let mut decides = Vec::with_capacity(SURFACE_SLOTS);
-        let mut applies = Vec::with_capacity(SURFACE_SLOTS);
-        for slot in 0..SURFACE_SLOTS {
-            let bound = reached(cx, subdivision::SUBDIVIDE_BEGIN, slot_binds(slot));
-            begins.push(cx.compute_pipeline(begin, subdivision::SUBDIVIDE_BEGIN, &bound)?);
-            let bound = reached(cx, subdivision::SUBDIVIDE_DECIDE, slot_binds(slot));
-            decides.push(cx.compute_pipeline(subdivide, subdivision::SUBDIVIDE_DECIDE, &bound)?);
-            let bound = reached(cx, subdivision::SUBDIVIDE_APPLY, slot_binds(slot));
-            applies.push(cx.compute_pipeline(subdivide, subdivision::SUBDIVIDE_APPLY, &bound)?);
-        }
-        let resolve_bound = [(draw::TERRAIN_IDS_TEXTURE, Bind::Texture(h.ids))];
-        let resolve = cx.form_owning(&RESOLVE_FORM, &[RESOLVE], &resolve_bound)?;
+        let resolve = resolve_forms(cx, h.ids)?;
         let form = cx.form_for(&TERRAIN_FORM, &[PassRole::Depth], &[])?;
         let seen = [
             cx.form_owning(&SEEN_FORM, &[IDS], &[])?,
@@ -564,17 +585,24 @@ impl GpuPart for TerrainGpu {
             (PassRole::Depth, false) => Joined::Ground {
                 args: cx.draw_input(pass.scene, h.args),
                 meshlet: cx.draw_input(pass.scene, h.meshlet),
+                lists: cx.draw_input(pass.scene, h.counters),
             },
             (PassRole::Lit | PassRole::Shown, _) => Joined::Seen {
                 args: cx.draw_input(pass.scene, h.args),
                 meshlet: cx.draw_input(pass.scene, h.meshlet),
+                lists: cx.draw_input(pass.scene, h.counters),
             },
             (PassRole::Blended, _) => Joined::Elsewhere(NEVER_BLENDS),
         });
         let inputs = Inputs {
             args: cx.draw_input(ids_pass, h.args),
             meshlet: cx.draw_input(ids_pass, h.meshlet),
-            subdivision_args: cx.draw_input(subdivide, h.args),
+            subdivision_args: cx.draw_input(tree.subdivide, h.args),
+            lists: cx.draw_input(ids_pass, h.counters),
+            listed: [
+                cx.draw_input(tree.list_drawn, h.args),
+                cx.draw_input(tree.list_seen, h.args),
+            ],
         };
         let sources = BounceSources {
             horizons: &horizon_maps,
@@ -584,9 +612,7 @@ impl GpuPart for TerrainGpu {
         };
         let bounce = Bounce::install(cx, &sources, bounce_pass)?;
         let sun = SunGpu::install(cx, &horizon_maps, sun_pass)?;
-        let to_array = |list: Vec<ComputePipeline<TerrainGpu>>| -> [ComputePipeline<TerrainGpu>; SURFACE_SLOTS] {
-            std::array::from_fn(|slot| list[slot])
-        };
+        let [begin, decide, apply, list_drawn, list_seen] = tree.pipelines;
         Ok(Self {
             passes: Passes {
                 normals: normals_pass,
@@ -594,10 +620,11 @@ impl GpuPart for TerrainGpu {
                 peaks: peaks_pass,
                 ancestors: ancestors_pass,
                 summaries: summaries_pass,
-                clear_counters,
-                begin,
-                copy_args,
-                subdivide,
+                clear_counters: tree.clear_counters,
+                begin: tree.begin,
+                copy_args: tree.copy_args,
+                subdivide: tree.subdivide,
+                listed: [tree.list_drawn, tree.list_seen],
                 bounce: bounce_pass,
                 sun: sun_pass,
                 ids: ids_pass,
@@ -609,9 +636,10 @@ impl GpuPart for TerrainGpu {
                 peaks: std::array::from_fn(|mip| peaks_pipelines[mip]),
                 ancestors: ancestors_pipelines,
                 summaries: summary_pipelines,
-                begin: to_array(begins),
-                decide: to_array(decides),
-                apply: to_array(applies),
+                begin,
+                decide,
+                apply,
+                listed: [list_drawn, list_seen],
             },
             inputs,
             form,
@@ -639,6 +667,7 @@ impl GpuPart for TerrainGpu {
             deferred: false,
             temporal: false,
             render: (0, 0),
+            listing: Listing::default(),
             handles,
         })
     }
@@ -878,26 +907,8 @@ impl GpuPart for TerrainGpu {
         inputs.extend_from_slice(bytemuck::cast_slice(palette));
         inputs.extend_from_slice(bytemuck::cast_slice(rungs));
         self.surface.settle(cx, h, (inputs, changed));
-        if self.surface.any() {
-            cx.run(self.passes.clear_counters);
-            cx.run(self.passes.begin);
-            let bytes = self.surface.counter_bytes().end;
-            cx.copy(
-                self.passes.copy_args,
-                &[engine_render::CopyRegion::Bytes {
-                    from: 0,
-                    to: 0,
-                    size: bytes,
-                }],
-            );
-            cx.run(self.passes.subdivide);
-            cx.read_back::<SurfaceTotals>(
-                SURFACE_TOTALS,
-                h.counters,
-                self.surface.counter_bytes(),
-                engine_render::AfterRead::Keep,
-            );
-        }
+        self.listing.built = [false; 2];
+        self.run_subdivision(cx);
         self.deferred = !self.frame.terrains.is_empty();
         if self.deferred {
             let display = frame.frame().display_size;
@@ -913,6 +924,10 @@ impl GpuPart for TerrainGpu {
             cx.release(h.ids);
         }
         self.deliver_stats(cx);
+    }
+
+    fn view(&mut self, _facts: &engine_core::ViewFacts, cx: &mut Prepare<'_, Self>) {
+        self.listing.main = cx.view_index() == 0;
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
@@ -970,6 +985,18 @@ impl GpuPart for TerrainGpu {
             self.subdivision_recorded = dispatched == 2 * self.surface.slots().count() as u32;
             return dispatched;
         }
+        if let Some(list) = self.passes.listed.iter().position(|&listed| listed == pass) {
+            let mut dispatched = 0;
+            for slot in self.surface.slots() {
+                dispatched += cx.dispatch(
+                    &self.pipelines.listed[list][slot],
+                    Count::Indirect(self.inputs.listed[list], self.surface.listed_offset(slot)),
+                );
+            }
+            self.listing.built[list] =
+                cx.view_index() == 0 && dispatched == self.surface.slots().count() as u32;
+            return dispatched;
+        }
         if pass == self.passes.bounce {
             return self.bounce.encode(cx);
         }
@@ -989,6 +1016,32 @@ impl GpuPart for TerrainGpu {
 }
 
 impl TerrainGpu {
+    fn run_subdivision(&self, cx: &mut Prepare<'_, Self>) {
+        if !self.surface.any() {
+            return;
+        }
+        cx.run(self.passes.clear_counters);
+        cx.run(self.passes.begin);
+        let bytes = self.surface.counter_bytes().end;
+        cx.copy(
+            self.passes.copy_args,
+            &[engine_render::CopyRegion::Bytes {
+                from: 0,
+                to: 0,
+                size: bytes,
+            }],
+        );
+        cx.run(self.passes.subdivide);
+        cx.run(self.passes.listed[0]);
+        cx.run(self.passes.listed[1]);
+        cx.read_back::<SurfaceTotals>(
+            SURFACE_TOTALS,
+            self.handles.counters,
+            self.surface.counter_bytes(),
+            engine_render::AfterRead::Keep,
+        );
+    }
+
     fn deliver_stats(&self, cx: &mut Prepare<'_, Self>) {
         let wanted = self.surface.slots().count() as u32 + self.surface.dropped();
         let stats = DrawnStats {
@@ -1013,6 +1066,12 @@ impl TerrainGpu {
     fn draw_ids(&self, draw: &mut Draw<'_, Self, Own>) -> u32 {
         let mut draws = 0;
         let pipelines = [draw.form(&self.seen[0]), draw.form(&self.seen[1])];
+        let list = [1, 0].into_iter().find(|&list| self.listing.ready(list));
+        let args = if list.is_some() {
+            self.inputs.lists
+        } else {
+            self.inputs.args
+        };
         for holes in [false, true] {
             for terrain in self
                 .frame
@@ -1020,13 +1079,17 @@ impl TerrainGpu {
                 .iter()
                 .filter(|terrain| terrain.holes == holes)
             {
-                for (pipeline, offset, cut) in self.split_draws(terrain, pipelines) {
+                let split = match list {
+                    Some(list) => self.listed_draws(terrain, pipelines, list),
+                    None => self.split_draws(terrain, pipelines),
+                };
+                for (pipeline, offset, cut) in split {
                     draw.draw_timed(
                         &pipeline,
                         Shape::Indirect {
                             vertices: &[],
                             indices: Some(self.inputs.meshlet),
-                            args: self.inputs.args,
+                            args,
                             offset,
                             material: None,
                         },
@@ -1037,6 +1100,29 @@ impl TerrainGpu {
             }
         }
         draws
+    }
+
+    fn listed_draws<T: Copy>(
+        &self,
+        terrain: &FrameTerrain,
+        [plain, holed]: [Option<T>; 2],
+        list: usize,
+    ) -> Vec<(T, u64, bool)> {
+        let Some([whole, cut]) = self.surface.list_offsets(terrain.terrain, list == 1) else {
+            return Vec::new();
+        };
+        if !terrain.holes {
+            return plain
+                .map(|plain| vec![(plain, whole, false), (plain, cut, false)])
+                .unwrap_or_default();
+        }
+        let Some(holed) = holed else {
+            return Vec::new();
+        };
+        vec![
+            (plain.unwrap_or(holed), whole, plain.is_none()),
+            (holed, cut, true),
+        ]
     }
 
     fn split_draws<T: Copy>(
@@ -1063,7 +1149,8 @@ impl TerrainGpu {
     }
 
     fn draw_resolve(&self, draw: &mut Draw<'_, Self, Own>) -> u32 {
-        let Some(pipeline) = draw.form(&self.resolve) else {
+        let (Some(far), Some(near)) = (draw.form(&self.resolve[0]), draw.form(&self.resolve[1]))
+        else {
             return 0;
         };
         let mut draws = 0;
@@ -1073,15 +1160,18 @@ impl TerrainGpu {
             };
             draw.scissor(rect);
             let index = terrain.terrain as u32;
-            draw.draw(
-                &pipeline,
-                Shape::Pulled {
-                    vertices: 0..3,
-                    instances: index..index + 1,
-                    material: None,
-                },
-            );
-            draws += 1;
+            let shape = |vertices| Shape::Pulled {
+                vertices,
+                instances: index..index + 1,
+                material: None,
+            };
+            let split = draw.draw(&far, shape(WHOLE_SCREEN));
+            let vertices = match split {
+                Recorded::Exact => WHOLE_SCREEN,
+                Recorded::StandIn | Recorded::Waiting | Recorded::Refused => UNSPLIT_SCREEN,
+            };
+            draw.draw(&near, shape(vertices));
+            draws += 2;
         }
         draw.scissor([0, 0, self.render.0, self.render.1]);
         draws
@@ -1092,7 +1182,11 @@ impl TerrainGpu {
             return draw.skip(NO_FORM);
         };
         match joined {
-            Joined::Ground { args, meshlet } => {
+            Joined::Ground {
+                args,
+                meshlet,
+                lists,
+            } => {
                 let Some(pipeline) = draw.form(&self.form) else {
                     return draw.skip(NO_FORM);
                 };
@@ -1104,10 +1198,14 @@ impl TerrainGpu {
                 self.draw_surface(
                     (scene, draw),
                     [Ok((pipeline, None)), holed],
-                    (*args, *meshlet),
+                    [*args, *meshlet, *lists],
                 )
             }
-            Joined::Seen { args, meshlet } => {
+            Joined::Seen {
+                args,
+                meshlet,
+                lists,
+            } => {
                 if !self.drawn {
                     return self.unlaid(draw);
                 }
@@ -1118,7 +1216,7 @@ impl TerrainGpu {
                 self.draw_surface(
                     (scene, draw),
                     [Ok((plain, None)), Ok((holes, None))],
-                    (*args, *meshlet),
+                    [*args, *meshlet, *lists],
                 )
             }
             Joined::Casters { patches, grid } => {
@@ -1162,11 +1260,12 @@ impl TerrainGpu {
         &self,
         (scene, draw): (&SceneDraw, &mut Draw<'_, Self, Scene>),
         surfaces: Surfaces<'_>,
-        (args, meshlet): (DrawInput<Self, Scene>, DrawInput<Self, Scene>),
+        [args, meshlet, lists]: [DrawInput<Self, Scene>; 3],
     ) -> u32 {
         let mut draws = 0;
         let mut unheld = None;
         let pipelines = [surfaces[0].ok(), surfaces[1].ok()];
+        let listed = scene.view.is_none() && self.listing.ready(0);
         for holes in [false, true] {
             for terrain in self
                 .frame
@@ -1180,7 +1279,12 @@ impl TerrainGpu {
                     unheld = Some(reason);
                     continue;
                 }
-                for ((pipeline, material), offset, cut) in self.split_draws(terrain, pipelines) {
+                let (args, split) = if listed {
+                    (lists, self.listed_draws(terrain, pipelines, 0))
+                } else {
+                    (args, self.split_draws(terrain, pipelines))
+                };
+                for ((pipeline, material), offset, cut) in split {
                     draw.draw_timed(
                         &pipeline,
                         Shape::Indirect {
@@ -1227,6 +1331,84 @@ fn drawn_label(pass: &str, view: Option<u32>, holes: bool, terrain: usize) -> St
 }
 
 type SummaryPipelines =[ComputePipeline<TerrainGpu>; SUMMARY_MIPS as usize];
+
+fn install_subdivision(
+    cx: &mut Install<'_, TerrainGpu>,
+    h: &Handles,
+    after: [Pass<TerrainGpu>; 4],
+) -> Result<SubdivisionInstall, Error> {
+    use crate::shaders::terrain_shading::subdivision;
+    let clear_counters = cx.clear("clear_surface_counters", h.counters);
+    let mut begin = cx
+        .pass("subdivision_begin")
+        .label("engine/terrain-subdivision-arguments")
+        .after(clear_counters);
+    for pass in after {
+        begin = begin.after(pass);
+    }
+    let begin = begin.id();
+    let copy_args = cx.copy(
+        "subdivision_args",
+        engine_render::Copied::Buffer(h.counters),
+        engine_render::Copied::Buffer(h.args),
+    );
+    let subdivide = cx
+        .pass("terrain_subdivision")
+        .label("engine/terrain-subdivision")
+        .span("terrain_subdivision")
+        .after(copy_args)
+        .after(begin)
+        .id();
+    let list_drawn = cx
+        .pass("terrain_leaf_lists")
+        .label("engine/terrain-leaf-lists")
+        .after(subdivide)
+        .id();
+    let list_seen = cx
+        .pass("terrain_seen_lists")
+        .label("engine/terrain-seen-lists")
+        .at(AttachPoint::Opaque)
+        .views(PassViews::Main)
+        .after(list_drawn)
+        .id();
+    let slot_binds = |slot: usize| {
+        let (uniform, tree) = h.slots[slot];
+        [
+            (subdivision::SUBDIVISION, Bind::Buffer(uniform)),
+            (subdivision::SUBDIVISION_TREE, Bind::Buffer(tree)),
+            (subdivision::SUBDIVISION_NODES, Bind::Buffer(h.nodes)),
+            (subdivision::SUBDIVISION_LEAVES, Bind::Buffer(h.leaves)),
+            (subdivision::SUBDIVISION_ARGS, Bind::Buffer(h.counters)),
+            (subdivision::SUBDIVISION_WATERED, Bind::Buffer(h.watered)),
+            (subdivision::SUBDIVISION_LISTS, Bind::Buffer(h.lists)),
+        ]
+    };
+    let entries = [
+        (begin, subdivision::SUBDIVIDE_BEGIN),
+        (subdivide, subdivision::SUBDIVIDE_DECIDE),
+        (subdivide, subdivision::SUBDIVIDE_APPLY),
+        (list_drawn, subdivision::SUBDIVIDE_LIST_DRAWN),
+        (list_seen, subdivision::SUBDIVIDE_LIST_SEEN),
+    ];
+    let mut pipelines = Vec::with_capacity(entries.len() * SURFACE_SLOTS);
+    for (pass, entry) in entries {
+        for slot in 0..SURFACE_SLOTS {
+            let bound = reached(cx, entry, slot_binds(slot));
+            pipelines.push(cx.compute_pipeline(pass, entry, &bound)?);
+        }
+    }
+    Ok(SubdivisionInstall {
+        clear_counters,
+        begin,
+        copy_args,
+        subdivide,
+        list_drawn,
+        list_seen,
+        pipelines: std::array::from_fn(|entry| {
+            std::array::from_fn(|slot| pipelines[entry * SURFACE_SLOTS + slot])
+        }),
+    })
+}
 
 fn install_summaries(
     cx: &mut Install<'_, TerrainGpu>,

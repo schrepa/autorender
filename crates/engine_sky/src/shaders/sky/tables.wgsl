@@ -162,19 +162,36 @@ fn around(azimuth: f32, elevation: f32) -> vec3<f32> {
     return vec3<f32>(cos(azimuth) * cos(elevation), sin(elevation), sin(azimuth) * cos(elevation));
 }
 
-@compute @workgroup_size(1)
-fn derive_light() {
-    let r = air_radius();
-    let sun = normalize(sky_air.sun.xyz);
-    let sun_color = sky_air.ozone.w * sun_transmittance(r, sun.y);
-    let zenith = view_light(vec3<f32>(0.0, 1.0, 0.0));
-    var horizon = vec3<f32>(0.0);
-    for (var index = 0u; index < 8u; index++) {
-        horizon += view_light(around(f32(index) * SKY_PI * 0.25, 0.1));
+const DERIVE_LANES: u32 = 64u;
+const HORIZON_TAPS: u32 = 8u;
+
+struct DerivedTap {
+    clear: vec3<f32>,
+    light: vec3<f32>,
+    direction: vec3<f32>,
+}
+
+var<workgroup> derived_taps: array<DerivedTap, DERIVE_LANES>;
+var<workgroup> derived_views: array<vec3<f32>, 9>;
+
+fn derived_tap(tap: u32, turns: u32, rises: u32) -> DerivedTap {
+    let rise = tap / turns;
+    let turn = tap % turns;
+    let up = (f32(rise) + 0.5) / f32(rises);
+    let across = sqrt(1.0 - up * up);
+    let angle = (f32(turn) + 0.5 * f32(rise & 1u)) * SKY_TURN / f32(turns);
+    let direction = vec3<f32>(cos(angle) * across, up, sin(angle) * across);
+    let clear = view_light(direction);
+    return DerivedTap(clear, clouded_light(clear, direction), direction);
+}
+
+@compute @workgroup_size(DERIVE_LANES)
+fn derive_light(@builtin(local_invocation_index) lane: u32) {
+    if lane < HORIZON_TAPS {
+        derived_views[lane] = view_light(around(f32(lane) * SKY_PI * 0.25, 0.1));
+    } else if lane == HORIZON_TAPS {
+        derived_views[lane] = view_light(vec3<f32>(0.0, 1.0, 0.0));
     }
-    horizon /= 8.0;
-    let night = (NIGHT + MOON_NIGHT * (sky_air.moon.w * max(sky_air.moon.y, 0.0)))
-        * sky_air.ozone.w * SKY_PI;
     var open = vec3<f32>(0.0);
     var level = vec3<f32>(0.0);
     var east = vec3<f32>(0.0);
@@ -183,23 +200,42 @@ fn derive_light() {
     var south = vec3<f32>(0.0);
     let turns = sky_domes.taps.x;
     let rises = sky_domes.taps.y;
-    let tap_light = 2.0 / f32(turns * rises);
-    for (var rise = 0u; rise < rises; rise++) {
-        let up = (f32(rise) + 0.5) / f32(rises);
-        let across = sqrt(1.0 - up * up);
-        for (var turn = 0u; turn < turns; turn++) {
-            let angle = (f32(turn) + 0.5 * f32(rise & 1u)) * SKY_TURN / f32(turns);
-            let direction = vec3<f32>(cos(angle) * across, up, sin(angle) * across);
-            let clear = view_light(direction);
-            let light = clouded_light(clear, direction);
-            open += clear * direction.y;
-            level += light * direction.y;
-            east += light * max(direction.x, 0.0);
-            west += light * max(-direction.x, 0.0);
-            north += light * max(direction.z, 0.0);
-            south += light * max(-direction.z, 0.0);
+    let taps = turns * rises;
+    for (var first = 0u; first < taps; first += DERIVE_LANES) {
+        if first + lane < taps {
+            derived_taps[lane] = derived_tap(first + lane, turns, rises);
         }
+        workgroupBarrier();
+        if lane == 0u {
+            for (var index = 0u; index < min(DERIVE_LANES, taps - first); index++) {
+                let light = derived_taps[index].light;
+                let direction = derived_taps[index].direction;
+                open += derived_taps[index].clear * direction.y;
+                level += light * direction.y;
+                east += light * max(direction.x, 0.0);
+                west += light * max(-direction.x, 0.0);
+                north += light * max(direction.z, 0.0);
+                south += light * max(-direction.z, 0.0);
+            }
+        }
+        workgroupBarrier();
     }
+    workgroupBarrier();
+    if lane != 0u {
+        return;
+    }
+    let r = air_radius();
+    let sun = normalize(sky_air.sun.xyz);
+    let sun_color = sky_air.ozone.w * sun_transmittance(r, sun.y);
+    let zenith = derived_views[HORIZON_TAPS];
+    var horizon = vec3<f32>(0.0);
+    for (var index = 0u; index < HORIZON_TAPS; index++) {
+        horizon += derived_views[index];
+    }
+    horizon /= 8.0;
+    let night = (NIGHT + MOON_NIGHT * (sky_air.moon.w * max(sky_air.moon.y, 0.0)))
+        * sky_air.ozone.w * SKY_PI;
+    let tap_light = 2.0 / f32(turns * rises);
     open *= tap_light;
     level *= tap_light;
     let upright = (east + west + north + south) * (0.25 * tap_light);

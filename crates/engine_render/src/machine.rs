@@ -67,15 +67,19 @@ pub(crate) struct Stage {
 }
 
 impl Stage {
+    pub(crate) fn text_key(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        self.composed.text.hash(&mut hasher);
+        hasher.finish()
+    }
+
     pub(crate) fn shader(
         &self,
         device: &wgpu::Device,
         shaders: &mut BTreeMap<u64, wgpu::ShaderModule>,
     ) -> wgpu::ShaderModule {
-        let mut hasher = DefaultHasher::new();
-        self.composed.text.hash(&mut hasher);
         shaders
-            .entry(hasher.finish())
+            .entry(self.text_key())
             .or_insert_with(|| {
                 device.create_shader_module(wgpu::ShaderModuleDescriptor {
                     label: Some(self.entry.name()),
@@ -249,7 +253,7 @@ pub(crate) fn pass_set(outputs: &[OutputDecl], pass: &PassDecl) -> Vec<SetFormat
 fn written_module(
     declared: &Declared,
     decl: &PipelineDecl,
-    outputs: &[OutputDecl],
+    (outputs, linker): (&[OutputDecl], &Linker),
     (path, problems): (&str, &mut Vec<Error>),
 ) -> Option<Option<(String, String)>> {
     let mut found: Option<(bool, Vec<u32>)> = None;
@@ -286,7 +290,16 @@ fn written_module(
             .iter()
             .filter_map(|at| outputs.get(*at as usize))
             .collect();
-        crate::shared::pass_module(colored, &listed)
+        let shades = colored
+            || listed.iter().any(|output| {
+                output.module.as_deref().is_some_and(|module| {
+                    crate::shared::reads_shaded(
+                        linker.text(module).unwrap_or_default(),
+                        output.name,
+                    )
+                })
+            });
+        crate::shared::pass_module(colored, &listed, shades)
     }))
 }
 
@@ -566,8 +579,12 @@ impl Machine {
                     .collect::<Vec<_>>()
                     .join("+")
             );
-            let Some(writes) = written_module(&declared, decl, &outputs, (&named, &mut *problems))
-            else {
+            let Some(writes) = written_module(
+                &declared,
+                decl,
+                (&outputs, &linker),
+                (&named, &mut *problems),
+            ) else {
                 continue;
             };
             let (mut stages, mut reached, mut failed) = (Vec::new(), Reached::new(), false);
