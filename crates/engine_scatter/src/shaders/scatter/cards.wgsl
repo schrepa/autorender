@@ -1,4 +1,4 @@
-import package::engine::shading::{SurfaceInput, SurfacePoint};
+import package::engine::shading::SurfacePoint;
 import package::engine::slots::{derived, set_direct_softness, set_metalness, set_roughness,
     set_transmission};
 import package::face::impostors::{CardDebugTargets, CardShaded, CardVertex, ImpostorRecord,
@@ -12,8 +12,8 @@ import package::face::debug::debug_record_with_kind;
 import package::generated::kinds::KIND_PLACED;
 import package::generated::writes::{DepthOutputs, Outputs, depth_outputs, outputs};
 import package::scatter::faces::placed_tiles::placed_impostor;
-import package::scatter::grounding::{grounded_color, grounded_metalness, grounded_normal,
-    grounded_roughness};
+import package::scatter::grounding::{ground_color, ground_metalness, ground_normal,
+    ground_roughness, grounding_of};
 import package::scatter::leaves::{carried_look, light_through, varied};
 import package::scatter::values::placed_values_of;
 import package::engine::presentation::ROUNDING_MARGIN;
@@ -48,23 +48,20 @@ fn card_of(input: PlacedCardVertex) -> CardVertex {
 }
 
 fn plant_point(baked: SurfacePoint, slot: u32) -> SurfacePoint {
-    var input: SurfaceInput;
-    input.world = baked.world;
-    input.kind = KIND_PLACED;
-    input.object = slot;
+    let values = placed_values_of(KIND_PLACED, slot);
     var point = baked;
     var color = baked.base_color;
     if baked.kind == SURFACE_THIN {
-        let values = placed_values_of(KIND_PLACED, slot);
         let look = carried_look(values.look);
         color = varied(color, values.tint, look);
         point = set_transmission(point, light_through(look, baked.occlusion));
         point = set_direct_softness(point, look.softness);
     }
-    point.base_color = grounded_color(input, color);
-    point.normal = grounded_normal(input, baked.normal);
-    point = set_roughness(point, grounded_roughness(input, baked.roughness));
-    point = set_metalness(point, grounded_metalness(input, baked.metalness));
+    let at = grounding_of(values, baked.world);
+    point.base_color = ground_color(at, color);
+    point.normal = ground_normal(at, baked.normal);
+    point = set_roughness(point, ground_roughness(at, baked.roughness));
+    point = set_metalness(point, ground_metalness(at, baked.metalness));
     return derived(point);
 }
 
@@ -179,7 +176,7 @@ fn laid_card(input: PlacedCardVertex) -> LaidCard {
     if !seen {
         discard;
     }
-    return LaidCard(card, impostor, baked, depth, placed_card_level(card, impostor), seen);
+    return LaidCard(card, impostor, baked, depth, level, seen);
 }
 
 fn laid_shaded(input: PlacedCardVertex, laid: LaidCard) -> CardShaded {
