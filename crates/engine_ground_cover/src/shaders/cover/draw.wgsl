@@ -2,11 +2,12 @@ import package::cover::faces::cover::{cover_card_look, cover_cell, cover_shape};
 import package::cover::laws::{BLADE_HALF, BLADE_SIZE, BLADE_UPPER, CARD_CELL, CARD_JOINTS,
     CARD_MIRRORED, CARD_TINT_RANGE, COVER_DRAW_VERTICES, FLAT_JOINTS, FORM_BLUNT, FORM_FLAT,
     STRAIGHT_JOINTS, blade_taper};
+import package::cover::spine::{SpineEnds, blade_middle, blade_side, cover_leaning, cover_spine,
+    cover_turn, spine_at, view_held};
 import package::engine::math::PI;
-import package::engine::view::{camera, detail_across};
+import package::engine::view::camera;
 import package::generated::cover::{CoverBlade, CoverCard, CoverFrame, ShapeRows,
-    cover_facing_angle, cover_facing_tilt_x, cover_facing_tilt_y, cover_lean_wind,
-    cover_lean_wind_before, cover_lean_x, cover_lean_y};
+    cover_facing_tilt_x, cover_facing_tilt_y, cover_lean_wind, cover_lean_wind_before};
 import package::generated::kinds::KIND_COVER;
 
 @group(2) @binding(0) var<storage, read> cover_blades: array<CoverBlade>;
@@ -71,66 +72,20 @@ fn shown_form(at: BladeVertex) -> u32 {
         | select(0u, FORM_FLAT, at.flat);
 }
 
-struct CoverSpine {
-    at: vec3<f32>,
-    tangent: vec3<f32>,
-}
-
-fn cover_side(side: vec3<f32>, root: vec3<f32>, width: f32) -> vec3<f32> {
-    let ray = normalize(root - camera.position.xyz);
-    let needed = detail_across(root) * camera.pixel_error;
-    let seen = width * length(cross(side, ray));
-    let facing = vec3<f32>(-ray.z, 0.0, ray.x);
-    if seen >= needed || dot(facing, facing) <= 0.0 {
-        return side;
+fn shown_side(blade: CoverBlade) -> vec3<f32> {
+    if view_held(cover_blades[cover_frame.blades.x]) {
+        return vec3<f32>(blade.side_x, 0.0, blade.side_z);
     }
-    let turned = normalize(select(-facing, facing, dot(side, facing) >= 0.0));
-    return normalize(mix(side, turned, 1.0 - seen / needed));
+    return blade_side(blade);
 }
 
-fn cover_turn(packed: u32) -> f32 {
-    return f32(cover_facing_angle(packed)) / 65535.0 * (2.0 * PI);
-}
-
-fn cover_leaning(packed: u32, facing: vec3<f32>, curl: f32, wind: f32) -> vec3<f32> {
-    let blown = vec3<f32>(cover_frame.wind.x, 0.0, cover_frame.wind.y);
-    let toward = select(facing, normalize(blown), length(blown) > 1.0e-4);
-    let own = facing * curl + vec3<f32>(f32(cover_lean_x(packed)), 0.0,
-        f32(cover_lean_y(packed))) / 127.5 - vec3<f32>(1.0, 0.0, 1.0);
-    return toward * wind + own * (1.0 - wind);
-}
-
-fn cover_spine(root: vec3<f32>, grows: vec3<f32>, height: f32, reach: vec3<f32>,
-        arc: vec3<f32>, t: f32) -> CoverSpine {
-    let bend = length(reach);
-    let tip = root + grows * (height * (1.0 - arc.y * bend * bend)) + reach * (height * arc.z);
-    let middle = root + grows * (height * arc.x);
-    var spine: CoverSpine;
-    spine.at = (1.0 - t) * (1.0 - t) * root + 2.0 * t * (1.0 - t) * middle + t * t * tip;
-    spine.tangent = 2.0 * (1.0 - t) * (middle - root) + 2.0 * t * (tip - middle);
-    return spine;
-}
-
-fn cover_point(at: BladeVertex, shape: ShapeRows, wind: f32) -> CoverPoint {
-    let blade = at.blade;
-    let size = at.size;
-    let form = blade.root_color >> 24u;
-    let bent = f32((form >> 1u) & 1u);
-    let turn = cover_turn(blade.facing);
-    let facing = vec3<f32>(cos(turn), 0.0, sin(turn));
-    let side = cover_side(vec3<f32>(-facing.z, 0.0, facing.x), blade.root, size.y);
-    let curl = mix(shape.tips.z, shape.tips.w, fract(turn * 3.1));
-    let lean = cover_leaning(blade.lean, facing, curl, wind);
-    let leaned = length(lean);
-    let bend = min(leaned + shape.bends.y * bent, mix(shape.bends.x, shape.bends.z, bent));
-    let direction = select(facing, lean / max(leaned, 1.0e-4), leaned > 1.0e-4);
-    let arc = vec3<f32>(mix(shape.arc.x, shape.bends.w, bent), shape.arc.yz);
+fn blade_point(at: BladeVertex, shape: ShapeRows, ends: SpineEnds, side: vec3<f32>)
+        -> CoverPoint {
     let t = at.along;
-    let spine = cover_spine(blade.root, vec3<f32>(0.0, 1.0, 0.0), size.x, direction * bend, arc,
-        t);
+    let spine = spine_at(at.blade.root, ends, t);
     var point: CoverPoint;
     point.across = at.across * blade_taper(shape.arc.w, shape.tips.xy, shown_form(at), t);
-    point.world = spine.at + side * (0.5 * point.across * size.y);
+    point.world = spine.at + side * (0.5 * point.across * at.size.y);
     point.normal = normalize(cross(side, spine.tangent));
     return point;
 }
@@ -144,12 +99,12 @@ fn cover_color(blade: CoverBlade, along: f32, reach: f32) -> vec3<f32> {
 fn cover_varyings(instance: u32, vertex: u32) -> CoverVaryings {
     let shape = cover_shape();
     let at = blade_vertex(instance, vertex);
-    let wind = cover_lean_wind(at.blade.lean);
-    let before = cover_lean_wind_before(at.blade.lean);
-    let point = cover_point(at, shape, f32(wind) / 127.5);
+    let side = shown_side(at.blade);
+    let middle = blade_middle(at.blade, shape);
+    let point = blade_point(at, shape, SpineEnds(at.blade.tip, middle), side);
     var previous = point.world;
-    if before != wind {
-        previous = cover_point(at, shape, f32(before) / 127.5).world;
+    if cover_lean_wind_before(at.blade.lean) != cover_lean_wind(at.blade.lean) {
+        previous = blade_point(at, shape, SpineEnds(at.blade.before, middle), side).world;
     }
     var output: CoverVaryings;
     output.clip_position = camera.view_projection * vec4<f32>(point.world, 1.0);
@@ -177,8 +132,8 @@ fn vs_cover(@builtin(instance_index) instance: u32, @builtin(vertex_index) verte
 fn cover_depth(instance: u32, vertex: u32) -> CoverVaryings {
     let shape = cover_shape();
     let at = blade_vertex(instance, vertex);
-    let wind = cover_lean_wind(at.blade.lean);
-    let point = cover_point(at, shape, f32(wind) / 127.5);
+    let point = blade_point(at, shape, SpineEnds(at.blade.tip, blade_middle(at.blade, shape)),
+        shown_side(at.blade));
     var output: CoverVaryings;
     output.clip_position = camera.view_projection * vec4<f32>(point.world, 1.0);
     return output;
@@ -244,7 +199,8 @@ fn card_point(card: CoverCard, corner: CardCorner, shape: ShapeRows, form: vec4<
     let side = card_side(vec3<f32>(-facing.z, 0.0, facing.x), card.root, form.x);
     let rise = f32(cover_facing_tilt_x(card.facing)) / 255.0 * (0.5 * PI);
     let grows = facing * cos(rise) + vec3<f32>(0.0, sin(rise), 0.0);
-    let lean = cover_leaning(card.lean, facing, 0.0, wind);
+    let lean = cover_leaning(card.lean, facing, 0.0, wind,
+        vec3<f32>(cover_frame.wind.x, 0.0, cover_frame.wind.y));
     let reach = lean * (size.y * min(1.0, shape.bends.x / max(length(lean), 1.0e-4)));
     var spine = cover_spine(card.root, grows, size.x, reach, shape.arc.xyz, corner.along);
     if corner.along < 0.0 {

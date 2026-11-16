@@ -21,8 +21,9 @@ import package::cover::ground::{Between, CellSamples, SITE_HELD, TILE_SPAN, cell
     ordered_to_height, site_between, site_lush, summed_under, tile_between};
 import package::cover::order::{hash, order_tail, ordered_cell, quad_order};
 import package::face::view_wind::wind_sway;
-import package::generated::cover::{COVER_CELL_ROWS, CoverBlade, CoverCard, CoverMaterial, Grow,
-    GrowSpot, cover_facing, cover_lean};
+import package::cover::spine::{shaped_blade, view_header};
+import package::generated::cover::{COVER_CELL_ROWS, CoverBlade, CoverCard, CoverFrame,
+    CoverMaterial, Grow, GrowSpot, cover_facing, cover_lean};
 
 struct Counts {
     appended: atomic<u32>,
@@ -52,6 +53,7 @@ struct DrawArgs {
 @group(1) @binding(5) var<storage, read_write> grow_spots: array<GrowSpot>;
 @group(1) @binding(6) var<storage, read_write> grow_runs: array<atomic<u32>>;
 @group(1) @binding(7) var<storage, read> grow_starts: array<u32>;
+@group(1) @binding(9) var<uniform> grow_frame: CoverFrame;
 
 const LATTICE_TURN: f32 = 0.618034;
 const WIND_SHOWN: f32 = 1.0e9;
@@ -1079,6 +1081,8 @@ fn grow_candidate(at: vec2<u32>, order: u32, candidate: u32, owner: vec3<u32>) {
     if atomicAdd(&counts.appended, pieces) + pieces > run.grow.room.x {
         return;
     }
+    blade = shaped_blade(blade, cover_shape(),
+        vec3<f32>(grow_frame.wind.x, 0.0, grow_frame.wind.y));
     if flattened {
         let flat = atomicAdd(&counts.flat, 1u);
         hold_casts(blade_bounds(blade, cover_shape()), 1u, flat, flat);
@@ -1450,6 +1454,7 @@ fn cast_args(at: u32, vertices: u32, local: u32, locals: u32) -> DrawArgs {
 @compute @workgroup_size(1)
 fn finish_cover() {
     let room = grows[0].room;
+    blades[room.x] = view_header();
     args[0] = DrawArgs(2u * STRAIGHT_JOINTS, atomicLoad(&counts.whole), 0u, 0u);
     args[1] = DrawArgs(2u * FLAT_JOINTS, atomicLoad(&counts.flat), COVER_DRAW_VERTICES, 0u);
     for (var bin = 0u; bin < room.z; bin++) {

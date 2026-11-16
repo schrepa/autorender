@@ -41,6 +41,10 @@ engine_core::gpu_struct! {
         pub(crate) lean: u32,
         pub(crate) root_color: u32,
         pub(crate) tip_color: u32,
+        pub(crate) tip: [f32; 3],
+        pub(crate) side_x: f32,
+        pub(crate) before: [f32; 3],
+        pub(crate) side_z: f32,
     }
 }
 
