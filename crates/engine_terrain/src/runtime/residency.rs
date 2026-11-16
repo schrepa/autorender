@@ -112,6 +112,7 @@ pub(super) struct TerrainState {
     pub(super) collision: Vec<TileKey>,
     pub(super) ranges: Vec<f32>,
     pub(super) baked: Option<Arc<Layers>>,
+    pub(super) baked_key: Option<RecordKey>,
     pub(super) baked_rivers: Arc<[TerrainRiver]>,
     pub(super) hydrology: HydrologyState,
     pub(super) bridges: Arc<[Bridge]>,
@@ -133,6 +134,7 @@ pub(super) struct TerrainState {
 
 pub(super) struct TerrainBake {
     pub(super) work: Background<Arc<Layers>>,
+    pub(super) key: Option<RecordKey>,
     pub(super) drawn: Arc<[TerrainRiver]>,
 }
 
@@ -140,6 +142,7 @@ pub(super) const TILE_ARRAY_BYTES: u64 = (TILE_STRIDE as u64) * (TILE_STRIDE as 
 
 pub(super) struct Around {
     pub(super) base: Arc<Layers>,
+    pub(super) base_key: Option<RecordKey>,
     pub(super) surroundings: Surroundings,
     pub(super) cutout: (Vec2, Vec2),
     pub(super) entity: Option<Entity>,
@@ -157,6 +160,7 @@ impl TerrainState {
             collision: Vec::new(),
             ranges: Vec::new(),
             baked: None,
+            baked_key: None,
             baked_rivers: Arc::from(Vec::new()),
             hydrology: HydrologyState::default(),
             bridges: Arc::from(Vec::new()),
@@ -357,11 +361,16 @@ impl TerrainState {
         }
     }
 
-    pub(super) fn finish_bake(&mut self, baked: Arc<Layers>, kinds: &[&'static LayerKind]) {
+    pub(super) fn finish_bake(
+        &mut self,
+        (baked, key): (Arc<Layers>, Option<RecordKey>),
+        kinds: &[&'static LayerKind],
+    ) {
         if baked.unbaked().is_none() {
             self.bridges = baked.bridges().into();
         }
         self.baked = Some(baked);
+        self.baked_key = key;
         self.refresh_layers(kinds);
         self.changed = true;
     }

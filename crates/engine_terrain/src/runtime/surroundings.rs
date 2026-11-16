@@ -91,9 +91,10 @@ impl Terrains {
             if base.unbaked().is_some() {
                 continue;
             }
+            let base_key = state.baked.as_ref().and(state.baked_key);
             if let Some(layout) = surroundings.layout(&state.terrain) {
                 let surface = state.terrain.surface.clone();
-                wanted.push((state.entity, base, surroundings, layout, surface));
+                wanted.push((state.entity, (base, base_key), surroundings, layout, surface));
             }
         }
         let mut kept = Vec::with_capacity(self.entries.len());
@@ -101,7 +102,7 @@ impl Terrains {
             let held = state.around.as_ref().is_none_or(|around| {
                 wanted
                     .iter()
-                    .any(|(entity, base, surroundings, (_, _, cutout), _)| {
+                    .any(|(entity, (base, _), surroundings, (_, _, cutout), _)| {
                         *entity == state.entity
                             && Arc::ptr_eq(base, &around.base)
                             && *surroundings == around.surroundings
@@ -116,7 +117,7 @@ impl Terrains {
             }
         }
         self.entries = kept;
-        for (entity, base, surroundings, (origin, pyramid, cutout), surface) in wanted {
+        for (entity, (base, base_key), surroundings, (origin, pyramid, cutout), surface) in wanted {
             if self
                 .entries
                 .iter()
@@ -147,6 +148,7 @@ impl Terrains {
             let mut state = TerrainState::new(entity, terrain, kinds);
             state.around = Some(Around {
                 base,
+                base_key,
                 surroundings,
                 cutout,
                 entity: None,

@@ -12,7 +12,7 @@ pub(super) fn bake(
         return false;
     }
     let kinds = asking.kinds;
-    let (baked, drawn) = match state.bake.take() {
+    let (baked, drawn, key) = match state.bake.take() {
         Some(mut bake) if bake.work.waiting() => {
             let landed = match bake.work.poll(asking.records) {
                 Landed::Waiting => None,
@@ -25,9 +25,9 @@ pub(super) fn bake(
                     return true;
                 }
                 Some(Ok(baked)) => {
-                    let drawn = Arc::clone(&bake.drawn);
+                    let (drawn, key) = (Arc::clone(&bake.drawn), bake.key);
                     state.bake = Some(bake);
-                    (baked, drawn)
+                    (baked, drawn, key)
                 }
                 Some(Err(error)) => {
                     state.failures.record(frame, error);
@@ -57,6 +57,7 @@ pub(super) fn bake(
                     .map_err(|error| BAKE.undecoded(error))
             });
             state.bake = Some(TerrainBake {
+                key: work.asked_key().copied(),
                 work,
                 drawn: state.terrain.rivers.clone(),
             });
@@ -68,7 +69,7 @@ pub(super) fn bake(
         state.hydrology_changed = true;
     }
     let before = state.baked.clone();
-    state.finish_bake(baked, kinds);
+    state.finish_bake((baked, key), kinds);
     state.redrawn(drawn, before.as_deref());
     false
 }

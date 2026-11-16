@@ -2,6 +2,7 @@ use super::*;
 use engine_core::{FrameBudget, Landed, RecordKey};
 
 const BUDGET: &str = "terrain";
+const BAKED_STACK: u8 = 1;
 
 pub(super) struct Asking<'a, 'w, 's> {
     pub(super) jobs: &'a mut Jobs<'w, 's>,
@@ -229,7 +230,7 @@ pub(crate) fn share_recipe(
     if layers.unbaked().is_some() {
         return;
     }
-    let (stack, view) = match &state.around {
+    let (stack, view, baked) = match &state.around {
         Some(around) => (
             around.base.clone(),
             Some(StackView {
@@ -238,8 +239,9 @@ pub(crate) fn share_recipe(
                 high: around.cutout.1 - around.cutout.0,
                 blend: around.surroundings.blend,
             }),
+            around.base_key,
         ),
-        None => (layers, None),
+        None => (layers, None, state.baked.as_ref().and(state.baked_key)),
     };
     if state.recipe.as_ref().is_some_and(|recipe| {
         Arc::ptr_eq(&recipe.stack, &stack) && recipe.materials == state.materials
@@ -254,7 +256,15 @@ pub(crate) fn share_recipe(
     let stack_key = match shared {
         Some(key) => key,
         None => {
-            let key = jobs.share(crate::jobs::share_stack(&stack));
+            let bytes = crate::jobs::share_stack(&stack);
+            let key = match baked {
+                Some(baked) => {
+                    let key = RecordKey::shared_tagged(BAKED_STACK, &baked.hash());
+                    jobs.share_as(key, bytes);
+                    key
+                }
+                None => jobs.share(bytes),
+            };
             stacks.push((stack.clone(), key));
             key
         }

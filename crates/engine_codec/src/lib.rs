@@ -98,6 +98,17 @@ impl<'a> Reader<'a> {
         Ok(*head)
     }
 
+    fn whole<const N: usize>(&mut self, count: usize) -> Result<&'a [[u8; N]], Error> {
+        let (chunks, _) = self.bytes.as_chunks::<N>();
+        let Some(chunks) = chunks.get(..count) else {
+            return Err(invalid("$")
+                .at_least(N as u64)
+                .got(self.bytes.len() % N));
+        };
+        self.bytes = &self.bytes[count * N..];
+        Ok(chunks)
+    }
+
     fn count(&mut self) -> Result<usize, Error> {
         let count = size(u64::from_le_bytes(self.take()?), "$.count")?;
         if count > self.bytes.len() {
@@ -329,13 +340,16 @@ pub fn get_records(input: &mut Reader<'_>, stride: usize) -> Result<Box<[u8]>, E
     input.bytes = rest;
     let records = count / stride;
     let mut values = vec![0_u8; count];
-    let mut at = 0;
-    for place in 0..stride {
-        let mut before = 0_u8;
-        for record in 0..records {
-            before = before.wrapping_add(residuals[at]);
-            values[record * stride + place] = before;
-            at += 1;
+    if records == 0 {
+        return Ok(values.into_boxed_slice());
+    }
+    let mut columns: Vec<std::slice::Iter<'_, u8>> =
+        residuals.chunks_exact(records).map(<[u8]>::iter).collect();
+    let mut before = vec![0_u8; stride];
+    for record in values.chunks_exact_mut(stride) {
+        for ((value, before), column) in record.iter_mut().zip(&mut before).zip(&mut columns) {
+            *before = before.wrapping_add(column.next().copied().unwrap_or_default());
+            *value = *before;
         }
     }
     Ok(values.into_boxed_slice())
@@ -406,6 +420,24 @@ pub fn encode<T: Codec>(value: &T) -> Vec<u8> {
 pub trait Codec: Sized {
     fn write(&self, out: &mut Writer);
     fn read(input: &mut Reader<'_>) -> Result<Self, Error>;
+
+    fn read_many(input: &mut Reader<'_>, count: usize) -> Result<Vec<Self>, Error> {
+        read_each(input, count)
+    }
+
+    fn write_many(values: &[Self], out: &mut Writer) {
+        for value in values {
+            value.write(out);
+        }
+    }
+}
+
+fn read_each<T: Codec>(input: &mut Reader<'_>, count: usize) -> Result<Vec<T>, Error> {
+    let mut values = Vec::with_capacity(count);
+    for _ in 0..count {
+        values.push(T::read(input)?);
+    }
+    Ok(values)
 }
 
 macro_rules! number {
@@ -417,6 +449,19 @@ macro_rules! number {
 
             fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
                 Ok(Self::from_le_bytes(input.take()?))
+            }
+
+            fn write_many(values: &[Self], out: &mut Writer) {
+                out.bytes.reserve(std::mem::size_of_val(values));
+                for value in values {
+                    out.bytes.extend_from_slice(&value.to_le_bytes());
+                }
+            }
+
+            fn read_many(input: &mut Reader<'_>, count: usize) -> Result<Vec<Self>, Error> {
+                const SIZE: usize = std::mem::size_of::<$type>();
+                let chunks = input.whole::<SIZE>(count)?;
+                Ok(chunks.iter().map(|chunk| Self::from_le_bytes(*chunk)).collect())
             }
         }
     )*};
@@ -446,6 +491,19 @@ impl Codec for bool {
             flag => Err(invalid("$.flag").at_most(1).got(flag)),
         }
     }
+
+    fn write_many(values: &[Self], out: &mut Writer) {
+        out.bytes.extend(values.iter().map(|&value| u8::from(value)));
+    }
+
+    fn read_many(input: &mut Reader<'_>, count: usize) -> Result<Vec<Self>, Error> {
+        let available = &input.bytes[..count.min(input.bytes.len())];
+        if let Some(&flag) = available.iter().find(|&&flag| flag > 1) {
+            return Err(invalid("$.flag").at_most(1).got(flag));
+        }
+        let flags = input.whole::<1>(count)?;
+        Ok(flags.iter().map(|&[flag]| flag == 1).collect())
+    }
 }
 
 impl Codec for String {
@@ -465,27 +523,19 @@ impl Codec for String {
 impl<T: Codec> Codec for Vec<T> {
     fn write(&self, out: &mut Writer) {
         (self.len() as u64).write(out);
-        for value in self {
-            value.write(out);
-        }
+        T::write_many(self, out);
     }
 
     fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         let count = input.count()?;
-        let mut values = Vec::with_capacity(count);
-        for _ in 0..count {
-            values.push(T::read(input)?);
-        }
-        Ok(values)
+        T::read_many(input, count)
     }
 }
 
 impl<T: Codec> Codec for Box<[T]> {
     fn write(&self, out: &mut Writer) {
         (self.len() as u64).write(out);
-        for value in self.iter() {
-            value.write(out);
-        }
+        T::write_many(self, out);
     }
 
     fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
@@ -496,9 +546,7 @@ impl<T: Codec> Codec for Box<[T]> {
 impl<T: Codec> Codec for Arc<[T]> {
     fn write(&self, out: &mut Writer) {
         (self.len() as u64).write(out);
-        for value in self.iter() {
-            value.write(out);
-        }
+        T::write_many(self, out);
     }
 
     fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
@@ -560,6 +608,21 @@ impl<T: Codec + Copy + Default, const N: usize> Codec for [T; N] {
         }
         Ok(values)
     }
+
+    fn write_many(values: &[Self], out: &mut Writer) {
+        T::write_many(values.as_flattened(), out);
+    }
+
+    fn read_many(input: &mut Reader<'_>, count: usize) -> Result<Vec<Self>, Error> {
+        if N == 0 {
+            return Ok(vec![[T::default(); N]; count]);
+        }
+        let Some(total) = count.checked_mul(N) else {
+            return read_each(input, count);
+        };
+        let flat = T::read_many(input, total)?;
+        Ok(flat.as_chunks::<N>().0.to_vec())
+    }
 }
 
 impl<A: Codec, B: Codec> Codec for (A, B) {
@@ -581,6 +644,11 @@ impl Codec for Vec2 {
     fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         <[f32; 2]>::read(input).map(Vec2::from_array)
     }
+
+    fn read_many(input: &mut Reader<'_>, count: usize) -> Result<Vec<Self>, Error> {
+        let values = <[f32; 2]>::read_many(input, count)?;
+        Ok(values.into_iter().map(Vec2::from_array).collect())
+    }
 }
 
 impl Codec for Vec3 {
@@ -590,6 +658,11 @@ impl Codec for Vec3 {
 
     fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         <[f32; 3]>::read(input).map(Vec3::from_array)
+    }
+
+    fn read_many(input: &mut Reader<'_>, count: usize) -> Result<Vec<Self>, Error> {
+        let values = <[f32; 3]>::read_many(input, count)?;
+        Ok(values.into_iter().map(Vec3::from_array).collect())
     }
 }
 
