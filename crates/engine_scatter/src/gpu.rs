@@ -623,10 +623,10 @@ impl ScatterGpu {
             let bit = cx.passes().bit(name)?;
             let streams = Streams {
                 ids: cx.draw_input(scene, ids),
-                args: cx.draw_input(scene, draws),
+                args: cx.args_input(scene, draws),
                 records: cx.draw_input(scene, records),
                 cards: cx.draw_input(scene, cards),
-                card_args: cx.draw_input(scene, card_args),
+                card_args: cx.args_input(scene, card_args),
             };
             Some(Joined {
                 bit,
@@ -1025,12 +1025,22 @@ impl ScatterGpu {
             PassRole::Depth => &[Some(false), Some(true)],
             PassRole::Lit | PassRole::Blended | PassRole::Shown => &[None],
         };
-        let listed = turns.iter().flat_map(|turn| {
-            items.iter().filter(move |item| {
-                (!fading || item.fades) && turn.is_none_or(|masked| item.masked == masked)
+        let mut listed: Vec<&Level> = turns
+            .iter()
+            .flat_map(|turn| {
+                items.iter().filter(move |item| {
+                    (!fading || item.fades) && turn.is_none_or(|masked| item.masked == masked)
+                })
             })
-        });
+            .collect();
         let depth = scene.role == PassRole::Depth && !fading;
+        if depth {
+            let finest = |item: &Level| {
+                let bits = self.held.reached.get(reached + item.group as usize);
+                bits.map_or(0, |bits| bits.trailing_zeros())
+            };
+            listed.sort_by_key(|item| (item.masked, finest(item)));
+        }
         for item in listed {
             let pair = pipelines[usize::from(item.masked)];
             let extended = item.extended && (item.masked || !depth);
