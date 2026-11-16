@@ -1,12 +1,15 @@
 import package::engine::detail::{ViewDetail, fits, handover};
-import package::engine::drawn::{drawn_in_view, drawn_view_sees};
+import package::engine::drawn::{drawn_in_view, drawn_view_sees, drawn_views};
 import package::engine::geometry::declarations::{FADE_LEVEL_MAX, faded_slot, faded_slot_slot};
 import package::engine::view::seen_share;
 import package::generated::scatter::{
     CullFrame, CullGroup, CullView, DEAD, NO_LAYER, SCATTER_GROUP, scatter_terrain_hidden,
     scatter_terrain_layer, scatter_terrain_rank
 };
-import package::place::placed_tiles::Record;
+import package::place::placed_tiles::{Pose, Record};
+import package::scatter::faces::placed_tiles::placed_pose;
+
+const BOX_SLACK: f32 = 1.0e-4;
 
 struct DrawArgs {
     index_count: u32,
@@ -86,10 +89,32 @@ fn left_out() {
     atomicAdd(&card_args[frame.counts.w].instance_count, 1u);
 }
 
+fn box_seen(view: u32, pose: Pose, group: CullGroup) -> bool {
+    let reach = group.middle.w;
+    if !(reach >= 0.0) || view >= arrayLength(&drawn_views) || drawn_views[view].frustum == 0u {
+        return true;
+    }
+    let middle = vec4<f32>(group.middle.xyz, 1.0);
+    let center = vec3<f32>(dot(pose.r0, middle), dot(pose.r1, middle), dot(pose.r2, middle));
+    for (var plane = 0u; plane < 6u; plane++) {
+        let facing = drawn_views[view].planes[plane];
+        let along = facing.x * pose.r0.xyz + facing.y * pose.r1.xyz + facing.z * pose.r2.xyz;
+        let ahead = dot(facing.xyz, center);
+        let spread = dot(abs(along), group.half.xyz) + reach * length(facing.xyz);
+        let slack = BOX_SLACK * (abs(ahead) + abs(facing.w) + spread);
+        if ahead + facing.w + spread + slack < 0.0 {
+            return false;
+        }
+    }
+    return true;
+}
+
 fn chosen(view: u32, fading: u32, id: u32, record: Record, group: CullGroup, wanted: CullView,
-        away: f32) {
+        away: f32, meshes: bool) {
     if wanted.eye.w <= 0.0 {
-        list(view, record, group, 0u, id);
+        if meshes {
+            list(view, record, group, 0u, id);
+        }
         return;
     }
     let detail = measure(wanted);
@@ -108,7 +133,7 @@ fn chosen(view: u32, fading: u32, id: u32, record: Record, group: CullGroup, wan
     if step > 0u {
         card(view, id, faded_slot(group.record, step, false));
     }
-    if step >= FADE_LEVEL_MAX {
+    if step >= FADE_LEVEL_MAX || !meshes {
         return;
     }
     if step == 0u || fading == view || faded_slot_slot(id) != id {
@@ -134,6 +159,8 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
     let retired = hidden
         || (retires && !placed_seen(record.radius, rank, distance(record.center, frame.eye.xyz)));
     let reach = vec3<f32>(record.radius);
+    var pose: Pose;
+    var posed = false;
     for (var view = 0u; view < frame.counts.w; view++) {
         let wanted = views[view];
         if !drawn_in_view(wanted.shape.w, frame.drawn.x)
@@ -141,16 +168,18 @@ fn cull_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
             continue;
         }
         let away = distance(record.center, wanted.eye.xyz);
-        if view == 0u {
-            if !retired {
-                chosen(view, frame.counts.w, id.x, record, group, wanted, away);
-            }
-            continue;
-        }
         let casts = wanted.shape.z != 0u;
-        if (casts && hidden) || (!casts && retired) || !seen_in(wanted, record.radius, away) {
+        let skipped = (casts && hidden) || (!casts && retired)
+            || !seen_in(wanted, record.radius, away);
+        if (view == 0u && retired) || (view != 0u && skipped) {
             continue;
         }
-        chosen(view, view, id.x, record, group, wanted, away);
+        if !posed {
+            pose = placed_pose(id.x);
+            posed = true;
+        }
+        let meshes = box_seen(wanted.shape.w, pose, group);
+        let fading = select(view, frame.counts.w, view == 0u);
+        chosen(view, fading, id.x, record, group, wanted, away, meshes);
     }
 }

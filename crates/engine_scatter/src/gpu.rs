@@ -878,9 +878,11 @@ impl ScatterGpu {
                 (!fading || item.fades) && turn.is_none_or(|masked| item.masked == masked)
             })
         });
+        let depth = scene.role == PassRole::Depth && !fading;
         for item in listed {
             let pair = pipelines[usize::from(item.masked)];
-            let Some(pipeline) = &pair[usize::from(item.extended)] else {
+            let extended = item.extended && (item.masked || !depth);
+            let Some(pipeline) = &pair[usize::from(extended)] else {
                 continue;
             };
             let level = item.level as usize;
