@@ -1371,6 +1371,14 @@ const WALK_TRY: u32 = 3u;
 struct Walk {
     stage: u32,
     look: u32,
+    clump: u32,
+    quad: u32,
+    order: u32,
+    next: u32,
+    tried: u32,
+}
+
+struct WalkLook {
     row: u32,
     accents: vec4<u32>,
     density: f32,
@@ -1379,53 +1387,53 @@ struct Walk {
     first: vec2<i32>,
     wide: u32,
     count: u32,
-    clump: u32,
+}
+
+fn walk_look(planned: vec4<u32>, at: u32) -> WalkLook {
+    var walked: WalkLook;
+    walked.row = select(planned.z, planned.w, at == 1u);
+    if walked.row == COVER_NO_LAYER {
+        return walked;
+    }
+    let look = cover_look(walked.row);
+    let size = look.clump.x;
+    let reach = cell_plan.reaches[at];
+    let low = run.grow.origin.xz + run.corner - REACH_ROUNDING;
+    let high = low + run.spacing + 2.0 * REACH_ROUNDING;
+    let first = vec2<i32>(floor(low / size)) - vec2<i32>(1);
+    let last = vec2<i32>(floor(high / size)) + vec2<i32>(1);
+    walked.accents = look.accents;
+    walked.density = look.shape.x;
+    walked.size = size;
+    walked.patches = CoverPatchRange(reach.x, reach.y, reach.z);
+    walked.first = first;
+    walked.wide = u32(last.x - first.x + 1);
+    walked.count = walked.wide * u32(last.y - first.y + 1);
+    return walked;
+}
+
+struct WalkClump {
+    kept: bool,
     id: vec2<i32>,
     limit: u32,
     point: vec2<f32>,
     lowest: vec2<i32>,
     highest: vec2<i32>,
-    quad: vec2<i32>,
-    spot: vec2<u32>,
-    order: u32,
-    next: u32,
-    tried: u32,
-    pick: Pick,
 }
 
-fn walk_look(walk: ptr<function, Walk>, row: u32, reach: vec4<f32>, lane: u32) {
-    let look = cover_look(row);
-    let size = look.clump.x;
-    let low = run.grow.origin.xz + run.corner - REACH_ROUNDING;
-    let high = low + run.spacing + 2.0 * REACH_ROUNDING;
-    let first = vec2<i32>(floor(low / size)) - vec2<i32>(1);
-    let last = vec2<i32>(floor(high / size)) + vec2<i32>(1);
-    (*walk).row = row;
-    (*walk).accents = look.accents;
-    (*walk).density = look.shape.x;
-    (*walk).size = size;
-    (*walk).patches = CoverPatchRange(reach.x, reach.y, reach.z);
-    (*walk).first = first;
-    (*walk).wide = u32(last.x - first.x + 1);
-    (*walk).count = (*walk).wide * u32(last.y - first.y + 1);
-    (*walk).clump = lane;
-    (*walk).stage = WALK_CLUMP;
-}
-
-fn walk_clump(walk: ptr<function, Walk>, cell: vec2<u32>) -> bool {
-    let index = (*walk).clump;
-    (*walk).clump += 64u;
-    let size = (*walk).size;
+fn walk_clump(look: WalkLook, index: u32, cell: vec2<u32>) -> WalkClump {
+    var clump: WalkClump;
+    let size = look.size;
     let quad = run.grow.origin.w;
-    let id = (*walk).first + vec2<i32>(vec2<u32>(index % (*walk).wide, index / (*walk).wide));
-    let kind = cover_accent_row((*walk).accents,
+    let id = look.first + vec2<i32>(vec2<u32>(index % look.wide, index / look.wide));
+    let kind = cover_accent_row(look.accents,
         unit(hash(cover_clump_seed(id, 2u * run.slot) ^ 0x9e3779b9u)));
     if kind == COVER_NO_LAYER {
-        return false;
+        return clump;
     }
-    let bound = cover_bound(kind, run.growth, (*walk).patches, run.closest);
+    let bound = cover_bound(kind, run.growth, look.patches, run.closest);
     if bound.x <= 0.0 {
-        return false;
+        return clump;
     }
     let start = vec2<i32>(cell * run.side);
     let end = start + vec2<i32>(i32(run.side) - 1);
@@ -1433,77 +1441,76 @@ fn walk_clump(walk: ptr<function, Walk>, cell: vec2<u32>) -> bool {
         / quad;
     let far = (vec2<f32>(id + vec2<i32>(2)) * size - run.grow.origin.xz + REACH_ROUNDING)
         / quad;
-    (*walk).lowest = max(vec2<i32>(floor(near)), start);
-    (*walk).highest = min(vec2<i32>(floor(far)), end);
-    if any((*walk).lowest > (*walk).highest) {
-        return false;
-    }
-    (*walk).id = id;
-    (*walk).limit = u32(ceil(f32(run.finest) * min(run.tiered, min((1.0 + ROUNDING)
-        * (*walk).density * bound.x * run.sown, run.stacked / bound.y))));
-    (*walk).point = cover_clump_point(id, size, 2u * run.slot) - run.grow.origin.xz;
-    (*walk).quad = (*walk).lowest;
-    return true;
+    clump.lowest = max(vec2<i32>(floor(near)), start);
+    clump.highest = min(vec2<i32>(floor(far)), end);
+    clump.kept = all(clump.lowest <= clump.highest);
+    clump.id = id;
+    clump.limit = u32(ceil(f32(run.finest) * min(run.tiered, min((1.0 + ROUNDING)
+        * look.density * bound.x * run.sown, run.stacked / bound.y))));
+    clump.point = cover_clump_point(id, size, 2u * run.slot) - run.grow.origin.xz;
+    return clump;
 }
 
-fn walk_quad(walk: ptr<function, Walk>) -> bool {
-    let quad = run.grow.origin.w;
-    let at = vec2<u32>((*walk).quad);
-    (*walk).quad.x += 1;
-    if (*walk).quad.x > (*walk).highest.x {
-        (*walk).quad = vec2<i32>((*walk).lowest.x, (*walk).quad.y + 1);
-    }
-    let furthest = CLUMP_REACH * (*walk).size + REACH_ROUNDING;
-    let gap = max(abs((vec2<f32>(at) + 0.5) * quad - (*walk).point) - 0.5 * quad,
-        vec2<f32>(0.0));
-    if dot(gap, gap) > furthest * furthest {
-        return false;
-    }
-    (*walk).spot = at;
-    (*walk).order = quad_order(at, run.depth, run.slot, (*walk).limit);
-    (*walk).next = (*walk).order;
-    return true;
-}
-
-fn walk_next(walk: ptr<function, Walk>, planned: vec4<u32>, cell: vec2<u32>, lane: u32)
-        -> bool {
+fn walk_next(walk: ptr<function, Walk>, planned: vec4<u32>, cell: vec2<u32>, lane: u32,
+        pick: ptr<function, Pick>) -> bool {
     var made = false;
     loop {
-        let stage = (*walk).stage;
-        if stage == WALK_LOOK {
-            if (*walk).look >= 2u {
-                break;
-            }
-            let look = (*walk).look;
-            (*walk).look += 1u;
-            let row = select(planned.z, planned.w, look == 1u);
-            if row != COVER_NO_LAYER {
-                walk_look(walk, row, cell_plan.reaches[look], lane);
-            }
-        } else if stage == WALK_CLUMP {
-            if (*walk).clump >= (*walk).count {
-                (*walk).stage = WALK_LOOK;
-            } else if walk_clump(walk, cell) {
-                (*walk).stage = WALK_QUAD;
-            }
-        } else if stage == WALK_QUAD {
-            if (*walk).quad.y > (*walk).highest.y {
-                (*walk).stage = WALK_CLUMP;
-            } else if walk_quad(walk) {
-                (*walk).stage = WALK_TRY;
-            }
-        } else {
-            if (*walk).next >= (*walk).limit {
-                (*walk).stage = WALK_QUAD;
-            } else {
-                (*walk).pick = Pick((*walk).spot, (*walk).order, (*walk).next / run.finest,
-                    vec3<u32>((*walk).row, bitcast<vec2<u32>>((*walk).id)));
-                (*walk).next += run.finest;
-                (*walk).tried += 1u;
-                made = true;
-                break;
-            }
+        if (*walk).look >= 2u {
+            break;
         }
+        let look = walk_look(planned, (*walk).look);
+        if (*walk).stage == WALK_LOOK {
+            (*walk).clump = lane;
+            (*walk).stage = WALK_CLUMP;
+        }
+        if (*walk).clump >= look.count {
+            (*walk).look += 1u;
+            (*walk).stage = WALK_LOOK;
+            continue;
+        }
+        let clump = walk_clump(look, (*walk).clump, cell);
+        if !clump.kept {
+            (*walk).clump += 64u;
+            (*walk).stage = WALK_CLUMP;
+            continue;
+        }
+        let span = clump.highest - clump.lowest + vec2<i32>(1);
+        if (*walk).stage == WALK_CLUMP {
+            (*walk).quad = 0u;
+            (*walk).stage = WALK_QUAD;
+        }
+        if (*walk).quad >= u32(span.x * span.y) {
+            (*walk).clump += 64u;
+            (*walk).stage = WALK_CLUMP;
+            continue;
+        }
+        let quad = (*walk).quad;
+        let at = vec2<u32>(clump.lowest
+            + vec2<i32>(vec2<u32>(quad % u32(span.x), quad / u32(span.x))));
+        if (*walk).stage == WALK_QUAD {
+            let reach = run.grow.origin.w;
+            let furthest = CLUMP_REACH * look.size + REACH_ROUNDING;
+            let gap = max(abs((vec2<f32>(at) + 0.5) * reach - clump.point) - 0.5 * reach,
+                vec2<f32>(0.0));
+            if dot(gap, gap) > furthest * furthest {
+                (*walk).quad += 1u;
+                continue;
+            }
+            (*walk).order = quad_order(at, run.depth, run.slot, clump.limit);
+            (*walk).next = (*walk).order;
+            (*walk).stage = WALK_TRY;
+        }
+        if (*walk).next >= clump.limit {
+            (*walk).quad += 1u;
+            (*walk).stage = WALK_QUAD;
+            continue;
+        }
+        *pick = Pick(at, (*walk).order, (*walk).next / run.finest,
+            vec3<u32>(look.row, bitcast<vec2<u32>>(clump.id)));
+        (*walk).next += run.finest;
+        (*walk).tried += 1u;
+        made = true;
+        break;
     }
     return made;
 }
@@ -1628,8 +1635,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         var pick: Pick;
         var made = false;
         if walking {
-            made = walk_next(&walk, planned, cell, lane);
-            pick = walk.pick;
+            made = walk_next(&walk, planned, cell, lane, &pick);
         } else if plain < total {
             let order = plain % finest;
             pick = Pick(ordered_cell(home, below, below, order >> (2u * lane_levels), slot), order,
