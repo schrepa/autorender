@@ -26,6 +26,14 @@ pub struct FrameStats {
     pub render: engine_core::RenderStats,
     pub bricks_cost: Option<engine_registry::BrickCosts>,
     pub bricks: BTreeMap<&'static str, serde_json::Value>,
+    pub pipelines_per_pass: BTreeMap<&'static str, PassPipelines>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
+pub struct PassPipelines {
+    pub render: u32,
+    pub compute: u32,
 }
 
 #[cfg(feature = "schema")]

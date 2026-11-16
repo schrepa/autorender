@@ -19,6 +19,7 @@ export interface FrameStats {
   pipelines: number;
   pipelines_created: number;
   pipelines_listed: number;
+  pipelines_per_pass: Record<string, PassPipelines>;
   pipelines_unlisted: number;
   preparation_ms: number;
   read_back_age: number | null;
@@ -117,6 +118,11 @@ export interface KindPass {
 }
 
 export type KindPassState = { draws: number; state: "drew" } | { draws: number; reason: DropReason; state: "dropped" } | { on: string; state: "waiting" } | { on: string; state: "refused" } | { reason: string; state: "skipped" } | { state: "silent" };
+
+export interface PassPipelines {
+  compute: number;
+  render: number;
+}
 
 export interface Progress {
   done: number;

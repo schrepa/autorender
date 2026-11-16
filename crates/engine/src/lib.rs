@@ -61,9 +61,9 @@ pub mod bricks {
 }
 
 pub mod stats {
-    pub use crate::frame_stats::FrameStats;
     #[cfg(feature = "schema")]
     pub use crate::frame_stats::frame_stats_schema;
+    pub use crate::frame_stats::{FrameStats, PassPipelines};
     pub use engine_core::{Cut, JobStats, RenderStats};
 }
 

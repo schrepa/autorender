@@ -107,6 +107,7 @@ impl Health {
 pub(crate) struct Reports {
     health: Health,
     messages: Vec<String>,
+    notices: Vec<Error>,
 }
 
 impl Reports {
@@ -140,6 +141,23 @@ fn named_by(parts: &[crate::install::PartInfo], message: &str) -> Option<usize> 
     named
 }
 
+fn refusal(machine: &crate::machine::Machine, (pass, program): (&str, u64), text: &str) -> Error {
+    let label = (machine.pipelines.iter())
+        .find(|built| built.program_key == program)
+        .and_then(|built| {
+            let entry = match &built.decl.program {
+                crate::install::Program::Render(desc) => desc.vertex.name(),
+                crate::install::Program::Compute(_) => built.stages.first()?.entry.name(),
+            };
+            Some(machine.part_label(built.decl.part, entry))
+        });
+    let path = match label {
+        Some(label) => format!("$.pipelines.{pass}.{label}"),
+        None => format!("$.pipelines.{pass}"),
+    };
+    failed(&path).got_whole(text)
+}
+
 impl Renderer {
     pub(super) fn check_health(&mut self) -> Result<(), Error> {
         let installed = self.installing.as_mut().map(|validation| {
@@ -156,9 +174,15 @@ impl Renderer {
             Some(Poll::Pending) | None => {}
         }
         if let Ok(mut reports) = self.core.health.lock() {
+            let mut refused = Vec::new();
             if let Some(run) = self.run.as_mut() {
-                reports.messages.append(&mut run.pipelines.refused);
+                for (pass, program, text) in std::mem::take(&mut run.pipelines.refused) {
+                    let notice = refusal(&run.machine, (pass, program), &text);
+                    reports.notices.push(notice);
+                    refused.push(text);
+                }
             }
+            reports.messages.extend(refused.iter().cloned());
             for message in std::mem::take(&mut reports.messages) {
                 let named = self
                     .run
@@ -166,7 +190,12 @@ impl Renderer {
                     .and_then(|run| named_by(&run.machine.declared.parts, &message));
                 match (named, self.run.as_mut()) {
                     (Some(part), Some(run)) => {
-                        if !run.machine.declared.parts[part].lazy {
+                        let held = &run.machine.declared.parts[part];
+                        if !held.lazy {
+                            if !refused.contains(&message) {
+                                let path = format!("$.gpu.{}", held.name);
+                                reports.notices.push(failed(&path).got_whole(&message));
+                            }
                             continue;
                         }
                         let saved = run.part;
@@ -186,6 +215,14 @@ impl Renderer {
             }
         }
         Ok(())
+    }
+
+    pub fn take_notices(&self) -> Vec<Error> {
+        self.core
+            .health
+            .lock()
+            .map(|mut reports| std::mem::take(&mut reports.notices))
+            .unwrap_or_default()
     }
 
     pub fn device_health(&self) -> DeviceHealth {

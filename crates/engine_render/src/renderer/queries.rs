@@ -122,6 +122,13 @@ impl Renderer {
         &[]
     }
 
+    pub fn pipelines_per_pass(&self) -> Vec<(&'static str, [u32; 2])> {
+        self.run
+            .as_ref()
+            .map(|run| run.pipelines.per_pass.clone())
+            .unwrap_or_default()
+    }
+
     pub fn compiled_per_pass(&self) -> Vec<(&'static str, u32)> {
         self.core.ledger.per_pass().to_vec()
     }

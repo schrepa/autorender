@@ -1182,7 +1182,7 @@ pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
     run.make_all_shaders();
     let refused: Vec<Error> = std::mem::take(&mut run.pipelines.refused)
         .into_iter()
-        .map(|message| failed_with("$.pipelines", message))
+        .map(|(_, _, message)| failed_with("$.pipelines", message))
         .collect();
     match crate::platform::ready(scope.pop()) {
         Some(Some(error)) => Err(vec![failed_with("$.pipelines", error)]),

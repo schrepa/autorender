@@ -274,7 +274,8 @@ pub(crate) struct Pipelines {
     pub(crate) switches: Vec<(u32, bool)>,
     pub(crate) listing: bool,
     pub(crate) making: super::making::Making,
-    pub(crate) refused: Vec<String>,
+    pub(crate) refused: Vec<(&'static str, u64, String)>,
+    pub(crate) per_pass: Vec<(&'static str, [u32; 2])>,
     pub(crate) cache: Option<wgpu::PipelineCache>,
     pub(crate) warming: super::warming::Warming,
     pub(crate) settled: bool,
@@ -282,6 +283,17 @@ pub(crate) struct Pipelines {
 }
 
 impl Pipelines {
+    pub(crate) fn made_in(&mut self, pass: &'static str, computed: bool) {
+        let at = match self.per_pass.iter().position(|(known, _)| *known == pass) {
+            Some(at) => at,
+            None => {
+                self.per_pass.push((pass, [0, 0]));
+                self.per_pass.len() - 1
+            }
+        };
+        self.per_pass[at].1[usize::from(computed)] += 1;
+    }
+
     pub(crate) fn stood_in(&self) -> u32 {
         let left = self
             .standing
