@@ -2637,7 +2637,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "0ebcddcf352411916848ea476b232357a856c7b5546eb86ced491e2d54ae2c2c"
+      "version": "233dd3df2b1fa381dc83840ed6d15ca53ebff198d38fcf646cafe402a202d7b1"
     },
     {
       "dependencies": [
