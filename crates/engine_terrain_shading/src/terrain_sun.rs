@@ -7,6 +7,7 @@ use engine_render::{
     AfterRead, Allocation, Bind, Buffer, ComputePipeline, Count, Encode, Install, Lifetime, Pass,
     Prepare,
 };
+use engine_tiles::TileKey;
 use glam::{Vec2, Vec3, Vec3Swizzles};
 
 use crate::gpu::{
@@ -14,7 +15,7 @@ use crate::gpu::{
     SunTerrain,
 };
 use crate::settings::TerrainShading;
-use crate::state::{Atlas, AtlasMoves, TileId};
+use crate::state::{Atlas, AtlasMoves, TileId, Upload};
 use crate::terrain::TerrainGpu;
 use crate::terrain_horizons::Horizons;
 
@@ -99,7 +100,7 @@ pub(crate) struct SunPlan {
     pub(crate) build: Option<SunBuild>,
     marched: Option<u32>,
     slide: Option<(f64, Vec<(u32, Window)>)>,
-    stale: bool,
+    stale: u32,
     dropped: bool,
     tiles: Cursor,
     builds: u32,
@@ -135,24 +136,41 @@ impl SunPlan {
         self.dropped = false;
     }
 
-    fn marches(&self, tiles: &TerrainTiles, (terrain, key): TileId) -> bool {
+    fn marches(&self, (tiles, atlas): (&TerrainTiles, &Atlas), (terrain, key): TileId) -> u32 {
         let (Some(marched), Some(entry)) = (
             self.key,
             tiles.terrains.iter().find(|entry| entry.terrain == terrain),
         ) else {
-            return false;
+            return 0;
         };
+        let pyramid = &entry.pyramid;
         let level = u32::from(key.level);
-        let size = entry.pyramid.tile_size(level);
+        let size = pyramid.tile_size(level);
         let low = entry.origin.xz() + Vec2::new(f32::from(key.x), f32::from(key.z)) * size;
-        let footprint = (low, low + Vec2::splat(size), entry.pyramid.spacing(level));
+        let footprint = (low, low + Vec2::splat(size), pyramid.spacing(level));
+        let top = pyramid.levels().saturating_sub(1);
+        let rooted = atlas
+            .slots
+            .contains_key(&(terrain, TileKey::new(top as u8, 0, 0)));
+        let reads = |window: &Window| {
+            let first = (0..top)
+                .take_while(|&below| pyramid.spacing(below + 1) <= window.texel)
+                .count() as u32;
+            !rooted || level >= first
+        };
+        let shown = self
+            .shown
+            .iter()
+            .enumerate()
+            .filter_map(|(at, window)| window.map(|window| (at as u32, window)));
         let built = self.build.iter().flat_map(|build| build.windows.iter());
         let sliding = self.slide.iter().flat_map(|(_, windows)| windows.iter());
-        self.shown
-            .iter()
-            .flatten()
-            .chain(built.chain(sliding).map(|(_, window)| window))
-            .any(|window| window.reaches(marched.side, marched.cone, footprint))
+        shown
+            .chain(built.chain(sliding).copied())
+            .filter(|(_, window)| {
+                reads(window) && window.reaches(marched.side, marched.cone, footprint)
+            })
+            .fold(0, |stale, (at, _)| stale | 1 << at)
     }
 
     fn wanted(&self, key: &Key, eye: Vec2, heading: Vec2) -> Vec<(u32, Window)> {
@@ -164,7 +182,7 @@ impl SunPlan {
                 let origin = (eye / snap).round() * snap - Vec2::splat(0.5 * texel * side);
                 let shown = self.shown[level as usize];
                 let kept = shown.is_some_and(|shown| {
-                    !self.stale
+                    self.stale & 1 << level == 0
                         && shown.origin == origin
                         && shown.texel == texel
                         && shown.heading == heading
@@ -226,13 +244,24 @@ pub(crate) fn plan(
 ) {
     let plan = &mut *plan;
     let moves = AtlasMoves::since(&atlas, &mut plan.tiles);
-    plan.stale |= moves.all
-        || moves
-            .uploads
-            .iter()
-            .map(|&(id, _, _)| id)
-            .chain(moves.changed.iter().copied())
-            .any(|id| plan.marches(&tiles, id));
+    if moves.all {
+        plan.stale = u32::MAX;
+    }
+    let shaped = moves
+        .uploads
+        .iter()
+        .filter(|&&(_, _, upload)| upload == Upload::Whole)
+        .map(|&(id, _, _)| id)
+        .chain(
+            moves
+                .changed
+                .iter()
+                .copied()
+                .filter(|id| !atlas.slots.contains_key(id)),
+        );
+    for id in shaped {
+        plan.stale |= plan.marches((&tiles, &atlas), id);
+    }
     let toward = Vec3::from_slice(&sun.direction[..3]);
     let level = Vec2::new(toward.x, toward.z);
     let finest = held(&tiles, &atlas)
@@ -293,7 +322,7 @@ pub(crate) fn plan(
         let windows = plan.wanted(&key, eye, level.normalize());
         if !windows.is_empty() {
             plan.builds = plan.builds.wrapping_add(1);
-            plan.stale = false;
+            plan.stale = 0;
             plan.build = Some(SunBuild {
                 id: plan.builds,
                 windows,
