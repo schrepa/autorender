@@ -2,8 +2,9 @@ import package::place::heightfield::{SurfaceTriangle, TerrainGroundRise, Terrain
     TerrainLevelHeight, TerrainUniform, TerrainView};
 import package::engine::view::{camera, eye_world};
 import package::terrain_shading::draw::{TerrainBlend, terrain_band_rise, terrain_control_sampler, terrain_controls_blend, terrain_displacement, terrain_gradient_between, terrain_layer_fades, terrain_material, terrain_material_rises, terrain_steep_blend, terrain_tile_maps};
-import package::terrain_shading::field::{surface_along, terrain_load};
-import package::terrain_shading::surface::{surface_height, surface_kept, surface_relative};
+import package::terrain_shading::field::{surface_along, terrain_heights};
+import package::terrain_shading::surface::{surface_height, surface_height_at, surface_kept,
+    surface_relative};
 import package::terrain_shading::tables::{table_look, table_terrain, table_view, terrain_tables};
 import package::generated::terrain_shading::{CONTROL_PLANE, LookUniform, NORMAL_PLANE, PATCH_GRID, TABLE_LOOK, SUBDIVISION_ARGS, SUBDIVISION_WATERED, SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES, TILE_PLANES};
 
@@ -45,7 +46,15 @@ fn surface_leaf(index: u32) -> SurfaceTriangle {
 }
 
 fn surface_drawn(triangle: SurfaceTriangle, local: vec2<f32>) -> vec3<f32> {
-    let relative = surface_relative(local, surface_height(triangle, local));
+    return surface_lifted(local, surface_height(triangle, local));
+}
+
+fn surface_drawn_at(triangle: SurfaceTriangle, local: vec2<f32>, held: f32) -> vec3<f32> {
+    return surface_lifted(local, surface_height_at(triangle, local, held));
+}
+
+fn surface_lifted(local: vec2<f32>, height: f32) -> vec3<f32> {
+    let relative = surface_relative(local, height);
     return relative + terrain_displacement(eye_world(relative), local, 0.0).moved;
 }
 
@@ -91,16 +100,13 @@ fn terrain_level_height(local: vec2<f32>, level: u32) -> TerrainLevelHeight {
         let within = clamp(samples - vec2<f32>(tile * 256u), vec2<f32>(0.0), vec2<f32>(256.0));
         let corner = min(vec2<u32>(within), vec2<u32>(255u));
         let f = within - vec2<f32>(corner);
-        let texel = corner + vec2<u32>(1u);
-        let h00 = terrain_load(layer, texel);
-        let h10 = terrain_load(layer, texel + vec2<u32>(1u, 0u));
-        let h01 = terrain_load(layer, texel + vec2<u32>(0u, 1u));
-        let h11 = terrain_load(layer, texel + vec2<u32>(1u, 1u));
+        let h = textureGather(0, terrain_heights, terrain_control_sampler,
+            (vec2<f32>(corner) + vec2<f32>(2.0)) / 259.0, layer);
         held.found = true;
         if f.x + f.y <= 1.0 {
-            held.height = h00 + f.x * (h10 - h00) + f.y * (h01 - h00);
+            held.height = h.w + f.x * (h.z - h.w) + f.y * (h.x - h.w);
         } else {
-            held.height = h11 + (1.0 - f.x) * (h01 - h11) + (1.0 - f.y) * (h10 - h11);
+            held.height = h.y + (1.0 - f.x) * (h.x - h.y) + (1.0 - f.y) * (h.z - h.y);
         }
         return held;
     }

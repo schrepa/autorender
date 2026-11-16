@@ -77,6 +77,10 @@ fn surface_drawn(triangle: SurfaceTriangle, local: vec2<f32>) -> vec3<f32> {
     return vec3<f32>(0.0);
 }
 
+fn surface_drawn_at(triangle: SurfaceTriangle, local: vec2<f32>, held: f32) -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+
 fn terrain_level_height(local: vec2<f32>, level: u32) -> TerrainLevelHeight {
     var height: TerrainLevelHeight;
     return height;

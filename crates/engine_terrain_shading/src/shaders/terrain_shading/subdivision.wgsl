@@ -252,25 +252,29 @@ fn subdivision_measure(triangle: SurfaceTriangle) -> SubdivisionMeasure {
     }
     let pieces = length(triangle.c - triangle.a) / f32(1u << SURFACE_MESHLET_LEVEL);
     let rise = max(high.x - low.x, high.y - low.y);
-    var a: SubdivisionPoint;
-    var b: SubdivisionPoint;
-    var c: SubdivisionPoint;
-    var over: SurfaceWater;
+    let over = subdivision_water(triangle);
+    let edged = any(low < extent.xy) || any(high > extent.zw)
+        || (all(high > cutout.xy) && all(low < cutout.zw));
+    let risen = vec3<f32>(0.0, over.error + rise, 0.0);
+    var first = vec3<f32>(0.0);
+    var second = vec3<f32>(0.0);
+    var kept = mat3x3<f32>();
+    var wet = vec3<f32>(0.0);
     var unit = vec3<f32>(0.0);
-    var risen = vec3<f32>(0.0);
     var finer = 0.0;
     var bent = 0.0;
     var across = 0.0;
     var risen_across = 0.0;
     var lowest = vec3<f32>(0.0);
     var highest = vec3<f32>(0.0);
-    var corners = 4u;
-    for (var corner = 0u; corner < corners; corner++) {
+    for (var corner = 0u; corner < 7u; corner++) {
         let point = subdivision_point(subdivision_corner(triangle, corner), pieces);
         let moved = length(point.lift - point.kept);
         let near = detail_across(point.world);
+        let near_wet = detail_across(point.world + risen);
+        measure.drawn = measure.drawn || point.found;
         if corner == 0u {
-            a = point;
+            first = point.world;
             finer = moved;
             across = near;
             lowest = point.world;
@@ -282,34 +286,32 @@ fn subdivision_measure(triangle: SurfaceTriangle) -> SubdivisionMeasure {
             highest = max(highest, point.world);
         }
         if corner == 1u {
-            b = point;
+            second = point.world;
+        }
+        if corner < 3u {
+            kept = mat3x3<f32>(select(kept[0], point.kept, corner == 0u),
+                select(kept[1], point.kept, corner == 1u), select(kept[2], point.kept, corner == 2u));
+            wet = select(wet, vec3<f32>(near_wet), vec3<u32>(corner) == vec3<u32>(0u, 1u, 2u));
         }
         if corner == 2u {
-            c = point;
+            let normal = cross(second - first, point.world - first);
+            unit = normal / max(length(normal), 1.0e-12);
         }
         if corner == 3u {
-            measure.drawn = a.found || b.found || c.found || point.found;
             if !measure.drawn {
                 return measure;
             }
-            over = subdivision_water(triangle);
             measure.watered = over.reached;
-            if any(low < extent.xy) || any(high > extent.zw)
-                || (all(high > cutout.xy) && all(low < cutout.zw)) {
+            if edged {
                 measure.splits = true;
                 return measure;
             }
-            let normal = cross(b.world - a.world, c.world - a.world);
-            unit = normal / max(length(normal), 1.0e-12);
-            bent = abs(dot(point.kept - (a.kept + b.kept + c.kept) / 3.0, unit));
-            risen = vec3<f32>(0.0, over.error + rise, 0.0);
-            risen_across = min(min(detail_across(a.world + risen), detail_across(b.world + risen)),
-                min(detail_across(c.world + risen), detail_across(point.world + risen)));
-            corners = 7u;
+            bent = abs(dot(point.kept - (kept[0] + kept[1] + kept[2]) / 3.0, unit));
+            risen_across = min(min(wet.x, wet.y), min(wet.z, near_wet));
         } else if corner > 3u {
-            bent = max(bent, abs(dot(point.kept - subdivision_middle(a.kept, b.kept, c.kept,
+            bent = max(bent, abs(dot(point.kept - subdivision_middle(kept[0], kept[1], kept[2],
                 corner), unit)));
-            risen_across = min(risen_across, detail_across(point.world + risen));
+            risen_across = min(risen_across, near_wet);
         }
     }
     let parts = f32(1u << SURFACE_MESHLET_LEVEL);

@@ -283,7 +283,10 @@ fn surface_error_at(local: vec2<f32>, piece: f32) -> f32 {
 }
 
 fn surface_height(triangle: SurfaceTriangle, local: vec2<f32>) -> f32 {
-    let held = terrain_true_height(local);
+    return surface_height_at(triangle, local, terrain_true_height(local));
+}
+
+fn surface_height_at(triangle: SurfaceTriangle, local: vec2<f32>, held: f32) -> f32 {
     let hypotenuse = abs(triangle.a - triangle.b);
     let unit = (hypotenuse.x + hypotenuse.y) / f32(2u << SURFACE_MESHLET_LEVEL);
     let cells = vec2<i32>(round(local / unit));
