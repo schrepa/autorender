@@ -5,6 +5,8 @@ use std::sync::Arc;
 use engine_core::{Entry, Error, ErrorCode, Source, Var};
 use wesl::Mangler as _;
 
+mod driver;
+
 pub const CORE_PACKAGE: &str = "engine_render";
 pub const CORE_PREFIX: &str = "engine";
 pub const CAMERA: &str = "camera";
@@ -140,6 +142,8 @@ pub(crate) struct Linker {
     numbered: bool,
     edited: BTreeMap<String, String>,
     kept: Vec<(String, String)>,
+    prepared: Option<Result<driver::Prepared, String>>,
+    parsed: driver::Parsed,
 }
 
 pub(crate) fn path_of(var_or_entry: (engine_core::Module, &str)) -> (&'static str, String) {
@@ -203,7 +207,13 @@ impl Linker {
             self.place_handed(module.path());
         }
         self.numbered = false;
+        self.changed();
+    }
+
+    fn changed(&mut self) {
         self.composed.clear();
+        self.prepared = None;
+        self.parsed.clear();
     }
 
     pub(crate) fn hand(&mut self, path: String, package: &'static str, parts: Vec<Part>) {
@@ -240,7 +250,7 @@ impl Linker {
         self.modules.retain(|known| known.path != path);
         self.add(path, package, Cow::Owned(text), true);
         self.numbered = false;
-        self.composed.clear();
+        self.changed();
     }
 
     fn add(
@@ -443,7 +453,7 @@ impl Linker {
             self.numbers.get(&(path.clone(), name.clone())).copied()
         });
         self.numbered = true;
-        self.composed.clear();
+        self.changed();
         listed
     }
 
@@ -500,65 +510,36 @@ impl Linker {
         let failed = |error: &dyn std::fmt::Display| {
             Error::new(ErrorCode::ShaderLink, path.clone()).got(error.to_string())
         };
-        let mut resolver = wesl::resolver::VirtualResolver::new();
-        for source in &self.modules {
-            let text = match pass {
-                Some((_, text)) if source.path == crate::shared::WRITES_MODULE => text.clone(),
-                Some(_) | None => self.numbered_text(source),
-            };
-            resolver.add_module(
-                module_path(&source.path).map_err(|error| failed(&error))?,
-                Cow::Owned(text),
-            );
-        }
-        let mut features = wesl::Features::new();
-        features.default = wesl::Feature::Error;
-        let options = wesl::CompileOptions {
-            imports: true,
-            condcomp: true,
-            visibility: true,
-            generics: false,
-            strip: true,
-            lower: false,
-            validate: false,
-            sourcemap: false,
-            mangler: wesl::ManglerKind::Escape,
-            mangle_main: false,
-            keep: kept.map(|entry| vec![entry.to_owned()]),
-            keep_main: kept.is_none(),
-            features,
-            ..Default::default()
-        };
+        let prepared = self
+            .prepared
+            .get_or_insert_with(|| prepare(&self.modules, &self.numbers))
+            .as_ref()
+            .map_err(|error| failed(error))?;
         let main = module_path(module).map_err(|error| failed(&error))?;
-        let mut result =
-            wesl::compile(&main, &options, &resolver).map_err(|error| failed(&error))?;
+        let writes = pass.map(|(_, text)| text.as_str());
+        let mut result = driver::compile(&main, kept, (prepared, writes), &mut self.parsed)
+            .map_err(|error| failed(&error))?;
         let order = |path: &wesl::syntax::ModulePath| {
             if *path == main {
                 return 0;
             }
-            let named = path.to_string();
-            1 + self
-                .modules
-                .iter()
-                .position(|source| format!("package::{}", source.path) == named)
+            1 + prepared
+                .named
+                .get(&path.to_string())
+                .copied()
                 .unwrap_or(self.modules.len())
         };
         result.modules.sort_by_key(|module| order(&module.path));
         let linked = wesl::pass::link(&result.modules, Some(&result.used_items));
         let bindings = bound_vars(&linked);
-        let text = self.pieces_read_in_place(linked.to_string());
+        let text = pieces_read_in_place(&prepared.pieces, linked.to_string());
         let switches = switch_ids(&text);
         let mut overrides = Vec::new();
-        for source in &self.modules {
-            for name in declared_overrides(&source.text) {
-                let mangled = if source.path == module {
-                    name.clone()
-                } else {
-                    let path = module_path(&source.path).map_err(|error| failed(&error))?;
-                    wesl::mangler::EscapeMangler.mangle(&path, &name)
-                };
-                if declares_override(&text, &mangled) {
-                    overrides.push((name, mangled));
+        for (source, names) in self.modules.iter().zip(&prepared.overrides) {
+            for (name, other) in names {
+                let mangled = if source.path == module { name } else { other };
+                if declares_override(&text, mangled) {
+                    overrides.push((name.clone(), mangled.clone()));
                 }
             }
         }
@@ -571,54 +552,6 @@ impl Linker {
         });
         self.composed.insert(key, Arc::clone(&composed));
         Ok(composed)
-    }
-
-    fn pieces_read_in_place(&self, mut text: String) -> String {
-        use wesl::Mangler as _;
-        let Ok(arena) = module_path(crate::pieces::PIECES_MODULE) else {
-            return text;
-        };
-        let arena = wesl::mangler::EscapeMangler.mangle(&arena, crate::pieces::PIECES_BINDING);
-        let inner = format!("{}::", crate::pieces::PIECES_MODULE);
-        for source in &self.modules {
-            let Some(prefix) = source.path.strip_prefix(&inner) else {
-                continue;
-            };
-            let Ok(path) = module_path(&source.path) else {
-                continue;
-            };
-            let read = wesl::mangler::EscapeMangler.mangle(&path, "piece");
-            let call = format!("{read}()");
-            let Some(at) = text.find(&format!("fn {call}")) else {
-                continue;
-            };
-            let end = text[at..]
-                .find('}')
-                .map_or(text.len(), |close| at + close + 1);
-            text.replace_range(at..end, "");
-            text = text.replace(&call, &format!("{arena}.{prefix}"));
-        }
-        text
-    }
-
-    fn numbered_text(&self, module: &Module) -> String {
-        let mut placed = String::with_capacity(module.text.len());
-        for line in module.text.split_inclusive('\n') {
-            match declared_binding(line) {
-                Some((indent, 0, name, rest)) => {
-                    let number = self
-                        .numbers
-                        .get(&(module.path.clone(), name))
-                        .copied()
-                        .unwrap_or(u32::MAX);
-                    placed.push_str(indent);
-                    placed.push_str(&format!("@group(0) @binding({number}) "));
-                    placed.push_str(rest);
-                }
-                Some(_) | None => placed.push_str(line),
-            }
-        }
-        placed
     }
 
     pub(crate) fn reaches(&self, composed: &Composed, path: &str, name: &str) -> bool {
@@ -634,6 +567,26 @@ impl Linker {
     }
 
     pub(crate) fn reached(&self, composed: &Composed) -> Vec<(String, Declaration)> {
+        let Some(Ok(prepared)) = &self.prepared else {
+            return self.reached_unprepared(composed);
+        };
+        let mut found = Vec::new();
+        for (module, mangled) in self.modules.iter().zip(&prepared.declared) {
+            for (declared, other) in module.declared.iter().zip(mangled) {
+                let name = if module.path == composed.module {
+                    &declared.name
+                } else {
+                    other
+                };
+                if composed.bindings.contains(name) {
+                    found.push((module.path.clone(), declared.clone()));
+                }
+            }
+        }
+        found
+    }
+
+    fn reached_unprepared(&self, composed: &Composed) -> Vec<(String, Declaration)> {
         let mut found = Vec::new();
         for module in &self.modules {
             for declared in &module.declared {
@@ -662,31 +615,31 @@ impl Linker {
             .is_some_and(|module| defines_function(&module.text, function))
     }
 
-    pub(crate) fn provides(&self, path: &str, name: &str) -> bool {
+    pub(crate) fn provided(&self, path: &str) -> Vec<String> {
         use wesl::syntax::{GlobalDeclaration, TranslationUnit};
         let Some(module) = self.module(path) else {
-            return false;
+            return Vec::new();
         };
         let Ok(unit) = module.text.parse::<TranslationUnit>() else {
-            return false;
+            return Vec::new();
         };
-        let declared =
-            unit.global_declarations
-                .iter()
-                .any(|declaration| match declaration.node() {
-                    GlobalDeclaration::Declaration(item) => item.ident.to_string() == name,
-                    GlobalDeclaration::Struct(item) => item.ident.to_string() == name,
-                    GlobalDeclaration::TypeAlias(item) => item.ident.to_string() == name,
-                    GlobalDeclaration::Void
-                    | GlobalDeclaration::Function(_)
-                    | GlobalDeclaration::ConstAssert(_)
-                    | GlobalDeclaration::Compound(_) => false,
-                });
-        declared
-            || unit
-                .imports
-                .iter()
-                .any(|import| imports_name(&import.content, name))
+        let mut names: Vec<String> = unit
+            .global_declarations
+            .iter()
+            .filter_map(|declaration| match declaration.node() {
+                GlobalDeclaration::Declaration(item) => Some(item.ident.to_string()),
+                GlobalDeclaration::Struct(item) => Some(item.ident.to_string()),
+                GlobalDeclaration::TypeAlias(item) => Some(item.ident.to_string()),
+                GlobalDeclaration::Void
+                | GlobalDeclaration::Function(_)
+                | GlobalDeclaration::ConstAssert(_)
+                | GlobalDeclaration::Compound(_) => None,
+            })
+            .collect();
+        for import in &unit.imports {
+            imported_names(&import.content, &mut names);
+        }
+        names
     }
 
     pub(crate) fn unused(
@@ -744,6 +697,113 @@ impl Linker {
     }
 }
 
+fn prepare(
+    modules: &[Module],
+    numbers: &BTreeMap<(String, String), u32>,
+) -> Result<driver::Prepared, String> {
+    let mut paths = Vec::with_capacity(modules.len());
+    for source in modules {
+        paths.push(module_path(&source.path)?);
+    }
+    let mut at = engine_core::collections::HashMap::default();
+    let mut named = engine_core::collections::HashMap::default();
+    for (index, (source, path)) in modules.iter().zip(&paths).enumerate() {
+        at.insert(path.clone(), index);
+        named
+            .entry(format!("package::{}", source.path))
+            .or_insert(index);
+    }
+    let mangle = |path, name: &str| driver::mangled(path, name);
+    Ok(driver::Prepared {
+        at,
+        named,
+        texts: modules
+            .iter()
+            .map(|source| numbered_text(numbers, source))
+            .collect(),
+        writes: modules
+            .iter()
+            .map(|source| source.path == crate::shared::WRITES_MODULE)
+            .collect(),
+        overrides: modules
+            .iter()
+            .zip(&paths)
+            .map(|(source, path)| {
+                declared_overrides(&source.text)
+                    .into_iter()
+                    .map(|name| {
+                        let mangled = mangle(path, &name);
+                        (name, mangled)
+                    })
+                    .collect()
+            })
+            .collect(),
+        declared: modules
+            .iter()
+            .zip(&paths)
+            .map(|(source, path)| {
+                (source.declared.iter())
+                    .map(|declared| mangle(path, &declared.name))
+                    .collect()
+            })
+            .collect(),
+        pieces: pieces_read(modules),
+    })
+}
+
+fn pieces_read(modules: &[Module]) -> Vec<(String, String, String)> {
+    let Ok(arena) = module_path(crate::pieces::PIECES_MODULE) else {
+        return Vec::new();
+    };
+    let arena = driver::mangled(&arena, crate::pieces::PIECES_BINDING);
+    let inner = format!("{}::", crate::pieces::PIECES_MODULE);
+    let mut read = Vec::new();
+    for source in modules {
+        let Some(prefix) = source.path.strip_prefix(&inner) else {
+            continue;
+        };
+        let Ok(path) = module_path(&source.path) else {
+            continue;
+        };
+        let call = format!("{}()", driver::mangled(&path, "piece"));
+        read.push((format!("fn {call}"), call, format!("{arena}.{prefix}")));
+    }
+    read
+}
+
+fn pieces_read_in_place(pieces: &[(String, String, String)], mut text: String) -> String {
+    for (declaration, call, replacement) in pieces {
+        let Some(at) = text.find(declaration.as_str()) else {
+            continue;
+        };
+        let end = text[at..]
+            .find('}')
+            .map_or(text.len(), |close| at + close + 1);
+        text.replace_range(at..end, "");
+        text = text.replace(call.as_str(), replacement);
+    }
+    text
+}
+
+fn numbered_text(numbers: &BTreeMap<(String, String), u32>, module: &Module) -> String {
+    let mut placed = String::with_capacity(module.text.len());
+    for line in module.text.split_inclusive('\n') {
+        match declared_binding(line) {
+            Some((indent, 0, name, rest)) => {
+                let number = numbers
+                    .get(&(module.path.clone(), name))
+                    .copied()
+                    .unwrap_or(u32::MAX);
+                placed.push_str(indent);
+                placed.push_str(&format!("@group(0) @binding({number}) "));
+                placed.push_str(rest);
+            }
+            Some(_) | None => placed.push_str(line),
+        }
+    }
+    placed
+}
+
 fn handed_text(base: Option<&str>, parts: &[Part]) -> String {
     let mut text = base.unwrap_or_default().to_owned();
     for &(name, part) in parts {
@@ -767,14 +827,16 @@ fn handed_text(base: Option<&str>, parts: &[Part]) -> String {
     text
 }
 
-fn imports_name(content: &wesl::syntax::ImportContent, name: &str) -> bool {
+fn imported_names(content: &wesl::syntax::ImportContent, names: &mut Vec<String>) {
     match content {
         wesl::syntax::ImportContent::Item(item) => {
-            item.rename.as_ref().unwrap_or(&item.ident).to_string() == name
+            names.push(item.rename.as_ref().unwrap_or(&item.ident).to_string());
         }
-        wesl::syntax::ImportContent::Collection(imports) => imports
-            .iter()
-            .any(|import| imports_name(&import.content, name)),
+        wesl::syntax::ImportContent::Collection(imports) => {
+            for import in imports {
+                imported_names(&import.content, names);
+            }
+        }
     }
 }
 

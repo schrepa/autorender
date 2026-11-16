@@ -33,6 +33,7 @@ export async function loadGame<T extends GameBindings>(load: () => Promise<T>, w
   requireWasmSimd();
   const bindings = await load();
   await bindings.default();
+  performance.mark("engine-instantiated");
   useJobs(bindings, worker);
   jobPool();
   return bindings;
