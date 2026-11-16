@@ -106,7 +106,12 @@ impl SnapHeld {
                 .seen
                 .as_ref()
                 .is_none_or(|seen| seen.assets != inputs.assets);
+        let mut recolour = false;
         if looked {
+            recolour = self
+                .seen
+                .as_ref()
+                .is_some_and(|seen| seen.baking.looks != inputs.baking.looks);
             match self.seen.as_ref().map(|seen| seen.moved(inputs)) {
                 Some(Moved::Tiles(changed)) => {
                     full |= !region(&mut now, (pool, inputs.tiles), &changed);
@@ -129,6 +134,11 @@ impl SnapHeld {
             now.rects.clear();
             now.boxes.clear();
             now.full = true;
+        } else if recolour {
+            now.spans.push(Span {
+                slots: 0..objects,
+                filtered: false,
+            });
         }
         let now = merged(now, objects);
         let again = std::mem::replace(&mut self.again, now.clone());

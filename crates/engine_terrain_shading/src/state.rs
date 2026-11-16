@@ -646,6 +646,7 @@ pub(crate) fn place_tiles(
 ) {
     let atlas = &mut *atlas;
     let layers = std::mem::take(&mut derived.layers);
+    let looks = derived.looks.take();
     atlas.now = time.real_elapsed as f32;
     atlas.changes.resize(settings.tile_feed as usize);
     let attached = |entry: &TerrainEntry| {
@@ -661,6 +662,7 @@ pub(crate) fn place_tiles(
         && whole == ground.whole
         && (atlas.unplaced.is_empty() || !atlas.has_room())
         && layers.is_empty()
+        && looks.is_none_or(|looks| looks == baking.looks)
         && tiles
             .terrains
             .iter()
@@ -688,7 +690,7 @@ pub(crate) fn place_tiles(
             palette,
             whole,
         });
-        publish_baking(&mut baking, (Vec::new(), Vec::new()));
+        publish_baking(&mut baking, (Vec::new(), Vec::new()), looks);
         return;
     }
     atlas.capacity = capacity;
@@ -752,7 +754,7 @@ pub(crate) fn place_tiles(
         .collect();
     held.sort_unstable_by_key(|tile| (tile.terrain, tile.key.level, tile.key.x, tile.key.z));
     let shaded = shaded_tiles(&tiles, &bakes, &held);
-    publish_baking(&mut baking, (shaded, atlas.derived(&held)));
+    publish_baking(&mut baking, (shaded, atlas.derived(&held)), looks);
     let published = GroundTiles {
         held,
         layers: atlas.capacity,
@@ -768,7 +770,11 @@ type Listed = Vec<(Entity, TileKey)>;
 fn publish_baking(
     baking: &mut ResMut<'_, GroundBaking>,
     (shaded, derived): (Listed, Vec<(Entity, TileKey, u32)>),
+    looks: Option<u64>,
 ) {
+    if let Some(looks) = looks.filter(|&looks| looks != baking.looks) {
+        baking.looks = looks;
+    }
     if baking.shaded != shaded {
         baking.shaded = shaded;
     }
@@ -1168,10 +1174,18 @@ pub(crate) struct PartStats {
 #[derive(Resource, Default)]
 pub(crate) struct Derived {
     layers: Vec<u32>,
+    looks: Option<u64>,
 }
 
+pub(crate) const DERIVED_LAYERS: u32 = 0;
+pub(crate) const GROUND_LOOKS: u32 = 1;
+
 impl Readable for Derived {
-    fn arrived(&mut self, _tag: u32, read: Readback<&[u8]>) {
+    fn arrived(&mut self, tag: u32, read: Readback<&[u8]>) {
+        if tag == GROUND_LOOKS {
+            self.looks = read.value.first_chunk::<8>().map(|word| u64::from_le_bytes(*word));
+            return;
+        }
         let layers = read.value.as_chunks::<4>().0.iter();
         self.layers.extend(layers.map(|word| u32::from_le_bytes(*word)));
         self.layers.sort_unstable();
