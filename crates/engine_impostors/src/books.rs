@@ -9,8 +9,8 @@ use engine_core::{
     AlphaMode, AssetLibrary, AssetResidency, Background, Census, CookAsks, Cull, Detail,
     DeviceLimits, Error, ErrorCode, Feed, Filter, FrameBudget, FrameTime, GeometryHandle, GpuBits,
     Hold, IDLE_JOBS, Job, JobCx, JobKind, Jobs, Landed, LightingModel, Material, MaterialHandle,
-    Records, Request, Requests, Settling, Switched, TextureRef, VIEW_JOBS, WorkClock, Wrap,
-    content_hash, gpu_struct, job_priority,
+    Records, Request, Requests, Settling, Switched, TextureRef, VIEW_JOBS, Wrap, content_hash,
+    gpu_struct, job_priority,
 };
 use engine_places_rendering::impostors::{
     ImpostorAsk, ImpostorAsks, ImpostorFlags, ImpostorRecord, ImpostorRecords,
@@ -20,25 +20,29 @@ use engine_render::wgpu;
 use crate::part::BakeReads;
 use crate::settings::{ImpostorSettings, ImpostorStats};
 
-pub(crate) const IMPOSTOR_KINDS: u32 = 4;
+pub(crate) const BASE_KINDS: u32 = 3;
 
 const BAKES_IN_FLIGHT: usize = 4;
 
-const BAKE_DELAY_MS: f64 = 1000.0;
-
-const RGBA8_SIZE: u32 = 512;
-
 const ATLAS_FRAMES: u32 = 12;
-
-const FIRST_BYTES: u64 = 16 << 20;
 
 const RECORD_MAGIC: &[u8; 4] = b"EIMP";
 
-const RECORD_HEADER: usize = 20;
+const RECORD_HEADER: usize = 24;
+
+const RECORD_EMISSIVE: usize = 20;
 
 pub(crate) const RECORD_START: usize = RECORD_HEADER + 4;
 
 pub(crate) const ROW_ALIGNMENT: u32 = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+
+pub(crate) fn kinds(emissive: bool) -> u32 {
+    BASE_KINDS + u32::from(emissive)
+}
+
+fn emits(material: Option<&Material>) -> bool {
+    material.is_some_and(|material| material.emissive() != [0.0; 3])
+}
 
 pub(crate) fn record_of(
     (min, max): (Vec3, Vec3),
@@ -100,21 +104,10 @@ impl AtlasShape {
         }
     }
 
-    fn held(self) -> Self {
-        if self.size() > RGBA8_SIZE {
-            Self {
-                texels: self.texels / 2,
-                ..self
-            }
-        } else {
-            self
-        }
-    }
-
     fn held_on(self, device: &AtlasDevice) -> Self {
-        let mut shape = self.held();
+        let mut shape = self;
         while (shape.size() > device.max_texture_dimension
-            || readback_bytes(shape, ROW_ALIGNMENT) + 4 > device.max_buffer_size)
+            || readback_bytes(shape, ROW_ALIGNMENT, true) + 4 > device.max_buffer_size)
             && shape.texels > 2
         {
             shape.texels /= 2;
@@ -158,8 +151,8 @@ pub(crate) fn level_rows(shape: AtlasShape, level: u32, alignment: u32) -> (u32,
     (rows, row.next_multiple_of(alignment), row)
 }
 
-pub(crate) fn readback_bytes(shape: AtlasShape, alignment: u32) -> u64 {
-    u64::from(IMPOSTOR_KINDS)
+pub(crate) fn readback_bytes(shape: AtlasShape, alignment: u32, emissive: bool) -> u64 {
+    u64::from(kinds(emissive))
         * (0..shape.levels())
             .map(|level| {
                 let (rows, stride, _) = level_rows(shape, level, alignment);
@@ -168,7 +161,7 @@ pub(crate) fn readback_bytes(shape: AtlasShape, alignment: u32) -> u64 {
             .sum::<u64>()
 }
 
-fn record_header(shape: AtlasShape) -> Vec<u8> {
+fn record_header(shape: AtlasShape, emissive: bool) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(RECORD_HEADER);
     bytes.extend_from_slice(RECORD_MAGIC);
     for word in [
@@ -176,15 +169,16 @@ fn record_header(shape: AtlasShape) -> Vec<u8> {
         shape.texels,
         u32::from(shape.hemisphere),
         shape.levels(),
+        u32::from(emissive),
     ] {
         bytes.extend_from_slice(&word.to_le_bytes());
     }
     bytes
 }
 
-fn record_bytes(shape: AtlasShape) -> usize {
+fn record_bytes(shape: AtlasShape, emissive: bool) -> usize {
     RECORD_START
-        + IMPOSTOR_KINDS as usize
+        + kinds(emissive) as usize
             * (0..shape.levels())
                 .map(|level| level_bytes(shape.size() >> level))
                 .sum::<usize>()
@@ -216,9 +210,9 @@ pub(crate) static ASSEMBLY: JobKind =
 
 const ASSEMBLY_HEADER: usize = RECORD_HEADER + 4;
 
-fn assembly_input(shape: AtlasShape, read: &[u8]) -> Vec<u8> {
+fn assembly_input(shape: AtlasShape, emissive: bool, read: &[u8]) -> Vec<u8> {
     let mut input = Vec::with_capacity(ASSEMBLY_HEADER + read.len());
-    input.extend_from_slice(&record_header(shape));
+    input.extend_from_slice(&record_header(shape, emissive));
     input.extend_from_slice(&ROW_ALIGNMENT.to_le_bytes());
     input.extend_from_slice(read);
     input
@@ -232,6 +226,7 @@ fn input_word(input: &[u8], at: usize) -> Option<u32> {
 struct Assembly {
     input: Vec<u8>,
     shape: AtlasShape,
+    kinds: u32,
     alignment: u32,
     out: Vec<u8>,
     region: u32,
@@ -245,18 +240,20 @@ impl Assembly {
             texels: input_word(input, 8)?,
             hemisphere: input_word(input, 12)? != 0,
         };
+        let emissive = input_word(input, RECORD_EMISSIVE)? != 0;
         let alignment = input_word(input, RECORD_HEADER)?;
-        let regions = readback_bytes(shape, alignment);
+        let regions = readback_bytes(shape, alignment, emissive);
         if input.len() as u64 != ASSEMBLY_HEADER as u64 + regions + 4 {
             return None;
         }
         let thin = input_word(input, input.len() - 4)?;
-        let mut out = Vec::with_capacity(record_bytes(shape));
+        let mut out = Vec::with_capacity(record_bytes(shape, emissive));
         out.extend_from_slice(&input[..RECORD_HEADER]);
         out.extend_from_slice(&u32::from(thin != 0).to_le_bytes());
         Some(Self {
             input: input.to_vec(),
             shape,
+            kinds: kinds(emissive),
             alignment,
             out,
             region: 0,
@@ -279,10 +276,10 @@ impl Assembly {
 impl Job for Assembly {
     fn step(&mut self, _: u64, _: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
         let levels = self.shape.levels();
-        if self.region < IMPOSTOR_KINDS * levels {
+        if self.region < self.kinds * levels {
             self.level(self.region % levels);
         }
-        Ok((self.region >= IMPOSTOR_KINDS * levels).then(|| std::mem::take(&mut self.out)))
+        Ok((self.region >= self.kinds * levels).then(|| std::mem::take(&mut self.out)))
     }
 }
 
@@ -431,11 +428,6 @@ impl Layers {
     }
 }
 
-fn grown_layers(needed: u32, bytes: u64, limit: u32) -> u32 {
-    let first = (FIRST_BYTES / bytes.max(1)).clamp(1, 16) as u32;
-    needed.max(first).next_power_of_two().min(limit).max(needed)
-}
-
 type ImpostorKey = (GeometryHandle, Option<MaterialHandle>, bool);
 
 struct Baked {
@@ -448,7 +440,6 @@ struct Supply {
     identity: ImpostorIdentity,
     _held: Hold,
     fetch: Option<Background<Arc<[u8]>>>,
-    since: Option<f64>,
 }
 
 enum Supplied {
@@ -482,10 +473,12 @@ pub(crate) enum AtlasWork {
     Release,
     Grow {
         layers: u32,
+        emissive: bool,
     },
     Load {
         layer: u32,
         bytes: Weak<[u8]>,
+        emissive: bool,
     },
     Bake {
         serial: u32,
@@ -494,6 +487,7 @@ pub(crate) enum AtlasWork {
         parts: Vec<(GeometryHandle, MaterialHandle)>,
         bounds: (Vec3, Vec3),
         hemisphere: bool,
+        emissive: bool,
     },
 }
 
@@ -501,6 +495,9 @@ struct Book {
     shape: AtlasShape,
     layers: Layers,
     capacity: u32,
+    emissive: bool,
+    wanted: HashSet<ImpostorKey>,
+    wanting: HashSet<ImpostorKey>,
     drawn: bool,
     baked: HashMap<ImpostorKey, Baked>,
     supplies: HashMap<ImpostorKey, Supply>,
@@ -517,28 +514,18 @@ struct Supplying<'a, 'w, 's> {
     serials: &'a mut Serials,
     budget: &'a mut FrameBudget,
     cooking: bool,
-    now: Option<f64>,
-}
-
-impl Supplying<'_, '_, '_> {
-    fn lasted(&self, since: Option<f64>) -> bool {
-        match (since, self.now) {
-            (Some(since), Some(now)) => now - since >= BAKE_DELAY_MS,
-            _ => true,
-        }
-    }
 }
 
 #[derive(Default)]
 struct Serials {
     next: u32,
-    baking: HashMap<u32, (ImpostorIdentity, AtlasShape)>,
+    baking: HashMap<u32, (ImpostorIdentity, AtlasShape, bool)>,
 }
 
 impl Serials {
-    fn take(&mut self, identity: ImpostorIdentity, shape: AtlasShape) -> u32 {
+    fn take(&mut self, identity: ImpostorIdentity, shape: AtlasShape, emissive: bool) -> u32 {
         self.next = self.next.wrapping_add(1) % crate::part::MISSED;
-        self.baking.insert(self.next, (identity, shape));
+        self.baking.insert(self.next, (identity, shape, emissive));
         self.next
     }
 }
@@ -549,6 +536,9 @@ impl Book {
             shape: shape.held_on(device),
             layers: Layers::default(),
             capacity: 0,
+            emissive: false,
+            wanted: HashSet::default(),
+            wanting: HashSet::default(),
             drawn: false,
             baked: HashMap::default(),
             supplies: HashMap::default(),
@@ -574,6 +564,7 @@ impl Book {
     fn restart(&mut self, cx: &mut Supplying<'_, '_, '_>, shape: AtlasShape) {
         self.shape = shape;
         self.capacity = 0;
+        self.emissive = false;
         self.drawn = false;
         self.layers = Layers::default();
         self.baked.clear();
@@ -594,6 +585,7 @@ impl Book {
             return;
         }
         self.capacity = 0;
+        self.emissive = false;
         self.drawn = false;
         self.layers = Layers::default();
         self.baked.clear();
@@ -677,8 +669,8 @@ impl Book {
             .supplies
             .get(&key)
             .filter(|supply| supply.material.as_ref() == bake.material)
-            .map(|supply| (supply.identity, supply.since));
-        let Some((identity, since)) = asked else {
+            .map(|supply| supply.identity);
+        let Some(identity) = asked else {
             let identity = identity(self.shape.facing(key.2), bake.content);
             let fetch = cx
                 .jobs
@@ -688,7 +680,6 @@ impl Book {
                 identity,
                 _held: self.answers.ask(identity).into(),
                 fetch: Some(fetch),
-                since: cx.now,
             };
             self.supplies.insert(key, supply);
             return Supplied::Coming;
@@ -708,10 +699,7 @@ impl Book {
             Some(Request::Missing) => {}
             Some(Request::Asked(_)) | None => return Supplied::Coming,
         }
-        if self.baking.contains(&identity)
-            || self.baking.len() >= BAKES_IN_FLIGHT
-            || !cx.lasted(since)
-        {
+        if self.baking.contains(&identity) || self.baking.len() >= BAKES_IN_FLIGHT {
             return Supplied::Coming;
         }
         self.bake(cx, key, bake, identity);
@@ -723,20 +711,35 @@ impl Book {
             .map_or(Supplied::Refused, Supplied::Resident)
     }
 
-    fn layer_bytes(&self) -> u64 {
-        level_bytes(self.shape.size()) as u64 * 4 * 4 / 3
-    }
-
-    fn layer(&mut self, cx: &mut Supplying<'_, '_, '_>, budget: Option<u32>) -> Option<u32> {
-        if self.layers.live() >= cx.device.layer_limit(budget) {
+    fn layer(
+        &mut self,
+        cx: &mut Supplying<'_, '_, '_>,
+        (key, emissive): (ImpostorKey, bool),
+        budget: Option<u32>,
+    ) -> Option<u32> {
+        let limit = cx.device.layer_limit(budget);
+        if self.layers.live() >= limit {
             return None;
         }
         let layer = self.layers.allocate(cx.device.max_layers)?;
         let extent = self.layers.extent();
+        let grown = self.capacity < extent || (emissive && !self.emissive);
         if self.capacity < extent {
-            let capacity = grown_layers(extent, self.layer_bytes(), cx.device.max_layers);
-            self.capacity = capacity;
-            self.push(cx, AtlasWork::Grow { layers: capacity });
+            let coming = self
+                .wanted
+                .iter()
+                .filter(|wanted| **wanted != key && !self.baked.contains_key(*wanted))
+                .count();
+            let room = limit - self.layers.live();
+            self.capacity = extent + u32::try_from(coming).unwrap_or(u32::MAX).min(room);
+        }
+        self.emissive |= emissive;
+        if grown {
+            let work = AtlasWork::Grow {
+                layers: self.capacity,
+                emissive: self.emissive,
+            };
+            self.push(cx, work);
         }
         Some(layer)
     }
@@ -750,14 +753,15 @@ impl Book {
         budget: Option<u32>,
     ) -> bool {
         let shape = self.shape.facing(key.2);
-        let header = record_header(shape);
-        if bytes.len() != record_bytes(shape)
+        let emissive = emits(bake.material);
+        let header = record_header(shape, emissive);
+        if bytes.len() != record_bytes(shape, emissive)
             || bytes.get(..RECORD_HEADER) != Some(header.as_slice())
         {
             return false;
         }
         let thin = input_word(bytes, RECORD_HEADER).is_some_and(|word| word != 0);
-        let Some(layer) = self.layer(cx, budget) else {
+        let Some(layer) = self.layer(cx, (key, emissive), budget) else {
             return false;
         };
         self.push(
@@ -765,6 +769,7 @@ impl Book {
             AtlasWork::Load {
                 layer,
                 bytes: Arc::downgrade(bytes),
+                emissive,
             },
         );
         self.resident(key, bake, (layer, thin));
@@ -797,7 +802,10 @@ impl Book {
     ) {
         self.baking.insert(identity);
         self.answers.ask_again(&identity);
-        let serial = cx.serials.take(identity, self.shape.facing(key.2));
+        let emissive = emits(bake.material);
+        let serial = cx
+            .serials
+            .take(identity, self.shape.facing(key.2), emissive);
         self.push(
             cx,
             AtlasWork::Bake {
@@ -807,6 +815,7 @@ impl Book {
                 parts: bake.parts.clone(),
                 bounds: bake.bounds,
                 hemisphere: key.2,
+                emissive,
             },
         );
     }
@@ -935,12 +944,14 @@ impl ImpostorBooks {
         if !self.installed {
             return;
         }
-        let Some((identity, shape)) = self.serials.baking.remove(&serial) else {
+        let Some((identity, shape, emissive)) = self.serials.baking.remove(&serial) else {
             return;
         };
-        let expected = readback_bytes(shape, ROW_ALIGNMENT) + 4;
+        let expected = readback_bytes(shape, ROW_ALIGNMENT, emissive) + 4;
         let input = match read {
-            Some(bytes) if bytes.len() as u64 == expected => Ok(assembly_input(shape, &bytes)),
+            Some(bytes) if bytes.len() as u64 == expected => {
+                Ok(assembly_input(shape, emissive, &bytes))
+            }
             Some(bytes) => Err(bake_failed(bytes.len())),
             None => Err(bake_failed("lost")),
         };
@@ -1034,7 +1045,6 @@ struct Frame {
     least: usize,
     detail: bool,
     cooking: bool,
-    now: Option<f64>,
     seconds: f64,
 }
 
@@ -1047,7 +1057,7 @@ pub(crate) fn settle(
         Res<Detail>,
         Res<DeviceLimits>,
     ),
-    (clock, time, records): (Res<WorkClock>, Res<FrameTime>, Res<Records>),
+    (time, records): (Res<FrameTime>, Res<Records>),
     (library, residency): (Res<AssetLibrary>, Res<AssetResidency>),
     (mut books, mut budget, mut stats): (
         ResMut<ImpostorBooks>,
@@ -1070,7 +1080,6 @@ pub(crate) fn settle(
         least: settings.min_triangles as usize,
         detail: detail.chosen_error().is_some(),
         cooking,
-        now: clock.now().filter(|_| !cooking),
         seconds: time.real_elapsed,
     };
     let books = &mut *books;
@@ -1118,7 +1127,6 @@ fn settle_books(
         serials,
         budget,
         cooking: frame.cooking,
-        now: frame.now,
     };
     if missed && let Some(book) = held.as_mut() {
         let shape = book.shape;
@@ -1243,21 +1251,35 @@ fn supply_ask(
     {
         return None;
     }
+    let key = (ask.mesh, ask.material, hemisphere);
+    let supplied = supply_key(book, cx, sources, (ask, key), budget);
+    if matches!(supplied, Supplied::Coming | Supplied::Waiting) {
+        book.wanting.insert(key);
+    }
+    Some(supplied)
+}
+
+fn supply_key(
+    book: &mut Book,
+    cx: &mut Supplying<'_, '_, '_>,
+    sources: Sources<'_>,
+    (ask, key): (&ImpostorAsk, ImpostorKey),
+    budget: Option<u32>,
+) -> Supplied {
     if ask
         .material
         .is_some_and(|handle| !drawable(sources, handle))
     {
-        return Some(Supplied::Waiting);
+        return Supplied::Waiting;
     }
     let material = ask.material.and_then(current_material(sources));
-    let key = (ask.mesh, ask.material, hemisphere);
     if let Some(resident) = book.record(key, material) {
-        return Some(Supplied::Resident(resident));
+        return Supplied::Resident(resident);
     }
     let Some(bake) = bake_of(sources, ask, material) else {
-        return Some(Supplied::Waiting);
+        return Supplied::Waiting;
     };
-    Some(book.supply(cx, key, &bake, budget))
+    book.supply(cx, key, &bake, budget)
 }
 
 fn supply_all(
@@ -1327,6 +1349,8 @@ fn settle_book(
 ) {
     book.fit(cx, AtlasShape::of(frame.pixels));
     book.waiting = 0;
+    std::mem::swap(&mut book.wanted, &mut book.wanting);
+    book.wanting.clear();
     retain_book(book, cx, sources);
     let shown = frame.detail && frame.switched_on;
     if !shown {

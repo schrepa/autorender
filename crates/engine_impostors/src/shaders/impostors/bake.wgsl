@@ -76,9 +76,9 @@ fn vs_impostor_bake_extended(input: GeometryVertex, extra: GeometryExtra,
 
 struct BakeTargets {
     @location(0) albedo: vec4<f32>,
-    @location(1) emissive: vec4<f32>,
-    @location(2) geometry: vec4<f32>,
-    @location(3) surface: vec4<f32>,
+    @location(1) geometry: vec4<f32>,
+    @location(2) surface: vec4<f32>,
+    @location(3) emissive: vec4<f32>,
 }
 
 fn bake_input(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool)
@@ -110,10 +110,10 @@ fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool
     }
     var targets: BakeTargets;
     targets.albedo = vec4<f32>(point.base_color, 1.0);
-    targets.emissive = vec4<f32>(emissive_texel(surface), base.a);
     targets.geometry = vec4<f32>(stable_normalize(point.normal) * 0.5 + 0.5,
         0.5 + 0.5 * input.depth);
-    targets.surface = vec4<f32>(point.roughness, point.metalness, point.occlusion, 0.0);
+    targets.surface = vec4<f32>(point.roughness, point.metalness, point.occlusion, base.a);
+    targets.emissive = vec4<f32>(emissive_texel(surface), 0.0);
     return targets;
 }
 

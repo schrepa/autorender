@@ -5,8 +5,8 @@ import package::face::debug::debug_record_with_kind;
 import package::face::instances::{DEBUG_LEVEL_AT, LAST_LEVEL, instance_color, instance_pose,
     instance_previous_pose, last_entry, last_fading_entry, last_late_entry};
 import package::generated::writes::{DepthOutputs, depth_outputs};
-import package::impostors::faces::impostors::{card_debug, card_depth, card_lit, card_point,
-    card_previous, posed_card};
+import package::impostors::faces::impostors::{CardSun, card_debug, card_depth, card_lit,
+    card_point, card_previous, card_sun_frames, posed_card};
 import package::place::impostors::{CardDebugTargets, CardVertex, DEBUG_CARD, ImpostorRecord};
 
 @group(1) @binding(0) var<storage, read> card_records: array<ImpostorRecord>;
@@ -28,7 +28,8 @@ struct CardOutput {
     @location(10) crossings: vec3<f32>,
     @location(11) @interpolate(flat) slopes_ab: vec4<f32>,
     @location(12) @interpolate(flat) slope_c: vec2<f32>,
-    @location(13) @interpolate(flat) slot: u32,
+    @location(13) @interpolate(flat) slot_sun: vec2<u32>,
+    @location(14) @interpolate(flat) sun: vec4<f32>,
 }
 
 fn card_output(vertex: u32, entry: vec2<u32>) -> CardOutput {
@@ -39,12 +40,14 @@ fn card_output(vertex: u32, entry: vec2<u32>) -> CardOutput {
     if drawn_slot_moved(entry.x) {
         previous = instance_previous_pose(slot);
     }
-    let made = posed_card(vertex, entry.y, pose, color, card_records[entry.y]);
+    let record = card_records[entry.y];
+    let made = posed_card(vertex, entry.y, pose, color, record);
     let card = made.output;
+    let sun = card_sun_frames(card, record);
     return CardOutput(card.clip_position, card.frames_ab, card.frame_c, card.world,
         card.normal_x, card.normal_y, card.normal_z, card.depth_axis, card.material, card.batch,
         card_previous(made.local, previous, color), card.crossings, card.slopes_ab, card.slope_c,
-        slot);
+        vec2<u32>(slot, sun.frames), vec4<f32>(sun.weights, sun.turned));
 }
 
 @vertex
@@ -74,9 +77,10 @@ fn card_vertex(input: CardOutput) -> CardVertex {
 @fragment
 fn fs_card(input: CardOutput) -> DepthOutputs {
     let card = card_vertex(input);
-    let fade = drawn_fade(input.slot);
+    let fade = drawn_fade(input.slot_sun.x);
     let record = card_records[input.batch];
-    let shaded = card_lit(card, record, card_point(card, record, fade), fade_word_on(fade));
+    let sun = CardSun(input.slot_sun.y, input.sun.xyz, input.sun.w);
+    let shaded = card_lit(card, record, card_point(card, record, fade), fade_word_on(fade), sun);
     return depth_outputs(shaded.point, shaded.shaded,
         view_pixel(input.clip_position, vec4<f32>(input.previous.xy, 0.0, input.previous.z)),
         shaded.depth);
@@ -85,15 +89,16 @@ fn fs_card(input: CardOutput) -> DepthOutputs {
 @fragment
 fn fs_card_depth(input: CardOutput) -> @builtin(frag_depth) f32 {
     let card = card_vertex(input);
-    let fade = drawn_fade(input.slot);
+    let fade = drawn_fade(input.slot_sun.x);
     return card_depth(card, card_point(card, card_records[input.batch], fade), fade_word_on(fade));
 }
 
 @fragment
 fn fs_debug_card(input: CardOutput) -> CardDebugTargets {
     let card = card_vertex(input);
-    let fade = drawn_fade(input.slot);
-    let record = debug_record_with_kind(CARD_RECORD, drawn_records[input.slot].kind);
+    let slot = input.slot_sun.x;
+    let fade = drawn_fade(slot);
+    let record = debug_record_with_kind(CARD_RECORD, drawn_records[slot].kind);
     return card_debug(card, card_point(card, card_records[input.batch], fade),
-        vec2<u32>(record, input.slot), input.batch, fade, fade_word_on(fade));
+        vec2<u32>(record, slot), input.batch, fade, fade_word_on(fade));
 }

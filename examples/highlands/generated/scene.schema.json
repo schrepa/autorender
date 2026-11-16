@@ -6440,7 +6440,7 @@
           "type": "integer"
         },
         "pixels": {
-          "default": 128.0,
+          "default": 64.0,
           "format": "float",
           "maximum": 4096.0,
           "minimum": 8.0,

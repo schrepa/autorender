@@ -6,7 +6,7 @@ settings! {
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneImpostors")]
     pub struct ImpostorSettings {
-        pub pixels: f32 = 128.0 => range(8.0, 4096.0),
+        pub pixels: f32 = 64.0 => range(8.0, 4096.0),
         #[serde(skip_serializing_if = "Option::is_none")]
         pub max: Option<u32> = None => budget,
         pub work: u32 = 64 => at_least(1),

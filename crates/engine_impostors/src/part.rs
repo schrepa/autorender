@@ -14,8 +14,8 @@ use engine_render::{
 };
 
 use crate::books::{
-    AtlasShape, AtlasWork, ImpostorBooks, RECORD_START, ROW_ALIGNMENT, level_rows, readback_bytes,
-    record_of, rows,
+    AtlasShape, AtlasWork, ImpostorBooks, RECORD_START, ROW_ALIGNMENT, kinds, level_rows,
+    readback_bytes, record_of, rows,
 };
 use crate::cards::CARD;
 use crate::shaders::impostors::bake;
@@ -26,21 +26,21 @@ pub(crate) const MISSED: u32 = u32::MAX - 1;
 
 const FORMATS: [wgpu::TextureFormat; 4] = [
     wgpu::TextureFormat::Rgba8UnormSrgb,
+    wgpu::TextureFormat::Rgba8Unorm,
+    wgpu::TextureFormat::Rgba8Unorm,
     wgpu::TextureFormat::Rgba8UnormSrgb,
-    wgpu::TextureFormat::Rgba8Unorm,
-    wgpu::TextureFormat::Rgba8Unorm,
 ];
 const ATLAS_LABELS: [&str; 4] = [
     "impostor_albedo",
-    "impostor_emissive",
     "impostor_geometry",
     "impostor_surface",
+    "impostor_emissive",
 ];
 const BAKE_LABELS: [&str; 4] = [
     "impostor_bake_albedo",
-    "impostor_bake_emissive",
     "impostor_bake_geometry",
     "impostor_bake_surface",
+    "impostor_bake_emissive",
 ];
 const BAKE_DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 const MESH: &[VertexLayout] = &[VertexLayout::Geometry(GeometryStream::Vertex)];
@@ -129,6 +129,7 @@ struct Asked {
     parts: Vec<(GeometryHandle, MaterialHandle)>,
     bounds: (Vec3, Vec3),
     hemisphere: bool,
+    emissive: bool,
 }
 
 struct Drawn {
@@ -152,7 +153,7 @@ pub(crate) struct ImpostorGpu {
     asked: VecDeque<Asked>,
     drawing: Option<Drawn>,
     announced: bool,
-    held: bool,
+    held: usize,
 }
 
 impl ImpostorGpu {
@@ -172,7 +173,7 @@ impl ImpostorGpu {
         self.asked.clear();
         self.drawing = None;
         self.shape = None;
-        self.held = false;
+        self.held = 0;
     }
 
     fn apply(&mut self, work: &AtlasWork, cx: &mut Prepare<'_, Self>) -> Allocation {
@@ -186,7 +187,7 @@ impl ImpostorGpu {
                 self.forget(cx);
                 self.shape = shape;
             }
-            AtlasWork::Grow { layers } => {
+            AtlasWork::Grow { layers, emissive } => {
                 let Some(shape) = self.shape else {
                     return Allocation::Kept;
                 };
@@ -195,17 +196,24 @@ impl ImpostorGpu {
                     height: shape.size(),
                     depth_or_array_layers: *layers,
                 };
+                let kinds = kinds(*emissive) as usize;
                 let mut grown = Allocation::Kept;
-                for texture in self.atlas {
-                    if cx.grow(texture, extent, shape.levels()) == Allocation::Fresh && self.held {
+                for (kind, texture) in self.atlas.into_iter().enumerate().take(kinds) {
+                    if cx.grow(texture, extent, shape.levels()) == Allocation::Fresh
+                        && kind < self.held
+                    {
                         grown = Allocation::Fresh;
                     }
                 }
-                self.held = true;
+                self.held = self.held.max(kinds);
                 return grown;
             }
-            AtlasWork::Load { layer, bytes } => match (self.shape, bytes.upgrade()) {
-                (Some(shape), Some(bytes)) => self.load(shape, *layer, &bytes, cx),
+            AtlasWork::Load {
+                layer,
+                bytes,
+                emissive,
+            } => match (self.shape, bytes.upgrade()) {
+                (Some(shape), Some(bytes)) => self.load(shape, (*layer, *emissive), &bytes, cx),
                 (Some(_), None) => cx.deliver::<BakeReads>(MISSED, Vec::new()),
                 (None, _) => {}
             },
@@ -216,6 +224,7 @@ impl ImpostorGpu {
                 parts,
                 bounds,
                 hemisphere,
+                emissive,
             } => {
                 if self.shape.is_none() {
                     cx.deliver::<BakeReads>(*serial, Vec::new());
@@ -228,15 +237,22 @@ impl ImpostorGpu {
                     parts: parts.clone(),
                     bounds: *bounds,
                     hemisphere: *hemisphere,
+                    emissive: *emissive,
                 });
             }
         }
         Allocation::Kept
     }
 
-    fn load(&self, shape: AtlasShape, layer: u32, bytes: &[u8], cx: &mut Prepare<'_, Self>) {
+    fn load(
+        &self,
+        shape: AtlasShape,
+        (layer, emissive): (u32, bool),
+        bytes: &[u8],
+        cx: &mut Prepare<'_, Self>,
+    ) {
         let mut at = RECORD_START;
-        for texture in self.atlas {
+        for texture in self.atlas.into_iter().take(kinds(emissive) as usize) {
             for level in 0..shape.levels() {
                 let size = shape.size() >> level;
                 let (row, rows) = rows(size);
@@ -333,7 +349,7 @@ impl ImpostorGpu {
     }
 
     fn read_back(&self, drawn: &Drawn, cx: &mut Prepare<'_, Self>) {
-        let regions = readback_bytes(drawn.shape, ROW_ALIGNMENT);
+        let regions = readback_bytes(drawn.shape, ROW_ALIGNMENT, drawn.asked.emissive);
         let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.read, regions + 4);
         self.copy_out(drawn, regions, cx);
     }
@@ -342,7 +358,8 @@ impl ImpostorGpu {
         let shape = drawn.shape;
         let total = regions + 4;
         let mut offset = 0_u64;
-        for texture in self.colors {
+        let kinds = kinds(drawn.asked.emissive) as usize;
+        for texture in self.colors.into_iter().take(kinds) {
             cx.mipmaps(texture, 0..1);
             let copies: Vec<CopyRegion> = (0..shape.levels())
                 .map(|level| {
@@ -400,9 +417,9 @@ impl GpuPart for ImpostorGpu {
         let sampler = cx.sampler(engine_core::Sampler::LINEAR_CLAMP);
         let views = [
             face::ATLAS_ALBEDO,
-            face::ATLAS_EMISSIVE,
             face::ATLAS_GEOMETRY,
             face::ATLAS_SURFACE,
+            face::ATLAS_EMISSIVE,
         ];
         for (var, texture) in views.into_iter().zip(atlas) {
             cx.frame(var, Bind::Texture(texture))?;
@@ -447,7 +464,7 @@ impl GpuPart for ImpostorGpu {
             asked: VecDeque::new(),
             drawing: None,
             announced: false,
-            held: false,
+            held: 0,
         })
     }
 
