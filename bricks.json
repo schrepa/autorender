@@ -2442,7 +2442,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "3f4934f109149c1faba2e1d7cc8bc45c222ff5b8c23132b7848d4bd16f8df20d"
+      "version": "ac861d5292cedb5b448b24eff77e87699d76b5d00fa1028ebea93ae842754063"
     },
     {
       "dependencies": [
