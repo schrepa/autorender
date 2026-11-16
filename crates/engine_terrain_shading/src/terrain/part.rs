@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Cursor, DepthBias, DeviceLimits, Entry, Error, MaterialHandle, PassRole,
+    AssetLibrary, Cursor, DepthBias, Detail, DeviceLimits, Entry, Error, MaterialHandle, PassRole,
     ProvidedAssets, Views,
 };
 use engine_open_world_kit::ground::{GroundTiles, TerrainTiles};
@@ -266,6 +266,9 @@ pub(crate) struct TerrainGpu {
     macro_maps: MacroMaps,
     frame: TerrainFrame,
     cursor: Cursor,
+    atlas_short: [bool; 5],
+    subdivision_recorded: bool,
+    fading: bool,
     drawn: bool,
     tiles_waiting: bool,
     deferred: bool,
@@ -287,7 +290,7 @@ type Neighbors = (
     Res<'static, ProbeCaptures>,
 );
 
-type Frame = Res<'static, Views>;
+type Frame = (Res<'static, Views>, Option<Res<'static, Detail>>);
 
 impl GpuPart for TerrainGpu {
     type Reads = (
@@ -630,6 +633,9 @@ impl GpuPart for TerrainGpu {
             macro_maps,
             frame: TerrainFrame::default(),
             cursor: Cursor::default(),
+            atlas_short: [false; 5],
+            subdivision_recorded: false,
+            fading: false,
             drawn: false,
             tiles_waiting: false,
             deferred: false,
@@ -645,7 +651,7 @@ impl GpuPart for TerrainGpu {
     )]
     fn prepare(
         &mut self,
-        (lists, neighbors, frame, (limits, assets, holed, provided, lights, sun_plan)): SystemParamItem<
+        (lists, neighbors, (frame, detail), (limits, assets, holed, provided, lights, sun_plan)): SystemParamItem<
             '_,
             '_,
             Self::Reads,
@@ -702,21 +708,31 @@ impl GpuPart for TerrainGpu {
         };
         let watered = water.is_changed();
         let p = &self.passes;
+        let short = self.atlas_short;
         let ran = [
-            cx.ran(p.normals),
-            cx.ran(p.control),
-            cx.ran(p.peaks),
-            cx.ran(p.ancestors),
-            cx.ran(p.summaries),
+            cx.ran(p.normals) && !short[0],
+            cx.ran(p.control) && !short[1],
+            cx.ran(p.peaks) && !short[2],
+            cx.ran(p.ancestors) && !(short[3] || short[0] || short[1]),
+            cx.ran(p.summaries) && !short[4],
         ];
-        let subdivided = cx.ran(p.subdivide);
-        self.atlas.upload(
+        let subdivided = cx.ran(p.subdivide) && self.subdivision_recorded;
+        let uploaded = self.atlas.upload(
             cx,
             h,
             (&tiles, &atlas, &bakes),
             (&moves, ran),
             (&water, watered),
         );
+        let derived = [
+            self.atlas.normal_jobs(),
+            self.atlas.control_jobs(),
+            self.atlas.peak_jobs(),
+            self.atlas.ancestor_jobs(),
+            self.atlas.summary_jobs(),
+        ]
+        .iter()
+        .any(|&jobs| jobs > 0);
         if self.atlas.normal_jobs() > 0 {
             cx.run(self.passes.normals);
         }
@@ -733,17 +749,18 @@ impl GpuPart for TerrainGpu {
             cx.run(self.passes.summaries);
         }
         let view_list = view_uniforms(&views, &captures);
-        self.tables.prepare(
+        let laid_out = self.tables.prepare(
             cx,
             h,
             (&tiles, &atlas, &moves, tiles.is_changed()),
             view_list.len(),
         );
-        self.tables.write_header(cx, h, (atlas.now, &settings.look()));
+        let look = settings.look();
+        self.tables.write_header(cx, h, (atlas.now, &look));
         self.tables.write_views(cx, h, &view_list);
         let unprovided = ProvidedAssets::default();
         let provided = provided.as_deref().unwrap_or(&unprovided);
-        self.maps.prepare(cx, (&tiles, &assets, provided));
+        let mapped = self.maps.prepare(cx, (&tiles, &assets, provided));
         self.tables.write_palette(
             cx,
             h,
@@ -832,6 +849,36 @@ impl GpuPart for TerrainGpu {
             &views,
         );
         self.tables.write_terrains(cx, h, self.patches.uniforms());
+        let seconds = look.shore[2];
+        let fading = atlas
+            .arrivals
+            .values()
+            .chain(atlas.surfaced.values())
+            .any(|&began| atlas.now - began < 2.0 * seconds);
+        let moved = moves.all
+            || !moves.uploads.is_empty()
+            || !moves.vacated.is_empty()
+            || !moves.changed.is_empty();
+        let changed =
+            moved || uploaded || derived || laid_out || mapped || watered || fading || self.fading;
+        self.fading = fading;
+        let unset = Detail::default();
+        let seen = main.detail(detail.as_deref().unwrap_or(&unset));
+        let mut inputs: Vec<u32> = bytemuck::cast_slice(&[
+            seen.eye.x,
+            seen.eye.y,
+            seen.eye.z,
+            seen.pixel_angle,
+            seen.texel,
+            seen.pixel_error,
+        ])
+        .to_vec();
+        let (palette, rungs) = self.tables.palette_rows();
+        inputs.extend_from_slice(bytemuck::cast_slice(self.patches.uniforms()));
+        inputs.extend_from_slice(bytemuck::cast_slice(&[look]));
+        inputs.extend_from_slice(bytemuck::cast_slice(palette));
+        inputs.extend_from_slice(bytemuck::cast_slice(rungs));
+        self.surface.settle(cx, h, (inputs, changed));
         if self.surface.any() {
             cx.run(self.passes.clear_counters);
             cx.run(self.passes.begin);
@@ -871,25 +918,35 @@ impl GpuPart for TerrainGpu {
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
         if pass == self.passes.normals {
-            return cx.dispatch(
+            let dispatched = cx.dispatch(
                 &self.pipelines.normals,
                 Count::Groups(self.atlas.normal_groups()),
             );
+            self.atlas_short[0] = dispatched < 1;
+            return dispatched;
         }
         if pass == self.passes.control {
-            return cx.dispatch(
+            let dispatched = cx.dispatch(
                 &self.pipelines.control,
                 Count::Groups(self.atlas.control_groups()),
             );
+            self.atlas_short[1] = dispatched < 1;
+            return dispatched;
         }
         if pass == self.passes.peaks {
-            return self.atlas.peaks(cx, &self.pipelines.peaks);
+            let dispatched = self.atlas.peaks(cx, &self.pipelines.peaks);
+            self.atlas_short[2] = dispatched < self.pipelines.peaks.len() as u32;
+            return dispatched;
         }
         if pass == self.passes.ancestors {
-            return self.atlas.ancestors(cx, &self.pipelines.ancestors);
+            let dispatched = self.atlas.ancestors(cx, &self.pipelines.ancestors);
+            self.atlas_short[3] = dispatched < self.atlas.ancestor_lists();
+            return dispatched;
         }
         if pass == self.passes.summaries {
-            return self.atlas.summaries(cx, &self.pipelines.summaries);
+            let dispatched = self.atlas.summaries(cx, &self.pipelines.summaries);
+            self.atlas_short[4] = dispatched < self.pipelines.summaries.len() as u32;
+            return dispatched;
         }
         if pass == self.passes.begin {
             let mut dispatched = 0;
@@ -911,6 +968,7 @@ impl GpuPart for TerrainGpu {
                     Count::Indirect(self.inputs.subdivision_args, offset),
                 );
             }
+            self.subdivision_recorded = dispatched == 2 * self.surface.slots().count() as u32;
             return dispatched;
         }
         if pass == self.passes.bounce {

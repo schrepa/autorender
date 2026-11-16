@@ -203,8 +203,9 @@ impl TerrainMaps {
         &mut self,
         cx: &mut Prepare<'_, TerrainGpu>,
         (tiles, assets, provided): (&TerrainTiles, &AssetLibrary, &ProvidedAssets),
-    ) {
-        if !self.filled {
+    ) -> bool {
+        let filled = !self.filled;
+        if filled {
             self.defaults(cx);
             self.filled = true;
         }
@@ -238,7 +239,7 @@ impl TerrainMaps {
             }
         }
         if self.listing == self.listed {
-            return;
+            return filled;
         }
         self.listed.clone_from(&self.listing);
         let features = self.features;
@@ -261,6 +262,7 @@ impl TerrainMaps {
         self.materials = kept.len().max(1) as u32;
         self.size = shape.map_or((1, 1), |shape| shape.size);
         self.layers = kept;
+        true
     }
 
     fn fill(

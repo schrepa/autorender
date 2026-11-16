@@ -70,6 +70,11 @@ impl TileAtlas {
         self.control_ancestors.len() + self.normal_ancestors.len()
     }
 
+    pub(super) fn ancestor_lists(&self) -> u32 {
+        u32::from(!self.control_ancestors.is_empty())
+            + u32::from(!self.normal_ancestors.is_empty())
+    }
+
     pub(super) fn summary_jobs(&self) -> usize {
         self.summary_layers.len()
     }
@@ -139,7 +144,7 @@ impl TileAtlas {
         (tiles, atlas, bakes): (&TerrainTiles, &Atlas, &Bakes),
         (moves, [normals, control, peaks, ancestors, summaries]): (&AtlasMoves, [bool; 5]),
         (line, watered): (&Waterline, bool),
-    ) {
+    ) -> bool {
         let capacity = atlas.capacity.max(1);
         let needed = atlas.next_layer.min(capacity);
         if needed > self.layers {
@@ -159,10 +164,10 @@ impl TileAtlas {
         };
         let mut allocations = Vec::new();
         let (size, mips) = array(HEIGHT_MIPS, layers);
-        allocations.push(cx.allocate(handles.heights, size, mips));
+        allocations.push(cx.grow(handles.heights, size, mips));
         let (size, mips) = array(1, layers * TILE_PLANES);
-        allocations.push(cx.allocate(handles.tile_maps, size, mips));
-        allocations.push(cx.allocate(
+        allocations.push(cx.grow(handles.tile_maps, size, mips));
+        allocations.push(cx.grow(
             handles.rivers,
             wgpu::Extent3d {
                 width: RIVER_PLANES * LAYER_SIZE,
@@ -171,7 +176,7 @@ impl TileAtlas {
             },
             1,
         ));
-        allocations.push(cx.allocate(
+        allocations.push(cx.grow(
             handles.summaries,
             wgpu::Extent3d {
                 width: SUMMARY_CELLS,
@@ -181,7 +186,7 @@ impl TileAtlas {
             SUMMARY_MIPS,
         ));
         for errors in [handles.errors, handles.water_errors] {
-            allocations.push(cx.allocate(
+            allocations.push(cx.grow(
                 errors,
                 wgpu::Extent3d {
                     width: ERROR_CELLS,
@@ -220,6 +225,7 @@ impl TileAtlas {
         }
         let found = water_errors(line, watered || !uploads.is_empty());
         let placed: Vec<TileId> = uploads.iter().map(|&(id, _, _)| id).collect();
+        let written = whole || watered || !touched.is_empty();
         for (id, layer, upload) in uploads {
             let Some(index) = tiles
                 .terrains
@@ -275,6 +281,7 @@ impl TileAtlas {
         write_jobs(cx, handles.control_ancestors, &self.control_ancestors);
         write_jobs(cx, handles.normal_ancestors, &self.normal_ancestors);
         self.controls = self.control_jobs.len() as u32;
+        written
     }
 
     fn rederive(

@@ -73,7 +73,7 @@ impl TerrainTables {
         handles: &Handles,
         (tiles, atlas, moves, moved): (&TerrainTiles, &Atlas, &AtlasMoves, bool),
         views: usize,
-    ) {
+    ) -> bool {
         let laid_out = self.directory_layout.len() == tiles.terrains.len()
             && self.directory_layout.iter().zip(tiles.terrains.iter()).all(
                 |(&(id, pyramid), terrain)| id == terrain.terrain && pyramid == terrain.pyramid,
@@ -120,6 +120,7 @@ impl TerrainTables {
             self.write_moved_fades(cx, handles, (tiles, atlas), moves);
             self.write_moved_holes(cx, handles, tiles, moves);
         }
+        fresh || !laid_out || moved
     }
 
     fn lay_out_directory(&mut self, tiles: &TerrainTiles) {
@@ -441,6 +442,10 @@ impl TerrainTables {
             }
             *held = shares;
         }
+    }
+
+    pub(super) fn palette_rows(&self) -> (&[PaletteEntry], &[Rungs]) {
+        (&self.palette, &self.rungs)
     }
 
     pub(super) fn palette_of(&self, index: usize, materials: usize) -> &[PaletteEntry] {

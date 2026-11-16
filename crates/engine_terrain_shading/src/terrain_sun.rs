@@ -7,14 +7,14 @@ use engine_render::{
     AfterRead, Allocation, Bind, Buffer, ComputePipeline, Count, Encode, Install, Lifetime, Pass,
     Prepare,
 };
-use glam::{Vec2, Vec3};
+use glam::{Vec2, Vec3, Vec3Swizzles};
 
 use crate::gpu::{
     HorizonsPiece, SUN_GROUP, SUN_LEVEL_LAYERS, SUN_LEVELS, SUN_SNAPS, SUN_STATE, SunJob,
     SunTerrain,
 };
 use crate::settings::TerrainShading;
-use crate::state::{Atlas, AtlasMoves};
+use crate::state::{Atlas, AtlasMoves, TileId};
 use crate::terrain::TerrainGpu;
 use crate::terrain_horizons::Horizons;
 
@@ -30,6 +30,43 @@ pub(crate) struct Window {
     texel: f32,
     heading: Vec2,
     half: u32,
+}
+
+impl Window {
+    fn reaches(&self, side: u32, cone: f32, (low, high, spacing): (Vec2, Vec2, f32)) -> bool {
+        let along = self.heading;
+        let across = along.perp();
+        let span = |first: Vec2, last: Vec2, axis: Vec2| {
+            [
+                first,
+                Vec2::new(last.x, first.y),
+                Vec2::new(first.x, last.y),
+                last,
+            ]
+            .map(|corner| corner.dot(axis))
+            .into_iter()
+            .fold(
+                (f32::INFINITY, f32::NEG_INFINITY),
+                |(least, most), value| {
+                    (
+                        engine_math::min(least, value),
+                        engine_math::max(most, value),
+                    )
+                },
+            )
+        };
+        let last = self.origin + Vec2::splat(self.texel * side as f32);
+        let margin = 2.0 * self.texel + 2.0 * spacing;
+        let (start, _) = span(self.origin, last, along);
+        let (left, right) = span(self.origin, last, across);
+        let (_, farthest) = span(low, high, along);
+        let (near, far) = span(low, high, across);
+        if farthest < start - margin {
+            return false;
+        }
+        let wide = engine_math::max(self.texel, cone * (farthest - start)) + margin;
+        far >= left - wide && near <= right + wide
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -96,6 +133,26 @@ impl SunPlan {
         self.marched = None;
         self.slide = None;
         self.dropped = false;
+    }
+
+    fn marches(&self, tiles: &TerrainTiles, (terrain, key): TileId) -> bool {
+        let (Some(marched), Some(entry)) = (
+            self.key,
+            tiles.terrains.iter().find(|entry| entry.terrain == terrain),
+        ) else {
+            return false;
+        };
+        let level = u32::from(key.level);
+        let size = entry.pyramid.tile_size(level);
+        let low = entry.origin.xz() + Vec2::new(f32::from(key.x), f32::from(key.z)) * size;
+        let footprint = (low, low + Vec2::splat(size), entry.pyramid.spacing(level));
+        let built = self.build.iter().flat_map(|build| build.windows.iter());
+        let sliding = self.slide.iter().flat_map(|(_, windows)| windows.iter());
+        self.shown
+            .iter()
+            .flatten()
+            .chain(built.chain(sliding).map(|(_, window)| window))
+            .any(|window| window.reaches(marched.side, marched.cone, footprint))
     }
 
     fn wanted(&self, key: &Key, eye: Vec2, heading: Vec2) -> Vec<(u32, Window)> {
@@ -170,9 +227,12 @@ pub(crate) fn plan(
     let plan = &mut *plan;
     let moves = AtlasMoves::since(&atlas, &mut plan.tiles);
     plan.stale |= moves.all
-        || !moves.uploads.is_empty()
-        || !moves.vacated.is_empty()
-        || !moves.changed.is_empty();
+        || moves
+            .uploads
+            .iter()
+            .map(|&(id, _, _)| id)
+            .chain(moves.changed.iter().copied())
+            .any(|id| plan.marches(&tiles, id));
     let toward = Vec3::from_slice(&sun.direction[..3]);
     let level = Vec2::new(toward.x, toward.z);
     let finest = held(&tiles, &atlas)
@@ -273,6 +333,7 @@ pub(crate) struct SunGpu {
     issued: Option<(usize, u32)>,
     told: bool,
     counted: bool,
+    recorded: bool,
     groups: [u32; 3],
 }
 
@@ -307,6 +368,7 @@ impl SunGpu {
             issued: None,
             told: false,
             counted: false,
+            recorded: false,
             groups: [0; 3],
         })
     }
@@ -323,7 +385,7 @@ impl SunGpu {
         horizons: &Horizons,
     ) {
         if let Some(before) = self.issued.take()
-            && !cx.ran(self.pass)
+            && !(cx.ran(self.pass) && self.recorded)
         {
             self.at = before;
         }
@@ -418,7 +480,9 @@ impl SunGpu {
         cx.run(self.pass);
     }
 
-    pub(crate) fn encode(&self, cx: &mut Encode<'_, TerrainGpu>) -> u32 {
-        cx.dispatch(&self.pipeline, Count::Groups(self.groups))
+    pub(crate) fn encode(&mut self, cx: &mut Encode<'_, TerrainGpu>) -> u32 {
+        let dispatched = cx.dispatch(&self.pipeline, Count::Groups(self.groups));
+        self.recorded = dispatched > 0;
+        dispatched
     }
 }

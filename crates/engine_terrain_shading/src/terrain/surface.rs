@@ -40,6 +40,9 @@ struct Subdivided {
 pub(crate) struct SurfaceTrees {
     trees: [Option<Tree>; SURFACE_SLOTS],
     frame: Vec<Option<Subdivided>>,
+    uniforms: Vec<SubdivisionUniform>,
+    inputs: Vec<u32>,
+    fresh: bool,
     targets: [f32; 2],
     unseen: f32,
     leaves_bytes: u64,
@@ -96,7 +99,27 @@ impl SurfaceTrees {
 
     pub(super) fn rest(&mut self) {
         self.frame.clear();
+        self.inputs.clear();
         self.shallow = 0;
+    }
+
+    pub(super) fn settle(
+        &mut self,
+        cx: &mut Prepare<'_, TerrainGpu>,
+        handles: &Handles,
+        (mut inputs, moved): (Vec<u32>, bool),
+    ) {
+        inputs.extend_from_slice(bytemuck::cast_slice(&self.uniforms));
+        if moved || self.fresh || inputs != self.inputs {
+            for subdivided in self.frame.iter().flatten() {
+                let Some(tree) = self.trees[subdivided.slot] else {
+                    continue;
+                };
+                let (_, buffer) = handles.slots[subdivided.slot];
+                cx.write(buffer, state_bytes(tree.depth), &[0_u32]);
+            }
+        }
+        self.inputs = inputs;
     }
 
     pub(super) fn prepare(
@@ -117,6 +140,7 @@ impl SurfaceTrees {
         self.shallow = 0;
         self.dropped = 0;
         self.frame.clear();
+        self.uniforms.clear();
         let (settings, water) = (views.settings, views.water);
         let count = tiles.terrains.len();
         let share = room / 16 * 16 / LEAF_BYTES / (count as u64).max(1);
@@ -130,8 +154,9 @@ impl SurfaceTrees {
             (handles.counters, SURFACE_SLOTS as u64 * ARGS_BYTES),
             (handles.args, SURFACE_SLOTS as u64 * ARGS_BYTES),
         ];
+        self.fresh = false;
         for (buffer, bytes) in sizes {
-            let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, bytes);
+            self.fresh |= cx.allocate_buffer(buffer, bytes) == Allocation::Fresh;
         }
         self.targets = [settings.subdivision_error, water.subdivision_error];
         self.unseen = settings.subdivision_unseen;
@@ -204,6 +229,10 @@ impl SurfaceTrees {
         let (buffer, _) = handles.slots[slot];
         let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, SLOT);
         cx.write(buffer, 0, &[uniform]);
+        self.uniforms.push(SubdivisionUniform {
+            frame: [0, uniform.frame[1], uniform.frame[2], uniform.frame[3]],
+            ..uniform
+        });
         self.frame.push(Some(Subdivided {
             slot,
             first,
@@ -278,8 +307,12 @@ fn counts_words(depth: u32) -> u32 {
     1 << (depth + 1 - SUBDIVISION_COUNTED)
 }
 
-fn tree_bytes(depth: u32) -> u64 {
+fn state_bytes(depth: u32) -> u64 {
     (u64::from(counts_words(depth)) + (1_u64 << (depth - 5))) * 4
+}
+
+fn tree_bytes(depth: u32) -> u64 {
+    state_bytes(depth) + 8
 }
 
 fn finest_spacing(side: f32, depth: u32) -> f32 {

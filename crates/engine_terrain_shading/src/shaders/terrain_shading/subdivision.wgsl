@@ -16,6 +16,15 @@ import package::generated::terrain_shading::{SUBDIVISION_ARGS, SUBDIVISION_COUNT
 
 const SUBDIVISION_SPLIT: u32 = 1u;
 const SUBDIVISION_MERGE: u32 = 2u;
+const SUBDIVISION_RAN: u32 = 1u << 31u;
+const SUBDIVISION_CHANGED: u32 = 1u << 30u;
+const SUBDIVISION_APPLIED: u32 = 1u << 29u;
+const SUBDIVISION_QUIET: u32 = 3u;
+const SUBDIVISION_SETTLED: u32 = 2u;
+
+fn subdivision_state() -> u32 {
+    return subdivision.tree.y + (1u << (subdivision.tree.x - 5u));
+}
 
 fn subdivision_bit(node: u32) -> u32 {
     let deepest = subdivision.tree.x;
@@ -114,6 +123,38 @@ fn subdivision_point(local: vec2<f32>, pieces: f32) -> SubdivisionPoint {
     return point;
 }
 
+fn subdivision_corner(triangle: SurfaceTriangle, corner: u32) -> vec2<f32> {
+    if corner == 0u {
+        return triangle.a;
+    }
+    if corner == 1u {
+        return triangle.b;
+    }
+    if corner == 2u {
+        return triangle.c;
+    }
+    if corner == 3u {
+        return (triangle.a + triangle.b + triangle.c) / 3.0;
+    }
+    if corner == 4u {
+        return (triangle.a + triangle.b) * 0.5;
+    }
+    if corner == 5u {
+        return (triangle.b + triangle.c) * 0.5;
+    }
+    return (triangle.c + triangle.a) * 0.5;
+}
+
+fn subdivision_middle(a: vec3<f32>, b: vec3<f32>, c: vec3<f32>, corner: u32) -> vec3<f32> {
+    if corner == 4u {
+        return (a + b) * 0.5;
+    }
+    if corner == 5u {
+        return (b + c) * 0.5;
+    }
+    return (c + a) * 0.5;
+}
+
 fn subdivision_seen(low: vec3<f32>, high: vec3<f32>) -> bool {
     for (var index = 0u; index < 6u; index++) {
         if frustum_reach(subdivision.planes[index], low, high) < 0.0 {
@@ -158,23 +199,9 @@ fn subdivision_drawn(triangle: SurfaceTriangle) -> SubdivisionMeasure {
     return measure;
 }
 
-fn subdivision_exceeds(points: array<vec3<f32>, 7>, bound: f32, rise: f32, pixels: f32)
-        -> bool {
-    var held = points;
+fn subdivision_exceeds(bound: f32, across: f32, lowest: vec3<f32>, highest: vec3<f32>,
+        rise: f32, pixels: f32) -> bool {
     let up = vec3<f32>(0.0, rise, 0.0);
-    let risen = vec3<f32>(0.0, bound + rise, 0.0);
-    var across = detail_across(held[0]);
-    var lowest = held[0];
-    var highest = held[0];
-    for (var index = 0u; index < 7u; index++) {
-        let point = held[index];
-        across = min(across, detail_across(point));
-        if rise > 0.0 {
-            across = min(across, detail_across(point + risen));
-        }
-        lowest = min(lowest, point);
-        highest = max(highest, point);
-    }
     let seen = subdivision_seen(lowest - vec3<f32>(bound), highest + vec3<f32>(bound) + up);
     let allowed = pixels * camera.pixel_error * select(subdivision.square.w, 1.0, seen);
     return bound / max(across, 1.0e-6) > allowed;
@@ -190,57 +217,82 @@ fn subdivision_measure(triangle: SurfaceTriangle) -> SubdivisionMeasure {
         return measure;
     }
     let pieces = length(triangle.c - triangle.a) / f32(1u << SURFACE_MESHLET_LEVEL);
-    let a = subdivision_point(triangle.a, pieces);
-    let b = subdivision_point(triangle.b, pieces);
-    let c = subdivision_point(triangle.c, pieces);
-    let center = subdivision_point((triangle.a + triangle.b + triangle.c) / 3.0, pieces);
-    measure.drawn = a.found || b.found || c.found || center.found;
-    if !measure.drawn {
-        return measure;
-    }
-    let over = subdivision_water(triangle);
-    measure.watered = over.reached;
-    if any(low < extent.xy) || any(high > extent.zw)
-        || (all(high > cutout.xy) && all(low < cutout.zw)) {
-        measure.splits = true;
-        return measure;
-    }
-    let ab = subdivision_point((triangle.a + triangle.b) * 0.5, pieces);
-    let bc = subdivision_point((triangle.b + triangle.c) * 0.5, pieces);
-    let ca = subdivision_point((triangle.c + triangle.a) * 0.5, pieces);
-    let normal = cross(b.world - a.world, c.world - a.world);
-    let unit = normal / max(length(normal), 1.0e-12);
-    let bent = abs(vec4<f32>(dot(ab.kept - (a.kept + b.kept) * 0.5, unit),
-        dot(bc.kept - (b.kept + c.kept) * 0.5, unit),
-        dot(ca.kept - (c.kept + a.kept) * 0.5, unit),
-        dot(center.kept - (a.kept + b.kept + c.kept) / 3.0, unit)));
-    let finer = max(max(max(length(a.lift - a.kept), length(b.lift - b.kept)),
-        max(length(c.lift - c.kept), length(center.lift - center.kept))),
-        max(max(length(ab.lift - ab.kept), length(bc.lift - bc.kept)),
-        length(ca.lift - ca.kept)));
-    let parts = f32(1u << SURFACE_MESHLET_LEVEL);
-    let displacement = finer + max(max(bent.x, bent.y), max(bent.z, bent.w)) / (parts * parts);
-    let points = array<vec3<f32>, 7>(a.world, b.world, c.world, center.world, ab.world,
-        bc.world, ca.world);
     let rise = max(high.x - low.x, high.y - low.y);
-    measure.splits = subdivision_exceeds(points, surface_ground_error(triangle) + displacement,
-        0.0, subdivision.square.y)
-        || (over.reached && subdivision_exceeds(points, over.error, rise, subdivision.square.z));
+    var a: SubdivisionPoint;
+    var b: SubdivisionPoint;
+    var c: SubdivisionPoint;
+    var over: SurfaceWater;
+    var unit = vec3<f32>(0.0);
+    var risen = vec3<f32>(0.0);
+    var finer = 0.0;
+    var bent = 0.0;
+    var across = 0.0;
+    var risen_across = 0.0;
+    var lowest = vec3<f32>(0.0);
+    var highest = vec3<f32>(0.0);
+    var corners = 4u;
+    for (var corner = 0u; corner < corners; corner++) {
+        let point = subdivision_point(subdivision_corner(triangle, corner), pieces);
+        let moved = length(point.lift - point.kept);
+        let near = detail_across(point.world);
+        if corner == 0u {
+            a = point;
+            finer = moved;
+            across = near;
+            lowest = point.world;
+            highest = point.world;
+        } else {
+            finer = max(finer, moved);
+            across = min(across, near);
+            lowest = min(lowest, point.world);
+            highest = max(highest, point.world);
+        }
+        if corner == 1u {
+            b = point;
+        }
+        if corner == 2u {
+            c = point;
+        }
+        if corner == 3u {
+            measure.drawn = a.found || b.found || c.found || point.found;
+            if !measure.drawn {
+                return measure;
+            }
+            over = subdivision_water(triangle);
+            measure.watered = over.reached;
+            if any(low < extent.xy) || any(high > extent.zw)
+                || (all(high > cutout.xy) && all(low < cutout.zw)) {
+                measure.splits = true;
+                return measure;
+            }
+            let normal = cross(b.world - a.world, c.world - a.world);
+            unit = normal / max(length(normal), 1.0e-12);
+            bent = abs(dot(point.kept - (a.kept + b.kept + c.kept) / 3.0, unit));
+            risen = vec3<f32>(0.0, over.error + rise, 0.0);
+            risen_across = min(min(detail_across(a.world + risen), detail_across(b.world + risen)),
+                min(detail_across(c.world + risen), detail_across(point.world + risen)));
+            corners = 7u;
+        } else if corner > 3u {
+            bent = max(bent, abs(dot(point.kept - subdivision_middle(a.kept, b.kept, c.kept,
+                corner), unit)));
+            risen_across = min(risen_across, detail_across(point.world + risen));
+        }
+    }
+    let parts = f32(1u << SURFACE_MESHLET_LEVEL);
+    let displacement = finer + bent / (parts * parts);
+    let wet_across = select(across, min(across, risen_across), rise > 0.0);
+    measure.splits = subdivision_exceeds(surface_ground_error(triangle) + displacement, across,
+        lowest, highest, 0.0, subdivision.square.y)
+        || (over.reached && subdivision_exceeds(over.error, wet_across, lowest, highest, rise,
+        subdivision.square.z));
     return measure;
 }
 
-fn subdivision_merges(base: u32) -> bool {
-    let top = subdivision_neighbor(base);
+fn subdivision_mergeable(base: u32, top: u32) -> bool {
     if top != 0u && top < base {
         return false;
     }
-    if subdivision_count(base) != 2u || (top != 0u && subdivision_count(top) != 2u) {
-        return false;
-    }
-    if subdivision_measure(subdivision_triangle(base)).splits {
-        return false;
-    }
-    return top == 0u || !subdivision_measure(subdivision_triangle(top)).splits;
+    return subdivision_count(base) == 2u && (top == 0u || subdivision_count(top) == 2u);
 }
 
 fn subdivision_tally(bit: u32, gained: bool) {
@@ -302,8 +354,18 @@ fn subdivision_chain(node: u32, apply: bool) -> u32 {
 fn subdivide_begin() {
     use_terrain(subdivision.frame.z);
     let args = subdivision.frame.y * SUBDIVISION_ARGS;
+    let state_at = subdivision_state();
+    let state = atomicLoad(&subdivision_tree[state_at]);
+    var quiet = state & SUBDIVISION_QUIET;
+    if (state & SUBDIVISION_RAN) != 0u {
+        quiet = select(min(quiet + 1u, SUBDIVISION_SETTLED), 0u,
+            (state & (SUBDIVISION_CHANGED | SUBDIVISION_APPLIED)) != SUBDIVISION_APPLIED);
+    }
+    atomicStore(&subdivision_tree[state_at], quiet);
+    let settled = quiet == SUBDIVISION_SETTLED;
     let leaves = atomicLoad(&subdivision_tree[1]);
-    atomicStore(&subdivision_args[args], (leaves + SUBDIVISION_GROUP - 1u) / SUBDIVISION_GROUP);
+    atomicStore(&subdivision_args[args],
+        select((leaves + SUBDIVISION_GROUP - 1u) / SUBDIVISION_GROUP, 0u, settled));
     atomicStore(&subdivision_args[args + 1u], 1u);
     atomicStore(&subdivision_args[args + 2u], 1u);
     atomicStore(&subdivision_args[args + SUBDIVISION_LEAVES], leaves);
@@ -315,7 +377,8 @@ fn subdivide_begin() {
     atomicStore(&subdivision_args[draw + 4u], 0u);
     atomicStore(&subdivision_args[args + SUBDIVISION_RESERVED], 0u);
     atomicStore(&subdivision_args[args + SUBDIVISION_REFUSED], 0u);
-    atomicStore(&subdivision_args[args + SUBDIVISION_WATERED], 0u);
+    atomicStore(&subdivision_args[args + SUBDIVISION_WATERED],
+        select(0u, atomicLoad(&subdivision_tree[state_at + 1u]), settled));
 }
 
 @compute @workgroup_size(SUBDIVISION_GROUP)
@@ -325,14 +388,42 @@ fn subdivide_decide(@builtin(global_invocation_id) id: vec3<u32>) {
     if id.x >= atomicLoad(&subdivision_args[args + SUBDIVISION_LEAVES]) {
         return;
     }
+    if id.x == 0u {
+        atomicOr(&subdivision_tree[subdivision_state()], SUBDIVISION_RAN);
+    }
     let node = subdivision_leaf(id.x);
     let triangle = subdivision_triangle(node);
     let depth = firstLeadingBit(node);
+    let splitting = subdivision.frame.x == 0u;
+    var asked = triangle;
+    var asks = 0u;
+    var top = 0u;
+    if splitting {
+        asks = select(0u, 1u, depth < subdivision.tree.x);
+    } else if depth >= 2u && (node & 1u) == 0u {
+        let base = node >> 1u;
+        top = subdivision_neighbor(base);
+        if subdivision_mergeable(base, top) {
+            asked = subdivision_triangle(base);
+            asks = select(1u, 2u, top != 0u);
+        }
+    }
     var measure: SubdivisionMeasure;
-    if subdivision.frame.x == 0u && depth < subdivision.tree.x {
-        measure = subdivision_measure(triangle);
-    } else {
+    if asks == 0u || !splitting {
         measure = subdivision_drawn(triangle);
+    }
+    var merges = asks > 0u;
+    for (var ask = 0u; ask < asks; ask++) {
+        let measured = subdivision_measure(asked);
+        if splitting {
+            measure = measured;
+        } else if measured.splits {
+            merges = false;
+            break;
+        }
+        if ask + 1u < asks {
+            asked = subdivision_triangle(top);
+        }
     }
     let at = subdivision.tree.z + id.x;
     var drawn = SurfaceTriangle(triangle.a, triangle.a, triangle.a);
@@ -345,12 +436,15 @@ fn subdivide_decide(@builtin(global_invocation_id) id: vec3<u32>) {
         subdivision_watered[subdivision.tree.z + place] = at;
     }
     var decision = 0u;
-    if subdivision.frame.x == 0u {
+    if splitting {
         if measure.splits && depth < subdivision.tree.x {
             decision = SUBDIVISION_SPLIT;
         }
-    } else if depth >= 2u && (node & 1u) == 0u && subdivision_merges(node >> 1u) {
+    } else if merges {
         decision = SUBDIVISION_MERGE;
+    }
+    if decision != 0u {
+        atomicOr(&subdivision_tree[subdivision_state()], SUBDIVISION_CHANGED);
     }
     subdivision_nodes[at] = node | (decision << 30u);
 }
@@ -362,6 +456,11 @@ fn subdivide_apply(@builtin(global_invocation_id) id: vec3<u32>) {
     let leaves = atomicLoad(&subdivision_args[args + SUBDIVISION_LEAVES]);
     if id.x >= leaves {
         return;
+    }
+    if id.x == 0u {
+        atomicStore(&subdivision_tree[subdivision_state() + 1u],
+            atomicLoad(&subdivision_args[args + SUBDIVISION_WATERED]));
+        atomicOr(&subdivision_tree[subdivision_state()], SUBDIVISION_APPLIED);
     }
     let word = subdivision_nodes[subdivision.tree.z + id.x];
     let node = word & 0x3fffffffu;
