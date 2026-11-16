@@ -558,9 +558,10 @@ impl<P: GpuPart> Install<'_, P> {
         &mut self,
         form: &KindForm,
         topology: FormTopology,
+        owns: &[PassFragment],
         bound: &[(Var, Bind<P>)],
     ) -> Result<Form<P>, Error> {
-        self.form_built(form, (&EVERY_ROLE, &[]), topology, bound)
+        self.form_built(form, (&EVERY_ROLE, owns), topology, bound)
     }
 
     pub fn form_owning(

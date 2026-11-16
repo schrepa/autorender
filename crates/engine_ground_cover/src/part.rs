@@ -1,10 +1,14 @@
 use bevy_ecs::prelude::*;
-use engine_core::{DrawKind, Error, MaterialHandle, PassRole};
+use engine_core::{
+    AttachPoint, DrawKind, Entry, Error, MaterialHandle, PassRole, PassViews, ScenePass,
+    ScenePasses, TargetName,
+};
 use engine_open_world_kit::ground::PALETTE_ENTRIES;
 use engine_render::{
-    AfterRead, Allocation, Bind, Buffer, ComputePipeline, Count, Draw, DrawInput, Encode, Form,
-    FormSide, FormTopology, FragmentUse, GpuPart, Install, KindForm, Lifetime, Own, Pass, PerPass,
-    Prepare, Scene, SceneDraw, Shape, Varyings, wgpu,
+    AfterRead, Allocation, Bind, Buffer, ComputePipeline, Count, Draw, DrawInput, Encode,
+    FaceCull, Form, FormColor, FormDepth, FormFragment, FormSide, FormTopology, FragmentPass,
+    FragmentUse, GpuPart, Install, KindForm, Lifetime, Own, Pass, PassFragment, PerPass, Prepare,
+    Scene, SceneDraw, Shape, Varyings, wgpu,
 };
 
 pub(crate) const COVER: DrawKind = DrawKind("cover");
@@ -19,7 +23,7 @@ use crate::layouts::{
     LightRows, SeenRows, ShapeRows,
 };
 use crate::settings::GroundCover;
-use crate::shaders::cover::{draw, faces::cover as face, grow};
+use crate::shaders::cover::{draw, faces::cover as face, grow, matched};
 use crate::surface::CoverSurface;
 
 const DRAW_ARGS: u64 = size_of::<wgpu::util::DrawIndirectArgs>() as u64;
@@ -50,7 +54,7 @@ const BLADE_FORM: KindForm = KindForm {
         streams: &[],
         depth_bias: FormSide::UNBIASED,
     },
-    owned: None,
+    owned: Some(FormSide::pulled(draw::VS_COVER_CAST)),
     varyings: Varyings::ObjectExtra(FragmentUse::Masked),
 };
 
@@ -61,7 +65,7 @@ const CARD_FORM: KindForm = KindForm {
         streams: &[],
         depth_bias: FormSide::UNBIASED,
     },
-    owned: None,
+    owned: Some(FormSide::pulled(draw::VS_CARD_CAST)),
     varyings: Varyings::ObjectExtra(FragmentUse::Masked),
 };
 
@@ -87,6 +91,7 @@ pub(crate) struct CoverGpu {
     blades: Buffer<Self>,
     cards: Buffer<Self>,
     counts: Buffer<Self>,
+    casts: Buffer<Self>,
     args: Buffer<Self>,
     frame: Buffer<Self>,
     table: Buffer<Self>,
@@ -99,6 +104,7 @@ pub(crate) struct CoverGpu {
     card: Vec<Held>,
     shadows: bool,
     bins: usize,
+    views: u64,
     cells: Vec<[u32; 3]>,
     spans: Vec<&'static str>,
     blade_bytes: u64,
@@ -125,6 +131,7 @@ impl GpuPart for CoverGpu {
         let blades = cx.buffer("cover_blades", Lifetime::Kept);
         let cards = cx.buffer("cover_cards", Lifetime::Kept);
         let counts = cx.buffer("cover_counts", Lifetime::Kept);
+        let casts = cx.buffer("cover_casts", Lifetime::Kept);
         let args = cx.buffer("cover_draw", Lifetime::Kept);
         let frame = cx.buffer("cover_frame", Lifetime::Kept);
         let table = cx.buffer("cover_table", Lifetime::Kept);
@@ -150,6 +157,7 @@ impl GpuPart for CoverGpu {
                 (grow::CARDS, Bind::Buffer(cards)),
                 (grow::GROW_SPOTS, Bind::Buffer(spots)),
                 (grow::GROW_ROW, Bind::Buffer(windows)),
+                (grow::COVER_CASTS, Bind::Buffer(casts)),
             ],
         )?;
         let running = cx.draw_input(grow_pass, runs);
@@ -160,11 +168,13 @@ impl GpuPart for CoverGpu {
                 (grow::GROWS, Bind::Buffer(rows)),
                 (grow::COUNTS, Bind::Buffer(counts)),
                 (grow::ARGS, Bind::Buffer(args)),
+                (grow::COVER_CASTS, Bind::Buffer(casts)),
             ],
         )?;
         let blade_form = cx.form_shaped(
             &BLADE_FORM,
             FormTopology::Strip,
+            &matched_passes(cx.passes(), draw::VS_COVER_CAST),
             &[
                 (draw::COVER_BLADES, Bind::Buffer(blades)),
                 (draw::COVER_FRAME, Bind::Buffer(frame)),
@@ -173,6 +183,7 @@ impl GpuPart for CoverGpu {
         let card_form = cx.form_shaped(
             &CARD_FORM,
             FormTopology::Strip,
+            &matched_passes(cx.passes(), draw::VS_CARD_CAST),
             &[
                 (draw::COVER_CARDS, Bind::Buffer(cards)),
                 (draw::COVER_FRAME, Bind::Buffer(frame)),
@@ -199,6 +210,7 @@ impl GpuPart for CoverGpu {
             blades,
             cards,
             counts,
+            casts,
             args,
             frame,
             table,
@@ -211,6 +223,7 @@ impl GpuPart for CoverGpu {
             card: Vec::new(),
             shadows: false,
             bins: 0,
+            views: 0,
             cells: Vec::new(),
             spans: Vec::new(),
             blade_bytes: BLADE_BYTES,
@@ -260,7 +273,9 @@ impl GpuPart for CoverGpu {
         self.drawn = plan.drawn && !plan.rows.is_empty();
         cx.write(self.table, THIN_AT, &[if self.drawn { plan.thin } else { 0.0 }]);
         self.bins = plan.bins as usize;
+        self.views = u64::from(plan.views);
         let bins = u64::from(plan.bins.max(1));
+        let kinds = BLADE_DRAWS + u64::from(plan.bins);
         let grown = plan.cells.len() as u64;
         if self.drawn {
             let blades = u64::from(plan.capacity) * BLADE_BYTES;
@@ -284,7 +299,8 @@ impl GpuPart for CoverGpu {
         let counted = (COUNT_WORDS + bins) * WORD;
         let sizes = [
             (self.counts, counted),
-            (self.args, (BLADE_DRAWS + bins) * DRAW_ARGS),
+            (self.args, (kinds * (1 + self.views)).max(BLADE_DRAWS + bins) * DRAW_ARGS),
+            (self.casts, (2 * kinds * self.views * WORD).max(WINDOW_BYTES)),
             (self.frame, FRAME_BYTES),
             (self.blades, self.blade_bytes),
             (self.cards, self.card_bytes),
@@ -332,6 +348,7 @@ impl GpuPart for CoverGpu {
             return 0;
         }
         cx.clear(self.counts);
+        cx.clear(self.casts);
         cx.dispatch(&self.lists.finding, Count::Groups(self.lists.found));
         let mut timed = None;
         for (index, &[.., tier]) in self.cells.iter().enumerate() {
@@ -374,8 +391,15 @@ impl CoverGpu {
         let Some(&args) = draw.per_pass(&self.inputs) else {
             return draw.skip("pass has no cover list");
         };
+        let kinds = BLADE_DRAWS + self.bins as u64;
+        let first = match (scene.view, scene.index) {
+            (Some(_), Some(index)) if u64::from(index) < self.views => {
+                (1 + u64::from(index)) * kinds
+            }
+            (Some(_) | None, _) => 0,
+        };
         let mut drawn = 0;
-        for (at, form) in (0..BLADE_DRAWS).zip(["strips", "flats"]) {
+        for (at, form) in (first..first + BLADE_DRAWS).zip(["strips", "flats"]) {
             draw.draw_timed(
                 &blades,
                 Shape::Indirect {
@@ -399,7 +423,7 @@ impl CoverGpu {
                             vertices: &[],
                             indices: None,
                             args,
-                            offset: (BLADE_DRAWS + bin as u64) * DRAW_ARGS,
+                            offset: (first + BLADE_DRAWS + bin as u64) * DRAW_ARGS,
                             material: Some(*material),
                         },
                         || draw_label(scene, &format!("cards {bin}")),
@@ -415,6 +439,48 @@ impl CoverGpu {
             None => drawn,
         }
     }
+}
+
+fn matched_passes(passes: &ScenePasses, cast: Entry) -> Vec<PassFragment> {
+    let placed = |listed: &&ScenePass| {
+        listed.bit.is_some()
+            && listed.pass.views != PassViews::Owned
+            && listed.pass.writes.contains(TargetName::DEPTH)
+            && passes.takes(listed, COVER)
+    };
+    let lays = |listed: &ScenePass| {
+        listed.pass.role() == PassRole::Depth && listed.pass.at == AttachPoint::Depth
+    };
+    if !passes.listed().iter().filter(placed).any(lays) {
+        return Vec::new();
+    }
+    passes
+        .listed()
+        .iter()
+        .filter(placed)
+        .filter_map(|listed| {
+            let pass = FragmentPass::Scene(Scene::named(listed.name));
+            if lays(listed) {
+                return Some(PassFragment {
+                    pass,
+                    side: Some(FormSide::pulled(cast)),
+                    fragment: FormFragment::Role(PassRole::Depth),
+                });
+            }
+            (listed.pass.role() == PassRole::Lit && listed.pass.at > AttachPoint::Depth).then_some(
+                PassFragment {
+                    pass,
+                    side: None,
+                    fragment: FormFragment::Entry {
+                        entry: matched::FS_COVER_MATCHED,
+                        cull: FaceCull::None,
+                        depth: FormDepth::Matched,
+                        color: FormColor::Written,
+                    },
+                },
+            )
+        })
+        .collect()
 }
 
 fn draw_label(scene: &SceneDraw, form: &str) -> String {
