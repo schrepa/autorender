@@ -296,7 +296,7 @@ fn weigh_targets(
 }
 
 impl Machine {
-    fn part_label(&self, part: u32, entry: &str) -> String {
+    pub(crate) fn part_label(&self, part: u32, entry: &str) -> String {
         match self
             .declared
             .parts
@@ -800,7 +800,8 @@ impl Compiler<'_> {
                     self.pipelines
                         .making
                         .refuse((finished.program, finished.key));
-                    self.pipelines.refused.push(error.to_string());
+                    let refused = (finished.pass, finished.program, error.to_string());
+                    self.pipelines.refused.push(refused);
                     continue;
                 }
             };
@@ -812,10 +813,12 @@ impl Compiler<'_> {
             else {
                 continue;
             };
+            let computed = matches!(made, Created::Compute(_));
             match made {
                 Created::Render(made) => built.made.push((finished.key, made)),
                 Created::Compute(made) => built.computed.push((finished.key, made)),
             }
+            self.pipelines.made_in(finished.pass, computed);
             if warmed {
                 self.pipelines.warming.made += 1;
             } else {

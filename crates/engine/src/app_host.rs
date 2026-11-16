@@ -5,7 +5,7 @@ use engine_core::{
 use engine_registry::Registry;
 use engine_render::{Picture, RenderTarget, Renderer};
 
-use crate::frame_stats::{FrameStats, ResolutionStats};
+use crate::frame_stats::{FrameStats, PassPipelines, ResolutionStats};
 use crate::host::InputSource;
 use crate::host::policy::FRAME_INTERVAL_MS;
 use crate::pacing::Pacing;
@@ -134,12 +134,16 @@ fn log_unmet(engine: &Engine) {
         eprintln!("{record}");
     }
     for error in engine.notices() {
-        let record = serde_json::json!({"event": "notice", "error": error});
-        #[cfg(target_arch = "wasm32")]
-        web_sys::console::info_1(&wasm_bindgen::JsValue::from_str(&record.to_string()));
-        #[cfg(not(target_arch = "wasm32"))]
-        eprintln!("{record}");
+        log_notice(error);
     }
+}
+
+fn log_notice(error: &engine_core::Error) {
+    let record = serde_json::json!({"event": "notice", "error": error});
+    #[cfg(target_arch = "wasm32")]
+    web_sys::console::info_1(&wasm_bindgen::JsValue::from_str(&record.to_string()));
+    #[cfg(not(target_arch = "wasm32"))]
+    eprintln!("{record}");
 }
 
 #[inline(never)]
@@ -610,6 +614,7 @@ impl AppHost {
             render: rendered,
             bricks_cost: None,
             bricks: std::collections::BTreeMap::new(),
+            pipelines_per_pass: std::collections::BTreeMap::new(),
         };
         if acquired && picture == Picture::Shown && self.engine.readiness().settled() {
             self.renderer.settle_pipelines();
@@ -656,6 +661,7 @@ impl AppHost {
         self.engine.report_drawing(reports);
         self.collect_pipelines();
         self.report_shader_errors();
+        self.report_notices();
         if picture == Picture::Hidden {
             self.cut_shown_views();
         }
@@ -706,6 +712,23 @@ impl AppHost {
         }
     }
 
+    fn report_notices(&mut self) {
+        let notices = self.renderer.take_notices();
+        if notices.is_empty() {
+            return;
+        }
+        let world = self.engine.app.world_mut();
+        let Some(mut registry) = world.get_resource_mut::<Registry>() else {
+            return;
+        };
+        for notice in notices {
+            if !registry.notices().contains(&notice) {
+                log_notice(&notice);
+                registry.report_notice(notice);
+            }
+        }
+    }
+
     pub fn job_list(&self) -> std::sync::Arc<engine_registry::JobList> {
         self.engine.job_list()
     }
@@ -737,6 +760,9 @@ impl AppHost {
                 .get_resource::<Registry>()
                 .map(|registry| registry.frame_stats(world))
                 .unwrap_or_default(),
+            pipelines_per_pass: (self.renderer.pipelines_per_pass().into_iter())
+                .map(|(pass, [render, compute])| (pass, PassPipelines { render, compute }))
+                .collect(),
             ..self.stats.clone()
         }
     }
