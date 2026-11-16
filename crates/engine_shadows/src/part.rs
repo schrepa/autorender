@@ -2,7 +2,7 @@ use std::ops::Range;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Entry, Error, PassViews, Sampler, ViewFacts, Wrap};
-use engine_places_rendering::shadows::{CasterMap, CasterView, SHADOW_REGIONS, ShadowMaps};
+use engine_places_rendering::shadows::{CasterMap, CasterView, ShadowMaps};
 use engine_render::{
     Access, Allocation, Attach, AttachPoint, Bind, Buffer, DebugShown, DepthUse, DrawInput,
     Encode, FULLSCREEN, GpuPart, Install, Lifetime, Own, Pass, Pipeline, Prepare, Recorded,
@@ -117,8 +117,9 @@ impl ShadowsGpu {
         let side = key.side;
         let lost =
             cx.allocate(self.levels, extent(side, side, key.layers()), 1) == Allocation::Fresh;
+        let (wide, layers) = crate::regions::region_shape(side);
         let (Allocation::Fresh | Allocation::Kept) =
-            cx.allocate(self.regions, extent(side, side, SHADOW_REGIONS), 1);
+            cx.allocate(self.regions, extent(wide, wide, layers), 1);
         let mut sky = false;
         if plan.sky.live {
             sky = cx.allocate(self.sky, extent(RESOLUTION, RESOLUTION, SKY_LAYERS), 1)

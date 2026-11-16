@@ -10,7 +10,7 @@ use engine_core::{
     Switched, Transform, ViewDetail, ViewFacts, Views, mover_of,
 };
 use engine_places_rendering::shadows::{
-    CasterMap, Refresh, Region as MapView, SHADOW_REGIONS, ShadowMaps,
+    CasterMap, Refresh, Region as MapView, ShadowMaps,
 };
 use engine_places_rendering::sky::SkyLight;
 use engine_places_rendering::sun::Sun;
@@ -379,8 +379,10 @@ pub(crate) fn shadow_stats(
     let (sky_maps, sky_drawn) = plan.sky.counts();
     let (held, side, bytes) = plan.key.map_or((0, 0, 0), |key| {
         let texel = SHADOW_FORMAT.block_copy_size(None).map_or(0, u64::from);
-        let layers = u64::from(key.layers() + SHADOW_REGIONS);
-        (key.levels, key.side, u64::from(key.side).pow(2) * texel * layers)
+        let (wide, regions) = crate::regions::region_shape(key.side);
+        let levels = u64::from(key.side).pow(2) * u64::from(key.layers());
+        let staged = u64::from(wide).pow(2) * u64::from(regions);
+        (key.levels, key.side, (levels + staged) * texel)
     });
     stats.set_if_neq(ShadowStats {
         active: true,
