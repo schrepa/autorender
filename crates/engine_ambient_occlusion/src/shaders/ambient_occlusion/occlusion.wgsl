@@ -87,6 +87,30 @@ fn filter_tap(center: vec4<f32>, pixel: vec2<i32>, offset: vec2<i32>, last: vec2
     return textureLoad(raw_occlusion, clamp(pixel + offset, vec2<i32>(0), last), 0);
 }
 
+struct FilterFit {
+    inverse: f32,
+    slope: vec2<f32>,
+    tolerance: f32,
+}
+
+fn filter_add(held: vec2<f32>, center: vec4<f32>, pixel: vec2<i32>, offset: vec2<i32>,
+        last: vec2<i32>, fit: FilterFit) -> vec2<f32> {
+    let sample = filter_tap(center, pixel, offset, last);
+    let expected = fit.inverse + dot(fit.slope, vec2<f32>(offset));
+    let plane = saturate(1.25 - abs(inverse_distance(sample) - expected) / fit.tolerance);
+    let weight = exp(-f32(offset.x * offset.x + offset.y * offset.y) / 8.0) * plane;
+    return vec2<f32>(held.x + sample.x * weight, held.y + weight);
+}
+
+fn filter_row(held: vec2<f32>, center: vec4<f32>, pixel: vec2<i32>, y: i32, last: vec2<i32>,
+        fit: FilterFit) -> vec2<f32> {
+    var row = filter_add(held, center, pixel, vec2<i32>(-2, y), last, fit);
+    row = filter_add(row, center, pixel, vec2<i32>(-1, y), last, fit);
+    row = filter_add(row, center, pixel, vec2<i32>(0, y), last, fit);
+    row = filter_add(row, center, pixel, vec2<i32>(1, y), last, fit);
+    return filter_add(row, center, pixel, vec2<i32>(2, y), last, fit);
+}
+
 fn filtered_occlusion(pixel: vec2<i32>) -> f32 {
     let last = vec2<i32>(post.size.xy) - 1;
     let center = textureLoad(raw_occlusion, pixel, 0);
@@ -102,21 +126,13 @@ fn filtered_occlusion(pixel: vec2<i32>) -> f32 {
         select(right, left, abs(left) < abs(right)),
         select(down, up, abs(up) < abs(down)),
     );
-    let tolerance = OCCLUSION_PLANE * inverse;
-    var sum = 0.0;
-    var total = 0.0;
-    for (var y = -2; y <= 2; y++) {
-        for (var x = -2; x <= 2; x++) {
-            let offset = vec2<i32>(x, y);
-            let sample = filter_tap(center, pixel, offset, last);
-            let expected = inverse + dot(slope, vec2<f32>(offset));
-            let plane = saturate(1.25 - abs(inverse_distance(sample) - expected) / tolerance);
-            let weight = exp(-f32(x * x + y * y) / 8.0) * plane;
-            sum += sample.x * weight;
-            total += weight;
-        }
-    }
-    return sum / total;
+    let fit = FilterFit(inverse, slope, OCCLUSION_PLANE * inverse);
+    var held = filter_row(vec2<f32>(0.0), center, pixel, -2, last, fit);
+    held = filter_row(held, center, pixel, -1, last, fit);
+    held = filter_row(held, center, pixel, 0, last, fit);
+    held = filter_row(held, center, pixel, 1, last, fit);
+    held = filter_row(held, center, pixel, 2, last, fit);
+    return held.x / held.y;
 }
 
 @fragment
