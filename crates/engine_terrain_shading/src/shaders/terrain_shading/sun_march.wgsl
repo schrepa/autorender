@@ -235,7 +235,7 @@ fn sun_walk(index: u32, world: vec2<f32>, base: f32, job: SunJob,
             let cell = min(vec2<u32>(max(floor((start + rate * (s + ahead)) / width),
                 vec2<f32>(0.0))), vec2<u32>(cells - 1u));
             let first = vec2<f32>(cell) * width;
-            let under = tile_peak(found.tile, offset / (2u << mip) + cell, mip) - o.y;
+            let under = tile_peak(found.tile, (offset >> vec2<u32>(mip + 1u)) + cell, mip) - o.y;
             let exit = max(min(square_exit(start, rate, first, width), leaves),
                 min(s + ahead, leaves));
             let beaten = (*crests).slopes + vec2<f32>(job.heading.w);

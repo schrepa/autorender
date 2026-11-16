@@ -1,6 +1,6 @@
 import package::engine::view::{DetailLevel, detail_across, detail_level};
 import package::generated::pieces::shadows::piece;
-import package::generated::shadows::{LEVEL_MARGIN, ShadowLevel};
+import package::generated::shadows::{LEVEL_MARGIN, SOFT_GATHERS, ShadowLevel};
 import package::place::sun_blockers::SunAt;
 
 @group(0) @binding(0) var shadow_levels: texture_depth_2d_array;
@@ -138,8 +138,14 @@ fn level_visibility(index: u32, sun: SunAt, blend: f32) -> f32 {
     let first = gather_corner(light.xy) - vec2<f32>(f32(gathers) - 1.0);
     let most = vec2<f32>(soft_texels());
     var blocking = vec2<f32>(0.0);
-    for (var row = 0u; row < gathers; row++) {
-        for (var column = 0u; column < gathers; column++) {
+    for (var row = 0u; row < SOFT_GATHERS; row++) {
+        if row >= gathers {
+            break;
+        }
+        for (var column = 0u; column < SOFT_GATHERS; column++) {
+            if column >= gathers {
+                break;
+            }
             let corner = first + 2.0 * vec2<f32>(f32(column), f32(row));
             let texels = gather_texels(corner, light.xy);
             let gap = receiver_gaps(index, level.moving, corner, texels, light.z, slope);
@@ -155,8 +161,14 @@ fn level_visibility(index: u32, sun: SunAt, blend: f32) -> f32 {
         vec2<f32>(1.0 + blend), most);
     let soft = crown_softness(sun.softness, level.band.y);
     var visible = 0.0;
-    for (var row = 0u; row < gathers; row++) {
-        for (var column = 0u; column < gathers; column++) {
+    for (var row = 0u; row < SOFT_GATHERS; row++) {
+        if row >= gathers {
+            break;
+        }
+        for (var column = 0u; column < SOFT_GATHERS; column++) {
+            if column >= gathers {
+                break;
+            }
             let corner = first + 2.0 * vec2<f32>(f32(column), f32(row));
             let texels = gather_texels(corner, light.xy);
             let gap = receiver_gaps(index, level.moving, corner, texels, light.z, slope);

@@ -68,7 +68,7 @@ fn multiple_light(r: f32, mu: f32) -> vec3<f32> {
     return textureSampleLevel(multiple_table, table_sampler, uv, 0.0).rgb;
 }
 
-fn scattered(origin: vec3<f32>, direction: vec3<f32>, sun: vec3<f32>, steps: u32) -> vec3<f32> {
+fn scattered(origin: vec3<f32>, direction: vec3<f32>, sun: vec3<f32>) -> vec3<f32> {
     var light = vec3<f32>(0.0);
     let bottom = sky_air.radii.x;
     let top_hit = sphere_hit(origin, direction, sky_air.radii.y);
@@ -85,8 +85,8 @@ fn scattered(origin: vec3<f32>, direction: vec3<f32>, sun: vec3<f32>, steps: u32
     let mie = mie_phase(cosine);
     var throughput = vec3<f32>(1.0);
     var travelled = 0.0;
-    for (var step = 0u; step < steps; step++) {
-        let t = span * (f32(step) + 0.3) / f32(steps);
+    for (var step = 0u; step < VIEW_STEPS; step++) {
+        let t = span * (f32(step) + 0.3) / f32(VIEW_STEPS);
         let dt = t - travelled;
         travelled = t;
         let point = origin + direction * t;
@@ -135,7 +135,7 @@ fn build_sky_view(@builtin(global_invocation_id) id: vec3<u32>) {
         view_cos,
         view_sin * sqrt(max(1.0 - light_cos * light_cos, 0.0)),
     );
-    let light = scattered(vec3<f32>(0.0, r, 0.0), direction, sun, VIEW_STEPS);
+    let light = scattered(vec3<f32>(0.0, r, 0.0), direction, sun);
     textureStore(table_out, id.xy, SKY_VIEW_LAYER,
         vec4<f32>((light + NIGHT) * sky_air.ozone.w * SKY_PI, 1.0));
 }
