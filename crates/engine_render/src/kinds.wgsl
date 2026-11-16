@@ -49,6 +49,40 @@ struct ShownExtraVaryings {
     @location(6) @interpolate(flat) object: vec4<u32>,
 }
 
+struct DepthVaryings {
+    @invariant @builtin(position) clip_position: vec4<f32>,
+    @location(0) normal_u: vec4<f32>,
+    @location(1) world_v: vec4<f32>,
+    @location(2) @interpolate(flat) material: vec4<u32>,
+}
+
+struct DepthExtraVaryings {
+    @invariant @builtin(position) clip_position: vec4<f32>,
+    @location(0) normal_u: vec4<f32>,
+    @location(1) world_v: vec4<f32>,
+    @location(2) @interpolate(flat) material: vec4<u32>,
+    @location(4) color: vec4<f32>,
+    @location(5) uv1: vec2<f32>,
+}
+
+struct ObjectDepthVaryings {
+    @invariant @builtin(position) clip_position: vec4<f32>,
+    @location(0) normal_u: vec4<f32>,
+    @location(1) world_v: vec4<f32>,
+    @location(2) @interpolate(flat) material: vec4<u32>,
+    @location(6) @interpolate(flat) object: vec4<u32>,
+}
+
+struct ObjectDepthExtraVaryings {
+    @invariant @builtin(position) clip_position: vec4<f32>,
+    @location(0) normal_u: vec4<f32>,
+    @location(1) world_v: vec4<f32>,
+    @location(2) @interpolate(flat) material: vec4<u32>,
+    @location(4) color: vec4<f32>,
+    @location(5) uv1: vec2<f32>,
+    @location(6) @interpolate(flat) object: vec4<u32>,
+}
+
 struct KindFragment {
     color: vec4<f32>,
     normal: vec3<f32>,
@@ -179,13 +213,15 @@ fn object_targets(input: KindFragment, object: vec4<u32>, front: bool) -> DebugT
 }
 
 @fragment
-fn fs_kind_masked_depth(input: SurfaceVaryings) {
-    masked_depth(surface_fragment(input));
+fn fs_kind_masked_depth(input: DepthVaryings) {
+    masked_depth(fragment_values(input.clip_position, input.normal_u, input.world_v,
+        input.material));
 }
 
 @fragment
-fn fs_kind_masked_depth_extra(input: SurfaceExtraVaryings) {
-    masked_depth(extra_fragment(input));
+fn fs_kind_masked_depth_extra(input: DepthExtraVaryings) {
+    masked_depth(extra_values(input.clip_position, input.normal_u, input.world_v,
+        input.material, input.color, input.uv1));
 }
 
 @fragment
@@ -232,13 +268,15 @@ fn fs_kind_shown_extra(input: ShownExtraVaryings, @builtin(front_facing) front: 
 }
 
 @fragment
-fn fs_kind_object_masked_depth(input: ShownVaryings) {
-    masked_depth(shown_object(input));
+fn fs_kind_object_masked_depth(input: ObjectDepthVaryings) {
+    masked_depth(object_fragment(fragment_values(input.clip_position, input.normal_u,
+        input.world_v, input.material), input.object));
 }
 
 @fragment
-fn fs_kind_object_masked_depth_extra(input: ShownExtraVaryings) {
-    masked_depth(shown_extra_object(input));
+fn fs_kind_object_masked_depth_extra(input: ObjectDepthExtraVaryings) {
+    masked_depth(object_fragment(extra_values(input.clip_position, input.normal_u,
+        input.world_v, input.material, input.color, input.uv1), input.object));
 }
 
 @fragment
