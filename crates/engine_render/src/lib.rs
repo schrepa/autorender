@@ -855,6 +855,10 @@ impl<P: GpuPart> Prepare<'_, P> {
             && self.core.assets.materials.group(material).is_some()
     }
 
+    pub fn mipped(&self, material: Option<MaterialHandle>) -> bool {
+        self.core.assets.materials.mipped(material)
+    }
+
     pub fn last_frame_read(&self) -> bool {
         let machine = &self.core.machine;
         let ran = &self.core.set().ran;
@@ -972,8 +976,8 @@ impl<P: GpuPart> Prepare<'_, P> {
             .write_texture(texture.0, level, at, bytes, layout, extent);
     }
 
-    pub fn mipmaps(&mut self, texture: Texture<P>, layers: Range<u32>) {
-        self.core.mipmaps(texture.0, layers);
+    pub fn mipmaps(&mut self, texture: Texture<P>, layers: Range<u32>) -> bool {
+        self.core.mipmaps(texture.0, layers)
     }
 
     pub fn copy(&mut self, pass: Pass<P>, regions: &[CopyRegion]) {

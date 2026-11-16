@@ -137,6 +137,7 @@ struct Drawn {
     shape: AtlasShape,
     draws: Vec<(GeometryHandle, Option<MaterialHandle>, usize)>,
     skipped: bool,
+    baked: bool,
 }
 
 pub(crate) struct ImpostorGpu {
@@ -305,7 +306,7 @@ impl ImpostorGpu {
                         .iter()
                         .map(|&(mesh, material)| (mesh, Some(material))),
                 )
-                .filter(|&(mesh, material)| cx.drawable(mesh, material))
+                .filter(|&(mesh, material)| cx.drawable(mesh, material) && cx.mipped(material))
                 .filter_map(|(mesh, material)| {
                     let extended = residency.mesh(mesh)?.extended();
                     let two_sided = material
@@ -339,6 +340,7 @@ impl ImpostorGpu {
             shape,
             draws,
             skipped: false,
+            baked: false,
         });
         for texture in self.colors {
             let (Allocation::Fresh | Allocation::Kept) =
@@ -348,10 +350,19 @@ impl ImpostorGpu {
         cx.run(self.baking);
     }
 
-    fn read_back(&self, drawn: &Drawn, cx: &mut Prepare<'_, Self>) {
+    fn read_back(&self, drawn: &Drawn, cx: &mut Prepare<'_, Self>) -> bool {
+        let kinds = kinds(drawn.asked.emissive) as usize;
+        let mut mipped = true;
+        for texture in self.colors.into_iter().take(kinds) {
+            mipped &= cx.mipmaps(texture, 0..1);
+        }
+        if !mipped {
+            return false;
+        }
         let regions = readback_bytes(drawn.shape, ROW_ALIGNMENT, drawn.asked.emissive);
         let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.read, regions + 4);
         self.copy_out(drawn, regions, cx);
+        true
     }
 
     fn copy_out(&self, drawn: &Drawn, regions: u64, cx: &mut Prepare<'_, Self>) {
@@ -360,7 +371,6 @@ impl ImpostorGpu {
         let mut offset = 0_u64;
         let kinds = kinds(drawn.asked.emissive) as usize;
         for texture in self.colors.into_iter().take(kinds) {
-            cx.mipmaps(texture, 0..1);
             let copies: Vec<CopyRegion> = (0..shape.levels())
                 .map(|level| {
                     let (rows, stride, _) = level_rows(shape, level, ROW_ALIGNMENT);
@@ -479,11 +489,15 @@ impl GpuPart for ImpostorGpu {
         }
         let mut drawn = self.drawing.take();
         let ran = cx.ran(self.baking);
-        if let Some(again) = drawn.take_if(|drawn| drawn.skipped || !ran) {
+        if let Some(again) = drawn.take_if(|drawn| !drawn.baked && (drawn.skipped || !ran)) {
             self.asked.push_front(again.asked);
         }
-        if let Some(drawn) = &drawn {
-            self.read_back(drawn, cx);
+        let busy = drawn.is_some();
+        if let Some(mut held) = drawn {
+            held.baked = true;
+            if !self.read_back(&held, cx) {
+                self.drawing = Some(held);
+            }
         }
         match books.log().events(&mut self.cursor) {
             Events::Listed(works) => {
@@ -501,7 +515,7 @@ impl GpuPart for ImpostorGpu {
                 return;
             }
         }
-        if drawn.is_some() {
+        if busy {
             return;
         }
         match self.asked.pop_front() {

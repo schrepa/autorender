@@ -349,6 +349,17 @@ impl MaterialStore {
         }
     }
 
+    pub(crate) fn mipped(&self, material: Option<MaterialHandle>) -> bool {
+        material.is_none_or(|handle| {
+            self.materials.get(&handle).is_some_and(|material| {
+                material
+                    .textures
+                    .iter()
+                    .all(|(texture, _)| !self.owed.contains(texture))
+            })
+        })
+    }
+
     pub(crate) fn variant(&self, material: Option<MaterialHandle>) -> Option<MaterialVariant> {
         match material {
             Some(handle) => self.materials.get(&handle).map(|material| material.variant),

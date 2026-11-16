@@ -3,25 +3,26 @@ use engine_core::Expected;
 use super::*;
 
 impl Run {
-    pub(crate) fn mipmaps(&mut self, texture: u32, layers: Range<u32>) {
+    pub(crate) fn mipmaps(&mut self, texture: u32, layers: Range<u32>) -> bool {
         let Some(made) = self
             .written_texture(texture)
             .map(|made| made.texture.clone())
         else {
             let error = fault(self.path("mipmaps"), ErrorCode::InvalidValue);
             self.fault(error);
-            return;
+            return false;
         };
         if !crate::mipmaps::drawn(made.format(), made.dimension()) {
             let error = fault(self.path("mipmaps"), ErrorCode::UnsupportedFeature)
                 .expected(Expected::Supported)
                 .got(made.format());
             self.fault(error);
-            return;
+            return false;
         }
         self.owed_mips.retain(|(owed, _)| *owed != texture);
         self.owed_mips.push((texture, layers));
         self.record_mips();
+        !self.owed_mips.iter().any(|(owed, _)| *owed == texture)
     }
 
     pub(crate) fn record_mips(&mut self) {
@@ -39,12 +40,13 @@ impl Run {
                 continue;
             };
             let (mut compiler, assets) = self.split();
+            let levels = made.mip_level_count();
             let recorded = layers.clone().all(|layer| {
                 assets
                     .materials
                     .mips()
                     .record((&device, &mut encoder), &mut compiler, &made, Some(layer))
-                    .is_some()
+                    .is_some_and(|written| written + 1 >= levels)
             });
             if !recorded {
                 self.owed_mips.push((texture, layers));
