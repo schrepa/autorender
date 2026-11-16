@@ -554,15 +554,6 @@ fn terrain_pick2(columns: mat3x2<f32>, at: u32) -> vec2<f32> {
     return select(select(columns[0], columns[1], at == 1u), columns[2], at == 2u);
 }
 
-fn terrain_pick3(columns: mat3x3<f32>, at: u32) -> vec3<f32> {
-    return select(select(columns[0], columns[1], at == 1u), columns[2], at == 2u);
-}
-
-fn terrain_put3(columns: mat3x3<f32>, at: u32, column: vec3<f32>) -> mat3x3<f32> {
-    return mat3x3<f32>(select(columns[0], column, at == 0u),
-        select(columns[1], column, at == 1u), select(columns[2], column, at == 2u));
-}
-
 const TERRAIN_LANES: vec4<u32> = vec4<u32>(0u, 1u, 2u, 3u);
 
 fn terrain_lane_set(lanes: vec4<f32>, at: u32, value: f32) -> vec4<f32> {
@@ -590,14 +581,30 @@ fn terrain_plane_at(mapping: TerrainMapping, world: vec3<f32>, world_dx: vec3<f3
 
 struct TerrainHexed {
     texel: vec4<f32>,
-    shares: mat3x3<f32>,
-    opened: mat3x3<f32>,
+    shares: vec3<f32>,
+}
+
+fn terrain_hexed_axis(at: TerrainPlaneAt, hexes: TerrainHexes, dx: vec2<f32>, dy: vec2<f32>,
+        layer: u32) -> TerrainHexed {
+    var first = vec4<f32>(0.0);
+    var second = vec4<f32>(0.0);
+    var third = vec4<f32>(0.0);
+    if hexes.open.x > 0.0 {
+        first = terrain_hex_tap(at.uv, dx, dy, hexes.turns[0], hexes.shifts[0], layer);
+    }
+    if hexes.open.y > 0.0 {
+        second = terrain_hex_tap(at.uv, dx, dy, hexes.turns[1], hexes.shifts[1], layer);
+    }
+    if hexes.open.z > 0.0 {
+        third = terrain_hex_tap(at.uv, dx, dy, hexes.turns[2], hexes.shifts[2], layer);
+    }
+    let shares = terrain_hex_shares(hexes.open, vec3<f32>(first.a, second.a, third.a));
+    return TerrainHexed(shares.x * first + shares.y * second + shares.z * third, shares);
 }
 
 fn terrain_hexed(mapping: TerrainMapping, world: vec3<f32>, world_dx: vec3<f32>,
-        world_dy: vec3<f32>, level: f32) -> TerrainHexed {
-    var hexed: TerrainHexed;
-    let layer = 2u * mapping.layer + 1u;
+        world_dy: vec3<f32>, level: f32) -> f32 {
+    var height = 0.0;
     let span = exp2(level) / f32(textureDimensions(terrain_material_data).x);
     for (var axis = 0u; axis < 3u; axis++) {
         let plane = mapping.planes[axis];
@@ -606,26 +613,11 @@ fn terrain_hexed(mapping: TerrainMapping, world: vec3<f32>, world_dx: vec3<f32>,
             let dx = select(at.dx, vec2<f32>(span, 0.0), level >= 0.0);
             let dy = select(at.dy, vec2<f32>(0.0, span), level >= 0.0);
             let hexes = terrain_hexes(at.uv, axis, mapping.layer);
-            var first = vec4<f32>(0.0);
-            var second = vec4<f32>(0.0);
-            var third = vec4<f32>(0.0);
-            if hexes.open.x > 0.0 {
-                first = terrain_hex_tap(at.uv, dx, dy, hexes.turns[0], hexes.shifts[0], layer);
-            }
-            if hexes.open.y > 0.0 {
-                second = terrain_hex_tap(at.uv, dx, dy, hexes.turns[1], hexes.shifts[1], layer);
-            }
-            if hexes.open.z > 0.0 {
-                third = terrain_hex_tap(at.uv, dx, dy, hexes.turns[2], hexes.shifts[2], layer);
-            }
-            let shares = terrain_hex_shares(hexes.open, vec3<f32>(first.a, second.a, third.a));
-            hexed.shares = terrain_put3(hexed.shares, axis, shares);
-            hexed.opened = terrain_put3(hexed.opened, axis,
-                hexes.open / (hexes.open.x + hexes.open.y + hexes.open.z));
-            hexed.texel += plane * (shares.x * first + shares.y * second + shares.z * third);
+            height += plane
+                * terrain_hexed_axis(at, hexes, dx, dy, 2u * mapping.layer + 1u).texel.a;
         }
     }
-    return hexed;
+    return height;
 }
 
 fn terrain_hex_tap(uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, turn: vec2<f32>,
@@ -655,10 +647,11 @@ fn terrain_plane_normal(filtered: vec3<f32>, turn: vec2<f32>, axis: u32, normal:
 struct TerrainNear {
     albedo: vec3<f32>,
     mapped: vec4<f32>,
+    texel: vec4<f32>,
 }
 
 fn terrain_near(mapping: TerrainMapping, world: vec3<f32>, world_dx: vec3<f32>,
-        world_dy: vec3<f32>, held: mat3x3<f32>, opened: bool, normal: vec3<f32>, scale: f32,
+        world_dy: vec3<f32>, held: f32, opened: bool, normal: vec3<f32>, scale: f32,
         least: f32) -> TerrainNear {
     var near: TerrainNear;
     for (var axis = 0u; axis < 3u; axis++) {
@@ -666,9 +659,11 @@ fn terrain_near(mapping: TerrainMapping, world: vec3<f32>, world_dx: vec3<f32>,
         if plane > 0.0 {
             let at = terrain_plane_at(mapping, world, world_dx, world_dy, axis, least);
             let hexes = terrain_hexes(at.uv, axis, mapping.layer);
-            var share = terrain_pick3(held, axis);
-            if opened {
-                share = hexes.open / (hexes.open.x + hexes.open.y + hexes.open.z);
+            var share = hexes.open / (hexes.open.x + hexes.open.y + hexes.open.z);
+            if !opened {
+                let hexed = terrain_hexed_axis(at, hexes, at.dx, at.dy, 2u * mapping.layer + 1u);
+                near.texel += plane * hexed.texel;
+                share = hexed.shares * (1.0 - held) + share * held;
             }
             for (var hex = 0u; hex < 3u; hex++) {
                 if share[hex] > 0.0 {
@@ -689,6 +684,7 @@ fn terrain_near(mapping: TerrainMapping, world: vec3<f32>, world_dx: vec3<f32>,
             }
         }
     }
+    near.texel = select(near.texel, vec4<f32>(1.0, 1.0, 1.0, 0.5), opened);
     return near;
 }
 
@@ -800,8 +796,7 @@ struct TerrainSlot {
     far: f32,
     faded: f32,
     shown: vec2<f32>,
-    texel: vec4<f32>,
-    hexes: mat3x3<f32>,
+    held: f32,
     chain: vec2<f32>,
     depth: f32,
     buried: f32,
@@ -826,23 +821,10 @@ fn terrain_rung_blur(rungs: TerrainRungs, fine: f32, rung: u32) -> f32 {
         * select(rungs.tilings.x, fine, rung == 0u || rungs.tilings.x <= 0.0);
 }
 
-fn terrain_maps_gone(material: u32, weight: f32, resolved: f32) -> f32 {
-    if weight <= 0.0 {
-        return 1.0;
-    }
-    let entry = terrain_material(material);
-    if entry.params.w <= 0.0 {
-        return 1.0;
-    }
-    return max(terrain_gone(resolved, entry.params.x, terrain_look.reach.y),
-        terrain_gone(resolved, entry.params.x, terrain_look.reach.z));
-}
-
 fn terrain_slot(material: u32, sharing: bool, site: TerrainSite) -> TerrainSlot {
     var slot: TerrainSlot;
     slot.far = 1.0;
     slot.faded = 1.0;
-    slot.texel = vec4<f32>(1.0, 1.0, 1.0, 0.5);
     if !sharing {
         return slot;
     }
@@ -902,14 +884,8 @@ fn terrain_slot_rank(held: TerrainSlot, material: u32, site: TerrainSite, contes
     return rank;
 }
 
-fn terrain_slot_texels(slot: ptr<function, TerrainSlot>, site: TerrainSite) {
-    let held = *slot;
-    let hexed = terrain_hexed(held.mapping, site.world, site.world_dx, site.world_dy, -1.0);
-    (*slot).texel = hexed.texel;
-    (*slot).hexes = hexed.shares * (1.0 - held.far) + hexed.opened * held.far;
-}
-
 fn terrain_slot_kept(slot: ptr<function, TerrainSlot>, kept: f32) {
+    (*slot).held = (*slot).far;
     (*slot).faded = 1.0 - kept * (1.0 - (*slot).faded);
     (*slot).far = 1.0 - kept * (1.0 - (*slot).far);
     (*slot).shown *= kept;
@@ -976,13 +952,13 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
     if slot.faded < 1.0 {
         let mapping = slot.mapping;
         let tiled = terrain_near(mapping, site.world, site.world_dx, site.world_dy,
-            slot.hexes, slot.opened, site.geometric, select(0.0, scale, slot.far < 1.0), 0.0);
+            slot.held, slot.opened, site.geometric, select(0.0, scale, slot.far < 1.0), 0.0);
         let mapped = tiled.mapped;
         color = mix(entry.color.rgb * tiled.albedo, color, slot.faded);
         if slot.far < 1.0 {
-            roughness = mix(entry.color.w * slot.texel.g, roughness, slot.far);
-            occlusion = mix(1.0 + entry.maps.y * (slot.texel.r - 1.0), occlusion, slot.far);
-            metalness *= mix(slot.texel.b, 1.0, slot.far);
+            roughness = mix(entry.color.w * tiled.texel.g, roughness, slot.far);
+            occlusion = mix(1.0 + entry.maps.y * (tiled.texel.r - 1.0), occlusion, slot.far);
+            metalness *= mix(tiled.texel.b, 1.0, slot.far);
             lost = mix(mapped.w, lost, slot.far);
             if scale > 0.0 {
                 turned = mix(stable_normalize(mapped.xyz), turned, slot.far);
@@ -1003,7 +979,7 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
         let spans = terrain_march_spans(site.world_dx, site.world_dy, terrain_look.march.z);
         let bent = select(0.0, slot.far * slot.chain[rung], scale > 0.0);
         let wide = terrain_near(mapping, site.world, spans.dx, spans.dy,
-            mat3x3<f32>(), true, site.geometric,
+            0.0, true, site.geometric,
             select(0.0, scale, bent > 0.0),
             terrain_rung_blur(slot.rungs, entry.params.x, rung) * mapping.scale);
         color *= mix(vec3<f32>(1.0), wide.albedo * held.rgb, slot.shown[rung]);
@@ -1122,7 +1098,6 @@ fn terrain_reached(base: vec4<f32>, present: vec4<f32>, pinned: vec4<f32>, band:
 fn terrain_shares(site: TerrainSite, blend: TerrainBlend) -> TerrainShares {
     let present = select(vec4<f32>(0.0), vec4<f32>(1.0), blend.weights > vec4<f32>(0.0));
     let share = blend.weights / max(dot(blend.weights, vec4<f32>(1.0)), 1.0e-6);
-    let resolved = site.footprint.resolved;
     var gone = vec4<f32>(0.0);
     var depths = vec4<f32>(0.0);
     var buried = vec4<f32>(0.0);
@@ -1131,7 +1106,7 @@ fn terrain_shares(site: TerrainSite, blend: TerrainBlend) -> TerrainShares {
         let material = blend.ids[slot];
         let part = share[slot];
         let held = terrain_slot(material, !(part <= 0.0), site);
-        gone = terrain_lane_set(gone, slot, terrain_maps_gone(material, part, resolved));
+        gone = terrain_lane_set(gone, slot, held.far);
         depths = terrain_lane_set(depths, slot, held.depth);
         buried = terrain_lane_set(buried, slot, held.buried);
         pinned = terrain_lane_set(pinned, slot, terrain_slot_pinned(held));
@@ -1207,9 +1182,6 @@ fn terrain_shared_ground(shares: TerrainShares, site: TerrainSite) -> TerrainGro
         held.opened = !(terrain_marked(shares.marks, TERRAIN_MARK_REACHED + slot)
             && held.far < 1.0);
         held.lush = shares.lush;
-        if !held.opened {
-            terrain_slot_texels(&held, site);
-        }
         if terrain_marked(shares.marks, TERRAIN_MARK_EDGED) {
             let present = select(0.0, 1.0,
                 terrain_marked(shares.marks, TERRAIN_MARK_PRESENT + slot));
@@ -1232,12 +1204,12 @@ const TERRAIN_MESH_CARRIES: f32 = 2.0;
 const TERRAIN_BAND_PIXELS: f32 = 1.0;
 
 fn terrain_band_height(mapping: TerrainMapping, world: vec3<f32>, level: f32) -> f32 {
-    return terrain_hexed(mapping, world, vec3<f32>(0.0), vec3<f32>(0.0), level).texel.a;
+    return terrain_hexed(mapping, world, vec3<f32>(0.0), vec3<f32>(0.0), level);
 }
 
 fn terrain_pixel_height(mapping: TerrainMapping, world: vec3<f32>, dx: vec3<f32>,
         dy: vec3<f32>) -> f32 {
-    return terrain_hexed(mapping, world, dx, dy, -1.0).texel.a;
+    return terrain_hexed(mapping, world, dx, dy, -1.0);
 }
 
 fn terrain_band_level(mapping: TerrainMapping, meters: f32) -> f32 {
