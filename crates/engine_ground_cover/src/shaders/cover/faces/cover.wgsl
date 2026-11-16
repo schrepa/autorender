@@ -200,13 +200,13 @@ fn cover_clump(at: vec2<f32>, size: f32, layer: u32) -> CoverClump {
                 next = nearest;
                 nearest = gap;
                 clump.center = point * size;
-                clump.seed = cover_clump_seed(id, layer);
                 clump.cell = id;
             } else {
                 next = min(next, gap);
             }
         }
     }
+    clump.seed = select(0u, cover_clump_seed(clump.cell, layer), nearest < 8.0);
     clump.inside = 0.5 * (sqrt(next) - sqrt(nearest)) * size;
     return clump;
 }
@@ -437,39 +437,42 @@ fn cover_canopy(site: CoverSite, drawn: bool) -> CoverCanopy {
     }
     canopy.far.vegetated = 1.0;
     let header = cover_header();
-    let base = cover_look(at);
+    let first = cover_look(at);
     let thin = select(0.0, header.layers.w, drawn && bitcast<f32>(terrain.y) > 0.0);
     let growth = pow(header.lush.w, saturate(site.lush) - 0.5);
     let view = cover_view(site.normal, site.toward);
     let layers = header.layers.x;
-    let densest = header.shading.x * growth * growth * growth * base.extra.w * view.y;
-    if thin >= 1.0 && base.shade.w * growth >= site.error && layers * view.x >= densest {
+    let densest = header.shading.x * growth * growth * growth * first.extra.w * view.y;
+    if thin >= 1.0 && first.shade.w * growth >= site.error && layers * view.x >= densest {
         return canopy;
     }
-    let patches = cover_patch(site.world.xz, base, site.footprint, 0u);
+    let patches = cover_patch(site.world.xz, first, site.footprint, 0u);
     let scale = growth * patches.height;
     let thick = header.shading.x * growth * patches.density;
-    let dense = thick * base.shape.x;
+    let dense = thick * first.shape.x;
+    let accents = first.accents;
     var share = 1.0;
     var hidden = vec4<f32>(0.0);
     var shade = vec3<f32>(0.0);
     var drift = vec3<f32>(0.0);
     var lean = vec4<f32>(0.0);
-    for (var index = 0u; index <= base.accents.y; index++) {
-        var spec = base;
+    for (var index = 0u; index <= accents.y; index++) {
+        let accent = index < accents.y;
+        let spec = cover_look(select(at, accents.x + index * COVER_MATERIAL_ROWS, accent));
         var weight = share;
-        if index < base.accents.y {
-            spec = cover_look(base.accents.x + index * COVER_MATERIAL_ROWS);
+        if accent {
             weight = spec.extra.z;
             share -= weight;
         }
+        let base = cover_look(at);
         let part = cover_hidden(spec, weight, dense, scale, site.error, view, layers, thin);
         hidden += part;
         shade += part.rgb * (spec.shade.rgb - base.shade.rgb);
         drift += part.rgb * (spec.drift.rgb - base.drift.rgb);
         lean += part.w * spec.lean;
     }
-    for (var index = 0u; index < base.accents.w; index++) {
+    for (var index = 0u; index < accents.w; index++) {
+        let base = cover_look(at);
         let spec = cover_beside(base, index);
         let part = cover_hidden(spec, spec.shape.x / base.shape.x, thick * spec.shape.x, scale,
             site.error, view, layers, thin);
@@ -481,6 +484,7 @@ fn cover_canopy(site: CoverSite, drawn: bool) -> CoverCanopy {
     if hidden.w <= 0.0 {
         return canopy;
     }
+    let base = cover_look(at);
     var tall = 0.0;
     if cover_kept(base.clump.x, site.footprint) > 0.0 {
         tall = cover_tall(cover_clump(site.world.xz, base.clump.x, 0u), base, scale,

@@ -560,7 +560,8 @@ pub(crate) fn publish_waterline(
             held.terrain == found.terrain
                 && held.key == found.key
                 && held.stamp == found.stamp
-                && held.errors[..] == found.errors[..]
+                && (Arc::ptr_eq(&held.errors, &found.errors)
+                    || held.errors[..] == found.errors[..])
         });
     if same {
         return;

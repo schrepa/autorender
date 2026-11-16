@@ -15,6 +15,7 @@ use engine_render::{
 use glam::Vec3;
 
 use crate::far_cover::{CanopyGpu, CanopyMaps};
+use crate::hidden::Hidden;
 use crate::layouts::{
     CullFrame, CullGroup, CullView, DrawArgs, DrawKind, DrawRecord, LAID_GROUP, LEVELS,
     PlacedGroup, PlacedRecord, PlacedValues, PoseData, SCATTER_GROUP, SlotColor, Snap,
@@ -25,6 +26,7 @@ use crate::shaders::scatter::{
     cards as card_shaders, casters as caster_shaders, draw as object_shaders, laid as laid_shaders,
     matched as matched_shaders,
 };
+use crate::snapping::{SnapHeld, SnapInputs};
 use crate::systems::{ScatterFeedback, ScatterState};
 
 const IDS: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
@@ -222,6 +224,14 @@ struct Sizes {
     card_args: u64,
 }
 
+impl Held {
+    fn laid_at(&self, index: u32) -> bool {
+        self.views
+            .iter()
+            .any(|listed| listed.drawn == index && listed.laid)
+    }
+}
+
 impl Default for Sizes {
     fn default() -> Self {
         Self {
@@ -252,13 +262,12 @@ struct Held {
     ids_room: u64,
     cards_room: u64,
     uploaded: Option<u64>,
-    snapped: Option<u64>,
-    snap_again: bool,
-    slots_written: bool,
-    snapping: bool,
+    slot_sizes: [u64; 4],
+    snap: SnapHeld,
     prepared: bool,
     cards: bool,
     atlas: bool,
+    pyramid: bool,
     placed_groups: Vec<PlacedGroup>,
     culling: Vec<(Listed, CullView)>,
     culled: Vec<CullView>,
@@ -499,7 +508,7 @@ fn levels_reached(
 
 pub(crate) struct ScatterGpu {
     scatter: Pass<Self>,
-    snap_uniform: Buffer<Self>,
+    snap_list: Buffer<Self>,
     frame: Buffer<Self>,
     views: Buffer<Self>,
     records: Buffer<Self>,
@@ -525,6 +534,7 @@ pub(crate) struct ScatterGpu {
     joined: PerPass<Option<Joined>>,
     records_written: bool,
     held: Held,
+    hidden: Hidden,
 }
 
 fn grow(held: &mut u64, bytes: u64, room: u64) {
@@ -682,26 +692,30 @@ impl ScatterGpu {
         }
     }
 
-    fn write_slot(&self, cx: &mut Prepare<'_, Self>, write: &SlotWrite, objects: u32) -> bool {
+    fn write_slot(
+        &self,
+        cx: &mut Prepare<'_, Self>,
+        write: &SlotWrite,
+        objects: u32,
+    ) -> Option<std::ops::Range<u32>> {
         match write {
             SlotWrite::Dead(slots) => {
                 let slots = slots.start.min(objects)..slots.end.min(objects);
-                if slots.is_empty() {
-                    return false;
+                if !slots.is_empty() {
+                    cx.write(
+                        self.records,
+                        u64::from(slots.start) * size_of::<PlacedRecord>() as u64,
+                        &vec![dead(); (slots.end - slots.start) as usize],
+                    );
                 }
-                cx.write(
-                    self.records,
-                    u64::from(slots.start) * size_of::<PlacedRecord>() as u64,
-                    &vec![dead(); (slots.end - slots.start) as usize],
-                );
-                true
+                None
             }
-            SlotWrite::Objects(start, (poses, colors, records, values)) => {
-                let count = objects.saturating_sub(*start).min(records.len() as u32) as usize;
+            SlotWrite::Objects(first, (poses, colors, records, values)) => {
+                let count = objects.saturating_sub(*first).min(records.len() as u32) as usize;
                 if count == 0 {
-                    return false;
+                    return None;
                 }
-                let start = u64::from(*start);
+                let start = u64::from(*first);
                 cx.write(
                     self.poses,
                     start * size_of::<PoseData>() as u64,
@@ -722,7 +736,7 @@ impl ScatterGpu {
                     start * size_of::<PlacedValues>() as u64,
                     &values[..count],
                 );
-                true
+                Some(*first..*first + count as u32)
             }
         }
     }
@@ -736,22 +750,34 @@ impl ScatterGpu {
             size_of::<PlacedValues>(),
         ];
         let mut fresh = false;
-        for ((buffer, bytes), stride) in buffers.into_iter().zip(state.slot_bytes).zip(strides) {
-            fresh |= cx.allocate_buffer(buffer, bytes.max(stride as u64)) == Allocation::Fresh;
+        let sizes = self.held.slot_sizes.iter_mut();
+        for (((buffer, bytes), stride), size) in
+            buffers.into_iter().zip(state.slot_bytes).zip(strides).zip(sizes)
+        {
+            let bytes = bytes.max(stride as u64);
+            let copied = *size > 0 && bytes > *size && bytes.is_power_of_two();
+            let allocation = if copied {
+                cx.grow_buffer(buffer, bytes)
+            } else {
+                cx.allocate_buffer(buffer, bytes)
+            };
+            fresh |= allocation == Allocation::Fresh;
+            *size = bytes;
         }
         let objects = state.objects;
         if fresh || self.held.uploaded != Some(state.slot_sequence) {
-            let mut wrote = false;
             let missed = self.held.uploaded.map(|seen| seen + 1) != Some(state.slot_sequence);
-            if fresh || missed || state.whole {
+            if fresh || missed {
                 for write in state.pool.whole(&state.groups) {
-                    wrote |= self.write_slot(cx, &write, objects);
+                    self.write_slot(cx, &write, objects);
                 }
+                self.held.snap.wrote_whole();
             }
             for write in &state.pool.writes {
-                wrote |= self.write_slot(cx, write, objects);
+                if let Some(slots) = self.write_slot(cx, write, objects) {
+                    self.held.snap.wrote(slots);
+                }
             }
-            self.held.slots_written |= wrote;
         }
         self.held.uploaded = Some(state.slot_sequence);
         self.held.objects = objects;
@@ -784,38 +810,39 @@ impl ScatterGpu {
     fn prepare_snap(
         &mut self,
         cx: &mut Prepare<'_, Self>,
-        state: &ScatterState,
+        (state, residency): (&ScatterState, &AssetResidency),
         (tiles, ground, baking): (
             &Res<'_, TerrainTiles>,
             &Res<'_, GroundTiles>,
             &Res<'_, engine_open_world_kit::ground::GroundBaking>,
         ),
     ) {
-        let held = &mut self.held;
-        held.snapping = false;
+        let objects = self.held.objects;
+        let snap = &mut self.held.snap;
+        snap.snapping = false;
         let terrains = tiles.terrains.len() as u32;
-        if cx.allocate_buffer(self.snap_uniform, size_of::<Snap>() as u64) == Allocation::Fresh {
-            held.snapped = None;
+        if cx.grow_buffer(self.snap_list, 2 * size_of::<Snap>() as u64) == Allocation::Fresh {
+            snap.snapped = None;
         }
         if ground.layers == 0 || terrains == 0 || state.resident == 0 {
             return;
         }
-        let changed = tiles.is_changed()
-            || ground.is_changed()
-            || baking.is_changed()
-            || held.slots_written
-            || held.snapped != Some(state.generation);
-        if !changed && !held.snap_again {
+        let inputs = SnapInputs {
+            tiles,
+            ground,
+            baking,
+            assets: (state.library, residency.revision()),
+            changed: tiles.is_changed() || ground.is_changed() || baking.is_changed(),
+        };
+        let planned = snap.plan(&inputs, (&state.pool, state.generation, objects));
+        if planned.is_empty() {
             return;
         }
-        held.snap_again = changed;
-        held.snapped = Some(state.generation);
-        held.slots_written = false;
-        let snap = Snap {
-            counts: [held.objects, terrains, 0, 0],
-        };
-        cx.write(self.snap_uniform, 0, &[snap]);
-        held.snapping = true;
+        let words = snap.words(&planned, terrains);
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.grow_buffer(self.snap_list, std::mem::size_of_val(words.as_slice()) as u64);
+        cx.write(self.snap_list, 0, &words);
+        snap.snapping = true;
     }
 
     fn prepare_cull(
@@ -860,6 +887,7 @@ impl ScatterGpu {
         }
         held.prepared = false;
         held.cards = plan.cards;
+        held.pyramid = views.main().is_some();
         held.atlas = plan.atlas;
         held.views.clear();
         held.views.extend(listed.iter().map(|(view, _)| *view));
@@ -867,10 +895,10 @@ impl ScatterGpu {
             held.sizes = Sizes::default();
         }
         let view_count = listed.len() as u32;
-        let lists = u64::from(view_count) + 1;
+        let lists = u64::from(view_count) + 3;
         let ids = u64::from(state.group_data.ids_per_view) * lists * 4;
         let draws = u64::from(held.group_count * LEVELS) * lists * size_of::<DrawArgs>() as u64;
-        let cards = u64::from(state.objects) * u64::from(view_count) * 8;
+        let cards = u64::from(state.objects) * (u64::from(view_count) + 1) * 8;
         let sizes = &mut held.sizes;
         grow(
             &mut sizes.views,
@@ -880,7 +908,7 @@ impl ScatterGpu {
         grow(&mut sizes.ids, ids, state.room);
         grow(&mut sizes.draws, draws, state.room);
         grow(&mut sizes.cards, cards, state.room);
-        grow(&mut sizes.card_args, lists * 16, state.room);
+        grow(&mut sizes.card_args, (lists - 1) * 16, state.room);
         let sizes = *sizes;
         let rebuilt = [
             (
@@ -893,6 +921,7 @@ impl ScatterGpu {
             (self.cards, sizes.cards),
             (self.card_args, sizes.card_args),
             (self.frame, size_of::<CullFrame>() as u64),
+            (self.hidden.picks, u64::from(state.objects).max(4) * 4),
         ];
         for (buffer, bytes) in rebuilt {
             let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, bytes);
@@ -909,15 +938,16 @@ impl ScatterGpu {
             return;
         }
         frame.counts[3] = view_count;
-        frame.drawn[0] = drawn;
+        let render = views.drawn().first().map_or(glam::UVec2::ZERO, |view| view.size);
+        frame.drawn = [drawn, render.x, render.y, 0];
         held.fading_view = listed.len();
         let card_args = &mut held.card_args;
         card_args.clear();
-        card_args.resize(listed.len(), [IMPOSTOR_VERTICES, 0, 0, 0]);
+        card_args.resize(listed.len() + 1, [IMPOSTOR_VERTICES, 0, 0, 0]);
         card_args.push([0; 4]);
         let args = &mut held.args;
         args.clear();
-        for _ in 0..=listed.len() {
+        for _ in 0..listed.len() + 3 {
             args.extend_from_slice(&state.group_data.template);
         }
         let culled = &mut held.culled;
@@ -931,7 +961,7 @@ impl ScatterGpu {
         }
         let left = ids > state.room || cards > state.room;
         if (left || held.left_out) && held.objects > 0 {
-            let at = u64::from(view_count) * 16;
+            let at = (u64::from(view_count) + 1) * 16;
             cx.read_back::<ScatterFeedback>(LEFT_OUT, self.card_args, at..at + 16, AfterRead::Keep);
         }
         held.left_out = left;
@@ -1000,7 +1030,13 @@ impl ScatterGpu {
     ) -> (u32, u32) {
         let mut draws = 0;
         let mut empty = 0;
-        let reached = self.held.group_count as usize * view;
+        let fading_view = self.held.fading_view;
+        let source = match view.checked_sub(fading_view + 1) {
+            Some(0) => 0,
+            Some(_) => fading_view,
+            None => view,
+        };
+        let reached = self.held.group_count as usize * source;
         let turns: &[Option<bool>] = match scene.role {
             PassRole::Depth => &[Some(false), Some(true)],
             PassRole::Lit | PassRole::Blended | PassRole::Shown => &[None],
@@ -1067,8 +1103,15 @@ impl ScatterGpu {
         } else {
             [plain, fading]
         };
-        let lists: &[(usize, bool, [&Pair; 2])] = match (view, held.cards) {
-            (0, true) => &[
+        let coloured = matched && view == 0 && self.hidden.coloured == scene.index;
+        let colour = held.fading_view + 1;
+        let lists: &[(usize, bool, [&Pair; 2])] = match (view, held.cards, coloured) {
+            (0, true, true) => &[
+                (colour, false, [&plain, &cut]),
+                (colour + 1, true, [&fading, &cut_fading]),
+            ],
+            (0, false, true) => &[(colour, false, [&plain, &cut])],
+            (0, true, false) => &[
                 (0, false, [&plain, &cut]),
                 (held.fading_view, true, [&fading, &cut_fading]),
             ],
@@ -1108,7 +1151,8 @@ impl ScatterGpu {
                 None,
             )
         };
-        let Some((cards, offset)) = self.card_source(view) else {
+        let listed = if coloured { held.fading_view } else { view };
+        let Some((cards, offset)) = self.card_source(listed) else {
             return (draws, empty);
         };
         let record = DrawRecord::of(DrawKind::PlacedCard, 0);
@@ -1210,7 +1254,7 @@ impl GpuPart for ScatterGpu {
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         use crate::shaders::scatter::{cull, faces, snap, values as placed};
-        let snap_uniform = cx.buffer("snap", Lifetime::Kept);
+        let snap_list = cx.buffer("snap", Lifetime::Kept);
         let frame = cx.buffer("frame", Lifetime::Kept);
         let views = cx.buffer("views", Lifetime::Kept);
         let records = cx.buffer("records", Lifetime::Kept);
@@ -1237,16 +1281,14 @@ impl GpuPart for ScatterGpu {
             scatter,
             snap::SNAP_SCATTER,
             &[
-                (snap::SNAP, Bind::Buffer(snap_uniform)),
+                (snap::SNAP, Bind::Buffer(snap_list)),
                 (snap::RECORDS, Bind::Buffer(records)),
                 (snap::POSES, Bind::Buffer(poses)),
                 (snap::VALUES, Bind::Buffer(values)),
             ],
         )?;
-        let culling = cx.compute_pipeline(
-            scatter,
-            cull::CULL_SCATTER,
-            &[
+        let cull_bound = || {
+            vec![
                 (cull::FRAME, Bind::Buffer(frame)),
                 (cull::RECORDS, Bind::Buffer(records)),
                 (cull::GROUPS, Bind::Buffer(groups)),
@@ -1255,8 +1297,8 @@ impl GpuPart for ScatterGpu {
                 (cull::VIEWS, Bind::Buffer(views)),
                 (cull::CARDS, Bind::Buffer(cards)),
                 (cull::CARD_ARGS, Bind::Buffer(card_args)),
-            ],
-        )?;
+            ]
+        };
         let laid = cx.view_texture("laid_depth", wgpu::TextureFormat::R32Float, Lifetime::Kept);
         let lay = cx
             .pass("scatter_laid")
@@ -1273,11 +1315,15 @@ impl GpuPart for ScatterGpu {
                 (laid_shaders::LAID_OUT, Bind::Texture(laid)),
             ],
         )?;
+        let hidden = Hidden::install(cx, lay, cull_bound())?;
+        let mut bound = cull_bound();
+        bound.push((cull::PICKS, Bind::Buffer(hidden.picks)));
+        let culling = cx.compute_pipeline(scatter, cull::CULL_SCATTER, &bound)?;
         let forms = Self::forms(cx, (poses, colors, laid))?;
         let joined = Self::scenes(cx, &forms, (ids, draws, debug_records, cards, card_args));
         Ok(Self {
             scatter,
-            snap_uniform,
+            snap_list,
             frame,
             views,
             records,
@@ -1303,6 +1349,7 @@ impl GpuPart for ScatterGpu {
             joined,
             records_written: false,
             held: Held::default(),
+            hidden,
         })
     }
 
@@ -1319,6 +1366,7 @@ impl GpuPart for ScatterGpu {
             self.held = Held::default();
         }
         self.laid_copied = None;
+        self.hidden.begin();
         let words = record_words();
         let records = cx.allocate_buffer(
             self.debug_records,
@@ -1335,23 +1383,21 @@ impl GpuPart for ScatterGpu {
         self.list_draws(&state, &residency);
         self.write_placed_groups(cx, &state);
         self.canopy.prepare(cx, &canopy);
-        self.prepare_snap(cx, &state, (&tiles, &ground, &baking));
+        self.prepare_snap(cx, (&state, &residency), (&tiles, &ground, &baking));
         self.prepare_cull(cx, &state, (&*views, &*table));
         if self.held.prepared && self.held.objects > 0 {
             cx.run(self.scatter);
-        } else if self.held.snapping {
-            self.held.snapped = None;
+        } else if self.held.snap.snapping {
+            self.held.snap.snapped = None;
         }
     }
 
     fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
         let index = cx.view_index();
         let held = &self.held;
-        let laid = held
-            .views
-            .iter()
-            .any(|listed| listed.drawn == index && listed.laid);
-        if !(held.prepared && held.cards && laid) {
+        let laid = held.prepared && held.laid_at(index);
+        let main = laid && held.views.first().is_some_and(|first| first.drawn == index);
+        if !(laid && (held.cards || main)) {
             return;
         }
         let size = view.size();
@@ -1362,23 +1408,31 @@ impl GpuPart for ScatterGpu {
         };
         let (Allocation::Fresh | Allocation::Kept) = cx.allocate(self.laid, extent, 1);
         self.laid_size = (view.render.x, view.render.y);
+        if main && held.pyramid {
+            self.hidden.view = Some(index);
+        }
         cx.run(self.lay);
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
         if pass == self.lay {
-            let (width, height) = self.laid_size;
-            let groups = [width.div_ceil(LAID_GROUP), height.div_ceil(LAID_GROUP), 1];
-            let copied = cx.dispatch(&self.laying, Count::Groups(groups)) != 0;
-            self.laid_copied = copied.then(|| cx.view_index());
+            if self.held.cards {
+                let (width, height) = self.laid_size;
+                let groups = [width.div_ceil(LAID_GROUP), height.div_ceil(LAID_GROUP), 1];
+                let copied = cx.dispatch(&self.laying, Count::Groups(groups)) != 0;
+                self.laid_copied = copied.then(|| cx.view_index());
+            }
+            self.hidden.encode(cx, self.held.objects);
             return 0;
         }
         if pass == self.scatter {
-            let groups = [self.held.objects.div_ceil(SCATTER_GROUP), 1, 1];
-            if self.held.snapping && cx.dispatch(&self.snapping, Count::Groups(groups)) == 0 {
-                self.held.snapped = None;
+            let snap = &mut self.held.snap;
+            let snapped = [snap.threads.div_ceil(SCATTER_GROUP), 1, 1];
+            if snap.snapping && cx.dispatch(&self.snapping, Count::Groups(snapped)) == 0 {
+                snap.snapped = None;
             }
-            cx.dispatch(&self.culling, Count::Groups(groups));
+            let groups = [self.held.objects.div_ceil(SCATTER_GROUP), 1, 1];
+            self.hidden.culled = cx.dispatch(&self.culling, Count::Groups(groups)) != 0;
         }
         0
     }

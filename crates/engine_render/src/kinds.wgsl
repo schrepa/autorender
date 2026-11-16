@@ -3,13 +3,11 @@ import package::engine::materials::alpha_test;
 import package::engine::geometry::declarations::fade_hidden;
 import package::engine::geometry::vertex::output_color;
 import package::engine::shading::{Shaded, SurfaceInput, SurfacePoint, ViewPixel};
-import package::engine::slots::shade as shade_point;
-import package::engine::slots::slot_output;
 import package::engine::surface::{masked_out, opacity_cut, surface_point};
 import package::engine::view::{camera, material_bias, view_pixel};
 import package::face::debug::{DebugTargets, debug_record_with_kind, debug_targets};
 import package::face::debug_modes::point_source;
-import package::generated::writes::{Outputs, blended_outputs, outputs};
+import package::generated::writes::{Outputs, blended_outputs, outputs, slot_shaded};
 
 struct SurfaceVaryings {
     @invariant @builtin(position) clip_position: vec4<f32>,
@@ -193,7 +191,7 @@ fn masked_depth(input: KindFragment) {
 fn shade(input: KindFragment, front: bool) -> KindShaded {
     let surface = surface_input(input, front);
     let point = lit_point(surface);
-    return KindShaded(point, slot_output(surface, point, shade_point(point, input.pixel)));
+    return KindShaded(point, slot_shaded(surface, point, input.pixel));
 }
 
 fn drawn_pixel(clip_position: vec4<f32>, previous: vec3<f32>) -> ViewPixel {

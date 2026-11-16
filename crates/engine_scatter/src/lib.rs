@@ -8,10 +8,12 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 mod far_cover;
 mod gpu;
 mod groups;
+mod hidden;
 mod jobs;
 mod layouts;
 mod pool;
 mod settings;
+mod snapping;
 mod systems;
 
 use engine_core::{

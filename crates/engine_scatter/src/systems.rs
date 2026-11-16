@@ -8,10 +8,11 @@ use engine_core::{
 };
 use engine_math::collections::HashMap;
 use engine_open_world_kit::ground::{
-    Foliage, GroundTiles, PlacedTiles, PooledTile, TerrainTiles, TileFace,
+    Foliage, GroundTiles, PlacedAsset, PlacedTiles, PooledTile, TerrainEntry, TerrainTiles,
+    TileFace,
 };
 use engine_places_rendering::impostors::{ImpostorAsks, ImpostorRecord, ImpostorRecords};
-use engine_tiles::TileKey;
+use engine_tiles::{Pyramid, TileKey};
 use glam::Vec3;
 
 use crate::ScatterBrick;
@@ -78,7 +79,7 @@ pub(crate) struct ScatterState {
     pub(crate) room: u64,
     pub(crate) generation: u64,
     pub(crate) slot_sequence: u64,
-    pub(crate) whole: bool,
+    pub(crate) library: (u64, u64),
     pub(crate) left_objects: u32,
     pub(crate) moved: Vec<(Vec3, Vec3)>,
     pub(crate) restyled: bool,
@@ -93,6 +94,7 @@ pub(crate) struct ScatterState {
     retake: bool,
     refilled: bool,
     revisions: Option<((u64, u64), u64)>,
+    placing: Vec<Placing>,
 }
 
 impl Default for ScatterState {
@@ -108,7 +110,7 @@ impl Default for ScatterState {
             room: u64::MAX,
             generation: 0,
             slot_sequence: 0,
-            whole: false,
+            library: (0, 0),
             left_objects: 0,
             moved: Vec::new(),
             restyled: false,
@@ -123,6 +125,7 @@ impl Default for ScatterState {
             retake: false,
             refilled: false,
             revisions: None,
+            placing: Vec::new(),
         }
     }
 }
@@ -226,6 +229,37 @@ pub(crate) fn publish_canopy(
 }
 
 type ResolvedTerrains<'a> = Vec<(Entity, Vec<Option<Resolved<'a>>>)>;
+
+#[derive(PartialEq)]
+struct Placing {
+    terrain: Entity,
+    origin: Vec3,
+    pyramid: Pyramid,
+    recipe: Option<[u8; 32]>,
+    surroundings: bool,
+    placement: Arc<[PlacedAsset]>,
+}
+
+impl Placing {
+    fn of(terrain: &TerrainEntry) -> Self {
+        Self {
+            terrain: terrain.terrain,
+            origin: terrain.origin,
+            pyramid: terrain.pyramid,
+            recipe: terrain.recipe,
+            surroundings: terrain.surroundings,
+            placement: Arc::clone(&terrain.placement),
+        }
+    }
+}
+
+fn same_placing(held: &[Placing], tiles: &TerrainTiles) -> bool {
+    held.len() == tiles.terrains.len()
+        && held
+            .iter()
+            .zip(tiles.terrains.iter())
+            .all(|(held, terrain)| *held == Placing::of(terrain))
+}
 
 fn look_meshes(look: &PlacedLook) -> Vec<GeometryHandle> {
     std::iter::once(look.mesh)
@@ -391,14 +425,9 @@ fn write_slots(state: &mut ScatterState) {
         .unwrap_or(0);
     let held = u64::from(end).min(room) as u32;
     state.left_objects = end - held;
-    let mut grown = false;
     for (bytes, stride) in state.slot_bytes.iter_mut().zip(SLOT_STRIDES) {
-        grown |= grow(bytes, u64::from(held) * stride, state.room);
+        grow(bytes, u64::from(held) * stride, state.room);
     }
-    if grown {
-        state.generation += 1;
-    }
-    state.whole = grown;
     state.slot_sequence += 1;
     state.objects = held;
 }
@@ -469,10 +498,13 @@ pub(crate) fn place_pool(
         state.generation += 1;
     }
     let revisions = (library.revision(), residency.revision());
-    let derived = landed
-        || tiles.is_changed()
-        || settings.is_changed()
-        || state.revisions != Some(revisions);
+    state.library = revisions.0;
+    let placed = tiles.is_changed() && !same_placing(&state.placing, &tiles);
+    if placed {
+        state.placing = tiles.terrains.iter().map(Placing::of).collect();
+    }
+    let derived =
+        landed || placed || settings.is_changed() || state.revisions != Some(revisions);
     state.refilled = false;
     if derived || foliage.is_changed() || maps.whole() != ground.whole {
         let (resolved, kept) = resolve_all(&tiles, (&settings, &state.authored), &library);

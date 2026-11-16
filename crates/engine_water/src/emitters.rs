@@ -2,12 +2,12 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Cursor, Since, Spawner};
-use engine_heightfield::Fall;
+use engine_heightfield::{Fall, TileKey};
 use glam::{Vec2, Vec3};
 
 use crate::jobs::tile_water::point;
 use crate::state::{WaterState, WaterTerrain};
-use crate::waterfalls::{FallLook, drowned, falling, spawn_fall};
+use crate::waterfalls::{FallLook, drowned, falling, judged_at, spawn_fall};
 use crate::{Water, WaterBrick, WaterPoint};
 
 struct Falls {
@@ -40,6 +40,19 @@ fn drawn_water(terrain: &WaterTerrain, at: Vec2) -> Option<WaterPoint> {
         .flatten()
 }
 
+fn touches_falls(terrain: &WaterTerrain, keys: &[TileKey]) -> bool {
+    if keys.is_empty() {
+        return false;
+    }
+    let pyramid = &terrain.pyramid;
+    let points = judged_at(&terrain.falls);
+    keys.iter().any(|&key| {
+        points
+            .iter()
+            .any(|&at| pyramid.tile_at(u32::from(key.level), at) == Some(key))
+    })
+}
+
 impl Emitters {
     pub(crate) fn falling(&self) -> Option<&Arc<[Fall]>> {
         self.falls.as_ref().map(|falls| &falls.falling)
@@ -69,7 +82,11 @@ impl Emitters {
             }
             self.look = Some(*look);
         }
-        let touched = !matches!(terrain.touched.since(&mut self.cursor), Since::Same);
+        let touched = match terrain.touched.since(&mut self.cursor) {
+            Since::Same => false,
+            Since::Listed(keys) => touches_falls(terrain, keys),
+            Since::All => true,
+        };
         self.follow_falls(terrain, touched, look, spawner);
     }
 

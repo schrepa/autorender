@@ -9,7 +9,12 @@ import package::generated::scatter::{
 };
 import package::place::placed_tiles::{Pose, Record};
 
-@group(1) @binding(0) var<uniform> snap: Snap;
+struct SnapList {
+    head: Snap,
+    items: array<vec4<u32>>,
+}
+
+@group(1) @binding(0) var<storage, read> snap: SnapList;
 @group(1) @binding(1) var<storage, read_write> records: array<Record>;
 @group(1) @binding(2) var<storage, read_write> poses: array<Pose>;
 @group(1) @binding(3) var<storage, read_write> values: array<PlacedValues>;
@@ -74,37 +79,68 @@ fn ground_color(index: u32, info: TerrainInfo, terrain: GroundTerrain, local: ve
         max(saturate(far.w), 1.0 / 255.0)));
 }
 
+fn snapped_slot(thread: u32) -> vec2<u32> {
+    var low = 0u;
+    var high = snap.head.counts.z;
+    while high - low > 1u {
+        let middle = (low + high) / 2u;
+        if snap.items[middle].y <= thread {
+            low = middle;
+        } else {
+            high = middle;
+        }
+    }
+    let span = snap.items[low];
+    return vec2<u32>(span.x + (thread - span.y), span.z);
+}
+
+fn ground_moved(at: vec2<f32>) -> bool {
+    let first = snap.head.counts.z;
+    for (var index = 0u; index < snap.head.counts.w; index++) {
+        let rect = bitcast<vec4<f32>>(snap.items[first + index]);
+        if all(at >= rect.xy) && all(at <= rect.zw) {
+            return true;
+        }
+    }
+    return false;
+}
+
 @compute @workgroup_size(SCATTER_GROUP)
 fn snap_scatter(@builtin(global_invocation_id) id: vec3<u32>) {
-    if id.x >= snap.counts.x {
+    if id.x >= snap.head.counts.x {
         return;
     }
-    let record = records[id.x];
+    let found = snapped_slot(id.x);
+    let slot = found.x;
+    if found.y != 0u && !ground_moved(vec2<f32>(poses[slot].r0.w, poses[slot].r2.w)) {
+        return;
+    }
+    let record = records[slot];
     let terrain = scatter_terrain_index(record.terrain);
-    if record.group == DEAD || terrain >= snap.counts.y {
+    if record.group == DEAD || terrain >= snap.head.counts.y {
         return;
     }
     let info = terrain_info(terrain);
     let ground_terrain = ground_of(info);
-    let pose = poses[id.x];
+    let pose = poses[slot];
     let local = vec2<f32>(pose.r0.w, pose.r2.w) - info.origin.xz;
     let ground = finest_ground(info, ground_terrain, local);
     let near = scatter_terrain_near(record.terrain);
     let hidden = near != 0u && ground.found && ground.level < near;
-    records[id.x].terrain = scatter_terrain_with_hidden(record.terrain, hidden);
+    records[slot].terrain = scatter_terrain_with_hidden(record.terrain, hidden);
     if !ground.found {
         return;
     }
     let base = info.origin.y
         + true_height(ground_terrain, local, ground.level, ground.tile) - record.sink;
-    poses[id.x].r1.w = base;
-    records[id.x].center.y = record.center.y + (base - pose.r1.w);
-    let held = values[id.x];
+    poses[slot].r1.w = base;
+    records[slot].center.y = record.center.y + (base - pose.r1.w);
+    let held = values[slot];
     if held.reach != 0.0 {
         let tilt = unpack2x16snorm(held.tilt);
         let up = sqrt(max(1.0 - dot(tilt, tilt), 0.01));
-        values[id.x].ground = base + record.sink
+        values[slot].ground = base + record.sink
             + dot(tilt, vec2<f32>(pose.r0.w, pose.r2.w)) / up;
-        values[id.x].texel = ground_color(terrain, info, ground_terrain, local, ground);
+        values[slot].texel = ground_color(terrain, info, ground_terrain, local, ground);
     }
 }

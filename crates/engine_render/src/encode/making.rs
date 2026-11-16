@@ -73,12 +73,13 @@ impl Making {
     pub(crate) fn submit(
         &mut self,
         made: (u64, u64),
-        (pass, noted): (&'static str, Option<(Compiled, bool)>),
+        (pass, noted, stages): (&'static str, Option<(Compiled, bool)>, Vec<u64>),
         job: impl FnOnce() -> Creating + wgpu::WasmNotSend + 'static,
     ) {
         self.pending.push(made);
         #[cfg(not(target_arch = "wasm32"))]
         {
+            drop(stages);
             let (program, key) = made;
             let job = move || Finished {
                 program,
@@ -103,6 +104,7 @@ impl Making {
                 made,
                 pass,
                 noted,
+                stages,
                 job: Box::new(job),
             });
     }
@@ -168,21 +170,50 @@ struct Queued {
     made: (u64, u64),
     pass: &'static str,
     noted: Option<(Compiled, bool)>,
+    stages: Vec<u64>,
     job: Box<dyn FnOnce() -> Creating>,
 }
 
 #[cfg(target_arch = "wasm32")]
-#[derive(Default)]
 struct Flight {
     jobs: VecDeque<Queued>,
     arrived: Vec<Finished>,
     flying: usize,
+    slots: usize,
+    compiling: Vec<u64>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Flight {
+    fn next(&mut self) -> Option<Queued> {
+        if self.flying >= self.slots {
+            return None;
+        }
+        let at = self.jobs.iter().position(|queued| {
+            !queued
+                .stages
+                .iter()
+                .any(|stage| self.compiling.contains(stage))
+        })?;
+        let queued = self.jobs.remove(at)?;
+        self.compiling.extend(queued.stages.iter().copied());
+        self.flying += 1;
+        Some(queued)
+    }
+
+    fn land(&mut self, stages: &[u64]) {
+        for stage in stages {
+            if let Some(at) = self.compiling.iter().position(|known| known == stage) {
+                self.compiling.swap_remove(at);
+            }
+        }
+        self.flying -= 1;
+    }
 }
 
 #[cfg(target_arch = "wasm32")]
 struct Flights {
     shared: Rc<RefCell<Flight>>,
-    slots: usize,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -194,25 +225,19 @@ impl Flights {
             .and_then(|cores| cores.as_f64())
             .map_or(1, |cores| cores as usize);
         Self {
-            shared: Rc::default(),
-            slots: cores.saturating_sub(1).max(1),
+            shared: Rc::new(RefCell::new(Flight {
+                jobs: VecDeque::new(),
+                arrived: Vec::new(),
+                flying: 0,
+                slots: cores.saturating_sub(1).max(1),
+                compiling: Vec::new(),
+            })),
         }
     }
 
     fn hand(&self, queued: Queued) {
-        let starting = {
-            let mut flight = self.shared.borrow_mut();
-            flight.jobs.push_back(queued);
-            let starting = self
-                .slots
-                .saturating_sub(flight.flying)
-                .min(flight.jobs.len());
-            flight.flying += starting;
-            starting
-        };
-        for _ in 0..starting {
-            wasm_bindgen_futures::spawn_local(fly(Rc::clone(&self.shared)));
-        }
+        self.shared.borrow_mut().jobs.push_back(queued);
+        launch(&self.shared);
     }
 
     fn arrive(&self, waited: Option<(u64, u64)>) -> Vec<Finished> {
@@ -228,28 +253,38 @@ impl Flights {
 }
 
 #[cfg(target_arch = "wasm32")]
-async fn fly(shared: Rc<RefCell<Flight>>) {
+fn launch(shared: &Rc<RefCell<Flight>>) {
     loop {
-        let next = {
-            let mut flight = shared.borrow_mut();
-            let next = flight.jobs.pop_front();
-            if next.is_none() {
-                flight.flying -= 1;
-            }
-            next
-        };
+        let next = shared.borrow_mut().next();
         let Some(queued) = next else {
             return;
         };
-        let made = (queued.job)().await;
-        shared.borrow_mut().arrived.push(Finished {
-            program: queued.made.0,
-            key: queued.made.1,
-            pass: queued.pass,
-            noted: queued.noted,
+        wasm_bindgen_futures::spawn_local(fly(Rc::clone(shared), queued));
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn fly(shared: Rc<RefCell<Flight>>, queued: Queued) {
+    let Queued {
+        made: (program, key),
+        pass,
+        noted,
+        stages,
+        job,
+    } = queued;
+    let made = job().await;
+    {
+        let mut flight = shared.borrow_mut();
+        flight.land(&stages);
+        flight.arrived.push(Finished {
+            program,
+            key,
+            pass,
+            noted,
             made,
         });
     }
+    launch(&shared);
 }
 
 #[cfg(target_arch = "wasm32")]

@@ -2158,7 +2158,7 @@
         }
       ],
       "type": "engine_terrain::runtime::brick::TerrainBrick",
-      "version": "9224315edc57e611a2c374bcccb73d8a4129b85e1e4e3b78c1248366b4f4c3ee"
+      "version": "eae94f34d00112ae850423c34ab477849622f061965787b3daa8708c74d58cc1"
     },
     {
       "dependencies": [
@@ -2442,7 +2442,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "8ed3a09739748fa311cda8d89efdd42835aa0fc612f302ae2fba0bb8201c39cd"
+      "version": "27b71ec67f00d0219b01378c0de9d3b61f191fd52223441018cf6151ecfdbcaa"
     },
     {
       "dependencies": [
@@ -2633,7 +2633,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "3bf086dba77cbdca63b9cbcb66a18717831f2038f71253f36ef85f34858209aa"
+      "version": "76b079e7689a481fc718837f62f1b3932f7e8d6d79e71d8e0d2636ddc5d1334a"
     },
     {
       "dependencies": [
@@ -2767,7 +2767,7 @@
         }
       ],
       "type": "engine_ground_cover::GroundCoverBrick",
-      "version": "be9c8beaf3beac304da0d0c8f54f86785f152607100eff383e1247b9e42c6140"
+      "version": "afeaa8020c1d943c070ce12a9fe4312e4e17184c9132a08cadc71cedab0e4da7"
     },
     {
       "dependencies": [
@@ -2993,7 +2993,7 @@
         }
       ],
       "type": "engine_water::WaterBrick",
-      "version": "aa1e2ffa7d6f72af697ceb9889c2acf7dfa4bc8c6ef775b8d55edda19045583c"
+      "version": "2e73d2b499a3f1f2ab9cd95da77d31cfe1ffc8b5af0f651f45a02c7d437d8703"
     },
     {
       "dependencies": [
@@ -3400,8 +3400,8 @@
     }
   ],
   "frame": {
-    "frame_variants": 53,
-    "layouts": 115,
+    "frame_variants": 54,
+    "layouts": 117,
     "pieces": [
       {
         "brick": "engine_sun",
