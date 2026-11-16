@@ -91,16 +91,22 @@ fn water_stored_read(local: vec2<f32>, cell: WaterCell) -> WaterStored {
 
 fn water_stored(local: vec2<f32>, seen: f32) -> WaterStored {
     let picked = detail_level(seen, terrain_uniform().anchor.w, terrain_uniform().directory.y);
-    let cell = water_cell(local, picked.level);
-    let fine = water_stored_read(local, cell);
-    if !fine.found || picked.blend <= 0.0 || cell.level != picked.level {
-        return fine;
+    var fine: WaterStored;
+    for (var step = 0u; step < 2u; step++) {
+        let cell = water_cell(local, picked.level + step);
+        let read = water_stored_read(local, cell);
+        if step == 1u {
+            if read.found {
+                return WaterStored(water_blend(fine.at, read.at, picked.blend), true);
+            }
+            break;
+        }
+        fine = read;
+        if !fine.found || picked.blend <= 0.0 || cell.level != picked.level {
+            break;
+        }
     }
-    let coarser = water_stored_read(local, water_cell(local, picked.level + 1u));
-    if !coarser.found {
-        return fine;
-    }
-    return WaterStored(water_blend(fine.at, coarser.at, picked.blend), true);
+    return fine;
 }
 
 fn water_blend(first: WaterAt, second: WaterAt, toward: f32) -> WaterAt {
@@ -727,10 +733,11 @@ fn shade_water(pixel: vec2<f32>, at: WaterAt, face: WaterFace, behind: WaterBehi
     surface.transmit = transmit;
     surface.path = vec2<f32>(through, luminance(water_extinction(aerated)));
     surface.calm = face.calm;
-    let lit = water_light(surface, pixel);
-    let caustic = 1.0 + (gathered - 1.0) * lit.sunny
-        * exp(-bed_depth * (1.0 / water.optics.caustic_depth + water.optics.bubbles * aerated));
+    let sinking = exp(-bed_depth
+        * (1.0 / water.optics.caustic_depth + water.optics.bubbles * aerated));
     let wet = water_ramp(standing, water.shore.soaked, standing_change) * water.shore.wet;
+    let lit = water_light(surface, pixel);
+    let caustic = 1.0 + (gathered - 1.0) * lit.sunny * sinking;
     let let_through = (1.0 - lit.reflectance) * (1.0 - cover);
     var result: WaterShade;
     result.point = lit.point;
@@ -786,14 +793,18 @@ fn fs_water(input: WaterOutput) -> Outputs {
     let gathered = water_gathered(face);
     let held_change = fwidth(at.held);
     var targets: Outputs;
-    if risen {
+    if !shallow && !dry && rise.standing > 0.0 {
         let behind = water_behind(face.point, face.normal, face.view, pixel, water_ground(pixel),
             face.plane);
         let shade = shade_water(pixel, at, face, behind, vec2<f32>(0.0), gathered, held_change);
         let previous = water_previous(input.relative, shade.velocity, saturate(shade.coverage));
         targets = outputs(shade.point, shade.shaded,
             view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
-        targets.color = water_covering(shade, water_seen(pixel));
+        var seen = vec3<f32>(0.0);
+        if shade.fade != 1.0 {
+            seen = water_seen(pixel);
+        }
+        targets.color = water_covering(shade, seen);
     }
     return targets;
 }
