@@ -832,10 +832,10 @@ impl ScatterGpu {
         };
         let streams = &joined.streams;
         let drawn = if joined.owned {
-            self.draw_views(view, draw, streams)
+            self.draw_views((scene, view), draw, streams)
         } else {
             let matched = joined.follows && self.held.views[view].laid;
-            self.draw_objects((view, matched), draw, streams)
+            self.draw_objects((scene, view, matched), draw, streams)
         };
         let waiting = if joined.owned && self.held.views[view].casts {
             self.held.cast_waiting
@@ -853,6 +853,7 @@ impl ScatterGpu {
     fn draw_levels(
         &self,
         (view, items, fading): (usize, &[Level], bool),
+        (scene, matched): (&SceneDraw, bool),
         draw: &mut Draw<'_, Self, Scene>,
         inputs: &Streams,
         pipelines: [&Pair; 2],
@@ -868,7 +869,7 @@ impl ScatterGpu {
                 continue;
             };
             let record = DrawRecord::of(DrawKind::Placed, level);
-            draw.draw(
+            draw.draw_timed(
                 pipeline,
                 Shape::MeshIndirect {
                     mesh: item.mesh,
@@ -877,6 +878,7 @@ impl ScatterGpu {
                     offset,
                     streams: &[(inputs.ids, ids), (inputs.records, record.offset())],
                 },
+                || level_label(scene, item, (matched, fading)),
             );
             draws += 1;
         }
@@ -885,7 +887,7 @@ impl ScatterGpu {
 
     fn draw_objects(
         &self,
-        (view, matched): (usize, bool),
+        (scene, view, matched): (&SceneDraw, usize, bool),
         draw: &mut Draw<'_, Self, Scene>,
         inputs: &Streams,
     ) -> u32 {
@@ -914,7 +916,13 @@ impl ScatterGpu {
         };
         let mut draws = 0;
         for &(list, fades, pipelines) in lists {
-            draws += self.draw_levels((list, &held.lit, fades), draw, inputs, pipelines);
+            draws += self.draw_levels(
+                (list, &held.lit, fades),
+                (scene, matched),
+                draw,
+                inputs,
+                pipelines,
+            );
         }
         if !held.cards {
             return draws;
@@ -922,7 +930,7 @@ impl ScatterGpu {
         let card = draw.form(&self.forms.cards);
         if let (Some(card), Some((cards, offset))) = (card, self.card_source(view)) {
             let record = DrawRecord::of(DrawKind::PlacedCard, 0);
-            draw.draw(
+            draw.draw_timed(
                 &card,
                 Shape::IndirectAt {
                     vertices: &[(inputs.cards, cards), (inputs.records, record.offset())],
@@ -930,13 +938,19 @@ impl ScatterGpu {
                     args: inputs.card_args,
                     offset,
                 },
+                || scene_label(scene, "cards"),
             );
             draws += 1;
         }
         draws
     }
 
-    fn draw_views(&self, view: usize, draw: &mut Draw<'_, Self, Scene>, inputs: &Streams) -> u32 {
+    fn draw_views(
+        &self,
+        (scene, view): (&SceneDraw, usize),
+        draw: &mut Draw<'_, Self, Scene>,
+        inputs: &Streams,
+    ) -> u32 {
         let held = &self.held;
         let items = if held.views[view].casts {
             &held.cast
@@ -947,10 +961,16 @@ impl ScatterGpu {
             draw.form(&self.forms.plain),
             draw.form(&self.forms.extended),
         ];
-        let mut draws = self.draw_levels((view, items, false), draw, inputs, [&chosen; 2]);
+        let mut draws = self.draw_levels(
+            (view, items, false),
+            (scene, false),
+            draw,
+            inputs,
+            [&chosen; 2],
+        );
         let card = draw.form(&self.forms.casters).filter(|_| held.atlas);
         if let (Some(card), Some((cards, offset))) = (card, self.card_source(view)) {
-            draw.draw(
+            draw.draw_timed(
                 &card,
                 Shape::IndirectAt {
                     vertices: &[(inputs.cards, cards)],
@@ -958,11 +978,39 @@ impl ScatterGpu {
                     args: inputs.card_args,
                     offset,
                 },
+                || scene_label(scene, "casters"),
             );
             draws += 1;
         }
         draws
     }
+}
+
+fn scene_label(scene: &SceneDraw, what: &str) -> String {
+    let pass = scene.pass.name();
+    match scene.view {
+        Some(view) => format!("scatter {pass} {what} view {view}"),
+        None => format!("scatter {pass} {what}"),
+    }
+}
+
+fn level_label(scene: &SceneDraw, item: &Level, (matched, fading): (bool, bool)) -> String {
+    let material = item
+        .material
+        .map_or_else(|| "none".to_owned(), |material| material.slot().to_string());
+    let cut = match (item.masked, matched) {
+        (false, _) => "opaque",
+        (true, false) => "masked",
+        (true, true) => "masked matched",
+    };
+    let fading = if fading { " fading" } else { "" };
+    let what = format!(
+        "group {} level {} mesh {} material {material} {cut}{fading}",
+        item.group,
+        item.level,
+        item.mesh.slot()
+    );
+    scene_label(scene, &what)
 }
 
 impl GpuPart for ScatterGpu {
