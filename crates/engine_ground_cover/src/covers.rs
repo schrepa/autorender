@@ -64,6 +64,7 @@ pub(crate) struct SlotTerms {
     pub(crate) cards: f32,
     pub(crate) widest: f32,
     pub(crate) tallest: f32,
+    pub(crate) span: f32,
     pub(crate) stand: f32,
     pub(crate) least: Least,
 }
@@ -79,7 +80,6 @@ pub(crate) struct CoverTable {
     pub(crate) light: LightRows,
     pub(crate) seen: SeenRows,
     pub(crate) cards: CardRows,
-    pub(crate) tallest: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -119,7 +119,6 @@ impl Grown {
 struct Far {
     lowest: f32,
     leaves: f32,
-    tallest: f32,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -129,6 +128,7 @@ struct Counted {
     cards: f32,
     widest: f32,
     tallest: f32,
+    span: f32,
     stand: f32,
     least: Least,
 }
@@ -148,7 +148,7 @@ impl Counted {
             far.leaves,
             grown.dense * dims.width * dims.mean * grown.grows * grown.grows,
         );
-        far.tallest = max(far.tallest, dims.span * grown.grows);
+        self.span = max(self.span, dims.span * grown.grows);
     }
 
     fn seen(&mut self, (dims, grown): (Dims, Grown)) {
@@ -166,6 +166,7 @@ impl Counted {
         }
         slot.widest = max(slot.widest, self.widest);
         slot.tallest = max(slot.tallest, self.tallest);
+        slot.span = max(slot.span, self.span);
         slot.stand = max(slot.stand, self.stand);
         slot.least = slot.least.or(self.least);
     }
@@ -354,7 +355,6 @@ impl<'a> Tail<'a> {
         (name, look): (&'a str, &CoverLook),
         counted: bool,
         slots: &mut Vec<SlotTerms>,
-        tallest: &mut f32,
     ) -> CoverMaterial {
         let cover = self.cover;
         let mut made = self.material(name, look);
@@ -363,7 +363,6 @@ impl<'a> Tail<'a> {
         let mut far = Far {
             lowest: f32::MAX,
             leaves: 0.0,
-            tallest: *tallest,
         };
         let mut own = Counted::default();
         let mut rest = 1.0;
@@ -402,7 +401,6 @@ impl<'a> Tail<'a> {
         made.extra[0] = leaf;
         made.extra[3] = far.leaves;
         made.limits = own.limits(cover.lush.sqrt());
-        *tallest = far.tallest;
         made
     }
 }
@@ -454,7 +452,6 @@ impl CoverTable {
             kinds: BTreeMap::new(),
         };
         tail.rows.clear();
-        let mut tallest = 0.0;
         for terrain in terrains {
             let base = palette
                 .iter()
@@ -476,7 +473,7 @@ impl CoverTable {
                         .looks
                         .get_key_value(&*material.name)
                         .map_or_else(CoverMaterial::default, |(name, look)| {
-                            tail.grown((name, look), counted, &mut slots, &mut tallest)
+                            tail.grown((name, look), counted, &mut slots)
                         });
                 }
                 for slot in &slots {
@@ -489,7 +486,6 @@ impl CoverTable {
             self.slots.push(slots);
         }
         self.kinds = tail.rows;
-        self.tallest = tallest;
         self.set(cover);
     }
 

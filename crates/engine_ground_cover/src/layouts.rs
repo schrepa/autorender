@@ -12,6 +12,17 @@ engine_core::gpu_struct! {
         pub(crate) terms: [f32; 4],
         pub(crate) least: [f32; 4],
         pub(crate) wind: [f32; 4],
+        pub(crate) cells: [u32; 4],
+    }
+}
+
+engine_core::gpu_struct! {
+    pub(crate) struct GrowSpot {
+        pub(crate) fine: [u32; 4],
+        pub(crate) coarse: [u32; 4],
+        pub(crate) seat: [f32; 4],
+        pub(crate) under: [u32; 4],
+        pub(crate) lush: [u32; 4],
     }
 }
 
@@ -195,6 +206,7 @@ const _: () = assert!(
 
 pub(crate) const GENERATED: &[&str] = &[
     Grow::WGSL,
+    GrowSpot::WGSL,
     CoverFrame::WGSL,
     CoverBlade::WGSL,
     CoverCard::WGSL,

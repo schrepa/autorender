@@ -19,15 +19,15 @@ pub(crate) const CARD_BYTES: u64 = size_of::<CoverCard>() as u64;
 const APPENDED_WORD: usize = 0;
 const STRIPS_WORD: usize = 1;
 const FLATS_WORD: usize = 2;
-const CAPACITY_WORD: usize = 4;
-const CARD_CAPACITY_WORD: usize = 5;
-const TRIED_WORD: usize = 6;
-const SCANNED_WORD: usize = 7;
-const RAN_WORD: usize = 8;
-const GREW_WORD: usize = 9;
-const CARDED_WORD: usize = 10;
+const CAPACITY_WORD: usize = 3;
+const CARD_CAPACITY_WORD: usize = 4;
+const TRIED_WORD: usize = 5;
+const SCANNED_WORD: usize = 6;
+const RAN_WORD: usize = 7;
+const GREW_WORD: usize = 8;
+pub(crate) const CARDED_WORD: usize = 9;
 
-const LANES: f32 = 64.0;
+const LANES: u32 = 64;
 const LANE_FILL: f32 = 4.0;
 const CELL_MARGIN: f32 = 0.05;
 const FLAT_CORNER: f32 = 1.0e-6;
@@ -36,6 +36,8 @@ const FLAT_CORNER: f32 = 1.0e-6;
 pub(crate) struct CoverPlan {
     pub(crate) rows: Vec<Grow>,
     pub(crate) cells: Vec<[u32; 3]>,
+    pub(crate) finding: [u32; 3],
+    pub(crate) spots: u32,
     pub(crate) frame: CoverFrame,
     pub(crate) capacity: u32,
     pub(crate) cards: u32,
@@ -47,6 +49,7 @@ pub(crate) struct CoverPlan {
     reach: f32,
     tiers: u32,
     groups: u32,
+    widest: u32,
 }
 
 #[derive(Resource, Default)]
@@ -88,7 +91,6 @@ fn word(bytes: &[u8], index: usize) -> u32 {
 struct Common {
     measure: ViewDetail,
     seen: Option<Wedge>,
-    tallest: f32,
     grounded: f32,
     wind: [f32; 4],
 }
@@ -220,6 +222,7 @@ pub(crate) fn plan_cover(
     plan.room = limits.storage_room / 16 * 16;
     plan.drawn = !ground.tables.is_empty();
     plan.bins = cover.atlases.len() as u32;
+    plan.widest = limits.max_compute_workgroups_per_dimension.max(1);
     if !plan.drawn {
         return;
     }
@@ -241,7 +244,6 @@ pub(crate) fn plan_cover(
             detail.pixel_error,
         ),
         seen: Wedge::seen(main, &cull),
-        tallest: table.tallest * cover.lush.sqrt(),
         grounded,
         wind: [
             time.elapsed as f32,
@@ -324,7 +326,8 @@ impl CoverPlan {
                     continue;
                 }
                 let grown = [at, table.base(index), slot as u32];
-                self.grow_terrain(terrain, grown, (law, density, terms.stand), main, common);
+                let span = terms.span * lushest;
+                self.grow_terrain(terrain, grown, (law, density, terms.stand, span), main, common);
                 let area = law.area();
                 most[0] += area * dense[0];
                 most[1] += area * dense[1];
@@ -363,16 +366,26 @@ impl CoverPlan {
         self.capacity = capacity;
         self.cards = cards;
         self.thin = thin;
-        let seen = common.seen.map_or(-1, |_| self.rows.len() as i32);
-        for row in &mut self.rows {
+        let rows = self.rows.len() as u32;
+        let seen = common.seen.map_or(-1, |_| rows as i32);
+        let mut spots = 0_u32;
+        for (row, &[across, along, _]) in self.rows.iter_mut().zip(&self.cells) {
             row.room = [capacity, cards, self.bins, 0];
             row.detail[3] = thin;
             row.grid[2] = seen;
+            row.cells = [spots, across, 0, rows];
+            spots += across * along;
         }
+        for row in &mut self.rows {
+            row.cells[2] = spots;
+        }
+        self.spots = spots;
+        let groups = spots.div_ceil(LANES);
+        self.finding = [groups.min(self.widest), groups.div_ceil(self.widest), 1];
         if let Some(Wedge { apex, sides: [first, last] }) = common.seen {
             self.rows.push(Grow {
                 origin: [apex.x, apex.y, first.x, first.y],
-                eye: [last.x, last.y, common.tallest + CELL_MARGIN, 0.0],
+                eye: [last.x, last.y, 0.0, 0.0],
                 grid: [0; 4],
                 counts: [0; 4],
                 room: [0; 4],
@@ -381,6 +394,7 @@ impl CoverPlan {
                 terms: [0.0; 4],
                 least: [0.0; 4],
                 wind: [0.0; 4],
+                cells: [0; 4],
             });
         }
         true
@@ -390,7 +404,7 @@ impl CoverPlan {
         &mut self,
         terrain: &TerrainEntry,
         [at, base, slot]: [u32; 3],
-        (law, density, stand): (CoverLaw, f32, f32),
+        (law, density, stand, span): (CoverLaw, f32, f32, f32),
         main: &ViewFacts,
         common: Common,
     ) {
@@ -399,13 +413,13 @@ impl CoverPlan {
         let held = (side * side) as f32;
         let mut coarsest = 1.0;
         let mut depth = 0_u32;
-        while coarsest * coarsest * held < LANE_FILL * LANES {
+        while coarsest * coarsest * held < LANE_FILL * LANES as f32 {
             coarsest *= 2.0;
             depth += 1;
         }
         let center = Vec2::new(main.detail_eye.x, main.detail_eye.z);
         let corner = Vec2::new(terrain.origin.x, terrain.origin.z);
-        let margin = common.tallest + CELL_MARGIN;
+        let margin = span + CELL_MARGIN;
         let [elapsed, before, blown, _] = common.wind;
         let wind = [elapsed, before, blown, std::f32::consts::SQRT_2 * stand];
         let reach = law.reach();
@@ -433,14 +447,14 @@ impl CoverPlan {
                 })
                 .filter(|(_, cells)| cells.min_element() > 0);
             if let Some((first, cells)) = shown {
-                self.rows.push(Grow {
+                let row = Grow {
                     origin: terrain.origin.extend(spacing).to_array(),
                     eye: main.detail_eye.extend(outer).to_array(),
                     grid: [first.x, first.y, 0, side as i32],
                     counts: [at, terrain.pyramid.levels(), base, slot],
                     room: [0; 4],
                     detail: [measure.pixel_angle, measure.texel, measure.pixel_error, 1.0],
-                    tier: [inner, scale, tried, common.tallest],
+                    tier: [inner, scale, tried, span],
                     terms: [
                         law.widest,
                         law.tallest,
@@ -449,10 +463,20 @@ impl CoverPlan {
                     ],
                     least: [narrowest, lowest, finest, CELL_MARGIN],
                     wind,
-                });
+                    cells: [0; 4],
+                };
                 let [across, along] = cells.as_uvec2().to_array();
                 self.groups = self.groups.saturating_add(across.saturating_mul(along));
-                self.cells.push([across, along, tiers]);
+                let most = (self.widest / across).max(1);
+                let mut start = 0;
+                while start < along {
+                    let taken = most.min(along - start);
+                    let mut part = row;
+                    part.grid[1] = first.y + start as i32;
+                    self.rows.push(part);
+                    self.cells.push([across, taken, tiers]);
+                    start += taken;
+                }
             }
             tiers += 1;
             if outer >= reach {

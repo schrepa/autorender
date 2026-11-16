@@ -17,13 +17,12 @@ import package::face::ground_tiles::{GroundMaterial, GroundTerrain, GroundTile, 
     tile_material, tile_site, tile_summary, true_height};
 import package::face::view_wind::wind_sway;
 import package::generated::cover::{COVER_CELL_ROWS, CoverBlade, CoverCard, CoverMaterial, Grow,
-    cover_facing, cover_lean};
+    GrowSpot, cover_facing, cover_lean};
 
 struct Counts {
     appended: atomic<u32>,
     whole: atomic<u32>,
     flat: atomic<u32>,
-    growth: u32,
     capacity: u32,
     card_capacity: u32,
     tried: atomic<u32>,
@@ -45,6 +44,9 @@ struct DrawArgs {
 @group(1) @binding(2) var<storage, read_write> counts: Counts;
 @group(1) @binding(3) var<storage, read_write> args: array<DrawArgs>;
 @group(1) @binding(4) var<storage, read_write> cards: array<CoverCard>;
+@group(1) @binding(5) var<storage, read_write> grow_spots: array<GrowSpot>;
+@group(1) @binding(6) var<storage, read_write> grow_runs: array<atomic<u32>>;
+@group(1) @binding(7) var<uniform> grow_row: vec4<u32>;
 
 const LATTICE_TURN: f32 = 0.618034;
 const WIND_SHOWN: f32 = 1.0e9;
@@ -300,7 +302,7 @@ struct CellPlan {
     stacked: f32,
 }
 
-var<workgroup> cell_found: vec2<u32>;
+var<workgroup> cell_found: vec4<u32>;
 var<workgroup> cell_fine: vec4<u32>;
 var<workgroup> cell_coarse: vec3<u32>;
 var<workgroup> cell_seat: vec4<f32>;
@@ -421,7 +423,7 @@ fn tussock_material(grow: Grow, tile: LevelTile, samples: vec2<f32>, pick: f32,
     return select(other, own, pick < kept);
 }
 
-fn unseen_cell(wedge: i32, center: vec2<f32>, spacing: f32) -> bool {
+fn unseen_cell(wedge: i32, center: vec2<f32>, spacing: f32, margin: f32) -> bool {
     if wedge < 0 {
         return false;
     }
@@ -430,7 +432,7 @@ fn unseen_cell(wedge: i32, center: vec2<f32>, spacing: f32) -> bool {
     let away = center - apex.xy;
     let first = apex.zw;
     let last = sides.xy;
-    let reach = 0.5 * spacing + sides.z;
+    let reach = 0.5 * spacing + margin;
     return first.x * away.y - first.y * away.x + reach * (abs(first.x) + abs(first.y)) < 0.0
         || away.x * last.y - away.y * last.x + reach * (abs(last.x) + abs(last.y)) < 0.0;
 }
@@ -521,11 +523,21 @@ fn cell_shown(grow: Grow, corner: vec2<f32>, spacing: f32, heights: vec2<f32>) -
         base + vec3<f32>(spacing, heights.y + 0.5 * grow.tier.w, spacing) + margin);
 }
 
-fn find_cell(row: u32, group: vec2<u32>) -> u32 {
+struct Found {
+    kind: u32,
+    fine: vec4<u32>,
+    coarse: vec3<u32>,
+    seat: vec4<f32>,
+    under: vec3<u32>,
+    lush: vec4<u32>,
+}
+
+fn find_cell(row: u32, group: vec2<u32>) -> Found {
+    var cell_out: Found;
     let grid = grows[row].grid;
     let at = grid.xy + vec2<i32>(group);
     if any(at < vec2<i32>(0)) {
-        return CELL_LEFT;
+        return cell_out;
     }
     let origin = grows[row].origin;
     let tier = grows[row].tier;
@@ -536,18 +548,19 @@ fn find_cell(row: u32, group: vec2<u32>) -> u32 {
     let center = origin.xz + middle;
     let half_diagonal = 0.7072 * spacing;
     let flat = distance(center, eye.xz);
-    if flat > eye.w + half_diagonal || unseen_cell(grid.z, center, spacing) {
-        return CELL_LEFT;
+    if flat > eye.w + half_diagonal
+            || unseen_cell(grid.z, center, spacing, tier.w + grows[row].least.w) {
+        return cell_out;
     }
     let grow = grows[row];
     let info = terrain_info(grow.counts.x);
     let terrain = GroundTerrain(info.levels.x, grow.counts.y, origin.w);
     if any(middle > ground_extent(terrain)) {
-        return CELL_LEFT;
+        return cell_out;
     }
     let found = ground_tile(terrain, middle, 0u);
     if !found.found {
-        return CELL_LEFT;
+        return cell_out;
     }
     let cell = vec2<u32>(at);
     let side = u32(tier.y);
@@ -579,21 +592,23 @@ fn find_cell(row: u32, group: vec2<u32>) -> u32 {
         let away = vec2<f32>(length(vec2<f32>(flat, clamp(0.0, heights.x, heights.y))) - ROUNDING,
             length(vec2<f32>(flat, max(abs(heights.x), abs(heights.y)))) + ROUNDING);
         if cell_beyond(away, half_diagonal, eye.w, tier.x) {
-            return CELL_LEFT;
+            return cell_out;
         }
         var live = !grown;
         if grown {
             if any(under.low != vec4<f32>(0.0)) {
                 let still = site_lush(under.low, under.high);
-                atomicStore(&cell_driest, ~bitcast<u32>(still.x));
-                atomicStore(&cell_lushest, bitcast<u32>(still.y));
+                cell_out.lush.x = ~bitcast<u32>(still.x);
+                cell_out.lush.y = bitcast<u32>(still.y);
             }
             if any(under.wide_low != vec4<f32>(0.0)) {
                 let around = site_lush(under.wide_low, under.wide_high);
-                atomicStore(&cell_driest_near, ~bitcast<u32>(around.x));
-                atomicStore(&cell_lushest_near, bitcast<u32>(around.y));
+                cell_out.lush.z = ~bitcast<u32>(around.x);
+                cell_out.lush.w = bitcast<u32>(around.y);
             }
-            let growth = grown_range(grow, corner, spacing);
+            let growth = lush_growth(grow, corner, spacing,
+                lush_range(cell_out.lush.x, cell_out.lush.y),
+                lush_range(cell_out.lush.z, cell_out.lush.w));
             let closest = across(view, view.eye
                 + vec3<f32>(max(away.x - half_diagonal, 0.0), 0.0, 0.0)) * view.pixel_error;
             for (var rest = under.named; rest != 0u && !live; rest &= rest - 1u) {
@@ -604,30 +619,62 @@ fn find_cell(row: u32, group: vec2<u32>) -> u32 {
         dead = !live || !cell_shown(grow, corner, spacing, under.heights);
         if dead && !cell_beyond(away.yx, half_diagonal, eye.w, tier.x) {
             atomicAdd(&counts.scanned, 1u);
-            return CELL_LEFT;
+            return cell_out;
         }
     }
     let height = height_on(found.tile, max(middle / per, vec2<f32>(0.0)));
     let center_away = distance(vec3<f32>(center.x, origin.y + height, center.y), eye.xyz);
     if cell_beyond(vec2<f32>(center_away), half_diagonal, eye.w, tier.x) {
-        return CELL_LEFT;
+        return cell_out;
     }
     atomicAdd(&counts.scanned, 1u);
     if dead {
-        return CELL_LEFT;
+        return cell_out;
     }
     let closest = across(view, view.eye
         + vec3<f32>(max(center_away - half_diagonal, 0.0), 0.0, 0.0)) * view.pixel_error;
-    cell_fine = vec4<u32>(found.tile.layer, found.tile.first, found.level);
-    cell_coarse = vec3<u32>(coarse.layer, coarse.first);
-    cell_seat = vec4<f32>(height, closest, select(0.0, grow.wind.w, grow.wind.w > closest), 0.0);
+    cell_out.fine = vec4<u32>(found.tile.layer, found.tile.first, found.level);
+    cell_out.coarse = vec3<u32>(coarse.layer, coarse.first);
+    cell_out.seat = vec4<f32>(height, closest, select(0.0, grow.wind.w, grow.wind.w > closest),
+        0.0);
     if !summed {
-        return CELL_UNSUMMED;
+        cell_out.kind = CELL_UNSUMMED;
+        return cell_out;
     }
-    atomicStore(&cell_low, ~ordered_height(under.heights.x));
-    atomicStore(&cell_high, ordered_height(under.heights.y));
-    atomicStore(&cell_named, under.named);
-    return CELL_SUMMED;
+    cell_out.under = vec3<u32>(~ordered_height(under.heights.x), ordered_height(under.heights.y),
+        under.named);
+    cell_out.kind = CELL_SUMMED;
+    return cell_out;
+}
+
+@compute @workgroup_size(64)
+fn find_cells(@builtin(workgroup_id) group: vec3<u32>,
+        @builtin(num_workgroups) groups: vec3<u32>,
+        @builtin(local_invocation_index) lane: u32) {
+    let spot = (group.y * groups.x + group.x) * 64u + lane;
+    let sizes = grows[0].cells;
+    if spot >= sizes.z {
+        return;
+    }
+    var low = 0u;
+    var high = sizes.w - 1u;
+    while low < high {
+        let middle = (low + high + 1u) / 2u;
+        if grows[middle].cells.x <= spot {
+            low = middle;
+        } else {
+            high = middle - 1u;
+        }
+    }
+    let cells = grows[low].cells;
+    let local = spot - cells.x;
+    let found = find_cell(low, vec2<u32>(local % cells.y, local / cells.y));
+    if found.kind == CELL_LEFT {
+        return;
+    }
+    let kept = atomicAdd(&grow_runs[3u * low], 1u);
+    grow_spots[cells.x + kept] = GrowSpot(found.fine, vec4<u32>(found.coarse, found.kind),
+        found.seat, vec4<u32>(found.under, local), found.lush);
 }
 
 fn scan_under(grow: Grow, fine: vec4<u32>, coarse: vec3<u32>, corner: vec2<f32>, closest: f32,
@@ -1214,20 +1261,32 @@ fn walk_clumps(row: u32, reach: vec4<f32>, cell: vec2<u32>, lane: u32) -> u32 {
 fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
         @builtin(local_invocation_index) lane: u32) {
     if lane == 0u {
-        let row = counts.growth;
-        cell_found = vec2<u32>(row, find_cell(row, group.xy));
+        let row = grow_row.x;
+        let cells = grows[row].cells;
+        let held = grow_spots[cells.x + group.x];
+        cell_fine = held.fine;
+        cell_coarse = held.coarse.xyz;
+        cell_seat = held.seat;
+        atomicStore(&cell_low, held.under.x);
+        atomicStore(&cell_high, held.under.y);
+        atomicStore(&cell_named, held.under.z);
+        atomicStore(&cell_driest, held.lush.x);
+        atomicStore(&cell_lushest, held.lush.y);
+        atomicStore(&cell_driest_near, held.lush.z);
+        atomicStore(&cell_lushest_near, held.lush.w);
+        let local = held.under.w;
+        let cell = vec2<u32>(grows[row].grid.xy + vec2<i32>(vec2<u32>(local % cells.y,
+            local / cells.y)));
+        cell_found = vec4<u32>(row, held.coarse.w, cell);
     }
     let found = workgroupUniformLoad(&cell_found);
-    if found.y == CELL_LEFT {
-        return;
-    }
     let grow = grows[found.x];
     let scale = grow.tier.y;
     let side = u32(scale);
     let depth = u32(grow.terms.w);
     let slot = grow.counts.w;
     let spacing = grow.origin.w * scale;
-    let cell = vec2<u32>(grow.grid.xy + vec2<i32>(group.xy));
+    let cell = found.zw;
     let corner = vec2<f32>(cell) * spacing;
     let middle = corner + vec2<f32>(0.5 * spacing);
     let center = grow.origin.xz + middle;
@@ -1328,11 +1387,6 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
     if lane_grew {
         count_grown();
     }
-}
-
-@compute @workgroup_size(1)
-fn next_growth() {
-    counts.growth += 1u;
 }
 
 @compute @workgroup_size(1)
