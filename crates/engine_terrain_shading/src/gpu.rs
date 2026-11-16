@@ -15,7 +15,7 @@ gpu_consts! {
     pub const SURFACE_VERTEX_STRIDE: u32 = 16;
     pub const SURFACE_ERROR_MIPS: u32 = 8;
     pub const SUBDIVISION_GROUP: u32 = 64;
-    pub const SUBDIVISION_ARGS: u32 = 64;
+    pub const SUBDIVISION_ARGS: u32 = 48;
     pub const SUBDIVISION_LEAVES: u32 = 3;
     pub const SUBDIVISION_DRAW: u32 = 4;
     pub const SUBDIVISION_RESERVED: u32 = 9;
@@ -27,9 +27,9 @@ gpu_consts! {
     pub const SUBDIVISION_LISTED: u32 = 26;
     pub const SUBDIVISION_LISTS: u32 = 32;
     pub const SURFACE_ROLE_SHIFT: u32 = 28;
-    pub const SURFACE_LIST_SHIFT: u32 = 26;
+    pub const SURFACE_LIST_SHIFT: u32 = 27;
     pub const SURFACE_LISTED: u32 = 3;
-    pub const SURFACE_LISTS: u32 = 4;
+    pub const SURFACE_LISTS: u32 = 2;
 
     pub const HORIZON_DIRECTIONS: u32 = 16;
     pub const HORIZON_LAYERS: u32 = 1;
@@ -116,9 +116,9 @@ const _: () = assert!(
         && SUBDIVISION_HOLED + 5 <= SUBDIVISION_LISTED
         && SUBDIVISION_LISTED + 3 <= SUBDIVISION_LISTS
         && SUBDIVISION_LISTS + 5 * SURFACE_LISTS <= SUBDIVISION_ARGS
-        && SURFACE_LIST_SHIFT + 2 == SURFACE_ROLE_SHIFT
+        && SURFACE_LIST_SHIFT + 1 == SURFACE_ROLE_SHIFT
         && SURFACE_LISTED < 4
-        && SURFACE_LISTS == 4,
+        && SURFACE_LISTS == 2,
     "subdivision_counters_keep_their_words"
 );
 

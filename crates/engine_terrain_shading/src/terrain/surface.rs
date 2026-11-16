@@ -103,11 +103,10 @@ impl SurfaceTrees {
         ])
     }
 
-    pub(super) fn list_offsets(&self, index: usize, seen: bool) -> Option<[u64; 2]> {
-        let first = SUBDIVISION_LISTS + 10 * u32::from(seen);
+    pub(super) fn list_offsets(&self, index: usize) -> Option<[u64; 2]> {
         Some([
-            self.record_offset(index, first)?,
-            self.record_offset(index, first + 5)?,
+            self.record_offset(index, SUBDIVISION_LISTS)?,
+            self.record_offset(index, SUBDIVISION_LISTS + 5)?,
         ])
     }
 

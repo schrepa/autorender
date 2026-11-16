@@ -1,19 +1,16 @@
-import package::engine::drawn::{drawn_prepass_pyramid, frustum_reach};
+import package::engine::drawn::frustum_reach;
 import package::engine::view::{camera, detail_across};
 import package::place::heightfield::{SurfaceTriangle, TerrainSubdivision};
 import package::terrain_shading::draw::terrain_displacement;
-import package::terrain_shading::faces::heightfield::{surface_vertex, terrain, terrain_level_height,
-    terrain_view, use_terrain};
+import package::terrain_shading::faces::heightfield::{terrain, terrain_level_height, use_terrain};
 
-import package::terrain_shading::surface::{SurfaceWater, surface_bounds, surface_cut,
-    surface_ground_error, surface_half, surface_height, surface_kept, surface_marked,
-    surface_relative, surface_seen, surface_water, surface_whole};
+import package::terrain_shading::surface::{SurfaceWater, surface_cut, surface_ground_error,
+    surface_half, surface_kept, surface_marked, surface_seen, surface_water, surface_whole};
 import package::generated::terrain_shading::{SUBDIVISION_ARGS, SUBDIVISION_COUNTED,
     SUBDIVISION_DRAW, SUBDIVISION_GROUP, SUBDIVISION_LEAVES, SUBDIVISION_REFUSED,
     SUBDIVISION_RESERVED, SUBDIVISION_WATERED, SUBDIVISION_WHOLE, SUBDIVISION_HOLED,
     SUBDIVISION_LISTED, SUBDIVISION_LISTS, SURFACE_LISTED, SURFACE_LISTS, SURFACE_LIST_SHIFT,
-    SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES, SURFACE_ROLE_SHIFT,
-    SURFACE_VERTEX_STRIDE};
+    SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_ROLE_SHIFT, SURFACE_VERTEX_STRIDE};
 
 @group(1) @binding(0) var<uniform> subdivision: TerrainSubdivision;
 @group(1) @binding(1) var<storage, read_write> subdivision_tree: array<atomic<u32>>;
@@ -535,121 +532,26 @@ fn subdivide_apply(@builtin(global_invocation_id) id: vec3<u32>) {
     }
 }
 
-const SUBDIVISION_HIDDEN: f32 = 0.9999847412109375;
-
 var<workgroup> listed_kinds: array<u32, SUBDIVISION_GROUP>;
 var<workgroup> listed_firsts: array<u32, 2>;
 
-struct SubdivisionRect {
-    first: vec2<u32>,
-    last: vec2<u32>,
-    nearest: f32,
-    held: bool,
-}
-
-fn subdivision_rect(near: vec3<f32>, far: vec3<f32>) -> SubdivisionRect {
-    var rect: SubdivisionRect;
-    let projection = terrain_view.relative_view_projection;
-    var low = vec2<f32>(3.4e38);
-    var high = vec2<f32>(-3.4e38);
-    for (var corner = 0u; corner < 8u; corner++) {
-        let point = select(near, far, (vec3<u32>(corner) & vec3<u32>(1u, 2u, 4u)) != vec3<u32>(0u));
-        let clip = projection * vec4<f32>(point, 1.0);
-        if !(clip.w > 0.0) || !(clip.z <= clip.w) {
-            return rect;
-        }
-        let ndc = clip.xyz / clip.w;
-        low = min(low, ndc.xy);
-        high = max(high, ndc.xy);
-        rect.nearest = max(rect.nearest, ndc.z);
-    }
-    let size = camera.region.xy;
-    let first = floor(vec2<f32>(low.x * 0.5 + 0.5, 0.5 - high.y * 0.5) * size) - 1.0;
-    let last = floor(vec2<f32>(high.x * 0.5 + 0.5, 0.5 - low.y * 0.5) * size) + 1.0;
-    rect.first = vec2<u32>(clamp(first, vec2<f32>(0.0), size - 1.0));
-    rect.last = vec2<u32>(clamp(last, vec2<f32>(0.0), size - 1.0));
-    rect.held = true;
-    return rect;
-}
-
-fn subdivision_covered(near: vec3<f32>, far: vec3<f32>) -> bool {
-    let rect = subdivision_rect(near, far);
-    if !rect.held {
-        return false;
-    }
-    let levels = textureNumLevels(drawn_prepass_pyramid);
-    for (var level = 0u; level < levels; level++) {
-        let low = rect.first >> vec2<u32>(level + 1u);
-        let high = rect.last >> vec2<u32>(level + 1u);
-        if any(high > low + 1u) {
-            continue;
-        }
-        let farthest = min(
-            min(textureLoad(drawn_prepass_pyramid, low, i32(level)).r,
-                textureLoad(drawn_prepass_pyramid, vec2<u32>(high.x, low.y), i32(level)).r),
-            min(textureLoad(drawn_prepass_pyramid, vec2<u32>(low.x, high.y), i32(level)).r,
-                textureLoad(drawn_prepass_pyramid, high, i32(level)).r));
-        return rect.nearest < farthest * SUBDIVISION_HIDDEN;
-    }
-    return false;
-}
-
-fn subdivision_hidden(triangle: SurfaceTriangle) -> bool {
-    let levels = terrain.directory.y;
-    if levels == 0u {
-        return false;
-    }
-    let bounds = surface_bounds();
-    let margin = bounds.w;
-    if !(margin > 0.0) {
-        return false;
-    }
-    var lowest = 3.4e38;
-    var highest = -3.4e38;
-    for (var vertex = 0u; vertex < SURFACE_MESHLET_VERTICES; vertex++) {
-        let height = surface_height(triangle, surface_vertex(triangle, vertex));
-        lowest = min(lowest, height);
-        highest = max(highest, height);
-    }
-    let low = min(min(triangle.a, triangle.b), triangle.c);
-    let high = max(max(triangle.a, triangle.b), triangle.c);
-    let top = terrain.anchor.w * f32(1u << (levels - 1u));
-    let shift = abs(vec2<f32>(bitcast<vec2<i32>>(terrain.surface.zw)) * top);
-    let offset = terrain_view.eye_offset.xyz;
-    let across = max(abs(low), abs(high)) + shift + abs(terrain.anchor.xz) + abs(offset.xz);
-    let tall = max(abs(lowest), abs(highest)) + abs(terrain.anchor.y) + abs(offset.y);
-    let lift = bounds.z * (1.0 + margin);
-    let reach = vec3<f32>(lift) + margin * (vec3<f32>(across.x, tall, across.y) + lift);
-    return subdivision_covered(surface_relative(low, lowest) + offset - reach,
-        surface_relative(high, highest) + offset + reach);
-}
-
-fn subdivision_kind_drawn(index: u32, args: u32) -> vec2<u32> {
-    if index >= atomicLoad(&subdivision_args[args + SUBDIVISION_LEAVES]) {
-        return vec2<u32>(0u);
+fn subdivision_kind(index: u32, leaves: u32) -> u32 {
+    if index >= leaves {
+        return 0u;
     }
     let stored = subdivision_leaves[subdivision.tree.z + index];
     if !surface_seen(surface_kept(stored)) {
-        return vec2<u32>(0u);
+        return 0u;
     }
-    return vec2<u32>(select(2u, 1u, surface_whole(stored)), index);
+    return select(2u, 1u, surface_whole(stored));
 }
 
-fn subdivision_kind_seen(index: u32, args: u32) -> vec2<u32> {
-    let whole = atomicLoad(&subdivision_args[args + SUBDIVISION_LISTS + 1u]);
-    let holed = atomicLoad(&subdivision_args[args + SUBDIVISION_LISTS + 6u]);
-    if index >= whole + holed {
-        return vec2<u32>(0u);
-    }
-    let cut = index >= whole;
-    let at = subdivision.tree.z + select(index, index - whole, cut);
-    let leaf = subdivision_lists[at * SURFACE_LISTS + select(0u, 1u, cut)];
-    let triangle = surface_kept(subdivision_leaves[subdivision.tree.z + leaf]);
-    return vec2<u32>(select(select(1u, 2u, cut), 0u, subdivision_hidden(triangle)), leaf);
-}
-
-fn subdivision_list(local: u32, args: u32, listed: vec2<u32>, lists: u32) {
-    let kind = listed.x;
+@compute @workgroup_size(SUBDIVISION_GROUP)
+fn subdivide_list_drawn(@builtin(global_invocation_id) id: vec3<u32>,
+        @builtin(local_invocation_index) local: u32) {
+    use_terrain(subdivision.frame.z);
+    let args = subdivision.frame.y * SUBDIVISION_ARGS;
+    let kind = subdivision_kind(id.x, atomicLoad(&subdivision_args[args + SUBDIVISION_LEAVES]));
     listed_kinds[local] = kind;
     workgroupBarrier();
     if local == 0u {
@@ -659,7 +561,7 @@ fn subdivision_list(local: u32, args: u32, listed: vec2<u32>, lists: u32) {
             whole += select(0u, 1u, listed_kinds[at] == 1u);
             holed += select(0u, 1u, listed_kinds[at] == 2u);
         }
-        let records = args + SUBDIVISION_LISTS + 5u * lists + 1u;
+        let records = args + SUBDIVISION_LISTS + 1u;
         listed_firsts[0] = atomicAdd(&subdivision_args[records], whole);
         listed_firsts[1] = atomicAdd(&subdivision_args[records + 5u], holed);
     }
@@ -672,21 +574,5 @@ fn subdivision_list(local: u32, args: u32, listed: vec2<u32>, lists: u32) {
         before += select(0u, 1u, listed_kinds[at] == kind);
     }
     let place = subdivision.tree.z + listed_firsts[kind - 1u] + before;
-    subdivision_lists[place * SURFACE_LISTS + lists + kind - 1u] = listed.y;
-}
-
-@compute @workgroup_size(SUBDIVISION_GROUP)
-fn subdivide_list_drawn(@builtin(global_invocation_id) id: vec3<u32>,
-        @builtin(local_invocation_index) local: u32) {
-    use_terrain(subdivision.frame.z);
-    let args = subdivision.frame.y * SUBDIVISION_ARGS;
-    subdivision_list(local, args, subdivision_kind_drawn(id.x, args), 0u);
-}
-
-@compute @workgroup_size(SUBDIVISION_GROUP)
-fn subdivide_list_seen(@builtin(global_invocation_id) id: vec3<u32>,
-        @builtin(local_invocation_index) local: u32) {
-    use_terrain(subdivision.frame.z);
-    let args = subdivision.frame.y * SUBDIVISION_ARGS;
-    subdivision_list(local, args, subdivision_kind_seen(id.x, args), 2u);
+    subdivision_lists[place * SURFACE_LISTS + kind - 1u] = id.x;
 }
