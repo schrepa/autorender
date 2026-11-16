@@ -5,8 +5,10 @@ import package::engine::post::frame::{depth_texture, drawn_texels, drawn_uv, lin
 @fragment
 fn fs_levels_scene(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let pixel = vec2<i32>(position.xy);
-    let solid = select(0.0, 1.0, textureLoad(depth_texture, pixel, 0) > 0.0);
-    return vec4<f32>(textureLoad(scene, pixel, 0).rgb * solid, solid);
+    if !(textureLoad(depth_texture, pixel, 0) > 0.0) {
+        discard;
+    }
+    return vec4<f32>(textureLoad(scene, pixel, 0).rgb, 1.0);
 }
 
 @fragment
