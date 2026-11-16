@@ -1,9 +1,12 @@
 use std::collections::BTreeMap;
 use std::f32::consts::{FRAC_1_PI, PI};
+use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::math::{max, min};
-use engine_open_world_kit::ground::{GroundTiles, PALETTE_ENTRIES, TerrainEntry, TerrainTiles};
+use engine_open_world_kit::ground::{
+    GroundTiles, PALETTE_ENTRIES, SurfaceMaterial, TerrainEntry, TerrainTiles,
+};
 
 use crate::layouts::{
     COVER_HEADER_ROWS, COVER_MATERIAL_ROWS, CardRows, CoverCell, CoverHeader, CoverMaterial,
@@ -528,16 +531,62 @@ impl CoverTable {
     }
 }
 
+type Filled = (Entity, bool, Arc<[SurfaceMaterial]>);
+
+#[derive(Default)]
+pub(crate) struct FilledFrom {
+    terrains: Vec<Filled>,
+    palette: Vec<(Entity, Option<u32>)>,
+}
+
+impl FilledFrom {
+    fn of((terrains, palette): (&[TerrainEntry], &[(Entity, Option<u32>)])) -> Self {
+        Self {
+            terrains: terrains
+                .iter()
+                .map(|entry| {
+                    (
+                        entry.terrain,
+                        entry.surroundings,
+                        Arc::clone(&entry.materials),
+                    )
+                })
+                .collect(),
+            palette: palette.to_vec(),
+        }
+    }
+
+    fn same(&self, (terrains, palette): (&[TerrainEntry], &[(Entity, Option<u32>)])) -> bool {
+        self.palette == palette
+            && self.terrains.len() == terrains.len()
+            && self
+                .terrains
+                .iter()
+                .zip(terrains)
+                .all(|((terrain, surroundings, materials), entry)| {
+                    *terrain == entry.terrain
+                        && *surroundings == entry.surroundings
+                        && (Arc::ptr_eq(materials, &entry.materials)
+                            || materials[..] == entry.materials[..])
+                })
+    }
+}
+
 pub(crate) fn write_covers(
     cover: Res<GroundCover>,
     (tiles, ground): (Res<TerrainTiles>, Res<GroundTiles>),
     mut table: ResMut<CoverTable>,
-    mut spare: Local<CoverTable>,
+    (mut spare, mut filled): (Local<CoverTable>, Local<Option<FilledFrom>>),
 ) {
     if !(cover.is_changed() || tiles.is_changed() || ground.is_changed()) {
         return;
     }
-    spare.fill(&cover, (&tiles.terrains, &ground.palette));
+    let inputs = (&tiles.terrains[..], &ground.palette[..]);
+    if !cover.is_changed() && filled.as_ref().is_some_and(|from| from.same(inputs)) {
+        return;
+    }
+    spare.fill(&cover, inputs);
+    *filled = Some(FilledFrom::of(inputs));
     if *spare != *table {
         std::mem::swap(&mut *table, &mut *spare);
     }

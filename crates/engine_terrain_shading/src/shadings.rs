@@ -101,6 +101,7 @@ struct Want {
 #[derive(Default)]
 pub(crate) struct Shadings {
     basis: Option<([u8; 32], Arc<[Stamp]>)>,
+    records: HashMap<TileKey, RecordKey>,
     tiles: BTreeMap<TileKey, Shading>,
     sharing: BTreeSet<RecordKey>,
     attached: Vec<TileKey>,
@@ -155,9 +156,17 @@ impl Shadings {
         if same {
             return;
         }
+        self.records.clear();
         let record =
             |key: TileKey| ShadingJob::of(recipe, &entry.pyramid, &entry.edits, key).record();
         self.tiles.retain(|&key, tile| tile.record == record(key));
+    }
+
+    fn record(&mut self, (entry, recipe): (&TerrainEntry, [u8; 32]), key: TileKey) -> RecordKey {
+        *self
+            .records
+            .entry(key)
+            .or_insert_with(|| ShadingJob::of(recipe, &entry.pyramid, &entry.edits, key).record())
     }
 
     fn take_arrived(
@@ -200,7 +209,7 @@ impl Shadings {
         took
     }
 
-    fn wanted(&self, entry: &TerrainEntry, recipe: [u8; 32], eye: Vec2) -> Vec<Want> {
+    fn wanted(&mut self, entry: &TerrainEntry, recipe: [u8; 32], eye: Vec2) -> Vec<Want> {
         let pyramid = entry.pyramid;
         let levels = pyramid.levels();
         let size = pyramid.tile_size(0);
@@ -242,7 +251,7 @@ impl Shadings {
             if want.key.level < 2 || self.tiles.get(&want.key).is_some_and(Shading::arrived) {
                 continue;
             }
-            let record = ShadingJob::of(recipe, &pyramid, &entry.edits, want.key).record();
+            let record = self.record((entry, recipe), want.key);
             if !self.made(want.key, record) {
                 continue;
             }
@@ -259,6 +268,7 @@ impl Shadings {
             wanted.insert(want.key, want.held);
         }
         self.tiles.retain(|key, _| wanted.contains_key(key));
+        self.records.retain(|key, _| wanted.contains_key(key));
         for (key, tile) in &mut self.tiles {
             if tile.held() && !wanted.get(key).copied().unwrap_or(false) {
                 tile.shade = Shade::Stored;
@@ -282,9 +292,7 @@ impl Shadings {
             if has {
                 continue;
             }
-            let input =
-                engine_codec::encode(&ShadingJob::of(recipe, &entry.pyramid, &entry.edits, key));
-            let record = RecordKey::of(&SHADING, &input);
+            let record = self.record((entry, recipe), key);
             let made = self.made(key, record);
             let finer = if key.level > 1 {
                 TileShading::reads(&entry.pyramid, key)
@@ -298,6 +306,8 @@ impl Shadings {
             {
                 continue;
             }
+            let input =
+                engine_codec::encode(&ShadingJob::of(recipe, &entry.pyramid, &entry.edits, key));
             let shade = if made {
                 let mut reads = Vec::new();
                 for at in &finer {
