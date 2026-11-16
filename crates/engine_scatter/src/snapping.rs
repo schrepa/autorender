@@ -29,7 +29,10 @@ struct Seen {
 
 enum Moved {
     All,
-    Tiles(Vec<TileId>),
+    Tiles {
+        moving: Vec<TileId>,
+        recoloured: Vec<TileId>,
+    },
 }
 
 const MOST_RECTS: usize = 64;
@@ -109,13 +112,11 @@ impl SnapHeld {
                 .is_none_or(|seen| seen.assets != inputs.assets);
         let mut recolour = false;
         if looked {
-            recolour = self
-                .seen
-                .as_ref()
-                .is_some_and(|seen| seen.baking.looks != inputs.baking.looks);
+            recolour = self.seen.as_ref().is_some_and(|seen| seen.restyled(inputs));
             match self.seen.as_ref().map(|seen| seen.moved(inputs)) {
-                Some(Moved::Tiles(changed)) => {
-                    full |= !region(&mut now, (pool, inputs.tiles), &changed);
+                Some(Moved::Tiles { moving, recoloured }) => {
+                    full |= !region(&mut now, (pool, inputs.tiles), (&moving, true));
+                    full |= !region(&mut now, (pool, inputs.tiles), (&recoloured, false));
                 }
                 Some(Moved::All) | None => full = true,
             }
@@ -167,15 +168,20 @@ impl SnapHeld {
 }
 
 impl Seen {
+    fn restyled(&self, now: &SnapInputs<'_>) -> bool {
+        self.baking.looks != now.baking.looks
+            || self.assets != now.assets
+            || self.baking.terrains != now.baking.terrains
+            || self.ground.palette != now.ground.palette
+            || !same_terrains(&self.tiles, now.tiles, same_looks)
+    }
+
     fn moved(&self, now: &SnapInputs<'_>) -> Moved {
         let (before, after) = (&self.ground, now.ground);
-        let kept = self.assets == now.assets
-            && before.layers == after.layers
+        let kept = before.layers == after.layers
             && before.tables == after.tables
-            && before.palette == after.palette
             && before.whole == after.whole
-            && self.baking.terrains == now.baking.terrains
-            && same_terrains(&self.tiles, now.tiles);
+            && same_terrains(&self.tiles, now.tiles, same_ground);
         if !kept {
             return Moved::All;
         }
@@ -184,33 +190,44 @@ impl Seen {
             .iter()
             .map(|tile| ((tile.terrain, tile.key), (tile.stamp, tile.layer)))
             .collect();
-        let mut changed: Vec<TileId> = Vec::new();
+        let mut moving: Vec<TileId> = Vec::new();
         for tile in &after.held {
             let id = (tile.terrain, tile.key);
             if held.remove(&id) != Some((tile.stamp, tile.layer)) {
-                changed.push(id);
+                moving.push(id);
             }
         }
-        changed.extend(held.into_keys());
+        moving.extend(held.into_keys());
         let shaded: HashSet<TileId> = self.baking.shaded.iter().copied().collect();
         let shading: HashSet<TileId> = now.baking.shaded.iter().copied().collect();
-        changed.extend(shaded.symmetric_difference(&shading).copied());
         let derived: HashSet<_> = self.baking.derived.iter().copied().collect();
         let deriving: HashSet<_> = now.baking.derived.iter().copied().collect();
         let derivations = derived.symmetric_difference(&deriving);
-        changed.extend(derivations.map(|&(terrain, key, _)| (terrain, key)));
-        Moved::Tiles(changed)
+        let mut recoloured: Vec<TileId> = shaded.symmetric_difference(&shading).copied().collect();
+        recoloured.extend(derivations.map(|&(terrain, key, _)| (terrain, key)));
+        recoloured.sort_unstable();
+        recoloured.dedup();
+        recoloured.retain(|id| !moving.contains(id));
+        Moved::Tiles { moving, recoloured }
     }
 }
 
-fn same_terrains(before: &TerrainTiles, after: &TerrainTiles) -> bool {
+fn same_terrains(
+    before: &TerrainTiles,
+    after: &TerrainTiles,
+    same: fn(&TerrainEntry, &TerrainEntry) -> bool,
+) -> bool {
     Arc::ptr_eq(&before.terrains, &after.terrains)
         || (before.terrains.len() == after.terrains.len()
             && before
                 .terrains
                 .iter()
                 .zip(after.terrains.iter())
-                .all(|(before, after)| same_ground(before, after)))
+                .all(|(before, after)| same(before, after)))
+}
+
+fn same_looks(a: &TerrainEntry, b: &TerrainEntry) -> bool {
+    a.macro_map == b.macro_map && a.materials == b.materials && a.maps == b.maps
 }
 
 fn same_ground(a: &TerrainEntry, b: &TerrainEntry) -> bool {
@@ -232,9 +249,6 @@ fn same_ground(a: &TerrainEntry, b: &TerrainEntry) -> bool {
         && a.surface_program == b.surface_program
         && a.site_ranges == b.site_ranges
         && same_baked
-        && a.macro_map == b.macro_map
-        && a.materials == b.materials
-        && a.maps == b.maps
         && a.placement == b.placement
         && a.layers == b.layers
         && a.sample_offset == b.sample_offset
@@ -243,7 +257,7 @@ fn same_ground(a: &TerrainEntry, b: &TerrainEntry) -> bool {
 fn region(
     planned: &mut Planned,
     (pool, tiles): (&ScatterPool, &TerrainTiles),
-    changed: &[TileId],
+    (changed, moves): (&[TileId], bool),
 ) -> bool {
     let mut rects: Vec<(Entity, Vec2, Vec2)> = Vec::with_capacity(changed.len());
     for &(terrain, key) in changed {
@@ -259,7 +273,9 @@ fn region(
     }
     for (slots, filtered, bounds) in pool.standing_in(&rects) {
         planned.spans.push(Span { slots, filtered });
-        planned.boxes.extend(bounds.map(|bounds| widened(tiles, bounds)));
+        if moves {
+            planned.boxes.extend(bounds.map(|bounds| widened(tiles, bounds)));
+        }
     }
     planned
         .rects
