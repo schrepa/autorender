@@ -27,7 +27,7 @@ use crate::shaders::scatter::{
     matched as matched_shaders,
 };
 use crate::snapping::{SnapHeld, SnapInputs};
-use crate::systems::{ScatterFeedback, ScatterState};
+use crate::systems::{GroupData, ScatterFeedback, ScatterState};
 
 const IDS: wgpu::VertexBufferLayout<'static> = wgpu::VertexBufferLayout {
     array_stride: 4,
@@ -274,6 +274,25 @@ struct Held {
     reached: Vec<u32>,
     card_args: Vec<[u32; 4]>,
     args: Vec<DrawArgs>,
+    first_instance: bool,
+}
+
+fn lay_args(args: &mut Vec<DrawArgs>, data: &GroupData, lists: usize) {
+    args.clear();
+    for view in 0..lists {
+        let at = args.len();
+        args.extend_from_slice(&data.template);
+        if !data.first_instance {
+            continue;
+        }
+        let levels = data.lists.iter().flat_map(|lists| {
+            let lists = (lists.ids, lists.count);
+            (0..LEVELS).map(move |level| ids_start(data.ids_per_view, lists, view, level))
+        });
+        for (drawn, first) in args[at..].iter_mut().zip(levels) {
+            drawn[4] = u32::try_from(first).unwrap_or(u32::MAX);
+        }
+    }
 }
 
 impl Held {
@@ -535,6 +554,10 @@ pub(crate) struct ScatterGpu {
     records_written: bool,
     held: Held,
     hidden: Hidden,
+}
+
+fn ids_start(ids_per_view: u32, (ids, count): (u32, u32), view: usize, level: u32) -> u64 {
+    view as u64 * u64::from(ids_per_view) + u64::from(ids) + u64::from(level) * u64::from(count)
 }
 
 fn grow(held: &mut u64, bytes: u64, room: u64) {
@@ -941,23 +964,20 @@ impl ScatterGpu {
         let render = views.drawn().first().map_or(glam::UVec2::ZERO, |view| view.size);
         frame.drawn = [drawn, render.x, render.y, 0];
         held.fading_view = listed.len();
+        held.first_instance = state.group_data.first_instance;
+        lay_args(&mut held.args, &state.group_data, listed.len() + 3);
         let card_args = &mut held.card_args;
         card_args.clear();
         card_args.resize(listed.len() + 1, [IMPOSTOR_VERTICES, 0, 0, 0]);
         card_args.push([0; 4]);
-        let args = &mut held.args;
-        args.clear();
-        for _ in 0..listed.len() + 3 {
-            args.extend_from_slice(&state.group_data.template);
-        }
         let culled = &mut held.culled;
         culled.clear();
         culled.extend(listed.drain(..).map(|(_, view)| view));
         cx.write(self.frame, 0, &[frame]);
         cx.write(self.card_args, 0, card_args);
         cx.write(self.views, 0, culled);
-        if !args.is_empty() {
-            cx.write(self.draws, 0, args);
+        if !held.args.is_empty() {
+            cx.write(self.draws, 0, &held.args);
         }
         let left = ids > state.room || cards > state.room;
         if (left || held.left_out) && held.objects > 0 {
@@ -971,10 +991,8 @@ impl ScatterGpu {
 
     fn draw_source(&self, view: usize, group: usize, level: usize) -> Option<(u64, u64)> {
         let held = &self.held;
-        let &(ids, count) = held.lists.get(group)?;
-        let start = (view as u64 * u64::from(held.ids_per_view)
-            + u64::from(ids + level as u32 * count))
-            * 4;
+        let &lists = held.lists.get(group)?;
+        let start = ids_start(held.ids_per_view, lists, view, level as u32) * 4;
         let draw = (view * held.group_count as usize + group) * LEVELS as usize + level;
         (start < held.ids_room).then(|| (start, (draw * size_of::<DrawArgs>()) as u64))
     }
@@ -1077,7 +1095,8 @@ impl ScatterGpu {
                 empty += 1;
                 continue;
             }
-            let record = DrawRecord::of(DrawKind::Placed, level);
+            let shown = if scene.role == PassRole::Shown { level } else { 0 };
+            let record = DrawRecord::of(DrawKind::Placed, shown);
             draw.draw_timed(
                 pipeline,
                 Shape::MeshIndirect {
@@ -1085,7 +1104,10 @@ impl ScatterGpu {
                     material: item.material,
                     args: inputs.args,
                     offset,
-                    streams: &[(inputs.ids, ids), (inputs.records, record.offset())],
+                    streams: &[
+                        (inputs.ids, if self.held.first_instance { 0 } else { ids }),
+                        (inputs.records, record.offset()),
+                    ],
                 },
                 || level_label(scene, item, (matched, fading)),
             );
