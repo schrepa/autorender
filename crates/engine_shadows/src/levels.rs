@@ -206,9 +206,9 @@ pub(crate) struct Levels {
     pub(crate) redraws: u32,
 }
 
-fn take(regions: &mut Vec<Region>, wanted: &mut u32, region: Region) -> bool {
+fn take(regions: &mut Vec<Region>, (wanted, room): (&mut u32, usize), region: Region) -> bool {
     *wanted += 1;
-    let room = regions.len() < SHADOW_REGIONS as usize;
+    let room = regions.len() < room;
     if room {
         regions.push(region);
     }
@@ -268,7 +268,7 @@ impl Levels {
         }
     }
 
-    pub(crate) fn plan(&mut self) {
+    pub(crate) fn plan(&mut self, cameras: usize) {
         let Self {
             levels,
             regions,
@@ -276,18 +276,19 @@ impl Levels {
             redraws,
             ..
         } = self;
+        let room = cameras.min(SHADOW_REGIONS as usize);
         regions.clear();
         (*wanted, *redraws) = (0, 0);
         for (level, held) in levels.iter_mut().enumerate().rev() {
             if empty(held.window) {
-                if take(regions, wanted, Region { level, rect: held.wanted }) {
+                if take(regions, (wanted, room), Region { level, rect: held.wanted }) {
                     held.window = held.wanted;
                 }
                 continue;
             }
             for side in 0..4 {
                 let rect = strip(held.window, held.wanted, side);
-                if !empty(rect) && take(regions, wanted, Region { level, rect }) {
+                if !empty(rect) && take(regions, (wanted, room), Region { level, rect }) {
                     held.window = join(held.window, rect);
                 }
             }
@@ -297,7 +298,7 @@ impl Levels {
                 continue;
             }
             *redraws += 1;
-            if take(regions, wanted, Region { level, rect: held.redraw }) {
+            if take(regions, (wanted, room), Region { level, rect: held.redraw }) {
                 held.redraw = NONE;
             }
         }
