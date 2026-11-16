@@ -427,7 +427,7 @@
         }
       ],
       "type": "engine_impostors::ImpostorsBrick",
-      "version": "5e90009afebf4e0752cd5397a1ab5df109504f33a566f8e0429e334de77331e4"
+      "version": "58fa0ddef2daf98753e50152e44837c2726a31e7ae54e7b449de1c0fa66ec99f"
     },
     {
       "dependencies": [
@@ -2633,7 +2633,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "2b9f8db321bdcb6b4a3ba8bd5094458da5a623b47896097df103b0aae5fbe92d"
+      "version": "c9378e7ac24a75e35906bfda7c577051a06a9caab254d70f29ff02adc040eed3"
     },
     {
       "dependencies": [
