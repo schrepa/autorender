@@ -21,8 +21,8 @@ import package::generated::water::{FROUDE_GUARD_DEPTH, GRAVITY, NO_WATER_BLOCK, 
 import package::place::water::{WATER_HELD, WaterAt, WaterCell};
 import package::water::faces::water::{water_cell, water_read};
 import package::water::flow::{water_relief, water_stirring, water_stream};
-import package::water::foam::{water_blocking, water_contact, water_filming, water_foam,
-    water_sheer, water_white, water_whitening};
+import package::water::foam::{WaterWhite, water_blocking, water_contact, water_filming,
+    water_foam, water_sheer, water_white, water_whitening};
 import package::water::footprint::{water_footprint, water_roughness, water_turning};
 import package::water::refraction::refraction_sampler;
 import package::water::uniforms::water;
@@ -500,17 +500,19 @@ struct WaterFace {
     calm: f32,
 }
 
-fn water_face(still: vec3<f32>, at: WaterAt, own: vec3<f32>) -> WaterFace {
-    let world = eye_world(still);
-    if at.held < WATER_HELD {
-        discard;
-    }
+struct WaterRise {
+    plane: vec3<f32>,
+    swell: WaterSwell,
+    calm: f32,
+    standing: f32,
+    point: vec3<f32>,
+}
+
+fn water_rise(still: vec3<f32>, at: WaterAt, own: vec3<f32>, world_dx: vec3<f32>,
+        world_dy: vec3<f32>) -> WaterRise {
     let plane = normalize(vec3<f32>(at.slope.x, 1.0, at.slope.y));
     let resting = dot(still - own, plane) / plane.y; // optics: what the view meets behind the pixel
-    let flow = at.words.flow;
-    let world_dx = dpdx(world);
-    let world_dy = dpdy(world);
-    let speed = length(flow);
+    let speed = length(at.words.flow);
     var swell: WaterSwell;
     let calm = water_calm(speed);
     let room = min(at.depth, resting);
@@ -522,8 +524,22 @@ fn water_face(still: vec3<f32>, at: WaterAt, own: vec3<f32>) -> WaterFace {
     if standing <= 0.0 {
         discard;
     }
-    let point = still + vec3<f32>(0.0, swell.height, 0.0);
-    let standing_change = fwidth(standing);
+    return WaterRise(plane, swell, calm, standing, still + vec3<f32>(0.0, swell.height, 0.0));
+}
+
+struct WaterFlowing {
+    depth: f32,
+    hidden: vec3<f32>,
+    white: WaterWhite,
+    fall: vec2<f32>,
+}
+
+fn water_flowing(world: vec3<f32>, at: WaterAt, rise: WaterRise, world_dx: vec3<f32>,
+        world_dy: vec3<f32>, standing_change: f32) -> WaterFlowing {
+    let flow = at.words.flow;
+    let speed = length(flow);
+    let swell = rise.swell;
+    let standing = rise.standing;
     let depth = max(at.depth + swell.height, 0.0);
     let turbulence = at.words.state.x;
     let dropping = length(at.slope);
@@ -536,18 +552,35 @@ fn water_face(still: vec3<f32>, at: WaterAt, own: vec3<f32>) -> WaterFace {
     let relief = water_relief(stream, 1.0 - whitening, swell.slope, swell.hidden);
     let white = water_white(stream, relief.bumps, whitening, water_filming(stream, standing),
         at.words.state.z, water_sheer(standing, dropping), world_dx.xz, world_dy.xz);
-    let fall = at.slope + relief.slope + white.slope;
+    return WaterFlowing(depth, relief.hidden, white, at.slope + relief.slope + white.slope);
+}
+
+fn water_face(rise: WaterRise, flowing: WaterFlowing, world_dx: vec3<f32>, world_dy: vec3<f32>,
+        standing_change: f32, turning: vec3<f32>) -> WaterFace {
+    let fall = flowing.fall;
     let normal = normalize(vec3<f32>(fall.x, 1.0, fall.y));
-    let view = stable_normalize(-point);
-    let roughness = water_roughness(relief.hidden + water_turning(fall), water_heading(view));
-    return WaterFace(point, plane, standing, standing_change, depth, world_dx, world_dy, normal,
-        view, roughness, white.layers, white.pores, swell.rate, calm);
+    let view = stable_normalize(-rise.point);
+    let roughness = water_roughness(flowing.hidden + turning, water_heading(view));
+    return WaterFace(rise.point, rise.plane, rise.standing, standing_change, flowing.depth,
+        world_dx, world_dy, normal, view, roughness, flowing.white.layers, flowing.white.pores,
+        rise.swell.rate, rise.calm);
+}
+
+fn water_gathered(face: WaterFace) -> f32 {
+    return water_caustics(eye_world(face.point), face.normal, min(face.depth, face.standing));
+}
+
+fn water_quad_any(here: bool) -> bool {
+    let own = select(0.0, 1.0, here);
+    let across = dpdxFine(own);
+    let down = dpdyFine(own);
+    let diagonal = dpdyFine(across);
+    return here | (across != 0.0) | (down != 0.0) | (diagonal != 0.0);
 }
 
 fn shade_water(pixel: vec2<f32>, at: WaterAt, face: WaterFace, behind: WaterBehind,
-        layers: vec2<f32>) -> WaterShade {
+        layers: vec2<f32>, gathered: f32, held_change: f32) -> WaterShade {
     let point = face.point;
-    let world = eye_world(point);
     let plane = face.plane;
     let standing = face.standing;
     let standing_change = face.standing_change;
@@ -556,10 +589,9 @@ fn shade_water(pixel: vec2<f32>, at: WaterAt, face: WaterFace, behind: WaterBehi
     let normal = face.normal;
     let view = face.view;
     let bed_depth = min(depth, standing);
-    let gathered = water_caustics(world, normal, bed_depth);
     let racing = smoothstep(water.shore.racing.x, water.shore.racing.y, speed);
     let shallows = mix(water_ramp(standing, water.shore.fade, standing_change), 1.0, racing);
-    let fade = min(water_edge(standing, standing_change), water_ends(at.held, fwidth(at.held)))
+    let fade = min(water_edge(standing, standing_change), water_ends(at.held, held_change))
         * shallows;
     let through = min(max(length(behind.ground - point), 0.0), // optics: the view's way through the water
         depth * plane.y / max(dot(view, plane), 0.1)); // optics: the view's way through the water
@@ -605,25 +637,51 @@ fn water_mirroring(shade: WaterShade) -> WaterShade {
     return result;
 }
 
-fn shade_mesh(mesh: vec3<f32>, pixel: vec2<f32>) -> WaterShade {
-    let at = water_drawn(mesh);
-    let own = water_ground(pixel);
-    let face = water_face(water_on_surface(mesh, at), at, own);
-    let behind = water_behind(face.point, face.normal, face.view, pixel, own, face.plane);
-    return shade_water(pixel, at, face, behind, vec2<f32>(0.0));
-}
-
 @fragment
 fn fs_water(input: WaterOutput) -> Outputs {
-    if input.depth <= 0.0 {
+    let shallow = input.depth <= 0.0;
+    if shallow {
         discard;
     }
     use_terrain(input.terrain);
-    let shade = shade_mesh(input.relative, input.clip_position.xy);
-    let previous = water_previous(input.relative, shade.velocity, saturate(shade.coverage));
-    var targets = outputs(shade.point, shade.shaded,
-        view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
-    targets.color = water_covering(shade, water_seen(input.clip_position.xy));
+    let pixel = input.clip_position.xy;
+    var at: WaterAt;
+    var still = vec3<f32>(0.0);
+    if water_quad_any(!shallow) {
+        at = water_drawn(input.relative);
+        still = water_on_surface(input.relative, at);
+    }
+    let dry = at.held < WATER_HELD;
+    if dry {
+        discard;
+    }
+    let live = water_quad_any(!shallow && !dry);
+    let world = eye_world(still);
+    let world_dx = dpdx(world);
+    let world_dy = dpdy(world);
+    var rise: WaterRise;
+    if live {
+        rise = water_rise(still, at, water_ground(pixel), world_dx, world_dy);
+    }
+    let standing_change = fwidth(rise.standing);
+    var flowing: WaterFlowing;
+    if live {
+        flowing = water_flowing(world, at, rise, world_dx, world_dy, standing_change);
+    }
+    let face = water_face(rise, flowing, world_dx, world_dy, standing_change,
+        water_turning(flowing.fall));
+    let gathered = water_gathered(face);
+    let held_change = fwidth(at.held);
+    var targets: Outputs;
+    if live {
+        let behind = water_behind(face.point, face.normal, face.view, pixel, water_ground(pixel),
+            face.plane);
+        let shade = shade_water(pixel, at, face, behind, vec2<f32>(0.0), gathered, held_change);
+        let previous = water_previous(input.relative, shade.velocity, saturate(shade.coverage));
+        targets = outputs(shade.point, shade.shaded,
+            view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
+        targets.color = water_covering(shade, water_seen(pixel));
+    }
     return targets;
 }
 

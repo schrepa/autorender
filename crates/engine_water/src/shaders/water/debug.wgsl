@@ -8,10 +8,11 @@ import package::generated::kinds::KIND_WATER;
 import package::generated::pieces::water::piece;
 import package::generated::water::{DEBUG_SPAN_STEPS, DRY, GRAVITY, WATER_SPAN_LEAST,
     WATER_SPAN_MOST, water_probe_detail, water_probe_state};
-import package::place::water::WaterAt;
+import package::place::water::{WATER_HELD, WaterAt};
 import package::water::falls::{FallOutput, shade_fall};
+import package::water::footprint::water_turning;
 import package::water::surface::{WaterBehind, WaterOutput, shade_water, water_drawn,
-    water_eddy_froude, water_face, water_on_surface};
+    water_eddy_froude, water_face, water_flowing, water_gathered, water_on_surface, water_rise};
 
 fn debug_span_code(span: f32) -> u32 {
     if span <= 0.0 {
@@ -34,12 +35,22 @@ fn water_sun(world: vec3<f32>, normal: vec3<f32>) -> u32 {
 
 fn debug_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt) -> DebugTargets {
     let bed = point - vec3<f32>(0.0, at.depth, 0.0);
-    let shade = shade_water(pixel, at, water_face(point, at, bed),
-        WaterBehind(vec3<f32>(0.0), bed), vec2<f32>(0.0));
+    let world = eye_world(point);
+    if at.held < WATER_HELD {
+        discard;
+    }
+    let world_dx = dpdx(world);
+    let world_dy = dpdy(world);
+    let rise = water_rise(point, at, bed, world_dx, world_dy);
+    let standing_change = fwidth(rise.standing);
+    let flowing = water_flowing(world, at, rise, world_dx, world_dy, standing_change);
+    let face = water_face(rise, flowing, world_dx, world_dy, standing_change,
+        water_turning(flowing.fall));
+    let shade = shade_water(pixel, at, face, WaterBehind(vec3<f32>(0.0), bed), vec2<f32>(0.0),
+        water_gathered(face), fwidth(at.held));
     if shade.coverage < 0.5 && piece().debug.x == 0u { // optics: water covers as its shading sees it
         discard;
     }
-    let world = eye_world(point);
     let normal = shade.point.normal;
     let depth = at.depth;
     let speed = length(at.words.flow);

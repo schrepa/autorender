@@ -20,7 +20,7 @@ use crate::water::WaterGpu;
 const PER_LAYER: u32 = SIDE * SIDE;
 const LAYER_TEXELS: u32 = BLOCK * SIDE;
 pub(crate) const SURFACE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Float;
-pub(crate) const INFO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba32Uint;
+pub(crate) const INFO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Uint;
 
 type Slot = (Entity, TileKey);
 

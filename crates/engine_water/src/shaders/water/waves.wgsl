@@ -152,6 +152,7 @@ fn water_swell(spot: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, shortest: f32, dep
     let least = look.shown.x * sqrt(narrow * narrow + push.blur);
     let tight = 1.0 / (PI * max(look.breaking * depth, 1.0e-4));
     let band = 1.0 / max(look.shown.y - look.shown.x, 1.0e-6);
+    let coarsest_squared = coarsest * coarsest;
     var at = push.at;
     for (var index = 0u; index < look.count; index++) {
         let wave = water_waves[index].wave;
@@ -166,7 +167,7 @@ fn water_swell(spot: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>, shortest: f32, dep
         let steep = open * kept;
         let across = vec2<f32>(dot(push.dx, wave.heading), dot(push.dy, wave.heading));
         let spans = wave.wavelength * inverseSqrt(
-            max(max(dot(across, across), coarsest * coarsest) + push.blur, 1.0e-12));
+            max(max(dot(across, across), coarsest_squared) + push.blur, 1.0e-12));
         let part = saturate((spans - look.shown.x) * band); // filter: a wave narrower than its pixels along its travel averages out to roughness
         let shown = part * part * (3.0 - 2.0 * part);
         swell.hidden += (0.5 * steep * steep * (1.0 - shown * shown)) * water_spread(wave.heading);
