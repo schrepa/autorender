@@ -48,6 +48,7 @@ const VARS: &str = "struct DrawnPose {
 @group(0) @binding(0) var<storage, read> drawn_marks: array<u32>;
 @group(0) @binding(0) var<storage, read> drawn_occlusion: array<u32>;
 @group(0) @binding(0) var drawn_prepass_pyramid: texture_2d<f32>;
+@group(0) @binding(0) var drawn_opaque_pyramid: texture_2d<f32>;
 
 fn drawn_value(record: DrawnRecord, index: u32) -> f32 {
     if index >= record.floats {
@@ -578,6 +579,7 @@ struct Pyramid {
 struct Occlusion {
     pass: Pass<DrawnGpu>,
     held: Buffer<DrawnGpu>,
+    opaque: Pass<DrawnGpu>,
     levels: Pyramid,
     test: ComputePipeline<DrawnGpu>,
     running: bool,
@@ -947,28 +949,33 @@ impl DrawnGpu {
         cx: &mut Prepare<'_, Self>,
     ) -> u32 {
         let occlusion = &mut self.occlusion;
-        match main {
+        let count = match main {
             Some(main) => {
                 occlusion.prepass_levels.size(main, cx);
                 cx.run(occlusion.prepass);
+                let count = occlusion.levels.size(main, cx);
+                cx.run(occlusion.opaque);
+                count
             }
-            None => occlusion.prepass_levels.release(cx),
-        }
+            None => {
+                occlusion.prepass_levels.release(cx);
+                occlusion.levels.release(cx);
+                0
+            }
+        };
         let bytes = slots * 4;
         let fresh = cx.allocate_buffer(occlusion.held, bytes) == Allocation::Fresh;
-        let Some(main) = main.filter(|_| wanted) else {
+        if main.is_none() || !wanted {
             if occlusion.running {
                 cx.clear_buffer_range(occlusion.held, 0..bytes);
-                occlusion.levels.release(cx);
                 occlusion.running = false;
             }
             return 0;
-        };
+        }
         if fresh || !occlusion.running {
             cx.clear_buffer_range(occlusion.held, 0..bytes);
         }
         occlusion.running = true;
-        let count = occlusion.levels.size(main, cx);
         cx.run(occlusion.pass);
         count
     }
@@ -1108,8 +1115,14 @@ fn install_occlusion(
         .id();
     let held = cx.buffer("drawn_occlusion", Lifetime::Kept);
     cx.frame(var(DRAWN_MODULE, "drawn_occlusion"), Bind::Buffer(held))?;
-    let pyramid = cx.texture("drawn_depth_pyramid", PYRAMID_FORMAT, Lifetime::Kept);
-    let levels = Pyramid::install(cx, pass, pyramid, "drawn_pyramid_extent")?;
+    let opaque = cx
+        .pass("drawn_opaque_pyramid")
+        .at(AttachPoint::Opaque)
+        .label("engine/drawn-opaque-pyramid")
+        .id();
+    let pyramid = cx.texture("drawn_depth_pyramid", PYRAMID_FORMAT, Lifetime::Frame);
+    cx.frame(var(DRAWN_MODULE, "drawn_opaque_pyramid"), Bind::Texture(pyramid))?;
+    let levels = Pyramid::install(cx, opaque, pyramid, "drawn_pyramid_extent")?;
     let test = cx.compute_pipeline(
         pass,
         Entry::generated(core_module(DRAWN_CULL_MODULE), "drawn_occlusion_test"),
@@ -1134,6 +1147,7 @@ fn install_occlusion(
     Ok(Occlusion {
         pass,
         held,
+        opaque,
         levels,
         test,
         running: false,
@@ -1369,6 +1383,10 @@ impl GpuPart for DrawnGpu {
             self.occlusion.prepass_levels.encode(cx);
             return 0;
         }
+        if pass == self.occlusion.opaque {
+            self.occlusion.levels.encode(cx);
+            return 0;
+        }
         if pass != self.cull {
             return 0;
         }
@@ -1394,7 +1412,6 @@ impl GpuPart for DrawnGpu {
 impl DrawnGpu {
     fn encode_occlusion(&self, cx: &mut Encode<'_, Self>) {
         let occlusion = &self.occlusion;
-        occlusion.levels.encode(cx);
         if self.slots != 0 {
             cx.dispatch(
                 &occlusion.test,

@@ -11,7 +11,15 @@ gpu_consts! {
     pub const WATER_BLOCKS_SIDE: u32 = 16;
     pub const WATER_TILE_PATCHES: u32 = 16;
     pub const WATER_TILE_WORDS: u32 = WATER_TILE_PATCHES * WATER_TILE_PATCHES;
-    pub const WATER_LEAF_FIRST: u32 = 5;
+    pub const WATER_LEAF_UNLISTED: u32 = 5;
+    pub const WATER_LEAF_TOTAL: u32 = 10;
+    pub const WATER_LEAF_DISPATCH: u32 = 11;
+    pub const WATER_LEAF_FIRST: u32 = 14;
+    pub const WATER_LIST_ORDER: u32 = 8;
+    pub const WATER_LIST_GROUP: u32 = 64;
+    pub const WATER_LIST_GROUPS: u32 = 65535;
+    pub const WATER_SCAN_GROUP: u32 = 256;
+    pub const WATER_RAW_VERTEX: u32 = 65536;
     pub const DEBUG_SPAN_STEPS: f32 = 254.0;
     pub const WATER_RIPPLE_LEVELS: u32 = 16;
     pub const WATER_NOISE_WRAP: i32 = 256;

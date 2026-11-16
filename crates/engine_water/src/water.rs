@@ -12,13 +12,16 @@ use engine_heightfield::Fall;
 use engine_open_world_kit::ground::{GroundTiles, Heightfield};
 use engine_render::{
     Allocation, AttachPoint, Bind, Buffer, ComputePipeline, Count, Draw, DrawInput, Encode,
-    FaceCull, Form, FormSide, GpuPart, Install, KindForm, Lifetime, OwnFragments, Pass, PerPass,
+    FaceCull, Form, FormSide, GpuPart, Install, KindForm, Lifetime, Own, OwnFragments, Pass, PerPass,
     Prepare, RoleFragments, Scene, SceneDraw, Shape, TargetName, Varyings, VertexLayout,
 };
 use glam::{DVec2, DVec3, DVec4, UVec2, Vec3};
 
 use crate::Water;
-use crate::gpu::{FallVertex, WATER_LEAF_FIRST, WaterUniform};
+use crate::gpu::{
+    FallVertex, WATER_LEAF_DISPATCH, WATER_LEAF_FIRST, WATER_LEAF_UNLISTED, WATER_LIST_GROUP,
+    WATER_LIST_GROUPS, WATER_LIST_ORDER, WATER_RAW_VERTEX, WaterUniform,
+};
 use crate::look::looked;
 use crate::settings::WaterFallSheets;
 use crate::state::WaterState;
@@ -109,11 +112,93 @@ pub(crate) fn reached(
 struct Leaves {
     leaves: DrawInput<WaterGpu, Scene>,
     pattern: DrawInput<WaterGpu, Scene>,
+    listed: Option<DrawInput<WaterGpu, Scene>>,
 }
 
 struct Sheets {
     vertices: DrawInput<WaterGpu, Scene>,
     indices: DrawInput<WaterGpu, Scene>,
+}
+
+struct LeafList {
+    count: Pass<WaterGpu>,
+    pass: Pass<WaterGpu>,
+    counting: ComputePipeline<WaterGpu>,
+    marking: ComputePipeline<WaterGpu>,
+    scanning: ComputePipeline<WaterGpu>,
+    listing: ComputePipeline<WaterGpu>,
+    list: Buffer<WaterGpu>,
+    groups: DrawInput<WaterGpu, Own>,
+    room: u32,
+}
+
+impl LeafList {
+    fn install(
+        cx: &mut Install<'_, WaterGpu>,
+        uniform: Buffer<WaterGpu>,
+        leaf_args: Buffer<WaterGpu>,
+    ) -> Result<Self, Error> {
+        use crate::shaders::water::{surface, uniforms};
+        let count = cx.pass("water_leaf_args").id();
+        let pass = cx
+            .pass("water_leaf_list")
+            .at(AttachPoint::Opaque)
+            .views(PassViews::Main)
+            .label("engine/water-leaf-list")
+            .id();
+        let list = cx.buffer("water_leaf_list", Lifetime::Kept);
+        let mut pipeline = |pass: Pass<WaterGpu>, entry: Entry| {
+            let bound = reached(
+                cx,
+                &[entry],
+                vec![
+                    (uniforms::WATER, Bind::Buffer(uniform)),
+                    (surface::WATER_LEAF_ARGS, Bind::Buffer(leaf_args)),
+                    (surface::WATER_LEAF_SPANS, Bind::Buffer(leaf_args)),
+                    (surface::WATER_LEAF_LIST, Bind::Buffer(list)),
+                ],
+            );
+            cx.compute_pipeline(pass, entry, &bound)
+        };
+        Ok(Self {
+            counting: pipeline(count, surface::CS_WATER_LEAF_ARGS)?,
+            marking: pipeline(pass, surface::CS_WATER_LEAF_MARK)?,
+            scanning: pipeline(pass, surface::CS_WATER_LEAF_SCAN)?,
+            listing: pipeline(pass, surface::CS_WATER_LEAF_LIST)?,
+            groups: cx.draw_input(pass, leaf_args),
+            count,
+            pass,
+            list,
+            room: 0,
+        })
+    }
+
+    fn room(&mut self, leaves: u32, cx: &mut Prepare<'_, WaterGpu>) -> u32 {
+        let wanted = leaves.max(WATER_LIST_GROUP).next_power_of_two();
+        self.room = self.room.max(wanted.min(WATER_LIST_GROUP * WATER_LIST_GROUPS));
+        let chunks = u64::from(self.room / WATER_LIST_GROUP);
+        let words = u64::from(WATER_LIST_ORDER + self.room) + 3 * chunks;
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.list, words * 4);
+        self.room
+    }
+
+    fn run(&self, cx: &mut Prepare<'_, WaterGpu>) {
+        cx.run(self.count);
+        cx.run(self.pass);
+    }
+
+    fn encode(&self, pass: Pass<WaterGpu>, cx: &mut Encode<'_, WaterGpu>) {
+        if pass == self.count {
+            cx.dispatch(&self.counting, Count::Groups([1, 1, 1]));
+        }
+        if pass != self.pass {
+            return;
+        }
+        let groups = u64::from(WATER_LEAF_DISPATCH) * 4;
+        cx.dispatch(&self.marking, Count::Indirect(self.groups, groups));
+        cx.dispatch(&self.scanning, Count::Groups([1, 1, 1]));
+        cx.dispatch(&self.listing, Count::Indirect(self.groups, groups));
+    }
 }
 
 pub(crate) struct WaterGpu {
@@ -122,8 +207,7 @@ pub(crate) struct WaterGpu {
     leaf_pattern: Buffer<Self>,
     fall_vertices: Buffer<Self>,
     fall_indices: Buffer<Self>,
-    count_leaves: Pass<Self>,
-    counting: ComputePipeline<Self>,
+    listing: LeafList,
     form: Form<Self>,
     falls: Form<Self>,
     leaves: PerPass<Leaves>,
@@ -174,21 +258,12 @@ impl GpuPart for WaterGpu {
         cx.frame(face::WATER_DIRECTORY, Bind::Buffer(blocks.directory))?;
         let detail = DetailGpu::install(cx);
         let waves = WavesGpu::install(cx);
-        let count_leaves = cx.pass("water_leaf_args").id();
-        let counting_bound = reached(
-            cx,
-            &[surface::CS_WATER_LEAF_ARGS],
-            vec![
-                (uniforms::WATER, Bind::Buffer(uniform)),
-                (surface::WATER_LEAF_ARGS, Bind::Buffer(leaf_args)),
-            ],
-        );
-        let counting =
-            cx.compute_pipeline(count_leaves, surface::CS_WATER_LEAF_ARGS, &counting_bound)?;
+        let listing = LeafList::install(cx, uniform, leaf_args)?;
         let behind = || {
             let mut all = vec![
                 (uniforms::WATER, Bind::Buffer(uniform)),
                 (surface::WATER_LEAF_SPANS, Bind::Buffer(leaf_args)),
+                (surface::WATER_LEAF_ORDER, Bind::Buffer(listing.list)),
                 (surface::WATER_DEPTH, Bind::Target(TargetName::DEPTH)),
                 (surface::WATER_SCENE, Bind::Target(TargetName::COLOR)),
             ];
@@ -201,6 +276,8 @@ impl GpuPart for WaterGpu {
         let leaves = PerPass::of(surface_form.passes(), |pass| Leaves {
             leaves: cx.draw_input(pass.scene, leaf_args),
             pattern: cx.draw_input(pass.scene, leaf_pattern),
+            listed: (pass.scene.name() == WaterPass::NAME)
+                .then(|| cx.draw_input(pass.scene, listing.list)),
         });
         let sheets = PerPass::of(fall_form.passes(), |pass| Sheets {
             vertices: cx.draw_input(pass.scene, fall_vertices),
@@ -212,8 +289,7 @@ impl GpuPart for WaterGpu {
             leaf_pattern,
             fall_vertices,
             fall_indices,
-            count_leaves,
-            counting,
+            listing,
             form: surface_form,
             falls: fall_form,
             leaves,
@@ -240,7 +316,7 @@ impl GpuPart for WaterGpu {
         let pattern = &heightfield.leaf_indices;
         let made = cx.allocate_buffer(
             self.leaf_pattern,
-            std::mem::size_of_val(&pattern[..]) as u64,
+            2 * std::mem::size_of_val(&pattern[..]) as u64,
         );
         let fresh = made == Allocation::Fresh
             || self
@@ -249,7 +325,9 @@ impl GpuPart for WaterGpu {
                 .is_none_or(|written| written[..] != pattern[..]);
         if fresh {
             if !pattern.is_empty() {
-                cx.write(self.leaf_pattern, 0, &pattern[..]);
+                let raw = pattern.iter().map(|index| index + WATER_RAW_VERTEX);
+                let both: Vec<u32> = pattern.iter().copied().chain(raw).collect();
+                cx.write(self.leaf_pattern, 0, &both);
             }
             self.pattern_written = Some(Arc::clone(pattern));
         }
@@ -279,11 +357,12 @@ impl GpuPart for WaterGpu {
             .is_none_or(|view| surface_seen(view, state.blocks.areas(), reach));
         let [red, green, blue] = water.color;
         let sediment = water.sediment_color;
+        let room = self.listing.room(heightfield.water_leaves, cx);
         let frame = WaterUniform {
             color: [red, green, blue, water.clarity],
             absorption: absorption(water.color, water.clarity),
             sediment: [sediment[0], sediment[1], sediment[2], water.sediment],
-            terrains: [terrains, 0, 0, 0],
+            terrains: [terrains, room, 0, 0],
             reach,
             waves,
             ..WaterUniform::default()
@@ -291,16 +370,14 @@ impl GpuPart for WaterGpu {
         let look = looked(&water, self.detail.measured(), frame);
         cx.write(self.uniform, 0, &[look]);
         if self.surface {
-            cx.run(self.count_leaves);
+            self.listing.run(cx);
         } else if !self.falling() {
             cx.skip_kind(WATER_KIND, NO_FALL);
         }
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
-        if pass == self.count_leaves {
-            cx.dispatch(&self.counting, Count::Groups([1, 1, 1]));
-        }
+        self.listing.encode(pass, cx);
         0
     }
 }
@@ -313,18 +390,25 @@ impl WaterGpu {
         let mut draws = 0;
         let leaves = draw.per_pass(&self.leaves).filter(|_| self.surface);
         if let (Some(pipeline), Some(leaves)) = (draw.form(&self.form), leaves) {
-            draw.draw_timed(
-                &pipeline,
-                Shape::Indirect {
-                    vertices: &[],
-                    indices: Some(leaves.pattern),
-                    args: leaves.leaves,
-                    offset: 0,
-                    material: None,
-                },
-                || "water surface".to_owned(),
-            );
-            draws += 1;
+            let unlisted = u64::from(WATER_LEAF_UNLISTED) * 4;
+            let runs = match leaves.listed {
+                Some(listed) => [Some((listed, 0)), Some((leaves.leaves, unlisted))],
+                None => [Some((leaves.leaves, 0)), None],
+            };
+            for (args, offset) in runs.into_iter().flatten() {
+                draw.draw_timed(
+                    &pipeline,
+                    Shape::Indirect {
+                        vertices: &[],
+                        indices: Some(leaves.pattern),
+                        args,
+                        offset,
+                        material: None,
+                    },
+                    || "water surface".to_owned(),
+                );
+                draws += 1;
+            }
         }
         let sheets = draw.per_pass(&self.sheets);
         if let (Some(pipeline), Some(sheets)) = (draw.form(&self.falls), sheets) {
