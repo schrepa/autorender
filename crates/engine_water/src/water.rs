@@ -29,6 +29,9 @@ use crate::waves::{Waves, WavesGpu};
 
 pub(crate) const WATER_KIND: DrawKind = DrawKind("water");
 
+const NO_WATER: &str = "no water is drawn";
+const NO_FALL: &str = "no fall is built";
+
 pub(crate) struct WaterPass;
 
 impl PassName for WaterPass {
@@ -267,6 +270,7 @@ impl GpuPart for WaterGpu {
         self.drawn = watering;
         if !self.drawn {
             self.surface = false;
+            cx.skip_kind(WATER_KIND, NO_WATER);
             return;
         }
         let reach = surface_reach(&state, &ground, swell.swell().reach());
@@ -288,6 +292,8 @@ impl GpuPart for WaterGpu {
         cx.write(self.uniform, 0, &[look]);
         if self.surface {
             cx.run(self.count_leaves);
+        } else if !self.falling() {
+            cx.skip_kind(WATER_KIND, NO_FALL);
         }
     }
 
@@ -302,7 +308,7 @@ impl GpuPart for WaterGpu {
 impl WaterGpu {
     pub(crate) fn draw(&self, _: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
         if !self.drawn {
-            return draw.skip("no water is drawn");
+            return draw.skip(NO_WATER);
         }
         let mut draws = 0;
         let leaves = draw.per_pass(&self.leaves).filter(|_| self.surface);
@@ -340,9 +346,15 @@ impl WaterGpu {
             }
         }
         if draws == 0 {
-            return draw.skip("no fall is built");
+            return draw.skip(NO_FALL);
         }
         draws
+    }
+
+    fn falling(&self) -> bool {
+        self.built
+            .iter()
+            .any(|(_, _, _, drawn, run)| drawn.is_some() && !run.is_empty())
     }
 
     fn prepare_falls(
