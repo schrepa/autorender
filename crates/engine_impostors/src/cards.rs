@@ -110,10 +110,10 @@ impl GpuPart for CardGpu {
             &[(counts::LATE_CARD_ARGS, Bind::Buffer(late_args))],
         )?;
         let bound = [(cards::CARD_RECORDS, Bind::Buffer(records))];
-        let late_input = cx.draw_input(late, late_args);
+        let late_input = cx.args_input(late, late_args);
         let placed = cx.form_owning(&CARD_FORM, &[LATE], &bound)?;
         let fading = cx.form(&FADING_CARD_FORM, &bound)?;
-        let inputs = PerPass::of(placed.passes(), |pass| cx.draw_input(pass.scene, args));
+        let inputs = PerPass::of(placed.passes(), |pass| cx.args_input(pass.scene, args));
         Ok(Self {
             counted,
             late_counted,

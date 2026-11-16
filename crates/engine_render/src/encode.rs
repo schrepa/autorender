@@ -19,6 +19,7 @@ use crate::readback::{Deliver, Keep, Readbacks, Reader};
 use crate::registration::{Installed, KindMember};
 use crate::{AfterRead, Allocation, CameraUniform, DepthUse, SceneDraw, VertexLayout};
 
+mod arena;
 mod compile;
 mod copies;
 mod draw;
@@ -30,6 +31,7 @@ mod run;
 mod views;
 mod warming;
 
+pub(crate) use arena::Arena;
 pub(crate) use compile::Compiler;
 pub(crate) use recording::{Ended, Recording, Step};
 pub(crate) use run::{Bindings, DroppedTally, KindAnswer, Pipelines, Run};
@@ -384,6 +386,7 @@ pub(crate) struct Open {
     pub(crate) layout: PassLayout,
     pub(crate) offset: u32,
     pub(crate) shared: bool,
+    pub(crate) viewed: Option<u32>,
     pub(crate) layered: bool,
     pub(crate) label: Option<u32>,
     pub(crate) set: Set,

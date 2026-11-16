@@ -544,6 +544,7 @@ impl Renderer {
                 run.parts[part] = Some(held);
             }
             run.forget_viewed();
+            run.lay_arena();
             keep_eligible(run, &facts, (first, index == 0), Some(step) == last_surface);
             let mut outputs = asked.clone();
             if order.len() > 1 {
@@ -735,6 +736,7 @@ impl Renderer {
                         run.parts[part as usize] = Some(held);
                     }
                 }
+                run.owe_written(index);
             }
             let Some(run) = self.run.as_mut() else { break };
             run.record();

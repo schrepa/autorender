@@ -90,6 +90,7 @@ pub(crate) struct BufferDecl {
     pub(crate) usage: wgpu::BufferUsages,
     pub(crate) window: Option<u64>,
     pub(crate) per_view: bool,
+    pub(crate) args: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -365,6 +366,7 @@ impl InstallCore {
             usage: wgpu::BufferUsages::empty(),
             window: None,
             per_view,
+            args: false,
         });
         (self.declared.buffers.len() - 1) as u32
     }
@@ -568,6 +570,13 @@ impl InstallCore {
             buffer,
         });
         (self.declared.inputs.len() - 1) as u32
+    }
+
+    pub(crate) fn args_input(&mut self, scope: Scoped, buffer: u32) -> u32 {
+        if let Some(declared) = self.declared.buffers.get_mut(buffer as usize) {
+            declared.args = true;
+        }
+        self.draw_input(scope, buffer)
     }
 
     pub(crate) fn draws_scene(&mut self, pass: u32, name: &'static str, listed: engine_core::Pass) {

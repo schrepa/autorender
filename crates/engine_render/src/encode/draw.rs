@@ -56,6 +56,20 @@ fn bound_input<'b>(
     input(stream).ok_or(DropReason::MissingInput)
 }
 
+fn indirect_args<'b>(
+    (machine, arena): (&Machine, &'b Arena),
+    input: impl Fn(u32) -> Option<&'b wgpu::Buffer>,
+    (args, offset): (u32, u64),
+) -> Result<(&'b wgpu::Buffer, u64), DropReason> {
+    let direct = bound_input(input, args)?;
+    let laid = machine
+        .declared
+        .inputs
+        .get(args as usize)
+        .and_then(|decl| arena.args(decl.buffer, offset));
+    Ok(laid.unwrap_or((direct, offset)))
+}
+
 fn index_input<'b>(
     input: impl Fn(u32) -> Option<&'b wgpu::Buffer>,
     indices: Option<u32>,
@@ -249,6 +263,7 @@ impl Run {
             assets,
             frames,
             bound,
+            arena,
             ..
         } = self;
         let parity = frames.parity;
@@ -367,7 +382,7 @@ impl Run {
                 offset,
                 ..
             } => {
-                let args = bound_input(input, args)?;
+                let (args, offset) = indirect_args((machine, arena), input, (args, offset))?;
                 let indexed = index_input(input, indices)?;
                 for (slot, (stream, _)) in vertices.listed().iter().enumerate() {
                     let buffer = bound_input(input, *stream)?;
@@ -389,7 +404,7 @@ impl Run {
                 args,
                 offset,
             } => {
-                let args = bound_input(input, args)?;
+                let (args, offset) = indirect_args((machine, arena), input, (args, offset))?;
                 let indexed = index_input(input, indices)?;
                 for (slot, (stream, start)) in vertices.listed().iter().enumerate() {
                     let buffer = bound_input(input, *stream)?;
@@ -417,7 +432,7 @@ impl Run {
                     .materials
                     .group(material)
                     .ok_or(DropReason::MaterialNotResident)?;
-                let args = bound_input(input, args)?;
+                let (args, offset) = indirect_args((machine, arena), input, (args, offset))?;
                 if open.set.material != Some(material) {
                     render.set_bind_group(1, group, &[]);
                     open.set.material = Some(material);

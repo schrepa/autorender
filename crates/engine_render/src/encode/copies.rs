@@ -182,6 +182,7 @@ impl Run {
 
     pub(crate) fn clear_buffer(&mut self, buffer: u32) {
         self.end_render();
+        self.owe(buffer);
         let Some((made, _)) = self.buffer_held(buffer) else {
             return;
         };
@@ -265,6 +266,7 @@ impl Run {
                 continue;
             }
             if request.then == AfterRead::Clear {
+                self.arena.owed_after(request.buffer);
                 encoder.clear_buffer(&buffer, request.range.start, Some(bytes));
             }
         }

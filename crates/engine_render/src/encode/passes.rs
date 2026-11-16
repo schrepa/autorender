@@ -162,6 +162,7 @@ impl Run {
         }
         self.end_render();
         for buffer in std::mem::take(&mut self.queued.cleared) {
+            self.owe(buffer);
             let made = self.buffer_held(buffer).map(|(made, _)| made.clone());
             if let (Some(made), Some(encoder)) = (made, self.recording.encoder()) {
                 encoder.clear_buffer(&made, 0, None);
@@ -210,6 +211,7 @@ impl Run {
         reason = "longer than the line ceiling; it may only shrink"
     )]
     pub(crate) fn begin_render(&mut self, attach: AttachRaw, view: Option<&OwnedDraw>) -> bool {
+        self.pay_arena();
         let offset = self.view_offset(view);
         let Some(pass) = self.planning.pass_decls.get(self.pass as usize).cloned() else {
             return false;
@@ -489,10 +491,11 @@ impl Run {
                 .map(|(key, ..)| *key)
                 .chain(depth.as_ref().map(|(key, ..)| *key)),
         );
+        let loads = view.is_some_and(|view| !view.clear.depth() && !view.clear.color());
+        let viewed = view.is_some().then_some(self.pass);
         if let Some(open) = self.recording.open_mut()
             && self.planning.merge
-            && open.shared
-            && is_shared
+            && ((open.shared && is_shared) || (loads && open.viewed == viewed))
             && open.attachments == attachments
         {
             if open.offset != offset {
@@ -579,6 +582,7 @@ impl Run {
             layout,
             offset,
             shared: is_shared,
+            viewed,
             layered: layer.is_some(),
             label: None,
             set: Set::default(),
