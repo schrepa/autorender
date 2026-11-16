@@ -20,7 +20,7 @@ use crate::layouts::{
     PlacedGroup, PlacedRecord, PlacedValues, PoseData, SCATTER_GROUP, SlotColor, Snap,
     placed_group, record_words,
 };
-use crate::pool::{SlotWrite, dead};
+use crate::pool::{SlotWrite, Spread, dead};
 use crate::shaders::scatter::{
     cards as card_shaders, casters as caster_shaders, draw as object_shaders, laid as laid_shaders,
     matched as matched_shaders,
@@ -262,8 +262,41 @@ struct Held {
     placed_groups: Vec<PlacedGroup>,
     culling: Vec<(Listed, CullView)>,
     culled: Vec<CullView>,
+    reached: Vec<u32>,
     card_args: Vec<[u32; 4]>,
     args: Vec<DrawArgs>,
+}
+
+impl Held {
+    fn reach(&mut self, state: &ScatterState) {
+        let lists = self.culled.len();
+        let main = self.culled[0];
+        let nearest = state.pool.nearest(Vec3::from_slice(&main.eye[..3]));
+        self.reached.clear();
+        for at in 0..=lists {
+            let (list, view) = match at {
+                0 => (List::Main, main),
+                _ if at == lists => (List::Fading, main),
+                _ => (List::Own, self.culled[at]),
+            };
+            self.reached.extend(state.groups.groups.iter().map(|drawn| {
+                let owner = drawn.objects as usize;
+                let near = match list {
+                    List::Main | List::Fading => nearest.get(owner).copied().unwrap_or(0.0),
+                    List::Own => 0.0,
+                };
+                match (
+                    state.group_data.data.get(owner),
+                    state.pool.spreads.get(owner),
+                ) {
+                    (Some(group), Some(&spread)) => {
+                        levels_reached(&view, (group, spread, near), list, self.cards)
+                    }
+                    _ => u32::MAX,
+                }
+            }));
+        }
+    }
 }
 
 type DrawBuffers = (
@@ -381,6 +414,86 @@ fn listed_view(
             ],
         },
     ))
+}
+
+const SLACK: f32 = 1.0 / 1024.0;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum List {
+    Main,
+    Fading,
+    Own,
+}
+
+fn levels_reached(
+    view: &CullView,
+    (group, spread, near): (&CullGroup, Spread, f32),
+    list: List,
+    cards: bool,
+) -> u32 {
+    let camera = group.camera.clamp(1, LEVELS) as usize;
+    let every = (1 << camera) - 1;
+    let pixels = view.eye[3];
+    let errors = &group.errors[..camera - 1];
+    let known = pixels.is_finite()
+        && near >= 0.0
+        && spread.low > 0.0
+        && spread.low <= spread.high
+        && spread.high.is_finite()
+        && errors
+            .iter()
+            .all(|error| *error >= 0.0 && error.is_finite());
+    if !known {
+        return every;
+    }
+    if pixels <= 0.0 {
+        return u32::from(list != List::Fading);
+    }
+    let impostor = group.impostor;
+    let cards = cards && view.shape[1] != 0 && impostor > 0.0;
+    if list == List::Fading && !cards {
+        return 0;
+    }
+    let mut reached = every;
+    if cards {
+        for (at, error) in errors.iter().enumerate() {
+            if *error > impostor * (1.0 + SLACK) {
+                reached &= !(2 << at);
+            }
+        }
+        if list == List::Fading {
+            let fits = impostor * std::f32::consts::FRAC_1_SQRT_2 * (1.0 - SLACK);
+            let finest = errors
+                .iter()
+                .rposition(|error| *error <= fits)
+                .map_or(0, |at| at + 1);
+            reached &= !((1 << finest) - 1);
+        }
+    }
+    let flat = view.shape[0] == 0;
+    if flat && list == List::Own && spread.radius * pixels < 1.0 - SLACK {
+        return 0;
+    }
+    let step = 1.0 / pixels;
+    let least = if flat { step } else { near * step } * (1.0 - SLACK);
+    if cards && least >= impostor * spread.high * (1.0 + SLACK) {
+        return 0;
+    }
+    let low = if flat && cards {
+        engine_math::max(spread.low, step / impostor * (1.0 - SLACK))
+    } else {
+        spread.low
+    };
+    for level in 0..camera {
+        let reaches = !flat || level == 0 || errors[level - 1] * low <= step * (1.0 + SLACK);
+        let stays = errors[level..]
+            .iter()
+            .all(|error| *error * spread.high > least);
+        if !reaches || !stays {
+            reached &= !(1 << level);
+        }
+    }
+    reached
 }
 
 pub(crate) struct ScatterGpu {
@@ -806,6 +919,7 @@ impl ScatterGpu {
             cx.read_back::<ScatterFeedback>(LEFT_OUT, self.card_args, at..at + 16, AfterRead::Keep);
         }
         held.left_out = left;
+        held.reach(state);
         held.prepared = true;
     }
 
@@ -841,7 +955,7 @@ impl ScatterGpu {
             return draw.skip("view has no visible list");
         };
         let streams = &joined.streams;
-        let drawn = if joined.owned {
+        let (drawn, empty) = if joined.owned {
             self.draw_views((scene, view), draw, streams)
         } else {
             let matched = joined.follows && self.held.views[view].laid;
@@ -852,11 +966,11 @@ impl ScatterGpu {
         } else {
             self.held.lit_waiting
         };
-        match (drawn, &self.held.refused, waiting) {
-            (0, Some(error), _) => draw.refuse(PLACED_MESHES, error),
-            (0, None, true) => draw.wait(PLACED_MESHES),
-            (0, None, false) => draw.skip("nothing placed reaches this view"),
-            (drawn, _, _) => drawn,
+        match (drawn, empty, &self.held.refused, waiting) {
+            (0, 0, Some(error), _) => draw.refuse(PLACED_MESHES, error),
+            (0, 0, None, true) => draw.wait(PLACED_MESHES),
+            (0, _, _, _) => draw.skip("nothing placed reaches this view"),
+            (drawn, ..) => drawn,
         }
     }
 
@@ -867,8 +981,10 @@ impl ScatterGpu {
         draw: &mut Draw<'_, Self, Scene>,
         inputs: &Streams,
         pipelines: [&Pair; 2],
-    ) -> u32 {
+    ) -> (u32, u32) {
         let mut draws = 0;
+        let mut empty = 0;
+        let reached = self.held.group_count as usize * view;
         let turns: &[Option<bool>] = match scene.role {
             PassRole::Depth => &[Some(false), Some(true)],
             PassRole::Lit | PassRole::Blended | PassRole::Shown => &[None],
@@ -887,6 +1003,16 @@ impl ScatterGpu {
             let Some((ids, offset)) = self.draw_source(view, item.group as usize, level) else {
                 continue;
             };
+            let at = reached + item.group as usize;
+            if self
+                .held
+                .reached
+                .get(at)
+                .is_some_and(|bits| bits >> level & 1 == 0)
+            {
+                empty += 1;
+                continue;
+            }
             let record = DrawRecord::of(DrawKind::Placed, level);
             draw.draw_timed(
                 pipeline,
@@ -901,7 +1027,7 @@ impl ScatterGpu {
             );
             draws += 1;
         }
-        draws
+        (draws, empty)
     }
 
     fn draw_objects(
@@ -909,7 +1035,7 @@ impl ScatterGpu {
         (scene, view, matched): (&SceneDraw, usize, bool),
         draw: &mut Draw<'_, Self, Scene>,
         inputs: &Streams,
-    ) -> u32 {
+    ) -> (u32, u32) {
         let held = &self.held;
         let forms = &self.forms;
         let plain = [draw.form(&forms.plain), draw.form(&forms.extended)];
@@ -931,17 +1057,20 @@ impl ScatterGpu {
             _ => &[(view, false, [&plain, &cut])],
         };
         let mut draws = 0;
+        let mut empty = 0;
         for &(list, fades, pipelines) in lists {
-            draws += self.draw_levels(
+            let (drawn, skipped) = self.draw_levels(
                 (list, &held.lit, fades),
                 (scene, matched),
                 draw,
                 inputs,
                 pipelines,
             );
+            draws += drawn;
+            empty += skipped;
         }
         if !held.cards {
-            return draws;
+            return (draws, empty);
         }
         let laid = matched && self.laid_copied.is_some() && self.laid_copied == scene.index;
         let card = draw.form(if laid {
@@ -963,7 +1092,7 @@ impl ScatterGpu {
             );
             draws += 1;
         }
-        draws
+        (draws, empty)
     }
 
     fn draw_views(
@@ -971,7 +1100,7 @@ impl ScatterGpu {
         (scene, view): (&SceneDraw, usize),
         draw: &mut Draw<'_, Self, Scene>,
         inputs: &Streams,
-    ) -> u32 {
+    ) -> (u32, u32) {
         let held = &self.held;
         let items = if held.views[view].casts {
             &held.cast
@@ -982,7 +1111,7 @@ impl ScatterGpu {
             draw.form(&self.forms.plain),
             draw.form(&self.forms.extended),
         ];
-        let mut draws = self.draw_levels(
+        let (mut draws, empty) = self.draw_levels(
             (view, items, false),
             (scene, false),
             draw,
@@ -1003,7 +1132,7 @@ impl ScatterGpu {
             );
             draws += 1;
         }
-        draws
+        (draws, empty)
     }
 }
 

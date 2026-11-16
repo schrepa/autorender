@@ -46,9 +46,31 @@ pub(crate) enum SlotWrite {
     Dead(Range<u32>),
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct Spread {
+    pub(crate) low: f32,
+    pub(crate) high: f32,
+    pub(crate) radius: f32,
+}
+
+impl Spread {
+    const NONE: Self = Self {
+        low: f32::INFINITY,
+        high: 0.0,
+        radius: 0.0,
+    };
+
+    fn take(&mut self, record: &PlacedRecord) {
+        self.low = engine_math::min(self.low, record.scale);
+        self.high = engine_math::max(self.high, record.scale);
+        self.radius = engine_math::max(self.radius, record.radius);
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct ScatterPool {
     pub(crate) counts: Vec<u32>,
+    pub(crate) spreads: Vec<Spread>,
     pub(crate) far: u32,
     pub(crate) end: u32,
     pub(crate) writes: Vec<SlotWrite>,
@@ -61,6 +83,7 @@ impl ScatterPool {
     pub(crate) fn clear(&mut self, groups: usize) {
         *self = Self {
             counts: vec![0; groups],
+            spreads: vec![Spread::NONE; groups],
             ..Self::default()
         };
     }
@@ -126,6 +149,9 @@ impl ScatterPool {
         let mut far = 0;
         for record in &objects.2 {
             far += u32::from(stands_far(record));
+            if let Some(spread) = self.spreads.get_mut(record.group as usize) {
+                spread.take(record);
+            }
             match groups.iter_mut().find(|(group, _)| *group == record.group) {
                 Some((_, held)) => *held += 1,
                 None => groups.push((record.group, 1)),
@@ -162,6 +188,25 @@ impl ScatterPool {
                 )
             })
             .chain(self.free.iter().cloned().map(SlotWrite::Dead))
+    }
+
+    pub(crate) fn nearest(&self, eye: Vec3) -> Vec<f32> {
+        let mut nearest = vec![f32::INFINITY; self.spreads.len()];
+        for pooled in self.tiles.values() {
+            let Some((low, high)) = pooled.bounds else {
+                continue;
+            };
+            let outside = (low - eye).max(eye - high).max(Vec3::ZERO);
+            let away = (outside.x * outside.x + outside.z * outside.z).sqrt();
+            let reach = eye.abs().max(low.abs()).max(high.abs()).max_element() + away;
+            let away = engine_math::max(away - reach * 1.0e-5, 0.0);
+            for &(group, _) in &pooled.groups {
+                if let Some(near) = nearest.get_mut(group as usize) {
+                    *near = engine_math::min(*near, away);
+                }
+            }
+        }
+        nearest
     }
 
     pub(crate) fn take_moved(&mut self) -> Vec<(Vec3, Vec3)> {
