@@ -8,14 +8,13 @@ use glam::{Mat4, Vec3};
 use super::part::{Handles, TerrainGpu, TerrainViews};
 use super::{SLOT, SURFACE_SLOTS};
 use crate::gpu::{
-    SUBDIVISION_ARGS, SUBDIVISION_COUNTED, SUBDIVISION_DRAW, SURFACE_MESHLET_INDICES,
-    SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES, SubdivisionUniform,
+    SUBDIVISION_ARGS, SUBDIVISION_COUNTED, SUBDIVISION_DRAW, SUBDIVISION_HOLED, SUBDIVISION_WHOLE,
+    SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES, SubdivisionUniform,
 };
 
 const LEAF_BYTES: u64 = 24;
 const NODE_BYTES: u64 = 4;
 const ARGS_BYTES: u64 = SUBDIVISION_ARGS as u64 * 4;
-const DRAW_OFFSET: u64 = SUBDIVISION_DRAW as u64 * 4;
 const SHALLOWEST: u32 = SUBDIVISION_COUNTED + 2;
 const _: () = assert!(SURFACE_MESHLET_VERTICES <= 1 << 16, "meshlet_fits_u16");
 
@@ -93,8 +92,19 @@ impl SurfaceTrees {
     }
 
     pub(super) fn draw_offset(&self, index: usize) -> Option<u64> {
+        self.record_offset(index, SUBDIVISION_DRAW)
+    }
+
+    pub(super) fn split_offsets(&self, index: usize) -> Option<[u64; 2]> {
+        Some([
+            self.record_offset(index, SUBDIVISION_WHOLE)?,
+            self.record_offset(index, SUBDIVISION_HOLED)?,
+        ])
+    }
+
+    fn record_offset(&self, index: usize, record: u32) -> Option<u64> {
         self.subdivided(index)
-            .map(|subdivided| subdivided.slot as u64 * ARGS_BYTES + DRAW_OFFSET)
+            .map(|subdivided| subdivided.slot as u64 * ARGS_BYTES + u64::from(record) * 4)
     }
 
     pub(super) fn rest(&mut self) {

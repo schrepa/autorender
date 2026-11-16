@@ -4,8 +4,8 @@ import package::place::heightfield::{SurfaceTriangle, TerrainSubdivision};
 import package::terrain_shading::draw::terrain_displacement;
 import package::terrain_shading::faces::heightfield::{terrain, terrain_level_height, use_terrain};
 
-import package::terrain_shading::surface::{SurfaceWater, surface_ground_error, surface_half, surface_water};
-import package::generated::terrain_shading::{SUBDIVISION_ARGS, SUBDIVISION_COUNTED, SUBDIVISION_DRAW, SUBDIVISION_GROUP, SUBDIVISION_LEAVES, SUBDIVISION_REFUSED, SUBDIVISION_RESERVED, SUBDIVISION_WATERED, SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_VERTEX_STRIDE};
+import package::terrain_shading::surface::{SurfaceWater, surface_cut, surface_ground_error, surface_half, surface_marked, surface_water};
+import package::generated::terrain_shading::{SUBDIVISION_ARGS, SUBDIVISION_COUNTED, SUBDIVISION_DRAW, SUBDIVISION_GROUP, SUBDIVISION_LEAVES, SUBDIVISION_REFUSED, SUBDIVISION_RESERVED, SUBDIVISION_WATERED, SUBDIVISION_WHOLE, SUBDIVISION_HOLED, SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_ROLE_SHIFT, SURFACE_VERTEX_STRIDE};
 
 @group(1) @binding(0) var<uniform> subdivision: TerrainSubdivision;
 @group(1) @binding(1) var<storage, read_write> subdivision_tree: array<atomic<u32>>;
@@ -80,6 +80,31 @@ fn subdivision_triangle(node: u32) -> SurfaceTriangle {
         triangle = surface_half(triangle, (node >> (bit - 1u)) & 1u);
     }
     return triangle;
+}
+
+fn subdivision_order(node: u32) -> u32 {
+    let side = subdivision.square.x;
+    let depth = firstLeadingBit(node);
+    let eye = camera.position.xz - terrain.origin.xz;
+    var triangle = SurfaceTriangle(vec2<f32>(side), vec2<f32>(0.0), vec2<f32>(0.0, side));
+    var order = 0u;
+    for (var bit = depth; bit > 0u; bit--) {
+        let child = (node >> (bit - 1u)) & 1u;
+        var near = select(0u, 1u, eye.x > eye.y);
+        if bit < depth {
+            let edge = (triangle.a + triangle.b) * 0.5 - triangle.c;
+            let across = vec2<f32>(-edge.y, edge.x);
+            near = select(0u, 1u,
+                dot(across, eye - triangle.c) * dot(across, triangle.b - triangle.c) > 0.0);
+            triangle = surface_half(triangle, child);
+        } else if child == 1u {
+            triangle = SurfaceTriangle(vec2<f32>(0.0), vec2<f32>(side), vec2<f32>(side, 0.0));
+        }
+        if child != near {
+            order += subdivision_count(2u * (node >> bit) + near);
+        }
+    }
+    return order;
 }
 
 fn subdivision_neighbor(node: u32) -> u32 {
@@ -369,12 +394,16 @@ fn subdivide_begin() {
     atomicStore(&subdivision_args[args + 1u], 1u);
     atomicStore(&subdivision_args[args + 2u], 1u);
     atomicStore(&subdivision_args[args + SUBDIVISION_LEAVES], leaves);
-    let draw = args + SUBDIVISION_DRAW;
-    atomicStore(&subdivision_args[draw], SURFACE_MESHLET_INDICES);
-    atomicStore(&subdivision_args[draw + 1u], leaves);
-    atomicStore(&subdivision_args[draw + 2u], 0u);
-    atomicStore(&subdivision_args[draw + 3u], subdivision.frame.z * SURFACE_VERTEX_STRIDE);
-    atomicStore(&subdivision_args[draw + 4u], 0u);
+    for (var role = 0u; role < 3u; role++) {
+        let draw = args + select(SUBDIVISION_DRAW, select(SUBDIVISION_WHOLE, SUBDIVISION_HOLED,
+            role == 2u), role > 0u);
+        atomicStore(&subdivision_args[draw], SURFACE_MESHLET_INDICES);
+        atomicStore(&subdivision_args[draw + 1u], leaves);
+        atomicStore(&subdivision_args[draw + 2u], 0u);
+        atomicStore(&subdivision_args[draw + 3u],
+            subdivision.frame.z * SURFACE_VERTEX_STRIDE + (role << SURFACE_ROLE_SHIFT));
+        atomicStore(&subdivision_args[draw + 4u], 0u);
+    }
     atomicStore(&subdivision_args[args + SUBDIVISION_RESERVED], 0u);
     atomicStore(&subdivision_args[args + SUBDIVISION_REFUSED], 0u);
     atomicStore(&subdivision_args[args + SUBDIVISION_WATERED],
@@ -425,10 +454,10 @@ fn subdivide_decide(@builtin(global_invocation_id) id: vec3<u32>) {
             asked = subdivision_triangle(top);
         }
     }
-    let at = subdivision.tree.z + id.x;
+    let at = subdivision.tree.z + subdivision_order(node);
     var drawn = SurfaceTriangle(triangle.a, triangle.a, triangle.a);
     if measure.drawn {
-        drawn = triangle;
+        drawn = surface_marked(triangle, !surface_cut(triangle));
     }
     subdivision_leaves[at] = drawn;
     if measure.watered {
@@ -446,7 +475,7 @@ fn subdivide_decide(@builtin(global_invocation_id) id: vec3<u32>) {
     if decision != 0u {
         atomicOr(&subdivision_tree[subdivision_state()], SUBDIVISION_CHANGED);
     }
-    subdivision_nodes[at] = node | (decision << 30u);
+    subdivision_nodes[subdivision.tree.z + id.x] = node | (decision << 30u);
 }
 
 @compute @workgroup_size(SUBDIVISION_GROUP)

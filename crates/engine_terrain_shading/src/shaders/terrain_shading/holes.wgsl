@@ -27,5 +27,8 @@ fn terrain_holed(ground: TerrainUniform, cell: vec2<f32>) -> bool {
 }
 
 fn opacity(input: SurfaceInput, point: SurfacePoint) -> f32 {
+    if input.surface.x > 0.0 {
+        return 1.0;
+    }
     return select(1.0, 0.0, terrain_holed(table_terrain(input.object), input.uv));
 }
