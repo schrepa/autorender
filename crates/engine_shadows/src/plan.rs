@@ -315,9 +315,9 @@ pub(crate) fn plan_shadows(
             casters_changed = true;
         }
     }
-    plan.levels.plan(live_cameras(&plan.cameras, (&moves, &lenses)));
-    plan.moving = if changes.moving > 0 { key.moving } else { 0 };
     let quiet = readiness.loading.total == 0 && readiness.compiling == 0;
+    plan.levels.plan(live_cameras(&plan.cameras, (&moves, &lenses)), !quiet);
+    plan.moving = if changes.moving > 0 { key.moving } else { 0 };
     let occludes = occluding.on();
     plan.sky.prepare(
         (&sky, occludes),

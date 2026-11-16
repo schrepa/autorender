@@ -19,7 +19,7 @@ use crate::ScatterBrick;
 use crate::pool::Reach;
 use crate::snapping::widened;
 use crate::far_cover::{CanopyMaps, wanted};
-use crate::gpu::PLACED;
+use crate::gpu::{PLACED, SLACK};
 use crate::groups::{Groups, Kept, Resolved, resolve};
 use crate::layouts::{
     CanopyPiece, CullFrame, CullGroup, CullView, DrawArgs, LEVELS, PlacedRecord, PlacedValues,
@@ -85,7 +85,7 @@ pub(crate) struct ScatterState {
     pub(crate) library: (u64, u64),
     pub(crate) left_objects: u32,
     pub(crate) moved: Vec<(Entity, Reach)>,
-    pub(crate) restyled: bool,
+    pub(crate) restyled: Option<f32>,
     pub(crate) released: bool,
     pub(crate) impostors: Vec<ImpostorRecord>,
     pub(crate) impostor_generation: u64,
@@ -117,7 +117,7 @@ impl Default for ScatterState {
             library: (0, 0),
             left_objects: 0,
             moved: Vec::new(),
-            restyled: false,
+            restyled: None,
             released: false,
             impostors: Vec::new(),
             impostor_generation: 0,
@@ -166,6 +166,22 @@ pub(crate) fn publish_foliage(settings: Res<FoliageSettings>, mut foliage: ResMu
     });
 }
 
+fn card_pixel(state: &ScatterState, before: &[ImpostorRecord]) -> f32 {
+    let mut least = f32::INFINITY;
+    for (group, drawn) in state.groups.groups.iter().enumerate() {
+        let Some(spread) = state.pool.spreads.get(drawn.objects as usize) else {
+            continue;
+        };
+        for record in [before.get(group), state.impostors.get(group)].into_iter().flatten() {
+            let error = record.error();
+            if error > 0.0 && spread.low.is_finite() {
+                least = engine_math::min(least, error * spread.low);
+            }
+        }
+    }
+    least * std::f32::consts::FRAC_1_SQRT_2 * (1.0 - SLACK)
+}
+
 pub(crate) fn take_impostors(
     records: Query<Ref<ImpostorRecords>, With<Placements>>,
     mut state: ResMut<ScatterState>,
@@ -176,7 +192,7 @@ pub(crate) fn take_impostors(
         .ok()
         .filter(|held| held.generation == state.impostor_generation);
     let arrived = held.as_ref().is_some_and(|held| held.is_changed());
-    state.restyled = false;
+    state.restyled = None;
     if std::mem::take(&mut state.retake) || arrived {
         let fresh = held
             .as_ref()
@@ -185,8 +201,8 @@ pub(crate) fn take_impostors(
             .map(|index| fresh.get(index).copied().unwrap_or_default())
             .collect();
         state.groups.take_impostors(&records);
-        state.restyled = records != state.impostors;
-        state.impostors = records;
+        let before = std::mem::replace(&mut state.impostors, records);
+        state.restyled = (before != state.impostors).then(|| card_pixel(state, &before));
     }
     state.impostor_live = held.as_ref().map_or(0, |held| held.live);
     state.impostor_refused = held.as_ref().map_or(0, |held| held.refused);
@@ -656,7 +672,7 @@ pub(crate) fn publish_tiles(state: Res<ScatterState>, mut placed: ResMut<PlacedT
     if !placed.groups.iter().copied().eq(boxes.clone()) {
         placed.groups = boxes.collect();
     }
-    let stale = state.restyled || state.refilled;
+    let stale = state.restyled.is_some() || state.refilled;
     let held = &placed.tiles;
     let mut pool = state.pool.pooled();
     let current = !stale
@@ -745,8 +761,10 @@ pub(crate) fn publish_changes(
             spacing: widest,
         });
     }
-    if state.restyled || std::mem::take(&mut resnapped.full) {
+    if std::mem::take(&mut resnapped.full) {
         areas.push(DrawnArea::All);
+    } else if let Some(pixel) = state.restyled.filter(|pixel| pixel.is_finite()) {
+        areas.push(DrawnArea::Coarse { pixel });
     }
 }
 

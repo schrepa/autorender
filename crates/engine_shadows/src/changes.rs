@@ -11,6 +11,7 @@ use crate::ShadowSettings;
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum ShadowChange {
     Box { min: Vec3, max: Vec3, spacing: f32 },
+    Coarse { pixel: f32 },
     All,
     Casters,
 }
@@ -110,6 +111,7 @@ fn publish_areas(areas: &DrawnAreas, cursor: &mut Cursor, shadows: &mut ShadowCh
             for area in listed {
                 shadows.push(match *area {
                     DrawnArea::Box { min, max, spacing } => ShadowChange::Box { min, max, spacing },
+                    DrawnArea::Coarse { pixel } => ShadowChange::Coarse { pixel },
                     DrawnArea::All => ShadowChange::All,
                 });
             }
