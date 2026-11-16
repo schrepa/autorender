@@ -2813,7 +2813,8 @@
         {
           "part": "water",
           "passes": [
-            "water_leaf_args"
+            "water_leaf_args",
+            "water_leaf_list"
           ]
         }
       ],
@@ -2993,7 +2994,7 @@
         }
       ],
       "type": "engine_water::WaterBrick",
-      "version": "ce79e66c59079e438ab71168801d689a4e7515d4847593296965969910df3f6f"
+      "version": "a097550fa0890cac0b9f3086f8b4f56dfad5a293e1970ae47ffaa612cd6ea430"
     },
     {
       "dependencies": [
@@ -3400,8 +3401,8 @@
     }
   ],
   "frame": {
-    "frame_variants": 53,
-    "layouts": 115,
+    "frame_variants": 54,
+    "layouts": 118,
     "pieces": [
       {
         "brick": "engine_sun",
@@ -3937,7 +3938,19 @@
   "left_out": [],
   "list_order": {
     "fold_ties": [],
-    "pass_ties": [],
+    "pass_ties": [
+      {
+        "first": {
+          "brick": "engine_render",
+          "pass": "drawn_occlusion"
+        },
+        "target": "scene",
+        "then": {
+          "brick": "engine_water",
+          "pass": "water_leaf_list"
+        }
+      }
+    ],
     "unlisted_steps": []
   },
   "ownership": [],

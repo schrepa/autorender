@@ -1,4 +1,5 @@
 import package::engine::color::luminance;
+import package::engine::drawn::drawn_opaque_pyramid;
 import package::engine::math::{PI, pcg, unit};
 import package::engine::presentation::ROUNDING_MARGIN;
 import package::engine::shading::{Shaded, SurfacePoint};
@@ -19,8 +20,9 @@ import package::face::sky::{ambient, sky_average};
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
 import package::generated::writes::{Outputs, outputs};
-import package::generated::water::{FROUDE_GUARD_DEPTH, GRAVITY, NO_WATER_BLOCK, WATER_LEAF_FIRST,
-    WATER_TILE_PATCHES};
+import package::generated::water::{FROUDE_GUARD_DEPTH, GRAVITY, NO_WATER_BLOCK, WATER_LEAF_DISPATCH,
+    WATER_LEAF_FIRST, WATER_LEAF_TOTAL, WATER_LEAF_UNLISTED, WATER_LIST_GROUP, WATER_LIST_GROUPS,
+    WATER_LIST_ORDER, WATER_RAW_VERTEX, WATER_SCAN_GROUP, WATER_TILE_PATCHES};
 import package::place::water::{WATER_HELD, WaterAt, WaterCell};
 import package::water::faces::water::{water_cell, water_read};
 import package::water::flow::{water_relief, water_stirring, water_stream};
@@ -32,6 +34,7 @@ import package::water::uniforms::water;
 import package::water::waves::{WaterSwell, water_calm, water_piece, water_swell};
 
 @group(1) @binding(57) var<storage, read> water_leaf_spans: array<u32>;
+@group(1) @binding(59) var<storage, read> water_leaf_order: array<u32>;
 @group(2) @binding(22) var water_depth: texture_depth_2d;
 @group(2) @binding(23) var water_scene: texture_2d<f32>;
 
@@ -179,7 +182,58 @@ fn water_leaf_seen(corner_low: vec2<f32>, corner_high: vec2<f32>) -> bool {
         || water_beyond(vec4<f32>(0.0, 1.0, 0.0, 1.0) * clip, low, high)
         || water_beyond(vec4<f32>(0.0, -1.0, 0.0, 1.0) * clip, low, high)
         || water_beyond(vec4<f32>(0.0, 0.0, -1.0, 1.0) * clip, low, high)
-        || water_beyond(vec4<f32>(0.0, 0.0, 1.0, 0.0) * clip, low, high));
+        || water_beyond(vec4<f32>(0.0, 0.0, 1.0, 0.0) * clip, low, high)
+        || water_behind_opaque(clip, low, high));
+}
+
+const WATER_LARGEST: f32 = 3.4028233e38;
+const WATER_HIDDEN_SCALE: f32 = 0.9999847412109375;
+const WATER_NEAREST_W: f32 = 1.0e-6;
+
+fn water_behind_opaque(clip: mat4x4<f32>, low: vec3<f32>, high: vec3<f32>) -> bool {
+    var first = vec2<f32>(WATER_LARGEST);
+    var last = vec2<f32>(-WATER_LARGEST);
+    var nearest = -WATER_LARGEST;
+    for (var corner = 0u; corner < 8u; corner++) {
+        let at = select(low, high, vec3<bool>((corner & 1u) != 0u, (corner & 2u) != 0u,
+            (corner & 4u) != 0u));
+        let projected = clip * vec4<f32>(at, 1.0);
+        if !(projected.w > WATER_NEAREST_W) {
+            return false;
+        }
+        let ndc = projected.xyz / projected.w;
+        first = min(first, ndc.xy);
+        last = max(last, ndc.xy);
+        nearest = max(nearest, ndc.z);
+    }
+    if !(all(abs(vec4<f32>(first, last)) < vec4<f32>(WATER_LARGEST)) && nearest < WATER_LARGEST) {
+        return false;
+    }
+    let size = camera.region.xy;
+    let corner_low = vec2<f32>(first.x * 0.5 + 0.5, 0.5 - last.y * 0.5) * size;
+    let corner_high = vec2<f32>(last.x * 0.5 + 0.5, 0.5 - first.y * 0.5) * size;
+    let edge = size - 1.0;
+    var a = vec2<u32>(clamp(floor(corner_low) - 1.0, vec2<f32>(0.0), edge)) / 2u;
+    var b = vec2<u32>(clamp(floor(corner_high) + 1.0, vec2<f32>(0.0), edge)) / 2u;
+    let levels = textureNumLevels(drawn_opaque_pyramid);
+    var level = 0u;
+    loop {
+        if (b.x - a.x <= 1u && b.y - a.y <= 1u) || level + 1u >= levels {
+            break;
+        }
+        a = a / 2u;
+        b = b / 2u;
+        level += 1u;
+    }
+    if b.x - a.x > 1u || b.y - a.y > 1u {
+        return false;
+    }
+    let farthest = min(
+        min(textureLoad(drawn_opaque_pyramid, a, level).r,
+            textureLoad(drawn_opaque_pyramid, vec2<u32>(b.x, a.y), level).r),
+        min(textureLoad(drawn_opaque_pyramid, vec2<u32>(a.x, b.y), level).r,
+            textureLoad(drawn_opaque_pyramid, b, level).r));
+    return nearest < farthest * WATER_HIDDEN_SCALE;
 }
 
 fn water_beyond(plane: vec4<f32>, low: vec3<f32>, high: vec3<f32>) -> bool {
@@ -189,16 +243,17 @@ fn water_beyond(plane: vec4<f32>, low: vec3<f32>, high: vec3<f32>) -> bool {
     return dot(plane.xyz, support) + plane.w < -margin;
 }
 
-fn water_output(vertex: u32, instance: u32) -> WaterOutput {
-    let leaf = water_leaf_terrain(instance);
+fn water_output(index: u32, instance: u32) -> WaterOutput {
+    let raw = index >= WATER_RAW_VERTEX;
+    let vertex = select(index, index - WATER_RAW_VERTEX, raw);
+    var listed = instance;
+    if !raw {
+        listed = water_leaf_order[WATER_LIST_ORDER + instance];
+    }
+    let leaf = water_leaf_terrain(listed);
     use_terrain(leaf.x);
     let triangle = surface_leaf(leaf.y);
     var output: WaterOutput;
-    if !water_leaf_seen(min(min(triangle.a, triangle.b), triangle.c),
-            max(max(triangle.a, triangle.b), triangle.c)) {
-        output.clip_position = vec4<f32>(2.0, 2.0, 2.0, 1.0);
-        return output;
-    }
     let local = surface_vertex(triangle, vertex);
     output.terrain = leaf.x;
     let ground = terrain_level_height(local, 0u);
@@ -753,6 +808,15 @@ fn water_eddy_froude(speed: f32, slope: f32, depth: f32) -> f32 {
 }
 
 @group(1) @binding(0) var<storage, read_write> water_leaf_args: array<u32>;
+@group(1) @binding(60) var<storage, read_write> water_leaf_list: array<u32>;
+
+fn water_leaf_draw(at: u32, instances: u32, first: u32) {
+    water_leaf_args[at] = SURFACE_LEAF_INDICES;
+    water_leaf_args[at + 1u] = instances;
+    water_leaf_args[at + 2u] = first;
+    water_leaf_args[at + 3u] = 0u;
+    water_leaf_args[at + 4u] = 0u;
+}
 
 @compute @workgroup_size(1)
 fn cs_water_leaf_args() {
@@ -764,9 +828,114 @@ fn cs_water_leaf_args() {
         water_leaf_args[WATER_LEAF_FIRST + 2u * terrain + 1u] = count;
         total += count;
     }
-    water_leaf_args[0] = SURFACE_LEAF_INDICES;
-    water_leaf_args[1] = total;
-    water_leaf_args[2] = 0u;
-    water_leaf_args[3] = 0u;
-    water_leaf_args[4] = 0u;
+    let groups = total / WATER_LIST_GROUP + u32(total % WATER_LIST_GROUP != 0u);
+    let listed = total <= water.terrains.y && groups <= WATER_LIST_GROUPS;
+    water_leaf_draw(0u, total, SURFACE_LEAF_INDICES);
+    water_leaf_draw(WATER_LEAF_UNLISTED, select(total, 0u, listed), SURFACE_LEAF_INDICES);
+    water_leaf_args[WATER_LEAF_TOTAL] = total;
+    water_leaf_args[WATER_LEAF_DISPATCH] = select(0u, groups, listed);
+    water_leaf_args[WATER_LEAF_DISPATCH + 1u] = 1u;
+    water_leaf_args[WATER_LEAF_DISPATCH + 2u] = 1u;
+}
+
+fn water_leaf_drawn(leaf: u32) -> bool {
+    let at = water_leaf_terrain(leaf);
+    use_terrain(at.x);
+    let triangle = surface_leaf(at.y);
+    return water_leaf_seen(min(min(triangle.a, triangle.b), triangle.c),
+        max(max(triangle.a, triangle.b), triangle.c));
+}
+
+fn water_list_masks() -> u32 {
+    return WATER_LIST_ORDER + water.terrains.y;
+}
+
+fn water_list_offsets() -> u32 {
+    return water_list_masks() + 2u * (water.terrains.y / WATER_LIST_GROUP);
+}
+
+var<workgroup> water_marks: array<atomic<u32>, 2>;
+
+@compute @workgroup_size(WATER_LIST_GROUP)
+fn cs_water_leaf_mark(@builtin(local_invocation_index) lane: u32,
+        @builtin(workgroup_id) group: vec3<u32>) {
+    let leaf = group.x * WATER_LIST_GROUP + lane;
+    if leaf < water_leaf_spans[WATER_LEAF_TOTAL] && water_leaf_drawn(leaf) {
+        atomicOr(&water_marks[lane / 32u], 1u << (lane % 32u));
+    }
+    workgroupBarrier();
+    if lane < 2u {
+        water_leaf_list[water_list_masks() + 2u * group.x + lane] = atomicLoad(&water_marks[lane]);
+    }
+}
+
+var<workgroup> water_scan_chunks: u32;
+var<workgroup> water_sums: array<u32, WATER_SCAN_GROUP>;
+
+fn water_chunk_marked(chunk: u32) -> u32 {
+    let masks = water_list_masks() + 2u * chunk;
+    return countOneBits(water_leaf_list[masks]) + countOneBits(water_leaf_list[masks + 1u]);
+}
+
+fn water_listed_draw(instances: u32) {
+    water_leaf_list[0] = SURFACE_LEAF_INDICES;
+    water_leaf_list[1] = instances;
+    water_leaf_list[2] = 0u;
+    water_leaf_list[3] = 0u;
+    water_leaf_list[4] = 0u;
+}
+
+@compute @workgroup_size(WATER_SCAN_GROUP)
+fn cs_water_leaf_scan(@builtin(local_invocation_index) lane: u32) {
+    if lane == 0u {
+        water_scan_chunks = water_leaf_spans[WATER_LEAF_DISPATCH];
+    }
+    let chunks = workgroupUniformLoad(&water_scan_chunks);
+    if chunks == 0u {
+        if lane == 0u {
+            water_listed_draw(0u);
+        }
+        return;
+    }
+    let per = chunks / WATER_SCAN_GROUP + u32(chunks % WATER_SCAN_GROUP != 0u);
+    let start = min(lane * per, chunks);
+    let end = min(start + per, chunks);
+    var sum = 0u;
+    for (var chunk = start; chunk < end; chunk++) {
+        sum += water_chunk_marked(chunk);
+    }
+    water_sums[lane] = sum;
+    workgroupBarrier();
+    for (var step = 1u; step < WATER_SCAN_GROUP; step <<= 1u) {
+        let added = select(0u, water_sums[max(lane, step) - step], lane >= step);
+        workgroupBarrier();
+        water_sums[lane] += added;
+        workgroupBarrier();
+    }
+    let offsets = water_list_offsets();
+    var offset = water_sums[lane] - sum;
+    for (var chunk = start; chunk < end; chunk++) {
+        water_leaf_list[offsets + chunk] = offset;
+        offset += water_chunk_marked(chunk);
+    }
+    if lane == WATER_SCAN_GROUP - 1u {
+        water_listed_draw(water_sums[lane]);
+    }
+}
+
+@compute @workgroup_size(WATER_LIST_GROUP)
+fn cs_water_leaf_list(@builtin(local_invocation_index) lane: u32,
+        @builtin(workgroup_id) group: vec3<u32>) {
+    let masks = water_list_masks() + 2u * group.x;
+    let low = water_leaf_list[masks];
+    let high = water_leaf_list[masks + 1u];
+    let bit = lane % 32u;
+    let below = (1u << bit) - 1u;
+    if ((select(low, high, lane >= 32u) >> bit) & 1u) == 0u {
+        return;
+    }
+    let before = select(countOneBits(low & below), countOneBits(low) + countOneBits(high & below),
+        lane >= 32u);
+    let at = WATER_LIST_ORDER + water_leaf_list[water_list_offsets() + group.x] + before;
+    water_leaf_list[at] = group.x * WATER_LIST_GROUP + lane;
 }
