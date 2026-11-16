@@ -6,11 +6,23 @@ use engine_core::{
 use glam::Vec3;
 
 use crate::bricks::game::HighlandsStats;
-use crate::jobs::{BOULDER, CAVE_POINTS, CONIFER, CONIFER_SHADOW, trees};
+use crate::jobs::photographs::{ATLAS_MAPS, BARK_MAPS, Photographs};
+use crate::jobs::trees::{self, PLANTS};
+use crate::jobs::{BOULDER, CAVE_POINTS, PLANT, sprays};
 
 const BOULDERS: u32 = 5;
 
-const SPRUCES: u32 = 3;
+const ROCK_SHAPE: u32 = 8;
+
+const SHAPED_ROCKS: [(&str, u32, u32); 3] = [("outcrop", 1, 4), ("ledge", 2, 4), ("block", 3, 6)];
+
+const ATLASES: [&str; 3] = ["spruce_twigs", "pine_twigs", "undergrowth"];
+
+const TWIGS: [&str; 2] = ["spruce_twigs", "pine_twigs"];
+
+const LEAVES: &str = "birch_leaves";
+
+const BARKS: [&str; 3] = ["spruce", "pine", "birch"];
 
 #[derive(Resource, Default)]
 pub(crate) struct Content {
@@ -73,6 +85,7 @@ impl Content {
 pub(crate) fn provide_land(
     (assets, records, provided): (&mut AssetLibrary, &mut RecordExchange, &mut ProvidedAssets),
     (content, jobs): (&mut Content, &mut Jobs<'_, '_>),
+    photographs: &Photographs,
 ) -> Result<(), Error> {
     let boulders = (0..BOULDERS)
         .map(|seed| content.ask((&mut *jobs, &mut *assets), &BOULDER, &seed.to_le_bytes()))
@@ -81,24 +94,56 @@ pub(crate) fn provide_land(
         provided.provide_mesh(format!("boulder{seed}"), mesh);
     }
     content.boulders = boulders;
-    provided.provide_texture("bark_atlas", trees::bark_atlas(records, assets)?);
-    for seed in 0..SPRUCES {
-        for detail in 0..trees::DETAIL_LEVELS {
-            let mut identity = seed.to_le_bytes().to_vec();
-            identity.extend_from_slice(&(detail as u32).to_le_bytes());
-            let mesh = content.ask((&mut *jobs, &mut *assets), &CONIFER, &identity)?;
-            let name = match detail {
-                0 => format!("spruce{seed}"),
-                _ => format!("spruce{seed}_lod{detail}"),
-            };
-            provided.provide_mesh(name, mesh);
+    for (name, shape, count) in SHAPED_ROCKS {
+        for seed in 0..count {
+            let rock = (shape << ROCK_SHAPE) | seed;
+            let mesh = content.ask((&mut *jobs, &mut *assets), &BOULDER, &rock.to_le_bytes())?;
+            provided.provide_mesh(format!("{name}{seed}"), mesh);
         }
-        let shadow = content.ask(
-            (&mut *jobs, &mut *assets),
-            &CONIFER_SHADOW,
-            &seed.to_le_bytes(),
-        )?;
-        provided.provide_mesh(format!("spruce{seed}_shadow"), shadow);
+    }
+    provide_plants((assets, records, provided), (content, jobs), photographs)
+}
+
+fn provide_plants(
+    (assets, records, provided): (&mut AssetLibrary, &mut RecordExchange, &mut ProvidedAssets),
+    (content, jobs): (&mut Content, &mut Jobs<'_, '_>),
+    photographs: &Photographs,
+) -> Result<(), Error> {
+    for bark in BARKS {
+        let textures =
+            photographs.textures((&mut *records, &mut *assets), ("bark", bark), &BARK_MAPS)?;
+        for (&(map, _), texture) in BARK_MAPS.iter().zip(textures) {
+            provided.provide_texture(format!("{bark}_bark_{map}"), texture);
+        }
+    }
+    for atlas in ATLASES {
+        let textures =
+            photographs.textures((&mut *records, &mut *assets), ("plants", atlas), &ATLAS_MAPS)?;
+        for (&(map, _), texture) in ATLAS_MAPS.iter().zip(textures) {
+            provided.provide_texture(format!("{atlas}_{map}"), texture);
+        }
+    }
+    let mut atlases = Vec::with_capacity(TWIGS.len() + 1);
+    for twigs in TWIGS {
+        atlases.push((twigs, photographs.atlas(twigs)?));
+    }
+    let textures = photographs.sprays((&mut *records, &mut *assets), LEAVES)?;
+    for (&(map, _), texture) in ATLAS_MAPS.iter().zip(textures) {
+        provided.provide_texture(format!("{LEAVES}_{map}"), texture);
+    }
+    atlases.push((LEAVES, sprays::atlas()));
+    for (index, plant) in PLANTS.iter().enumerate() {
+        let atlas = atlases
+            .iter()
+            .find(|(twigs, _)| plant.atlas() == Some(*twigs))
+            .map(|(_, atlas)| atlas);
+        for &piece in plant.pieces() {
+            for detail in 0..plant.details() {
+                let input = trees::input(index, detail, piece, atlas);
+                let mesh = content.ask((&mut *jobs, &mut *assets), &PLANT, &input)?;
+                provided.provide_mesh(plant.mesh(piece, detail), mesh);
+            }
+        }
     }
     Ok(())
 }

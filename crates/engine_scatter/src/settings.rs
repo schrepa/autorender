@@ -2,13 +2,11 @@ use std::borrow::Cow;
 
 use engine_core::__private::{schemars, serde};
 use engine_core::{
-    Cut, Error, ErrorCode, Expected, GeometryHandle, InvalidSetting, MaterialHandle, Rule, Setting,
-    settings, stats,
+    Cut, Error, ErrorCode, GeometryHandle, InvalidSetting, MaterialHandle, Rule, Setting, settings,
+    stats,
 };
 
-pub const MAX_OCCUPANCY_LEVELS: u32 = 8;
-
-pub const MAX_PLACEMENT_LODS: usize = 4;
+pub const MAX_PLACEMENT_LODS: usize = 7;
 
 pub const MAX_PLACEMENT_PARTS: usize = 2;
 
@@ -27,15 +25,17 @@ settings! {
 }
 
 settings! {
-    #[section("occupancy")]
-    #[switch(on)]
+    #[section("canopy")]
+    #[derive(Copy)]
     #[serde(deny_unknown_fields)]
-    #[schemars(rename = "SceneOccupancy")]
-    pub struct OccupancySettings {
-        pub radius: f32 = 512.0 => range(64.0, 4096.0),
-        pub resolution: u32 = 1024 => multiple(32, 128, 4096),
-        pub levels: u32 = 4 => range(1, MAX_OCCUPANCY_LEVELS),
-        pub strength: f32 = 0.75 => range(0.0, 1.0),
+    #[schemars(rename = "SceneCanopy")]
+    pub struct CanopySettings {
+        pub handover_pixels: f32 = 1.0 => range(0.25, 256.0),
+        pub sky_through: f32 = 0.25 => range(0.0, 1.0),
+        pub sun_through: f32 = 0.1 => range(0.0, 1.0),
+        pub crown_light: f32 = 0.6 => range(0.0, 1.0),
+        pub roughness: f32 = 0.85 => range(0.03, 1.0),
+        pub relief: f32 = 1.0 => range(0.0, 4.0),
     }
 }
 
@@ -56,24 +56,12 @@ settings! {
 pub struct PlacedLook {
     pub mesh: GeometryHandle,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub lods: Vec<PlacedLod>,
+    pub lods: Vec<GeometryHandle>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub parts: Vec<PlacedPart>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub shadow: Option<GeometryHandle>,
     #[serde(default, skip_serializing_if = "is_zero")]
     #[schemars(transform = engine_core::stated(SWAY))]
     pub sway: f32,
-}
-
-#[derive(
-    Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(crate = "engine_core::__private::serde", deny_unknown_fields)]
-#[schemars(crate = "engine_core::__private::schemars")]
-pub struct PlacedLod {
-    pub mesh: GeometryHandle,
-    pub error: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
@@ -91,11 +79,13 @@ stats! {
         pub placed_far_objects: u32,
         pub placed_impostors: u32,
         pub dropped_objects: u32,
+        pub canopy_maps: u32,
+        pub canopy_waiting: u32,
+        pub canopy_failure: Option<String>,
         pub impostors: Cut,
         pub parts: Cut,
         pub lods: Cut,
-        pub occupancy_redraws: u32,
-        pub occupancy_averages: u32,
+        pub measured_levels: Vec<Vec<f32>>,
     }
 }
 
@@ -110,7 +100,7 @@ fn refused(field: String, error: Error) -> InvalidSetting {
     }
 }
 
-fn lods_sorted(at: &str, lods: &[PlacedLod]) -> Result<(), InvalidSetting> {
+fn lods_fit(at: &str, lods: &[GeometryHandle]) -> Result<(), InvalidSetting> {
     if lods.len() > MAX_PLACEMENT_LODS {
         return Err(refused(
             format!("{at}.lods"),
@@ -118,19 +108,6 @@ fn lods_sorted(at: &str, lods: &[PlacedLod]) -> Result<(), InvalidSetting> {
                 .at_most(MAX_PLACEMENT_LODS as u64)
                 .got(lods.len()),
         ));
-    }
-    let mut last = 0.0;
-    for (level, lod) in lods.iter().enumerate() {
-        let error = lod.error;
-        if !(error.is_finite() && error > last) {
-            return Err(refused(
-                format!("{at}.lods[{level}].error"),
-                Error::new(ErrorCode::OutOfRange, "$")
-                    .expected(Expected::Sorted)
-                    .got(error),
-            ));
-        }
-        last = error;
     }
     Ok(())
 }
@@ -164,7 +141,7 @@ fn check_looks(settings: &ScatterSettings) -> Result<(), InvalidSetting> {
         look.sway
             .check("sway", SWAY)
             .map_err(|invalid| invalid.within("looks").indexed("looks", index))?;
-        lods_sorted(&at, &look.lods)?;
+        lods_fit(&at, &look.lods)?;
         parts_fit(&at, &look.parts, 1 + look.lods.len())?;
     }
     Ok(())

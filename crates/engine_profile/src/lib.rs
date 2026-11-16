@@ -23,6 +23,8 @@ mod collector;
 #[cfg(feature = "enabled")]
 mod rows;
 #[cfg(feature = "enabled")]
+mod threads;
+#[cfg(feature = "enabled")]
 pub use allocator::{
     ALWAYS_SAMPLED_BYTES, AllocationSnapshot, SAMPLE_EVERY, TrackingAllocator, allocation_snapshot,
     sample_allocations,
@@ -39,6 +41,8 @@ pub use rows::{
     RowScope, frame_mark, mark_speed, now_ms, row, take_rows, take_slow, take_speed, take_waits,
     tally, timed, waited,
 };
+#[cfg(feature = "enabled")]
+pub use threads::{announce_thread, listen_to_threads};
 
 #[cfg(not(feature = "enabled"))]
 mod disabled {
@@ -90,6 +94,8 @@ mod disabled {
     pub fn waited(_: &str, _: f64) {}
     #[inline(always)]
     pub fn mark_speed() {}
+    #[inline(always)]
+    pub fn announce_thread(_: std::fmt::Arguments<'_>) {}
     pub fn take_rows() -> Vec<crate::Row> {
         Vec::new()
     }

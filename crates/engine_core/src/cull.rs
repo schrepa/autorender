@@ -4,7 +4,7 @@ use bevy_ecs::world::World;
 use glam::{Mat4, Vec3, Vec4};
 
 use crate::presentation_bounds::MAX_COEFFICIENT;
-use crate::{DrawnState, DrawnTable, settings};
+use crate::{DrawnTable, settings};
 
 settings! {
     #[section("culling")]
@@ -65,12 +65,9 @@ pub fn frustum_sees(planes: &[Vec4], low: Vec3, high: Vec3) -> bool {
 
 pub(crate) fn settle(world: &mut World) {
     let culling = world.get_resource::<Culling>().cloned().unwrap_or_default();
-    let drawn = world.get_resource::<DrawnTable>().map_or(0, |table| {
-        table
-            .states()
-            .filter(|(_, state)| matches!(state, DrawnState::Drawn { .. }))
-            .count()
-    });
+    let drawn = world
+        .get_resource::<DrawnTable>()
+        .map_or(0, DrawnTable::drawn_count);
     let budget = culling.budget();
     let plan = CullPlan {
         frustum: culling.frustum,

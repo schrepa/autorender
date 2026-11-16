@@ -5,7 +5,7 @@ use engine_heightfield::tile::TileJob;
 
 use crate::TileWater;
 use crate::jobs::drawn::{DrawHead, DrawnWater, FloodHead, landed};
-use crate::state::{Drawing, HeldWater, WaterState, Work};
+use crate::state::{HeldWater, WaterState, Work};
 
 pub(crate) type DrawnWork = Background<Option<(TileWater, DrawnWater)>>;
 
@@ -86,9 +86,9 @@ pub(crate) fn draw(
             let Some(held) = terrain.held.get_mut(&key) else {
                 continue;
             };
-            let (work, drawing) = match held.work.take() {
+            let (work, flood) = match held.work.take() {
                 Some(Work::Draw(work)) => (work, None),
-                Some(Work::Redraw(work, drawing)) => (work, Some(drawing)),
+                Some(Work::Redraw(work, to)) => (work, Some(to)),
                 other @ (Some(Work::Base(_)) | None) => {
                     held.work = other;
                     continue;
@@ -96,9 +96,9 @@ pub(crate) fn draw(
             };
             let made = match work.take(&*records) {
                 Taken::Waiting(work) => {
-                    held.work = Some(match drawing {
+                    held.work = Some(match flood {
                         None => Work::Draw(work),
-                        Some(drawing) => Work::Redraw(work, drawing),
+                        Some(to) => Work::Redraw(work, to),
                     });
                     continue;
                 }
@@ -106,7 +106,7 @@ pub(crate) fn draw(
                 Taken::Failed(error) => Err(error),
             };
             landed_any = true;
-            match drawing {
+            match flood {
                 None => match made {
                     Ok(made) => {
                         held.keep_made();
@@ -118,29 +118,17 @@ pub(crate) fn draw(
                         held.made = Some(Err(error));
                     }
                 },
-                Some(drawing) => match (made.map_err(|error| error.to_string()), drawing) {
-                    (Ok(made), Drawing::Given(record)) => {
-                        held.hold(made);
-                        held.watered = None;
-                        held.given = Some(record);
-                    }
-                    (Ok(made), Drawing::Flood(to)) => {
-                        if made.is_some() {
+                Some(to) => {
+                    held.watered = to;
+                    match made {
+                        Ok(Some(made)) => {
                             state.rewatered_tiles += 1;
-                            held.hold(made);
-                            held.given = None;
+                            held.hold(Some(made));
                         }
-                        held.watered = to;
+                        Ok(None) => {}
+                        Err(error) => state.failures.record(frame, error.to_string()),
                     }
-                    (Err(error), Drawing::Given(_)) => {
-                        terrain.settled.water_failed(key, &error);
-                        state.failures.record(frame, error);
-                    }
-                    (Err(error), Drawing::Flood(to)) => {
-                        held.watered = to;
-                        state.failures.record(frame, error);
-                    }
-                },
+                }
             }
             terrain.touch(key);
         }

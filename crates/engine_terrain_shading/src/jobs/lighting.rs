@@ -9,16 +9,31 @@ pub const DIRECTIONS: usize = 16;
 
 pub const SKY_PLANES: usize = 4;
 
-pub const HORIZON_PLANES: usize = 2 * DIRECTIONS + 1;
+pub const SECTOR_MAPS: usize = 4;
+
+pub const CELL_PEAKS: usize = 4;
+
+pub const NEAR_CELLS: usize = 3;
+
+pub const HORIZON_PLANES: usize = 4;
 
 pub const SKY_LAYERS: usize = 1;
 
-pub const HORIZON_LAYERS: usize = DIRECTIONS / 2 + 1;
+pub const HORIZON_LAYERS: usize = 1;
 
 const SLOPE_TOLERANCE: f32 = 1.0e-4;
 
-const FARTHEST: f32 = 6.0e4;
 const NO_CREST: f32 = -6.0e4;
+
+const NODE_REACH: f32 = 8.0;
+const HEADING_SLACK: f32 = 0.01;
+const HEIGHT_SLACK: f32 = 0.01;
+const SLOPE_SLACK: f32 = 1.0e-5;
+
+const _: () = assert!(
+    SECTOR_MAPS * SECTOR_MAPS == DIRECTIONS,
+    "sector_maps_fill_one_plane"
+);
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct TerrainLighting {
@@ -73,17 +88,7 @@ impl TerrainLighting {
         let plane = |index: usize| Some(plane(&self.horizons, self.horizon_size, index));
         let mut texels =
             Vec::with_capacity(HORIZON_LAYERS * 8 * self.horizons.len() / HORIZON_PLANES);
-        for pair in 0..DIRECTIONS / 2 {
-            let (first, second) = (2 * pair, 2 * pair + 1);
-            let channels = [
-                plane(first),
-                plane(second),
-                plane(DIRECTIONS + first),
-                plane(DIRECTIONS + second),
-            ];
-            interleave(&channels, 0, &mut texels, u16::to_le_bytes);
-        }
-        let ground = [plane(2 * DIRECTIONS), None, None, None];
+        let ground = [plane(0), plane(1), plane(2), plane(3)];
         interleave(&ground, 0, &mut texels, u16::to_le_bytes);
         texels
     }
@@ -131,6 +136,151 @@ impl Ground<'_> {
         let far = c + (d - c) * tx;
         near + (far - near) * tz
     }
+
+    fn span(&self, low: [f32; 2], high: [f32; 2]) -> [f32; 2] {
+        let columns = self.samples[0] as usize;
+        let last = self.samples.map(|count| (count - 1) as f32);
+        let first =
+            [0, 1].map(|axis| clamp((low[axis] / self.spacing).floor(), 0.0, last[axis]) as usize);
+        let end =
+            [0, 1].map(|axis| clamp((high[axis] / self.spacing).ceil(), 0.0, last[axis]) as usize);
+        let mut span = [f32::INFINITY, f32::NEG_INFINITY];
+        for z in first[1]..=end[1] {
+            for &height in &self.heights[z * columns + first[0]..=z * columns + end[0]] {
+                span = [min(span[0], height), max(span[1], height)];
+            }
+        }
+        span
+    }
+}
+
+struct Wedge {
+    along: [f32; 2],
+    sin: f32,
+    cos: f32,
+}
+
+impl Wedge {
+    fn new(direction: usize) -> Self {
+        let (sin, cos) = sin_cos(direction as f32 * (TAU / DIRECTIONS as f32));
+        let (edge_sin, edge_cos) = sin_cos(0.5 * TAU / DIRECTIONS as f32 + HEADING_SLACK);
+        Self {
+            along: [cos, sin],
+            sin: edge_sin,
+            cos: edge_cos,
+        }
+    }
+}
+
+struct Peaks {
+    cell: [f32; 2],
+    levels: Vec<(usize, Vec<f32>)>,
+}
+
+impl Peaks {
+    fn new(ground: &Ground<'_>, extent: [f32; 2], side: usize) -> Self {
+        let cell = [extent[0] / side as f32, extent[1] / side as f32];
+        let mut base = Vec::with_capacity(side * side);
+        for z in 0..side {
+            for x in 0..side {
+                let [_, high] = ground.span(
+                    [x as f32 * cell[0], z as f32 * cell[1]],
+                    [(x + 1) as f32 * cell[0], (z + 1) as f32 * cell[1]],
+                );
+                base.push(high + HEIGHT_SLACK);
+            }
+        }
+        let mut levels = vec![(side, base)];
+        loop {
+            let (side, finer) = &levels[levels.len() - 1];
+            let side = *side;
+            if side <= 1 {
+                break;
+            }
+            let half = side.div_ceil(2);
+            let coarser = (0..half * half)
+                .map(|at| {
+                    let (x, z) = (2 * (at % half), 2 * (at / half));
+                    let mut peak = f32::NEG_INFINITY;
+                    for z in z..(z + 2).min(side) {
+                        for x in x..(x + 2).min(side) {
+                            peak = max(peak, finer[z * side + x]);
+                        }
+                    }
+                    peak
+                })
+                .collect();
+            levels.push((half, coarser));
+        }
+        Self { cell, levels }
+    }
+
+    fn clears(
+        &self,
+        at: [usize; 2],
+        heights: [f32; 2],
+        wedge: &Wedge,
+        nodes: &mut Vec<(usize, usize, usize)>,
+    ) -> [f32; 2] {
+        let side = self.levels[0].0;
+        let wide = self.cell.map(|cell| CELL_PEAKS as f32 * cell);
+        let middle = [0, 1].map(|axis| (at[axis] as f32 + 0.5) * wide[axis]);
+        let half = [0, 1].map(|axis| 0.5 * wide[axis] + self.cell[axis]);
+        let low = at.map(|cell| (CELL_PEAKS * cell + 1).saturating_sub(CELL_PEAKS * NEAR_CELLS));
+        let high = at.map(|cell| CELL_PEAKS * (cell + NEAR_CELLS + 1) - 1);
+        let reach = (half[0] * half[0] + half[1] * half[1]).sqrt();
+        let mut best = [0.0_f32; 2];
+        nodes.clear();
+        nodes.push((self.levels.len() - 1, 0, 0));
+        while let Some((level, x, z)) = nodes.pop() {
+            let first = [x << level, z << level];
+            let end = [((x + 1) << level).min(side), ((z + 1) << level).min(side)];
+            if (0..2).all(|axis| first[axis] >= low[axis] && end[axis] <= high[axis]) {
+                continue;
+            }
+            let node = [0, 1].map(|axis| 0.5 * (end[axis] - first[axis]) as f32 * self.cell[axis]);
+            let offset = [0, 1].map(|axis| {
+                0.5 * (end[axis] + first[axis]) as f32 * self.cell[axis] - middle[axis]
+            });
+            let gap = [0, 1].map(|axis| max(offset[axis].abs() - half[axis] - node[axis], 0.0));
+            let distance = (gap[0] * gap[0] + gap[1] * gap[1]).sqrt();
+            let (across, peaks) = &self.levels[level];
+            let peak = peaks[z * across + x];
+            let over = heights.map(|height| peak - height);
+            if over[0] <= best[0] * distance && over[1] <= best[1] * distance {
+                continue;
+            }
+            let along = offset[0] * wedge.along[0] + offset[1] * wedge.along[1];
+            let aside = (offset[0] * wedge.along[1] - offset[1] * wedge.along[0]).abs();
+            let edge = aside * wedge.cos - along * wedge.sin;
+            let past = if along * wedge.cos + aside * wedge.sin >= 0.0 {
+                edge
+            } else {
+                (offset[0] * offset[0] + offset[1] * offset[1]).sqrt()
+            };
+            if edge > 0.0 && past > reach + (node[0] * node[0] + node[1] * node[1]).sqrt() {
+                continue;
+            }
+            if level == 0 || NODE_REACH * 2.0 * max(node[0], node[1]) <= distance {
+                for plane in 0..2 {
+                    best[plane] = max(best[plane], over[plane] / distance);
+                }
+                continue;
+            }
+            let finer = self.levels[level - 1].0;
+            for (x, z) in [
+                (2 * x, 2 * z),
+                (2 * x + 1, 2 * z),
+                (2 * x, 2 * z + 1),
+                (2 * x + 1, 2 * z + 1),
+            ] {
+                if x < finer && z < finer {
+                    nodes.push((level - 1, x, z));
+                }
+            }
+        }
+        best
+    }
 }
 
 struct Sweep {
@@ -140,8 +290,6 @@ struct Sweep {
     step: f32,
     size: [usize; 2],
     slopes: Vec<f32>,
-    rises: Vec<f32>,
-    distances: Vec<f32>,
 }
 
 struct Between {
@@ -183,8 +331,6 @@ impl Sweep {
             step,
             size,
             slopes: vec![0.0; size[0] * size[1]],
-            rises: vec![0.0; size[0] * size[1]],
-            distances: vec![0.0; size[0] * size[1]],
         };
         let mut heights = vec![0.0_f32; size[0]];
         let mut hull: Vec<(f32, f32)> = Vec::with_capacity(size[0]);
@@ -220,8 +366,6 @@ impl Sweep {
                 } else {
                     NO_CREST
                 };
-                sweep.rises[row + sample] = rise;
-                sweep.distances[row + sample] = distance;
                 hull.push((a, height));
             }
         }
@@ -283,10 +427,7 @@ pub fn light(
     let center = |step: [f32; 2], x: usize, z: usize| {
         ((x as f32 + 0.5) * step[0], (z as f32 + 0.5) * step[1])
     };
-    let finest = min(
-        min(sky_step[0], sky_step[1]),
-        min(horizon_step[0], horizon_step[1]),
-    );
+    let finest = min(sky_step[0], sky_step[1]);
     let mut sky = vec![0_u8; SKY_PLANES * sky_count * sky_count];
     let sky_area = sky_count * sky_count;
     let mut texels = vec![SkyTexel::default(); sky_area];
@@ -313,22 +454,6 @@ pub fn light(
                 accumulate(&mut texels[z * sky_count + x], [cos, sin], slope);
             }
         }
-        for z in 0..horizon_count {
-            for x in 0..horizon_count {
-                let (px, pz) = center(horizon_step, x, z);
-                let place = sweep.between(px, pz);
-                let rise = sweep.mix(&sweep.rises, &place);
-                let distance = sweep.mix(&sweep.distances, &place);
-                let scale = if distance > FARTHEST {
-                    FARTHEST / distance
-                } else {
-                    1.0
-                };
-                let at = z * horizon_count + x;
-                horizons[direction * horizon_area + at] = half(max(rise * scale, NO_CREST));
-                horizons[(DIRECTIONS + direction) * horizon_area + at] = half(distance * scale);
-            }
-        }
     }
     for (at, texel) in texels.iter().enumerate() {
         sky[at] = unorm(texel.seen / max(texel.open, 1.0e-6));
@@ -348,7 +473,38 @@ pub fn light(
         .iter()
         .fold(f32::INFINITY, |low, &height| min(low, height));
     for (at, &height) in grounds.iter().enumerate() {
-        horizons[2 * DIRECTIONS * horizon_area + at] = half(height - lowest);
+        horizons[at] = half(height - lowest);
+    }
+    let cells = horizon_count / SECTOR_MAPS;
+    if cells > 0 {
+        let peaks = Peaks::new(ground, extent, cells * CELL_PEAKS);
+        let wide = [extent[0] / cells as f32, extent[1] / cells as f32];
+        let wedges: Vec<Wedge> = (0..DIRECTIONS).map(Wedge::new).collect();
+        let mut nodes = Vec::new();
+        for z in 0..cells {
+            for x in 0..cells {
+                let [low, high] = ground.span(
+                    [x as f32 * wide[0], z as f32 * wide[1]],
+                    [(x + 1) as f32 * wide[0], (z + 1) as f32 * wide[1]],
+                );
+                let floor = half_below(low - HEIGHT_SLACK - lowest);
+                let top = half_above(high + HEIGHT_SLACK - lowest);
+                let at = 3 * horizon_area + z * horizon_count + x;
+                horizons[at] = floor;
+                horizons[at + cells] = top;
+                let heights = [lowest + whole(floor), lowest + whole(top)];
+                for (direction, wedge) in wedges.iter().enumerate() {
+                    let slopes = peaks.clears([x, z], heights, wedge, &mut nodes);
+                    let map = (direction / SECTOR_MAPS * cells + z) * horizon_count
+                        + direction % SECTOR_MAPS * cells
+                        + x;
+                    for (plane, slope) in slopes.into_iter().enumerate() {
+                        horizons[(1 + plane) * horizon_area + map] =
+                            half_above(slope * (1.0 + SLOPE_SLACK));
+                    }
+                }
+            }
+        }
     }
     TerrainLighting {
         sky_size,
@@ -408,6 +564,44 @@ pub(crate) fn normalized(vector: [f32; 3]) -> [f32; 3] {
 
 pub(crate) fn unorm(value: f32) -> u8 {
     (clamp(value, 0.0, 1.0) * 255.0 + 0.5) as u8
+}
+
+fn whole(half: u16) -> f32 {
+    let sign = if half & 0x8000 == 0 { 1.0 } else { -1.0 };
+    let exponent = i32::from((half >> 10) & 0x1f);
+    let mantissa = f32::from(half & 0x3ff);
+    let power = |exponent: i32| f32::from_bits(((exponent + 127) as u32) << 23);
+    match exponent {
+        0 => sign * mantissa * power(-24),
+        31 => sign * f32::INFINITY,
+        _ => sign * (1024.0 + mantissa) * power(exponent - 25),
+    }
+}
+
+fn half_above(value: f32) -> u16 {
+    let nearest = half(value);
+    if whole(nearest) >= value {
+        nearest
+    } else if nearest & 0x8000 == 0 {
+        nearest + 1
+    } else if nearest == 0x8000 {
+        1
+    } else {
+        nearest - 1
+    }
+}
+
+fn half_below(value: f32) -> u16 {
+    let nearest = half(value);
+    if whole(nearest) <= value {
+        nearest
+    } else if nearest & 0x8000 != 0 {
+        nearest + 1
+    } else if nearest == 0 {
+        0x8001
+    } else {
+        nearest - 1
+    }
 }
 
 fn half(value: f32) -> u16 {

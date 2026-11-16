@@ -1,4 +1,5 @@
-use engine_math::{max, sin_cos};
+use engine_core::ViewDetail;
+use engine_math::max;
 use glam::{Vec2, Vec3};
 
 use crate::{Pyramid, TileKey};
@@ -11,18 +12,8 @@ pub struct LodRanges {
 impl LodRanges {
     pub const MIN_SPACINGS: f32 = 96.0;
 
-    pub fn new(
-        pyramid: &Pyramid,
-        pixel_error: f32,
-        viewport_height: f32,
-        vertical_fov: f32,
-    ) -> Self {
-        let (sin, cos) = sin_cos(0.5 * vertical_fov);
-        let tangent = sin / max(cos, 1.0e-6);
-        let spacings = max(
-            viewport_height / max(2.0 * tangent * pixel_error, 1.0e-6),
-            Self::MIN_SPACINGS,
-        );
+    pub fn new(pyramid: &Pyramid, view: ViewDetail) -> Self {
+        let spacings = max(view.reach(1.0), Self::MIN_SPACINGS);
         let spacings = if spacings.is_finite() {
             spacings
         } else {

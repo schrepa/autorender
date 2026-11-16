@@ -4,7 +4,7 @@ use engine_core::Error;
 use engine_open_world_kit::ground::{TerrainEntry, TerrainTiles};
 use engine_render::{Allocation, Install, Lifetime, Prepare, Texture, wgpu};
 
-use crate::gpu::{HORIZON_RECORD_VECTORS, HORIZON_RECORDS};
+use crate::gpu::{HORIZON_RECORD_VECTORS, HORIZON_RECORDS, SUN_LEVEL_LAYERS, SUN_LEVELS};
 use crate::jobs::lighting::{HORIZON_LAYERS, TerrainLighting};
 use crate::settings::TerrainShading;
 use crate::state::Bakes;
@@ -13,6 +13,7 @@ use crate::terrain_bounce::{BOUNCE_LAYERS, BounceLevels, MOST_LEVELS};
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const WINDOW_ROW: u32 = crate::jobs::bounce::MAX_PROBES;
+pub(crate) const SUN_LAYERS: usize = (SUN_LEVELS * SUN_LEVEL_LAYERS) as usize;
 
 const _: () = assert!(
     MOST_LEVELS <= 4 * (HORIZON_RECORD_VECTORS as usize - 4),
@@ -30,6 +31,7 @@ pub(crate) struct Horizons {
     shape: Option<(u32, usize, u32)>,
     held: Vec<Option<Arc<TerrainLighting>>>,
     pub(crate) uploaded: u32,
+    pub(crate) fresh: bool,
 }
 
 impl Horizons {
@@ -39,6 +41,7 @@ impl Horizons {
             shape: None,
             held: Vec::new(),
             uploaded: 0,
+            fresh: false,
         })
     }
 
@@ -68,16 +71,17 @@ impl Horizons {
         let size = settings.shadow_resolution;
         let (count, _) = room(layers, tiles.terrains.len());
         self.shape = Some((size, count, slots));
-        let total = (HORIZON_LAYERS * count) as u32 + BOUNCE_LAYERS as u32 * slots;
+        let total = sun_base(count, slots) + SUN_LAYERS as u32;
         let allocation = cx.allocate(
             self.texture,
             wgpu::Extent3d {
                 width: size,
                 height: size,
-                depth_or_array_layers: total.max(1),
+                depth_or_array_layers: total,
             },
             1,
         );
+        self.fresh = allocation == Allocation::Fresh;
         if allocation == Allocation::Fresh || self.held.len() != count {
             self.held = vec![None; count];
         }
@@ -121,7 +125,12 @@ impl Horizons {
         self.uploaded = 0;
         self.shape = None;
         self.held.clear();
+        self.fresh = false;
     }
+}
+
+pub(crate) fn sun_base(count: usize, slots: u32) -> u32 {
+    (HORIZON_LAYERS * count) as u32 + BOUNCE_LAYERS as u32 * slots
 }
 
 pub(crate) fn records(
@@ -149,7 +158,7 @@ pub(crate) fn records(
                     size,
                     window,
                 };
-                records.extend(record(terrain, lighting, place, settings));
+                records.extend(record(terrain, lighting, place));
             }
             None => records.extend(NO_RECORD),
         }
@@ -158,17 +167,12 @@ pub(crate) fn records(
 }
 
 pub(crate) fn room(layers: u32, terrains: usize) -> (usize, u32) {
-    let layers = layers as usize;
+    let layers = (layers as usize).saturating_sub(SUN_LAYERS);
     let casting = terrains
         .min(layers / HORIZON_LAYERS)
         .min(HORIZON_RECORDS as usize / HORIZON_RECORD_VECTORS as usize);
     let slots = (layers - HORIZON_LAYERS * casting) / BOUNCE_LAYERS;
     (casting, slots as u32)
-}
-
-fn max_extent(terrain: &TerrainEntry) -> f32 {
-    let extent = terrain.pyramid.extent();
-    engine_math::max(extent.x, extent.y)
 }
 
 struct Place {
@@ -182,10 +186,8 @@ fn record(
     terrain: &TerrainEntry,
     lighting: &TerrainLighting,
     place: Place,
-    settings: &TerrainShading,
 ) -> [[f32; 4]; HORIZON_RECORD_VECTORS as usize] {
     let extent = terrain.pyramid.extent();
-    let texel = max_extent(terrain) / lighting.horizon_size as f32;
     let mut record = NO_RECORD;
     record[0] = [
         terrain.origin.x,
@@ -195,8 +197,8 @@ fn record(
     ];
     record[1] = [
         (HORIZON_LAYERS * place.index) as f32,
-        settings.shadow_softness,
-        0.1 * texel,
+        0.0,
+        0.0,
         terrain.origin.y + lighting.lowest,
     ];
     if let Some(window) = place.window {

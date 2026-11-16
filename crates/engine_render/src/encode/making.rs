@@ -174,7 +174,10 @@ impl Threads {
                 let (shared, done) = (Arc::clone(&shared), done.clone());
                 std::thread::Builder::new()
                     .name(format!("engine-pipelines-{index}"))
-                    .spawn(move || work(&shared, &done))
+                    .spawn(move || {
+                        engine_profile::announce_thread(format_args!("Pipelines {index}"));
+                        work(&shared, &done);
+                    })
                     .ok()
             })
             .collect();

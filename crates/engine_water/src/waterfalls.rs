@@ -1,192 +1,291 @@
 use bevy_ecs::prelude::*;
 use engine_core::{Spawner, Transform};
 use engine_heightfield::Fall;
-use engine_math::{GRAVITY, clamp, max};
+use engine_math::{GRAVITY, atan2, clamp, max, min};
 use engine_places_rendering::particles::{
     ParticleBlend, ParticleEmitter, ParticleLook, ParticleShape,
 };
-use glam::Vec3;
+use glam::{Quat, Vec2, Vec3};
 
-use crate::WaterBrick;
 use crate::jobs::shallow_water::DENSITY;
+use crate::settings::{WaterFallSheets, WaterFallSpray, WaterMist};
+use crate::{WaterBrick, WaterPoint};
 
-const SPLASH_WATTS: f32 = 2.0e3;
-const SPLASH_RATE: [f32; 2] = [20.0, 600.0];
-const MIST_WATTS: f32 = 1.5e5;
-const MIST_RATE: [f32; 2] = [1.0, 12.0];
-const BURST_WATTS: f32 = 6.0e4;
-const BURST_RATE: [f32; 2] = [2.0, 24.0];
+pub(crate) type FallLook = (WaterFallSheets, WaterFallSpray, WaterMist);
 
-fn jets(fall: &Fall) -> Vec<(usize, usize, f32)> {
+#[derive(Clone, Copy)]
+struct Jet {
+    lip: usize,
+    landing: usize,
+}
+
+fn whole(fall: &Fall) -> bool {
+    let count = fall.path.len();
+    count >= 2
+        && fall.times.len() == count
+        && fall.aloft.len() == count
+        && fall.widths.len() == count
+}
+
+fn jets(fall: &Fall) -> Vec<Jet> {
     let mut found = Vec::new();
     let mut leaving = None;
-    for index in 0..fall.path.len() {
-        let aloft = fall.aloft.get(index).copied().unwrap_or(false);
+    for (index, &aloft) in fall.aloft.iter().enumerate() {
         match (leaving, aloft) {
             (None, true) => leaving = Some(index),
             (Some(lip), false) => {
-                let (a, b) = (
-                    Vec3::from_array(fall.path[index - 1]),
-                    Vec3::from_array(fall.path[index]),
-                );
-                let seconds = fall.times.get(index).zip(fall.times.get(index - 1));
-                let speed = seconds.map_or(fall.speed, |(after, before)| {
-                    a.distance(b) / max(after - before, 1.0e-3)
+                found.push(Jet {
+                    lip,
+                    landing: index,
                 });
-                found.push((lip, index, speed));
                 leaving = None;
             }
-            _ => {}
+            (None, false) | (Some(_), true) => {}
         }
     }
     found
 }
 
-fn jet(flight: Vec3, speed: f32, seconds: f32, width: f32, seed: u32) -> ParticleEmitter {
+fn level(fall: &Fall, index: usize) -> Vec2 {
+    Vec2::new(fall.path[index][0], fall.path[index][2])
+}
+
+fn leaving_speed(fall: &Fall, jet: Jet, slowest: f32) -> f32 {
+    let run = level(fall, jet.lip + 1).distance(level(fall, jet.lip));
+    let seconds = max(fall.times[jet.lip + 1] - fall.times[jet.lip], 1.0e-3);
+    max(run / seconds, slowest)
+}
+
+fn carried(fall: &Fall, jet: Jet) -> f32 {
+    fall.discharge / max(fall.widths[jet.lip], 0.1)
+}
+
+fn drowned_jet(
+    fall: &Fall,
+    jet: Jet,
+    slowest: f32,
+    water: &dyn Fn(Vec2) -> Option<WaterPoint>,
+) -> bool {
+    let (lip, foot) = (level(fall, jet.lip), level(fall, jet.landing));
+    let Some(below) = water(foot) else {
+        return false;
+    };
+    let bed = |at: Vec2| water(at).map(|over| over.surface - over.depth);
+    let crest = match (bed(lip), bed(lip + lip - foot)) {
+        (Some(brink), Some(above)) => max(brink, above),
+        (Some(only), None) | (None, Some(only)) => only,
+        (None, None) => {
+            fall.path[jet.lip][1] - carried(fall, jet) / leaving_speed(fall, jet, slowest)
+        }
+    };
+    below.surface >= crest
+}
+
+pub(crate) fn drowned(
+    falls: &[Fall],
+    slowest: f32,
+    water: &dyn Fn(Vec2) -> Option<WaterPoint>,
+) -> Vec<bool> {
+    falls
+        .iter()
+        .filter(|fall| whole(fall))
+        .flat_map(|fall| {
+            jets(fall)
+                .into_iter()
+                .map(move |jet| drowned_jet(fall, jet, slowest, water))
+        })
+        .collect()
+}
+
+fn stretch(fall: &Fall, first: usize, last: usize) -> Fall {
+    if first == 0 && last + 1 == fall.path.len() {
+        return fall.clone();
+    }
+    let mut aloft = fall.aloft[first..=last].to_vec();
+    if let Some(end) = aloft.last_mut() {
+        *end = false;
+    }
+    let (ended, before) = (
+        Vec3::from_array(fall.path[last]),
+        Vec3::from_array(fall.path[last - 1]),
+    );
+    let seconds = max(fall.times[last] - fall.times[last - 1], 1.0e-3);
+    Fall {
+        top: fall.path[first],
+        bottom: fall.path[last],
+        path: fall.path[first..=last].to_vec(),
+        times: fall.times[first..=last].to_vec(),
+        aloft,
+        widths: fall.widths[first..=last].to_vec(),
+        sky: fall
+            .sky
+            .get(first..=last)
+            .map_or_else(Vec::new, <[f32]>::to_vec),
+        width: fall.widths[first],
+        area: fall.area,
+        speed: if last + 1 == fall.path.len() {
+            fall.speed
+        } else {
+            ended.distance(before) / seconds
+        },
+        discharge: fall.discharge,
+    }
+}
+
+pub(crate) fn falling(falls: &[Fall], drowned: &[bool]) -> Vec<Fall> {
+    let mut verdicts = drowned.iter().copied();
+    let mut found = Vec::new();
+    for fall in falls.iter().filter(|fall| whole(fall)) {
+        let (mut first, mut leaps) = (0, false);
+        for jet in jets(fall) {
+            if !verdicts.next().unwrap_or(false) {
+                leaps = true;
+                continue;
+            }
+            if leaps {
+                found.push(stretch(fall, first, jet.lip));
+            }
+            (first, leaps) = (jet.landing, false);
+        }
+        if leaps {
+            found.push(stretch(fall, first, fall.path.len() - 1));
+        }
+    }
+    found
+}
+
+fn seed_of(fall: &Fall, number: usize) -> u32 {
+    let [x, y, z] = fall.top.map(f32::to_bits);
+    (x.wrapping_mul(0x9e37_79b9) ^ y.wrapping_mul(0x85eb_ca6b) ^ z.wrapping_mul(0xc2b2_ae35))
+        .wrapping_add((number as u32).wrapping_mul(0x27d4_eb2f))
+}
+
+fn tinted([red, green, blue]: [f32; 3], open: f32, alpha: f32) -> [f32; 4] {
+    [red * open, green * open, blue * open, alpha]
+}
+
+struct Foot {
+    width: f32,
+    struck: f32,
+    landing: f32,
+    power: f32,
+    open: f32,
+    seed: u32,
+}
+
+fn spray(foot: &Foot, look: &WaterFallSpray) -> ParticleEmitter {
+    let thrown = clamp(look.throw * foot.landing, look.speed[0], look.speed[1]);
+    let direction = Vec3::new(0.0, 1.0, look.forward).normalize();
     ParticleEmitter {
-        rate: 30.0 + 10.0 * width,
+        rate: clamp(
+            foot.power * foot.width / look.watts,
+            look.rate[0],
+            look.rate[1],
+        ),
         look: ParticleLook {
-            lifetime: seconds,
-            speed,
-            direction: flight.normalize_or(Vec3::X),
-            spread: 0.2,
+            lifetime: 2.0 * thrown * direction.y / GRAVITY,
+            speed: thrown,
+            direction,
+            spread: look.fan,
             acceleration: Vec3::new(0.0, -GRAVITY, 0.0),
-            shape: ParticleShape::Ball,
-            extent: Vec3::splat(0.45 * width),
-            size: [0.05, 0.12],
-            color: [[0.9, 0.93, 0.97, 0.6], [0.94, 0.96, 1.0, 0.15]],
+            shape: ParticleShape::Box,
+            extent: Vec3::new(look.foot_share * foot.width, 0.0, foot.struck),
+            size: look.size,
+            color: [
+                tinted(look.color, foot.open, look.alpha),
+                tinted(look.color, foot.open, 0.0),
+            ],
             brightness: 1.0,
             blend: ParticleBlend::Alpha,
-            stretch: 0.04,
-            seed,
+            stretch: look.stretch,
+            seed: foot.seed,
             ..ParticleLook::default()
         },
         ..ParticleEmitter::default()
     }
 }
 
-fn emitters(fall: &Fall, origin: Vec3, seed: u32) -> Vec<(Transform, ParticleEmitter)> {
-    let width = fall.width;
-    let at = |point: Vec3| Transform {
-        translation: origin + point,
-        ..Transform::default()
-    };
+fn veil(foot: &Foot, strength: f32, puff: f32, look: &WaterMist) -> ParticleEmitter {
+    let alive = min(look.overlap * (1.0 + foot.width / puff), look.most);
+    ParticleEmitter {
+        rate: alive / look.seconds,
+        look: ParticleLook {
+            lifetime: look.seconds,
+            lifetime_spread: look.uneven,
+            speed: look.travel * puff / look.seconds,
+            speed_spread: look.uneven,
+            direction: Vec3::Y,
+            spread: look.fan,
+            acceleration: Vec3::ZERO,
+            shape: ParticleShape::Box,
+            extent: Vec3::new(0.5 * foot.width, look.spread * puff, look.spread * puff),
+            size: [look.growth[0] * puff, look.growth[1] * puff],
+            size_spread: look.uneven,
+            color: [
+                tinted(look.color, foot.open, look.alpha * strength),
+                tinted(look.color, foot.open, 0.0),
+            ],
+            fade_in: look.fade_in,
+            brightness: 1.0,
+            blend: ParticleBlend::Mist,
+            stretch: 0.0,
+            seed: foot.seed ^ 0x9e37_79b9,
+            ..ParticleLook::default()
+        },
+        ..ParticleEmitter::default()
+    }
+}
+
+fn emitters(
+    fall: &Fall,
+    origin: Vec3,
+    (sheets, droplets, mist): &FallLook,
+) -> Vec<(Transform, ParticleEmitter)> {
     let point = |index: usize| Vec3::from_array(fall.path[index]);
-    let sky = |index: usize| fall.sky.get(index).copied().unwrap_or(1.0);
-    let mut landings = Vec::new();
     let mut spawned = Vec::new();
-    for (number, &(lip, landing, landing_speed)) in jets(fall).iter().enumerate() {
-        let (top, bottom) = (point(lip), point(landing));
-        let flight = Vec3::new(bottom.x - top.x, 0.0, bottom.z - top.z);
-        let (reach, drop) = (flight.length(), max(top.y - bottom.y, 0.1));
-        let speed = max(reach * (GRAVITY / (2.0 * drop)).sqrt(), 0.5);
-        let seconds = (2.0 * drop / GRAVITY).sqrt();
-        let key = seed.wrapping_mul(97).wrapping_add(number as u32);
-        spawned.push((at(top), jet(flight, speed, seconds, width, key)));
-        landings.push((bottom, drop, landing_speed, sky(landing)));
-    }
-    let last = fall.path.len() - 1;
-    let clinging = jets(fall)
-        .last()
-        .is_none_or(|&(_, landing, _)| landing + 1 < last);
-    if last >= 1 && clinging && !fall.aloft.get(last - 1).copied().unwrap_or(false) {
-        let from = landings.last().map_or(point(0).y, |&(landed, ..)| landed.y);
-        landings.push((
-            point(last),
-            max(from - point(last).y, 0.1),
-            fall.speed,
-            sky(last),
-        ));
-    }
-    let puffs = clamp(width / 10.0, 0.6, 2.5);
-    for (number, &(landed, drop, landing_speed, open)) in landings.iter().enumerate() {
-        let power = DENSITY * GRAVITY * fall.discharge * drop;
-        let lit =
-            |[red, green, blue, alpha]: [f32; 4]| [red * open, green * open, blue * open, alpha];
-        let key = seed.wrapping_mul(131).wrapping_add(number as u32);
-        spawned.push((
-            at(landed),
-            ParticleEmitter {
-                rate: clamp(power / SPLASH_WATTS, SPLASH_RATE[0], SPLASH_RATE[1]),
-                look: ParticleLook {
-                    lifetime: 1.4,
-                    speed: clamp(landing_speed * 0.4, 2.0, 9.0),
-                    direction: Vec3::Y,
-                    spread: 0.9,
-                    acceleration: Vec3::new(0.0, -GRAVITY, 0.0),
-                    shape: ParticleShape::Ball,
-                    extent: Vec3::splat(0.35 * width),
-                    size: [0.06, 0.16],
-                    color: [lit([0.92, 0.95, 0.98, 0.65]), lit([0.95, 0.97, 1.0, 0.0])],
-                    brightness: 1.0,
-                    blend: ParticleBlend::Alpha,
-                    stretch: 0.05,
-                    seed: key.wrapping_mul(31) ^ 0x5bd1_e995,
-                    ..ParticleLook::default()
-                },
-                ..ParticleEmitter::default()
-            },
-        ));
-        spawned.push((
-            at(landed + Vec3::Y * 0.5),
-            ParticleEmitter {
-                rate: clamp(power / BURST_WATTS, BURST_RATE[0], BURST_RATE[1]),
-                look: ParticleLook {
-                    lifetime: 1.6,
-                    speed: clamp(landing_speed * 0.3, 2.0, 6.0),
-                    direction: Vec3::Y,
-                    spread: 1.45,
-                    acceleration: Vec3::new(0.0, 0.6, 0.0),
-                    shape: ParticleShape::Ball,
-                    extent: Vec3::splat(0.3 * width),
-                    size: [1.5 * puffs, 5.0 * puffs],
-                    color: [lit([0.94, 0.96, 1.0, 0.25]), lit([1.0, 1.0, 1.0, 0.0])],
-                    brightness: 1.0,
-                    blend: ParticleBlend::Mist,
-                    stretch: 0.0,
-                    seed: key.wrapping_mul(7) ^ 0x2c1b_3c6d,
-                    ..ParticleLook::default()
-                },
-                ..ParticleEmitter::default()
-            },
-        ));
-        spawned.push((
-            at(landed + Vec3::Y * 1.5),
-            ParticleEmitter {
-                rate: clamp(power / MIST_WATTS, MIST_RATE[0], MIST_RATE[1]),
-                look: ParticleLook {
-                    lifetime: 6.0,
-                    speed: clamp(landing_speed * 0.12, 0.5, 2.5),
-                    direction: Vec3::Y,
-                    spread: 1.3,
-                    acceleration: Vec3::new(0.0, 0.3, 0.0),
-                    shape: ParticleShape::Ball,
-                    extent: Vec3::splat(0.5 * width),
-                    size: [4.0 * puffs, 11.0 * puffs],
-                    color: [lit([0.94, 0.96, 1.0, 0.3]), lit([1.0, 1.0, 1.0, 0.0])],
-                    brightness: 1.0,
-                    blend: ParticleBlend::Mist,
-                    stretch: 0.0,
-                    seed: key ^ 0x9e37_79b9,
-                    ..ParticleLook::default()
-                },
-                ..ParticleEmitter::default()
-            },
-        ));
+    for (number, jet) in jets(fall).into_iter().enumerate() {
+        let (top, bottom) = (point(jet.lip), point(jet.landing));
+        let heading = Vec3::new(bottom.x - top.x, 0.0, bottom.z - top.z).normalize_or(Vec3::X);
+        let turned = Quat::from_rotation_y(atan2(heading.x, heading.z));
+        let placed = |at: Vec3| Transform {
+            translation: origin + at,
+            rotation: turned,
+            ..Transform::default()
+        };
+        let carried = carried(fall, jet);
+        let leaving = leaving_speed(fall, jet, sheets.slowest);
+        let drop = max(top.y - bottom.y, 0.0);
+        let head = leaving * leaving / (2.0 * GRAVITY) + drop;
+        let landing = (2.0 * GRAVITY * head).sqrt();
+        let foot = Foot {
+            width: max(fall.widths[jet.lip], 0.1),
+            struck: carried / landing + sheets.edge_spread * drop,
+            landing,
+            power: DENSITY * GRAVITY * carried * head,
+            open: fall.sky.get(jet.landing).copied().unwrap_or(1.0),
+            seed: seed_of(fall, number),
+        };
+        spawned.push((placed(bottom), spray(&foot, droplets)));
+        let strength = min((foot.power / mist.full_watts).sqrt(), 1.0);
+        if strength >= mist.least {
+            let puff = clamp(mist.puff_per_head * head, mist.puff[0], mist.puff[1]);
+            spawned.push((
+                placed(bottom + Vec3::Y * (mist.spread * puff)),
+                veil(&foot, strength, puff, mist),
+            ));
+        }
     }
     spawned
 }
 
-pub(crate) fn spawn_falls(
-    falls: &[Fall],
+pub(crate) fn spawn_fall(
+    fall: &Fall,
     origin: Vec3,
+    look: &FallLook,
     spawner: &mut Spawner<WaterBrick>,
 ) -> Vec<Entity> {
-    let mut entities = Vec::new();
-    for (index, fall) in falls.iter().enumerate() {
-        for (transform, emitter) in emitters(fall, origin, index as u32) {
-            entities.push(spawner.spawn((transform, emitter)));
-        }
-    }
-    entities
+    emitters(fall, origin, look)
+        .into_iter()
+        .map(|(transform, emitter)| spawner.spawn((transform, emitter)))
+        .collect()
 }

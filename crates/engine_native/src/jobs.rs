@@ -205,7 +205,8 @@ impl JobPool {
             }
             orders = host.take_jobs();
         }
-        if let Some(store) = &self.store {
+        if let Some(store) = &mut self.store {
+            store.save_due();
             let counters = store.counters();
             if self.reported != Some(counters) {
                 self.reported = Some(counters);

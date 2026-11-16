@@ -4,9 +4,9 @@ use std::sync::{Arc, PoisonError, RwLock};
 use bevy_ecs::prelude::*;
 use engine_core::{
     Background, Cursor, Error, Feed, FrameBudget, FrameTime, JobFailures, Jobs, RecordKey, Records,
-    Requests, Settling, Since, Spawner, Taken, VIEW_JOBS, Views, job_priority,
+    Since, Spawner, Taken, VIEW_JOBS, Views, job_priority,
 };
-use engine_heightfield::tile::{Solid, TileJob};
+use engine_heightfield::tile::TileJob;
 use engine_heightfield::{
     ErrorPyramid, Fall, HydrologyBake, Layers, Pyramid, Rivers, Stamp, TileKey, reaches,
 };
@@ -21,23 +21,16 @@ use crate::emitters::Emitters;
 use crate::flow::Running;
 use crate::jobs::drawn::{DrawnWater, is_dry};
 use crate::jobs::{DRAWN, TILE_WATER};
-use crate::settled::{Settled, Shares};
 use crate::water_blocks::Blocks;
-use crate::water_particles::Particles;
-use crate::water_sim::LiveSim;
-use crate::{RiverFlow, TileWater, Water, WaterBrick, WaterWindow};
+use crate::waves::{Swell, Waves};
+use crate::{RiverFlow, TileWater, Water, WaterBrick};
 
 pub(crate) type Watered = Option<Arc<Running>>;
 
 pub(crate) enum Work {
     Base(Background<(Arc<[u8]>, bool)>),
     Draw(DrawnWork),
-    Redraw(DrawnWork, Drawing),
-}
-
-pub(crate) enum Drawing {
-    Given(RecordKey),
-    Flood(Watered),
+    Redraw(DrawnWork, Watered),
 }
 
 pub(crate) struct HeldWater {
@@ -48,7 +41,6 @@ pub(crate) struct HeldWater {
     pub(crate) water: Option<Arc<TileWater>>,
     pub(crate) drawn: Option<Arc<DrawnWater>>,
     pub(crate) watered: Watered,
-    pub(crate) given: Option<RecordKey>,
 }
 
 impl HeldWater {
@@ -61,7 +53,6 @@ impl HeldWater {
             water: None,
             drawn: None,
             watered: None,
-            given: None,
         }
     }
 
@@ -113,17 +104,10 @@ pub(crate) struct WaterTerrain {
     pub(crate) recipe: Option<[u8; 32]>,
     pub(crate) baked: Arc<Layers>,
     pub(crate) edits: Arc<[Stamp]>,
-    pub(crate) solids: Arc<[Option<Solid>]>,
-    pub(crate) relief: u128,
     pub(crate) falls: Arc<[Fall]>,
     pub(crate) flow: Option<RiverFlow>,
-    pub(crate) window: Option<WaterWindow>,
-    pub(crate) window_moved: bool,
-    pub(crate) window_changed: Vec<[Vec2; 2]>,
-    pub(crate) settled: Settled,
     pub(crate) held: BTreeMap<TileKey, HeldWater>,
     pub(crate) touched: Feed<TileKey>,
-    pub(crate) window_cursor: Cursor,
     cursor: Cursor,
     kept: Arc<[(TileKey, engine_core::Stamp)]>,
 }
@@ -138,17 +122,10 @@ impl WaterTerrain {
             recipe: entry.recipe,
             baked: Arc::clone(baked),
             edits: Arc::clone(&entry.edits),
-            solids: Arc::clone(&entry.solids),
-            relief: entry.relief,
             falls: Arc::from(Vec::new()),
             flow: None,
-            window: None,
-            window_moved: false,
-            window_changed: Vec::new(),
-            settled: Settled::default(),
             held: BTreeMap::new(),
             touched: Feed::new(feed),
-            window_cursor: Cursor::default(),
             cursor: Cursor::default(),
             kept: Arc::from(Vec::new()),
         }
@@ -176,12 +153,10 @@ impl WaterTerrain {
 
     pub(crate) fn touch(&mut self, key: TileKey) {
         self.touched.push(key);
-        self.settled.stir(key.level == 0);
     }
 
     pub(crate) fn touch_all(&mut self) {
         self.touched.replace();
-        self.settled.stir(true);
     }
 
     pub(crate) fn tile_job(&self, key: TileKey) -> Option<TileJob> {
@@ -355,36 +330,9 @@ pub(crate) struct WaterState {
     pub(crate) emitters: BTreeMap<Entity, Emitters>,
     pub(crate) dropped: bool,
     pub(crate) failures: JobFailures,
-    pub(crate) settling: SettleQueue,
-    pub(crate) shares: Shares,
-    pub(crate) everything: Requests<Entity, ()>,
     pub(crate) blocks: Blocks,
-    pub(crate) live: LiveSim,
-    pub(crate) particles: Particles,
     pub(crate) rewatered_tiles: u32,
     pub(crate) stale_water_tiles: u32,
-    pub(crate) settled_records: u32,
-    pub(crate) settling_records: u32,
-    pub(crate) settles_left: u64,
-    pub(crate) squares_left: u32,
-    pub(crate) unsettled: Settling,
-}
-
-#[derive(Default)]
-pub(crate) struct SettleQueue {
-    pub(crate) asked: Vec<crate::water_settle::SettleAsk>,
-    pub(crate) settled: Vec<(Vec<u8>, SettleMade)>,
-}
-
-pub(crate) type SettleMade = Result<Arc<[u8]>, String>;
-
-impl SettleQueue {
-    pub(crate) fn made(&self, input: &[u8]) -> Option<SettleMade> {
-        self.settled
-            .iter()
-            .find(|(held, _)| held[..] == *input)
-            .map(|(_, made)| made.clone())
-    }
 }
 
 pub(crate) struct SurfaceTerrain {
@@ -444,16 +392,17 @@ struct Served {
     terrains: Vec<SurfaceTerrain>,
     baking: Vec<(Vec3, Pyramid)>,
     rivers: Vec<(Vec3, Vec3)>,
-    live: Vec<(Vec3, Vec3)>,
+    swell: Arc<Swell>,
 }
 
 #[derive(Default)]
 pub(crate) struct WaterSurface(RwLock<Served>);
 
 impl WaterSurface {
-    fn follow(&self, terrains: &[WaterTerrain], baking: &[(Vec3, Pyramid)]) {
+    fn follow(&self, terrains: &[WaterTerrain], baking: &[(Vec3, Pyramid)], swell: &Arc<Swell>) {
         let mut served = self.0.write().unwrap_or_else(PoisonError::into_inner);
         let served = &mut *served;
+        served.swell = Arc::clone(swell);
         served.baking.clear();
         served.baking.extend_from_slice(baking);
         let waters = terrains.iter().filter(|terrain| !terrain.surroundings);
@@ -476,30 +425,18 @@ impl WaterSurface {
                 )
             })
         }));
-        served.live.clear();
-        served.live.extend(
-            terrains
-                .iter()
-                .filter_map(|terrain| terrain.window.as_ref().map(WaterWindow::square))
-                .map(|(low, high)| {
-                    (
-                        Vec3::new(low.x, -1.0e5, low.y),
-                        Vec3::new(high.x, 1.0e5, high.y),
-                    )
-                }),
-        );
     }
 }
 
 impl WaterQuery for WaterSurface {
     fn water(&self, point: Vec3) -> GroundRead<Option<WaterSample>> {
         let served = self.0.read().unwrap_or_else(PoisonError::into_inner);
-        crate::water_source::water_at(&served.terrains, &served.baking, point)
+        crate::water_source::water_at(&served.terrains, &served.baking, &served.swell, point)
     }
 
     fn reaches(&self) -> Vec<(Vec3, Vec3)> {
         let served = self.0.read().unwrap_or_else(PoisonError::into_inner);
-        served.rivers.iter().chain(&served.live).copied().collect()
+        served.rivers.clone()
     }
 }
 
@@ -550,8 +487,6 @@ pub(crate) fn follow(
         terrain.surroundings = entry.surroundings;
         terrain.recipe = entry.recipe;
         terrain.edits = Arc::clone(&entry.edits);
-        terrain.solids = Arc::clone(&entry.solids);
-        terrain.relief = entry.relief;
         let local = Vec2::new(eye.x - entry.origin.x, eye.z - entry.origin.z);
         terrain.take_faces(entry);
         terrain.follow_faces(&mut jobs, local);
@@ -561,11 +496,14 @@ pub(crate) fn follow(
     state.dropped = !before.is_empty();
 }
 
+type Waved = BTreeMap<(Entity, TileKey), (Arc<[u16]>, Arc<[u16]>)>;
+
 pub(crate) fn publish_waterline(
-    water: Res<Water>,
+    (water, waves): (Res<Water>, Res<Waves>),
     state: Res<WaterState>,
     mut line: ResMut<Waterline>,
     mut cursors: Local<Vec<(Entity, Cursor)>>,
+    mut waved: Local<(u64, Waved)>,
 ) {
     let before = std::mem::take(&mut *cursors);
     let mut touched = false;
@@ -577,32 +515,45 @@ pub(crate) fn publish_waterline(
         touched |= !matches!(terrain.touched.since(&mut cursor), Since::Same);
         cursors.push((terrain.entity, cursor));
     }
-    if !(touched || state.dropped || water.is_changed() || line.watered != state.watered) {
+    let (made, kept) = &mut *waved;
+    let remade = *made != waves.makes();
+    let changed = touched || state.dropped || water.is_changed() || remade;
+    if !(changed || line.watered != state.watered) {
         return;
     }
+    let before = std::mem::take(kept);
+    *made = waves.makes();
+    let swell = waves.swell();
     let dry = ErrorPyramid::dry().shared_halves();
-    let errors: Vec<WaterTileErrors> = state
-        .terrains
-        .iter()
-        .flat_map(|terrain| {
-            let dry = &dry;
-            terrain
-                .held
-                .values()
-                .filter(|held| held.resident())
-                .map(move |held| WaterTileErrors {
-                    terrain: terrain.entity,
-                    key: held.face.key,
-                    stamp: held.face.stamp,
-                    errors: held
-                        .drawn
-                        .as_ref()
-                        .map_or_else(|| Arc::clone(dry), |drawn| Arc::clone(&drawn.errors)),
-                })
-        })
-        .collect();
+    let mut errors = Vec::new();
+    for terrain in &state.terrains {
+        for held in terrain.held.values().filter(|held| held.resident()) {
+            let at = (terrain.entity, held.face.key);
+            let waved = match (&held.drawn, &held.water) {
+                (Some(drawn), Some(water)) => {
+                    let still = &drawn.errors;
+                    let waved = before
+                        .get(&at)
+                        .filter(|(from, _)| !remade && Arc::ptr_eq(from, still))
+                        .map_or_else(
+                            || swell.errors(still, water, held.face.spacing),
+                            |(_, waved)| Arc::clone(waved),
+                        );
+                    kept.insert(at, (Arc::clone(still), Arc::clone(&waved)));
+                    waved
+                }
+                (Some(drawn), None) => Arc::clone(&drawn.errors),
+                (None, _) => Arc::clone(&dry),
+            };
+            errors.push(WaterTileErrors {
+                terrain: terrain.entity,
+                key: held.face.key,
+                stamp: held.face.stamp,
+                errors: waved,
+            });
+        }
+    }
     let same = line.subdivision_error == water.subdivision_error
-        && line.subdivision_leaves == water.subdivision_leaves
         && line.watered == state.watered
         && line.errors.len() == errors.len()
         && line.errors.iter().zip(&errors).all(|(held, found)| {
@@ -616,13 +567,16 @@ pub(crate) fn publish_waterline(
     }
     let line = &mut *line;
     line.subdivision_error = water.subdivision_error;
-    line.subdivision_leaves = water.subdivision_leaves;
     line.watered.clear();
     line.watered.extend_from_slice(&state.watered);
     line.errors = errors;
 }
 
-pub(crate) fn publish_bodies(mut state: ResMut<WaterState>, mut spawner: Spawner<WaterBrick>) {
+pub(crate) fn publish_bodies(
+    waves: Res<Waves>,
+    mut state: ResMut<WaterState>,
+    mut spawner: Spawner<WaterBrick>,
+) {
     let state = state.bypass_change_detection();
     if state.body.is_none() {
         state.body = Some(spawner.spawn(WaterBody {
@@ -630,5 +584,7 @@ pub(crate) fn publish_bodies(mut state: ResMut<WaterState>, mut spawner: Spawner
             shape: state.surface.clone(),
         }));
     }
-    state.surface.follow(&state.terrains, &state.baking);
+    state
+        .surface
+        .follow(&state.terrains, &state.baking, waves.swell());
 }

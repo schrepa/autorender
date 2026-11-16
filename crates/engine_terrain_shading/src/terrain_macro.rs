@@ -8,19 +8,29 @@ use crate::state::Bakes;
 use crate::terrain::TerrainGpu;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-struct Shape {
-    size: u32,
+pub(crate) struct Shape {
+    size: [u32; 2],
     levels: usize,
     format: TextureFormat,
 }
 
 impl Shape {
-    fn of(texture: &Texture) -> Self {
+    pub(crate) fn of(texture: &Texture) -> Self {
         Self {
-            size: texture.width(),
+            size: [texture.width(), texture.height()],
             levels: texture.levels().len(),
             format: texture.format(),
         }
+    }
+
+    pub(crate) fn first(tiles: &TerrainTiles, bakes: &Bakes, assets: &AssetLibrary) -> Option<Self> {
+        tiles
+            .terrains
+            .iter()
+            .filter_map(|terrain| bakes.macro_map(terrain.terrain))
+            .chain(bakes.lent().iter().copied().flatten())
+            .find_map(|handle| assets.texture(handle))
+            .map(|texture| Self::of(texture))
     }
 }
 
@@ -28,6 +38,7 @@ pub(crate) struct MacroMaps {
     pub(crate) texture: engine_render::Texture<TerrainGpu>,
     shape: Option<(Shape, usize)>,
     empty: bool,
+    lent: usize,
     held: Vec<Option<Arc<Texture>>>,
 }
 
@@ -41,19 +52,21 @@ impl MacroMaps {
             ),
             shape: None,
             empty: false,
+            lent: 0,
             held: Vec::new(),
         })
     }
 
     pub(crate) fn layer(&self, index: usize) -> u32 {
-        match self.held.get(index) {
-            Some(Some(_)) => index as u32 + 1,
+        let layer = self.lent + index;
+        match self.held.get(layer) {
+            Some(Some(_)) => layer as u32 + 1,
             _ => 0,
         }
     }
 
     pub(crate) fn count(&self) -> u32 {
-        self.held.iter().flatten().count() as u32
+        self.held.iter().skip(self.lent).flatten().count() as u32
     }
 
     pub(crate) fn prepare(
@@ -61,13 +74,18 @@ impl MacroMaps {
         cx: &mut Prepare<'_, TerrainGpu>,
         (tiles, bakes, assets, max_layers): (&TerrainTiles, &Bakes, &AssetLibrary, u32),
     ) {
-        let map = |index: usize| {
-            let terrain = tiles.terrains.get(index)?;
-            assets.texture(bakes.macro_map(terrain.terrain)?)
+        let most = max_layers as usize;
+        let lent = bakes.lent().len().min(most);
+        let map = |index: usize| match index.checked_sub(lent) {
+            Some(index) => {
+                let terrain = tiles.terrains.get(index)?;
+                assets.texture(bakes.macro_map(terrain.terrain)?)
+            }
+            None => assets.texture(bakes.lent()[index]?),
         };
-        let first = (0..tiles.terrains.len()).find_map(map);
-        let Some(shape) = first.map(|texture| Shape::of(texture)) else {
+        let Some(shape) = Shape::first(tiles, bakes, assets) else {
             self.shape = None;
+            self.lent = 0;
             self.held.clear();
             let allocation = cx.allocate_as(
                 self.texture,
@@ -91,20 +109,24 @@ impl MacroMaps {
             }
             return;
         };
-        let count = tiles.terrains.len().min(max_layers as usize);
+        let count = (lent + tiles.terrains.len()).min(most);
         self.empty = false;
         let allocation = cx.allocate_as(
             self.texture,
             engine_render::texture_format(shape.format, ColorSpace::Linear).0,
             wgpu::Extent3d {
-                width: shape.size,
-                height: shape.size,
+                width: shape.size[0],
+                height: shape.size[1],
                 depth_or_array_layers: count as u32,
             },
             shape.levels as u32,
         );
-        if allocation == Allocation::Fresh || self.shape != Some((shape, count)) {
+        if allocation == Allocation::Fresh
+            || self.shape != Some((shape, count))
+            || self.lent != lent
+        {
             self.shape = Some((shape, count));
+            self.lent = lent;
             self.held = vec![None; count];
         }
         for index in 0..count {
@@ -117,7 +139,7 @@ impl MacroMaps {
                         cx.write_level(
                             self.texture,
                             (level as u32, index as u32),
-                            (shape.size, shape.size),
+                            (shape.size[0], shape.size[1]),
                             shape.format,
                             bytes,
                         );

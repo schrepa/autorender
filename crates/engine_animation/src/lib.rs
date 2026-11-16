@@ -13,7 +13,8 @@ mod skins;
 mod views;
 
 use engine_core::{
-    Asked, Brick, Bricks, ComponentKind, GpuStruct, SceneComponents, Schedule, Source, settings,
+    Asked, Brick, Bricks, ComponentKind, GpuStruct, JobKind, SceneComponents, Schedule, Source,
+    settings,
 };
 use engine_places::skin::Skin;
 use engine_places_rendering::animation::{Animate, Animator, Attachment, Model};
@@ -45,6 +46,7 @@ pub struct AnimationBrick;
 
 impl Brick for AnimationBrick {
     const SOURCE: &'static Source = &SOURCE;
+    const JOBS: &'static [&'static JobKind] = &[&import::IMAGE];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

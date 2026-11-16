@@ -7,8 +7,7 @@ struct Record {
     scale: f32,
     terrain: u32,
     sink: f32,
-    state: u32,
-    pad: array<u32, 3>,
+    pad: array<u32, 4>,
 }
 
 struct Pose {

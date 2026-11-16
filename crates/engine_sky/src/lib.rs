@@ -8,7 +8,6 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 mod clouds;
 mod environment;
 mod gpu_layouts;
-mod haze;
 #[cfg(not(target_arch = "wasm32"))]
 mod pure;
 mod settings;
@@ -19,37 +18,12 @@ mod views;
 use bevy_ecs::prelude::*;
 #[cfg(not(target_arch = "wasm32"))]
 use engine_core::Corpus;
-use engine_core::{
-    AttachPoint, Brick, Bricks, JobKind, Pass, PassName, PassPurpose, PassViews, Schedule, Slot,
-    SlotSet, Source, Writes, never,
-};
-use engine_places_rendering::lighting::{Ambient, SunBlockers};
+use engine_core::{Brick, Bricks, JobKind, Schedule, Source};
+use engine_places_rendering::lighting::Ambient;
 use engine_places_rendering::sky::SkyLight;
 use engine_render::RenderBricks;
 
-pub use settings::{Clouds, Haze, NightSky, Sky};
-
-pub(crate) struct HazePass;
-
-impl PassName for HazePass {
-    const NAME: &'static str = "haze";
-    const PASS: Pass = Pass {
-        writes: Writes::NOTHING,
-        reads: SlotSet::NONE,
-        views: PassViews::Main,
-        at: AttachPoint::Post,
-        purpose: PassPurpose::Scene,
-        takes: never,
-    };
-}
-
-#[derive(Resource, Default)]
-struct CloudShadows;
-
-impl Slot for CloudShadows {
-    const NAME: &'static str = "sky_cloud_shadows";
-    const WGSL: Option<&'static str> = Some(include_str!("places/cloud_shadows.wgsl"));
-}
+pub use settings::{Clouds, NightSky, Sky};
 
 pub struct SkyBrick;
 
@@ -70,22 +44,15 @@ impl Brick for SkyBrick {
             .stats::<views::StaticTablesView>()
             .stats::<views::CloudStats>()
             .stats::<views::SkyStats>()
-            .stats::<views::HazeStats>()
+            .stats::<views::LightingStats>()
             .resource::<views::SkyLightLevel>()
             .resource::<tables::StaticTables>()
             .resource::<sky::SkyPlan>()
             .resource::<clouds::CloudSteps>()
-            .resource::<haze::HazeSteps>()
             .resource::<environment::EnvironmentSteps>()
             .fill::<SkyLight>(Some(shaders::sky::faces::sky::MODULE))
-            .join::<SunBlockers>((), Some(shaders::sky::blockers::MODULE))
             .join::<Ambient>((), Some(shaders::sky::ambient::MODULE))
-            .within_switch::<Clouds>(|bricks| {
-                bricks.fill::<CloudShadows>(Some(shaders::sky::faces::cloud_shadows::MODULE));
-            })
-            .within_switch::<Haze>(|bricks| {
-                bricks.applies::<HazePass>(shaders::sky::haze::MODULE);
-            })
+            .within_switch::<Clouds>(|_| {})
             .systems(
                 Schedule::ViewSync,
                 (
@@ -94,6 +61,7 @@ impl Brick for SkyBrick {
                     publish_sky_light,
                     tables::table_stats,
                     views::sky_stats,
+                    views::lighting_stats,
                 ),
             )
             .generated(gpu_layouts::GENERATED)
@@ -103,9 +71,7 @@ impl Brick for SkyBrick {
 
 fn publish_sky_light(sky: Res<Sky>, plan: Res<sky::SkyPlan>, mut light: ResMut<SkyLight>) {
     light.set_if_neq(SkyLight {
-        sun_intensity: sky.sun_intensity,
         sun_size: sky.sun_size,
-        adaptation: sky.adaptation,
         environment: plan.environment(),
     });
 }

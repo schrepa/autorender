@@ -121,6 +121,8 @@ impl<'a, G: Game> App<'a, G> {
         (bricks, build): Build<'a, G>,
     ) -> engine::Result<Running<G>> {
         #[cfg(feature = "profiling")]
+        engine_profiler::sampler::listen_for_threads();
+        #[cfg(feature = "profiling")]
         if self.options.profile.is_some() {
             engine_profiler::sample_heap_from_launch();
         }
@@ -332,8 +334,10 @@ impl<G: Game> Running<G> {
         let phase = self.host.animation_frame(timestamp, width, height)?;
         engine::profiling::mark_speed();
         self.exchange_jobs();
-        if phase == FramePhase::Playing {
-            self.title.frame(&self.window, timestamp, &self.host);
+        match phase {
+            FramePhase::Playing => self.title.frame(&self.window, timestamp, &self.host),
+            FramePhase::Compiling | FramePhase::Preparing => self.title.loading(&self.window),
+            FramePhase::Started | FramePhase::Idle => {}
         }
         Ok(phase)
     }
@@ -381,6 +385,7 @@ struct Title {
     since: Option<f64>,
     frames: u32,
     cpu_ms: f64,
+    loading: bool,
 }
 
 impl Title {
@@ -390,6 +395,14 @@ impl Title {
             since: None,
             frames: 0,
             cpu_ms: 0.0,
+            loading: false,
+        }
+    }
+
+    fn loading(&mut self, window: &winit::window::Window) {
+        if !self.loading {
+            window.set_title(&format!("{} · loading, the world is paused", self.name));
+            self.loading = true;
         }
     }
 

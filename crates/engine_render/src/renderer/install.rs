@@ -114,6 +114,12 @@ fn fold_ties(unlisted: &[FoldStep]) -> Vec<(FoldStep, FoldStep)> {
     ties
 }
 
+fn fold_steps(built: &Built) -> Vec<crate::shared::Step> {
+    let mut found = crate::shared::folded(&built.applied);
+    found.extend(crate::shared::stacked(&built.machine.declared.passes).1);
+    found
+}
+
 fn listing(built: &mut Built, order: Option<&engine_core::FoldOrder>) -> Installation {
     let modules = built.machine.linker.paths();
     let texts = modules
@@ -148,7 +154,7 @@ fn listing(built: &mut Built, order: Option<&engine_core::FoldOrder>) -> Install
         .collect();
     layouts.sort_unstable();
     layouts.dedup();
-    let unlisted_steps: Vec<FoldStep> = crate::shared::unlisted(&built.applied, order)
+    let unlisted_steps: Vec<FoldStep> = crate::shared::unlisted(&fold_steps(built), order)
         .into_iter()
         .map(|(stage, step)| FoldStep { stage, step })
         .collect();
@@ -715,10 +721,10 @@ pub(crate) fn install(
     let scenes = scene_passes(world);
     let unknown = world
         .get_resource::<engine_core::FoldOrder>()
-        .map(|order| crate::shared::unknown_steps(&built.applied, order))
+        .map(|order| crate::shared::unknown_steps(&fold_steps(&built), order))
         .unwrap_or_default();
     if let Some(mut registry) = world.get_resource_mut::<Registry>() {
-        for problem in &built.machine.over_limit {
+        for (_, problem) in &built.machine.over_limit {
             registry.report(problem.clone());
         }
         for error in unknown {
@@ -752,8 +758,11 @@ fn install_with(
     let (switches, links) = faces(registry, &mut linker, &mut roots, &mut problems);
     let material = material_layout(registry, &mut linker, &mut roots, &mut problems);
     let outputs = outputs(registry, &mut roots);
+    let found = applied_modules(registry, &mut linker, &mut roots, &mut problems);
+    let steps = crate::shared::folded(&found);
     let applied = crate::shared::ordered(
-        applied_modules(registry, &mut linker, &mut roots, &mut problems),
+        found,
+        &steps,
         world.get_resource::<engine_core::FoldOrder>(),
     );
     linker.add_generated(
@@ -904,13 +913,17 @@ fn install_with(
         );
     }
     let InstallCore {
-        declared,
+        mut declared,
         linker,
         draws: entries,
         problems: mut declared_problems,
         ..
     } = core;
     problems.append(&mut declared_problems);
+    crate::shared::stack(
+        &mut declared.passes,
+        world.get_resource::<engine_core::FoldOrder>(),
+    );
     let fills = |package: &'static str, place: &str| {
         registry
             .brick(package)
@@ -999,7 +1012,6 @@ impl Renderer {
     }
 
     pub fn install(&mut self, world: &mut World) -> Result<(), Vec<Error>> {
-        super::startup::refuse_lacking(world, self.core.device.features());
         let installed = install(&self.core.device, self.core.limits, world, self.edited())?;
         self.adopt_installed(installed, world);
         Ok(())
@@ -1102,10 +1114,15 @@ impl Renderer {
 
 #[doc(hidden)]
 pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
-    let asked = super::startup::asked_features(world);
-    let (device, queue) = noop_device(asked).map_err(|error| vec![error])?;
+    let (device, queue) = noop_device().map_err(|error| vec![error])?;
     let limits = device_limits(&device.limits(), device.features(), 0);
     let mut installed = install(&device, limits, world, std::collections::BTreeMap::new())?;
+    let over: Vec<Error> = (installed.machine.over_limit.iter())
+        .map(|(_, error)| error.clone())
+        .collect();
+    if !over.is_empty() {
+        return Err(over);
+    }
     let listed = listing(
         &mut installed,
         world.get_resource::<engine_core::FoldOrder>(),
@@ -1331,7 +1348,7 @@ pub(crate) fn reinstall(
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn noop_device(asked: wgpu::Features) -> Result<(wgpu::Device, wgpu::Queue), Error> {
+fn noop_device() -> Result<(wgpu::Device, wgpu::Queue), Error> {
     let mut descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
     descriptor.backends = wgpu::Backends::NOOP;
     descriptor.backend_options.noop.enable = true;
@@ -1342,7 +1359,6 @@ fn noop_device(asked: wgpu::Features) -> Result<(wgpu::Device, wgpu::Queue), Err
             .map_err(|error| failed_with("$.adapter", error))?;
     let (device, queue) = crate::platform::ready(adapter.request_device(&wgpu::DeviceDescriptor {
         label: Some("engine/noop-device"),
-        required_features: adapter.features() & asked,
         required_limits: super::startup::device_limits(&adapter.limits()),
         ..Default::default()
     }))
@@ -1352,6 +1368,6 @@ fn noop_device(asked: wgpu::Features) -> Result<(wgpu::Device, wgpu::Queue), Err
 }
 
 #[cfg(target_arch = "wasm32")]
-fn noop_device(_asked: wgpu::Features) -> Result<(wgpu::Device, wgpu::Queue), Error> {
+fn noop_device() -> Result<(wgpu::Device, wgpu::Queue), Error> {
     Err(failed("$.device").expected(Expected::Supported))
 }

@@ -6,19 +6,6 @@ fn sky_above(normal: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(0.0);
 }
 
-fn atmospheric(light: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3<f32>)
-        -> vec4<f32> {
-    return vec4<f32>(light, 0.0);
-}
-
-fn atmospheric_cover(eye: vec3<f32>, point: vec3<f32>) -> f32 {
-    return 0.0;
-}
-
-fn cloud_passing(world: vec3<f32>) -> f32 {
-    return 1.0;
-}
-
 fn environment_levels() -> u32 {
     return 1u;
 }
@@ -41,8 +28,4 @@ fn ambient() -> f32 {
 
 fn sunlight() -> vec3<f32> {
     return vec3<f32>(1.0);
-}
-
-fn light_level(sun: vec3<f32>) -> f32 {
-    return 1.0;
 }

@@ -16,7 +16,6 @@ pub struct WaterTileErrors {
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct Waterline {
     pub subdivision_error: f32,
-    pub subdivision_leaves: u32,
     pub watered: Vec<Entity>,
     pub errors: Vec<WaterTileErrors>,
 }

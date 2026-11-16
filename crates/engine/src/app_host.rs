@@ -159,7 +159,7 @@ impl AppHost {
             build(&mut engine)?;
             Ok(engine)
         })?;
-        let starting = Renderer::start(target, engine.app.world()).await?;
+        let starting = Renderer::start(target).await?;
         let renderer = Box::new(starting.finish().await?);
         let mut host = Self::with(engine, renderer, display_paced);
         host.claim_passes()?;

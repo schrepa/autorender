@@ -71,7 +71,10 @@ impl Threads {
                     (queue.clone(), Arc::clone(&handovers), Arc::clone(&turns));
                 std::thread::Builder::new()
                     .name(format!("engine-submit-{index}"))
-                    .spawn(move || work(&queue, &handovers, &turns))
+                    .spawn(move || {
+                        engine_profile::announce_thread(format_args!("Submit {index}"));
+                        work(&queue, &handovers, &turns);
+                    })
                     .ok()
             })
             .collect();

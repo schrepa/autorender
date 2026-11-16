@@ -161,7 +161,7 @@ pub(crate) struct Machine {
     pub(crate) depth_writes: Vec<bool>,
     pub(crate) binding_bytes: BTreeMap<(Option<usize>, u32, u32), u64>,
     pub(crate) linker: Linker,
-    pub(crate) over_limit: Vec<Error>,
+    pub(crate) over_limit: Vec<(u32, Error)>,
 }
 
 fn layout_entries(entries: &[(u32, Ty, ShaderStages)]) -> Vec<wgpu::BindGroupLayoutEntry> {
@@ -206,7 +206,7 @@ fn stage_of(entry: Entry, linker: &Linker) -> ShaderStages {
 
 pub(crate) fn writes_depth(depth: DepthUse) -> bool {
     match depth {
-        DepthUse::None | DepthUse::Test => false,
+        DepthUse::None | DepthUse::Test | DepthUse::TestStrictly => false,
         DepthUse::Write { .. } | DepthUse::Overwrite => true,
         DepthUse::Compare { write, .. } => write,
     }
@@ -758,6 +758,11 @@ impl Machine {
             })
             .unzip();
         let material_key = format!("{material_entries:?}");
+        let over_limit = plan
+            .over
+            .iter()
+            .map(|(pipeline, error)| (staged[*pipeline as usize].0.part, error.clone()))
+            .collect();
         let mut pipelines = Vec::with_capacity(staged.len());
         for (index, (decl, stages, reached)) in staged.into_iter().enumerate() {
             let skipped = plan.skipped.get(index).copied().unwrap_or(false);
@@ -963,7 +968,7 @@ impl Machine {
             depth_writes,
             binding_bytes,
             linker,
-            over_limit: plan.over,
+            over_limit,
         })
     }
 }
@@ -1369,7 +1374,6 @@ fn graph_of(
         .filter(|(_, pass)| crate::shared::composites(pass))
         .map(|(index, _)| PassId::new(index))
         .collect();
-    let mut overlays: Vec<PassId> = Vec::new();
     for (at, pass) in declared.passes.iter().enumerate() {
         let Some(canvas) = canvas.filter(|_| pass.layer == Some(AttachPoint::Overlay)) else {
             continue;
@@ -1378,10 +1382,7 @@ fn graph_of(
             0,
             (canvas, GraphAccess::Draw(Clear::Color(crate::graph::BLACK))),
         );
-        passes[at]
-            .after
-            .extend(screens.iter().chain(&overlays).copied());
-        overlays.push(PassId::new(at));
+        passes[at].after.extend(screens.iter().copied());
     }
     for &(layer, view) in &copied {
         let (Some(copy), Some(from)) = (

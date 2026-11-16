@@ -94,17 +94,3 @@ fn bounce_at(world: vec3<f32>, on_terrain: bool) -> BounceAt {
     }
     return found;
 }
-
-fn bounce_seen(at: BounceAt) -> f32 {
-    var lower = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, at.texel,
-        at.first, 0.0).a;
-    var upper = textureSampleLevel(terrain_horizons, terrain_horizon_sampler, at.texel,
-        at.first + 4u, 0.0).a;
-    if at.blend > 0.0 {
-        lower = mix(lower, textureSampleLevel(terrain_horizons, terrain_horizon_sampler,
-            at.next, at.first, 0.0).a, at.blend);
-        upper = mix(upper, textureSampleLevel(terrain_horizons, terrain_horizon_sampler,
-            at.next, at.first + 4u, 0.0).a, at.blend);
-    }
-    return mix(lower, upper, saturate(at.layer));
-}

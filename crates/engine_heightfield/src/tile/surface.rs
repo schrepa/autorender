@@ -4,8 +4,8 @@ use engine_place::GpuBits;
 use serde::{Deserialize, Serialize};
 
 use super::Control;
-use super::expr::{Expr, MAX_EXPR_DEPTH, MAX_EXPR_LIST};
-use super::gpu::op;
+use super::expr::{Expr, MAX_EXPR_DEPTH, MAX_EXPR_LIST, Ramp};
+use super::gpu::{LAYER_COVERS, MAX_MAPS, op};
 use crate::Layers;
 use crate::PathSample;
 use crate::layer::maps;
@@ -15,6 +15,7 @@ pub const MAX_SURFACE_MATERIALS: usize = 255;
 pub const MAX_BIOMES: usize = 255;
 const MAX_NOISE_OCTAVES: u32 = 8;
 const MAX_BIOME_LAYERS: usize = 64;
+const MAX_COVERS: usize = 8;
 
 pub const MAX_SLOPE_DEGREES: f32 = 90.0;
 
@@ -60,15 +61,37 @@ fn is_unit(value: &f32) -> bool {
     *value == 1.0
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Grows {
+    pub map: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub low: Option<[f32; 2]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub high: Option<[f32; 2]>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Cover {
+    pub material: String,
+    pub grows: Vec<Grows>,
+}
+
+impl Setting for Cover {}
+
 fields! {
     #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(deny_unknown_fields)]
     pub struct BiomeLayer {
+        #[serde(default, skip_serializing_if = "String::is_empty")]
         pub material: String = String::new() => any,
         #[serde(default = "Expr::one", skip_serializing_if = "is_one")]
         pub mask: Expr = Expr::one() => any,
         #[serde(default = "one", skip_serializing_if = "is_unit")]
         pub opacity: f32 = one() => range(0.0, 1.0),
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        pub covers: Vec<Cover> = Vec::new() => any,
     }
 }
 
@@ -397,13 +420,11 @@ impl Scope {
     }
 
     fn user(&mut self, name: &str, path: String) -> Result<usize, Error> {
-        if self.gpu {
-            return Err(Error::new(crate::UNREADABLE_MAP, path)
-                .got(name)
-                .variants(maps::GPU));
-        }
         if let Some(index) = self.users.iter().position(|(known, _)| known == name) {
             return Ok(index);
+        }
+        if self.gpu && self.users.len() >= MAX_MAPS as usize {
+            return Err(terrain_error(path).at_most(u64::from(MAX_MAPS)).got(name));
         }
         self.users.push((name.to_owned(), path));
         Ok(self.users.len() - 1)
@@ -447,6 +468,7 @@ pub struct SampleInputs {
     pub water: crate::HydrologySample,
     pub erosion: f32,
     pub path: PathSample,
+    pub maps: [f32; MAX_MAPS as usize],
 }
 
 #[inline]
@@ -501,6 +523,49 @@ fn path_ramp(PathSample { distance, half }: PathSample, spacing: f32, ends: [f32
         .map(|offset| ramp((distance + offset * spacing).abs() - half, ends))
         .sum::<f32>()
         * 0.25
+}
+
+pub(crate) fn published_row<'n>(
+    layers: &Layers,
+    names: impl IntoIterator<Item = &'n str>,
+    (xs, z, spacing): (&[f32], f32, f32),
+    (gradient, curvature): (&[[f32; 2]], &[f32]),
+    out: &mut Vec<Vec<f32>>,
+) {
+    let mut count = 0;
+    for name in names {
+        if out.len() <= count {
+            out.push(Vec::new());
+        }
+        let row = &mut out[count];
+        count += 1;
+        row.clear();
+        row.resize(xs.len(), 0.0);
+        let Some(published) = layers.published().find(|published| published.name == name) else {
+            continue;
+        };
+        (published.map).change_row(xs.iter().copied(), z, spacing, |index, value| {
+            row[index] = value;
+        });
+        for (index, value) in row.iter_mut().enumerate() {
+            let rests = (published.rests)
+                .map_or(1.0, |rests| rests.share(gradient[index], curvature[index]));
+            *value = *value * rests * layers.shown(xs[index], z);
+        }
+    }
+    out.truncate(count);
+}
+
+pub(crate) fn rested(
+    change: f32,
+    rests: Option<crate::layer::Rests>,
+    gradient: [f32; 2],
+    curvature: f32,
+) -> f32 {
+    match rests {
+        Some(rests) if change > 0.0 => change * rests.share(gradient, curvature),
+        Some(_) | None => change,
+    }
 }
 
 pub(crate) fn erosion_row(layers: &Layers, xs: &[f32], z: f32, spacing: f32, out: &mut [f32]) {
@@ -626,10 +691,6 @@ impl Compiled {
                 )
             }
         })
-    }
-
-    fn gpu(expr: &Expr, path: &str) -> Result<Self, Error> {
-        Self::from(expr, path, 0, &mut Scope::gpu())
     }
 
     fn list(
@@ -804,8 +865,16 @@ impl Compiled {
                 out.extend([op::VALUE, input.op()]);
                 1
             }
-            Self::User { .. } => {
-                out.extend([op::CONSTANT, 0.0_f32.to_bits()]);
+            Self::User { map, ends } => {
+                match ends {
+                    Some(ends) => out.extend([
+                        op::MAP,
+                        *map as u32,
+                        ends[0].to_bits(),
+                        ends[1].to_bits(),
+                    ]),
+                    None => out.extend([op::MAP_VALUE, *map as u32]),
+                }
                 1
             }
             Self::Facing { toward, ends } => {
@@ -844,7 +913,10 @@ impl Compiled {
             Self::Ramp(Input::Path, ends) => path_ramp(inputs.path, inputs.spacing, *ends),
             Self::Ramp(input, ends) => ramp(input.at(inputs), *ends),
             Self::Value(input) => input.at(inputs),
-            Self::User { ends, .. } => ends.map_or(0.0, |ends| ramp(0.0, ends)),
+            Self::User { map, ends } => {
+                let value = inputs.maps.get(*map).copied().unwrap_or(0.0);
+                ends.map_or(value, |ends| ramp(value, ends))
+            }
             Self::Facing { toward, ends } => ramp(facing(*toward, inputs.gradient), *ends),
             Self::Noise {
                 frequency,
@@ -887,10 +959,47 @@ impl Compiled {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+struct CompiledCover {
+    material: u8,
+    grows: Compiled,
+}
+
+#[derive(Clone, Debug, PartialEq)]
 struct CompiledLayer {
     material: u8,
     mask: Compiled,
     opacity: f32,
+    covers: Vec<CompiledCover>,
+}
+
+impl CompiledLayer {
+    fn cost(&self) -> u64 {
+        self.mask.cost() + self.covers.iter().map(|cover| cover.grows.cost()).sum::<u64>()
+    }
+
+    fn reads(&self) -> Reads {
+        (self.covers.iter()).fold(self.mask.reads(), |reads, cover| {
+            reads.and(cover.grows.reads())
+        })
+    }
+
+    fn placed(&self, held: f32, grows: impl Fn(usize) -> f32) -> (u8, u8, f32) {
+        let (mut total, mut along) = (0.0_f32, 0.0_f32);
+        for index in 0..self.covers.len() {
+            let share = clamp(grows(index), 0.0, 1.0);
+            total += share;
+            along += share * index as f32;
+        }
+        let last = self.covers.len() - 1;
+        let place = min(along / max(total, 1.0e-6) * held, last as f32);
+        let lower = place as usize;
+        let upper = (lower + 1).min(last);
+        (
+            self.covers[lower].material,
+            self.covers[upper].material,
+            place - lower as f32,
+        )
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -910,9 +1019,76 @@ pub struct BiomeRules {
     reads: Reads,
     placements: Vec<super::placement::CompiledPlacement>,
     placed: Vec<super::placement::CompiledAuthored>,
+    users: Vec<(String, String)>,
 }
 
 impl Biomes {
+    fn material(&self, id: &str, path: String) -> Result<u8, Error> {
+        (self.materials.iter())
+            .position(|known| known == id)
+            .map(|index| index as u8)
+            .ok_or_else(|| unknown(path, id, &self.materials))
+    }
+
+    fn layer(
+        &self,
+        layer: &BiomeLayer,
+        path: &str,
+        scope: &mut Scope,
+    ) -> Result<CompiledLayer, Error> {
+        if layer.covers.is_empty() {
+            let material = self.material(&layer.material, format!("{path}.material"))?;
+            if let Err(invalid) = layer.validate() {
+                return Err(setting_error(invalid, path));
+            }
+            return Ok(CompiledLayer {
+                material,
+                mask: Compiled::from(&layer.mask, &format!("{path}.mask"), 0, scope)?,
+                opacity: layer.opacity,
+                covers: Vec::new(),
+            });
+        }
+        if let Err(invalid) = layer.validate() {
+            return Err(setting_error(invalid, path));
+        }
+        if !layer.material.is_empty() || layer.covers.len() > MAX_COVERS {
+            return Err(terrain_error(format!("{path}.covers"))
+                .range(1.0, MAX_COVERS as f64)
+                .got(layer.covers.len()));
+        }
+        let mut covers = Vec::with_capacity(layer.covers.len());
+        for (index, cover) in layer.covers.iter().enumerate() {
+            let at = format!("{path}.covers[{index}]");
+            let mut ranges = Vec::new();
+            for grows in &cover.grows {
+                let ramp = |[from, to]: [f32; 2]| {
+                    Expr::Ramp(Ramp {
+                        map: grows.map.clone(),
+                        from,
+                        to,
+                    })
+                };
+                ranges.extend(grows.low.map(&ramp));
+                ranges.extend(grows.high.map(|ends| Expr::Invert(Box::new(ramp(ends)))));
+            }
+            let grows = if ranges.is_empty() {
+                Compiled::Constant(1.0)
+            } else {
+                Compiled::from(&Expr::Mul(ranges), &format!("{at}.grows"), 0, scope)?
+            };
+            covers.push(CompiledCover {
+                material: self.material(&cover.material, format!("{at}.material"))?,
+                grows,
+            });
+        }
+        Ok(CompiledLayer {
+            material: covers[0].material,
+            mask: Compiled::from(&layer.mask, &format!("{path}.mask"), 0, scope)?,
+            opacity: layer.opacity,
+            covers,
+        })
+    }
+
     #[expect(
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
@@ -936,6 +1112,7 @@ impl Biomes {
                 .got(self.biomes.len()));
         }
         let mut biomes = Vec::with_capacity(self.biomes.len());
+        let mut scope = Scope::gpu();
         for (index, biome) in self.biomes.iter().enumerate() {
             let at = format!("$.biomes[{index}]");
             if self.biomes[..index]
@@ -951,28 +1128,19 @@ impl Biomes {
                     .range(1.0, MAX_BIOME_LAYERS as f64)
                     .got(biome.layers.len()));
             }
-            let fitness = Compiled::gpu(&biome.fitness, &format!("{at}.fitness"))?;
+            let fitness = Compiled::from(&biome.fitness, &format!("{at}.fitness"), 0, &mut scope)?;
             let mut layers = Vec::with_capacity(biome.layers.len());
             for (layer_index, layer) in biome.layers.iter().enumerate() {
                 let path = format!("{at}.layers[{layer_index}]");
-                let material = self
-                    .materials
-                    .iter()
-                    .position(|id| *id == layer.material)
-                    .ok_or_else(|| {
-                        unknown(format!("{path}.material"), &layer.material, &self.materials)
-                    })?;
-                if let Err(invalid) = layer.validate() {
-                    return Err(setting_error(invalid, &path));
-                }
-                layers.push(CompiledLayer {
-                    material: material as u8,
-                    mask: Compiled::gpu(&layer.mask, &format!("{path}.mask"))?,
-                    opacity: layer.opacity,
-                });
+                layers.push(self.layer(layer, &path, &mut scope)?);
             }
             let wetness = match &biome.wetness {
-                Some(rule) => Some(Compiled::gpu(rule, &format!("{at}.wetness"))?),
+                Some(rule) => Some(Compiled::from(
+                    rule,
+                    &format!("{at}.wetness"),
+                    0,
+                    &mut scope,
+                )?),
                 None => None,
             };
             biomes.push(CompiledBiome {
@@ -1006,6 +1174,7 @@ impl Biomes {
                         material: steep.material,
                         mask: Compiled::Constant(1.0),
                         opacity: 1.0,
+                        covers: Vec::new(),
                     }],
                     wetness: None,
                 });
@@ -1020,7 +1189,7 @@ impl Biomes {
             .iter()
             .map(|biome| {
                 biome.fitness.cost()
-                    + biome.layers.iter().map(|l| l.mask.cost()).sum::<u64>()
+                    + biome.layers.iter().map(CompiledLayer::cost).sum::<u64>()
                     + biome.wetness.as_ref().map_or(0, Compiled::cost)
             })
             .sum::<u64>();
@@ -1033,7 +1202,7 @@ impl Biomes {
                 .layers
                 .iter()
                 .fold(reads.and(biome.fitness.reads()), |reads, layer| {
-                    reads.and(layer.mask.reads())
+                    reads.and(layer.reads())
                 })
         });
         Ok(BiomeRules {
@@ -1045,6 +1214,7 @@ impl Biomes {
             reads,
             placements,
             placed,
+            users: scope.users(),
         })
     }
 }
@@ -1066,7 +1236,22 @@ impl BiomeRules {
         self.wet_biomes
     }
 
+    pub(crate) fn users(&self) -> impl Iterator<Item = &str> + Clone + '_ {
+        self.users.iter().map(|(name, _)| name.as_str())
+    }
+
     pub fn check_maps(&self, layers: &Layers) -> Result<(), Error> {
+        let readable: Vec<String> = (layers.layers().iter())
+            .flat_map(|layer| layer.images())
+            .collect();
+        for (name, path) in &self.users {
+            if !readable.contains(name) {
+                let known = maps::GPU.iter().copied();
+                return Err(Error::new(crate::UNREADABLE_MAP, path.clone())
+                    .got(name)
+                    .variants(known.chain(readable.iter().map(String::as_str))));
+            }
+        }
         super::placement::check_maps(&self.placements, layers)
     }
 
@@ -1092,8 +1277,26 @@ impl BiomeRules {
         }
     }
 
-    pub fn place_authored(&self, tile: &super::Tile, out: &mut Vec<super::Placed>) -> u64 {
-        super::placement::place_authored(&self.placed, tile, out)
+    pub fn places_from(&self, level: u8, from: Option<u8>) -> bool {
+        let Some(from) = from else {
+            return self.places(level, super::Placing::All);
+        };
+        self.placements
+            .iter()
+            .any(|layer| layer.level.max(from) == level)
+            || self
+                .placed
+                .iter()
+                .any(|object| object.level.max(from) == level)
+    }
+
+    pub fn place_authored(
+        &self,
+        tile: &super::Tile,
+        from: Option<u8>,
+        out: &mut Vec<super::Placed>,
+    ) -> u64 {
+        super::placement::place_authored(&self.placed, tile, from, out)
     }
 
     pub(crate) fn place_row(
@@ -1103,7 +1306,7 @@ impl BiomeRules {
         out: &mut Vec<super::Placed>,
         (layers, placing, scratch): (
             &crate::Layers,
-            super::Placing,
+            (super::Placing, Option<u8>),
             &mut super::placement::PlaceScratch,
         ),
     ) -> (u64, Option<(usize, usize)>) {
@@ -1157,6 +1360,18 @@ impl BiomeRules {
                     mask(words, &layer.mask)
                 };
                 materials = materials.max(u32::from(layer.material) + 1);
+                if layer.covers.is_empty() {
+                    continue;
+                }
+                let sequence = words.len();
+                words[entry] = LAYER_COVERS | sequence as u32;
+                words.push(layer.covers.len() as u32);
+                words.extend(std::iter::repeat_n(0, 2 * layer.covers.len()));
+                for (index, cover) in layer.covers.iter().enumerate() {
+                    words[sequence + 1 + 2 * index] = u32::from(cover.material);
+                    words[sequence + 2 + 2 * index] = mask(words, &cover.grows);
+                    materials = materials.max(u32::from(cover.material) + 1);
+                }
             }
         }
         (stack, self.biomes.len() as u32, materials)
@@ -1166,6 +1381,9 @@ impl BiomeRules {
         self.control_with(
             |biome| self.biomes[biome].fitness.evaluate(inputs),
             |biome, layer| self.biomes[biome].layers[layer].mask.evaluate(inputs),
+            |biome, layer, cover| {
+                (self.biomes[biome].layers[layer].covers[cover].grows).evaluate(inputs)
+            },
             |biome| (self.biomes[biome].wetness.as_ref()).map_or(0.0, |rule| rule.evaluate(inputs)),
             weights,
         )
@@ -1173,44 +1391,54 @@ impl BiomeRules {
 
     pub(crate) fn control_row(
         &self,
-        row: &RowInputs<'_>,
+        (row, maps): (&RowInputs<'_>, &[Vec<f32>]),
         out: &mut [u32],
         (scratch, weights): (&mut RowScratch, &mut Vec<(u8, f32)>),
     ) {
         let len = out.len();
-        let mut values: Vec<Vec<Vec<f32>>> = Vec::with_capacity(self.biomes.len());
+        let mut values: Vec<(Vec<Vec<f32>>, Vec<usize>)> = Vec::with_capacity(self.biomes.len());
         for (index, biome) in self.biomes.iter().enumerate() {
             let mut rows = Vec::with_capacity(biome.layers.len() + 2);
             let mut fitness = scratch.take(if index == 0 { 0 } else { len });
             if index > 0 {
-                biome.fitness.evaluate_row(row, &[], &mut fitness, scratch);
+                biome.fitness.evaluate_row(row, maps, &mut fitness, scratch);
             }
             rows.push(fitness);
             for (layer_index, layer) in biome.layers.iter().enumerate() {
                 let mut mask = scratch.take(if layer_index == 0 { 0 } else { len });
                 if layer_index > 0 {
-                    layer.mask.evaluate_row(row, &[], &mut mask, scratch);
+                    layer.mask.evaluate_row(row, maps, &mut mask, scratch);
                 }
                 rows.push(mask);
             }
             let mut wetness = scratch.take(if biome.wetness.is_some() { len } else { 0 });
             if let Some(rule) = &biome.wetness {
-                rule.evaluate_row(row, &[], &mut wetness, scratch);
+                rule.evaluate_row(row, maps, &mut wetness, scratch);
             }
             rows.push(wetness);
-            values.push(rows);
+            let mut firsts = Vec::with_capacity(biome.layers.len());
+            for layer in &biome.layers {
+                firsts.push(rows.len());
+                for cover in &layer.covers {
+                    let mut share = scratch.take(len);
+                    cover.grows.evaluate_row(row, maps, &mut share, scratch);
+                    rows.push(share);
+                }
+            }
+            values.push((rows, firsts));
         }
         for (sample, control) in out.iter_mut().enumerate() {
             *control = self
                 .control_with(
-                    |biome| values[biome][0][sample],
-                    |biome, layer| values[biome][layer + 1][sample],
-                    |biome| values[biome][self.biomes[biome].layers.len() + 1][sample],
+                    |biome| values[biome].0[0][sample],
+                    |biome, layer| values[biome].0[layer + 1][sample],
+                    |biome, layer, cover| values[biome].0[values[biome].1[layer] + cover][sample],
+                    |biome| values[biome].0[self.biomes[biome].layers.len() + 1][sample],
                     weights,
                 )
                 .pack();
         }
-        for rows in values {
+        for (rows, _) in values {
             for row in rows {
                 scratch.give(row);
             }
@@ -1221,6 +1449,7 @@ impl BiomeRules {
         &self,
         fitness: impl Fn(usize) -> f32,
         mask: impl Fn(usize, usize) -> f32,
+        grows: impl Fn(usize, usize, usize) -> f32,
         wetness: impl Fn(usize) -> f32,
         weights: &mut Vec<(u8, f32)>,
     ) -> Control {
@@ -1246,20 +1475,33 @@ impl BiomeRules {
             if share > 0.0 {
                 let mut left = share;
                 for (layer_index, layer) in compiled.layers.iter().enumerate().rev() {
-                    let cover = if layer_index == 0 {
-                        1.0
+                    let (held, cover) = if layer_index == 0 {
+                        (1.0, 1.0)
                     } else {
-                        clamp(mask(index, layer_index) * layer.opacity, 0.0, 1.0)
+                        let value = mask(index, layer_index);
+                        (
+                            clamp(value, 0.0, 1.0),
+                            clamp(value * layer.opacity, 0.0, 1.0),
+                        )
                     };
                     let weight = cover * left;
                     left *= 1.0 - cover;
                     if weight > 0.0 {
-                        match weights
-                            .iter_mut()
-                            .find(|(material, _)| *material == layer.material)
+                        let (lower, upper, split) = if layer.covers.is_empty() {
+                            (layer.material, layer.material, 0.0)
+                        } else {
+                            layer.placed(held, |cover| grows(index, layer_index, cover))
+                        };
+                        for (material, part) in
+                            [(lower, weight * (1.0 - split)), (upper, weight * split)]
                         {
-                            Some((_, total)) => *total += weight,
-                            None => weights.push((layer.material, weight)),
+                            if part <= 0.0 {
+                                continue;
+                            }
+                            match weights.iter_mut().find(|(known, _)| *known == material) {
+                                Some((_, total)) => *total += part,
+                                None => weights.push((material, part)),
+                            }
                         }
                     }
                     if left <= 0.0 {
@@ -1301,10 +1543,13 @@ record!(NoiseMask {
     seed,
     octaves,
 });
+record!(Grows { map, low, high });
+record!(Cover { material, grows });
 record!(BiomeLayer {
     material,
     mask,
     opacity,
+    covers,
 });
 record!(Biome {
     id,

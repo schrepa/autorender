@@ -2,78 +2,38 @@ use bytemuck::{Pod, Zeroable};
 use engine_core::{gpu_bits, gpu_consts, gpu_struct};
 use engine_heightfield::tile::PATCHES_PER_TILE;
 
-use crate::jobs::gpu::{BlockPlace, WaterInfoWord, WaterStateWord};
+use crate::jobs::gpu::{WaterInfoWord, WaterStateWord};
 
 gpu_consts! {
     pub const NO_WATER_BLOCK: u32 = 0xffffffff;
     pub const WATER_WAITING: u32 = 0xfffffffe;
     pub const WATER_GRADIENT_RANGE: f32 = 4.0;
-    pub const SIM_SLOTS: u32 = 64;
-    pub const SIM_CELL_SUMS: u32 = 4;
-    pub const SIM_BLOCK_LOOKS: u32 = 3;
-    pub const SIM_LIVE_LOOKS: u32 = 2;
-    pub const SIM_TOUCHES: u32 = 32;
-    pub const WATER_SIM_SOURCE_GROUP: u32 = 64;
-    pub const WATER_SETUP_RING_GROUP: u32 = 64;
-    pub const SETUP_SOLID_ENTRIES: u32 = 4;
-    pub const SETUP_WHOLE: u32 = 0;
-    pub const SETUP_RISEN: u32 = 1;
-    pub const SETUP_STANDS: u32 = 2;
-    pub const SIM_STANDING: u32 = 0x80000000;
-    pub const LIVE_NONE: u32 = 0xffffffff;
-    pub const LIVE_HEAD: u32 = 4;
-    pub const LIVE_CELL: u32 = 3;
-    pub const PARTICLE_GROUP: u32 = 256;
-    pub const PARTICLE_SIDE: u32 = 8;
-    pub const PARTICLE_LATTICE: u32 = 8;
-    pub const PARTICLE_MARGIN: u32 = 2;
-    pub const PARTICLE_FOAM_LIVE: u32 = 0;
-    pub const PARTICLE_WAVES_LIVE: u32 = 1;
-    pub const PARTICLE_FOAM_BORN: u32 = 2;
-    pub const PARTICLE_WAVES_BORN: u32 = 3;
-    pub const PARTICLE_FOAM_DROPPED: u32 = 4;
-    pub const PARTICLE_WAVES_DROPPED: u32 = 5;
-    pub const PARTICLE_FOAM_BEFORE: u32 = 6;
-    pub const PARTICLE_WAVES_BEFORE: u32 = 7;
-    pub const PARTICLE_ARGS: u32 = 8;
-    pub const PARTICLE_DRAW: u32 = 14;
-    pub const PARTICLE_ITEMS: u32 = 18;
-    pub const SURFACE_BEND: f32 = 7.0;
-    pub const SURFACE_BEND_MOST: f32 = 1.0;
-    pub const SURFACE_WIND_DRIFT: f32 = 0.03;
-    pub const FASTEST: f32 = 20.0;
-    pub const LOCAL_SHARE: f32 = 0.9;
-    pub const SLOWEST: f32 = 1.0;
-    pub const FOAM_LIFE: f32 = 20.0;
-    pub const FOAM_WET: f32 = 0.005;
-    pub const FOAM_LOSS: f32 = 0.02;
-    pub const FOAM_POWER: f32 = 500.0;
-    pub const SOURCE_SPEED: f32 = 1.5;
     pub const WATER_BLOCKS_SIDE: u32 = 16;
     pub const WATER_TILE_PATCHES: u32 = 16;
     pub const WATER_TILE_WORDS: u32 = WATER_TILE_PATCHES * WATER_TILE_PATCHES;
     pub const WATER_LEAF_FIRST: u32 = 5;
     pub const DEBUG_SPAN_STEPS: f32 = 254.0;
+    pub const WATER_RIPPLE_LEVELS: u32 = 16;
+    pub const WATER_NOISE_WRAP: i32 = 256;
+    pub const WATER_NOISE_REACH: f32 = 0.5;
+    pub const WATER_STEEPEST: f32 = 0.44879895;
+    pub const WATER_GUST_SALT: u32 = 0x51ed270b;
+    pub const WATER_GUST_FINE_SALT: u32 = 0x2545f491;
+    pub const WATER_PUSH_SALT: u32 = 0x9e3779b1;
+    pub const WATER_PUSH_FINE_SALT: u32 = 0x7f4a7c15;
 }
+
+pub(crate) type RippleKept = [[f32; 4]; 8];
 
 const _: () = assert!(
     WATER_TILE_PATCHES == PATCHES_PER_TILE,
     "WATER_TILE_PATCHES differs from PATCHES_PER_TILE"
 );
 
-#[gpu_bits]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct SimFlags {
-    pub stepping: bool,
-    pub local: bool,
-    pub open: bool,
-    pub summing: bool,
-    pub looking: bool,
-    pub sparse: bool,
-    pub live: bool,
-    pub bursting: bool,
-    pub keeping: bool,
-}
+const _: () = assert!(
+    size_of::<RippleKept>() == 2 * WATER_RIPPLE_LEVELS as usize * size_of::<f32>(),
+    "RippleKept does not hold WATER_RIPPLE_LEVELS levels of both ripple fields"
+);
 
 #[gpu_bits]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -115,16 +75,191 @@ pub(crate) struct WaterProbeState {
 }
 
 gpu_struct! {
+    pub(crate) struct WaterWavesLook {
+        pub gusts: [[f32; 4]; 2],
+        pub pushes: [[f32; 4]; 2],
+        pub rides: [[f32; 4]; 2],
+        pub anchor: [f32; 2],
+        pub downwind: [f32; 2],
+        pub still: [f32; 2],
+        pub shown: [f32; 2],
+        pub fan: [f32; 2],
+        pub count: u32,
+        pub chop: f32,
+        pub breaking: f32,
+        pub calmest: f32,
+        pub mesh_error: f32,
+        pub pad: f32,
+    }
+}
+
+gpu_struct! {
+    pub(crate) struct WaterWave {
+        pub heading: [f32; 2],
+        pub group: [f32; 2],
+        pub number: f32,
+        pub steep: f32,
+        pub gusted: f32,
+        pub wavelength: f32,
+        pub phase: f32,
+        pub speed: f32,
+        pub left: f32,
+        pub pad: f32,
+    }
+}
+
+gpu_struct! {
+    pub(crate) struct WaterWaveRow {
+        pub wave: WaterWave,
+        pub rests: [[f32; 4]; 10],
+    }
+}
+
+gpu_struct! {
+    pub(crate) struct WaterFlowLook {
+        pub moving: [f32; 2],
+        pub shown: [f32; 2],
+        pub frame: f32,
+        pub carry_slowest: f32,
+        pub carry_step: f32,
+        pub carry_log: f32,
+        pub rung_band: f32,
+        pub relief_steepest: f32,
+        pub ripple_seconds: f32,
+        pub boil_seconds: f32,
+    }
+}
+
+gpu_struct! {
+    pub(crate) struct WaterRippleLook {
+        pub kept: [[f32; 4]; 8],
+        pub reach: [f32; 4],
+        pub boil_churning: [f32; 2],
+        pub tile: [f32; 2],
+        pub fine_tile: f32,
+        pub stretch: f32,
+        pub coarse: f32,
+        pub skew: f32,
+        pub least: f32,
+        pub share: f32,
+        pub fine_share: f32,
+        pub boil_steep: f32,
+    }
+}
+
+gpu_struct! {
+    pub(crate) struct WaterReliefLook {
+        pub bump_froude: [f32; 2],
+        pub roughness: [f32; 2],
+        pub bump_steep: f32,
+        pub bump_depths: f32,
+        pub bump_deep: f32,
+        pub bump_shortest: f32,
+        pub bump_crests: f32,
+        pub bump_crest_gain: f32,
+        pub bump_flicker: f32,
+        pub boil_across: f32,
+    }
+}
+
+gpu_struct! {
+    pub(crate) struct WaterFoamLook {
+        pub fades: [f32; 2],
+        pub covers: [f32; 2],
+        pub tearing: [f32; 2],
+        pub froude: [f32; 2],
+        pub breaking: [f32; 2],
+        pub drop: [f32; 2],
+        pub blocking: [f32; 2],
+        pub crested: [f32; 2],
+        pub around: [f32; 2],
+        pub rough: [f32; 2],
+        pub drift_amount: [f32; 2],
+        pub drift_gathers: [f32; 2],
+        pub tile: f32,
+        pub steep: f32,
+        pub soft: f32,
+        pub halo: f32,
+        pub body: f32,
+        pub filmy: f32,
+        pub optical: f32,
+        pub hollow: f32,
+        pub albedo: f32,
+        pub sky: f32,
+        pub mirrors: f32,
+        pub open: f32,
+    }
+}
+
+gpu_struct! {
+    pub(crate) struct WaterShoreLook {
+        pub racing: [f32; 2],
+        pub lace_depth: [f32; 2],
+        pub lace_speed: [f32; 2],
+        pub fade: f32,
+        pub edge: f32,
+        pub edge_pixels: f32,
+        pub wet: f32,
+        pub soaked: f32,
+        pub lace_amount: f32,
+    }
+}
+
+gpu_struct! {
+    pub(crate) struct WaterOpticsLook {
+        pub phase_forward: f32,
+        pub phase_mean: f32,
+        pub bubbles: f32,
+        pub bubble_albedo: f32,
+        pub refraction_reach: f32,
+        pub caustic_contrast: f32,
+        pub caustic_most: f32,
+        pub caustic_depth: f32,
+    }
+}
+
+gpu_struct! {
+    pub(crate) struct WaterFallLook {
+        pub scale_shares: [f32; 4],
+        pub wander_scale: [f32; 2],
+        pub curtain_scale: [f32; 2],
+        pub rope_scale: [f32; 2],
+        pub strand_scale: [f32; 2],
+        pub plunge_drowns: [f32; 2],
+        pub pad: [f32; 2],
+        pub wander_reach: f32,
+        pub gathering: f32,
+        pub glassy_gathering: f32,
+        pub tear_thickness: f32,
+        pub rock_roughness: f32,
+        pub broken_stands: f32,
+        pub tear_softness: f32,
+        pub edge_thinning: f32,
+        pub relief_steepest: f32,
+        pub furrow_shade: f32,
+        pub matte_roughness: f32,
+        pub albedo: f32,
+        pub thin_tint: f32,
+        pub scattering: f32,
+        pub forward: f32,
+        pub faintest: f32,
+    }
+}
+
+gpu_struct! {
     pub(crate) struct WaterUniform {
         pub color: [f32; 4],
-        pub foam: [f32; 4],
         pub absorption: [f32; 4],
-        pub sim: [f32; 4],
-        pub sim_datum: [f32; 4],
         pub sediment: [f32; 4],
-        pub lift: [f32; 4],
-        pub sim_pixels: [f32; 4],
         pub terrains: [u32; 4],
+        pub waves: WaterWavesLook,
+        pub flow: WaterFlowLook,
+        pub ripples: WaterRippleLook,
+        pub relief: WaterReliefLook,
+        pub foam: WaterFoamLook,
+        pub shore: WaterShoreLook,
+        pub optics: WaterOpticsLook,
+        pub falls: WaterFallLook,
     }
 }
 
@@ -132,69 +267,9 @@ gpu_struct! {
     #[derive(bevy_ecs::resource::Resource)]
     pub(crate) struct WaterPiece {
         pub debug: [u32; 4],
+        pub ranges: [f32; 4],
+        pub breaking: [f32; 4],
     }
-}
-
-gpu_struct! {
-    pub(crate) struct SimFrame {
-        pub stage: [u32; 4],
-        pub inputs: [u32; 4],
-    }
-}
-
-gpu_struct! {
-    pub(crate) struct SimSlot {
-        pub shape: [u32; 4],
-        pub step: [f32; 4],
-        pub blocks: [u32; 4],
-        pub place: [u32; 4],
-    }
-}
-
-gpu_struct! {
-    pub(crate) struct SimTouch {
-        pub center: [f32; 4],
-        pub inverse: [[f32; 4]; 3],
-        pub velocity: [f32; 4],
-        pub reach: [f32; 4],
-    }
-}
-
-gpu_struct! {
-    pub(crate) struct SimSetup {
-        pub counts: [u32; 4],
-        pub square: [u32; 4],
-        pub meters: [f32; 4],
-        pub ring: [u32; 4],
-        pub tiles: [u32; 4],
-        pub terrain: [u32; 4],
-    }
-}
-
-gpu_struct! {
-    pub(crate) struct ParticleFrame {
-        pub window: [i32; 4],
-        pub lattice: [i32; 4],
-        pub step: [f32; 4],
-        pub flags: [u32; 4],
-        pub pool: [u32; 4],
-        pub eddies: [f32; 4],
-        pub terrain: [u32; 4],
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-#[repr(C)]
-pub(crate) struct SimSlots {
-    pub slot: [SimSlot; SIM_SLOTS as usize],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
-#[repr(C)]
-pub(crate) struct SimTouches {
-    pub count: [u32; 4],
-    pub blocks: [u32; 4],
-    pub touch: [SimTouch; SIM_TOUCHES as usize],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]
@@ -206,22 +281,26 @@ pub(crate) struct FallVertex {
     pub state: [f32; 2],
     pub sky: f32,
     pub terrain: u32,
+    pub flight: [f32; 4],
 }
 
 pub(crate) const GENERATED: &[&str] = &[
     WGSL,
     crate::jobs::gpu::WGSL,
-    <SimFlags as engine_core::GpuBits>::WGSL,
     <Shown as engine_core::BitValue>::WGSL,
     <WaterProbeDetail as engine_core::GpuBits>::WGSL,
     <WaterProbeState as engine_core::GpuBits>::WGSL,
     <WaterInfoWord as engine_core::GpuBits>::WGSL,
     <WaterStateWord as engine_core::GpuBits>::WGSL,
-    <BlockPlace as engine_core::GpuBits>::WGSL,
+    <WaterWavesLook as engine_core::GpuStruct>::WGSL,
+    <WaterWave as engine_core::GpuStruct>::WGSL,
+    <WaterWaveRow as engine_core::GpuStruct>::WGSL,
+    <WaterFlowLook as engine_core::GpuStruct>::WGSL,
+    <WaterRippleLook as engine_core::GpuStruct>::WGSL,
+    <WaterReliefLook as engine_core::GpuStruct>::WGSL,
+    <WaterFoamLook as engine_core::GpuStruct>::WGSL,
+    <WaterShoreLook as engine_core::GpuStruct>::WGSL,
+    <WaterOpticsLook as engine_core::GpuStruct>::WGSL,
+    <WaterFallLook as engine_core::GpuStruct>::WGSL,
     <WaterUniform as engine_core::GpuStruct>::WGSL,
-    <SimFrame as engine_core::GpuStruct>::WGSL,
-    <SimSlot as engine_core::GpuStruct>::WGSL,
-    <SimTouch as engine_core::GpuStruct>::WGSL,
-    <SimSetup as engine_core::GpuStruct>::WGSL,
-    <ParticleFrame as engine_core::GpuStruct>::WGSL,
 ];

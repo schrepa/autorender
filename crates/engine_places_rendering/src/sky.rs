@@ -3,9 +3,7 @@ use engine_place::{Slot, StoreId};
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct SkyLight {
-    pub sun_intensity: f32,
     pub sun_size: f32,
-    pub adaptation: f32,
     pub environment: Option<StoreId>,
 }
 
@@ -21,14 +19,6 @@ pub struct EyeMedium {
 
 impl Slot for EyeMedium {
     const NAME: &'static str = "eye_medium";
-}
-
-#[derive(Resource, Default)]
-pub struct OpenSky;
-
-impl Slot for OpenSky {
-    const NAME: &'static str = "open_sky";
-    const WGSL: Option<&'static str> = Some(include_str!("places/open_sky.wgsl"));
 }
 
 #[derive(Resource, Default)]

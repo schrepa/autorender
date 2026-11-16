@@ -25,7 +25,9 @@ pub(super) struct Left {
 }
 
 fn memory_bytes(tile: &Tile) -> u64 {
-    let arrays = tile.heights().len() + tile.control().map_or(0, <[u32]>::len);
+    let arrays = tile.heights().len()
+        + tile.control().map_or(0, <[u32]>::len)
+        + tile.site().map_or(0, <[u32]>::len);
     let holes = tile.hole_bits().map_or(0, <[u64]>::len) * 8;
     (arrays * 4 + holes + std::mem::size_of_val(tile.placed())) as u64
 }
@@ -52,6 +54,7 @@ fn face_of(
         holes: tile.shared_holes(),
         materials,
         control: tile.shared_control(),
+        site: tile.shared_site(),
         river_edges: tile.shared_river_edges(),
         river_beds: tile.shared_river_beds(),
         patch_bounds: tile.shared_patch_bounds(),

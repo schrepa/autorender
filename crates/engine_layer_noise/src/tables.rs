@@ -137,6 +137,7 @@ pub(crate) struct NoiseTables {
     pub(crate) params: NoiseLayer,
     octaves: [Octave; OCTAVES],
     gullies: [GullyOctave; GULLY_OCTAVES],
+    rise: f32,
 }
 
 pub(crate) const COARSE_SAMPLES: f32 = 32.0;
@@ -186,10 +187,21 @@ impl NoiseTables {
             }
         });
         Self {
+            rise: 1.0 / (1.0 - params.summits),
             params,
             octaves,
             gullies,
         }
+    }
+
+    #[inline(always)]
+    fn above(&self, h: f32) -> f32 {
+        max(h - self.params.summits, 0.0) * self.rise
+    }
+
+    #[inline(always)]
+    fn above4(&self, h: Vec4) -> Vec4 {
+        max4(h - self.params.summits, Vec4::ZERO) * self.rise
     }
 
     pub(crate) fn bands(&self, spacing: f32) -> (usize, std::ops::Range<usize>, usize) {
@@ -294,7 +306,9 @@ impl NoiseTables {
             let mx = blend_gradient(rolling[0], ridged[0], params.ridges);
             let mz = blend_gradient(rolling[1], ridged[1], params.ridges);
             let h = clamp(mixed, 0.0, 1.0);
-            let shape_slope = params.height * (1.0 + params.valleys * (2.0 * h - 1.0));
+            let steepened = 2.0 * params.peaks * self.above(h) * self.rise;
+            let shape_slope =
+                params.height * (1.0 + params.valleys * (2.0 * h - 1.0) + steepened);
             let (gx, gz) = (shape_slope * mx, shape_slope * mz);
             let slope = (gx * gx + gz * gz).sqrt();
             let inverse = 1.0 / max(slope, 1.0e-6);
@@ -363,7 +377,9 @@ impl NoiseTables {
             let mx = blend_gradient4(rolling[0], ridged[0], params.ridges);
             let mz = blend_gradient4(rolling[1], ridged[1], params.ridges);
             let h = min4(max4(mixed, Vec4::ZERO), Vec4::ONE);
-            let shape_slope = params.height * (1.0 + params.valleys * (2.0 * h - 1.0));
+            let steepened = 2.0 * params.peaks * self.above4(h) * self.rise;
+            let shape_slope =
+                params.height * (1.0 + params.valleys * (2.0 * h - 1.0) + steepened);
             let (gx, gz) = (shape_slope * mx, shape_slope * mz);
             let slope = sqrt4(gx * gx + gz * gz);
             let inverse = 1.0 / max4(slope, Vec4::splat(1.0e-6));
@@ -419,7 +435,8 @@ impl NoiseTables {
             );
         }
         let h = clamp(blend(sums.rolling, sums.ridged, params.ridges), 0.0, 1.0);
-        let shaped = h + params.valleys * (h * h - h);
+        let above = self.above(h);
+        let shaped = h + params.valleys * (h * h - h) + params.peaks * above * above;
         params.offset + params.height * shaped + state[2]
     }
 
@@ -455,7 +472,8 @@ impl NoiseTables {
             max4(blend4(sums.rolling, sums.ridged, params.ridges), Vec4::ZERO),
             Vec4::ONE,
         );
-        let shaped = h + params.valleys * (h * h - h);
+        let above = self.above4(h);
+        let shaped = h + params.valleys * (h * h - h) + params.peaks * above * above;
         params.offset + params.height * shaped + state[2]
     }
 }

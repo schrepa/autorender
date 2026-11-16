@@ -602,6 +602,18 @@ impl Layers {
         self.layers.iter().filter_map(|layer| layer.change())
     }
 
+    pub fn published(&self) -> impl Iterator<Item = crate::layer::Published<'_>> + '_ {
+        self.layers.iter().flat_map(|layer| layer.published())
+    }
+
+    pub fn site(&self) -> Option<crate::layer::SiteBytes> {
+        self.layers.iter().find_map(|layer| layer.site())
+    }
+
+    pub fn rests(&self, name: &str) -> Option<crate::layer::Rests> {
+        self.layers.iter().find_map(|layer| layer.rests(name))
+    }
+
     pub fn holes_reach(&self, min: Vec2, max: Vec2) -> bool {
         self.layers.iter().any(|layer| layer.holes_reach(min, max))
     }

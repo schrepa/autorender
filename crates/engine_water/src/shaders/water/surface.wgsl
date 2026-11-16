@@ -1,35 +1,34 @@
 import package::engine::color::luminance;
-import package::engine::math::PI;
+import package::engine::math::{PI, pcg, unit};
 import package::engine::shading::{Shaded, SurfacePoint};
 import package::engine::slots::{derived, set_added_light, set_direct_blocked, set_metalness,
-    set_occlusion, set_roughness, set_smoother_across, set_transmission, shade as shade_point,
-    standard_point};
+    set_mirrored_rough, set_occlusion, set_roughness, set_smoother_across, set_transmission,
+    shade as shade_point, standard_point};
 import package::engine::surfaces::SURFACE_WATER;
 import package::engine::view::{camera, detail_across, detail_level, eye_world, stable_normalize,
     view_pixel};
-import package::face::heightfield::{SURFACE_LEAF_INDICES, surface_leaf, surface_leaf_count,
-    surface_vertex, terrain_level_height, terrain_uniform, terrain_view_uniform, use_terrain};
+import package::face::heightfield::{SURFACE_LEAF_INDICES, surface_drawn, surface_leaf,
+    surface_leaf_count, surface_vertex, terrain_level_height, terrain_uniform,
+    terrain_view_uniform, use_terrain};
 import package::face::lighting::{distribution, environment_brdf, fresnel, given_reflectance,
     highlights, specular, sun_visibility, visibility};
-import package::face::sky::{ambient, atmospheric_cover, sky_average};
+import package::face::shadows::air_shadow;
+import package::face::sky::{ambient, sky_average};
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
 import package::generated::writes::{Outputs, outputs};
-import package::generated::water::{BREAK_THINNEST, GRAVITY, NO_WATER_BLOCK, NO_WATER_SURFACE,
-    SIM_LIVE_LOOKS, SIM_RIM, WATER_LEAF_FIRST, WATER_LIVE_BLOCK, WaterUniform};
-import package::place::water::{WATER_HELD, WaterAt};
-import package::water::faces::water::{water_at_level, water_cell, water_info_at, water_read,
-    water_smooth, water_texel, water_words, water_words_add};
-import package::water::flow::{water_detail, water_stirring};
-import package::water::foam::{water_blocking, water_contact, water_foam, water_foam_layers,
-    water_layers, water_splatted};
-import package::water::footprint::{WaterFootprint, water_footprint, water_roughness,
-    water_turning};
+import package::generated::water::{FROUDE_GUARD_DEPTH, GRAVITY, NO_WATER_BLOCK, WATER_LEAF_FIRST};
+import package::place::water::{WATER_HELD, WaterAt, WaterCell};
+import package::water::faces::water::{water_cell, water_read};
+import package::water::flow::{water_relief, water_stirring, water_stream};
+import package::water::foam::{water_blocking, water_contact, water_filming, water_foam,
+    water_sheer, water_white, water_whitening};
+import package::water::footprint::{water_footprint, water_roughness, water_turning};
 import package::water::refraction::refraction_sampler;
+import package::water::uniforms::water;
+import package::water::waves::{WaterSwell, water_calm, water_piece, water_swell};
 
-@group(1) @binding(52) var<uniform> water: WaterUniform;
 @group(1) @binding(57) var<storage, read> water_leaf_spans: array<u32>;
-@group(1) @binding(56) var<storage, read> water_live: array<vec4<f32>>;
 @group(2) @binding(22) var water_depth: texture_depth_2d;
 @group(2) @binding(23) var water_scene: texture_2d<f32>;
 
@@ -42,24 +41,14 @@ fn water_ground(pixel: vec2<f32>) -> vec3<f32> {
     return point.xyz / point.w - camera.position.xyz;
 }
 
-const WATER_WET: f32 = 0.35;
-const WATER_SOAKED: f32 = 0.03;
 const WATER_IOR: f32 = 1.333;
-const WATER_PHASE_G: f32 = 0.4;
-const WATER_PHASE_MEAN: f32 = 0.4498;
-const WATER_FOAM_ALBEDO: f32 = 0.65;
-const WATER_FOAM_SKY: f32 = 0.6;
-const WATER_FOAM_ROUGH: vec2<f32> = vec2<f32>(0.3, 0.7);
-const WATER_REACH: f32 = 4.0;
-const WATER_SHORE: f32 = 0.1;
-const WATER_EDGE_PIXELS: f32 = 1.5;
-const WATER_EDGE: f32 = 0.05;
-const WATER_RACING: vec2<f32> = vec2<f32>(0.8, 1.6);
+const WATER_SUN_TAPS: u32 = 4u;
 
 struct WaterOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) relative: vec3<f32>,
     @location(1) @interpolate(flat) terrain: u32,
+    @location(2) depth: f32,
 }
 
 fn water_leaf_terrain(instance: u32) -> vec2<u32> {
@@ -73,149 +62,39 @@ fn water_leaf_terrain(instance: u32) -> vec2<u32> {
     return vec2<u32>(last, instance - water_leaf_spans[WATER_LEAF_FIRST + 2u * last]);
 }
 
-fn water_corner(corner: u32, upper: bool) -> vec2<u32> {
-    let lower = vec2<u32>(select(0u, 1u, corner == 1u), select(0u, 1u, corner == 2u));
-    return select(lower, vec2<u32>(1u) - lower, upper);
+struct WaterStored {
+    at: WaterAt,
+    found: bool,
 }
 
-fn water_weights(within: vec2<f32>) -> vec3<f32> {
-    if within.x + within.y <= 1.0 {
-        return vec3<f32>(1.0 - within.x - within.y, within.x, within.y);
+fn water_stored_read(local: vec2<f32>, cell: WaterCell) -> WaterStored {
+    var stored: WaterStored;
+    if cell.block != NO_WATER_BLOCK {
+        stored.at = water_read(cell);
+        stored.found = true;
+        return stored;
     }
-    return vec3<f32>(within.x + within.y - 1.0, 1.0 - within.x, 1.0 - within.y);
+    let ground = terrain_level_height(local,
+        select(0u, cell.level, cell.level < terrain_uniform().directory.y));
+    if ground.found {
+        stored.at.surface = ground.height;
+        stored.found = true;
+    }
+    return stored;
 }
 
-fn water_field(local: vec2<f32>) -> f32 {
-    let cell = water_cell(local, 0u);
-    var level = 0.0;
-    if cell.block == NO_WATER_BLOCK {
-        level = terrain_level_height(local, cell.level).height;
-    } else {
-        let upper = cell.within.x + cell.within.y > 1.0;
-        var levels = vec3<f32>(0.0);
-        for (var corner = 0u; corner < 3u; corner++) {
-            let texel = water_texel(cell.block, cell.first + water_corner(corner, upper));
-            levels[corner] = bitcast<f32>(water_info_at(texel).z);
-        }
-        level = dot(levels, water_weights(cell.within));
+fn water_stored(local: vec2<f32>, seen: f32) -> WaterStored {
+    let picked = detail_level(seen, terrain_uniform().anchor.w, terrain_uniform().directory.y);
+    let cell = water_cell(local, picked.level);
+    let fine = water_stored_read(local, cell);
+    if !fine.found || picked.blend <= 0.0 || cell.level != picked.level {
+        return fine;
     }
-    return max(level, water_live_field(local));
-}
-
-fn water_live_field(local: vec2<f32>) -> f32 {
-    let n = water.sim.w;
-    let cells = (local + terrain_uniform().origin.xz - water.sim.xy) / water.sim.z - 0.5;
-    if n < 2.0 || any(cells < vec2<f32>(0.0)) || any(cells > vec2<f32>(n - 1.0)) {
-        return NO_WATER_SURFACE;
+    let coarser = water_stored_read(local, water_cell(local, picked.level + 1u));
+    if !coarser.found {
+        return fine;
     }
-    let first = min(vec2<i32>(floor(cells)), vec2<i32>(i32(n) - 2));
-    let within = cells - vec2<f32>(first);
-    var sum = 0.0;
-    var weight = 0.0;
-    for (var k = 0; k < 4; k++) {
-        let step = vec2<i32>(k % 2, k / 2);
-        let surface = water_live_look(first + step).x;
-        if surface > NO_WATER_SURFACE * 0.5 {
-            let shares = mix(vec2<f32>(1.0) - within, within, vec2<f32>(step));
-            sum += surface * shares.x * shares.y;
-            weight += shares.x * shares.y;
-        }
-    }
-    if weight <= 0.0 {
-        return NO_WATER_SURFACE;
-    }
-    return sum / weight + water.sim_datum.x - terrain_uniform().origin.y;
-}
-
-fn water_live_look(at: vec2<i32>) -> vec4<f32> {
-    let last = i32(water.sim.w) - 1;
-    let cell = vec2<u32>(clamp(at, vec2<i32>(0), vec2<i32>(last)));
-    let pool = u32(water.sim_datum.w);
-    let slot = (cell / WATER_LIVE_BLOCK + vec2<u32>(water.sim_datum.yz)) % pool;
-    let local = cell % WATER_LIVE_BLOCK;
-    let index = ((slot.y * pool + slot.x) * WATER_LIVE_BLOCK + local.y) * WATER_LIVE_BLOCK
-        + local.x;
-    return water_live[index * SIM_LIVE_LOOKS + 1u];
-}
-
-fn water_live_read(local: vec2<f32>) -> WaterAt {
-    let n = water.sim.w;
-    let cells = (local + terrain_uniform().origin.xz - water.sim.xy) / water.sim.z - 0.5;
-    let corner = clamp(floor(cells), vec2<f32>(1.0), vec2<f32>(n - 3.0));
-    let within = saturate(cells - corner);
-    let first = vec2<i32>(corner) - vec2<i32>(1);
-    let lift = water.sim_datum.x - terrain_uniform().origin.y;
-    var surfaces: array<vec2<f32>, 16>;
-    var words: array<vec2<u32>, 16>;
-    for (var k = 0u; k < 16u; k++) {
-        let look = water_live_look(first + vec2<i32>(vec2<u32>(k % 4u, k / 4u)));
-        surfaces[k] = look.xy + lift;
-        words[k] = bitcast<vec2<u32>>(look.zw);
-    }
-    var level = water_smooth(surfaces, within, water.sim.z);
-    var at = water_at_level(level);
-    if level.held <= 0.0 {
-        return at;
-    }
-    let nearest = select(vec2<u32>(1u), vec2<u32>(2u), within >= vec2<f32>(0.5));
-    for (var row = 0u; row < 4u; row++) {
-        for (var column = 0u; column < 4u; column++) {
-            let share = level.shares[row][column];
-            if share <= 0.0 {
-                continue;
-            }
-            let word = words[row * 4u + column];
-            at = water_words_add(at, water_words(vec4<u32>(word, 0u, 0u)), share,
-                all(vec2<u32>(column, row) == nearest));
-        }
-    }
-    return at;
-}
-
-fn water_live_stands(block: vec2<i32>) -> bool {
-    return water_live_look(block * i32(WATER_LIVE_BLOCK)).y <= 0.5 * NO_WATER_SURFACE;
-}
-
-fn water_live_standing(cells: vec2<f32>, n: f32) -> f32 {
-    let side = f32(WATER_LIVE_BLOCK);
-    let reach = i32((SIM_RIM + WATER_LIVE_BLOCK - 1u) / WATER_LIVE_BLOCK);
-    let blocks = i32(n) / i32(WATER_LIVE_BLOCK);
-    let own = vec2<i32>(floor(cells / side));
-    var nearest = f32(SIM_RIM);
-    for (var z = -reach; z <= reach; z++) {
-        for (var x = -reach; x <= reach; x++) {
-            let block = own + vec2<i32>(x, z);
-            if any(block < vec2<i32>(0)) || any(block >= vec2<i32>(blocks)) {
-                continue;
-            }
-            if !water_live_stands(block) {
-                continue;
-            }
-            let low = vec2<f32>(block) * side;
-            let apart = max(max(low - cells, cells - (low + side)), vec2<f32>(0.0));
-            nearest = min(nearest, max(apart.x, apart.y));
-        }
-    }
-    return nearest;
-}
-
-fn water_live_share(local: vec2<f32>, seen: f32) -> f32 {
-    let n = water.sim.w;
-    if n < f32(2u * SIM_RIM) {
-        return 0.0;
-    }
-    let handed = detail_level(seen, water.sim.z / (2.0 * water.sim_pixels.x), 2u);
-    if handed.level != 0u {
-        return 0.0;
-    }
-    let cells = (local + terrain_uniform().origin.xz - water.sim.xy) / water.sim.z;
-    let edges = min(min(cells.x, cells.y), min(n - cells.x, n - cells.y));
-    if edges <= 2.0 {
-        return 0.0;
-    }
-    let inside = min(edges, water_live_standing(cells, n));
-    let rim = smoothstep(2.0, f32(SIM_RIM), inside);
-    return rim * (1.0 - handed.blend);
+    return WaterStored(water_blend(fine.at, coarser.at, picked.blend), true);
 }
 
 fn water_blend(first: WaterAt, second: WaterAt, toward: f32) -> WaterAt {
@@ -234,20 +113,12 @@ fn water_blend(first: WaterAt, second: WaterAt, toward: f32) -> WaterAt {
 }
 
 fn water_pixel(local: vec2<f32>, seen: f32) -> WaterAt {
-    let live = water_live_share(local, seen);
-    if live >= 1.0 {
-        return water_live_read(local);
+    let stored = water_stored(local, seen);
+    var at: WaterAt;
+    if stored.found {
+        at = stored.at;
     }
-    let picked = detail_level(seen, terrain_uniform().anchor.w, terrain_uniform().directory.y);
-    let cell = water_cell(local, picked.level);
-    var at = water_read(cell);
-    if picked.blend > 0.0 && cell.level == picked.level {
-        at = water_blend(at, water_read(water_cell(local, picked.level + 1u)), picked.blend);
-    }
-    if live <= 0.0 {
-        return at;
-    }
-    return water_blend(at, water_live_read(local), live);
+    return at;
 }
 
 fn water_drawn(drawn: vec3<f32>) -> WaterAt {
@@ -266,21 +137,42 @@ fn water_relative(local: vec2<f32>, height: f32) -> vec3<f32> {
         local.y + from_eye.y) + terrain_view_uniform().eye_offset.xyz;
 }
 
-fn water_lift(world: vec3<f32>) -> f32 {
-    return (water.lift.x + water.lift.y) * detail_across(world);
-}
-
 fn water_output(vertex: u32, instance: u32) -> WaterOutput {
     let leaf = water_leaf_terrain(instance);
     use_terrain(leaf.x);
-    let local = surface_vertex(surface_leaf(leaf.y), vertex);
-    var relative = water_relative(local, water_field(local));
-    relative.y += water_lift(eye_world(relative));
+    let triangle = surface_leaf(leaf.y);
+    let local = surface_vertex(triangle, vertex);
     var output: WaterOutput;
+    output.terrain = leaf.x;
+    let ground = terrain_level_height(local, 0u);
+    if !ground.found {
+        output.clip_position = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        return output;
+    }
+    let seen = detail_across(eye_world(water_relative(local, ground.height)));
+    let stored = water_stored(local, seen);
+    if !stored.found {
+        output.clip_position = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        return output;
+    }
+    let at = stored.at;
+    let bed = surface_drawn(triangle, local) + terrain_view_uniform().eye_offset.xyz;
+    let still = water_relative(local, at.surface).y;
+    var swell: WaterSwell;
+    let calm = water_calm(length(at.words.flow));
+    let room = min(at.depth, still - bed.y);
+    if calm > 0.0 && room > 0.0 {
+        let allowed = water.waves.mesh_error * camera.pixel_error * detail_across(eye_world(bed));
+        let finest = terrain_uniform().anchor.w
+            * f32(1u << min(water_cell(local, 0u).level, 30u));
+        swell = water_swell(bed.xz + (camera.position.xz - water.waves.anchor), vec2<f32>(0.0),
+            vec2<f32>(0.0), water.waves.shown.x * max(water_piece(allowed), finest), room, calm);
+    }
+    let relative = vec3<f32>(bed.x, still + swell.height, bed.z);
     output.clip_position = terrain_view_uniform().relative_view_projection
         * vec4<f32>(relative, 1.0);
     output.relative = relative;
-    output.terrain = leaf.x;
+    output.depth = relative.y - bed.y;
     return output;
 }
 
@@ -290,19 +182,16 @@ fn vs_water(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instanc
     return water_output(vertex, instance);
 }
 
-fn water_previous(relative: vec3<f32>, flow: vec2<f32>, share: f32) -> vec3<f32> {
+fn water_previous(relative: vec3<f32>, velocity: vec3<f32>, share: f32) -> vec3<f32> {
     let seconds = clamp(camera.position.w - camera.previous.w, 0.0, WATER_LONGEST_FRAME);
-    let before = eye_world(relative) - vec3<f32>(flow.x, 0.0, flow.y) * (seconds * share);
+    let before = eye_world(relative) - velocity * (seconds * share);
     return (camera.previous_view_projection * vec4<f32>(before, 1.0)).xyw;
 }
 
 const WATER_LONGEST_FRAME: f32 = 0.1;
 
-const WATER_BUBBLES: f32 = 3.0;
-const WATER_BUBBLE_ALBEDO: f32 = 0.2;
-
 fn water_extinction(aerated: f32) -> vec3<f32> {
-    return water.absorption.rgb + water.sediment.w + WATER_BUBBLES * aerated;
+    return water.absorption.rgb + water.sediment.w + water.optics.bubbles * aerated;
 }
 
 fn water_transmitted(meters: f32, aerated: f32) -> vec3<f32> {
@@ -312,9 +201,11 @@ fn water_transmitted(meters: f32, aerated: f32) -> vec3<f32> {
 fn water_body(aerated: f32) -> vec3<f32> {
     let own = luminance(water.absorption.rgb);
     let sediment = water.sediment.w;
-    let bubbles = WATER_BUBBLES * aerated;
-    return (water.color.rgb * own + water.sediment.rgb * sediment
-        + vec3<f32>(WATER_BUBBLE_ALBEDO * bubbles)) / max(own + sediment + bubbles, 1.0e-6);
+    let bubbles = water.optics.bubbles * aerated;
+    return (water.color.rgb * own + water.sediment.rgb * sediment)
+        / max(own + sediment + bubbles, 1.0e-6)
+        + vec3<f32>(water.optics.bubble_albedo * bubbles)
+        / max(water_extinction(aerated), vec3<f32>(1.0e-6));
 }
 
 fn water_facing(normal: vec3<f32>, view: vec3<f32>, plane: vec3<f32>) -> vec3<f32> {
@@ -356,9 +247,9 @@ fn water_visibility(n_v: f32, n_l: f32, view_tangents: vec2<f32>, light_tangents
 }
 
 fn water_phase(cosine: f32) -> f32 {
-    let g = WATER_PHASE_G;
+    let g = water.optics.phase_forward;
     let denominator = 1.0 + g * g - 2.0 * g * cosine;
-    return (1.0 - g * g) / (denominator * sqrt(denominator)) / WATER_PHASE_MEAN;
+    return (1.0 - g * g) / (denominator * sqrt(denominator)) / water.optics.phase_mean;
 }
 
 fn water_scattered(view: vec3<f32>, sunlight: vec3<f32>, plane: vec3<f32>) -> vec3<f32> {
@@ -373,6 +264,23 @@ fn water_scattered(view: vec3<f32>, sunlight: vec3<f32>, plane: vec3<f32>) -> ve
     let leaving = -refract(-view, plane, 1.0 / WATER_IOR);
     let into = 1.0 - fresnel(vec3<f32>(0.02), sun_in).r;
     return sky + sunlight * (sun_in * into * water_phase(dot(entering, leaving)));
+}
+
+fn water_sunned(world: vec3<f32>, view: vec3<f32>, plane: vec3<f32>, path: vec2<f32>,
+        pixel: vec2<f32>) -> f32 {
+    let bent = refract(-view, plane, 1.0 / WATER_IOR);
+    let sinking = -dot(bent, plane);
+    let falling = -dot(refract(-sun_direction(), plane, 1.0 / WATER_IOR), plane);
+    let fading = path.y * (1.0 + max(sinking, 0.0) / max(falling, 1.0e-3)); // optics: light dims on its way down to a point and again on the view's way out
+    let reached = 1.0 - exp(-fading * path.x);
+    let jitter = unit(pcg(u32(pixel.x) ^ pcg(u32(pixel.y))));
+    var sum = 0.0;
+    for (var tap = 0u; tap < WATER_SUN_TAPS; tap++) {
+        let share = (f32(tap) + jitter) / f32(WATER_SUN_TAPS);
+        let along = -log(1.0 - share * reached) / max(fading, 1.0e-6); // optics: equal shares of the light scattered back along the view's way through the water
+        sum += air_shadow(world + bent * along);
+    }
+    return sum / f32(WATER_SUN_TAPS);
 }
 
 struct WaterBehind {
@@ -390,7 +298,7 @@ fn water_behind(relative: vec3<f32>, normal: vec3<f32>, view: vec3<f32>, pixel: 
     let sinking = -dot(bent, plane);
     if dot(view, plane) > 0.0 && sinking > 0.0 {
         let below = max(dot(relative - ground, plane), 0.0);
-        let reach = min(below / max(sinking, 0.1), WATER_REACH);
+        let reach = min(below / max(sinking, 0.1), water.optics.refraction_reach);
         let clip = camera.view_projection
             * vec4<f32>(eye_world(relative + bent * reach), 1.0);
         if clip.w > 1.0e-6 {
@@ -423,6 +331,8 @@ struct WaterSurface {
     foam: f32,
     scatter: vec3<f32>,
     transmit: vec3<f32>,
+    path: vec2<f32>,
+    calm: f32,
 }
 
 struct WaterLit {
@@ -438,7 +348,7 @@ fn water_light(surface: WaterSurface, pixel: vec2<f32>) -> WaterLit {
     let view = stable_normalize(-surface.relative);
     let up = vec3<f32>(0.0, 1.0, 0.0);
     let normal = water_facing(surface.normal, view, surface.plane);
-    let foam_roughness = mix(WATER_FOAM_ROUGH.y, WATER_FOAM_ROUGH.x, surface.foam_thin);
+    let foam_roughness = mix(water.foam.rough.y, water.foam.rough.x, surface.foam_thin);
     let roughness = mix(surface.roughness, vec2<f32>(foam_roughness), surface.foam);
     let alphas = roughness * roughness;
     let n_v = max(dot(normal, view), 1.0e-4);
@@ -446,10 +356,12 @@ fn water_light(surface: WaterSurface, pixel: vec2<f32>) -> WaterLit {
     let reflectance = saturate(luminance(environment_brdf(f0, roughness.x, n_v)));
     let sun = sun_direction();
     var sunlight = vec3<f32>(0.0);
+    var sunk = vec3<f32>(0.0);
     if sun.y > 0.0 {
         sunlight = sun_color()
-            * sun_visibility(SunAt(world, up, surface.world_dx, surface.world_dy, 0.0, SURFACE_WATER, 0u,
-                vec4<f32>(0.0)));
+            * sun_visibility(SunAt(world, up, surface.world_dx, surface.world_dy, 0.0,
+                SURFACE_WATER, 0u, vec4<f32>(0.0)));
+        sunk = sun_color() * water_sunned(world, view, surface.plane, surface.path, pixel);
     }
     var glint = vec3<f32>(0.0);
     let n_l = dot(normal, sun);
@@ -465,12 +377,13 @@ fn water_light(surface: WaterSurface, pixel: vec2<f32>) -> WaterLit {
             * (water_distribution(dot(along, half_vector), dot(across, half_vector),
                 max(dot(normal, half_vector), 0.0), widened)
                 * water_visibility(n_v, n_l, view * tangents, sun * tangents, widened) * n_l
-                * specular());
+                * (specular() * PI));
     }
     let body = surface.scatter * (vec3<f32>(1.0) - surface.transmit)
-        * water_scattered(view, sunlight, surface.plane) * (1.0 - reflectance);
+        * water_scattered(view, sunk, surface.plane) * (1.0 - reflectance);
     let sky = sky_average(up) * ambient();
-    let around = sun_color() * (0.35 * saturate(sun.y)) + sky * 0.5;
+    let around = sun_color() * (water.foam.around.x * saturate(sun.y))
+        + sky * water.foam.around.y;
     let foam_n_l = dot(surface.normal, sun);
     var foam_glint = vec3<f32>(0.0);
     if foam_n_l > 0.0 && any(sunlight > vec3<f32>(0.0)) {
@@ -479,10 +392,10 @@ fn water_light(surface: WaterSurface, pixel: vec2<f32>) -> WaterLit {
         foam_glint = fresnel(f0, max(dot(view, half_vector), 0.0)) * sunlight
             * (distribution(max(dot(surface.normal, half_vector), 0.0), foam_alpha)
                 * visibility(max(dot(surface.normal, view), 1.0e-4), foam_n_l, foam_alpha)
-                * foam_n_l * specular());
+                * foam_n_l * (specular() * PI));
     }
-    let foam = WATER_FOAM_ALBEDO * (1.0 - surface.foam_shade)
-        * (mix(around, sky, WATER_FOAM_SKY) + sunlight * max(foam_n_l, 0.0)) + foam_glint;
+    let foam = water.foam.albedo * (1.0 - surface.foam_shade)
+        * (mix(around, sky, water.foam.sky) + sunlight * max(foam_n_l, 0.0)) + foam_glint;
     var point = standard_point();
     point.base_color = surface.scatter;
     point.emissive = vec3<f32>(0.0);
@@ -498,9 +411,11 @@ fn water_light(surface: WaterSurface, pixel: vec2<f32>) -> WaterLit {
     point = set_direct_blocked(point, 1.0);
     point = set_added_light(point, mix(body + glint, foam, surface.foam));
     point = set_roughness(point, roughness.x);
+    point = set_mirrored_rough(point, surface.calm);
     point = set_metalness(point, 0.0);
     point = set_occlusion(point, 1.0);
     point = set_transmission(point, 0.0);
+    point.mirrored = saturate(1.0 - surface.foam / water.foam.mirrors);
     point = given_reflectance(derived(point), f0, vec3<f32>(0.0));
     var lit: WaterLit;
     lit.point = point;
@@ -517,7 +432,7 @@ struct WaterShade {
     coverage: f32,
     behind: vec3<f32>,
     fade: f32,
-    flow: vec2<f32>,
+    velocity: vec3<f32>,
 }
 
 fn water_seen(pixel: vec2<f32>) -> vec3<f32> {
@@ -529,10 +444,6 @@ fn water_covering(shade: WaterShade, seen: vec3<f32>) -> vec4<f32> {
     return vec4<f32>((shade.shaded.linear + shade.behind) * shade.fade
         + seen * (1.0 - shade.fade), 1.0);
 }
-
-const WATER_CAUSTIC_CONTRAST: f32 = 0.3;
-const WATER_CAUSTIC_MOST: f32 = 1.5;
-const WATER_CAUSTIC_DEPTH: f32 = 1.5;
 
 fn water_caustics(world: vec3<f32>, normal: vec3<f32>, bed: f32) -> f32 {
     let sun = sun_direction();
@@ -546,16 +457,16 @@ fn water_caustics(world: vec3<f32>, normal: vec3<f32>, bed: f32) -> f32 {
         return 1.0;
     }
     let gathered = level_spread / max(spread, level_spread * 1.0e-3);
-    return min(pow(gathered, WATER_CAUSTIC_CONTRAST), WATER_CAUSTIC_MOST);
+    return min(pow(gathered, water.optics.caustic_contrast), water.optics.caustic_most);
 }
 
 fn water_edge(meters: f32, change: f32) -> f32 {
-    return max(saturate(meters / max(change * WATER_EDGE_PIXELS, 1.0e-6)),
-        smoothstep(0.0, WATER_EDGE, meters));
+    return max(saturate(meters / max(change * water.shore.edge_pixels, 1.0e-6)),
+        smoothstep(0.0, water.shore.edge, meters));
 }
 
 fn water_ends(held: f32, change: f32) -> f32 {
-    return saturate((held - WATER_HELD) / max(change * WATER_EDGE_PIXELS, 1.0e-6));
+    return saturate((held - WATER_HELD) / max(change * water.shore.edge_pixels, 1.0e-6));
 }
 
 fn water_ramp(meters: f32, width: f32, change: f32) -> f32 {
@@ -573,73 +484,88 @@ fn water_ramped(meters: f32, width: f32) -> f32 {
 }
 
 struct WaterFace {
+    point: vec3<f32>,
     plane: vec3<f32>,
     standing: f32,
     standing_change: f32,
+    depth: f32,
     world_dx: vec3<f32>,
     world_dy: vec3<f32>,
-    footprint: WaterFootprint,
     normal: vec3<f32>,
     view: vec3<f32>,
     roughness: vec2<f32>,
+    foam: vec2<f32>,
+    pores: f32,
+    rate: f32,
+    calm: f32,
 }
 
-fn water_face(point: vec3<f32>, at: WaterAt, own: vec3<f32>) -> WaterFace {
-    let world = eye_world(point);
+fn water_face(still: vec3<f32>, at: WaterAt, own: vec3<f32>) -> WaterFace {
+    let world = eye_world(still);
     if at.held < WATER_HELD {
         discard;
     }
     let plane = normalize(vec3<f32>(at.slope.x, 1.0, at.slope.y));
-    let standing = max(dot(point - own, plane) / plane.y, 0.0); // optics: what the view meets behind the pixel
-    if standing <= 0.0 {
-        discard;
-    }
-    let standing_change = fwidth(standing);
-    let depth = at.depth;
+    let resting = dot(still - own, plane) / plane.y; // optics: what the view meets behind the pixel
     let flow = at.words.flow;
     let world_dx = dpdx(world);
     let world_dy = dpdy(world);
-    let turbulence = at.words.state.x;
     let speed = length(flow);
-    let stirring = water_stirring(speed, water_eddies(speed, length(at.slope), depth),
-        turbulence);
-    let footprint = water_footprint(world_dx.xz, world_dy.xz);
-    let splatted = water_splatted(world, footprint);
-    let detail = water_detail(world, flow, depth, stirring, detail_across(world),
-        camera.position.w);
-    let fall = at.slope + detail.slope + splatted.fall;
+    var swell: WaterSwell;
+    let calm = water_calm(speed);
+    let room = min(at.depth, resting);
+    if calm > 0.0 && room > 0.0 {
+        swell = water_swell(still.xz + (camera.position.xz - water.waves.anchor), world_dx.xz,
+            world_dy.xz, 0.0, room, calm);
+    }
+    let standing = resting + swell.height;
+    if standing <= 0.0 {
+        discard;
+    }
+    let point = still + vec3<f32>(0.0, swell.height, 0.0);
+    let standing_change = fwidth(standing);
+    let depth = max(at.depth + swell.height, 0.0);
+    let turbulence = at.words.state.x;
+    let dropping = length(at.slope);
+    let stirring = water_stirring(speed, water_eddies(speed, dropping, depth), turbulence);
+    let stream = water_stream(world.xz, flow, depth, stirring, turbulence, detail_across(world),
+        camera.position.w, world_dx.xz, world_dy.xz);
+    let contact = water_contact(standing, standing_change,
+        water_footprint(world_dx.xz, world_dy.xz), speed, water_blocking(standing, depth));
+    let whitening = water_whitening(stream, at.words.state.y, dropping, contact);
+    let relief = water_relief(stream, 1.0 - whitening, swell.slope, swell.hidden);
+    let white = water_white(stream, relief.bumps, whitening, water_filming(stream, standing),
+        at.words.state.z, water_sheer(standing, dropping), world_dx.xz, world_dy.xz);
+    let fall = at.slope + relief.slope + white.slope;
     let normal = normalize(vec3<f32>(fall.x, 1.0, fall.y));
     let view = stable_normalize(-point);
-    let unresolved = vec3<f32>(0.5 * detail.hidden, 0.5 * detail.hidden, 0.0)
-        + splatted.hidden * splatted.shown;
-    let roughness = water_roughness(unresolved + water_turning(fall), water_heading(view));
-    return WaterFace(plane, standing, standing_change, world_dx, world_dy, footprint, normal, view,
-        roughness);
+    let roughness = water_roughness(relief.hidden + water_turning(fall), water_heading(view));
+    return WaterFace(point, plane, standing, standing_change, depth, world_dx, world_dy, normal,
+        view, roughness, white.layers, white.pores, swell.rate, calm);
 }
 
-fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, face: WaterFace,
-        behind: WaterBehind, layers: vec2<f32>) -> WaterShade {
+fn shade_water(pixel: vec2<f32>, at: WaterAt, face: WaterFace, behind: WaterBehind,
+        layers: vec2<f32>) -> WaterShade {
+    let point = face.point;
     let world = eye_world(point);
     let plane = face.plane;
     let standing = face.standing;
     let standing_change = face.standing_change;
-    let depth = at.depth;
+    let depth = face.depth;
     let speed = length(at.words.flow);
     let normal = face.normal;
     let view = face.view;
     let bed_depth = min(depth, standing);
     let gathered = water_caustics(world, normal, bed_depth);
-    let racing = smoothstep(WATER_RACING.x, WATER_RACING.y, speed);
-    let shallows = mix(water_ramp(standing, WATER_SHORE, standing_change), 1.0, racing);
+    let racing = smoothstep(water.shore.racing.x, water.shore.racing.y, speed);
+    let shallows = mix(water_ramp(standing, water.shore.fade, standing_change), 1.0, racing);
     let fade = min(water_edge(standing, standing_change), water_ends(at.held, fwidth(at.held)))
         * shallows;
     let through = min(max(length(behind.ground - point), 0.0), // optics: the view's way through the water
         depth * plane.y / max(dot(view, plane), 0.1)); // optics: the view's way through the water
     let down = clamp(dot(point - behind.ground, plane) / plane.y, 0.0, through); // optics: the light's way down to what the view meets
-    let contact = water_contact(standing, standing_change, face.footprint, speed,
-        water_blocking(standing, depth));
-    let white = layers.x + water_layers(contact);
-    let foam = water_foam(white, layers.y);
+    let white = max(layers.x, 0.0) + face.foam.x;
+    let foam = water_foam(white, layers.y + face.foam.y, face.pores);
     let cover = foam.cover;
     let aerated = 1.0 - exp(-white);
     let transmit = water_transmitted(through + down, aerated);
@@ -655,20 +581,21 @@ fn shade_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt, face: WaterFace,
     surface.foam = cover;
     surface.scatter = water_body(aerated);
     surface.transmit = transmit;
+    surface.path = vec2<f32>(through, luminance(water_extinction(aerated)));
+    surface.calm = face.calm;
     let lit = water_light(surface, pixel);
     let caustic = 1.0 + (gathered - 1.0) * lit.sunny
-        * exp(-bed_depth * (1.0 / WATER_CAUSTIC_DEPTH + WATER_BUBBLES * aerated));
-    let wet = water_ramp(standing, WATER_SOAKED, standing_change) * WATER_WET;
+        * exp(-bed_depth * (1.0 / water.optics.caustic_depth + water.optics.bubbles * aerated));
+    let wet = water_ramp(standing, water.shore.soaked, standing_change) * water.shore.wet;
     let let_through = (1.0 - lit.reflectance) * (1.0 - cover);
     var result: WaterShade;
     result.point = lit.point;
     result.shaded = lit.shaded;
     result.coverage = max(max(1.0 - (1.0 - lit.reflectance) * luminance(transmit), wet),
         cover) * fade;
-    result.behind = behind.color * transmit * (caustic * let_through * (1.0 - wet)
-        * (1.0 - atmospheric_cover(camera.position.xyz, world)));
+    result.behind = behind.color * transmit * (caustic * let_through * (1.0 - wet));
     result.fade = fade;
-    result.flow = at.words.flow;
+    result.velocity = vec3<f32>(at.words.flow.x, face.rate, at.words.flow.y);
     return water_mirroring(result);
 }
 
@@ -680,18 +607,20 @@ fn water_mirroring(shade: WaterShade) -> WaterShade {
 
 fn shade_mesh(mesh: vec3<f32>, pixel: vec2<f32>) -> WaterShade {
     let at = water_drawn(mesh);
-    let point = water_on_surface(mesh, at);
     let own = water_ground(pixel);
-    let face = water_face(point, at, own);
-    let behind = water_behind(point, face.normal, face.view, pixel, own, face.plane);
-    return shade_water(point, pixel, at, face, behind, water_foam_layers(pixel));
+    let face = water_face(water_on_surface(mesh, at), at, own);
+    let behind = water_behind(face.point, face.normal, face.view, pixel, own, face.plane);
+    return shade_water(pixel, at, face, behind, vec2<f32>(0.0));
 }
 
 @fragment
 fn fs_water(input: WaterOutput) -> Outputs {
+    if input.depth <= 0.0 {
+        discard;
+    }
     use_terrain(input.terrain);
     let shade = shade_mesh(input.relative, input.clip_position.xy);
-    let previous = water_previous(input.relative, shade.flow, saturate(shade.coverage));
+    let previous = water_previous(input.relative, shade.velocity, saturate(shade.coverage));
     var targets = outputs(shade.point, shade.shaded,
         view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
     targets.color = water_covering(shade, water_seen(input.clip_position.xy));
@@ -700,13 +629,13 @@ fn fs_water(input: WaterOutput) -> Outputs {
 
 
 fn water_eddies(speed: f32, slope: f32, depth: f32) -> f32 {
-    let stirring = GRAVITY * speed * slope * max(depth, BREAK_THINNEST);
+    let stirring = GRAVITY * speed * slope * max(depth, FROUDE_GUARD_DEPTH);
     return select(0.0, pow(stirring, 1.0 / 3.0), stirring > 0.0);
 }
 
 fn water_eddy_froude(speed: f32, slope: f32, depth: f32) -> f32 {
     return water_eddies(speed, slope, depth)
-        / sqrt(GRAVITY * max(depth, BREAK_THINNEST));
+        / sqrt(GRAVITY * max(depth, FROUDE_GUARD_DEPTH));
 }
 
 @group(1) @binding(0) var<storage, read_write> water_leaf_args: array<u32>;

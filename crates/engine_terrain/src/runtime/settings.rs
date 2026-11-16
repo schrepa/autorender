@@ -2,7 +2,6 @@ use super::*;
 
 settings! {
     #[section("terrain")]
-    #[check(nested_rules)]
     #[switch(on)]
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneTerrainSettings")]
@@ -13,51 +12,8 @@ settings! {
         pub max_tiles: Option<u32> = None => budget,
         pub collision_radius: f32 = 192.0 => range(0.0, 4096.0),
         pub surroundings: bool = true => any,
-        #[serde(skip_serializing_if = "Option::is_none")]
-        pub motion_detail: Option<MotionDetail> = None => any,
         pub cache_bytes: u64 = 256 << 20 => any,
         pub gpu_materials: bool = true => any,
         pub tile_feed: u32 = 4096 => at_least(1),
-    }
-}
-
-fn nested_rules(settings: &TerrainSettings) -> Result<(), InvalidSetting> {
-    Setting::check(&settings.motion_detail, "motion_detail", Rule::Any)
-}
-
-fields! {
-    extra_rules;
-    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
-    #[schemars(rename = "SceneTerrainMotionDetail")]
-    #[serde(default, deny_unknown_fields)]
-    pub struct MotionDetail {
-        pub speed: f32 = 30.0 => range(0.0, 100_000.0),
-        pub fastest: f32 = 300.0 => range(0.0, 100_000.0),
-        pub levels: u32 = 2 => range(0, 8),
-        pub settle: f32 = 0.2 => range(0.0, 10.0),
-    }
-}
-
-impl ExtraRules for MotionDetail {
-    fn check_extra(&self) -> Result<(), InvalidSetting> {
-        if self.fastest >= self.speed {
-            Ok(())
-        } else {
-            Err(InvalidSetting::new("fastest", Expected::Above))
-        }
-    }
-}
-
-impl MotionDetail {
-    pub fn waiting(&self, speed: f32) -> u32 {
-        if speed <= self.speed || speed.is_nan() || self.levels == 0 {
-            return 0;
-        }
-        let share = if self.fastest > self.speed {
-            engine_math::clamp((speed - self.speed) / (self.fastest - self.speed), 0.0, 1.0)
-        } else {
-            1.0
-        };
-        ((share * self.levels as f32).ceil() as u32).clamp(1, self.levels)
     }
 }

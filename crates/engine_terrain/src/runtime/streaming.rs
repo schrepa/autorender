@@ -1,12 +1,11 @@
 use super::*;
-use engine_core::{DeviceLimits, FrameBudget, FrameTime, GlobalTransforms, Joined, Views};
+use engine_core::{
+    Detail, DeviceLimits, FrameBudget, FrameTime, GlobalTransforms, Joined, ViewDetail, ViewFacts,
+    Views,
+};
 use engine_open_world_kit::terrain::TerrainLayers;
 use engine_places_world::streaming::StreamingFocus;
 use glam::UVec2;
-
-pub(super) fn vertical_fov(camera: &Camera) -> f32 {
-    camera.vertical_fov().unwrap_or(f32::NAN)
-}
 
 fn device_tiles(limits: &DeviceLimits) -> Option<u32> {
     (limits.texture_layers > 0).then_some(limits.texture_layers)
@@ -20,11 +19,6 @@ impl Terrains {
     fn heading(&mut self, eye: Vec3, seconds: f32) -> Vec3 {
         let moved = self.last_eye.map_or(Vec3::ZERO, |last| eye - last);
         self.last_eye = Some(eye);
-        self.seconds = if seconds.is_finite() {
-            engine_math::max(seconds, 0.0)
-        } else {
-            0.0
-        };
         if moved.length() > JUMP {
             self.velocity = Vec3::ZERO;
         } else if seconds > 0.0 {
@@ -43,7 +37,7 @@ impl Terrains {
     fn stream(
         &mut self,
         settings: &TerrainSettings,
-        (camera, looking): (&Camera, Vec3),
+        (camera, looking, view): (&Camera, Vec3, ViewDetail),
         (eye, ahead): (Vec3, Vec3),
         (size, device_tiles): (UVec2, Option<u32>),
         (focus, places): (&[Vec3], &[(Vec3, f32)]),
@@ -75,31 +69,7 @@ impl Terrains {
         };
         let forward = Vec2::new(looking.x, looking.z);
         let planes = ViewPlanes::new(camera, (eye, looking), size);
-        let fov = vertical_fov(camera);
-        let fov = if fov.is_finite() && fov > 0.0 && fov < std::f32::consts::PI {
-            fov
-        } else {
-            vertical_fov(&Camera::default())
-        };
         let work = Work::frame(budget);
-        let (waiting, unsettled) = match settings.motion_detail {
-            Some(detail) => {
-                let speed = self.velocity.length();
-                self.fast_ago = if speed > detail.speed {
-                    Some(0.0)
-                } else {
-                    self.fast_ago.map(|ago| ago + self.seconds)
-                };
-                (
-                    detail.waiting(speed),
-                    self.fast_ago.is_some_and(|ago| ago < detail.settle),
-                )
-            }
-            None => {
-                self.fast_ago = None;
-                (0, false)
-            }
-        };
         let limit = match (settings.max_tiles, device_tiles) {
             (Some(a), Some(b)) => Some(a.min(b)),
             (a, b) => a.or(b),
@@ -117,7 +87,7 @@ impl Terrains {
             }
             let pyramid = state.terrain.pyramid;
             let origin = state.terrain.origin;
-            let ranges = LodRanges::new(&pyramid, settings.pixel_error, size.y as f32, fov);
+            let ranges = LodRanges::new(&pyramid, view);
             if !(0..pyramid.levels())
                 .map(|level| ranges.range(level))
                 .eq(state.ranges.iter().copied())
@@ -134,7 +104,6 @@ impl Terrains {
                 target,
                 keep,
                 mut missing,
-                waiting: waiting_tiles,
                 fallback,
                 named,
             } = plan(PlanInput {
@@ -152,8 +121,6 @@ impl Terrains {
                 collides: state.terrain.collision,
                 collision: std::mem::take(&mut state.collision),
                 remaining,
-                waiting,
-                unsettled,
                 store: &state.store,
             });
             state.collision = collision;
@@ -172,7 +139,6 @@ impl Terrains {
                     state.leave(&key, frame);
                 }
             }
-            stats.waiting_tiles += waiting_tiles;
             if state.store.kept_tiles() > 0 {
                 self.restored += state.store.restore(&missing, &work);
                 missing.retain(|(key, _)| state.loads(key));
@@ -264,11 +230,7 @@ impl Terrains {
             .map(|state| state.store.kept_tiles() as u32)
             .sum();
         release(&self.entries, &mut self.stacks, released, asking.jobs);
-        self.settling.left(
-            missing_left
-                .saturating_add(stats.baking)
-                .saturating_add(stats.waiting_tiles),
-        );
+        self.settling.left(missing_left.saturating_add(stats.baking));
         stats.dropped_tiles = stats.tile_cut.cut;
         let (failed_jobs, latest) = self.job_failures();
         stats.failed_jobs = failed_jobs;
@@ -288,7 +250,7 @@ pub(crate) struct TerrainStreaming {
 }
 
 pub(crate) type StreamReads<'w> = (
-    Res<'w, Views>,
+    (Res<'w, Views>, Res<'w, Detail>),
     Res<'w, FrameTime>,
     Res<'w, DeviceLimits>,
     Res<'w, GlobalTransforms>,
@@ -301,7 +263,7 @@ pub(crate) type StreamReads<'w> = (
 )]
 pub(crate) fn stream_terrains(
     settings: Res<TerrainSettings>,
-    (views, time, limits, globals, records): StreamReads<'_>,
+    ((views, detail), time, limits, globals, records): StreamReads<'_>,
     kinds: Joined<TerrainLayers>,
     focus: Query<Entity, With<StreamingFocus>>,
     prefetch: Query<(Entity, &TerrainPrefetch)>,
@@ -341,6 +303,16 @@ pub(crate) fn stream_terrains(
         .iter()
         .filter_map(|(entity, scene)| Some((entity, scene.built.clone()?)))
         .collect();
+    let size = main.map_or(views.frame().display_size, ViewFacts::size);
+    let view = main
+        .map_or_else(
+            || {
+                let error = detail.chosen_error().unwrap_or(0.0);
+                ViewDetail::perspective(eye, Camera::default().clip(1.0), size.y, error)
+            },
+            |main| main.detail(&detail),
+        )
+        .scaled(settings.pixel_error);
     let terrains = terrains.as_mut();
     terrains.follow(present, &kinds);
     let ahead = terrains.heading(eye, seconds);
@@ -354,12 +326,10 @@ pub(crate) fn stream_terrains(
         (
             &main.map(|main| main.lens).unwrap_or_default(),
             main.map_or(Vec3::NEG_Z, |main| main.forward),
+            view,
         ),
         (eye, ahead),
-        (
-            main.map_or(views.frame().display_size, |main| main.size()),
-            device_tiles(&limits),
-        ),
+        (size, device_tiles(&limits)),
         (&streaming.points, &streaming.places),
         (&mut asking, &mut *budget),
     );

@@ -75,8 +75,8 @@ fn card_vertex(input: CardOutput) -> CardVertex {
 fn fs_card(input: CardOutput) -> DepthOutputs {
     let card = card_vertex(input);
     let fade = drawn_fade(input.slot);
-    let shaded = card_lit(card, card_point(card, card_records[input.batch], fade),
-        fade_word_on(fade));
+    let record = card_records[input.batch];
+    let shaded = card_lit(card, record, card_point(card, record, fade), fade_word_on(fade));
     return depth_outputs(shaded.point, shaded.shaded,
         view_pixel(input.clip_position, vec4<f32>(input.previous.xy, 0.0, input.previous.z)),
         shaded.depth);

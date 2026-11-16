@@ -38,7 +38,6 @@ shader_modules! {
     "engine::post::pixel" = "post/pixel.wgsl";
     "engine::post::frame" = "effects.wgsl";
     "engine::post::resolve_plain" = "post/resolve_plain.wgsl";
-    "engine::post::levels" = "post/levels.wgsl";
 }
 
 pub static CORE: Source = Source::generated(crate::linker::CORE_PACKAGE, false, [0; 32], TEXTS);
@@ -62,6 +61,7 @@ pub const PRESENTATION_MODULE: &str = "engine::presentation";
 pub const DEBUG_MODULE: &str = "engine::debug";
 pub const DECLARATIONS_MODULE: &str = "engine::geometry::declarations";
 pub const VIEW_MODULE: &str = "engine::view";
+pub const DETAIL_MODULE: &str = "engine::detail";
 pub const PYRAMID_MODULE: &str = "engine::pyramid";
 
 fn unsigned(source: &mut String, name: &str, value: u32) {
@@ -141,7 +141,7 @@ pub fn view_source() -> String {
     source
 }
 
-pub fn generated_core() -> [(&'static str, String); 13] {
+pub fn generated_core() -> [(&'static str, String); 14] {
     let standard = crate::surface::MaterialLayout::standard();
     [
         (PRESENTATION_MODULE, presentation_source()),
@@ -155,6 +155,7 @@ pub fn generated_core() -> [(&'static str, String); 13] {
         (crate::surface::SLOTS_MODULE, standard.slots_source(false)),
         (crate::surface::SURFACES_MODULE, standard.surfaces_source()),
         (VIEW_MODULE, view_source()),
+        (DETAIL_MODULE, engine_core::detail_wgsl()),
         (PYRAMID_MODULE, crate::pyramid::source()),
         (crate::drawn::DRAWN_MODULE, crate::drawn::source()),
         (crate::drawn::DRAWN_CULL_MODULE, crate::drawn::cull_source()),

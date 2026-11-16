@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, AssetResidency, CullPlan, Detail, DeviceLimits, DrawnTable, Error, FrameTime,
+    AssetLibrary, AssetResidency, CullPlan, Detail, DeviceLimits, DrawnTable, Error,
     GeometryStream, GlobalTransforms, InstanceInput, PassRole, Views,
 };
 use engine_places::meshes::LastLevels;
@@ -107,7 +107,6 @@ pub(crate) struct Presented {
     pub view_draws: Buffer<MeshesGpu>,
     pub view_visible: Buffer<MeshesGpu>,
     pub last_ids: [Buffer<MeshesGpu>; 2],
-    pub lod_states: Buffer<MeshesGpu>,
     pub fading_ids: Buffer<MeshesGpu>,
     pub counts: Buffer<MeshesGpu>,
     pub totals: Buffer<MeshesGpu>,
@@ -115,7 +114,6 @@ pub(crate) struct Presented {
 
 pub(crate) struct Computes {
     pub cull: ComputePipeline<MeshesGpu>,
-    pub fades: ComputePipeline<MeshesGpu>,
     pub one: Compaction,
     pub two: Compaction,
     pub views: Compaction,
@@ -244,7 +242,6 @@ pub(crate) type FrameReads = (
     Res<'static, CullPlan>,
     Res<'static, GlobalTransforms>,
     Res<'static, Detail>,
-    Res<'static, FrameTime>,
     Res<'static, DeviceLimits>,
 );
 
@@ -327,7 +324,6 @@ fn install_presented(cx: &mut Install<'_, MeshesGpu>) -> Result<Presented, Error
         buffer("presentation_last_ids"),
         buffer("presentation_last_ids_two"),
     ];
-    let lod_states = buffer("presentation_lod_states");
     let fading_ids = buffer("presentation_fading_ids");
     let counts = buffer("presentation_occlusion_counts");
     let totals = buffer("presentation_totals");
@@ -349,7 +345,6 @@ fn install_presented(cx: &mut Install<'_, MeshesGpu>) -> Result<Presented, Error
         view_draws,
         view_visible,
         last_ids,
-        lod_states,
         fading_ids,
         counts,
         totals,
@@ -452,17 +447,6 @@ fn install_computes(
             (p::BATCHES, Bind::Buffer(presented.batches)),
             (p::SCAN, Bind::Buffer(presented.scan)),
             (p::SLOT_CANDIDATES, Bind::Buffer(presented.slot_candidates)),
-        ],
-    )?;
-    let fades = cx.compute_pipeline(
-        at,
-        p::FADE_LEVELS,
-        &[
-            (p::FRAME, Bind::Buffer(presented.frame)),
-            (p::BATCHES, Bind::Buffer(presented.batches)),
-            (p::SCAN, Bind::Buffer(presented.scan)),
-            (p::SLOT_CANDIDATES, Bind::Buffer(presented.slot_candidates)),
-            (p::LOD_STATES, Bind::Buffer(presented.lod_states)),
             (p::FADING_IDS, Bind::Buffer(presented.fading_ids)),
         ],
     )?;
@@ -477,20 +461,19 @@ fn install_computes(
             presented.last_ids[0],
         ),
     )?;
-    let gather = |cx: &mut Install<'_, MeshesGpu>, pass, entry, frame| {
-        cx.compute_pipeline(
-            pass,
-            entry,
-            &[
-                (p::FRAME, Bind::Buffer(frame)),
-                (p::SCAN, Bind::Buffer(presented.scan)),
-                (p::OCCLUSION_COUNTS, Bind::Buffer(presented.counts)),
-                (p::LOD_STATES, Bind::Buffer(presented.lod_states)),
-                (p::TOTALS, Bind::Buffer(presented.totals)),
-            ],
-        )
+    let gather = |cx: &mut Install<'_, MeshesGpu>, pass, entry, frame, watched: bool| {
+        let mut binds = vec![
+            (p::FRAME, Bind::Buffer(frame)),
+            (p::SCAN, Bind::Buffer(presented.scan)),
+            (p::OCCLUSION_COUNTS, Bind::Buffer(presented.counts)),
+            (p::TOTALS, Bind::Buffer(presented.totals)),
+        ];
+        if watched {
+            binds.push((p::FADING_IDS, Bind::Buffer(presented.fading_ids)));
+        }
+        cx.compute_pipeline(pass, entry, &binds)
     };
-    let gather_one = gather(cx, at, p::GATHER_PHASE_ONE, presented.frame)?;
+    let gather_one = gather(cx, at, p::GATHER_PHASE_ONE, presented.frame, true)?;
     let late = passes.occlusion;
     let two = compaction(
         cx,
@@ -503,7 +486,7 @@ fn install_computes(
             presented.last_ids[1],
         ),
     )?;
-    let gather_two = gather(cx, late, p::GATHER_PHASE_TWO, presented.frame_two)?;
+    let gather_two = gather(cx, late, p::GATHER_PHASE_TWO, presented.frame_two, false)?;
     let occlusion = cx.compute_pipeline(
         late,
         p::OCCLUDED_LISTS,
@@ -537,7 +520,6 @@ fn install_computes(
     )?;
     Ok(Computes {
         cull,
-        fades,
         one,
         two,
         views,

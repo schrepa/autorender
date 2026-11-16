@@ -5,17 +5,16 @@
 
 include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 
-mod atlas;
 mod changes;
 pub mod constants;
 mod debug;
 mod gpu_layouts;
 mod inspect;
+mod levels;
 mod part;
 mod plan;
 mod regions;
 mod settings;
-mod shadow_fit;
 mod sky;
 
 use engine_core::{
@@ -58,13 +57,12 @@ impl Brick for ShadowsBrick {
             .switch::<ShadowSettings>()
             .within_switch::<SkyOcclusion>(|_| {})
             .stats::<ShadowStats>()
-            .resource::<plan::ShadowFeedback>()
             .resource::<plan::ShadowDrawn>()
             .resource::<plan::ShadowPlan>()
             .resource::<changes::ShadowChanges>()
             .piece::<gpu_layouts::ShadowPiece>()
             .fill::<ShadowMaps>(Some(shaders::shadows::faces::shadows::MODULE))
-            .fill::<CasterRoutes>(Some(shaders::shadows::faces::routes::MODULE))
+            .fill::<CasterRoutes>(None)
             .join::<SunBlockers>((), Some(shaders::shadows::blockers::MODULE))
             .fill::<SkyVisibility>(Some(shaders::shadows::faces::sky_visibility::MODULE));
         for (index, (name, _)) in debug::MODES.into_iter().enumerate() {

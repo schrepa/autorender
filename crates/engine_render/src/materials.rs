@@ -140,18 +140,21 @@ impl MaterialStore {
         if self.synced == Some(generation) {
             return (0, 0);
         }
+        let before = self.textures.len();
         self.textures.retain(|handle, gpu| {
             residency.texture_resident(*handle)
                 && library.revision_of(*handle) == Some(gpu.revision)
         });
-        let textures = &self.textures;
+        let removed = (self.textures.len() != before).then_some(&self.textures);
         let count = self.materials.len();
         self.materials.retain(|handle, gpu| {
             residency.material_resident(*handle)
-                && gpu.textures.iter().all(|(texture, revision)| {
-                    textures
-                        .get(texture)
-                        .is_some_and(|held| held.revision == *revision)
+                && removed.is_none_or(|textures| {
+                    gpu.textures.iter().all(|(texture, revision)| {
+                        textures
+                            .get(texture)
+                            .is_some_and(|held| held.revision == *revision)
+                    })
                 })
         });
         if self.materials.len() != count {
@@ -194,6 +197,9 @@ impl MaterialStore {
             self.generation += 1;
         }
         for handle in residency.textures() {
+            if self.textures.contains_key(&handle) {
+                continue;
+            }
             if let Some(source) = library.texture(handle) {
                 let revision = library.revision_of(handle).unwrap_or_default();
                 let (more, generated) = self.upload_texture(

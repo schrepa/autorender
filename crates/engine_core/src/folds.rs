@@ -6,5 +6,6 @@ settings! {
     pub struct FoldOrder {
         pub post: Vec<String> = Vec::new() => any,
         pub display: Vec<String> = Vec::new() => any,
+        pub overlay: Vec<String> = Vec::new() => any,
     }
 }

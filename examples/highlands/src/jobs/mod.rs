@@ -1,11 +1,18 @@
 use engine_core::{Error, ErrorCode, Job, JobCx, JobKind, Mesh};
 use glam::Vec3;
 
+mod broadleaf;
 mod caves;
+mod conifers;
+mod deadwood;
 pub(crate) mod ground;
+pub(crate) mod photographs;
 pub(crate) mod random;
 mod rocks;
+pub(crate) mod sprays;
+pub(crate) mod sprigs;
 pub(crate) mod trees;
+mod wood;
 
 include!(concat!(env!("OUT_DIR"), "/jobs.rs"));
 
@@ -17,10 +24,7 @@ const CAVE_SEED: u32 = 79;
 
 pub(crate) static BOULDER: JobKind = JobKind::new("highlands::boulder", &SOURCE, start_boulder);
 
-pub(crate) static CONIFER: JobKind = JobKind::new("highlands::conifer", &SOURCE, start_conifer);
-
-pub(crate) static CONIFER_SHADOW: JobKind =
-    JobKind::new("highlands::conifer_shadow", &SOURCE, start_conifer_shadow);
+pub(crate) static PLANT: JobKind = JobKind::new("highlands::plant", &SOURCE, start_plant);
 
 pub(crate) static CAVE: JobKind = JobKind::new("highlands::cave", &SOURCE, start_cave);
 
@@ -64,27 +68,8 @@ fn start_boulder(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error>
     })
 }
 
-fn start_conifer(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
-    making(input, |input| {
-        let [seed, detail] = words(input, &CONIFER)?;
-        let detail = detail as usize;
-        if detail >= trees::DETAIL_LEVELS {
-            return Err(Error::new(
-                ErrorCode::InvalidRecord,
-                format!("$.jobs.{}", CONIFER.name()),
-            )
-            .at_most(trees::DETAIL_LEVELS as u64 - 1)
-            .got(detail));
-        }
-        trees::conifer(seed, detail)
-    })
-}
-
-fn start_conifer_shadow(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
-    making(input, |input| {
-        let [seed] = words(input, &CONIFER_SHADOW)?;
-        trees::shadow_proxy(seed)
-    })
+fn start_plant(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
+    making(input, trees::grow)
 }
 
 fn start_cave(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {

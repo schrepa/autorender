@@ -7,7 +7,6 @@ extern crate engine_ecs as bevy_ecs;
 
 pub mod animation;
 pub mod audio;
-pub mod exposure;
 pub mod impostors;
 pub mod lighting;
 pub mod lights;
@@ -37,15 +36,12 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<wind::ViewWind>(),
     PlaceDecl::slot::<sky::SkyLight>(),
     PlaceDecl::slot::<sky::EyeMedium>(),
-    PlaceDecl::slot::<sky::OpenSky>(),
     PlaceDecl::slot::<sky::SkyVisibility>(),
-    PlaceDecl::slot::<exposure::Exposure>(),
     PlaceDecl::slot::<tonemap::Display>(),
     PlaceDecl::slot::<lighting::Lighting>(),
     PlaceDecl::list::<lighting::SunBlockers>(),
     PlaceDecl::list::<lighting::Ambient>(),
     PlaceDecl::list::<lighting::Interiors>(),
-    PlaceDecl::slot::<occlusion::OcclusionSource>(),
     PlaceDecl::slot::<occlusion::AmbientVisibility>(),
     PlaceDecl::slot::<lights::Lights>(),
     PlaceDecl::component::<lights::LocalLight>("local_light"),

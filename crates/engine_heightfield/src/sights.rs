@@ -2,7 +2,7 @@ use engine_math::collections::HashMap;
 use engine_math::{GRAVITY, max, min};
 use glam::Vec2;
 
-use crate::hydraulics::{FLOODS, distances};
+use crate::hydraulics::distances;
 use crate::rivers::River;
 use crate::{Bed, HydrologyBake, Layers, Rivers};
 
@@ -89,10 +89,6 @@ impl RiverCourse<'_> {
         }
     }
 
-    pub fn crest(&self, point: usize) -> Option<f32> {
-        self.river.crest[point].map(|crest| crest.share)
-    }
-
     pub fn falls_at(&self, point: usize) -> bool {
         self.river.falls_at(point) || !self.river.surface[point].is_finite()
     }
@@ -172,7 +168,8 @@ impl Layers {
             for index in 0..river.points.len() {
                 widen(&mut listing.width, 2.0 * river.half[index]);
                 widen(&mut listing.depth, river.depth[index]);
-                widen(&mut listing.flood, FLOODS * river.discharge[index]);
+                let floods = hydrology.rivers.form().shape.floods;
+                widen(&mut listing.flood, floods * river.discharge[index]);
             }
             held[at].0 += river.cut.iter().filter(|&&cut| !cut).count();
             held[at].1 += river.cut.len();

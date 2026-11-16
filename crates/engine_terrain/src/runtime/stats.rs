@@ -7,7 +7,6 @@ stats! {
         pub resident_tiles: u32,
         pub loading_tiles: u32,
         pub missing_tiles: u32,
-        pub waiting_tiles: u32,
         pub cached_tiles: u32,
         pub cached_bytes: u64,
         pub restored_tiles: u64,

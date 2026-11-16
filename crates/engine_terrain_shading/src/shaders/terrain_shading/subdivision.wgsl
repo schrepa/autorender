@@ -1,19 +1,19 @@
 import package::engine::drawn::frustum_reach;
-import package::engine::view::detail_across;
+import package::engine::view::{camera, detail_across};
 import package::place::heightfield::{SurfaceTriangle, TerrainSubdivision};
 import package::terrain_shading::draw::terrain_displacement;
 import package::terrain_shading::faces::heightfield::{terrain, terrain_level_height, use_terrain};
 
 import package::terrain_shading::surface::{SurfaceWater, surface_ground_error, surface_half, surface_water};
-import package::generated::terrain_shading::{SUBDIVISION_ARGS, SUBDIVISION_COUNTED, SUBDIVISION_DRAW, SUBDIVISION_GROUP, SUBDIVISION_LEAVES, SUBDIVISION_MEASURE, SUBDIVISION_REFUSED, SUBDIVISION_RESERVED, SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_VERTEX_STRIDE};
+import package::generated::terrain_shading::{SUBDIVISION_ARGS, SUBDIVISION_COUNTED, SUBDIVISION_DRAW, SUBDIVISION_GROUP, SUBDIVISION_LEAVES, SUBDIVISION_REFUSED, SUBDIVISION_RESERVED, SUBDIVISION_WATERED, SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_VERTEX_STRIDE};
 
 @group(1) @binding(0) var<uniform> subdivision: TerrainSubdivision;
 @group(1) @binding(1) var<storage, read_write> subdivision_tree: array<atomic<u32>>;
 @group(1) @binding(2) var<storage, read_write> subdivision_nodes: array<u32>;
 @group(1) @binding(3) var<storage, read_write> subdivision_leaves: array<SurfaceTriangle>;
 @group(1) @binding(4) var<storage, read_write> subdivision_args: array<atomic<u32>>;
+@group(1) @binding(5) var<storage, read_write> subdivision_watered: array<u32>;
 
-const SUBDIVISION_UNSEEN: f32 = 8.0;
 const SUBDIVISION_SPLIT: u32 = 1u;
 const SUBDIVISION_MERGE: u32 = 2u;
 
@@ -102,17 +102,15 @@ struct SubdivisionPoint {
     found: bool,
 }
 
-fn subdivision_point(local: vec2<f32>, displaced: bool, pieces: f32) -> SubdivisionPoint {
+fn subdivision_point(local: vec2<f32>, pieces: f32) -> SubdivisionPoint {
     let held = terrain_level_height(local, 0u);
     var point: SubdivisionPoint;
     point.found = held.found;
     point.world = terrain.origin.xyz + vec3<f32>(local.x, held.height, local.y);
-    if displaced {
-        let lift = terrain_displacement(point.world, local, pieces);
-        point.lift = lift.moved;
-        point.kept = lift.kept;
-        point.world += point.lift;
-    }
+    let lift = terrain_displacement(point.world, local, pieces);
+    point.lift = lift.moved;
+    point.kept = lift.kept;
+    point.world += point.lift;
     return point;
 }
 
@@ -128,6 +126,58 @@ fn subdivision_seen(low: vec3<f32>, high: vec3<f32>) -> bool {
 struct SubdivisionMeasure {
     drawn: bool,
     splits: bool,
+    watered: bool,
+}
+
+fn subdivision_water(triangle: SurfaceTriangle) -> SurfaceWater {
+    if subdivision.frame.w == 0u {
+        return SurfaceWater(false, 0.0);
+    }
+    return surface_water(triangle);
+}
+
+fn subdivision_outside(low: vec2<f32>, high: vec2<f32>) -> bool {
+    let extent = subdivision.extent;
+    let cutout = subdivision.cutout;
+    return any(low >= extent.zw) || any(high <= extent.xy)
+        || (all(low >= cutout.xy) && all(high <= cutout.zw));
+}
+
+fn subdivision_drawn(triangle: SurfaceTriangle) -> SubdivisionMeasure {
+    var measure: SubdivisionMeasure;
+    let low = min(min(triangle.a, triangle.b), triangle.c);
+    let high = max(max(triangle.a, triangle.b), triangle.c);
+    if subdivision_outside(low, high) {
+        return measure;
+    }
+    measure.drawn = terrain_level_height(triangle.a, 0u).found
+        || terrain_level_height(triangle.b, 0u).found
+        || terrain_level_height(triangle.c, 0u).found
+        || terrain_level_height((triangle.a + triangle.b + triangle.c) / 3.0, 0u).found;
+    measure.watered = measure.drawn && subdivision_water(triangle).reached;
+    return measure;
+}
+
+fn subdivision_exceeds(points: array<vec3<f32>, 7>, bound: f32, rise: f32, pixels: f32)
+        -> bool {
+    var held = points;
+    let up = vec3<f32>(0.0, rise, 0.0);
+    let risen = vec3<f32>(0.0, bound + rise, 0.0);
+    var across = detail_across(held[0]);
+    var lowest = held[0];
+    var highest = held[0];
+    for (var index = 0u; index < 7u; index++) {
+        let point = held[index];
+        across = min(across, detail_across(point));
+        if rise > 0.0 {
+            across = min(across, detail_across(point + risen));
+        }
+        lowest = min(lowest, point);
+        highest = max(highest, point);
+    }
+    let seen = subdivision_seen(lowest - vec3<f32>(bound), highest + vec3<f32>(bound) + up);
+    let allowed = pixels * camera.pixel_error * select(subdivision.square.w, 1.0, seen);
+    return bound / max(across, 1.0e-6) > allowed;
 }
 
 fn subdivision_measure(triangle: SurfaceTriangle) -> SubdivisionMeasure {
@@ -136,72 +186,46 @@ fn subdivision_measure(triangle: SurfaceTriangle) -> SubdivisionMeasure {
     let high = max(max(triangle.a, triangle.b), triangle.c);
     let extent = subdivision.extent;
     let cutout = subdivision.cutout;
-    if any(low >= extent.zw) || any(high <= extent.xy)
-        || (all(low >= cutout.xy) && all(high <= cutout.zw)) {
+    if subdivision_outside(low, high) {
         return measure;
     }
-    let water = subdivision.square.z > 0.5;
-    var over = SurfaceWater(false, 0.0);
-    if water {
-        over = surface_water(triangle);
-        if !over.reached {
-            return measure;
-        }
-    }
     let pieces = length(triangle.c - triangle.a) / f32(1u << SURFACE_MESHLET_LEVEL);
-    let a = subdivision_point(triangle.a, !water, pieces);
-    let b = subdivision_point(triangle.b, !water, pieces);
-    let c = subdivision_point(triangle.c, !water, pieces);
-    let center = subdivision_point((triangle.a + triangle.b + triangle.c) / 3.0, !water, pieces);
-    measure.drawn = water || a.found || b.found || c.found || center.found;
+    let a = subdivision_point(triangle.a, pieces);
+    let b = subdivision_point(triangle.b, pieces);
+    let c = subdivision_point(triangle.c, pieces);
+    let center = subdivision_point((triangle.a + triangle.b + triangle.c) / 3.0, pieces);
+    measure.drawn = a.found || b.found || c.found || center.found;
     if !measure.drawn {
         return measure;
     }
+    let over = subdivision_water(triangle);
+    measure.watered = over.reached;
     if any(low < extent.xy) || any(high > extent.zw)
         || (all(high > cutout.xy) && all(low < cutout.zw)) {
         measure.splits = true;
         return measure;
     }
-    let ab = subdivision_point((triangle.a + triangle.b) * 0.5, !water, pieces);
-    let bc = subdivision_point((triangle.b + triangle.c) * 0.5, !water, pieces);
-    let ca = subdivision_point((triangle.c + triangle.a) * 0.5, !water, pieces);
-    var bound = over.error;
-    var rise = max(high.x - low.x, high.y - low.y);
-    if !water {
-        let normal = cross(b.world - a.world, c.world - a.world);
-        let unit = normal / max(length(normal), 1.0e-12);
-        let bent = abs(vec4<f32>(dot(ab.kept - (a.kept + b.kept) * 0.5, unit),
-            dot(bc.kept - (b.kept + c.kept) * 0.5, unit),
-            dot(ca.kept - (c.kept + a.kept) * 0.5, unit),
-            dot(center.kept - (a.kept + b.kept + c.kept) / 3.0, unit)));
-        let finer = max(max(max(length(a.lift - a.kept), length(b.lift - b.kept)),
-            max(length(c.lift - c.kept), length(center.lift - center.kept))),
-            max(max(length(ab.lift - ab.kept), length(bc.lift - bc.kept)),
-            length(ca.lift - ca.kept)));
-        let parts = f32(1u << SURFACE_MESHLET_LEVEL);
-        let displacement = finer + max(max(bent.x, bent.y), max(bent.z, bent.w)) / (parts * parts);
-        bound = surface_ground_error(triangle) + displacement;
-        rise = 0.0;
-    }
-    let up = vec3<f32>(0.0, rise, 0.0);
-    let risen = vec3<f32>(0.0, bound + rise, 0.0);
-    var points = array<vec3<f32>, 7>(a.world, b.world, c.world, center.world, ab.world,
+    let ab = subdivision_point((triangle.a + triangle.b) * 0.5, pieces);
+    let bc = subdivision_point((triangle.b + triangle.c) * 0.5, pieces);
+    let ca = subdivision_point((triangle.c + triangle.a) * 0.5, pieces);
+    let normal = cross(b.world - a.world, c.world - a.world);
+    let unit = normal / max(length(normal), 1.0e-12);
+    let bent = abs(vec4<f32>(dot(ab.kept - (a.kept + b.kept) * 0.5, unit),
+        dot(bc.kept - (b.kept + c.kept) * 0.5, unit),
+        dot(ca.kept - (c.kept + a.kept) * 0.5, unit),
+        dot(center.kept - (a.kept + b.kept + c.kept) / 3.0, unit)));
+    let finer = max(max(max(length(a.lift - a.kept), length(b.lift - b.kept)),
+        max(length(c.lift - c.kept), length(center.lift - center.kept))),
+        max(max(length(ab.lift - ab.kept), length(bc.lift - bc.kept)),
+        length(ca.lift - ca.kept)));
+    let parts = f32(1u << SURFACE_MESHLET_LEVEL);
+    let displacement = finer + max(max(bent.x, bent.y), max(bent.z, bent.w)) / (parts * parts);
+    let points = array<vec3<f32>, 7>(a.world, b.world, c.world, center.world, ab.world,
         bc.world, ca.world);
-    var across = detail_across(points[0]);
-    var lowest = points[0];
-    var highest = points[0];
-    for (var index = 0u; index < 7u; index++) {
-        let point = points[index];
-        across = min(across, detail_across(point));
-        if water {
-            across = min(across, detail_across(point + risen));
-        }
-        lowest = min(lowest, point);
-        highest = max(highest, point);
-    }
-    let seen = subdivision_seen(lowest - vec3<f32>(bound), highest + vec3<f32>(bound) + up);
-    let allowed = subdivision.square.y * select(SUBDIVISION_UNSEEN, 1.0, seen);
-    measure.splits = bound / max(across, 1.0e-6) > allowed;
+    let rise = max(high.x - low.x, high.y - low.y);
+    measure.splits = subdivision_exceeds(points, surface_ground_error(triangle) + displacement,
+        0.0, subdivision.square.y)
+        || (over.reached && subdivision_exceeds(points, over.error, rise, subdivision.square.z));
     return measure;
 }
 
@@ -291,7 +315,7 @@ fn subdivide_begin() {
     atomicStore(&subdivision_args[draw + 4u], 0u);
     atomicStore(&subdivision_args[args + SUBDIVISION_RESERVED], 0u);
     atomicStore(&subdivision_args[args + SUBDIVISION_REFUSED], 0u);
-    atomicStore(&subdivision_args[args + SUBDIVISION_MEASURE], u32(subdivision.square.z));
+    atomicStore(&subdivision_args[args + SUBDIVISION_WATERED], 0u);
 }
 
 @compute @workgroup_size(SUBDIVISION_GROUP)
@@ -303,14 +327,23 @@ fn subdivide_decide(@builtin(global_invocation_id) id: vec3<u32>) {
     }
     let node = subdivision_leaf(id.x);
     let triangle = subdivision_triangle(node);
-    let measure = subdivision_measure(triangle);
+    let depth = firstLeadingBit(node);
+    var measure: SubdivisionMeasure;
+    if subdivision.frame.x == 0u && depth < subdivision.tree.x {
+        measure = subdivision_measure(triangle);
+    } else {
+        measure = subdivision_drawn(triangle);
+    }
     let at = subdivision.tree.z + id.x;
     var drawn = SurfaceTriangle(triangle.a, triangle.a, triangle.a);
     if measure.drawn {
         drawn = triangle;
     }
     subdivision_leaves[at] = drawn;
-    let depth = firstLeadingBit(node);
+    if measure.watered {
+        let place = atomicAdd(&subdivision_args[args + SUBDIVISION_WATERED], 1u);
+        subdivision_watered[subdivision.tree.z + place] = at;
+    }
     var decision = 0u;
     if subdivision.frame.x == 0u {
         if measure.splits && depth < subdivision.tree.x {

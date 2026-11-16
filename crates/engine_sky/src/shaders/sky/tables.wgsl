@@ -1,5 +1,8 @@
 import package::engine::color::luminance;
-import package::generated::sky::{SKY_MULTIPLE_SIZE, SKY_TABLE_GROUP, SKY_VIEW_LAYER};
+import package::generated::sky::{
+    EYE_LAYER, SKY_MULTIPLE_SIZE, SKY_TABLE_GROUP, SKY_VIEW_LAYER, SkyDomes
+};
+import package::sky::cloud_dome::{behind_clouds, cloud_dome_uv};
 import package::sky::common::{
     SKY_PI, SKY_VIEW_SIZE, air_radius, air_sky, air_transmittance, sky_view_parameters,
     sphere_hit, to_sub_uv, transmittance_uv
@@ -11,9 +14,11 @@ import package::sky::piece::sky_air;
 @group(1) @binding(3) var view_table: texture_2d_array<f32>;
 @group(1) @binding(4) var table_sampler: sampler;
 @group(1) @binding(5) var table_out: texture_storage_2d_array<rgba16float, write>;
-@group(1) @binding(6) var<storage, read_write> derived: array<vec4<f32>, 6>;
+@group(1) @binding(6) var<storage, read_write> derived: array<vec4<f32>, 9>;
+@group(1) @binding(7) var<uniform> sky_domes: SkyDomes;
 
 const VIEW_STEPS: u32 = 30u;
+const SKY_TURN: f32 = 6.2831853;
 const NIGHT: vec3<f32> = vec3<f32>(0.004, 0.006, 0.012);
 const MOON_NIGHT: vec3<f32> = vec3<f32>(0.006, 0.008, 0.014);
 
@@ -132,11 +137,25 @@ fn build_sky_view(@builtin(global_invocation_id) id: vec3<u32>) {
     );
     let light = scattered(vec3<f32>(0.0, r, 0.0), direction, sun, VIEW_STEPS);
     textureStore(table_out, id.xy, SKY_VIEW_LAYER,
-        vec4<f32>((light + NIGHT) * sky_air.ozone.w, 1.0));
+        vec4<f32>((light + NIGHT) * sky_air.ozone.w * SKY_PI, 1.0));
 }
 
 fn view_light(direction: vec3<f32>) -> vec3<f32> {
     return air_sky(view_table, table_sampler, direction);
+}
+
+fn clouded_light(light: vec3<f32>, direction: vec3<f32>) -> vec3<f32> {
+    if sky_domes.layers.z == 0u {
+        return light;
+    }
+    let size = sky_domes.size.xy;
+    let at = clamp(cloud_dome_uv(direction) * size, vec2<f32>(0.5), size - 0.5)
+        / vec2<f32>(textureDimensions(view_table));
+    let older = textureSampleLevel(view_table, table_sampler, at,
+        sky_domes.layers.x + EYE_LAYER, 0.0);
+    let newer = textureSampleLevel(view_table, table_sampler, at,
+        sky_domes.layers.y + EYE_LAYER, 0.0);
+    return behind_clouds(light, mix(older, newer, sky_domes.size.z), direction);
 }
 
 fn around(azimuth: f32, elevation: f32) -> vec3<f32> {
@@ -154,20 +173,45 @@ fn derive_light() {
         horizon += view_light(around(f32(index) * SKY_PI * 0.25, 0.1));
     }
     horizon /= 8.0;
-    let azimuth = atan2(sun.z, sun.x);
-    let toward = view_light(around(azimuth, 0.035));
-    let away = view_light(around(azimuth + SKY_PI, 0.035));
     let night = (NIGHT + MOON_NIGHT * (sky_air.moon.w * max(sky_air.moon.y, 0.0)))
-        * sky_air.ozone.w;
-    let ground = sky_air.ground.rgb
-        * (sun_color * max(sun.y, 0.0) / SKY_PI + 0.5 * (zenith + horizon)) + night * 0.3;
-    let glow = max(luminance(toward - away), 0.0) / max(luminance(sun_color), 1e-4);
-    let falling = luminance(sun_color) * max(sun.y, 0.0)
-        + SKY_PI * luminance(0.5 * (zenith + horizon));
-    derived[0] = vec4<f32>(sun_color, 0.0);
+        * sky_air.ozone.w * SKY_PI;
+    var open = vec3<f32>(0.0);
+    var level = vec3<f32>(0.0);
+    var east = vec3<f32>(0.0);
+    var west = vec3<f32>(0.0);
+    var north = vec3<f32>(0.0);
+    var south = vec3<f32>(0.0);
+    let turns = sky_domes.taps.x;
+    let rises = sky_domes.taps.y;
+    let tap_light = 2.0 / f32(turns * rises);
+    for (var rise = 0u; rise < rises; rise++) {
+        let up = (f32(rise) + 0.5) / f32(rises);
+        let across = sqrt(1.0 - up * up);
+        for (var turn = 0u; turn < turns; turn++) {
+            let angle = (f32(turn) + 0.5 * f32(rise & 1u)) * SKY_TURN / f32(turns);
+            let direction = vec3<f32>(cos(angle) * across, up, sin(angle) * across);
+            let clear = view_light(direction);
+            let light = clouded_light(clear, direction);
+            open += clear * direction.y;
+            level += light * direction.y;
+            east += light * max(direction.x, 0.0);
+            west += light * max(-direction.x, 0.0);
+            north += light * max(direction.z, 0.0);
+            south += light * max(-direction.z, 0.0);
+        }
+    }
+    open *= tap_light;
+    level *= tap_light;
+    let upright = (east + west + north + south) * (0.25 * tap_light);
+    let ground = sky_air.ground.rgb * (sun_color * max(sun.y, 0.0) + level) + night * 0.3;
+    let falling = luminance(sun_color) * max(sun.y, 0.0) + luminance(level);
+    derived[0] = vec4<f32>(sun_color, sun.y);
     derived[1] = vec4<f32>(max(zenith, night), 0.0);
     derived[2] = vec4<f32>(max(horizon, night), falling);
     derived[3] = vec4<f32>(ground, 0.0);
-    derived[4] = vec4<f32>(max(away, night), 0.0);
-    derived[5] = vec4<f32>(min(glow, 4.0), 0.0, 0.0, 0.0);
+    derived[4] = vec4<f32>(upright, 0.0);
+    derived[5] = vec4<f32>((east - west) * (0.5 * tap_light), 0.0);
+    derived[6] = vec4<f32>(level - upright, 0.0);
+    derived[7] = vec4<f32>((north - south) * (0.5 * tap_light), 0.0);
+    derived[8] = vec4<f32>(open, 0.0);
 }

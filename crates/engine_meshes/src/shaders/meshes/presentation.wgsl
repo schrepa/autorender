@@ -1,19 +1,18 @@
+import package::engine::detail::{ViewDetail, fits, handover};
 import package::engine::drawn::{drawn_in_view, drawn_mark_first, drawn_mark_moving,
-    drawn_mark_subpixel, drawn_marks, drawn_model, drawn_occlusion, drawn_poses, drawn_views,
+    drawn_mark_subpixel, drawn_marks, drawn_model, drawn_occlusion, drawn_poses,
     occlusion_mark_hidden, occlusion_mark_late};
 import package::engine::drawn_fades::set_drawn_fade;
 import package::engine::geometry::declarations::{FADE_LEVEL_MAX, drawn_slot, fade_word};
 import package::generated::meshes::{ARGS_GROUP, BatchData as Batch, CULL_GROUP,
-    CandidateData as Candidate, GROUP, LOD_FADED, LOD_HISTORY_HELD,
-    LOD_LEVELS, PresentationFrame as Frame, UNWATCHED,
+    CandidateData as Candidate, GROUP, LOD_LEVELS, PresentationFrame as Frame, UNWATCHED,
     candidate_state_level, candidate_state_moving,
     candidate_state_phase_one, candidate_state_phase_two, candidate_state_subpixel,
     candidate_state_view, candidate_state_view_level,
     candidate_state_visible, candidate_state_with_level, candidate_state_with_moving,
     candidate_state_with_phase_one,
     candidate_state_with_phase_two, candidate_state_with_subpixel,
-    candidate_state_with_view, candidate_state_with_view_level, candidate_state_with_visible,
-    lod_fade, lod_fade_history, lod_fade_previous, lod_fade_progress, lod_fade_shown};
+    candidate_state_with_view, candidate_state_with_view_level, candidate_state_with_visible};
 
 struct DrawArgs {
     index_count: u32,
@@ -33,7 +32,6 @@ struct DrawArgs {
 @group(1) @binding(14) var<storage, read> slot_candidates: array<Candidate>;
 @group(1) @binding(19) var<storage, read_write> occlusion_counts: array<atomic<u32>>;
 @group(1) @binding(24) var<storage, read_write> last_ids: array<u32>;
-@group(1) @binding(25) var<storage, read_write> lod_states: array<u32>;
 @group(1) @binding(26) var<storage, read_write> fading_ids: array<atomic<u32>>;
 @group(1) @binding(27) var<storage, read_write> totals: array<u32, 26>;
 
@@ -55,115 +53,64 @@ fn cull(@builtin(global_invocation_id) id: vec3<u32>) {
         state = candidate_state_with_moving(state, drawn_mark_moving(mark));
         state = candidate_state_with_phase_one(state,
             frame.occlusion == 0u || drawn_mark_first(mark));
-        state = candidate_state_with_level(state,
-            lod_level(batches[candidate.batch], drawn_model(candidate.slot), 0u));
+        let picked = chosen(batches[candidate.batch], drawn_model(candidate.slot));
+        state = candidate_state_with_level(state, picked.level);
+        let step = u32(picked.share * f32(FADE_LEVEL_MAX));
+        if candidate_state_phase_one(state) && picked.level != LAST && step > 0u {
+            set_drawn_fade(candidate.slot, fade_word(step, false, true));
+            let index = atomicAdd(&fading_ids[0], 1u);
+            atomicStore(&fading_ids[4u + 2u * index], drawn_slot(candidate.slot, false));
+            atomicStore(&fading_ids[5u + 2u * index], candidate.batch);
+        }
+        if candidate.slot == frame.watched {
+            atomicStore(&fading_ids[1], picked.level + 1u);
+        }
     }
     scan[candidate.position] = state;
 }
 
-fn lod_level(batch: Batch, model: mat4x4<f32>, view: u32) -> u32 {
-    return lod_level_at(batch, model, 1.0, view);
+struct Chosen {
+    level: u32,
+    share: f32,
 }
 
-fn lod_level_at(batch: Batch, model: mat4x4<f32>, scale_distance: f32, view: u32) -> u32 {
+fn eye_detail() -> ViewDetail {
+    return ViewDetail(vec3<f32>(0.0), frame.pixel_angle, frame.texel, frame.lod_error);
+}
+
+fn chosen(batch: Batch, model: mat4x4<f32>) -> Chosen {
+    var picked = Chosen(0u, 0.0);
     let levels = u32(batch.lod_errors.z);
     let last = frame.last_level != 0u && batch.lod_errors.w > 0.0;
     if (levels <= 1u && !last) || !(frame.lod_error > 0.0) {
-        return 0u;
+        return picked;
     }
     let center = (model * vec4<f32>((batch.bounds_min.xyz + batch.bounds_max.xyz) * 0.5, 1.0)).xyz;
     let scale = max(length(model[0].xyz), max(length(model[1].xyz), length(model[2].xyz)));
     let radius = length(batch.bounds_max.xyz - batch.bounds_min.xyz) * 0.5 * scale;
-    let projection = drawn_views[view].rasterized;
-    let y_row = vec3<f32>(projection[0].y, projection[1].y, projection[2].y);
-    let w_row = vec3<f32>(projection[0].w, projection[1].w, projection[2].w);
-    let pixels = length(y_row) * drawn_views[view].viewport.y * 0.5 / frame.lod_error;
-    let perspective = length(w_row) > 0.5;
-    let to_eye = center - frame.eye.xyz;
-    let distance_squared = dot(to_eye, to_eye) * scale_distance * scale_distance;
-    var level = 0u;
-    for (var l = 1u; l < LAST + 1u; l++) {
-        var error = select(batch.lod_errors.y, batch.lod_errors.x, l == 1u);
-        if l == LAST {
-            error = batch.lod_errors.w;
-        }
-        if (l < LAST && l >= levels) || (l == LAST && !last) {
-            continue;
-        }
-        let projected = error * scale * pixels;
-        var fits = projected <= 1.0;
-        if perspective {
-            let reach = projected + radius;
-            fits = reach * reach <= distance_squared;
-        }
-        if fits {
-            level = l;
-            if l < LAST && level_indices(batch, l) == 0u {
-                return l;
+    let seen = eye_detail();
+    let placed = center - frame.eye.xyz;
+    let away = length(placed);
+    let near = select(vec3<f32>(0.0), placed * ((away - radius) / away), away > radius);
+    for (var l = 1u; l < levels; l++) {
+        if fits(seen, select(batch.lod_errors.y, batch.lod_errors.x, l == 1u) * scale, near) {
+            picked.level = l;
+            if level_indices(batch, l) == 0u {
+                return picked;
             }
         }
     }
-    return level;
+    if last {
+        picked.share = handover(seen, batch.lod_errors.w * scale, near);
+    }
+    if picked.share >= 1.0 {
+        picked.level = LAST;
+    }
+    return picked;
 }
 
 fn level_indices(batch: Batch, level: u32) -> u32 {
     return select(batch.lod_ranges.w, batch.lod_ranges.y, level == 1u);
-}
-
-@compute @workgroup_size(CULL_GROUP)
-fn fade_levels(@builtin(global_invocation_id) id: vec3<u32>) {
-    if id.x >= frame.candidates || !(frame.lod_error > 0.0) {
-        return;
-    }
-    let candidate = slot_candidates[id.x];
-    let flags = scan[candidate.position];
-    let batch = batches[candidate.batch];
-    if (flags & frame.mask) == 0u || frame.fade.x >= 1.0 {
-        lod_states[candidate.slot] = 0u;
-        return;
-    }
-    let level = candidate_state_level(flags);
-    let state = lod_states[candidate.slot];
-    var shown = level;
-    var previous = level;
-    var progress = LOD_FADED;
-    if lod_fade_history(state) == LOD_HISTORY_HELD {
-        shown = lod_fade_shown(state);
-        previous = lod_fade_previous(state);
-        progress = lod_fade_progress(state);
-        let model = drawn_model(candidate.slot);
-        let nearer = lod_level_at(batch, model, 1.0 - frame.fade.y, 0u);
-        let farther = lod_level_at(batch, model, 1.0 + frame.fade.y, 0u);
-        let wanted = max(nearer, min(shown, farther));
-        if progress >= LOD_FADED {
-            if wanted != shown {
-                previous = shown;
-                shown = wanted;
-                progress = 0u;
-            }
-        } else if wanted == previous {
-            previous = shown;
-            shown = wanted;
-            progress = LOD_FADED - progress;
-        }
-        let last = frame.last_level != 0u && batch.lod_errors.w > 0.0;
-        let last_switch = (shown == LAST) != (previous == LAST);
-        if !last_switch || !last || candidate_state_moving(flags) {
-            progress = LOD_FADED;
-        }
-        progress = min(progress + u32(frame.fade.x * f32(LOD_FADED)), LOD_FADED);
-    }
-    lod_states[candidate.slot] = lod_fade(shown, previous, progress, LOD_HISTORY_HELD);
-    var steady = shown;
-    if progress < LOD_FADED {
-        steady = select(shown, previous, shown == LAST);
-        let faded = u32(f32(progress) / f32(LOD_FADED) * f32(FADE_LEVEL_MAX));
-        set_drawn_fade(candidate.slot, fade_word(faded, shown != LAST, true));
-        let index = atomicAdd(&fading_ids[0], 1u);
-        atomicStore(&fading_ids[4u + 2u * index], drawn_slot(candidate.slot, false));
-        atomicStore(&fading_ids[5u + 2u * index], candidate.batch);
-    }
-    scan[candidate.position] = candidate_state_with_level(flags, steady);
 }
 
 @compute @workgroup_size(CULL_GROUP)
@@ -195,7 +142,7 @@ fn view_cull(@builtin(global_invocation_id) id: vec3<u32>) {
     if drawn_in_view(frame.bases.z, candidate.slot) {
         flags = candidate_state_with_view(flags, true);
         flags = candidate_state_with_view_level(flags,
-            lod_level(batches[candidate.batch], drawn_model(candidate.slot), frame.bases.z));
+            chosen(batches[candidate.batch], drawn_model(candidate.slot)).level);
     }
     scan[candidate.position] = flags;
 }
@@ -429,6 +376,9 @@ fn gather_phase_one() {
         totals[4u + level] = scan[at + level];
     }
     totals[3] = atomicLoad(&occlusion_counts[1]);
+    if frame.watched != UNWATCHED {
+        totals[13] = atomicLoad(&fading_ids[1]);
+    }
     if frame.occlusion == 0u {
         totals[12] = atomicLoad(&occlusion_counts[2]);
         gather_watched();
@@ -449,7 +399,6 @@ fn gather_phase_two() {
 
 fn gather_watched() {
     if frame.watched != UNWATCHED {
-        totals[13] = lod_states[frame.watched];
         let pose = drawn_poses[frame.watched];
         for (var lane = 0u; lane < 4u; lane++) {
             totals[14u + lane] = bitcast<u32>(pose.row_0[lane]);

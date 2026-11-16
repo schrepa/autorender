@@ -7,7 +7,9 @@ gpu_struct! {
         pub grade: [f32; 4],
         pub shadow_tint: [f32; 4],
         pub highlight_tint: [f32; 4],
-        pub exposure: [f32; 4],
+        pub curve: [f32; 4],
+        pub exposure: [f32; 3],
+        pub pad: f32,
     }
 }
 

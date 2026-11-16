@@ -1,7 +1,7 @@
 import package::engine::math::PI;
 import package::generated::sky::MIRROR_LAYER;
 import package::place::ambient::{EnvironmentAt, EnvironmentLight};
-import package::sky::air::behind_clouds;
+import package::sky::cloud_dome::behind_clouds;
 import package::sky::environment::environment_maps;
 import package::sky::faces::sky::{ambient, environment_levels, environment_sample, horizon,
     sky_above, sky_average};
@@ -54,7 +54,7 @@ fn environment(light: EnvironmentLight, at: EnvironmentAt) -> EnvironmentLight {
     var result = light;
     result.sky = sky_average(at.skyward) * ambient();
     result.upper = sky_above(at.skyward) * ambient();
-    result.horizon = horizon();
+    result.horizon = horizon() / PI;
     result.sky_specular = mirrored_sky(environment_lobe(at), at.world);
     return result;
 }

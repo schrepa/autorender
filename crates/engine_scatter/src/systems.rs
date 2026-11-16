@@ -2,31 +2,30 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Asset, AssetLibrary, AssetResidency, AssetUses, Cut, Detail, DeviceLimits, Drawn, DrawnArea,
-    DrawnAreas, FrameTime, Readable, Readback, Spawner, Switched, Transform, Views,
+    AUTHORED_LEVELS, Asset, AssetLibrary, AssetResidency, AssetUses, Background, Cut, Detail,
+    DeviceLimits, Drawn, DrawnArea, DrawnAreas, GeometryHandle, Jobs, Readable, Readback, Records,
+    Spawner, Transform, VIEW_JOBS, Views, authored_input, job_priority,
 };
 use engine_math::collections::HashMap;
 use engine_open_world_kit::ground::{
     Foliage, GroundTiles, PlacedTiles, PooledTile, TerrainTiles, TileFace,
 };
-use engine_places_rendering::impostors::{
-    ImpostorAsks, ImpostorRecord, ImpostorRecords, Impostors,
-};
-use engine_places_rendering::occlusion::OcclusionSource;
+use engine_places_rendering::impostors::{ImpostorAsks, ImpostorRecord, ImpostorRecords};
 use engine_tiles::TileKey;
 use glam::Vec3;
 
 use crate::ScatterBrick;
-use crate::far_cover::FarCoverTable;
+use crate::far_cover::{CanopyMaps, wanted};
 use crate::gpu::PLACED;
 use crate::groups::{Groups, Kept, Resolved, resolve};
 use crate::layouts::{
     CanopyPiece, CullFrame, CullGroup, CullView, DrawArgs, LEVELS, PlacedRecord, PlacedValues,
     PoseData, SlotColor, draw_args,
 };
-use crate::occupancy::{OccupancyWindows, canopy, texel_share};
 use crate::pool::{Pooled, ScatterPool};
-use crate::settings::{FoliageSettings, OccupancySettings, ScatterSettings, ScatterStats};
+use crate::settings::{
+    CanopySettings, FoliageSettings, PlacedLook, ScatterSettings, ScatterStats,
+};
 
 const SLOT_STRIDES: [u64; 4] = [
     size_of::<PoseData>() as u64,
@@ -54,11 +53,15 @@ pub(crate) struct CullPlan {
     pub(crate) atlas: bool,
 }
 
+pub(crate) struct Authored {
+    meshes: Vec<GeometryHandle>,
+    work: Background<Vec<f32>>,
+}
+
 #[derive(Default)]
 pub(crate) struct GroupData {
     pub(crate) data: Vec<CullGroup>,
     pub(crate) template: Vec<DrawArgs>,
-    pub(crate) casters: Vec<DrawArgs>,
     pub(crate) lists: Vec<GroupLists>,
     pub(crate) ids_per_view: u32,
 }
@@ -84,13 +87,12 @@ pub(crate) struct ScatterState {
     pub(crate) impostor_live: u32,
     pub(crate) impostor_refused: u32,
     pub(crate) uses: AssetUses,
-    pub(crate) fade: f32,
     pub(crate) plan: CullPlan,
-    presented: f32,
+    authored: Vec<Authored>,
     kept: Kept,
     retake: bool,
     refilled: bool,
-    covers_changed: bool,
+    revisions: Option<((u64, u64), u64)>,
 }
 
 impl Default for ScatterState {
@@ -115,13 +117,12 @@ impl Default for ScatterState {
             impostor_live: 0,
             impostor_refused: 0,
             uses: AssetUses::default(),
-            fade: 1.0,
             plan: CullPlan::default(),
-            presented: 0.0,
+            authored: Vec::new(),
             kept: Kept::default(),
             retake: false,
             refilled: false,
-            covers_changed: false,
+            revisions: None,
         }
     }
 }
@@ -183,36 +184,113 @@ pub(crate) fn take_impostors(
     state.impostor_refused = held.as_ref().map_or(0, |held| held.refused);
 }
 
-pub(crate) fn place_windows(
-    (settings, foliage, views): (Res<OccupancySettings>, Res<FoliageSettings>, Res<Views>),
-    occupying: Switched<OccupancySettings>,
-    state: Res<ScatterState>,
-    mut windows: ResMut<OccupancyWindows>,
+pub(crate) fn publish_canopy(
+    (foliage, canopy, views): (Res<FoliageSettings>, Res<CanopySettings>, Res<Views>),
+    maps: Res<CanopyMaps>,
     mut piece: ResMut<CanopyPiece>,
-    mut source: ResMut<OcclusionSource>,
 ) {
-    if state.covers_changed {
-        windows.redraw_all();
-    }
     let Some(main) = views.main() else {
         return;
     };
-    let lit = windows.place(
-        (&settings, occupying.on()),
-        main.detail_eye,
-        (state.groups.covers.as_slice(), state.objects),
-    );
-    piece.set_if_neq(canopy(lit, &foliage, main.jitter.is_some()));
-    source.set_if_neq(OcclusionSource {
-        texel_share: texel_share(&settings),
+    let cast = views
+        .drawn()
+        .iter()
+        .filter(|view| view.owner.is_some() && view.detail > 0.0)
+        .filter(|view| view.view_projection.row(3).truncate() == Vec3::ZERO)
+        .map(|view| 2.0 * view.detail)
+        .fold(f32::INFINITY, engine_math::min);
+    piece.set_if_neq(CanopyPiece {
+        handover: [
+            canopy.handover_pixels,
+            if cast.is_finite() { cast } else { 0.0 },
+            maps.count() as f32,
+            canopy.relief,
+        ],
+        light: [
+            canopy.sky_through,
+            canopy.sun_through,
+            canopy.crown_light,
+            canopy.roughness,
+        ],
+        foliage: [
+            foliage.transmission,
+            foliage.variation,
+            if foliage.hashed_cutoff && main.jitter.is_some() {
+                1.0
+            } else {
+                0.0
+            },
+            foliage.ground_blend,
+        ],
     });
 }
 
 type ResolvedTerrains<'a> = Vec<(Entity, Vec<Option<Resolved<'a>>>)>;
 
+fn look_meshes(look: &PlacedLook) -> Vec<GeometryHandle> {
+    std::iter::once(look.mesh)
+        .chain(look.lods.iter().copied())
+        .collect()
+}
+
+fn measured<'a>(authored: &'a [Authored], look: &PlacedLook) -> &'a [f32] {
+    let meshes = look_meshes(look);
+    authored
+        .iter()
+        .find(|held| held.meshes == meshes)
+        .and_then(|held| held.work.ready())
+        .map_or(&[], Vec::as_slice)
+}
+
+fn measure_looks(
+    authored: &mut Vec<Authored>,
+    (settings, library): (&ScatterSettings, &AssetLibrary),
+    (jobs, records): (&mut Jobs<'_, '_>, &Records),
+) -> bool {
+    authored.retain(|held| {
+        settings
+            .looks
+            .iter()
+            .any(|look| look_meshes(look) == held.meshes)
+    });
+    let mut landed = false;
+    for held in authored.iter_mut().filter(|held| held.work.waiting()) {
+        held.work.poll(records);
+        landed |= !held.work.waiting();
+    }
+    for look in settings.looks.iter().filter(|look| !look.lods.is_empty()) {
+        let meshes = look_meshes(look);
+        if authored.iter().any(|held| held.meshes == meshes) {
+            continue;
+        }
+        let Some(found) = meshes
+            .iter()
+            .map(|&handle| library.mesh(handle).map(|mesh| &**mesh))
+            .collect::<Option<Vec<_>>>()
+        else {
+            continue;
+        };
+        let work = jobs.fetch(
+            &AUTHORED_LEVELS,
+            &authored_input(&found),
+            job_priority(VIEW_JOBS, 0),
+            |bytes| {
+                Ok(bytes
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|&word| f32::from_le_bytes(word))
+                    .collect())
+            },
+        );
+        authored.push(Authored { meshes, work });
+    }
+    landed
+}
+
 fn resolve_all<'a>(
     tiles: &TerrainTiles,
-    settings: &ScatterSettings,
+    (settings, authored): (&ScatterSettings, &[Authored]),
     library: &'a AssetLibrary,
 ) -> (ResolvedTerrains<'a>, Kept) {
     let mut kept = Kept::default();
@@ -224,9 +302,11 @@ fn resolve_all<'a>(
                 .placement
                 .iter()
                 .map(|asset| {
+                    let look = settings.look(asset.mesh);
+                    let errors = look.map_or(&[][..], |look| measured(authored, look));
                     resolve(
                         asset,
-                        settings.look(asset.mesh),
+                        (look, errors),
                         library,
                         settings,
                         &mut kept,
@@ -259,7 +339,6 @@ fn set_groups(state: &mut ScatterState) {
     let held = &mut state.group_data;
     held.data.clear();
     held.template.clear();
-    held.casters.clear();
     held.lists.clear();
     let mut ids = 0;
     for (layout, group) in layouts.iter().zip(&state.groups.groups) {
@@ -272,19 +351,16 @@ fn set_groups(state: &mut ScatterState) {
             errors: layout.errors,
             impostor: layout.impostor.0,
             record: layout.impostor.1,
-            casters: layout.casters.len() as u32,
             parts: layout.parts,
+            pad: [0; 2],
         });
         held.lists.push(GroupLists { ids, count });
         for level in 0..LEVELS as usize {
             held.template.push(draw_args(
                 layout.levels.get(level).copied().unwrap_or((0, 0, 0)),
             ));
-            held.casters.push(draw_args(
-                layout.casters.get(level).copied().unwrap_or((0, 0, 0)),
-            ));
         }
-        ids += count * LEVELS;
+        ids += count * layout.levels.len() as u32;
     }
     held.ids_per_view = ids;
     if grow(
@@ -333,13 +409,48 @@ type PlaceReads<'w> = (
     Res<'w, DeviceLimits>,
 );
 
+fn derive_groups(
+    state: &mut ScatterState,
+    residency: &AssetResidency,
+    resolved: &ResolvedTerrains<'_>,
+) {
+    let wanted = asset_uses(resolved);
+    if state.uses.assets() != wanted.as_slice() {
+        state.uses = AssetUses::new(residency, wanted);
+    }
+    let mut groups = Groups::build(residency, resolved);
+    let refill = !state.groups.same_objects(&groups);
+    if !refill {
+        for (layout, before) in groups.layouts.iter_mut().zip(&state.groups.layouts) {
+            layout.impostor = before.impostor;
+        }
+    }
+    state.groups = groups;
+    state.refilled = refill;
+    if refill {
+        state.impostor_generation += 1;
+        state.impostors = vec![ImpostorRecord::default(); state.groups.groups.len()];
+        state.retake = true;
+        state.pool.clear(state.groups.groups.len());
+    }
+}
+
 pub(crate) fn place_pool(
     (tiles, settings, library, residency, limits): PlaceReads<'_>,
-    (detail, time): (Res<Detail>, Res<FrameTime>),
-    (ground, mut far): (Res<GroundTiles>, ResMut<FarCoverTable>),
+    (foliage, ground, mut maps): (
+        Res<FoliageSettings>,
+        Res<GroundTiles>,
+        ResMut<CanopyMaps>,
+    ),
+    (mut jobs, records): (Jobs, Res<Records>),
     mut state: ResMut<ScatterState>,
 ) {
     let state = &mut *state;
+    let landed = measure_looks(
+        &mut state.authored,
+        (&settings, &library),
+        (&mut jobs, &records),
+    );
     state.room = match limits.storage_room {
         0 => u64::MAX,
         room => room,
@@ -355,35 +466,30 @@ pub(crate) fn place_pool(
         state.group_bytes = GROUPS_FIRST;
         state.generation += 1;
     }
-    let (resolved, kept) = resolve_all(&tiles, &settings, &library);
-    state.kept = kept;
-    if tiles.is_changed() || ground.is_changed() || settings.is_changed() || library.is_changed() {
-        far.set_if_neq(FarCoverTable::of(
-            (&tiles.terrains, &ground.palette),
-            &resolved,
-            &library,
-        ));
-    }
-    let wanted = asset_uses(&resolved);
-    if state.uses.assets() != wanted.as_slice() {
-        state.uses = AssetUses::new(&residency, wanted);
-    }
-    let mut groups = Groups::build(&residency, &resolved);
-    let refill = !state.groups.same_objects(&groups);
-    if !refill {
-        for (layout, before) in groups.layouts.iter_mut().zip(&state.groups.layouts) {
-            layout.impostor = before.impostor;
+    let revisions = (library.revision(), residency.revision());
+    let derived = landed
+        || tiles.is_changed()
+        || settings.is_changed()
+        || state.revisions != Some(revisions);
+    state.refilled = false;
+    if derived || foliage.is_changed() || maps.whole() != ground.whole {
+        let (resolved, kept) = resolve_all(&tiles, (&settings, &state.authored), &library);
+        state.kept = kept;
+        maps.want(
+            wanted(
+                &tiles.terrains,
+                &resolved,
+                &library,
+                (foliage.variation, ground.whole),
+            ),
+            ground.whole,
+        );
+        if derived {
+            state.revisions = Some(revisions);
+            derive_groups(state, &residency, &resolved);
         }
     }
-    state.covers_changed = state.groups.covers != groups.covers;
-    state.groups = groups;
-    state.refilled = refill;
-    if refill {
-        state.impostor_generation += 1;
-        state.impostors = vec![ImpostorRecord::default(); state.groups.groups.len()];
-        state.retake = true;
-        state.pool.clear(state.groups.groups.len());
-    }
+    let refill = state.refilled;
     if refill || tiles.is_changed() {
         for terrain in tiles.terrains.iter() {
             let current: HashMap<TileKey, &TileFace> = terrain
@@ -409,7 +515,6 @@ pub(crate) fn place_pool(
                     (terrain.terrain, tile.key),
                     (Arc::clone(&tile.placed), tile.stamp, terrain.origin),
                     objects,
-                    refill,
                 );
             }
         }
@@ -422,17 +527,10 @@ pub(crate) fn place_pool(
         group.count = state.pool.counts[group.objects as usize];
     }
     set_groups(state);
-    let seconds = time.real_elapsed as f32;
-    let since = seconds - std::mem::replace(&mut state.presented, seconds);
-    state.fade = if detail.fade_seconds > 0.0 && since < 1.0 {
-        engine_math::clamp(since / detail.fade_seconds, 0.0, 1.0)
-    } else {
-        1.0
-    };
 }
 
 pub(crate) fn plan_cull(
-    (views, detail, policy): (Res<Views>, Res<Detail>, Res<Impostors>),
+    (views, detail, canopy): (Res<Views>, Res<Detail>, Res<CanopySettings>),
     mut state: ResMut<ScatterState>,
 ) {
     let state = &mut *state;
@@ -449,27 +547,22 @@ pub(crate) fn plan_cull(
     let view_projection = main.view_projection;
     let eye = main.detail_eye;
     let height = main.size().y as f32;
-    let pixel_error = detail.chosen_error();
-    let impostors = plan.cards.then_some(policy.pixels);
-    let y_row = view_projection.row(1).truncate().length();
-    let spanned = y_row * height * 0.5;
-    let pixels = pixel_error.map_or(0.0, |error| spanned / error);
-    let cards = impostors.map_or(0.0, |size| y_row * height / size);
+    let spanned = view_projection.row(1).truncate().length() * height * 0.5;
+    let pixels = detail.chosen_error().map_or(0.0, |error| spanned / error);
     plan.main = Some(CullView {
         eye: eye.extend(pixels).to_array(),
         shape: [1, 1, 0, 0],
     });
     let group_count = state.groups.layouts.len() as u32;
     plan.frame = Some(CullFrame {
-        eye: eye.extend(pixels).to_array(),
+        eye: eye.extend(spanned / canopy.handover_pixels).to_array(),
         counts: [state.objects, group_count, LEVELS, 0],
         strides: [
             state.group_data.ids_per_view,
             group_count * LEVELS,
-            u32::from(impostors.is_some()),
+            u32::from(plan.cards),
             state.objects,
         ],
-        fade: [state.fade, detail.margin, cards, spanned],
         drawn: [0; 4],
     });
     plan.prepared = true;
@@ -480,7 +573,7 @@ pub(crate) fn publish_assets(
     own: Query<(Entity, &AssetUses, &ImpostorAsks), With<Placements>>,
     mut spawner: Spawner<ScatterBrick>,
 ) {
-    let asks = ImpostorAsks {
+    let asks = || ImpostorAsks {
         generation: state.impostor_generation,
         hemisphere: true,
         asks: state.groups.asks.clone(),
@@ -490,8 +583,11 @@ pub(crate) fn publish_assets(
             if *uses != state.uses {
                 spawner.insert(entity, state.uses.clone());
             }
-            if *held != asks {
-                spawner.insert(entity, asks);
+            if held.generation != state.impostor_generation
+                || !held.hemisphere
+                || held.asks != state.groups.asks
+            {
+                spawner.insert(entity, asks());
             }
         }
         Err(_) => {
@@ -499,16 +595,12 @@ pub(crate) fn publish_assets(
                 Placements,
                 Transform::default(),
                 state.uses.clone(),
-                asks,
+                asks(),
                 ImpostorRecords::default(),
                 Drawn::procedural(PLACED),
             ));
         }
     }
-}
-
-pub(crate) fn mark_moved(state: Res<ScatterState>, mut windows: ResMut<OccupancyWindows>) {
-    windows.moved(&state.moved);
 }
 
 fn same_tile(tile: &PooledTile, pooled: &Pooled) -> bool {
@@ -523,20 +615,19 @@ pub(crate) fn publish_tiles(state: Res<ScatterState>, mut placed: ResMut<PlacedT
     if !placed.groups.iter().copied().eq(boxes.clone()) {
         placed.groups = boxes.collect();
     }
-    let tiles = state.pool.tiles();
     let stale = state.restyled || state.refilled;
+    let held = &placed.tiles;
+    let mut pool = state.pool.pooled();
     let current = !stale
-        && placed.tiles.len() == tiles.len()
-        && placed
-            .tiles
-            .iter()
-            .zip(&tiles)
-            .all(|(tile, &((terrain, key), pooled))| {
-                tile.terrain == terrain && tile.key == key && same_tile(tile, pooled)
-            });
+        && held.len() == pool.len()
+        && pool.all(|(&(terrain, key), pooled)| {
+            held.binary_search_by_key(&(terrain, key), |tile| (tile.terrain, tile.key))
+                .is_ok_and(|at| same_tile(&held[at], pooled))
+        });
     if current {
         return;
     }
+    let tiles = state.pool.tiles();
     let placed = &mut *placed;
     let mut before = std::mem::take(&mut placed.tiles);
     placed
@@ -580,11 +671,7 @@ pub(crate) fn publish_changes(state: Res<ScatterState>, mut areas: ResMut<DrawnA
 }
 
 pub(crate) fn scatter_stats(
-    (state, windows, feedback): (
-        Res<ScatterState>,
-        Res<OccupancyWindows>,
-        Res<ScatterFeedback>,
-    ),
+    (state, feedback, maps): (Res<ScatterState>, Res<ScatterFeedback>, Res<CanopyMaps>),
     mut stats: ResMut<ScatterStats>,
 ) {
     let entries = if state.objects > 0 {
@@ -598,10 +685,16 @@ pub(crate) fn scatter_stats(
         placed_far_objects: state.pool.far,
         placed_impostors: placed,
         dropped_objects: state.left_objects.saturating_add(entries),
+        canopy_maps: maps.shown(),
+        canopy_waiting: maps.waiting(),
+        canopy_failure: maps.failure().cloned(),
         impostors: Cut::of(placed + state.impostor_refused, placed),
         parts: Cut::of(state.kept.parts.0, state.kept.parts.1),
         lods: Cut::of(state.kept.lods.0, state.kept.lods.1),
-        occupancy_redraws: windows.redraws,
-        occupancy_averages: windows.averages,
+        measured_levels: state
+            .authored
+            .iter()
+            .map(|held| held.work.ready().cloned().unwrap_or_default())
+            .collect(),
     });
 }

@@ -14,7 +14,7 @@ use engine_core::{
     Brick, Bricks, Pass, PassName, PassPurpose, PassViews, Schedule, SlotSet, Source, Writes, never,
 };
 use engine_places_rendering::lighting::inputs;
-use engine_render::{AttachPoint, LastFrame, RenderBricks, TargetDecl, TargetName, wgpu};
+use engine_render::{AttachPoint, LastFrame, OpenSlot, RenderBricks, TargetDecl, TargetName, wgpu};
 
 pub use settings::Reflections;
 
@@ -68,14 +68,37 @@ impl Brick for ReflectionsBrick {
             .systems(Schedule::ViewSync, publish_piece)
             .join::<engine_places_rendering::reflections::TraceReaders>((), None)
             .point_input(inputs::ROUGHNESS)
+            .point_input(inputs::SMOOTHER_ACROSS)
+            .point_input(inputs::MIRRORED_ROUGH)
+            .open_slot(OpenSlot {
+                input: inputs::MIRRORED,
+                standard: shaders::reflections::standard::MODULE,
+                values: &[],
+            })
             .part::<part::TraceGpu>();
     }
 }
 
 fn publish_piece(reflections: Res<Reflections>, mut piece: ResMut<ReflectionsPiece>) {
     piece.set_if_neq(ReflectionsPiece {
-        surface: [reflections.max_roughness, 0.0, 0.0, 0.0],
-        trace: [reflections.distance, 0.0, 0.0, 0.0],
+        surface: [
+            reflections.max_roughness,
+            reflections.roughness_fade,
+            0.0,
+            0.0,
+        ],
+        trace: [
+            reflections.distance,
+            reflections.far_refine,
+            reflections.far_edge,
+            reflections.far_contrast,
+        ],
         applied: [reflections.distance, reflections.intensity, 0.0, 0.0],
+        counts: [
+            reflections.taps,
+            reflections.far_cell,
+            reflections.behind_steps,
+            0,
+        ],
     });
 }

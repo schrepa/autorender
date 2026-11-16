@@ -5,12 +5,13 @@ use engine_places::meshes::DEBUG_LEVEL_AT;
 use engine_places_rendering::impostors::{DEBUG_CARD, ImpostorRecord};
 use glam::Mat4;
 
+use crate::settings::MAX_PLACEMENT_LODS;
+
 gpu_struct! {
     pub(crate) struct CullFrame {
         pub eye: [f32; 4],
         pub counts: [u32; 4],
         pub strides: [u32; 4],
-        pub fade: [f32; 4],
         pub drawn: [u32; 4],
     }
 }
@@ -30,7 +31,7 @@ gpu_struct! {
         pub texel: u32,
         pub tint: u32,
         pub sway: f32,
-        pub pad: [u32; 2],
+        pub look: [u32; 2],
     }
 }
 
@@ -40,11 +41,11 @@ gpu_struct! {
         pub count: u32,
         pub levels: u32,
         pub camera: u32,
-        pub errors: [f32; 4],
+        pub errors: [f32; 7],
         pub impostor: f32,
         pub record: u32,
-        pub casters: u32,
         pub parts: u32,
+        pub pad: [u32; 2],
     }
 }
 
@@ -55,38 +56,10 @@ gpu_struct! {
 }
 
 gpu_struct! {
-    pub(crate) struct Splat {
-        pub area: [f32; 4],
-        pub counts: [u32; 4],
-        pub place: [u32; 4],
-        pub dirty: [[u32; 4]; 2],
-        pub finer: [i32; 4],
-        pub means: [[u32; 4]; 2],
-    }
-}
-
-gpu_struct! {
-    pub(crate) struct Cover {
-        pub footprint: f32,
-        pub bottom: f32,
-        pub top: f32,
-        pub density: f32,
-    }
-}
-
-gpu_struct! {
-    pub(crate) struct ListedDraw {
-        pub vertices: u32,
-        pub instances: u32,
-        pub first_vertex: u32,
-        pub first_instance: u32,
-    }
-}
-
-gpu_struct! {
-    pub(crate) struct PlacedFar {
-        pub placed: [f32; 4],
-        pub size: [f32; 4],
+    pub(crate) struct CanopyMap {
+        pub rect: [f32; 4],
+        pub shape: [f32; 4],
+        pub layers: [u32; 4],
     }
 }
 
@@ -105,49 +78,17 @@ gpu_struct! {
 gpu_struct! {
     #[derive(Resource)]
     pub struct CanopyPiece {
-        pub occupancy: [f32; 4],
-        pub occupancy_maps: [f32; 4],
-        pub occupancy_centers: [[f32; 4]; 4],
         pub foliage: [f32; 4],
+        pub handover: [f32; 4],
+        pub light: [f32; 4],
     }
 }
 
 gpu_consts! {
-    pub(crate) const SHOWN_CARD: u32 = 5;
-    pub(crate) const SHOWN_NONE: u32 = 6;
-    pub(crate) const FADED: u32 = 65535;
     pub(crate) const DEAD: u32 = 0xffffffff;
     pub(crate) const NO_LAYER: u32 = 0x7f;
-    pub(crate) const CELLS: u32 = 16;
-    pub(crate) const QUAD: u32 = 6;
     pub(crate) const SCATTER_GROUP: u32 = 64;
-    pub(crate) const OCCUPANCY_GROUP: u32 = 64;
     pub(crate) const WIND_REACH: f32 = 4.0;
-}
-
-#[gpu_bits]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct ScatterFade {
-    #[bits(3)]
-    pub(crate) shown: u32,
-    #[bits(3)]
-    pub(crate) previous: u32,
-    #[bits(16)]
-    pub(crate) progress: u32,
-    #[bits(1, at = 31)]
-    pub(crate) adopt: bool,
-}
-
-impl ScatterFade {
-    pub(crate) fn word(adopt: bool) -> u32 {
-        Self {
-            shown: SHOWN_NONE,
-            previous: SHOWN_NONE,
-            progress: FADED,
-            adopt,
-        }
-        .pack()
-    }
 }
 
 #[gpu_bits]
@@ -168,23 +109,19 @@ pub(crate) const TERRAIN_INDEX: u32 = 0x1ff;
 
 pub(crate) const GENERATED: &[&str] = &[
     WGSL,
-    <ScatterFade as GpuBits>::WGSL,
     <ScatterTerrain as GpuBits>::WGSL,
     <CullFrame as engine_core::GpuStruct>::WGSL,
     <CullView as engine_core::GpuStruct>::WGSL,
     <PlacedValues as engine_core::GpuStruct>::WGSL,
     <CullGroup as engine_core::GpuStruct>::WGSL,
     <Snap as engine_core::GpuStruct>::WGSL,
-    <Splat as engine_core::GpuStruct>::WGSL,
-    <Cover as engine_core::GpuStruct>::WGSL,
-    <ListedDraw as engine_core::GpuStruct>::WGSL,
-    <PlacedFar as engine_core::GpuStruct>::WGSL,
+    <CanopyMap as engine_core::GpuStruct>::WGSL,
+    crate::jobs::canopy::WGSL,
     <PlacedGroup as engine_core::GpuStruct>::WGSL,
 ];
 
-pub(crate) const LEVELS: u32 = SHOWN_CARD;
+pub(crate) const LEVELS: u32 = MAX_PLACEMENT_LODS as u32 + 1;
 pub(crate) const RANK_MAX: f32 = 1023.0;
-pub(crate) const MAX_OCCUPANCY_LEVELS: usize = crate::settings::MAX_OCCUPANCY_LEVELS as usize;
 
 pub(crate) const RECORD_LEVELS: u32 = 16;
 pub(crate) const RECORD_BYTES: u64 = 16;
@@ -252,8 +189,7 @@ pub(crate) struct PlacedRecord {
     pub scale: f32,
     pub terrain: u32,
     pub sink: f32,
-    pub state: u32,
-    pub pad: [u32; 3],
+    pub pad: [u32; 4],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Pod, Zeroable)]

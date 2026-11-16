@@ -10,8 +10,6 @@ pub use engine_animation::{
     AnimationBrick, ImportShared, ImportedModel, MODEL_PART, ModelLoaded, import_glb,
 };
 pub use engine_audio::AudioBrick;
-pub use engine_auto_exposure::AutoExposureBrick;
-pub use engine_bloom::BloomBrick;
 pub use engine_debug_view::DebugViewBrick;
 pub use engine_dither::DitherBrick;
 pub use engine_dynamic_resolution::DynamicResolutionBrick;
@@ -37,15 +35,13 @@ pub use engine_time_of_day::TimeOfDayBrick;
 pub use engine_tonemap::TonemapBrick;
 pub use engine_ui::UiBrick;
 
-const POST_ORDER: [&str; 2] = ["bloom", "haze"];
 const DISPLAY_ORDER: [&str; 2] = ["tonemap", "dither"];
+const OVERLAY_ORDER: [&str; 3] = ["debug_view_overlay", "text", "ui"];
 
 fn known<L: Listing>(list: L) -> L {
     list.knows::<AmbientOcclusionBrick>()
         .knows::<AnimationBrick>()
         .knows::<AudioBrick>()
-        .knows::<AutoExposureBrick>()
-        .knows::<BloomBrick>()
         .knows::<DebugViewBrick>()
         .knows::<DitherBrick>()
         .knows::<DynamicResolutionBrick>()
@@ -112,9 +108,7 @@ pub fn rendering<L: Listing>(list: L) -> L {
         .with::<SkyBrick>()
         .with::<PrepassBrick>()
         .with::<AmbientOcclusionBrick>()
-        .with::<BloomBrick>()
         .with::<TaaBrick>()
-        .with::<AutoExposureBrick>()
         .with::<TonemapBrick>()
         .with::<DitherBrick>()
         .with::<DebugViewBrick>()
@@ -130,7 +124,8 @@ pub fn rendering<L: Listing>(list: L) -> L {
         .places(engine_places::PLACES)
         .places(engine_places_rendering::PLACES)
         .settings(FoldOrder {
-            post: POST_ORDER.map(str::to_owned).to_vec(),
+            post: Vec::new(),
             display: DISPLAY_ORDER.map(str::to_owned).to_vec(),
+            overlay: OVERLAY_ORDER.map(str::to_owned).to_vec(),
         })
 }

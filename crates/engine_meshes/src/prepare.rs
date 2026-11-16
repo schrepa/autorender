@@ -1,6 +1,7 @@
 use bevy_ecs::system::SystemParamItem;
 use engine_core::{
-    AssetLibrary, CullPlan, DrawnTable, Error, ErrorCode, GlobalTransforms, GpuBits, Since, Views,
+    AssetLibrary, CullPlan, DrawnTable, Error, ErrorCode, GlobalTransforms, GpuBits, Since,
+    ViewDetail, Views,
 };
 use engine_render::{AfterRead, Allocation, GpuPart, Prepare, UploadRange, listed_ranges};
 
@@ -14,17 +15,14 @@ use crate::presentation::{
     Kept, PresentationTotals, TOTALS_BYTES, UploadSources, VIEWS, ViewSlot, WATCHED, grow,
     storage_bytes,
 };
-use crate::uploads::{ColorData, color_data};
+use crate::uploads::{ColorData, color_data, restyled_slots};
 
 const TOTALS: u32 = 0;
 const LIST_HEADER: u64 = 16;
 
 struct View {
-    eye: glam::Vec3,
+    detail: ViewDetail,
     occlusion: bool,
-    lod_error: f32,
-    fade: f32,
-    margin: f32,
     watched: Option<u32>,
 }
 
@@ -32,7 +30,7 @@ impl MeshesGpu {
     pub(crate) fn prepare_frame(
         &mut self,
         (
-            (table, assets, plan, hierarchy, detail, time, limits),
+            (table, assets, plan, hierarchy, detail, limits),
             (records, views, watched, totals, residency),
         ): SystemParamItem<'_, '_, <Self as GpuPart>::Reads>,
         cx: &mut Prepare<'_, Self>,
@@ -67,16 +65,9 @@ impl MeshesGpu {
             self.state.capacity = capacity_for(slots, limit);
         }
         self.prepare_instances(&table, &assets, cx);
-        let shown = cx.ran(self.passes.presentation);
-        let fade = self.fade_share(time.real_elapsed as f32, detail.fade_seconds, shown);
         let culling = View {
-            eye: main.detail_eye,
+            detail: measured(main.detail(&detail), main.view_projection),
             occlusion: plan.occlusion,
-            lod_error: detail.chosen_error().map_or(0.0, |pixel_error| {
-                pixel_error * main.render.y as f32 / main.size().y.max(1) as f32
-            }),
-            fade,
-            margin: detail.margin,
             watched: watched.slot,
         };
         let group_bytes = self.prepare_presentation(
@@ -95,20 +86,6 @@ impl MeshesGpu {
             self.gpu_counters(group_bytes, totals.last().map(|last| last.visible));
         }
         self.prepare_views(&views, limits.storage_room, cx);
-    }
-
-    fn fade_share(&mut self, seconds: f32, fade_seconds: f32, shown: bool) -> f32 {
-        let state = &mut self.state;
-        if shown {
-            state.faded_at = state.prepared_at;
-        }
-        state.prepared_at = Some(seconds);
-        let since = state.faded_at.map_or(f32::INFINITY, |at| seconds - at);
-        if fade_seconds > 0.0 && since < 1.0 {
-            engine_core::math::clamp(since / fade_seconds, 0.0, 1.0)
-        } else {
-            1.0
-        }
     }
 
     fn prepare_instances(
@@ -133,9 +110,12 @@ impl MeshesGpu {
         let records = table.records().len();
         let stride = size_of::<ColorData>();
         state.color_ranges.clear();
-        let library = Some(assets.revision());
-        let restyled = state.colors_library != library;
-        state.colors_library = library;
+        let library = assets.revision();
+        let before = state.colors_library.replace(library);
+        let restyled = before != Some(library);
+        let narrow = before
+            .filter(|before| before.0 == library.0)
+            .map(|(_, revision)| revision);
         match (colors, table.changes_since(&mut state.colors_seen)) {
             (Allocation::Fresh, _) | (Allocation::Kept, Since::All) => {
                 if records != 0 {
@@ -145,14 +125,29 @@ impl MeshesGpu {
                     });
                 }
             }
-            (Allocation::Kept, _) if restyled => {
-                if records != 0 {
-                    state.color_ranges.push(UploadRange {
-                        start: 0,
-                        end: records,
-                    });
+            (Allocation::Kept, since) if restyled => match narrow {
+                Some(revision) => {
+                    state.color_slots.clear();
+                    if let Since::Listed(slots) = since {
+                        state.color_slots.extend_from_slice(slots);
+                    }
+                    restyled_slots(table, assets, revision, &mut state.color_slots);
+                    listed_ranges(
+                        &state.color_slots,
+                        records,
+                        &mut state.color_bits,
+                        &mut state.color_ranges,
+                    );
                 }
-            }
+                None => {
+                    if records != 0 {
+                        state.color_ranges.push(UploadRange {
+                            start: 0,
+                            end: records,
+                        });
+                    }
+                }
+            },
             (Allocation::Kept, Since::Listed(slots)) => {
                 listed_ranges(
                     slots,
@@ -195,16 +190,14 @@ impl MeshesGpu {
     ) -> u64 {
         let kept = Kept {
             phase_two: view.occlusion,
-            last: view.lod_error > 0.0 && sources.last.iter().any(|level| level.error > 0.0),
+            last: view.detail.pixel_error > 0.0
+                && sources.last.iter().any(|level| level.error > 0.0),
         };
         let batches = &self.state.batches;
         let counts = (batches.ordered.len(), batches.batches.len());
         self.ensure_groups(counts, kept, cx);
         self.ensure_fades(cx);
-        let states = storage_bytes(self.state.fade_slots * 4);
-        self.state.watched = view
-            .watched
-            .filter(|&slot| u64::from(slot) * 4 + 4 <= states);
+        self.state.watched = view.watched;
         let group_bytes =
             self.write_batches(&sources, table, cx) + self.write_candidates(sources.hierarchy, cx);
         self.write_frame_uniform(view, plan, cx);
@@ -280,11 +273,14 @@ impl MeshesGpu {
             (kept.last && kept.phase_two, LIST_HEADER + capacity * 8),
         ]
         .map(|(wanted, bytes)| storage_bytes(if wanted { bytes } else { 0 }));
+        let batches = cx.allocate_buffer(
+            presented.batches,
+            storage_bytes(batch_capacity * size_of::<BatchData>() as u64),
+        );
+        if batches == Allocation::Fresh {
+            groups.batch_sent.clear();
+        }
         let rebuilt = [
-            (
-                presented.batches,
-                storage_bytes(batch_capacity * size_of::<BatchData>() as u64),
-            ),
             (presented.batch_bases, storage_bytes(batch_capacity * 16)),
             (presented.visible[0], storage_bytes(ids)),
             (presented.draws[0], storage_bytes(args)),
@@ -306,19 +302,8 @@ impl MeshesGpu {
 
     fn ensure_fades(&mut self, cx: &mut Prepare<'_, Self>) {
         let state = &mut self.state;
-        let slots = state.capacity as u64;
-        if slots > state.fade_slots {
-            state.fade_slots = slots;
-        }
         if state.groups.capacity > state.fading_capacity {
             state.fading_capacity = state.groups.capacity;
-        }
-        let states = cx.allocate_buffer(
-            self.presented.lod_states,
-            storage_bytes(state.fade_slots * 4),
-        );
-        if states == Allocation::Fresh {
-            state.groups.key = None;
         }
         let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(
             self.presented.fading_ids,
@@ -345,9 +330,13 @@ impl MeshesGpu {
                     .map_or(0.0, |material| table.reach(material))
             },
         );
-        if !groups.batch_staging.is_empty() {
-            cx.write(self.presented.batches, 0, &groups.batch_staging);
+        let sent: &[u8] = bytemuck::cast_slice(&groups.batch_sent);
+        let staged: &[u8] = bytemuck::cast_slice(&groups.batch_staging);
+        if staged.is_empty() || staged == sent {
+            return 0;
         }
+        cx.write(self.presented.batches, 0, &groups.batch_staging);
+        groups.batch_sent.clone_from(&groups.batch_staging);
         (groups.batch_staging.len() * size_of::<BatchData>()) as u64
     }
 
@@ -369,8 +358,6 @@ impl MeshesGpu {
             if words != 0 {
                 cx.clear_buffer_range(self.presented.scan, 0..words);
             }
-            let fades = storage_bytes(state.fade_slots * 4);
-            cx.clear_buffer_range(self.presented.lod_states, 0..fades);
         }
         groups.key = Some(key);
         groups.stage_candidates(&state.batches.batches, &state.batches.ordered);
@@ -405,19 +392,17 @@ impl MeshesGpu {
             .pack(),
             occlusion: u32::from(state.occlusion),
             plane: state.groups.capacity as u32,
-            lod_error: view.lod_error,
+            lod_error: view.detail.pixel_error,
             watched: state.watched.unwrap_or(UNWATCHED),
             last_level: u32::from(state.groups.kept.last),
-            pad_1: 0,
-            pad_2: 0,
-            eye: view.eye.extend(0.0).to_array(),
-            fade: [view.fade, view.margin, 0.0, 0.0],
+            pixel_angle: view.detail.pixel_angle,
+            texel: view.detail.texel,
+            eye: view.detail.eye.extend(0.0).to_array(),
             bases: [0; 4],
         };
         let (Allocation::Fresh | Allocation::Kept) =
             cx.allocate_buffer(self.presented.frame, size_of::<PresentationFrame>() as u64);
         cx.write(self.presented.frame, 0, &[uniform]);
-        state.lod = uniform.lod_error > 0.0;
         state.frame = Some(uniform);
         if state.occlusion {
             uniform.mask = CandidateState {
@@ -440,7 +425,8 @@ impl MeshesGpu {
         let capacity = state.groups.capacity as u64;
         let arg_count = u64::from(LOD_LEVELS) * u64::from(state.groups.batch_count);
         let (mut ids, mut args, mut refused) = (0_u64, 0_u64, 0_u32);
-        let mut frames: Vec<PresentationFrame> = Vec::new();
+        let mut frames = std::mem::take(&mut state.view_frames);
+        frames.clear();
         for (global, view) in views.drawn().iter().enumerate() {
             let Some(pass) = view.owner else {
                 continue;
@@ -471,10 +457,21 @@ impl MeshesGpu {
                 .pack();
                 uniform.occlusion = 0;
                 uniform.budget = u32::MAX;
-                uniform.lod_error = view.detail;
+                let seen = measured(
+                    ViewDetail::perspective(
+                        view.eye,
+                        view.view_projection,
+                        view.size.y,
+                        view.detail,
+                    ),
+                    view.view_projection,
+                );
+                uniform.lod_error = seen.pixel_error;
                 uniform.watched = UNWATCHED;
                 uniform.last_level = 0;
-                uniform.eye = view.eye.extend(0.0).to_array();
+                uniform.pixel_angle = seen.pixel_angle;
+                uniform.texel = seen.texel;
+                uniform.eye = seen.eye.extend(0.0).to_array();
                 uniform.bases = [ids as u32, args as u32, global as u32, 0];
                 state.views.push(ViewSlot {
                     drawn: global as u32,
@@ -490,28 +487,39 @@ impl MeshesGpu {
         }
         let counts = [state.views.len() as u32, refused];
         cx.deliver::<PresentationTotals>(VIEWS, bytemuck::cast_slice(&counts).to_vec());
-        if frames.is_empty() {
-            return;
+        if !frames.is_empty() {
+            let presented = &self.presented;
+            let rebuilt = [
+                (
+                    presented.view_frames,
+                    frames.len() as u64 * VIEW_FRAME_BYTES,
+                ),
+                (presented.view_visible, storage_bytes(ids * 4)),
+                (presented.view_draws, storage_bytes(args * DRAW_ARGS_BYTES)),
+            ];
+            for (buffer, bytes) in rebuilt {
+                let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, bytes);
+            }
+            for (at, frame) in frames.iter().enumerate() {
+                cx.write(
+                    presented.view_frames,
+                    at as u64 * VIEW_FRAME_BYTES,
+                    std::slice::from_ref(frame),
+                );
+            }
+            cx.run(self.passes.views);
         }
-        let presented = &self.presented;
-        let rebuilt = [
-            (
-                presented.view_frames,
-                frames.len() as u64 * VIEW_FRAME_BYTES,
-            ),
-            (presented.view_visible, storage_bytes(ids * 4)),
-            (presented.view_draws, storage_bytes(args * DRAW_ARGS_BYTES)),
-        ];
-        for (buffer, bytes) in rebuilt {
-            let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, bytes);
+        self.state.view_frames = frames;
+    }
+}
+
+fn measured(detail: ViewDetail, view_projection: glam::Mat4) -> ViewDetail {
+    if view_projection.row(3).truncate().length() > 0.5 {
+        detail
+    } else {
+        ViewDetail {
+            eye: detail.eye,
+            ..ViewDetail::orthographic(detail.pixel_angle, detail.pixel_error)
         }
-        for (at, frame) in frames.iter().enumerate() {
-            cx.write(
-                presented.view_frames,
-                at as u64 * VIEW_FRAME_BYTES,
-                std::slice::from_ref(frame),
-            );
-        }
-        cx.run(self.passes.views);
     }
 }

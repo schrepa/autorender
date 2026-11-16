@@ -28,8 +28,7 @@ impl Brick for HighlandsBrick {
     const SOURCE: &'static Source = &SOURCE;
     const JOBS: &'static [&'static JobKind] = &[
         &crate::jobs::BOULDER,
-        &crate::jobs::CONIFER,
-        &crate::jobs::CONIFER_SHADOW,
+        &crate::jobs::PLANT,
         &crate::jobs::CAVE,
     ];
 

@@ -4,7 +4,7 @@
     "caches entities": 2138,
     "caches mismatches": 0,
     "terrain frames": 400,
-    "terrain last frame": "399: {\"baking\":0,\"bounced\":1,\"bouncing\":0,\"bridges\":3,\"cached_bytes\":1141728,\"cached_tiles\":4,\"colored\":0,\"coloring\":2,\"fallback_tiles\":0,\"falls\":0,\"lighting\":0,\"lit\":2,\"loading\":{\"done\":0,\"total\":17},\"loading_tiles\":0,\"missing_tiles\":0,\"prefetching_tiles\":0,\"resident_tiles\":48,\"restored_tiles\":12,\"rewatered_tiles\":0,\"settled_records\":0,\"settling_records\":5,\"shaded_tiles\":5,\"shading_records\":0,\"stale_water_tiles\":0,\"surroundings_tiles\":31,\"terrains\":1,\"tile_cut\":{\"asked\":46,\"cut\":0,\"kept\":46},\"tunnels\":1,\"waiting_tiles\":0,\"white_water\":0} | terrain tiles 854854a0fbb2ae0d drawn true | surroundings tiles a2eadb7ccd455bc5 drawn true",
+    "terrain last frame": "399: {\"baking\":0,\"bounced\":1,\"bouncing\":0,\"bridges\":3,\"cached_bytes\":1141728,\"cached_tiles\":4,\"colored\":0,\"coloring\":2,\"fallback_tiles\":0,\"falls\":0,\"lighting\":0,\"lit\":2,\"loading\":{\"done\":0,\"total\":17},\"loading_tiles\":0,\"missing_tiles\":0,\"prefetching_tiles\":0,\"resident_tiles\":48,\"restored_tiles\":12,\"rewatered_tiles\":0,\"shaded_tiles\":5,\"shading_records\":0,\"stale_water_tiles\":0,\"surroundings_tiles\":31,\"terrains\":1,\"tile_cut\":{\"asked\":46,\"cut\":0,\"kept\":46},\"tunnels\":1,\"waiting_tiles\":0} | terrain tiles 854854a0fbb2ae0d drawn true | surroundings tiles a2eadb7ccd455bc5 drawn true",
     "terrain trace": "1a00ecc42af4938a"
   },
   "gltf": {
@@ -381,8 +381,6 @@
           "SceneAmbientOcclusion",
           "SceneAnimation",
           "SceneAudio",
-          "SceneAutoExposure",
-          "SceneBloom",
           "SceneBodyPush",
           "SceneClouds",
           "SceneCollider",
@@ -401,7 +399,6 @@
           "SceneGrading",
           "SceneGroundCover",
           "SceneGrounding",
-          "SceneHaze",
           "SceneHighlights",
           "SceneImpostors",
           "SceneInput",
@@ -540,9 +537,6 @@
           "attachment",
           "audio",
           "audio_stats",
-          "auto_exposure",
-          "bloom",
-          "bloom_stats",
           "body_push",
           "camera",
           "cloud_stats",
@@ -558,7 +552,6 @@
           "drawn_component",
           "dynamic_resolution",
           "dynamic_resolution_stats",
-          "exposure_stats",
           "feeds",
           "fold_order",
           "foliage",
@@ -569,8 +562,6 @@
           "ground_cover_stats",
           "grounded",
           "grounding",
-          "haze",
-          "haze_stats",
           "highlights",
           "impostors",
           "impostors_stats",
@@ -1401,28 +1392,6 @@
       "bytes": 27120,
       "portals": 432,
       "tiles": 16
-    },
-    "water part 0/0/0": "c7a37e4483613153",
-    "water part 0/0/1": "b558248c4b757352",
-    "water part 0/0/2": "7ec4040ed9e95a9b",
-    "water part 0/1/0": "5f487e86301595a1",
-    "water part 0/1/1": "0123619b4cf4a262",
-    "water part 0/1/2": "07d2bb09630b9f69",
-    "water part 0/2/0": "29ffd4d74ca036c2",
-    "water part 0/2/1": "9b4dc6b8fece8018",
-    "water part 0/2/2": "d26fcd29f6e80772",
-    "water start": {
-      "cells": [
-        384,
-        384
-      ],
-      "cook regions": 1,
-      "datum": 24.0,
-      "parts": 9,
-      "sources": 2,
-      "stored blocks": 102,
-      "tile": "0/1/1",
-      "watered tiles": 5
     }
   },
   "textures": {

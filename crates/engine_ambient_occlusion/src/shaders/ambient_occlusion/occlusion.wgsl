@@ -1,6 +1,6 @@
 import package::engine::math::TAU;
 import package::engine::screen_points::{depth_normal, world_at};
-import package::engine::post::frame::post;
+import package::engine::post::frame::{depth_texture, post};
 import package::generated::pieces::ambient_occlusion::piece;
 
 @group(1) @binding(0) var raw_occlusion: texture_2d<f32>;
@@ -18,11 +18,6 @@ fn occlusion_radius() -> f32 {
     return piece().occlusion.x;
 }
 
-fn occlusion_share(pixels: f32) -> f32 {
-    let handover = piece().canopy.x * post.eye.w;
-    return saturate(log2(max(pixels, 1.0e-6) / max(handover, 1.0e-6)));
-}
-
 fn ambient_visibility(pixel: vec2<i32>, p: vec3<f32>, normal: vec3<f32>, distance: f32,
         noise: f32) -> f32 {
     if piece().occlusion.w == 0.0 {
@@ -30,8 +25,7 @@ fn ambient_visibility(pixel: vec2<i32>, p: vec3<f32>, normal: vec3<f32>, distanc
     }
     let last = vec2<i32>(post.size.xy) - 1;
     let radius = occlusion_radius();
-    let seen = radius * post.eye.w / max(length(p - post.detail.xyz), 1.0e-4);
-    let strength = piece().occlusion.y * occlusion_share(seen);
+    let strength = piece().occlusion.y;
     let pixels = min(radius * post.eye.w / distance, MAX_PIXELS);
     if strength <= 0.0 || pixels < 1.0 {
         return 1.0;
@@ -127,6 +121,8 @@ fn filtered_occlusion(pixel: vec2<i32>) -> f32 {
 }
 
 @fragment
-fn fs_effects_filter(@builtin(position) position: vec4<f32>) -> @location(0) f32 {
-    return 1.0 - filtered_occlusion(vec2<i32>(position.xy));
+fn fs_effects_filter(@builtin(position) position: vec4<f32>) -> @location(0) vec2<f32> {
+    let pixel = vec2<i32>(position.xy);
+    return vec2<f32>(1.0 - filtered_occlusion(pixel),
+        quantizeToF16(textureLoad(depth_texture, pixel, 0)));
 }

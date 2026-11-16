@@ -1,10 +1,12 @@
 import package::engine::view::{camera, detail_across};
 import package::place::ground_tiles::{GroundHeight, GroundMaterial, GroundTerrain, GroundTile,
     LevelTile, MaterialLook, NOT_RESIDENT, PALETTE_ENTRIES, PEAK_CELLS, PEAK_MIPS, TILE_QUADS,
-    TerrainInfo};
+    TerrainInfo, TileSummary};
 import package::generated::terrain_shading::{CONTROL_PLANE, DETAIL_ANISOTROPY, NORMAL_PLANE,
-    PaletteEntry, TILE_PLANES, control_a, control_b, control_blend};
-import package::terrain_shading::tables::{table_terrain, terrain_tables};
+    PaletteEntry, SITE_PLANE, SUMMARY_FIRST, SUMMARY_LAST, SUMMARY_PLANES, TABLE_LOOK, TILE_PLANES,
+    control_a, control_b, control_blend};
+import package::terrain_shading::draw_shared::{terrain_site_gain, terrain_site_lush};
+import package::terrain_shading::tables::{table_look, table_terrain, terrain_tables};
 
 @group(0) @binding(0) var heights: texture_2d_array<f32>;
 @group(0) @binding(2) var tile_maps: texture_2d_array<u32>;
@@ -12,6 +14,7 @@ import package::terrain_shading::tables::{table_terrain, terrain_tables};
 @group(0) @binding(5) var<uniform> palette: array<PaletteEntry, PALETTE_ENTRIES>;
 @group(0) @binding(7) var ground_sky_map: texture_2d_array<f32>;
 @group(0) @binding(8) var ground_sky_sampler: sampler;
+@group(0) @binding(9) var tile_summaries: texture_2d_array<u32>;
 
 fn terrain_info(terrain: u32) -> TerrainInfo {
     let held = table_terrain(terrain);
@@ -67,6 +70,19 @@ fn tile_height(tile: LevelTile, sample: vec2<u32>) -> f32 {
 
 fn tile_peak(tile: LevelTile, texel: vec2<u32>, mip: u32) -> f32 {
     return textureLoad(heights, texel, tile.layer, mip + 1u).r;
+}
+
+fn tile_summary(tile: LevelTile, cell: vec2<u32>, mip: u32) -> TileSummary {
+    let level = clamp(mip, SUMMARY_FIRST, SUMMARY_LAST);
+    let at = min(cell >> vec2<u32>(level - min(mip, level)),
+        vec2<u32>((TILE_QUADS >> level) - 1u));
+    let plane = tile.layer * SUMMARY_PLANES;
+    let wide = textureLoad(tile_summaries, at, plane, level - SUMMARY_FIRST);
+    let sites = textureLoad(tile_summaries, at, plane + 1u, level - SUMMARY_FIRST);
+    let own = textureLoad(tile_summaries, at, plane + 2u, level - SUMMARY_FIRST);
+    return TileSummary(bitcast<f32>(own.x), bitcast<f32>(own.y), wide.w,
+        unpack4x8unorm(sites.x), unpack4x8unorm(sites.y), bitcast<f32>(wide.x),
+        bitcast<f32>(wide.y), wide.z, unpack4x8unorm(sites.z), unpack4x8unorm(sites.w));
 }
 
 fn tile_gradient(tile: LevelTile, sample: vec2<u32>) -> vec2<f32> {
@@ -157,9 +173,29 @@ fn macro_color(colors: vec4<f32>) -> vec3<f32> {
     return colors.rgb * (255.0 / 128.0);
 }
 
+fn ground_layer(layer: u32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
+    if layer == 0u {
+        return vec4<f32>(0.0);
+    }
+    return textureSampleLevel(macro_maps, ground_sky_sampler, uv, layer - 1u, lod);
+}
+
 fn material_look(base: u32, material: u32) -> MaterialLook {
     let entry = palette[min(base + material, PALETTE_ENTRIES - 1u)];
     return MaterialLook(entry.far);
+}
+
+fn tile_site(tile: LevelTile, sample: vec2<u32>) -> vec4<f32> {
+    let texel = min(sample - tile.first, vec2<u32>(256u)) + vec2<u32>(1u);
+    return unpack4x8unorm(textureLoad(tile_maps, texel, tile.layer * TILE_PLANES + SITE_PLANE,
+        0).x);
+}
+
+fn site_shift(color: vec3<f32>, base: u32, material: u32, site: vec4<f32>) -> vec3<f32> {
+    let entry = palette[min(base + material, PALETTE_ENTRIES - 1u)];
+    let look = table_look(TABLE_LOOK);
+    return color * terrain_site_gain(entry.heights.y, terrain_site_lush(site), look.lush.rgb,
+        look.bare.rgb);
 }
 
 const DETAIL_EDGE_ON: f32 = 0.0625;

@@ -13,19 +13,32 @@ fn octahedral_coordinates(normal: vec3<f32>) -> vec2<f32> {
     return select(n.xy, (vec2<f32>(1.0) - abs(n.yx)) * sign, n.z < 0.0);
 }
 
+fn traced(point: SurfacePoint, across: f32) -> f32 {
+    let limit = piece().surface;
+    let fine = saturate((1.0 - max(point.roughness, across) / limit.x) / limit.y);
+    return point.mirrored * max(fine, point.mirrored_rough);
+}
+
 fn reflects(point: SurfacePoint) -> bool {
-    return point.roughness < piece().surface.x;
+    if point.kind == SURFACE_THIN {
+        return false;
+    }
+    let kept = traced(point, point.roughness - point.smoother_across);
+    return pack4x8unorm(vec4<f32>(kept, 0.0, 0.0, 0.0)) != 0u;
 }
 
 fn surface(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> vec4<u32> {
     let normal = pack2x16unorm(octahedral_coordinates(point.normal) * 0.5 + 0.5);
     let rough = point.roughness;
     var across = rough;
+    var kept = 0.0;
     if reflects(point) {
         across = reflecting(point).across;
+        kept = traced(point, across);
     }
     let roughness = pack4x8unorm(vec4<f32>(rough, across, 0.0, 0.0));
-    return vec4<u32>(normal & 0xffffu, normal >> 16u, roughness, surface_depth(point.kind));
+    let body = surface_depth(point.kind) | (pack4x8unorm(vec4<f32>(kept, 0.0, 0.0, 0.0)) << 8u);
+    return vec4<u32>(normal & 0xffffu, normal >> 16u, roughness, body);
 }
 
 fn reflected(point: SurfacePoint, shaded: Shaded, at: ViewPixel) -> vec4<f32> {

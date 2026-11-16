@@ -8,7 +8,8 @@ use crate::{
     AssetLibrary, Camera, Clear, ColorSpace, Detail, Drawn, DrawnFlags, DrawnPoses, DrawnTable,
     Error, ErrorCode, FrameFacts, FrameId, FrameTime, GlobalTransforms, Hold, Jitter, Layers, List,
     Mobility, Operation, OwnedView, OwnedViews, PassBit, PassMask, PassViews, Refusal, Requests,
-    SceneIds, ScenePasses, Target, View, ViewCut, ViewHistory, ViewJitter, ViewLayer, take_asks,
+    SceneIds, ScenePasses, Target, View, ViewCut, ViewDetail, ViewHistory, ViewJitter, ViewLayer,
+    take_asks,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -54,6 +55,15 @@ impl ViewFacts {
 
     pub fn whole(&self, target: UVec2) -> bool {
         self.pixels == [0, 0, target.x, target.y]
+    }
+
+    pub fn detail(&self, detail: &Detail) -> ViewDetail {
+        ViewDetail::perspective(
+            self.detail_eye,
+            self.view_projection,
+            self.render.y,
+            detail.chosen_error().unwrap_or(0.0),
+        )
     }
 
     pub fn aspect(&self) -> f32 {

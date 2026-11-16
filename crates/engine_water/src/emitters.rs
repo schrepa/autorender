@@ -1,119 +1,152 @@
-use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
-use engine_core::{Cursor, RecordKey, Since, Spawner};
-use engine_heightfield::{Fall, TileKey};
-use glam::Vec3;
+use engine_core::{Cursor, Since, Spawner};
+use engine_heightfield::Fall;
+use glam::{Vec2, Vec3};
 
-use crate::WaterBrick;
+use crate::jobs::tile_water::point;
 use crate::state::{WaterState, WaterTerrain};
-use crate::waterfalls::spawn_falls;
-use crate::white_water::spawn_tile;
+use crate::waterfalls::{FallLook, drowned, falling, spawn_fall};
+use crate::{Water, WaterBrick, WaterPoint};
 
 struct Falls {
     origin: Vec3,
-    falls: Arc<[Fall]>,
-    entities: Vec<Entity>,
-}
-
-struct White {
-    origin: Vec3,
-    record: RecordKey,
-    entities: Vec<Entity>,
+    baked: Arc<[Fall]>,
+    drowned: Vec<bool>,
+    falling: Arc<[Fall]>,
+    entities: Vec<Vec<Entity>>,
 }
 
 #[derive(Default)]
 pub(crate) struct Emitters {
     falls: Option<Falls>,
-    white: BTreeMap<TileKey, White>,
     cursor: Cursor,
+    look: Option<FallLook>,
+}
+
+fn drawn_water(terrain: &WaterTerrain, at: Vec2) -> Option<WaterPoint> {
+    let pyramid = &terrain.pyramid;
+    (0..pyramid.levels())
+        .find_map(|level| {
+            let key = pyramid.tile_at(level, at)?;
+            let held = terrain.resident(&key)?;
+            point(
+                &held.face,
+                held.water.as_deref(),
+                at - pyramid.tile_origin(key),
+            )
+        })
+        .flatten()
 }
 
 impl Emitters {
-    pub(crate) fn white_water(&self) -> u32 {
-        self.white
-            .values()
-            .map(|white| white.entities.len() as u32)
-            .sum()
+    pub(crate) fn falling(&self) -> Option<&Arc<[Fall]>> {
+        self.falls.as_ref().map(|falls| &falls.falling)
     }
 
     fn despawn(self, spawner: &mut Spawner<WaterBrick>) {
-        let falls = self.falls.into_iter().flat_map(|falls| falls.entities);
-        let white = self.white.into_values().flat_map(|white| white.entities);
-        for entity in falls.chain(white) {
+        let falls = self
+            .falls
+            .into_iter()
+            .flat_map(|falls| falls.entities)
+            .flatten();
+        for entity in falls {
             spawner.despawn(entity);
         }
     }
 
-    fn follow(&mut self, terrain: &WaterTerrain, spawner: &mut Spawner<WaterBrick>) {
-        let origin = terrain.origin;
-        let current = self
-            .falls
-            .as_ref()
-            .is_some_and(|held| held.origin == origin && held.falls[..] == terrain.falls[..]);
-        if !current {
-            for entity in self.falls.take().into_iter().flat_map(|held| held.entities) {
-                spawner.despawn(entity);
-            }
-            self.falls = Some(Falls {
-                origin,
-                falls: Arc::clone(&terrain.falls),
-                entities: spawn_falls(&terrain.falls, origin, spawner),
-            });
-        }
-        let keys: Vec<TileKey> = match terrain.touched.since(&mut self.cursor) {
-            Since::Same => return,
-            Since::Listed(keys) => keys.iter().copied().filter(|key| key.level == 0).collect(),
-            Since::All => self
-                .white
-                .keys()
-                .chain(terrain.settled.held.keys())
-                .copied()
-                .collect(),
-        };
-        for key in keys {
-            self.follow_tile(terrain, key, spawner);
-        }
-    }
-
-    fn follow_tile(
+    fn follow(
         &mut self,
         terrain: &WaterTerrain,
-        key: TileKey,
+        look: &FallLook,
+        spawner: &mut Spawner<WaterBrick>,
+    ) {
+        if self.look.as_ref() != Some(look) {
+            let falls = self.falls.take().into_iter();
+            for entity in falls.flat_map(|falls| falls.entities).flatten() {
+                spawner.despawn(entity);
+            }
+            self.look = Some(*look);
+        }
+        let touched = !matches!(terrain.touched.since(&mut self.cursor), Since::Same);
+        self.follow_falls(terrain, touched, look, spawner);
+    }
+
+    fn follow_falls(
+        &mut self,
+        terrain: &WaterTerrain,
+        touched: bool,
+        look: &FallLook,
         spawner: &mut Spawner<WaterBrick>,
     ) {
         let origin = terrain.origin;
-        let wanted = terrain.settled.held.get(&key);
-        let keeps = self.white.get(&key).is_some_and(|white| {
-            white.origin == origin && wanted.is_some_and(|(_, made)| made.record == white.record)
+        let baked = self.falls.as_ref().is_some_and(|held| {
+            Arc::ptr_eq(&held.baked, &terrain.falls) || held.baked[..] == terrain.falls[..]
         });
-        if keeps {
+        let placed = self
+            .falls
+            .as_ref()
+            .is_some_and(|held| held.origin == origin);
+        if baked && placed && !touched {
             return;
         }
-        for entity in self
-            .white
-            .remove(&key)
-            .into_iter()
-            .flat_map(|white| white.entities)
-        {
+        let slowest = look.0.slowest;
+        let sunk = drowned(&terrain.falls, slowest, &|at| drawn_water(terrain, at));
+        let judged = baked
+            && self
+                .falls
+                .as_ref()
+                .is_some_and(|held| held.drowned == sunk);
+        if judged && placed {
+            return;
+        }
+        let before = self.falls.take();
+        let falling: Arc<[Fall]> = match &before {
+            Some(held) if judged => Arc::clone(&held.falling),
+            Some(_) | None => falling(&terrain.falls, &sunk).into(),
+        };
+        let (was, mut kept): (Arc<[Fall]>, Vec<Option<Vec<Entity>>>) = match before {
+            Some(held) => (
+                held.falling,
+                held.entities.into_iter().map(Some).collect(),
+            ),
+            None => (Arc::from(Vec::new()), Vec::new()),
+        };
+        if !placed {
+            for entity in kept.iter_mut().filter_map(Option::take).flatten() {
+                spawner.despawn(entity);
+            }
+        }
+        let entities = falling
+            .iter()
+            .map(|fall| {
+                was.iter()
+                    .zip(&mut kept)
+                    .find(|(held, entities)| entities.is_some() && *held == fall)
+                    .and_then(|(_, entities)| entities.take())
+                    .unwrap_or_else(|| spawn_fall(fall, origin, look, spawner))
+            })
+            .collect();
+        for entity in kept.into_iter().flatten().flatten() {
             spawner.despawn(entity);
         }
-        if let Some((water, made)) = wanted {
-            let entities = spawn_tile(water, &terrain.falls, (key, origin), spawner);
-            self.white.insert(
-                key,
-                White {
-                    origin,
-                    record: made.record,
-                    entities,
-                },
-            );
-        }
+        self.falls = Some(Falls {
+            origin,
+            baked: Arc::clone(&terrain.falls),
+            drowned: sunk,
+            falling,
+            entities,
+        });
     }
 }
 
-pub(crate) fn sync(mut state: ResMut<WaterState>, mut spawner: Spawner<WaterBrick>) {
+pub(crate) fn sync(
+    mut state: ResMut<WaterState>,
+    water: Res<Water>,
+    mut spawner: Spawner<WaterBrick>,
+) {
+    let look = (water.fall_sheets, water.fall_spray, water.mist);
     let state = state.bypass_change_detection();
     let gone: Vec<Entity> = state
         .emitters
@@ -136,6 +169,6 @@ pub(crate) fn sync(mut state: ResMut<WaterState>, mut spawner: Spawner<WaterBric
             .emitters
             .entry(terrain.entity)
             .or_default()
-            .follow(terrain, &mut spawner);
+            .follow(terrain, &look, &mut spawner);
     }
 }

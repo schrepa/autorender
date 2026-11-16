@@ -14,6 +14,7 @@ mod clock;
 mod cook;
 mod cull;
 mod cursor;
+mod detail;
 mod drawn;
 mod drawn_areas;
 mod entity_indices;
@@ -64,6 +65,7 @@ pub use clock::*;
 pub use cook::{Cook, CookAsks, CookList, cook};
 pub use cull::{CullPlan, Culling, frustum_bounded, frustum_planes, frustum_sees};
 pub use cursor::*;
+pub use detail::{DetailLevel, ViewDetail, detail_level, detail_wgsl, kept_levels, seen_share};
 pub use drawn::{
     DRAWN_PART, DrawnBatch, DrawnCensus, DrawnFlags, DrawnRecord, DrawnSettings, DrawnState,
     DrawnTable, PlanState, drawn_wgsl,
@@ -75,7 +77,7 @@ pub use engine_assets::{
     Filter, GeometryStream, InstanceInput, LightingModel, LodInput, LodLevel, MAPPED, MAPPED_MAPS,
     MAPPED_SLOTS, Material, MaterialBinding, Mesh, MeshLods, MeshVertex, NORMAL_MAP, NamedStream,
     RenderState, Sampler, StreamShape, SurfaceSlot, Texture, TextureFormat, TextureRef,
-    UvTransform, Wrap, attributes_wgsl, lod_input,
+    UvTransform, Wrap, attributes_wgsl, authored_input, lod_input,
 };
 pub use engine_place::{
     AUTHORED_COMPONENTS, AppliedView, AskedView, AuthoredId, Call, Callable, Each, EntityIds,

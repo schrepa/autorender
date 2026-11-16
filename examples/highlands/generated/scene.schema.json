@@ -83,6 +83,98 @@
       ],
       "type": "object"
     },
+    "Beds": {
+      "additionalProperties": false,
+      "properties": {
+        "contrast": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "dip": {
+          "default": [
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "hard": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "patches": {
+          "default": 900.0,
+          "format": "float",
+          "maximum": 1000000.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "resistance": {
+          "default": 0.8500000238418579,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "seed": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "slopes": {
+          "default": [
+            38.0,
+            68.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 89.0,
+            "minimum": 1.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "thickness": {
+          "default": 40.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "warp": {
+          "default": [
+            0.0,
+            1000.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000000.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "Binding": {
       "additionalProperties": false,
       "properties": {
@@ -275,6 +367,12 @@
     "BiomeLayer": {
       "additionalProperties": false,
       "properties": {
+        "covers": {
+          "items": {
+            "$ref": "#/$defs/Cover"
+          },
+          "type": "array"
+        },
         "mask": {
           "$ref": "#/$defs/Expr"
         },
@@ -288,9 +386,6 @@
           "type": "number"
         }
       },
-      "required": [
-        "material"
-      ],
       "type": "object"
     },
     "Blend": {
@@ -308,6 +403,55 @@
         "kinematic"
       ],
       "type": "string"
+    },
+    "Boulders": {
+      "additionalProperties": false,
+      "properties": {
+        "back": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "cover": {
+          "default": 0.30000001192092896,
+          "format": "float",
+          "maximum": 0.95,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "height": {
+          "default": 0.800000011920929,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "rise": {
+          "default": [
+            0.5,
+            0.8999999761581421
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "span": {
+          "default": 0.1666666716337204,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
     },
     "Bound": {
       "additionalProperties": false,
@@ -512,21 +656,45 @@
     "Cover": {
       "additionalProperties": false,
       "properties": {
-        "color": {
-          "default": [
-            0.12999999523162842,
-            0.20000000298023224,
-            0.05000000074505806
-          ],
+        "accents": {
           "items": {
-            "format": "float",
-            "maximum": 1.0,
-            "minimum": 0.0,
-            "type": "number"
+            "$ref": "#/$defs/CoverAccent"
           },
-          "maxItems": 3,
-          "minItems": 3,
           "type": "array"
+        },
+        "beside": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "blade": {
+          "$ref": "#/$defs/CoverBlade",
+          "default": {
+            "bent": 0.0,
+            "blunt": 0.0,
+            "fold": 0.44999998807907104,
+            "widths": 0.0
+          }
+        },
+        "clump": {
+          "$ref": "#/$defs/CoverClump",
+          "default": {
+            "fan": 0.0,
+            "height": 0.4000000059604645,
+            "lean": 0.3499999940395355,
+            "short": [
+              0.699999988079071,
+              0.699999988079071,
+              0.699999988079071
+            ],
+            "size": 1.0,
+            "tall": [
+              1.2999999523162842,
+              1.2999999523162842,
+              1.2999999523162842
+            ]
+          }
         },
         "density": {
           "default": 90.0,
@@ -550,12 +718,74 @@
           "minItems": 2,
           "type": "array"
         },
+        "patch": {
+          "$ref": "#/$defs/CoverPatch",
+          "default": {
+            "density": 0.0,
+            "height": 0.0,
+            "size": 20.0
+          }
+        },
+        "plants": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/CoverPlants"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "smallest": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "spread": {
+          "default": 0.30000001192092896,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
         "sway": {
           "default": 0.6000000238418579,
           "format": "float",
           "maximum": 1.0,
           "minimum": 0.0,
           "type": "number"
+        },
+        "tint": {
+          "default": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 8.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "tuft": {
+          "$ref": "#/$defs/CoverTuft",
+          "default": {
+            "fan": [
+              0.0,
+              0.0
+            ],
+            "gather": [
+              0.0,
+              0.0
+            ],
+            "size": 0.25
+          }
         },
         "width": {
           "default": 0.02500000037252903,
@@ -567,25 +797,678 @@
       },
       "type": "object"
     },
-    "Detail": {
+    "CoverAccent": {
+      "additionalProperties": false,
       "properties": {
-        "fade_seconds": {
+        "look": {
+          "default": "",
+          "type": "string"
+        },
+        "share": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "CoverAtlas": {
+      "additionalProperties": false,
+      "properties": {
+        "albedo": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "cells": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/CoverCell"
+          },
+          "type": "array"
+        },
+        "normal": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "size": {
+          "default": [
+            1024,
+            1024
+          ],
+          "items": {
+            "format": "uint32",
+            "maximum": 8192,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "CoverBlade": {
+      "additionalProperties": false,
+      "properties": {
+        "bent": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "blunt": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "fold": {
+          "default": 0.44999998807907104,
+          "format": "float",
+          "maximum": 2.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "widths": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 2.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "CoverCards": {
+      "additionalProperties": false,
+      "properties": {
+        "cutoff": {
           "default": 0.5,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "relief": {
+          "default": 1.0,
           "format": "float",
           "maximum": 4.0,
           "minimum": 0.0,
           "type": "number"
         },
+        "root_light": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "round": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 2.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "turn": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "CoverCell": {
+      "additionalProperties": false,
+      "properties": {
+        "h": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "name": {
+          "default": "",
+          "type": "string"
+        },
+        "root": {
+          "default": [
+            0,
+            0
+          ],
+          "items": {
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "w": {
+          "default": 1,
+          "format": "uint32",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "x": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "y": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "CoverClump": {
+      "additionalProperties": false,
+      "properties": {
+        "fan": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "height": {
+          "default": 0.4000000059604645,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "lean": {
+          "default": 0.3499999940395355,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "short": {
+          "default": [
+            0.699999988079071,
+            0.699999988079071,
+            0.699999988079071
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 8.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "size": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 8.0,
+          "minimum": 0.1,
+          "type": "number"
+        },
+        "tall": {
+          "default": [
+            1.2999999523162842,
+            1.2999999523162842,
+            1.2999999523162842
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 8.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "CoverLight": {
+      "additionalProperties": false,
+      "properties": {
+        "root_light": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "sheen": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.05,
+          "type": "number"
+        },
+        "stand_fade": {
+          "default": [
+            8.0,
+            40.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 10000.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "tip_light": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "CoverPatch": {
+      "additionalProperties": false,
+      "properties": {
+        "density": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 2.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "height": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "size": {
+          "default": 20.0,
+          "format": "float",
+          "maximum": 200.0,
+          "minimum": 1.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "CoverPlants": {
+      "additionalProperties": false,
+      "properties": {
+        "arc": {
+          "default": 360.0,
+          "format": "float",
+          "maximum": 360.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "atlas": {
+          "default": "",
+          "type": "string"
+        },
+        "bend": {
+          "default": 0.20000000298023224,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "cells": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "count": {
+          "default": [
+            1,
+            1
+          ],
+          "items": {
+            "format": "uint32",
+            "maximum": 64,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "lift": {
+          "default": [
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "rise": {
+          "default": [
+            90.0,
+            90.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 90.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "CoverShape": {
+      "additionalProperties": false,
+      "properties": {
+        "bent_knee": {
+          "default": 0.800000011920929,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "bent_more": {
+          "default": 0.44999998807907104,
+          "format": "float",
+          "maximum": 1.4,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "bent_most": {
+          "default": 1.25,
+          "format": "float",
+          "maximum": 1.4,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "blunt_round": {
+          "default": 3.0,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 0.25,
+          "type": "number"
+        },
+        "blunt_width": {
+          "default": 0.44999998807907104,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "curl": {
+          "default": [
+            0.25,
+            0.44999998807907104
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "drop": {
+          "default": 0.44999998807907104,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "flat_pixels": {
+          "default": 4.0,
+          "format": "float",
+          "maximum": 4096.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "knee": {
+          "default": 0.6000000238418579,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "most_bend": {
+          "default": 0.949999988079071,
+          "format": "float",
+          "maximum": 1.4,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "reach": {
+          "default": 0.75,
+          "format": "float",
+          "maximum": 2.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "risen": {
+          "default": 0.8330000042915344,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "straight_pixels": {
+          "default": 12.0,
+          "format": "float",
+          "maximum": 4096.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "taper": {
+          "default": 1.5,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 0.25,
+          "type": "number"
+        },
+        "tip_color": {
+          "default": 0.699999988079071,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.01,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "CoverTuft": {
+      "additionalProperties": false,
+      "properties": {
+        "fan": {
+          "default": [
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "gather": {
+          "default": [
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "size": {
+          "default": 0.25,
+          "format": "float",
+          "maximum": 8.0,
+          "minimum": 0.02,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "Deposits": {
+      "additionalProperties": false,
+      "properties": {
+        "earth": {
+          "default": 0.000029999999242136255,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "earth_reach": {
+          "default": 0.5,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 100.0,
+          "type": "number"
+        },
+        "earth_rise": {
+          "default": [
+            0.10000000149011612,
+            0.30000001192092896
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "fining": {
+          "default": 0.3499999940395355,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 10.0,
+          "type": "number"
+        },
+        "flood": {
+          "default": [
+            0.25,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "sand": {
+          "default": 0.0005000000237487257,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "sand_spread": {
+          "default": 0.3499999940395355,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "sides": {
+          "default": 2.0,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "silt_spread": {
+          "default": [
+            0.3333333432674408,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "wet": {
+          "default": [
+            1.2999999523162842,
+            0.6000000238418579
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "Detail": {
+      "properties": {
         "levels": {
           "$ref": "#/$defs/Levels",
           "default": "by_pixel_error"
-        },
-        "margin": {
-          "default": 0.10000000149011612,
-          "format": "float",
-          "maximum": 0.5,
-          "minimum": 0.0,
-          "type": "number"
         },
         "pixel_error": {
           "default": 1.0,
@@ -708,6 +1591,65 @@
     },
     "ErosionLayer": {
       "properties": {
+        "banks": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "beds": {
+          "$ref": "#/$defs/Beds",
+          "default": {
+            "contrast": 0.0,
+            "dip": [
+              0.0,
+              0.0
+            ],
+            "hard": 0.0,
+            "patches": 900.0,
+            "resistance": 0.8500000238418579,
+            "seed": 0,
+            "slopes": [
+              38.0,
+              68.0
+            ],
+            "thickness": 40.0,
+            "warp": [
+              0.0,
+              1000.0
+            ]
+          }
+        },
+        "channel": {
+          "default": 40000.0,
+          "format": "float",
+          "maximum": 1000000000000.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "cliff": {
+          "default": [
+            34.0,
+            42.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 89.0,
+            "minimum": 1.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "collapse": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
         "creep": {
           "default": 20.0,
           "format": "float",
@@ -719,6 +1661,13 @@
           "default": 0.004000000189989805,
           "format": "float",
           "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "floor": {
+          "default": 0.019999999552965164,
+          "format": "float",
+          "maximum": 10.0,
           "minimum": 0.0,
           "type": "number"
         },
@@ -736,12 +1685,68 @@
           "minimum": 0,
           "type": "integer"
         },
+        "mantle": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "repose": {
+          "default": 34.0,
+          "format": "float",
+          "maximum": 89.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
         "rounds": {
           "default": 60,
           "format": "uint32",
           "maximum": 400,
           "minimum": 1,
           "type": "integer"
+        },
+        "source": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1000000000000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "talus": {
+          "default": 0.3499999940395355,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "trunk": {
+          "default": 1000000000.0,
+          "format": "float",
+          "maximum": 1000000000000.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "wash": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "weathering": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "weathering_slope": {
+          "default": 27.0,
+          "format": "float",
+          "maximum": 89.0,
+          "minimum": 1.0,
+          "type": "number"
         }
       },
       "type": "object"
@@ -952,6 +1957,40 @@
       ],
       "type": "object"
     },
+    "Falls": {
+      "additionalProperties": false,
+      "properties": {
+        "bridge": {
+          "default": 2.0,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "cascade": {
+          "default": 0.44999998807907104,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 100.0,
+          "type": "number"
+        },
+        "cling": {
+          "default": 1.2000000476837158,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 100.0,
+          "type": "number"
+        },
+        "leap_depths": {
+          "default": 2.0,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
     "FarPlacement": {
       "additionalProperties": false,
       "properties": {
@@ -994,6 +2033,13 @@
       "additionalProperties": false,
       "properties": {
         "display": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "overlay": {
           "default": [],
           "items": {
             "type": "string"
@@ -1100,6 +2146,42 @@
       },
       "type": "object"
     },
+    "Grows": {
+      "additionalProperties": false,
+      "properties": {
+        "high": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "low": {
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": [
+            "array",
+            "null"
+          ]
+        },
+        "map": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "map"
+      ],
+      "type": "object"
+    },
     "HeightmapSettings": {
       "properties": {
         "attribution": {
@@ -1197,11 +2279,25 @@
           "minimum": 0.1,
           "type": "number"
         },
+        "clear": {
+          "default": 16.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
         "cover": {
           "default": 0.699999988079071,
           "format": "float",
           "maximum": 1.0,
           "minimum": 0.0,
+          "type": "number"
+        },
+        "edge": {
+          "default": 0.15000000596046448,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.001,
           "type": "number"
         },
         "height": {
@@ -1259,11 +2355,86 @@
     },
     "HydrologyLayer": {
       "properties": {
+        "boulders": {
+          "$ref": "#/$defs/Boulders",
+          "default": {
+            "back": 0.5,
+            "cover": 0.30000001192092896,
+            "height": 0.800000011920929,
+            "rise": [
+              0.5,
+              0.8999999761581421
+            ],
+            "span": 0.1666666716337204
+          }
+        },
+        "channel": {
+          "$ref": "#/$defs/Shape",
+          "default": {
+            "aspect": 12.0,
+            "bar_above": 0.20000000298023224,
+            "bar_widen": 0.44999998807907104,
+            "blend": 0.20000000298023224,
+            "deepen": 0.6000000238418579,
+            "floods": 3.0,
+            "narrowing": [
+              0.019999999552965164,
+              0.10000000149011612
+            ],
+            "pool_narrow": 0.11999999731779099,
+            "riffle_widen": 0.20000000298023224,
+            "steep_narrow": 0.25,
+            "sunk": 0.25
+          }
+        },
+        "deposits": {
+          "$ref": "#/$defs/Deposits",
+          "default": {
+            "earth": 0.000029999999242136255,
+            "earth_reach": 0.5,
+            "earth_rise": [
+              0.10000000149011612,
+              0.30000001192092896
+            ],
+            "fining": 0.3499999940395355,
+            "flood": [
+              0.25,
+              1.0
+            ],
+            "sand": 0.0005000000237487257,
+            "sand_spread": 0.3499999940395355,
+            "sides": 2.0,
+            "silt_spread": [
+              0.3333333432674408,
+              1.0
+            ],
+            "wet": [
+              1.2999999523162842,
+              0.6000000238418579
+            ]
+          }
+        },
         "discharge": {
           "default": 1.0,
           "format": "float",
           "maximum": 1000.0,
           "minimum": 0.001,
+          "type": "number"
+        },
+        "falls": {
+          "$ref": "#/$defs/Falls",
+          "default": {
+            "bridge": 2.0,
+            "cascade": 0.44999998807907104,
+            "cling": 1.2000000476837158,
+            "leap_depths": 2.0
+          }
+        },
+        "lake_depth": {
+          "default": 2.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.0,
           "type": "number"
         },
         "level": {
@@ -1272,6 +2443,145 @@
           "maximum": 15,
           "minimum": 0,
           "type": "integer"
+        },
+        "meanders": {
+          "$ref": "#/$defs/Meanders",
+          "default": {
+            "bar_chance": 0.4000000059604645,
+            "bar_length": 1.75,
+            "clear": 4.0,
+            "ease": 0.25,
+            "floor_drop": 1.5,
+            "floor_rise": 0.800000011920929,
+            "plain_beside": 0.5,
+            "plain_most": 0.75,
+            "rival": 0.30000001192092896,
+            "slopes": [
+              0.009999999776482582,
+              0.029999999329447746
+            ],
+            "steeper": [
+              2.0,
+              4.0
+            ],
+            "straighten": 0.75,
+            "strength": [
+              0.550000011920929,
+              1.0
+            ],
+            "stretch": [
+              0.8999999761581421,
+              1.350000023841858
+            ],
+            "swing": 1.7000000476837158,
+            "wave": 11.0
+          }
+        },
+        "pools": {
+          "$ref": "#/$defs/Pools",
+          "default": {
+            "apart": 6.0,
+            "bend": 0.6000000238418579,
+            "crest": 0.5,
+            "depth": 0.30000001192092896,
+            "ends": 2.0
+          }
+        },
+        "profile": {
+          "$ref": "#/$defs/Profile",
+          "default": {
+            "bench": 0.75,
+            "drops": [
+              1.0,
+              2.0
+            ],
+            "grade": [
+              0.061000000685453415,
+              0.46000000834465027
+            ],
+            "riser": 0.75
+          }
+        },
+        "section": {
+          "$ref": "#/$defs/Section",
+          "default": {
+            "bend": 0.4000000059604645,
+            "island": 0.5,
+            "lean": 0.5,
+            "rounding": 0.5,
+            "shelf": 0.800000011920929
+          }
+        },
+        "shortest": {
+          "default": 6.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "source": {
+          "default": 0.1599999964237213,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "type": "number"
+        },
+        "steps": {
+          "$ref": "#/$defs/Steps",
+          "default": {
+            "apart": [
+              1.0,
+              4.0
+            ],
+            "arch": [
+              -0.15000000596046448,
+              0.4000000059604645
+            ],
+            "clasts": [
+              0.0,
+              0.0,
+              0.5,
+              1.0,
+              1.0
+            ],
+            "height": 0.800000011920929,
+            "notch_bite": [
+              1.600000023841858,
+              3.200000047683716
+            ],
+            "notch_half": 1.2000000476837158,
+            "notch_room": 5.0,
+            "pool_aspect": 0.15000000596046448,
+            "pool_deepest": 0.5,
+            "riser_slope": 1.5,
+            "skew": 0.4000000059604645,
+            "spread": [
+              0.699999988079071,
+              1.399999976158142
+            ],
+            "tread": 0.25
+          }
+        },
+        "valley": {
+          "$ref": "#/$defs/Valley",
+          "default": {
+            "bank": [
+              0.25,
+              0.699999988079071
+            ],
+            "fade": 0.6499999761581421,
+            "plain_rise": 0.25,
+            "reach": 0.5,
+            "rise": 0.8999999761581421,
+            "terraces": 1,
+            "tread": 0.25,
+            "tread_rise": 0.15000000596046448,
+            "wall": 2.0,
+            "walled": [
+              0.5,
+              2.0
+            ]
+          }
         }
       },
       "type": "object"
@@ -1450,6 +2760,47 @@
       "required": [
         "joint"
       ],
+      "type": "object"
+    },
+    "JointSet": {
+      "additionalProperties": false,
+      "properties": {
+        "heading": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 360.0,
+          "minimum": -360.0,
+          "type": "number"
+        },
+        "offset": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "spacing": {
+          "default": 1.5,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.1,
+          "type": "number"
+        },
+        "splits": {
+          "default": 1,
+          "format": "uint32",
+          "maximum": 8,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "uneven": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 0.45,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
       "type": "object"
     },
     "Keys": {
@@ -1700,6 +3051,156 @@
           "format": "float",
           "maximum": 1.0,
           "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "Meanders": {
+      "additionalProperties": false,
+      "properties": {
+        "bar_chance": {
+          "default": 0.4000000059604645,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "bar_length": {
+          "default": 1.75,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 100.0,
+          "type": "number"
+        },
+        "clear": {
+          "default": 4.0,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "ease": {
+          "default": 0.25,
+          "format": "float",
+          "maximum": 10.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "floor_drop": {
+          "default": 1.5,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "floor_rise": {
+          "default": 0.800000011920929,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "plain_beside": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "plain_most": {
+          "default": 0.75,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "rival": {
+          "default": 0.30000001192092896,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "slopes": {
+          "default": [
+            0.009999999776482582,
+            0.029999999329447746
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "steeper": {
+          "default": [
+            2.0,
+            4.0
+          ],
+          "items": {
+            "exclusiveMinimum": 0.0,
+            "format": "float",
+            "maximum": 1000.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "straighten": {
+          "default": 0.75,
+          "format": "float",
+          "maximum": 10.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "strength": {
+          "default": [
+            0.550000011920929,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "stretch": {
+          "default": [
+            0.8999999761581421,
+            1.350000023841858
+          ],
+          "items": {
+            "exclusiveMinimum": 0.0,
+            "format": "float",
+            "maximum": 100.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "swing": {
+          "default": 1.7000000476837158,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "wave": {
+          "default": 11.0,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 1000.0,
           "type": "number"
         }
       },
@@ -1965,6 +3466,13 @@
           "minimum": -20000.0,
           "type": "number"
         },
+        "peaks": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
         "ridges": {
           "default": 0.30000001192092896,
           "format": "float",
@@ -1989,6 +3497,13 @@
           "default": 1.0,
           "format": "float",
           "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "summits": {
+          "default": 0.6000000238418579,
+          "format": "float",
+          "maximum": 0.99,
           "minimum": 0.0,
           "type": "number"
         },
@@ -2129,32 +3644,15 @@
       ],
       "type": "object"
     },
-    "PlacedLod": {
-      "additionalProperties": false,
-      "properties": {
-        "error": {
-          "format": "float",
-          "type": "number"
-        },
-        "mesh": {
-          "maxLength": 64,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9_.-]+$",
-          "type": "string"
-        }
-      },
-      "required": [
-        "mesh",
-        "error"
-      ],
-      "type": "object"
-    },
     "PlacedLook": {
       "additionalProperties": false,
       "properties": {
         "lods": {
           "items": {
-            "$ref": "#/$defs/PlacedLod"
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[A-Za-z0-9_.-]+$",
+            "type": "string"
           },
           "type": "array"
         },
@@ -2169,15 +3667,6 @@
             "$ref": "#/$defs/PlacedPart"
           },
           "type": "array"
-        },
-        "shadow": {
-          "maxLength": 64,
-          "minLength": 1,
-          "pattern": "^[A-Za-z0-9_.-]+$",
-          "type": [
-            "string",
-            "null"
-          ]
         },
         "sway": {
           "format": "float",
@@ -2282,6 +3771,9 @@
           "minimum": 0.25,
           "type": "number"
         },
+        "group": {
+          "type": "string"
+        },
         "id": {
           "type": "string"
         },
@@ -2303,6 +3795,11 @@
           },
           "type": "array"
         },
+        "room": {
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
         "scale": {
           "default": [
             1.0,
@@ -2322,6 +3819,16 @@
           "default": 0.0,
           "format": "float",
           "type": "number"
+        },
+        "sized": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SizedBy"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "required": [
@@ -2381,6 +3888,97 @@
         "size",
         "surface"
       ],
+      "type": "object"
+    },
+    "Pools": {
+      "additionalProperties": false,
+      "properties": {
+        "apart": {
+          "default": 6.0,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 100.0,
+          "type": "number"
+        },
+        "bend": {
+          "default": 0.6000000238418579,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "type": "number"
+        },
+        "crest": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "depth": {
+          "default": 0.30000001192092896,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "ends": {
+          "default": 2.0,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 100.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "Profile": {
+      "additionalProperties": false,
+      "properties": {
+        "bench": {
+          "default": 0.75,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "drops": {
+          "default": [
+            1.0,
+            2.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "grade": {
+          "default": [
+            0.061000000685453415,
+            0.46000000834465027
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "riser": {
+          "default": 0.75,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 100.0,
+          "type": "number"
+        }
+      },
       "type": "object"
     },
     "Projection": {
@@ -2651,9 +4249,9 @@
       "additionalProperties": false,
       "properties": {
         "lods": {
-          "default": 4,
+          "default": 7,
           "format": "uint32",
-          "maximum": 4,
+          "maximum": 7,
           "minimum": 0,
           "type": "integer"
         },
@@ -2862,109 +4460,6 @@
       },
       "type": "object"
     },
-    "SceneAutoExposure": {
-      "additionalProperties": false,
-      "properties": {
-        "brighten": {
-          "default": 3.0,
-          "format": "float",
-          "maximum": 16.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "center": {
-          "default": 2.0,
-          "format": "float",
-          "maximum": 16.0,
-          "minimum": 1.0,
-          "type": "number"
-        },
-        "compensation": {
-          "default": 0.0,
-          "format": "float",
-          "maximum": 8.0,
-          "minimum": -8.0,
-          "type": "number"
-        },
-        "darken": {
-          "default": 1.0,
-          "format": "float",
-          "maximum": 16.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "enabled": {
-          "default": false,
-          "type": "boolean"
-        },
-        "skip_bright": {
-          "default": 0.05000000074505806,
-          "format": "float",
-          "maximum": 0.45,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "skip_dark": {
-          "default": 0.30000001192092896,
-          "format": "float",
-          "maximum": 0.45,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "sky": {
-          "default": 0.5,
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "strength": {
-          "default": 1.0,
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "to_brighter": {
-          "default": 0.5,
-          "format": "float",
-          "maximum": 60.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "to_darker": {
-          "default": 2.0,
-          "format": "float",
-          "maximum": 60.0,
-          "minimum": 0.0,
-          "type": "number"
-        }
-      },
-      "type": "object"
-    },
-    "SceneBloom": {
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {
-          "default": true,
-          "type": "boolean"
-        },
-        "intensity": {
-          "default": 0.6000000238418579,
-          "format": "float",
-          "maximum": 4.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "threshold": {
-          "default": 2.0,
-          "format": "float",
-          "minimum": 0.0,
-          "type": "number"
-        }
-      },
-      "type": "object"
-    },
     "SceneBodyPush": {
       "additionalProperties": false,
       "properties": {
@@ -3003,15 +4498,136 @@
       },
       "type": "object"
     },
+    "SceneCanopy": {
+      "additionalProperties": false,
+      "properties": {
+        "crown_light": {
+          "default": 0.6000000238418579,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "handover_pixels": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 256.0,
+          "minimum": 0.25,
+          "type": "number"
+        },
+        "relief": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "roughness": {
+          "default": 0.8500000238418579,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.03,
+          "type": "number"
+        },
+        "sky_through": {
+          "default": 0.25,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "sun_through": {
+          "default": 0.10000000149011612,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
     "SceneClouds": {
       "additionalProperties": false,
       "properties": {
+        "backward": {
+          "default": -0.30000001192092896,
+          "format": "float",
+          "maximum": 0.99,
+          "minimum": -0.99,
+          "type": "number"
+        },
+        "backward_share": {
+          "default": 0.30000001192092896,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "bank_cover": {
+          "default": [
+            0.8500000238418579,
+            1.7000000476837158
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 8.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "bank_noise": {
+          "default": [
+            0.6100000143051147,
+            0.7200000286102295
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "banks": {
+          "default": 3,
+          "format": "uint32",
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer"
+        },
         "base": {
           "default": 1800.0,
           "format": "float",
           "maximum": 30000.0,
           "minimum": -10000.0,
           "type": "number"
+        },
+        "base_rise": {
+          "default": 0.10000000149011612,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "cover_noise": {
+          "default": [
+            0.949999988079071,
+            0.4000000059604645
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
         },
         "coverage": {
           "default": 0.44999998807907104,
@@ -3027,13 +4643,213 @@
           "minimum": 0.01,
           "type": "number"
         },
+        "detail": {
+          "default": 0.12999999523162842,
+          "format": "float",
+          "maximum": 8.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "empty_stride": {
+          "default": 2.5,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
         "enabled": {
           "default": false,
           "type": "boolean"
         },
+        "erosion": {
+          "default": 0.4000000059604645,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "fade": {
+          "default": 30000.0,
+          "format": "float",
+          "maximum": 10000000.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "far_shade": {
+          "default": 0.75,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "fewest_steps": {
+          "default": 32,
+          "format": "uint32",
+          "maximum": 512,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "forward": {
+          "default": 0.800000011920929,
+          "format": "float",
+          "maximum": 0.99,
+          "minimum": -0.99,
+          "type": "number"
+        },
+        "group_cover": {
+          "default": [
+            0.8500000238418579,
+            1.149999976158142
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 8.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "group_noise": {
+          "default": [
+            0.6000000238418579,
+            0.7400000095367432
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "groups": {
+          "default": 10,
+          "format": "uint32",
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "high": {
+          "default": 0.3499999940395355,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "high_base": {
+          "default": 9000.0,
+          "format": "float",
+          "maximum": 30000.0,
+          "minimum": -10000.0,
+          "type": "number"
+        },
+        "high_fibre": {
+          "default": 0.800000011920929,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "high_noise": {
+          "default": [
+            0.800000011920929,
+            0.6000000238418579
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "high_opacity": {
+          "default": 1.5,
+          "format": "float",
+          "maximum": 8.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "high_sheets": {
+          "default": 3,
+          "format": "uint32",
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "high_soft": {
+          "default": 0.05999999865889549,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "high_stretch": {
+          "default": 8.0,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "high_turn": {
+          "default": 19.0,
+          "format": "float",
+          "maximum": 360.0,
+          "minimum": -360.0,
+          "type": "number"
+        },
+        "high_wisps": {
+          "default": [
+            0.30000001192092896,
+            0.6200000047683716
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
         "in_view": {
           "default": true,
           "type": "boolean"
+        },
+        "most_steps": {
+          "default": 96,
+          "format": "uint32",
+          "maximum": 512,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "nearest_step": {
+          "default": 25.0,
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": 0.1,
+          "type": "number"
+        },
+        "powder": {
+          "default": 0.3499999940395355,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "powder_depth": {
+          "default": 120.0,
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": 0.0,
+          "type": "number"
         },
         "resolution": {
           "default": 2048,
@@ -3056,12 +4872,27 @@
           "minimum": 0,
           "type": "integer"
         },
-        "shadows": {
-          "default": 0.75,
+        "sky_gray": {
+          "default": 0.6000000238418579,
           "format": "float",
           "maximum": 1.0,
           "minimum": 0.0,
           "type": "number"
+        },
+        "sky_light": {
+          "default": [
+            0.30000001192092896,
+            1.2000000476837158
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 8.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
         },
         "slices": {
           "default": 64,
@@ -3070,12 +4901,83 @@
           "minimum": 1,
           "type": "integer"
         },
+        "step": {
+          "default": 100.0,
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "step_blur": {
+          "default": 0.25,
+          "format": "float",
+          "maximum": 8.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "step_limit": {
+          "default": 128,
+          "format": "uint32",
+          "maximum": 1024,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "step_share": {
+          "default": 0.10000000149011612,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "sun_step": {
+          "default": 60.0,
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "sun_step_growth": {
+          "default": 1.7999999523162842,
+          "format": "float",
+          "maximum": 8.0,
+          "minimum": 1.01,
+          "type": "number"
+        },
         "thickness": {
           "default": 1400.0,
           "format": "float",
           "maximum": 10000.0,
           "minimum": 50.0,
           "type": "number"
+        },
+        "top": {
+          "default": [
+            0.3499999940395355,
+            0.75
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 0.99,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "warp": {
+          "default": 1.5,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "weather": {
+          "default": 43,
+          "format": "uint32",
+          "maximum": 1000,
+          "minimum": 1,
+          "type": "integer"
         },
         "wind": {
           "default": [
@@ -3091,6 +4993,13 @@
           "maxItems": 2,
           "minItems": 2,
           "type": "array"
+        },
+        "wisp_height": {
+          "default": 0.33000001311302185,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.001,
+          "type": "number"
         }
       },
       "type": "object"
@@ -3615,20 +5524,10 @@
             }
           ]
         },
-        "auto_exposure": {
+        "canopy": {
           "anyOf": [
             {
-              "$ref": "#/$defs/SceneAutoExposure"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "bloom": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneBloom"
+              "$ref": "#/$defs/SceneCanopy"
             },
             {
               "type": "null"
@@ -3805,16 +5704,6 @@
             }
           ]
         },
-        "haze": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneHaze"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "highlights": {
           "anyOf": [
             {
@@ -3869,16 +5758,6 @@
           "anyOf": [
             {
               "$ref": "#/$defs/SceneNightSky"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "occupancy": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneOccupancy"
             },
             {
               "type": "null"
@@ -4220,14 +6099,21 @@
       "additionalProperties": false,
       "properties": {
         "contrast": {
-          "default": 1.100000023841858,
+          "default": 1.753000020980835,
+          "exclusiveMinimum": 0.0,
           "format": "float",
-          "minimum": 0.0,
           "type": "number"
         },
         "exposure": {
           "default": 1.0,
           "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "fade_to_white": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 8.0,
           "minimum": 0.0,
           "type": "number"
         },
@@ -4245,6 +6131,20 @@
           "maxItems": 3,
           "minItems": 3,
           "type": "array"
+        },
+        "mid": {
+          "default": 0.2639999985694885,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "type": "number"
+        },
+        "per_channel": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
         },
         "saturation": {
           "default": 1.0499999523162842,
@@ -4267,9 +6167,44 @@
           "minItems": 3,
           "type": "array"
         },
+        "shoulder": {
+          "default": 0.9829999804496765,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "type": "number"
+        },
+        "split": {
+          "default": [
+            0.20000000298023224,
+            0.800000011920929
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
         "vibrance": {
           "default": 0.15000000596046448,
           "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "white": {
+          "default": 9.0,
+          "exclusiveMinimum": 0.18,
+          "format": "float",
+          "type": "number"
+        },
+        "white_balance": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
           "minimum": 0.0,
           "type": "number"
         }
@@ -4279,6 +6214,22 @@
     "SceneGroundCover": {
       "additionalProperties": false,
       "properties": {
+        "atlases": {
+          "additionalProperties": {
+            "$ref": "#/$defs/CoverAtlas"
+          },
+          "type": "object"
+        },
+        "cards": {
+          "$ref": "#/$defs/CoverCards",
+          "default": {
+            "cutoff": 0.5,
+            "relief": 1.0,
+            "root_light": 1.0,
+            "round": 0.0,
+            "turn": 0.0
+          }
+        },
         "density": {
           "default": 1.0,
           "format": "float",
@@ -4290,11 +6241,67 @@
           "default": true,
           "type": "boolean"
         },
+        "full_wind": {
+          "default": 22.5,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.5,
+          "type": "number"
+        },
+        "grow_in": {
+          "default": 0.25,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "layers": {
+          "default": 3.0,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "light": {
+          "$ref": "#/$defs/CoverLight",
+          "default": {
+            "root_light": 1.0,
+            "sheen": 1.0,
+            "stand_fade": [
+              8.0,
+              40.0
+            ],
+            "tip_light": 1.0
+          }
+        },
         "looks": {
           "additionalProperties": {
             "$ref": "#/$defs/Cover"
           },
           "type": "object"
+        },
+        "lush": {
+          "default": 2.0,
+          "format": "float",
+          "maximum": 8.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "lush_tint": {
+          "default": [
+            0.6700000166893005,
+            0.800000011920929,
+            0.8899999856948853
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.01,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
         },
         "max_blades": {
           "format": "uint32",
@@ -4304,9 +6311,62 @@
             "null"
           ]
         },
+        "max_cards": {
+          "format": "uint32",
+          "minimum": 1,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "roughness": {
+          "default": 0.699999988079071,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
         "shadows": {
           "default": false,
           "type": "boolean"
+        },
+        "shape": {
+          "$ref": "#/$defs/CoverShape",
+          "default": {
+            "bent_knee": 0.800000011920929,
+            "bent_more": 0.44999998807907104,
+            "bent_most": 1.25,
+            "blunt_round": 3.0,
+            "blunt_width": 0.44999998807907104,
+            "curl": [
+              0.25,
+              0.44999998807907104
+            ],
+            "drop": 0.44999998807907104,
+            "flat_pixels": 4.0,
+            "knee": 0.6000000238418579,
+            "most_bend": 0.949999988079071,
+            "reach": 0.75,
+            "risen": 0.8330000042915344,
+            "straight_pixels": 12.0,
+            "taper": 1.5,
+            "tip_color": 0.699999988079071
+          }
+        },
+        "up": {
+          "default": [
+            0.30000001192092896,
+            0.6000000238418579
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
         }
       },
       "type": "object"
@@ -4318,57 +6378,6 @@
           "default": 1.0,
           "format": "float",
           "maximum": 10000.0,
-          "minimum": 0.0,
-          "type": "number"
-        }
-      },
-      "type": "object"
-    },
-    "SceneHaze": {
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {
-          "default": false,
-          "type": "boolean"
-        },
-        "forward": {
-          "default": 0.6000000238418579,
-          "format": "float",
-          "maximum": 0.95,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "reach": {
-          "default": 300.0,
-          "format": "float",
-          "maximum": 100000.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "size": {
-          "default": 60.0,
-          "format": "float",
-          "maximum": 100000.0,
-          "minimum": 0.1,
-          "type": "number"
-        },
-        "spread": {
-          "default": 0.6000000238418579,
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "strength": {
-          "default": 0.699999988079071,
-          "format": "float",
-          "maximum": 4.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "visibility": {
-          "default": 0.0,
-          "format": "float",
           "minimum": 0.0,
           "type": "number"
         }
@@ -4897,35 +6906,6 @@
     "SceneNightSky": {
       "additionalProperties": false,
       "properties": {
-        "cirrus": {
-          "default": 0.3499999940395355,
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "cirrus_drift": {
-          "default": [
-            6.0,
-            1.5
-          ],
-          "items": {
-            "format": "float",
-            "maximum": 1000.0,
-            "minimum": -1000.0,
-            "type": "number"
-          },
-          "maxItems": 2,
-          "minItems": 2,
-          "type": "array"
-        },
-        "cirrus_height": {
-          "default": 9000.0,
-          "format": "float",
-          "maximum": 50000.0,
-          "minimum": 500.0,
-          "type": "number"
-        },
         "moon": {
           "default": 1.0,
           "format": "float",
@@ -5283,45 +7263,6 @@
       ],
       "type": "object"
     },
-    "SceneOccupancy": {
-      "additionalProperties": false,
-      "properties": {
-        "enabled": {
-          "default": true,
-          "type": "boolean"
-        },
-        "levels": {
-          "default": 4,
-          "format": "uint32",
-          "maximum": 8,
-          "minimum": 1,
-          "type": "integer"
-        },
-        "radius": {
-          "default": 512.0,
-          "format": "float",
-          "maximum": 4096.0,
-          "minimum": 64.0,
-          "type": "number"
-        },
-        "resolution": {
-          "default": 1024,
-          "format": "uint32",
-          "maximum": 4096,
-          "minimum": 128,
-          "multipleOf": 32,
-          "type": "integer"
-        },
-        "strength": {
-          "default": 0.75,
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.0,
-          "type": "number"
-        }
-      },
-      "type": "object"
-    },
     "ScenePacing": {
       "additionalProperties": false,
       "properties": {
@@ -5527,6 +7468,13 @@
     "SceneReflections": {
       "additionalProperties": false,
       "properties": {
+        "behind_steps": {
+          "default": 16,
+          "format": "uint32",
+          "maximum": 96,
+          "minimum": 0,
+          "type": "integer"
+        },
         "distance": {
           "default": 120.0,
           "format": "float",
@@ -5537,6 +7485,34 @@
         "enabled": {
           "default": false,
           "type": "boolean"
+        },
+        "far_cell": {
+          "default": 8,
+          "format": "uint32",
+          "maximum": 16,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "far_contrast": {
+          "default": 0.25,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "far_edge": {
+          "default": 4.0,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "far_refine": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 0.0,
+          "type": "number"
         },
         "intensity": {
           "default": 1.0,
@@ -5551,6 +7527,20 @@
           "maximum": 1.0,
           "minimum": 0.05,
           "type": "number"
+        },
+        "roughness_fade": {
+          "default": 0.20000000298023224,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "type": "number"
+        },
+        "taps": {
+          "default": 8,
+          "format": "uint32",
+          "maximum": 8,
+          "minimum": 1,
+          "type": "integer"
         }
       },
       "type": "object"
@@ -5685,13 +7675,6 @@
     "SceneShadows": {
       "additionalProperties": false,
       "properties": {
-        "atlas_slots": {
-          "default": 1024,
-          "format": "uint32",
-          "maximum": 4096,
-          "minimum": 64,
-          "type": "integer"
-        },
         "changes": {
           "default": 1024,
           "format": "uint32",
@@ -5710,16 +7693,23 @@
           "type": "number"
         },
         "levels": {
-          "default": 16,
+          "default": 10,
           "format": "uint32",
           "minimum": 1,
           "type": "integer"
         },
-        "moving_tiles": {
-          "default": 256,
+        "moving_levels": {
+          "default": 4,
           "format": "uint32",
           "minimum": 0,
           "type": "integer"
+        },
+        "pixel_error": {
+          "default": 2.0,
+          "format": "float",
+          "maximum": 8.0,
+          "minimum": 0.5,
+          "type": "number"
         },
         "sample_texels": {
           "default": 2.0,
@@ -5727,17 +7717,12 @@
           "minimum": 0.0,
           "type": "number"
         },
-        "tile_texels": {
-          "default": 128,
-          "enum": [
-            64,
-            128,
-            256,
-            512
-          ],
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
+        "soft_texels": {
+          "default": 3.0,
+          "format": "float",
+          "maximum": 7.0,
+          "minimum": 2.0,
+          "type": "number"
         }
       },
       "type": "object"
@@ -5745,20 +7730,6 @@
     "SceneSky": {
       "additionalProperties": false,
       "properties": {
-        "adaptation": {
-          "default": 0.5,
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "aerial": {
-          "default": 1.0,
-          "format": "float",
-          "maximum": 100.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
         "altitude": {
           "default": 0.0,
           "format": "float",
@@ -5799,6 +7770,21 @@
           "minItems": 3,
           "type": "array"
         },
+        "light_taps": {
+          "default": [
+            16,
+            6
+          ],
+          "items": {
+            "format": "uint32",
+            "maximum": 64,
+            "minimum": 1,
+            "type": "integer"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
         "mie": {
           "default": 0.003996000159531832,
           "format": "float",
@@ -5807,7 +7793,7 @@
           "type": "number"
         },
         "mie_absorption": {
-          "default": 0.004399999976158142,
+          "default": 0.0004440000047907233,
           "format": "float",
           "maximum": 1.0,
           "minimum": 0.0,
@@ -6130,10 +8116,43 @@
     "SceneSurfaceLight": {
       "additionalProperties": false,
       "properties": {
+        "crossing": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 2.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "crossing_tint": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 2.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
         "emission": {
           "default": 0.5,
           "format": "float",
           "minimum": 0.0,
+          "type": "number"
+        },
+        "forward": {
+          "default": 1.0,
+          "format": "float",
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "forward_bend": {
+          "default": 0.30000001192092896,
+          "format": "float",
+          "maximum": 0.95,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "forward_focus": {
+          "default": 4.0,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
           "type": "number"
         },
         "rim": {
@@ -6528,6 +8547,25 @@
         {
           "allOf": [
             {
+              "$ref": "#/$defs/SiteLayer"
+            }
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "site"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "allOf": [
+            {
               "$ref": "#/$defs/Stamp"
             }
           ],
@@ -6547,7 +8585,7 @@
         {
           "allOf": [
             {
-              "$ref": "#/$defs/StepsLayer"
+              "$ref": "#/$defs/StrataLayer"
             }
           ],
           "properties": {
@@ -6555,7 +8593,26 @@
               "type": "string"
             },
             "type": {
-              "const": "steps"
+              "const": "strata"
+            }
+          },
+          "required": [
+            "type"
+          ],
+          "unevaluatedProperties": false
+        },
+        {
+          "allOf": [
+            {
+              "$ref": "#/$defs/TalusLayer"
+            }
+          ],
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "type": {
+              "const": "talus"
             }
           },
           "required": [
@@ -6630,40 +8687,6 @@
       ],
       "type": "object"
     },
-    "SceneTerrainMotionDetail": {
-      "additionalProperties": false,
-      "properties": {
-        "fastest": {
-          "default": 300.0,
-          "format": "float",
-          "maximum": 100000.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "levels": {
-          "default": 2,
-          "format": "uint32",
-          "maximum": 8,
-          "minimum": 0,
-          "type": "integer"
-        },
-        "settle": {
-          "default": 0.20000000298023224,
-          "format": "float",
-          "maximum": 10.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "speed": {
-          "default": 30.0,
-          "format": "float",
-          "maximum": 100000.0,
-          "minimum": 0.0,
-          "type": "number"
-        }
-      },
-      "type": "object"
-    },
     "SceneTerrainRiver": {
       "additionalProperties": false,
       "properties": {
@@ -6710,16 +8733,6 @@
           "type": [
             "integer",
             "null"
-          ]
-        },
-        "motion_detail": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneTerrainMotionDetail"
-            },
-            {
-              "type": "null"
-            }
           ]
         },
         "pinned_levels": {
@@ -7144,6 +9157,40 @@
     "SceneWater": {
       "additionalProperties": false,
       "properties": {
+        "boils": {
+          "$ref": "#/$defs/WaterBoils",
+          "default": {
+            "across": 0.800000011920929,
+            "churning": [
+              0.25,
+              0.699999988079071
+            ],
+            "steep": 0.14000000059604645
+          }
+        },
+        "bumps": {
+          "$ref": "#/$defs/WaterBumps",
+          "default": {
+            "crests": 3.0,
+            "deep": 0.30000001192092896,
+            "depths": 5.0,
+            "flicker": 0.6000000238418579,
+            "froude": [
+              0.3499999940395355,
+              1.0
+            ],
+            "shortest": 0.07999999821186066,
+            "steep": 0.30000001192092896
+          }
+        },
+        "caustics": {
+          "$ref": "#/$defs/WaterCaustics",
+          "default": {
+            "contrast": 0.30000001192092896,
+            "depth": 1.5,
+            "most": 1.5
+          }
+        },
         "clarity": {
           "default": 2.5,
           "format": "float",
@@ -7167,23 +9214,288 @@
           "minItems": 3,
           "type": "array"
         },
+        "debug_view": {
+          "$ref": "#/$defs/WaterDebugView",
+          "default": {
+            "critical": 0.03999999910593033,
+            "deepest": 2.0,
+            "fastest": 6.0,
+            "froude_top": 3.0
+          }
+        },
+        "drift_lines": {
+          "$ref": "#/$defs/WaterDriftLines",
+          "default": {
+            "amount": [
+              0.0,
+              0.2800000011920929
+            ],
+            "gathers": [
+              0.5,
+              2.0
+            ]
+          }
+        },
         "enabled": {
           "default": true,
           "type": "boolean"
         },
-        "foam_points": {
-          "default": 1024,
-          "format": "uint32",
-          "maximum": 8192,
-          "minimum": 64,
-          "type": "integer"
+        "fall_sheets": {
+          "$ref": "#/$defs/WaterFallSheets",
+          "default": {
+            "air_release": 1.2000000476837158,
+            "air_share": 0.8999999761581421,
+            "aired": [
+              0.15000000596046448,
+              0.550000011920929
+            ],
+            "airing": 0.4000000059604645,
+            "bow": 0.11999999731779099,
+            "breaking_from": 0.30000001192092896,
+            "columns": 8,
+            "edge_spread": 0.03500000014901161,
+            "inception": [
+              1.0,
+              2.0,
+              6.0
+            ],
+            "lingering": 0.30000001192092896,
+            "overhang": 1.149999976158142,
+            "row": 0.75,
+            "skim_reach": 6.0,
+            "slowest": 0.30000001192092896,
+            "springing": 4.0,
+            "thickness": [
+              0.05000000074505806,
+              1.2000000476837158
+            ]
+          }
         },
-        "live_budget": {
-          "default": 2097152,
-          "format": "uint32",
-          "maximum": 67108864,
-          "minimum": 65536,
-          "type": "integer"
+        "fall_spray": {
+          "$ref": "#/$defs/WaterFallSpray",
+          "default": {
+            "alpha": 0.44999998807907104,
+            "color": [
+              0.9200000166893005,
+              0.949999988079071,
+              0.9800000190734863
+            ],
+            "fan": 0.800000011920929,
+            "foot_share": 0.44999998807907104,
+            "forward": 0.4000000059604645,
+            "rate": [
+              8.0,
+              240.0
+            ],
+            "size": [
+              0.02500000037252903,
+              0.05999999865889549
+            ],
+            "speed": [
+              1.5,
+              8.0
+            ],
+            "stretch": 0.029999999329447746,
+            "throw": 0.3499999940395355,
+            "watts": 400.0
+          }
+        },
+        "falls": {
+          "$ref": "#/$defs/WaterFalls",
+          "default": {
+            "albedo": 0.800000011920929,
+            "broken_stands": 0.5,
+            "curtain_scale": [
+              0.550000011920929,
+              0.8999999761581421
+            ],
+            "edge_thinning": 0.30000001192092896,
+            "faintest": 0.009999999776482582,
+            "forward": 0.8500000238418579,
+            "furrow_shade": 0.550000011920929,
+            "gathering": 2.5,
+            "glassy_gathering": 0.15000000596046448,
+            "matte_roughness": 0.699999988079071,
+            "plunge_drowns": [
+              1.0,
+              2.0
+            ],
+            "relief_steepest": 1.2000000476837158,
+            "rock_roughness": 0.05999999865889549,
+            "rope_scale": [
+              0.1599999964237213,
+              0.33000001311302185
+            ],
+            "scale_shares": [
+              0.5,
+              0.3499999940395355,
+              0.3499999940395355
+            ],
+            "scattering": 500.0,
+            "strand_scale": [
+              0.04500000178813934,
+              0.10999999940395355
+            ],
+            "tear_softness": 0.4000000059604645,
+            "tear_thickness": 0.004000000189989805,
+            "thin_tint": 0.6000000238418579,
+            "wander_reach": 0.11999999731779099,
+            "wander_scale": [
+              1.600000023841858,
+              3.5
+            ]
+          }
+        },
+        "flow": {
+          "$ref": "#/$defs/WaterFlow",
+          "default": {
+            "carry_slowest": 0.10000000149011612,
+            "carry_step": 1.399999976158142,
+            "drift_ride": 6.0,
+            "drift_seconds": [
+              0.25,
+              1.5
+            ],
+            "frame": 1.5,
+            "moving": [
+              0.05000000074505806,
+              0.3499999940395355
+            ],
+            "relief_steepest": 0.8999999761581421,
+            "rung_band": 0.15000000596046448,
+            "shown": [
+              8.0,
+              16.0
+            ]
+          }
+        },
+        "foam": {
+          "$ref": "#/$defs/WaterFoam",
+          "default": {
+            "albedo": 0.6600000262260437,
+            "around": [
+              0.3499999940395355,
+              0.5
+            ],
+            "blocking": [
+              0.5,
+              0.8999999761581421
+            ],
+            "body": 1.0,
+            "breaking": [
+              0.6000000238418579,
+              1.2000000476837158
+            ],
+            "covers": [
+              0.11999999731779099,
+              0.949999988079071
+            ],
+            "crested": [
+              1.100000023841858,
+              0.6000000238418579
+            ],
+            "drop": [
+              0.07999999821186066,
+              0.3499999940395355
+            ],
+            "fades": [
+              0.004000000189989805,
+              0.07999999821186066
+            ],
+            "filmy": 0.30000001192092896,
+            "froude": [
+              1.0,
+              1.7000000476837158
+            ],
+            "halo": 0.5,
+            "hollow": 2.200000047683716,
+            "mirrors": 0.5,
+            "open": 0.0,
+            "optical": 4.0,
+            "rough": [
+              0.30000001192092896,
+              0.699999988079071
+            ],
+            "sky": 0.6000000238418579,
+            "soft": 0.5,
+            "steep": 4.0,
+            "tearing": [
+              0.699999988079071,
+              1.2999999523162842
+            ],
+            "tile": 3.0
+          }
+        },
+        "lace": {
+          "$ref": "#/$defs/WaterLace",
+          "default": {
+            "amount": 0.3499999940395355,
+            "depth": [
+              0.03999999910593033,
+              0.11999999731779099
+            ],
+            "speed": [
+              0.07999999821186066,
+              0.30000001192092896
+            ]
+          }
+        },
+        "mist": {
+          "$ref": "#/$defs/WaterMist",
+          "default": {
+            "alpha": 0.11999999731779099,
+            "color": [
+              0.9399999976158142,
+              0.9599999785423279,
+              1.0
+            ],
+            "fade_in": 0.20000000298023224,
+            "fan": 1.100000023841858,
+            "full_watts": 50000.0,
+            "growth": [
+              0.6000000238418579,
+              1.7999999523162842
+            ],
+            "least": 0.15000000596046448,
+            "most": 96.0,
+            "overlap": 8.0,
+            "puff": [
+              1.2000000476837158,
+              9.0
+            ],
+            "puff_per_head": 0.3499999940395355,
+            "seconds": 6.0,
+            "spread": 0.25,
+            "travel": 1.5,
+            "uneven": 0.30000001192092896
+          }
+        },
+        "optics": {
+          "$ref": "#/$defs/WaterOptics",
+          "default": {
+            "bubble_albedo": 0.44999998807907104,
+            "bubbles": 30.0,
+            "forward": 0.4000000059604645,
+            "refraction_reach": 4.0,
+            "roughness": [
+              0.029999999329447746,
+              0.6000000238418579
+            ]
+          }
+        },
+        "ripples": {
+          "$ref": "#/$defs/WaterRipples",
+          "default": {
+            "coarse": 0.6000000238418579,
+            "fine_share": 0.4000000059604645,
+            "fine_tile": 1.100000023841858,
+            "least": 0.04500000178813934,
+            "reach": 1.0,
+            "share": 0.6000000238418579,
+            "skew": 0.20000000298023224,
+            "stretch": 1.7999999523162842,
+            "tile": 3.200000047683716
+          }
         },
         "sediment": {
           "default": 0.15000000596046448,
@@ -7208,12 +9520,19 @@
           "minItems": 3,
           "type": "array"
         },
-        "simulation_cell": {
-          "default": 1.0,
-          "format": "float",
-          "maximum": 8.0,
-          "minimum": 0.25,
-          "type": "number"
+        "shore": {
+          "$ref": "#/$defs/WaterShore",
+          "default": {
+            "edge": 0.05000000074505806,
+            "edge_pixels": 1.5,
+            "fade": 0.10000000149011612,
+            "racing": [
+              0.800000011920929,
+              1.600000023841858
+            ],
+            "soaked": 0.029999999329447746,
+            "wet": 0.3499999940395355
+          }
         },
         "subdivision_error": {
           "default": 1.0,
@@ -7222,18 +9541,63 @@
           "minimum": 0.25,
           "type": "number"
         },
-        "subdivision_leaves": {
-          "default": 65536,
-          "format": "uint32",
-          "maximum": 4000000,
-          "minimum": 1024,
-          "type": "integer"
-        },
         "tile_feed": {
           "default": 4096,
           "format": "uint32",
           "minimum": 1,
           "type": "integer"
+        },
+        "waves": {
+          "$ref": "#/$defs/WaterWaves",
+          "default": {
+            "breaking": 0.7799999713897705,
+            "chop": 0.6000000238418579,
+            "count": 40,
+            "grouping": 0.8999999761581421,
+            "gust_calmest": 0.15000000596046448,
+            "gust_drift": [
+              1.0,
+              0.699999988079071
+            ],
+            "gust_long": 0.699999988079071,
+            "gust_size": [
+              90.0,
+              33.29999923706055
+            ],
+            "gust_strength": [
+              0.800000011920929,
+              0.4000000059604645
+            ],
+            "longest": 6.0,
+            "push": [
+              0.4300000071525574,
+              0.15000000596046448
+            ],
+            "push_ride": [
+              1.0,
+              0.6000000238418579
+            ],
+            "push_size": [
+              17.5,
+              5.599999904632568
+            ],
+            "seed": 2654435769,
+            "shortest": 0.05000000074505806,
+            "shown": [
+              2.0,
+              4.0
+            ],
+            "spread": [
+              0.800000011920929,
+              1.100000023841858
+            ],
+            "steepness": 0.20000000298023224,
+            "still": [
+              0.15000000596046448,
+              0.699999988079071
+            ],
+            "tilt": 0.699999988079071
+          }
         }
       },
       "type": "object"
@@ -7314,6 +9678,386 @@
         "clamp_to_edge"
       ],
       "type": "string"
+    },
+    "Section": {
+      "additionalProperties": false,
+      "properties": {
+        "bend": {
+          "default": 0.4000000059604645,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 10.0,
+          "type": "number"
+        },
+        "island": {
+          "default": 0.5,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "type": "number"
+        },
+        "lean": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 0.9,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "rounding": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "shelf": {
+          "default": 0.800000011920929,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "Shape": {
+      "additionalProperties": false,
+      "properties": {
+        "aspect": {
+          "default": 12.0,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "type": "number"
+        },
+        "bar_above": {
+          "default": 0.20000000298023224,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": -1.0,
+          "type": "number"
+        },
+        "bar_widen": {
+          "default": 0.44999998807907104,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "blend": {
+          "default": 0.20000000298023224,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 0.9,
+          "type": "number"
+        },
+        "deepen": {
+          "default": 0.6000000238418579,
+          "format": "float",
+          "maximum": 2.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "floods": {
+          "default": 3.0,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "narrowing": {
+          "default": [
+            0.019999999552965164,
+            0.10000000149011612
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 10.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "pool_narrow": {
+          "default": 0.11999999731779099,
+          "format": "float",
+          "maximum": 0.9,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "riffle_widen": {
+          "default": 0.20000000298023224,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "steep_narrow": {
+          "default": 0.25,
+          "format": "float",
+          "maximum": 0.9,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "sunk": {
+          "default": 0.25,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SiteLayer": {
+      "properties": {
+        "fetch": {
+          "default": 300.0,
+          "format": "float",
+          "maximum": 1000000.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "horizon": {
+          "default": 2000.0,
+          "format": "float",
+          "maximum": 1000000.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "latitude": {
+          "default": 45.0,
+          "format": "float",
+          "maximum": 90.0,
+          "minimum": -90.0,
+          "type": "number"
+        },
+        "level": {
+          "default": 4,
+          "format": "uint32",
+          "maximum": 12,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "north": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 360.0,
+          "minimum": -360.0,
+          "type": "number"
+        },
+        "plane_depth": {
+          "default": [
+            0.0,
+            2.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "plane_exposure": {
+          "default": [
+            -50.0,
+            50.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "plane_sun": {
+          "default": [
+            0.0,
+            2.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "plane_wetness": {
+          "default": [
+            -5.0,
+            25.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "radius": {
+          "default": 100.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "season": {
+          "default": [
+            1.0,
+            365.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 365.0,
+            "minimum": 1.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "snow": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "snow_gather": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "snow_hollow": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "snow_lee": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "snow_line": {
+          "default": [
+            0.0,
+            1000.0
+          ],
+          "items": {
+            "format": "float",
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "snow_rest": {
+          "default": [
+            90.0,
+            90.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 90.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "snow_sun": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "soil": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "soil_bare": {
+          "default": 90.0,
+          "format": "float",
+          "maximum": 90.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "soil_gather": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "soil_rest": {
+          "default": [
+            90.0,
+            90.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 90.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "wind": {
+          "default": 270.0,
+          "format": "float",
+          "maximum": 360.0,
+          "minimum": -360.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "SizedBy": {
+      "additionalProperties": false,
+      "properties": {
+        "from": {
+          "format": "float",
+          "type": "number"
+        },
+        "map": {
+          "type": "string"
+        },
+        "tendency": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "to": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "from",
+        "to"
+      ],
+      "type": "object"
     },
     "Stamp": {
       "properties": {
@@ -7452,50 +10196,72 @@
       ],
       "type": "object"
     },
-    "StepsLayer": {
+    "Steps": {
+      "additionalProperties": false,
       "properties": {
-        "cover": {
-          "default": 0.6000000238418579,
-          "format": "float",
-          "maximum": 1.0,
-          "minimum": 0.0,
-          "type": "number"
-        },
-        "height": {
-          "default": 3.0,
-          "format": "float",
-          "maximum": 100.0,
-          "minimum": 0.1,
-          "type": "number"
-        },
-        "joints": {
-          "default": 4.0,
-          "format": "float",
-          "maximum": 1000.0,
-          "minimum": 0.5,
-          "type": "number"
-        },
-        "patches": {
-          "default": 60.0,
-          "format": "float",
-          "maximum": 100000.0,
-          "minimum": 1.0,
-          "type": "number"
-        },
-        "seed": {
-          "default": 0,
-          "format": "uint32",
-          "minimum": 0,
-          "type": "integer"
-        },
-        "slope": {
+        "apart": {
           "default": [
-            33.02386474609375,
-            40.0
+            1.0,
+            4.0
+          ],
+          "items": {
+            "exclusiveMinimum": 0.0,
+            "format": "float",
+            "maximum": 100.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "arch": {
+          "default": [
+            -0.15000000596046448,
+            0.4000000059604645
           ],
           "items": {
             "format": "float",
-            "maximum": 89.0,
+            "maximum": 2.0,
+            "minimum": -2.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "clasts": {
+          "default": [
+            0.0,
+            0.0,
+            0.5,
+            1.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 5,
+          "minItems": 5,
+          "type": "array"
+        },
+        "height": {
+          "default": 0.800000011920929,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "notch_bite": {
+          "default": [
+            1.600000023841858,
+            3.200000047683716
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100.0,
             "minimum": 0.0,
             "type": "number"
           },
@@ -7503,20 +10269,69 @@
           "minItems": 2,
           "type": "array"
         },
-        "wetness": {
+        "notch_half": {
+          "default": 1.2000000476837158,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 100.0,
+          "type": "number"
+        },
+        "notch_room": {
+          "default": 5.0,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 100.0,
+          "type": "number"
+        },
+        "pool_aspect": {
+          "default": 0.15000000596046448,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "pool_deepest": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "riser_slope": {
+          "default": 1.5,
+          "exclusiveMinimum": 0.0,
+          "format": "float",
+          "maximum": 100.0,
+          "type": "number"
+        },
+        "skew": {
+          "default": 0.4000000059604645,
+          "format": "float",
+          "maximum": 2.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "spread": {
           "default": [
-            8.0,
-            5.0
+            0.699999988079071,
+            1.399999976158142
           ],
           "items": {
+            "exclusiveMinimum": 0.0,
             "format": "float",
-            "maximum": 25.0,
-            "minimum": -5.0,
+            "maximum": 10.0,
             "type": "number"
           },
           "maxItems": 2,
           "minItems": 2,
           "type": "array"
+        },
+        "tread": {
+          "default": 0.25,
+          "format": "float",
+          "maximum": 0.95,
+          "minimum": 0.0,
+          "type": "number"
         }
       },
       "type": "object"
@@ -7528,6 +10343,121 @@
       ],
       "type": "string"
     },
+    "StrataLayer": {
+      "properties": {
+        "contrast": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "dip": {
+          "default": [
+            0.0,
+            0.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": -1.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "joints": {
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/JointSet"
+          },
+          "type": "array"
+        },
+        "ledges": {
+          "default": 0.699999988079071,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "mask": {
+          "default": "",
+          "type": "string"
+        },
+        "patches": {
+          "default": 14.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 0.5,
+          "type": "number"
+        },
+        "riser": {
+          "default": 0.30000001192092896,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.05,
+          "type": "number"
+        },
+        "seed": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "splits": {
+          "default": 1,
+          "format": "uint32",
+          "maximum": 8,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "strength": {
+          "default": 0.800000011920929,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "thickness": {
+          "default": 6.0,
+          "format": "float",
+          "maximum": 500.0,
+          "minimum": 0.5,
+          "type": "number"
+        },
+        "uneven": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 0.45,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "varied": {
+          "default": 0.44999998807907104,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "warp": {
+          "default": [
+            0.0,
+            1000.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000000.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "StreamingFocus": {
       "additionalProperties": false,
       "type": "object"
@@ -7538,6 +10468,131 @@
         "biplanar"
       ],
       "type": "string"
+    },
+    "TalusLayer": {
+      "properties": {
+        "apart": {
+          "default": 40.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "block": {
+          "default": 3.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.1,
+          "type": "number"
+        },
+        "chute": {
+          "default": 999999995904.0,
+          "format": "float",
+          "maximum": 1000000000000.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "clear": {
+          "default": 16.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "gather": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "levee": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "level": {
+          "default": 4,
+          "format": "uint32",
+          "maximum": 12,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "reach": {
+          "default": 500.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "relief": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "rest": {
+          "default": [
+            90.0,
+            90.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 90.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "runnel": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "sag": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "seed": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "slope": {
+          "default": [
+            15.0,
+            25.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 90.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "width": {
+          "default": 3.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.1,
+          "type": "number"
+        }
+      },
+      "type": "object"
     },
     "TerrainPrefetch": {
       "additionalProperties": false,
@@ -7554,6 +10609,20 @@
     },
     "TerrainShading": {
       "properties": {
+        "albedo_pixels": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 4096.0,
+          "minimum": 0.5,
+          "type": "number"
+        },
+        "arrival_seconds": {
+          "default": 0.0010000000474974513,
+          "format": "float",
+          "maximum": 60.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
         "bounce": {
           "default": true,
           "type": "boolean"
@@ -7580,9 +10649,44 @@
           "minimum": 1.0,
           "type": "number"
         },
+        "edge_shade": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "edge_soil": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "edge_width": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
         "enabled": {
           "default": true,
           "type": "boolean"
+        },
+        "far_plane_cut": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 0.3,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "height_blend": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.001,
+          "type": "number"
         },
         "macro_resolution": {
           "default": 2048,
@@ -7591,12 +10695,75 @@
           "minimum": 64,
           "type": "integer"
         },
+        "maps_pixels": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 4096.0,
+          "minimum": 0.5,
+          "type": "number"
+        },
+        "plane_cut": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 0.3,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "plane_sharpness": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "relief_anisotropy": {
+          "default": 16.0,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "relief_pixels": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 4096.0,
+          "minimum": 0.5,
+          "type": "number"
+        },
+        "relief_reach": {
+          "default": 16.0,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "relief_refine_pixels": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
         "relief_steps": {
           "default": 8,
           "format": "uint32",
           "maximum": 64,
           "minimum": 2,
           "type": "integer"
+        },
+        "rung_anisotropy": {
+          "default": 16.0,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "rung_detail": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 0.125,
+          "type": "number"
         },
         "shadow_resolution": {
           "default": 512,
@@ -7605,12 +10772,44 @@
           "minimum": 64,
           "type": "integer"
         },
-        "shadow_softness": {
-          "default": 0.009999999776482582,
+        "shore_fringe": {
+          "default": 0.0010000000474974513,
           "format": "float",
-          "maximum": 0.2,
-          "minimum": 0.0,
+          "maximum": 100.0,
+          "minimum": 0.001,
           "type": "number"
+        },
+        "site_bare": {
+          "default": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "site_lush": {
+          "default": [
+            1.0,
+            1.0,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
         },
         "sky_resolution": {
           "default": 1024,
@@ -7622,6 +10821,55 @@
         "sky_visibility": {
           "default": true,
           "type": "boolean"
+        },
+        "strata_dip": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 89.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "strata_heading": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 360.0,
+          "minimum": -360.0,
+          "type": "number"
+        },
+        "strata_run": {
+          "default": 100.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 0.1,
+          "type": "number"
+        },
+        "strata_slope_full": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 90.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "strata_slope_start": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 90.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "strata_warp": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "strata_warp_size": {
+          "default": 100.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 1.0,
+          "type": "number"
         },
         "subdivision_depth": {
           "default": 27,
@@ -7644,15 +10892,135 @@
           "minimum": 1024,
           "type": "integer"
         },
+        "subdivision_unseen": {
+          "default": 8.0,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "sun_levels": {
+          "default": 8,
+          "format": "uint32",
+          "maximum": 8,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "sun_march_slack": {
+          "default": 0.25,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "sun_march_steps": {
+          "default": 2048,
+          "format": "uint32",
+          "maximum": 65536,
+          "minimum": 256,
+          "type": "integer"
+        },
+        "sun_rows": {
+          "default": 256,
+          "format": "uint32",
+          "maximum": 32768,
+          "minimum": 8,
+          "multipleOf": 8,
+          "type": "integer"
+        },
+        "sun_sample_spread": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
         "sun_shadows": {
           "default": true,
           "type": "boolean"
+        },
+        "sun_slide_seconds": {
+          "default": 0.25,
+          "format": "float",
+          "maximum": 10.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "sun_tall": {
+          "default": 32.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 1.0,
+          "type": "number"
+        },
+        "sun_texel": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 0.25,
+          "type": "number"
         },
         "tile_feed": {
           "default": 4096,
           "format": "uint32",
           "minimum": 1,
           "type": "integer"
+        },
+        "tiling_blend": {
+          "default": 0.20000000298023224,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "tiling_hexes": {
+          "default": 3.5,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 0.25,
+          "type": "number"
+        },
+        "tiling_turn": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "wet_darkening": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "wet_gloss": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "wet_porous_from": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "wet_porous_range": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "wet_spacing": {
+          "default": 1000000.0,
+          "format": "float",
+          "maximum": 1000000.0,
+          "minimum": 0.01,
+          "type": "number"
         }
       },
       "type": "object"
@@ -8345,6 +11713,98 @@
       },
       "type": "object"
     },
+    "Valley": {
+      "additionalProperties": false,
+      "properties": {
+        "bank": {
+          "default": [
+            0.25,
+            0.699999988079071
+          ],
+          "items": {
+            "exclusiveMinimum": 0.0,
+            "format": "float",
+            "maximum": 100.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "fade": {
+          "default": 0.6499999761581421,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "plain_rise": {
+          "default": 0.25,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "reach": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "rise": {
+          "default": 0.8999999761581421,
+          "format": "float",
+          "maximum": 10.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "terraces": {
+          "default": 1,
+          "format": "uint32",
+          "maximum": 8,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "tread": {
+          "default": 0.25,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "tread_rise": {
+          "default": 0.15000000596046448,
+          "format": "float",
+          "maximum": 10.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "wall": {
+          "default": 2.0,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "walled": {
+          "default": [
+            0.5,
+            2.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
     "ViewForm": {
       "additionalProperties": false,
       "properties": {
@@ -8403,6 +11863,1590 @@
             "x": 0.0,
             "y": 0.0
           }
+        }
+      },
+      "type": "object"
+    },
+    "WaterBoils": {
+      "additionalProperties": false,
+      "properties": {
+        "across": {
+          "default": 0.800000011920929,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "churning": {
+          "default": [
+            0.25,
+            0.699999988079071
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "steep": {
+          "default": 0.14000000059604645,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "WaterBumps": {
+      "additionalProperties": false,
+      "properties": {
+        "crests": {
+          "default": 3.0,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 0.05,
+          "type": "number"
+        },
+        "deep": {
+          "default": 0.30000001192092896,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "depths": {
+          "default": 5.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "flicker": {
+          "default": 0.6000000238418579,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "froude": {
+          "default": [
+            0.3499999940395355,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "shortest": {
+          "default": 0.07999999821186066,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "steep": {
+          "default": 0.30000001192092896,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "WaterCaustics": {
+      "additionalProperties": false,
+      "properties": {
+        "contrast": {
+          "default": 0.30000001192092896,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "depth": {
+          "default": 1.5,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "most": {
+          "default": 1.5,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 1.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "WaterDebugView": {
+      "additionalProperties": false,
+      "properties": {
+        "critical": {
+          "default": 0.03999999910593033,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "deepest": {
+          "default": 2.0,
+          "format": "float",
+          "maximum": 10000.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "fastest": {
+          "default": 6.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "froude_top": {
+          "default": 3.0,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 1.01,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "WaterDriftLines": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "default": [
+            0.0,
+            0.2800000011920929
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "gathers": {
+          "default": [
+            0.5,
+            2.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 8.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "WaterFallSheets": {
+      "additionalProperties": false,
+      "properties": {
+        "air_release": {
+          "default": 1.2000000476837158,
+          "format": "float",
+          "maximum": 600.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "air_share": {
+          "default": 0.8999999761581421,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "aired": {
+          "default": [
+            0.15000000596046448,
+            0.550000011920929
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "airing": {
+          "default": 0.4000000059604645,
+          "format": "float",
+          "maximum": 600.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "bow": {
+          "default": 0.11999999731779099,
+          "format": "float",
+          "maximum": 8.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "breaking_from": {
+          "default": 0.30000001192092896,
+          "format": "float",
+          "maximum": 0.99,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "columns": {
+          "default": 8,
+          "format": "uint32",
+          "maximum": 64,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "edge_spread": {
+          "default": 0.03500000014901161,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "inception": {
+          "default": [
+            1.0,
+            2.0,
+            6.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000.0,
+            "minimum": 0.001,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "lingering": {
+          "default": 0.30000001192092896,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "overhang": {
+          "default": 1.149999976158142,
+          "format": "float",
+          "maximum": 8.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "row": {
+          "default": 0.75,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 0.05,
+          "type": "number"
+        },
+        "skim_reach": {
+          "default": 6.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "slowest": {
+          "default": 0.30000001192092896,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "springing": {
+          "default": 4.0,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "thickness": {
+          "default": [
+            0.05000000074505806,
+            1.2000000476837158
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": 0.0001,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "WaterFallSpray": {
+      "additionalProperties": false,
+      "properties": {
+        "alpha": {
+          "default": 0.44999998807907104,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "color": {
+          "default": [
+            0.9200000166893005,
+            0.949999988079071,
+            0.9800000190734863
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "fan": {
+          "default": 0.800000011920929,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "foot_share": {
+          "default": 0.44999998807907104,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "forward": {
+          "default": 0.4000000059604645,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": -16.0,
+          "type": "number"
+        },
+        "rate": {
+          "default": [
+            8.0,
+            240.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100000.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "size": {
+          "default": [
+            0.02500000037252903,
+            0.05999999865889549
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "speed": {
+          "default": [
+            1.5,
+            8.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "stretch": {
+          "default": 0.029999999329447746,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "throw": {
+          "default": 0.3499999940395355,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "watts": {
+          "default": 400.0,
+          "format": "float",
+          "maximum": 1000000000.0,
+          "minimum": 0.001,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "WaterFalls": {
+      "additionalProperties": false,
+      "properties": {
+        "albedo": {
+          "default": 0.800000011920929,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "broken_stands": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": -16.0,
+          "type": "number"
+        },
+        "curtain_scale": {
+          "default": [
+            0.550000011920929,
+            0.8999999761581421
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000.0,
+            "minimum": 0.001,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "edge_thinning": {
+          "default": 0.30000001192092896,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "faintest": {
+          "default": 0.009999999776482582,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "forward": {
+          "default": 0.8500000238418579,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "furrow_shade": {
+          "default": 0.550000011920929,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "gathering": {
+          "default": 2.5,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "glassy_gathering": {
+          "default": 0.15000000596046448,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "matte_roughness": {
+          "default": 0.699999988079071,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "plunge_drowns": {
+          "default": [
+            1.0,
+            2.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "relief_steepest": {
+          "default": 1.2000000476837158,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "rock_roughness": {
+          "default": 0.05999999865889549,
+          "format": "float",
+          "maximum": 10.0,
+          "minimum": 0.00001,
+          "type": "number"
+        },
+        "rope_scale": {
+          "default": [
+            0.1599999964237213,
+            0.33000001311302185
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000.0,
+            "minimum": 0.001,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "scale_shares": {
+          "default": [
+            0.5,
+            0.3499999940395355,
+            0.3499999940395355
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "scattering": {
+          "default": 500.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "strand_scale": {
+          "default": [
+            0.04500000178813934,
+            0.10999999940395355
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000.0,
+            "minimum": 0.001,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "tear_softness": {
+          "default": 0.4000000059604645,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "tear_thickness": {
+          "default": 0.004000000189989805,
+          "format": "float",
+          "maximum": 10.0,
+          "minimum": 0.00001,
+          "type": "number"
+        },
+        "thin_tint": {
+          "default": 0.6000000238418579,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "wander_reach": {
+          "default": 0.11999999731779099,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "wander_scale": {
+          "default": [
+            1.600000023841858,
+            3.5
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000.0,
+            "minimum": 0.001,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "WaterFlow": {
+      "additionalProperties": false,
+      "properties": {
+        "carry_slowest": {
+          "default": 0.10000000149011612,
+          "format": "float",
+          "maximum": 10.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "carry_step": {
+          "default": 1.399999976158142,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 1.01,
+          "type": "number"
+        },
+        "drift_ride": {
+          "default": 6.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "drift_seconds": {
+          "default": [
+            0.25,
+            1.5
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 600.0,
+            "minimum": 0.001,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "frame": {
+          "default": 1.5,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.05,
+          "type": "number"
+        },
+        "moving": {
+          "default": [
+            0.05000000074505806,
+            0.3499999940395355
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "relief_steepest": {
+          "default": 0.8999999761581421,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "rung_band": {
+          "default": 0.15000000596046448,
+          "format": "float",
+          "maximum": 0.5,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "shown": {
+          "default": [
+            8.0,
+            16.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1024.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "WaterFoam": {
+      "additionalProperties": false,
+      "properties": {
+        "albedo": {
+          "default": 0.6600000262260437,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "around": {
+          "default": [
+            0.3499999940395355,
+            0.5
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "blocking": {
+          "default": [
+            0.5,
+            0.8999999761581421
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "body": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "breaking": {
+          "default": [
+            0.6000000238418579,
+            1.2000000476837158
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "covers": {
+          "default": [
+            0.11999999731779099,
+            0.949999988079071
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "crested": {
+          "default": [
+            1.100000023841858,
+            0.6000000238418579
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 8.0,
+            "minimum": -8.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "drop": {
+          "default": [
+            0.07999999821186066,
+            0.3499999940395355
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "fades": {
+          "default": [
+            0.004000000189989805,
+            0.07999999821186066
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "filmy": {
+          "default": 0.30000001192092896,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "froude": {
+          "default": [
+            1.0,
+            1.7000000476837158
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "halo": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "hollow": {
+          "default": 2.200000047683716,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "mirrors": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "open": {
+          "default": 0.0,
+          "format": "float",
+          "maximum": 16.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "optical": {
+          "default": 4.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "rough": {
+          "default": [
+            0.30000001192092896,
+            0.699999988079071
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.01,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "sky": {
+          "default": 0.6000000238418579,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "soft": {
+          "default": 0.5,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "steep": {
+          "default": 4.0,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "tearing": {
+          "default": [
+            0.699999988079071,
+            1.2999999523162842
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "texture": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tile": {
+          "default": 3.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.01,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "WaterLace": {
+      "additionalProperties": false,
+      "properties": {
+        "amount": {
+          "default": 0.3499999940395355,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "depth": {
+          "default": [
+            0.03999999910593033,
+            0.11999999731779099
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "speed": {
+          "default": [
+            0.07999999821186066,
+            0.30000001192092896
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "WaterMist": {
+      "additionalProperties": false,
+      "properties": {
+        "alpha": {
+          "default": 0.11999999731779099,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "color": {
+          "default": [
+            0.9399999976158142,
+            0.9599999785423279,
+            1.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 3,
+          "minItems": 3,
+          "type": "array"
+        },
+        "fade_in": {
+          "default": 0.20000000298023224,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "fan": {
+          "default": 1.100000023841858,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "full_watts": {
+          "default": 50000.0,
+          "format": "float",
+          "maximum": 1000000000.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "growth": {
+          "default": [
+            0.6000000238418579,
+            1.7999999523162842
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "least": {
+          "default": 0.15000000596046448,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "most": {
+          "default": 96.0,
+          "format": "float",
+          "maximum": 100000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "overlap": {
+          "default": 8.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "puff": {
+          "default": [
+            1.2000000476837158,
+            9.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000.0,
+            "minimum": 0.001,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "puff_per_head": {
+          "default": 0.3499999940395355,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "seconds": {
+          "default": 6.0,
+          "format": "float",
+          "maximum": 600.0,
+          "minimum": 0.001,
+          "type": "number"
+        },
+        "spread": {
+          "default": 0.25,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "travel": {
+          "default": 1.5,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "uneven": {
+          "default": 0.30000001192092896,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "WaterOptics": {
+      "additionalProperties": false,
+      "properties": {
+        "bubble_albedo": {
+          "default": 0.44999998807907104,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "bubbles": {
+          "default": 30.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "forward": {
+          "default": 0.4000000059604645,
+          "format": "float",
+          "maximum": 0.95,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "refraction_reach": {
+          "default": 4.0,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "roughness": {
+          "default": [
+            0.029999999329447746,
+            0.6000000238418579
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1.0,
+            "minimum": 0.01,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "WaterRipples": {
+      "additionalProperties": false,
+      "properties": {
+        "coarse": {
+          "default": 0.6000000238418579,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "fine_share": {
+          "default": 0.4000000059604645,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "fine_tile": {
+          "default": 1.100000023841858,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "least": {
+          "default": 0.04500000178813934,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "reach": {
+          "default": 1.0,
+          "format": "float",
+          "maximum": 32.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "share": {
+          "default": 0.6000000238418579,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "skew": {
+          "default": 0.20000000298023224,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": -4.0,
+          "type": "number"
+        },
+        "stretch": {
+          "default": 1.7999999523162842,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 0.05,
+          "type": "number"
+        },
+        "texture": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9_.-]+$",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tile": {
+          "default": 3.200000047683716,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.01,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "WaterShore": {
+      "additionalProperties": false,
+      "properties": {
+        "edge": {
+          "default": 0.05000000074505806,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0001,
+          "type": "number"
+        },
+        "edge_pixels": {
+          "default": 1.5,
+          "format": "float",
+          "maximum": 64.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "fade": {
+          "default": 0.10000000149011612,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0001,
+          "type": "number"
+        },
+        "racing": {
+          "default": [
+            0.800000011920929,
+            1.600000023841858
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "soaked": {
+          "default": 0.029999999329447746,
+          "format": "float",
+          "maximum": 100.0,
+          "minimum": 0.0001,
+          "type": "number"
+        },
+        "wet": {
+          "default": 0.3499999940395355,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "WaterWaves": {
+      "additionalProperties": false,
+      "properties": {
+        "breaking": {
+          "default": 0.7799999713897705,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "chop": {
+          "default": 0.6000000238418579,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "count": {
+          "default": 40,
+          "format": "uint32",
+          "maximum": 256,
+          "minimum": 1,
+          "type": "integer"
+        },
+        "grouping": {
+          "default": 0.8999999761581421,
+          "format": "float",
+          "maximum": 8.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "gust_calmest": {
+          "default": 0.15000000596046448,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "gust_drift": {
+          "default": [
+            1.0,
+            0.699999988079071
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "gust_long": {
+          "default": 0.699999988079071,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "gust_size": {
+          "default": [
+            90.0,
+            33.29999923706055
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100000.0,
+            "minimum": 1.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "gust_strength": {
+          "default": [
+            0.800000011920929,
+            0.4000000059604645
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 8.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "longest": {
+          "default": 6.0,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "push": {
+          "default": [
+            0.4300000071525574,
+            0.15000000596046448
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 1000.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "push_ride": {
+          "default": [
+            1.0,
+            0.6000000238418579
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 4.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "push_size": {
+          "default": [
+            17.5,
+            5.599999904632568
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100000.0,
+            "minimum": 0.01,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "seed": {
+          "default": 2654435769,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "shortest": {
+          "default": 0.05000000074505806,
+          "format": "float",
+          "maximum": 1000.0,
+          "minimum": 0.01,
+          "type": "number"
+        },
+        "shown": {
+          "default": [
+            2.0,
+            4.0
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 64.0,
+            "minimum": 1.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "spread": {
+          "default": [
+            0.800000011920929,
+            1.100000023841858
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 3.1415927,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "steepness": {
+          "default": 0.20000000298023224,
+          "format": "float",
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "type": "number"
+        },
+        "still": {
+          "default": [
+            0.15000000596046448,
+            0.699999988079071
+          ],
+          "items": {
+            "format": "float",
+            "maximum": 100.0,
+            "minimum": 0.0,
+            "type": "number"
+          },
+          "maxItems": 2,
+          "minItems": 2,
+          "type": "array"
+        },
+        "tilt": {
+          "default": 0.699999988079071,
+          "format": "float",
+          "maximum": 4.0,
+          "minimum": 0.0,
+          "type": "number"
         }
       },
       "type": "object"

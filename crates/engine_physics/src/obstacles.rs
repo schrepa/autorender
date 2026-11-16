@@ -45,7 +45,6 @@ pub(crate) fn obstruct(
                 center: solid.center,
                 axes: solid.axes,
                 round: matches!(solid.shape, ColliderShape::Sphere { .. }),
-                velocity: Vec3::ZERO,
             });
         }
     }

@@ -1,33 +1,20 @@
-use bytemuck::Zeroable;
-use engine_core::glam::{Mat4, Vec3, Vec4};
-use engine_core::{Clear, GpuBits, ViewLayer};
-use engine_places_rendering::shadows::{
-    CasterMap, KeptRefresh, Refresh, Region as MapView, SHADOW_REGIONS,
-};
+use std::ops::Range;
 
-use crate::atlas::AtlasLayout;
-use crate::constants::{LEVEL_BAND, LEVEL_BEFORE, LEVEL_WINDOW, LEVEL_WORDS};
-use crate::gpu_layouts::{CasterCull, CasterMode, ComposeData, Route, ShadowPiece};
-use crate::shadow_fit::{
-    ClipPlan, Clipmap, LightBasis, MapRegion, MovingTile, Region, region_tiles,
-};
+use engine_core::glam::{Mat4, Vec3, Vec4};
+use engine_core::{Clear, ViewLayer};
+use engine_places_rendering::shadows::{CasterMap, KeptRefresh, Refresh, Region as MapView};
+
+use crate::gpu_layouts::{ComposeData, ShadowLevel};
+use crate::levels::{Level, Levels, Rect};
 use crate::sky::{RESOLUTION, SkyDraw};
 
 const NORMAL_OFFSET_TEXELS: f32 = 0.5;
 const SLOPE_LIMIT_TEXELS: f32 = 16.0;
-const REGIONS: usize = SHADOW_REGIONS as usize;
 
 pub(crate) struct Placed {
     pub(crate) clip: Mat4,
     pub(crate) target: ViewLayer,
     pub(crate) clear: Clear,
-}
-
-pub(crate) struct FrameRegions<'a> {
-    pub(crate) basis: LightBasis,
-    pub(crate) clipmap: &'a Clipmap,
-    pub(crate) plan: &'a ClipPlan,
-    pub(crate) layout: AtlasLayout,
 }
 
 fn planes(rows: [Vec3; 3], rect: [f32; 4], depth: f32) -> [[f32; 4]; 6] {
@@ -44,249 +31,133 @@ fn planes(rows: [Vec3; 3], rect: [f32; 4], depth: f32) -> [[f32; 4]; 6] {
     ]
 }
 
-impl FrameRegions<'_> {
-    fn region_clip(&self, region: &Region) -> Mat4 {
-        MapRegion {
-            rect: region.rect,
-            depth: region.depth,
-        }
-        .clip(&self.basis)
+fn level_view(level: &Level, rect: Rect, map: CasterMap, sample_texels: f32) -> MapView {
+    MapView {
+        view: level.clip(rect),
+        map,
+        refresh: Refresh::Kept(KeptRefresh {
+            planes: planes(level.basis.rows, level.light_rect(rect), level.band()[1]),
+            texel: level.texel,
+            finest_spacing: sample_texels * level.texel,
+        }),
     }
+}
 
-    fn tile_clip(&self, tile: &MovingTile) -> Mat4 {
-        MapRegion {
-            rect: self.clipmap.tile_rect(tile.level, tile.tile),
-            depth: self.clipmap.band(tile.level),
-        }
-        .clip(&self.basis)
+pub(crate) fn views(
+    levels: &Levels,
+    (moving, side, sample_texels): (u32, u32, f32),
+    sky: Option<&SkyDraw>,
+    (views, placed): (&mut Vec<MapView>, &mut Vec<Placed>),
+) {
+    views.clear();
+    placed.clear();
+    for (layer, region) in (0_u32..).zip(&levels.regions) {
+        let level = levels.level(region.level);
+        let [x0, y0, x1, y1] = region.rect;
+        views.push(level_view(level, region.rect, CasterMap::Region, sample_texels));
+        placed.push(Placed {
+            clip: level.clip(region.rect),
+            target: ViewLayer {
+                layer,
+                rect: [0, 0, (x1 - x0) as u32, (y1 - y0) as u32],
+            },
+            clear: Clear::DepthOnly,
+        });
     }
-
-    fn moving_clip(&self, tile: &MovingTile) -> (Mat4, [f32; 4]) {
-        let (width, height) = self.layout.size();
-        let (width, height) = (width as f32, height as f32);
-        let side = self.layout.slot as f32;
-        let slot = self
-            .layout
-            .texels(self.layout.still + u32::from(tile.index));
-        let clip = self.tile_clip(tile);
-        let onto = Mat4::from_cols(
-            Vec4::new(side / width, 0.0, 0.0, 0.0),
-            Vec4::new(0.0, side / height, 0.0, 0.0),
-            Vec4::Z,
-            Vec4::new(
-                (2.0 * slot[0] + side) / width - 1.0,
-                1.0 - (2.0 * slot[1] + side) / height,
-                0.0,
-                1.0,
-            ),
-        );
-        (onto * clip, slot)
+    for (layer, level) in (levels.len() as u32..).zip(levels.iter().take(moving as usize)) {
+        views.push(level_view(level, level.wanted, CasterMap::Moving, sample_texels));
+        placed.push(Placed {
+            clip: level.clip(level.wanted),
+            target: ViewLayer {
+                layer,
+                rect: [0, 0, side, side],
+            },
+            clear: Clear::DepthOnly,
+        });
     }
-
-    pub(crate) fn placed(&self, (side, sky): (u32, Option<&SkyDraw>), out: &mut Vec<Placed>) {
-        out.clear();
-        out.extend(
-            (0_u32..)
-                .zip(&self.plan.regions)
-                .map(|(layer, region)| Placed {
-                    clip: self.region_clip(region),
-                    target: ViewLayer {
-                        layer,
-                        rect: [0, 0, side, side],
-                    },
-                    clear: Clear::DepthOnly,
-                }),
-        );
-        let slot = self.layout.slot;
-        out.extend(self.plan.moving.iter().map(|tile| {
-            let [x, y, _, _] = self
-                .layout
-                .texels(self.layout.still + u32::from(tile.index));
-            Placed {
-                clip: self.tile_clip(tile),
-                target: ViewLayer {
-                    layer: 0,
-                    rect: [x as u32, y as u32, slot, slot],
-                },
-                clear: Clear::Nothing,
-            }
-        }));
-        out.extend(sky.map(|draw| Placed {
+    if let Some(draw) = sky {
+        let rows = draw.rows.map(|row| Vec4::from_array(row).truncate());
+        views.push(MapView {
+            view: draw.clip,
+            map: CasterMap::Sky,
+            refresh: Refresh::Kept(KeptRefresh {
+                planes: planes(rows, draw.rect, draw.depth),
+                texel: 0.0,
+                finest_spacing: 0.0,
+            }),
+        });
+        placed.push(Placed {
             clip: draw.clip,
             target: ViewLayer {
                 layer: draw.layer as u32,
                 rect: [0, 0, RESOLUTION, RESOLUTION],
             },
             clear: Clear::DepthOnly,
-        }));
+        });
     }
+}
 
-    pub(crate) fn views(
-        &self,
-        (sky, sample_texels): (Option<&SkyDraw>, f32),
-        out: &mut Vec<MapView>,
-    ) {
-        out.clear();
-        let shift = self.basis.shift;
-        for region in &self.plan.regions {
-            let [x0, y0, x1, y1] = region.rect;
-            let rect = [x0 - shift.x, y0 - shift.y, x1 - shift.x, y1 - shift.y];
-            out.push(MapView {
-                view: self.region_clip(region),
-                map: CasterMap::Region,
-                refresh: Refresh::Kept(KeptRefresh {
-                    planes: planes(self.basis.rows, rect, region.depth[1] - shift.z),
-                    texel: region.texel,
-                    finest_spacing: sample_texels * region.texel,
-                }),
-            });
-        }
-        for tile in &self.plan.moving {
-            let [x0, y0, x1, y1] = self.clipmap.tile_rect(tile.level, tile.tile);
-            let rect = [x0 - shift.x, y0 - shift.y, x1 - shift.x, y1 - shift.y];
-            let depth = self.clipmap.band(tile.level);
-            let texel = self.clipmap.texel(tile.level);
-            out.push(MapView {
-                view: self.moving_clip(tile).0,
-                map: CasterMap::Moving,
-                refresh: Refresh::Kept(KeptRefresh {
-                    planes: planes(self.basis.rows, rect, depth[1] - shift.z),
-                    texel,
-                    finest_spacing: sample_texels * texel,
-                }),
-            });
-        }
-        if let Some(draw) = sky {
-            let rows = draw.rows.map(|row| Vec4::from_array(row).truncate());
-            out.push(MapView {
-                view: draw.clip,
-                map: CasterMap::Sky,
-                refresh: Refresh::Kept(KeptRefresh {
-                    planes: planes(rows, draw.rect, draw.depth),
-                    texel: 0.0,
-                    finest_spacing: 0.0,
-                }),
-            });
-        }
-    }
+fn pieces(from: i32, to: i32, side: i32) -> impl Iterator<Item = (i32, i32, i32)> {
+    let start = from.rem_euclid(side);
+    let first = (to - from).min(side - start);
+    [(start, 0, first), (0, first, to - from - first)]
+        .into_iter()
+        .filter(|&(_, _, length)| length > 0)
+}
 
-    pub(crate) fn routes(&self, routes: &mut Vec<Route>) {
-        routes.clear();
-        routes.resize(self.layout.moving.max(1) as usize, Route::zeroed());
-        for tile in &self.plan.moving {
-            let (clip, slot) = self.moving_clip(tile);
-            if let Some(route) = routes.get_mut(usize::from(tile.index)) {
-                *route = Route {
-                    clip: clip.to_cols_array_2d(),
-                    slot,
-                };
+pub(crate) fn composes(
+    levels: &Levels,
+    side: u32,
+    (out, ranges): (&mut Vec<ComposeData>, &mut Vec<(u32, Range<u32>)>),
+) {
+    let span = side as i32;
+    let ndc = |at: i32| at as f32 / side as f32 * 2.0 - 1.0;
+    let mut listed: Vec<(u32, ComposeData)> = Vec::new();
+    for (index, region) in (0_i32..).zip(&levels.regions) {
+        let [x0, y0, x1, y1] = region.rect;
+        for (dx, sx, wide) in pieces(x0, x1, span) {
+            for (dy, sy, high) in pieces(y0, y1, span) {
+                listed.push((
+                    region.level as u32,
+                    ComposeData {
+                        place: [ndc(dx), -ndc(dy), ndc(dx + wide), -ndc(dy + high)],
+                        source: [index, sx - dx, sy - dy, 0],
+                    },
+                ));
             }
         }
     }
-
-    pub(crate) fn composes(&self, tile_texels: u32, out: &mut Vec<ComposeData>) {
-        out.clear();
-        let square = region_tiles(tile_texels);
-        for compose in &self.plan.composes {
-            let place = self.layout.texels(u32::from(compose.slot));
-            let first = [
-                compose.at[0] * tile_texels,
-                (square - 1 - compose.at[1]) * tile_texels,
-            ];
-            out.push(ComposeData {
-                place,
-                source: [
-                    i32::from(compose.region),
-                    first[0] as i32 - place[0] as i32,
-                    first[1] as i32 - place[1] as i32,
-                    0,
-                ],
-            });
+    listed.sort_by_key(|&(level, _)| level);
+    out.clear();
+    ranges.clear();
+    for (at, (level, compose)) in (0_u32..).zip(listed) {
+        match ranges.last_mut() {
+            Some((last, range)) if *last == level => range.end = at + 1,
+            Some(_) | None => ranges.push((level, at..at + 1)),
         }
+        out.push(compose);
     }
+}
 
-    pub(crate) fn cull(&self, sky: Option<&SkyDraw>) -> CasterCull {
-        let mut regions = [[0.0; 4]; REGIONS];
-        let mut region_depths = [[0.0; 4]; REGIONS];
-        for (index, region) in self.plan.regions.iter().enumerate() {
-            regions[index] = region.rect;
-            region_depths[index] = [region.depth[1], 0.0, 0.0, 0.0];
-        }
-        let (width, height) = self.layout.size();
-        let mut cull = CasterCull {
-            light: self.basis.words(),
-            regions,
-            region_depths,
-            counts: [
-                self.plan.regions.len() as u32,
-                self.clipmap.len() as u32,
-                self.clipmap.mask_words() as u32,
-                self.clipmap.side(),
+pub(crate) fn level_data(levels: &Levels, moving: u32, out: &mut Vec<ShadowLevel>) {
+    out.clear();
+    for (index, level) in (0_u32..).zip(levels.iter()) {
+        let depth = level.depth_span();
+        out.push(ShadowLevel {
+            rows: level.rows(),
+            window: level.window.map(|at| at as f32),
+            band: [
+                level.texel,
+                1.0 / depth,
+                level.texel * NORMAL_OFFSET_TEXELS,
+                SLOPE_LIMIT_TEXELS * level.texel / depth,
             ],
-            moving: [self.layout.still, self.plan.moving.len() as u32, 0, 0],
-            mode: [0; 4],
-            sky: [[0.0; 4]; 3],
-            sky_rect: [0.0; 4],
-            sky_depths: [0.0; 4],
-            atlas: [2.0 / width as f32, 2.0 / height as f32, 0.0, 0.0],
-        };
-        if let Some(draw) = sky {
-            cull.sky = draw.rows;
-            cull.sky_rect = draw.rect;
-            cull.sky_depths = [draw.depth, 0.0, 0.0, 0.0];
-            cull.mode[0] = CasterMode { sky_refresh: true }.pack();
-        }
-        cull
-    }
-
-    pub(crate) fn lookup_piece(
-        &self,
-        (tile_texels, sample_texels): (u32, f32),
-        (shown, sky): (u32, [f32; 4]),
-    ) -> ShadowPiece {
-        let (width, height) = self.layout.size();
-        let levels = self.clipmap.len();
-        ShadowPiece {
-            light: self.basis.words(),
-            before: self.clipmap.before().unwrap_or(self.basis).words(),
-            state: [1.0, 0.0, shown as f32, 0.0],
-            level_state: [
-                levels as f32,
-                self.clipmap.texel(0),
-                tile_texels as f32,
-                sample_texels,
+            moving: [
+                level.wanted[0] as f32,
+                level.wanted[1] as f32,
+                if index < moving { 1.0 } else { 0.0 },
+                0.0,
             ],
-            atlas: [
-                self.clipmap.side() as f32,
-                self.layout.per_row as f32,
-                1.0 / width as f32,
-                1.0 / height as f32,
-            ],
-            sky,
-        }
-    }
-
-    pub(crate) fn levels(&self, out: &mut Vec<[u32; LEVEL_WORDS as usize]>) {
-        out.clear();
-        for level in 0..self.clipmap.len() {
-            let texel = self.clipmap.texel(level);
-            let band = |[near, far]: [f32; 2]| {
-                let depth = engine_core::math::max(far - near, 1.0e-6);
-                [
-                    near,
-                    1.0 / depth,
-                    texel * NORMAL_OFFSET_TEXELS,
-                    SLOPE_LIMIT_TEXELS * texel / depth,
-                ]
-                .map(f32::to_bits)
-            };
-            let mut words = [0; LEVEL_WORDS as usize];
-            words[LEVEL_WINDOW as usize..][..4]
-                .copy_from_slice(&self.clipmap.window(level).map(f32::to_bits));
-            words[LEVEL_BAND as usize..][..4].copy_from_slice(&band(self.clipmap.band(level)));
-            words[LEVEL_BEFORE as usize..][..4]
-                .copy_from_slice(&band(self.clipmap.band_before(level)));
-            out.push(words);
-        }
+        });
     }
 }

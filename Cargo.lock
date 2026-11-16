@@ -1119,28 +1119,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "engine_auto_exposure"
-version = "0.1.0"
-dependencies = [
- "engine_core",
- "engine_ecs",
- "engine_math",
- "engine_places_rendering",
- "engine_render",
- "engine_sources",
-]
-
-[[package]]
-name = "engine_bloom"
-version = "0.1.0"
-dependencies = [
- "engine_core",
- "engine_ecs",
- "engine_render",
- "engine_sources",
-]
-
-[[package]]
 name = "engine_cards"
 version = "0.1.0"
 dependencies = [
@@ -2060,8 +2038,6 @@ dependencies = [
  "engine_ambient_occlusion",
  "engine_animation",
  "engine_audio",
- "engine_auto_exposure",
- "engine_bloom",
  "engine_core",
  "engine_debug_view",
  "engine_dither",

@@ -17,20 +17,17 @@ use super::hash;
 const TRACE: &str = "target/pure/caches-trace.txt";
 const FIXTURE: &str = "web/scripts/fixtures/terrain.scene.json";
 const FRAMES: u32 = 400;
-const FIELDS: [&str; 29] = [
+const FIELDS: [&str; 25] = [
     "terrains",
     "resident_tiles",
     "loading_tiles",
     "missing_tiles",
-    "waiting_tiles",
     "cached_tiles",
     "cached_bytes",
     "restored_tiles",
     "prefetching_tiles",
     "rewatered_tiles",
     "stale_water_tiles",
-    "settled_records",
-    "settling_records",
     "shaded_tiles",
     "shading_records",
     "tile_cut",
@@ -45,7 +42,6 @@ const FIELDS: [&str; 29] = [
     "bridges",
     "tunnels",
     "falls",
-    "white_water",
     "surroundings_tiles",
 ];
 

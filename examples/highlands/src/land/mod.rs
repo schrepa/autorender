@@ -1,10 +1,12 @@
+use std::sync::Arc;
+
 use engine::collections::HashMap;
 use engine::host::Image;
 
 use engine::bricks::parse_value_at;
 use engine::prelude::*;
 use engine::{Error, ErrorCode, Expected};
-use engine_core::{BASE_COLOR_MAP, NORMAL_MAP, RecordExchange};
+use engine_core::{BASE_COLOR_MAP, NORMAL_MAP, RecordExchange, content_hash};
 use engine_places::surface::{
     METALLIC_ROUGHNESS_MAP, METALNESS, OCCLUSION, OCCLUSION_MAP, ROUGHNESS,
 };
@@ -16,22 +18,53 @@ use crate::records;
 
 pub type RockMaps = HashMap<String, Image>;
 
+pub type GroundFiles = HashMap<&'static str, Arc<[u8]>>;
+
+#[derive(Default)]
+pub struct WaterMaps {
+    pub foam: Option<Image>,
+    pub ripples: Option<Image>,
+}
+
 const BOULDER_SCAN_TILING: f32 = 1.8;
 const WALL_SCAN_TILING: f32 = 2.5;
 
 const ROCK_GROUND: &str = "rock";
 
-const GROUNDS: [&str; 9] = [
+macro_rules! grounds {
+    ($($kind:literal),* $(,)?) => {
+        const GROUNDS: [&str; GROUND_FILES.len() / 9] = [$($kind),*];
+
+        pub const GROUND_FILES: [&str; 108] = [$(
+            concat!("highlands/ground/", $kind, "_albedo.png"),
+            concat!("highlands/ground/", $kind, "_normal.png"),
+            concat!("highlands/ground/", $kind, "_orm.png"),
+            concat!("highlands/ground/", $kind, "_mid_albedo.png"),
+            concat!("highlands/ground/", $kind, "_mid_normal.png"),
+            concat!("highlands/ground/", $kind, "_mid_orm.png"),
+            concat!("highlands/ground/", $kind, "_far_albedo.png"),
+            concat!("highlands/ground/", $kind, "_far_normal.png"),
+            concat!("highlands/ground/", $kind, "_far_orm.png"),
+        )*];
+    };
+}
+
+grounds!(
     "grass",
     "dry_grass",
     "dirt",
-    ROCK_GROUND,
+    "rock",
     "snow",
     "sand",
     "gravel",
     "cobble",
     "scree",
-];
+    "forest_floor",
+    "moss",
+    "cliff",
+);
+
+const GROUND_RUNGS: [&str; 3] = ["", "_mid", "_far"];
 
 const GROUND_MAPS: [(&str, TextureUsage); 3] = [
     ("albedo", TextureUsage::Color),
@@ -40,6 +73,11 @@ const GROUND_MAPS: [(&str, TextureUsage); 3] = [
 ];
 
 const ROCK_TINT: [f32; 3] = [0.74, 0.7, 0.64];
+
+const WATER_FOAM: &str = "water_foam";
+const FLAT_FOAM: [u8; 4] = [128, 255, 128, 128];
+const WATER_RIPPLES: &str = "water_ripples";
+const FLAT_RIPPLES: [u8; 4] = [128, 128, 128, 128];
 
 const CAVE_MOUTH: &str = "cave_mouth";
 
@@ -95,27 +133,80 @@ fn world_mapped(material: Material, tiling: f32, top: TopLayer) -> engine::Resul
     Ok(material)
 }
 
-pub(crate) fn provide(world: &mut World, files: &RockMaps) -> engine::Result<()> {
+pub(crate) fn provide(
+    world: &mut World,
+    files: &RockMaps,
+    water: WaterMaps,
+    ground_files: &GroundFiles,
+) -> engine::Result<()> {
     world.insert_resource(ProvidedAssets::default());
     control(world, HighlandsControl::Land)?;
+    let hashed = |paths: &[&'static str]| {
+        let mut hashes = Vec::with_capacity(16 * paths.len());
+        for &path in paths {
+            let hash = ground_files.get(path).map_or(0, |file| content_hash(file));
+            hashes.extend_from_slice(&hash.to_le_bytes());
+        }
+        content_hash(&hashes)
+    };
+    let kinds = GROUND_FILES.as_chunks::<9>().0;
+    let fine: Vec<&'static str> = kinds.iter().flat_map(|paths| &paths[..3]).copied().collect();
+    let content = hashed(&fine);
     let grounds = world.resource_scope(|world, mut records: Mut<RecordExchange>| {
         let mut assets = world.resource_mut::<AssetLibrary>();
         GROUNDS
             .iter()
-            .map(|&name| ground_textures((&mut records, &mut assets), name))
+            .zip(kinds)
+            .map(|(&name, paths)| {
+                let mut sets = Vec::with_capacity(GROUND_RUNGS.len());
+                for (rung, paths) in GROUND_RUNGS.iter().zip(paths.as_chunks::<3>().0) {
+                    let files = paths.map(|path| ground_files.get(path).cloned());
+                    if !rung.is_empty() && files.iter().all(Option::is_none) {
+                        sets.push(Vec::new());
+                        continue;
+                    }
+                    let (set, content) = if rung.is_empty() {
+                        (name.to_owned(), content)
+                    } else {
+                        (format!("{name}{rung}"), hashed(paths))
+                    };
+                    sets.push(ground_textures(
+                        (&mut records, &mut assets),
+                        (&set, content),
+                        (paths, files),
+                    )?);
+                }
+                Ok(sets)
+            })
             .collect::<engine::Result<Vec<_>>>()
     })?;
     let mut provided = world.resource::<ProvidedAssets>().clone();
     let mut rock = Vec::new();
-    for (&name, textures) in GROUNDS.iter().zip(grounds) {
-        for (&(map, _), &texture) in GROUND_MAPS.iter().zip(&textures) {
-            provided.provide_texture(format!("{name}_{map}"), texture);
+    for (&name, sets) in GROUNDS.iter().zip(grounds) {
+        for (rung, textures) in GROUND_RUNGS.iter().zip(&sets) {
+            for (&(map, _), &texture) in GROUND_MAPS.iter().zip(textures) {
+                provided.provide_texture(format!("{name}_{map}{rung}"), texture);
+            }
         }
         if name == ROCK_GROUND {
-            rock = textures;
+            rock = sets.into_iter().next().unwrap_or_default();
         }
     }
     let mut assets = world.resource_mut::<AssetLibrary>();
+    for (name, flat, image) in [
+        (WATER_FOAM, FLAT_FOAM, water.foam),
+        (WATER_RIPPLES, FLAT_RIPPLES, water.ripples),
+    ] {
+        let image = image.unwrap_or_else(|| Image {
+            width: 1,
+            height: 1,
+            pixels: flat.to_vec(),
+        });
+        let texture = Texture::from_rgba(image.width, image.height, image.pixels)
+            .map_err(|error| error.within(&format!("$.{name}")))?
+            .with_color_space(ColorSpace::Linear);
+        provided.provide_texture(name, assets.insert_texture(texture)?);
+    }
     let material = match scanned(&mut assets, files, "boulder", BOULDER_SCAN_TILING, MOSS)? {
         Some(scan) => scan,
         None => in_terrain_rock(&rock, ([0.8, 0.77, 0.72], 0.85), 3.0, MOSS)?,
@@ -204,14 +295,21 @@ fn scene_layer<'a>(
 
 fn ground_textures(
     (records, assets): (&mut RecordExchange, &mut AssetLibrary),
-    name: &'static str,
+    (name, content): (&str, u128),
+    (paths, files): (&[&'static str; 3], [Option<Arc<[u8]>>; 3]),
 ) -> engine::Result<Vec<TextureHandle>> {
+    let maps: Vec<ground::Map> = paths
+        .iter()
+        .zip(files)
+        .zip(&GROUND_MAPS)
+        .map(|((&path, file), &(_, usage))| ground::Map { path, file, usage })
+        .collect();
     records::textures(
         (records, assets),
         crate::jobs::SOURCE.hash(),
-        format!("highlands/{name}"),
+        format!("highlands/ground/{content:032x}/{name}"),
         &GROUND_MAPS,
-        move || ground::sources(name).map_err(|error| error.to_string()),
+        move || ground::sources(&maps),
     )
 }
 

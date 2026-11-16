@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use engine_core::{AssetLibrary, ColorSpace, Error, Texture, TextureFormat, TextureHandle};
+use engine_core::{
+    AssetLibrary, ColorSpace, Error, ProvidedAssets, Texture, TextureFormat, TextureHandle,
+};
 use engine_open_world_kit::ground::{SurfaceMaps, TerrainTiles};
 use engine_places::surface::{METALLIC_ROUGHNESS_MAP, OCCLUSION_MAP, SurfaceValues};
 use engine_render::{Allocation, Install, Lifetime, Prepare, Sampler, wgpu};
@@ -18,6 +20,14 @@ fn array_space(array: usize) -> ColorSpace {
 type LayerKey = [Option<TextureHandle>; 3];
 
 const DEFAULTS: [[u8; 4]; 3] = [[255; 4], [128, 128, 255, 255], [255, 255, 255, 128]];
+
+const RUNG_NAMES: [&str; 2] = ["_mid", "_far"];
+const TILINGS: [&str; 2] = ["mid_tiling", "far_tiling"];
+const SOFT_DEPTH: &str = "soft_depth";
+const HEIGHT_DEVIATION: &str = "height_deviation";
+const SITE_SHIFT: &str = "site_shift";
+const UPRIGHT: &str = "upright";
+const STRATA: [&str; 3] = ["strata", "strata_ledge", "strata_thickness"];
 
 const BC7_DEFAULTS: [[u8; 16]; 3] = [
     [
@@ -55,6 +65,9 @@ pub(crate) struct TerrainMaps {
     layers: Vec<LayerKey>,
     listed: Vec<LayerKey>,
     listing: Vec<LayerKey>,
+    fine: Vec<LayerKey>,
+    coarser: Vec<[LayerKey; 2]>,
+    provided: ProvidedAssets,
     pub(crate) materials: u32,
     pub(crate) size: (u32, u32),
     pub(crate) dropped: u32,
@@ -78,6 +91,12 @@ pub(crate) struct MapMaterial {
     pub packed: bool,
     pub occlusion_strength: f32,
     pub metalness: f32,
+    pub tilings: [f32; 2],
+    pub soft_depth: f32,
+    pub height_deviation: f32,
+    pub site_shift: f32,
+    pub upright: f32,
+    pub strata: [f32; 3],
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -106,6 +125,9 @@ impl TerrainMaps {
             layers: Vec::new(),
             listed: Vec::new(),
             listing: Vec::new(),
+            fine: Vec::new(),
+            coarser: Vec::new(),
+            provided: ProvidedAssets::default(),
             materials: 1,
             size: (1, 1),
             dropped: 0,
@@ -119,6 +141,33 @@ impl TerrainMaps {
             .iter()
             .position(|layer| *layer == key)
             .map(|layer| layer as u32)
+    }
+
+    fn rung_keys(&self, fine: LayerKey, assets: &AssetLibrary) -> [LayerKey; 2] {
+        let Some(at) = self.fine.iter().position(|held| *held == fine) else {
+            return [fine; 2];
+        };
+        let mut finer = fine;
+        self.coarser[at].map(|named| {
+            let held = named.map(|handle| handle.filter(|&handle| assets.texture(handle).is_some()));
+            if held != [None; 3] {
+                finer = held;
+            }
+            finer
+        })
+    }
+
+    pub(crate) fn rungs(&self, maps: &SurfaceMaps, assets: &AssetLibrary) -> [Option<u32>; 2] {
+        let fine = key(maps, assets);
+        let [mid, far] = self.rung_keys(fine, assets);
+        let held = |key: LayerKey| {
+            self.layers
+                .iter()
+                .position(|layer| *layer == key)
+                .map(|layer| layer as u32)
+        };
+        let mid = held(mid).or_else(|| held(fine));
+        [mid, held(far).or(mid)]
     }
 
     pub(crate) fn means(&self, layer: u32) -> Means {
@@ -141,13 +190,19 @@ impl TerrainMaps {
             packed,
             occlusion_strength: surface.occlusion_strength,
             metalness: surface.metalness,
+            tilings: TILINGS.map(|name| amount(material.value(name))),
+            soft_depth: amount(material.value(SOFT_DEPTH)),
+            height_deviation: amount(material.value(HEIGHT_DEVIATION)),
+            site_shift: amount(material.value(SITE_SHIFT)),
+            upright: engine_math::min(amount(material.value(UPRIGHT)), 1.0),
+            strata: STRATA.map(|name| amount(material.value(name))),
         })
     }
 
     pub(crate) fn prepare(
         &mut self,
         cx: &mut Prepare<'_, TerrainGpu>,
-        (tiles, assets): (&TerrainTiles, &AssetLibrary),
+        (tiles, assets, provided): (&TerrainTiles, &AssetLibrary, &ProvidedAssets),
     ) {
         if !self.filled {
             self.defaults(cx);
@@ -166,39 +221,52 @@ impl TerrainMaps {
                 self.listing.push(key);
             }
         }
+        if self.listing != self.fine || *provided != self.provided {
+            self.coarser = self
+                .listing
+                .iter()
+                .map(|&fine| coarser(fine, provided))
+                .collect();
+            self.fine.clone_from(&self.listing);
+            self.provided.clone_from(provided);
+        }
+        for at in 0..self.fine.len() {
+            for key in self.rung_keys(self.fine[at], assets) {
+                if !self.listing.contains(&key) {
+                    self.listing.push(key);
+                }
+            }
+        }
         if self.listing == self.listed {
             return;
         }
-        let listed: Vec<(LayerKey, &SurfaceMaps)> = self
-            .listing
-            .iter()
-            .filter_map(|&wanted| Some((wanted, every().find(|maps| key(maps, assets) == wanted)?)))
-            .collect();
         self.listed.clone_from(&self.listing);
         let features = self.features;
-        let shape = listed
+        let shape = self
+            .listing
             .iter()
-            .find_map(|(_, maps)| shape_of(maps, assets, features));
-        let kept: Vec<&SurfaceMaps> = listed
+            .find_map(|&key| shape_of(key, assets, features));
+        let kept: Vec<LayerKey> = self
+            .listing
             .iter()
-            .filter(|(_, maps)| shape.is_some() && shape_of(maps, assets, features) == shape)
-            .map(|(_, maps)| *maps)
+            .copied()
+            .filter(|&key| shape.is_some() && shape_of(key, assets, features) == shape)
             .collect();
-        self.dropped = (listed.len() - kept.len()) as u32;
-        self.layers = kept.iter().map(|maps| key(maps, assets)).collect();
-        self.means = kept.iter().map(|maps| means(maps, assets)).collect();
+        self.dropped = (self.listing.len() - kept.len()) as u32;
+        self.means = kept.iter().map(|&key| means(key, assets)).collect();
         match shape.filter(|_| !kept.is_empty()) {
             Some(shape) => self.fill(cx, (&kept, assets), shape),
             None => self.defaults(cx),
         }
         self.materials = kept.len().max(1) as u32;
         self.size = shape.map_or((1, 1), |shape| shape.size);
+        self.layers = kept;
     }
 
     fn fill(
         &self,
         cx: &mut Prepare<'_, TerrainGpu>,
-        (kept, assets): (&[&SurfaceMaps], &AssetLibrary),
+        (kept, assets): (&[LayerKey], &AssetLibrary),
         shape: Shape,
     ) {
         let count = kept.len() as u32;
@@ -250,14 +318,14 @@ impl TerrainMaps {
 fn write_array(
     cx: &mut Prepare<'_, TerrainGpu>,
     (texture, array): (engine_render::Texture<TerrainGpu>, usize),
-    (kept, assets): (&[&SurfaceMaps], &AssetLibrary),
+    (kept, assets): (&[LayerKey], &AssetLibrary),
     shape: Shape,
 ) {
     let format = shape.formats[array];
-    for (layer, maps) in kept.iter().enumerate() {
+    for (layer, &key) in kept.iter().enumerate() {
         let layer = layer as u32;
         let places = [(0, layer), (1, 2 * layer), (1, 2 * layer + 1)];
-        for (default, (source, (held, at))) in textures(maps, assets).iter().zip(places).enumerate()
+        for (default, (source, (held, at))) in textures(key, assets).iter().zip(places).enumerate()
         {
             if held != array {
                 continue;
@@ -273,8 +341,8 @@ fn write_array(
     }
 }
 
-fn shape_of(maps: &SurfaceMaps, assets: &AssetLibrary, features: wgpu::Features) -> Option<Shape> {
-    let textures = textures(maps, assets);
+fn shape_of(key: LayerKey, assets: &AssetLibrary, features: wgpu::Features) -> Option<Shape> {
+    let textures = textures(key, assets);
     let first = textures.iter().flatten().next()?;
     let size = (first.width(), first.height());
     let levels = first.levels().len();
@@ -319,9 +387,9 @@ fn solid_level(format: TextureFormat, size: (u32, u32), level: u32, default: usi
     block.repeat(format.level_bytes(width, height) / 16)
 }
 
-fn means(maps: &SurfaceMaps, assets: &AssetLibrary) -> Means {
+fn means(key: LayerKey, assets: &AssetLibrary) -> Means {
     let [base_color, normal, metallic_roughness] =
-        textures(maps, assets).map(|texture| texture.and_then(|texture| texture.summary()));
+        textures(key, assets).map(|texture| texture.and_then(|texture| texture.summary()));
     let middle = f32::from(DEFAULTS[2][3]) / 255.0;
     Means {
         color: base_color.map_or([1.0; 3], |summary| summary.color),
@@ -330,6 +398,10 @@ fn means(maps: &SurfaceMaps, assets: &AssetLibrary) -> Means {
         slopes: normal.map_or(0.0, |summary| averaged_slopes(summary.mean)),
         height: metallic_roughness.map_or(middle, |summary| summary.mean[3]),
     }
+}
+
+fn amount(value: Option<f32>) -> f32 {
+    engine_math::max(value.unwrap_or(0.0), 0.0)
 }
 
 fn averaged_slopes(channels: [f32; 4]) -> f32 {
@@ -344,7 +416,16 @@ fn key(maps: &SurfaceMaps, assets: &AssetLibrary) -> LayerKey {
         .map(|handle| handle.filter(|&handle| assets.texture(handle).is_some()))
 }
 
-fn textures<'a>(maps: &SurfaceMaps, assets: &'a AssetLibrary) -> [Option<&'a Arc<Texture>>; 3] {
-    [maps.base_color, maps.normal, maps.metallic_roughness]
-        .map(|handle| handle.and_then(|handle| assets.texture(handle)))
+fn coarser(fine: LayerKey, provided: &ProvidedAssets) -> [LayerKey; 2] {
+    let names = fine.map(|handle| {
+        let handle = handle?;
+        provided
+            .texture_names()
+            .find(|name| provided.texture(name) == Some(handle))
+    });
+    RUNG_NAMES.map(|rung| names.map(|name| provided.texture(&format!("{}{rung}", name?))))
+}
+
+fn textures(key: LayerKey, assets: &AssetLibrary) -> [Option<&Arc<Texture>>; 3] {
+    key.map(|handle| handle.and_then(|handle| assets.texture(handle)))
 }

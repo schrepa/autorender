@@ -98,5 +98,4 @@ pub struct CasterRoutes;
 
 impl Slot for CasterRoutes {
     const NAME: &'static str = "caster_routes";
-    const WGSL: Option<&'static str> = Some(include_str!("places/caster_routes.wgsl"));
 }

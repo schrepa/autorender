@@ -1,6 +1,6 @@
 import package::engine::drawn::{INPUT_BATCH, INPUT_SLOT};
 import package::engine::geometry::declarations::{AffinePose, faded_slot_slot};
-import package::engine::view::{camera, view_clip};
+import package::engine::view::{camera, fade_noise, view_clip};
 import package::face::impostors::{impostor_albedo, impostor_basis, impostor_flags_hemisphere,
     impostor_frame_direction, impostor_frames, impostor_grid, impostor_levels, impostor_size};
 import package::scatter::faces::placed_tiles::placed_impostor;
@@ -62,7 +62,9 @@ fn fs_impostor_card(input: CardOutput) {
     let inset = 0.5 * exp2(ceil(level)) / size;
     let uv = clamp(input.uv, cell + inset, cell + span - inset);
     let coverage = impostor_albedo(uv, input.frame.x, level).a;
-    if coverage * (1.0 + 0.25 * level) < 0.5 {
+    let footprint = floor(input.uv * size * exp2(-floor(level)));
+    let cut = mix(0.5, fade_noise(footprint), saturate(level));
+    if !(coverage > cut) {
         discard;
     }
 }

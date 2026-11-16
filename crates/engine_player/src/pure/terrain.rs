@@ -24,15 +24,12 @@ use engine_terrain_shading::jobs::lighting::{self, Ground};
 use engine_terrain_shading::jobs::{
     BOUNCE, BounceJob, LIGHTING, LightingJob, MACRO_COLORS, MacroJob, bounce, macro_colors,
 };
-use engine_water::jobs::{PARTS, WaterJob};
-use engine_water::{SettleRegion, SettleStart, WaterPart};
 use glam::Vec2;
 use serde_json::json;
 
 const FIXTURE: &str = "web/scripts/fixtures/terrain.scene.json";
 const ENTITY: &str = "ground";
 const SLICE: u64 = 4096;
-const WATER_CELL: f32 = 8.0;
 const PINNED: u32 = 2;
 const SKY_TEXELS: u32 = 256;
 const HORIZON_TEXELS: u32 = 128;
@@ -44,7 +41,6 @@ pub const KINDS: &[&JobKind] = &[
     &LIGHTING,
     &BOUNCE,
     &MACRO_COLORS,
-    &PARTS,
     &PORTALS,
 ];
 
@@ -300,49 +296,6 @@ pub fn run(session: &mut dyn PureSession) -> Result<(), String> {
     session.record(
         "walk",
         json!({"points": found.points.len(), "length": found.length, "level": found.level}),
-    );
-
-    let watered = engine_water::watered_tiles(&baked, &pyramid);
-    let key = *watered
-        .first()
-        .ok_or("the fixture's bake waters no finest tile")?;
-    let region = SettleRegion::alone(&pyramid, key, WATER_CELL);
-    let mut parts = Vec::new();
-    for tile in region.reached(&pyramid) {
-        let input = WaterJob {
-            recipe: shared.hash(),
-            key: tile,
-            stamps: Vec::new(),
-            solids: Vec::new(),
-            cell: WATER_CELL,
-        }
-        .input();
-        let bytes = session.run(&PARTS, &input)?;
-        let same = session.sliced(&PARTS, &input, SLICE)? == bytes;
-        session.check(same, &|| {
-            format!(
-                "the water's part of {} run a slice at a time differs",
-                name(tile)
-            )
-        });
-        session.hash(&format!("water part {}", name(tile)), &bytes);
-        parts.push(engine_water::jobs::water_output(&bytes).map_err(|error| error.to_string())?);
-    }
-    let parts: Vec<&WaterPart> = parts.iter().collect();
-    let start = SettleStart::assemble(&baked, &pyramid, &region, &parts, None)
-        .map_err(|error| error.to_string())?;
-    session.record(
-        "water start",
-        json!({
-            "watered tiles": watered.len(),
-            "tile": name(key),
-            "parts": parts.len(),
-            "cells": start.stored.cells,
-            "stored blocks": start.stored.stored(),
-            "sources": start.sources.len(),
-            "datum": start.datum,
-            "cook regions": engine_water::settle_regions(&baked, &pyramid, WATER_CELL).len(),
-        }),
     );
 
     let pack = pack(&records, session)?;

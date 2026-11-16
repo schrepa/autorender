@@ -34,7 +34,7 @@ fn water_sun(world: vec3<f32>, normal: vec3<f32>) -> u32 {
 
 fn debug_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt) -> DebugTargets {
     let bed = point - vec3<f32>(0.0, at.depth, 0.0);
-    let shade = shade_water(point, pixel, at, water_face(point, at, bed),
+    let shade = shade_water(pixel, at, water_face(point, at, bed),
         WaterBehind(vec3<f32>(0.0), bed), vec2<f32>(0.0));
     if shade.coverage < 0.5 && piece().debug.x == 0u { // optics: water covers as its shading sees it
         discard;
@@ -58,6 +58,9 @@ fn debug_water(point: vec3<f32>, pixel: vec2<f32>, at: WaterAt) -> DebugTargets 
 
 @fragment
 fn fs_debug_water(input: WaterOutput) -> DebugTargets {
+    if input.depth <= 0.0 {
+        discard;
+    }
     use_terrain(input.terrain);
     let at = water_drawn(input.relative);
     return debug_water(water_on_surface(input.relative, at), input.clip_position.xy, at);

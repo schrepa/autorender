@@ -10,7 +10,7 @@ mod settings;
 
 use bevy_ecs::prelude::*;
 use engine_core::{Brick, Bricks, Schedule, Source, gpu_struct};
-use engine_places_rendering::occlusion::{AmbientVisibility, OcclusionSource};
+use engine_places_rendering::occlusion::AmbientVisibility;
 use engine_render::RenderBricks;
 
 pub use settings::{AmbientOcclusion, AmbientOcclusionStats};
@@ -19,7 +19,6 @@ gpu_struct! {
     #[derive(Resource)]
     pub struct AmbientPiece {
         pub occlusion: [f32; 4],
-        pub canopy: [f32; 4],
     }
 }
 
@@ -41,14 +40,9 @@ impl Brick for AmbientOcclusionBrick {
     }
 }
 
-fn publish_piece(
-    ambient: Res<AmbientOcclusion>,
-    source: Res<OcclusionSource>,
-    mut piece: ResMut<AmbientPiece>,
-) {
+fn publish_piece(ambient: Res<AmbientOcclusion>, mut piece: ResMut<AmbientPiece>) {
     piece.set_if_neq(AmbientPiece {
         occlusion: [ambient.radius, ambient.intensity, 0.0, 1.0],
-        canopy: [source.texel_share, 0.0, 0.0, 0.0],
     });
 }
 

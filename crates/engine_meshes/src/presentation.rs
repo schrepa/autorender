@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     AssetLibrary, AssetResidency, Cursor, FrameId, GeometryHandle, MaterialHandle, MeshResidence,
-    Readable, Readback, ResidentMesh,
+    Readable, Readback, ResidentMesh, kept_levels,
 };
 use engine_places::meshes::LastLevel;
 use engine_render::UploadRange;
@@ -168,10 +168,14 @@ pub(crate) struct Draws {
     pub items: Vec<DrawItem>,
 }
 
+fn kept(mesh: Option<&ResidentMesh>) -> impl Iterator<Item = (u32, u32, f32)> + '_ {
+    let lods = mesh.map_or(&[][..], ResidentMesh::lods);
+    kept_levels(lods.len(), LOD_LEVELS as usize - 1).map(move |level| lods[level])
+}
+
 fn drawn_levels(mesh: Option<&ResidentMesh>) -> u8 {
-    let plan = mesh.map_or(&[][..], ResidentMesh::plan);
-    let lods = plan.iter().take(LOD_LEVELS as usize - 1);
-    lods.enumerate()
+    kept(mesh)
+        .enumerate()
         .filter(|(_, lod)| lod.1 != 0)
         .fold(1, |levels, (lod, _)| levels | (1 << (lod + 1)))
 }
@@ -240,6 +244,7 @@ pub(crate) struct DrawGroups {
     pub slot_staging: Vec<CandidateData>,
     pub slot_positions: Vec<u32>,
     pub batch_staging: Vec<BatchData>,
+    pub batch_sent: Vec<BatchData>,
 }
 
 impl DrawGroups {
@@ -344,15 +349,12 @@ fn batch_record(
     (first_instance, capacity): (bool, usize),
 ) -> BatchData {
     let first_index = mesh.map_or(0, ResidentMesh::first_index);
-    let plan = mesh.map_or(&[][..], ResidentMesh::plan);
-    let lods = plan.len().min(LOD_LEVELS as usize - 1);
-    let lod = |level: usize| {
-        plan[..lods]
-            .get(level)
-            .map_or((0, 0, 0.0), |&(offset, count, error)| {
-                (first_index + offset, count, error)
-            })
-    };
+    let mut picked = [(0, 0, 0.0); LOD_LEVELS as usize - 1];
+    let mut lods = 0;
+    for (slot, (offset, count, error)) in picked.iter_mut().zip(kept(mesh)) {
+        *slot = (first_index + offset, count, error);
+        lods += 1;
+    }
     BatchData {
         start: batch.instances.start,
         count: batch.instances.end - batch.instances.start,
@@ -366,8 +368,8 @@ fn batch_record(
             0
         },
         first_plane: if first_instance { capacity as u32 } else { 0 },
-        lod_ranges: [lod(0).0, lod(0).1, lod(1).0, lod(1).1],
-        lod_errors: [lod(0).2, lod(1).2, (1 + lods) as f32, last.error],
+        lod_ranges: [picked[0].0, picked[0].1, picked[1].0, picked[1].1],
+        lod_errors: [picked[0].2, picked[1].2, (1 + lods) as f32, last.error],
         bounds_min: bounds.0.extend(0.0).to_array(),
         bounds_max: bounds.1.extend(0.0).to_array(),
     }
@@ -381,19 +383,17 @@ pub(crate) struct FrameState {
     pub color_staging: Vec<ColorData>,
     pub color_ranges: Vec<UploadRange>,
     pub color_bits: Vec<u64>,
+    pub color_slots: Vec<u32>,
     pub colors_seen: Cursor,
     pub colors_library: Option<(u64, u64)>,
-    pub prepared_at: Option<f32>,
-    pub faded_at: Option<f32>,
     pub draws: Draws,
     pub groups: DrawGroups,
-    pub fade_slots: u64,
     pub fading_capacity: usize,
     pub frame: Option<crate::layouts::PresentationFrame>,
     pub candidates: u32,
     pub occlusion: bool,
-    pub lod: bool,
     pub views: Vec<ViewSlot>,
+    pub view_frames: Vec<crate::layouts::PresentationFrame>,
     pub instance_count: usize,
     pub watched: Option<u32>,
 }

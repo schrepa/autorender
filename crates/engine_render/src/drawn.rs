@@ -29,7 +29,7 @@ const PREVIOUS_POSE_ROW: &str = "memory.gpu_previous_pose_bytes";
 const NODE_LEVELS: usize = MAX_HIERARCHY_DEPTH + 1;
 const PYRAMID_LEVELS: usize = 16;
 const PYRAMID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
-const NODE_BYTES: usize = 2 * size_of::<NodePose>() + size_of::<NodeInfo>() + size_of::<PoseRows>();
+const WRITE_CALL_BYTES: usize = 4_096;
 
 const VARS: &str = "struct DrawnPose {
     row_0: vec4<f32>,
@@ -558,6 +558,7 @@ struct Nodes {
     capacity: usize,
     composed_capacity: usize,
     parent_capacity: usize,
+    parents_sent: Vec<u32>,
     level_ranges: Vec<(u32, u32)>,
     seen: Cursor,
     whole: bool,
@@ -573,7 +574,7 @@ struct Occlusion {
     first: ComputePipeline<DrawnGpu>,
     down: Vec<ComputePipeline<DrawnGpu>>,
     test: ComputePipeline<DrawnGpu>,
-    written: Vec<(u32, u32)>,
+    written: Vec<[u32; 4]>,
     running: bool,
 }
 
@@ -596,6 +597,12 @@ pub(crate) struct DrawnGpu {
     pose: ComputePipeline<Self>,
     pipeline: ComputePipeline<Self>,
     seen: Cursor,
+    slot_bits: Vec<u64>,
+    slot_ranges: Vec<UploadRange>,
+    entries: Vec<CullView>,
+    views_sent: Vec<CullView>,
+    words_sent: u32,
+    frame_sent: DrawnFrame,
     stride: usize,
     slots: u32,
     groups: [u32; 3],
@@ -612,6 +619,41 @@ fn storage_bytes(bytes: u64) -> u64 {
 
 fn grow(needed: usize) -> usize {
     needed.max(1_024).next_power_of_two()
+}
+
+fn merged(ranges: &[UploadRange], size: usize) -> impl Iterator<Item = UploadRange> + '_ {
+    let mut at = 0;
+    std::iter::from_fn(move || {
+        let mut range = *ranges.get(at)?;
+        at += 1;
+        while let Some(next) = ranges.get(at)
+            && (next.start - range.end).saturating_mul(size) <= WRITE_CALL_BYTES
+        {
+            range.end = next.end;
+            at += 1;
+        }
+        Some(range)
+    })
+}
+
+fn write_ranges<T: bytemuck::Pod>(
+    cx: &mut Prepare<'_, DrawnGpu>,
+    (buffer, base): (Buffer<DrawnGpu>, u64),
+    (data, per): (&[T], usize),
+    ranges: &[UploadRange],
+) -> (u64, u32) {
+    let size = per * size_of::<T>();
+    let (mut bytes, mut writes) = (0, 0);
+    for range in merged(ranges, size) {
+        cx.write(
+            buffer,
+            base + (range.start * size) as u64,
+            &data[range.start * per..range.end * per],
+        );
+        bytes += ((range.end - range.start) * size) as u64;
+        writes += 1;
+    }
+    (bytes, writes)
 }
 
 fn rasterized(facts: &ViewFacts) -> Mat4 {
@@ -633,11 +675,11 @@ fn absolute(view_projection: Mat4) -> [[f32; 4]; 4] {
 }
 
 fn cull_views(
-    views: &Views,
-    passes: Option<&ScenePasses>,
+    (views, passes): (&Views, Option<&ScenePasses>),
     plan: &CullPlan,
     levels: u32,
-) -> Vec<CullView> {
+    entries: &mut Vec<CullView>,
+) {
     let listed = passes.map_or(&[][..], ScenePasses::listed);
     let main = listed
         .iter()
@@ -645,47 +687,43 @@ fn cull_views(
         .filter_map(|scene| scene.bit)
         .fold(0, |mask, bit| mask | bit.mask().word());
     let facts = views.listed();
-    let mut entries: Vec<CullView> = views
-        .drawn()
-        .iter()
-        .enumerate()
-        .map(|(index, view)| {
-            let owned = view.owner.is_some();
-            let placed = if owned {
-                view.view_projection
-            } else {
-                facts
-                    .get(view.local as usize)
-                    .map_or(view.view_projection, rasterized)
-            };
-            let planes = match view.planes {
-                Some(planes) if owned => planes,
-                Some(_) | None => frustum_planes(placed).map(|plane| plane.to_array()),
-            };
-            let occluding = index == 0 && levels != 0;
-            CullView {
-                planes,
-                absolute: absolute(placed),
-                rasterized: placed.to_cols_array_2d(),
-                view_projection: view.view_projection.to_cols_array_2d(),
-                eye: view.eye.extend(0.0).to_array(),
-                viewport: [
-                    view.size.x as f32,
-                    view.size.y as f32,
-                    if occluding { levels as f32 } else { 0.0 },
-                    0.0,
-                ],
-                passes: if view.draws { view.passes.word() } else { 0 },
-                layers: view.layers.0,
-                takes: view.takes.map_or(0, |mobility| mobility as u32 + 1),
-                owned: u32::from(owned),
-                frustum: u32::from(owned || (plan.frustum && frustum_bounded(placed))),
-                subpixel: u32::from(owned || plan.subpixel),
-                occlusion: u32::from(occluding),
-                pad: 0,
-            }
-        })
-        .collect();
+    entries.clear();
+    for (index, view) in views.drawn().iter().enumerate() {
+        let owned = view.owner.is_some();
+        let placed = if owned {
+            view.view_projection
+        } else {
+            facts
+                .get(view.local as usize)
+                .map_or(view.view_projection, rasterized)
+        };
+        let planes = match view.planes {
+            Some(planes) if owned => planes,
+            Some(_) | None => frustum_planes(placed).map(|plane| plane.to_array()),
+        };
+        let occluding = index == 0 && levels != 0;
+        entries.push(CullView {
+            planes,
+            absolute: absolute(placed),
+            rasterized: placed.to_cols_array_2d(),
+            view_projection: view.view_projection.to_cols_array_2d(),
+            eye: view.eye.extend(0.0).to_array(),
+            viewport: [
+                view.size.x as f32,
+                view.size.y as f32,
+                if occluding { levels as f32 } else { 0.0 },
+                0.0,
+            ],
+            passes: if view.draws { view.passes.word() } else { 0 },
+            layers: view.layers.0,
+            takes: view.takes.map_or(0, |mobility| mobility as u32 + 1),
+            owned: u32::from(owned),
+            frustum: u32::from(owned || (plan.frustum && frustum_bounded(placed))),
+            subpixel: u32::from(owned || plan.subpixel),
+            occlusion: u32::from(occluding),
+            pad: 0,
+        });
+    }
     if entries.is_empty() {
         entries.push(CullView {
             passes: main,
@@ -693,7 +731,6 @@ fn cull_views(
             ..CullView::default()
         });
     }
-    entries
 }
 
 impl DrawnGpu {
@@ -715,30 +752,25 @@ impl DrawnGpu {
         if records.is_empty() {
             return;
         }
-        let range = match (fresh, changes) {
-            (true, _) | (false, Since::All) => 0..records.len(),
-            (false, Since::Listed(changed)) => {
-                let (low, high) = changed.iter().fold((usize::MAX, 0), |(low, high), &slot| {
-                    (low.min(slot as usize), high.max(slot as usize + 1))
-                });
-                low..high.min(records.len())
-            }
+        let count = records.len();
+        self.slot_ranges.clear();
+        match (fresh, changes) {
             (false, Since::Same) => return,
-        };
-        if range.is_empty() {
-            return;
+            (false, Since::Listed(changed))
+                if changed.iter().all(|&slot| (slot as usize) < count) =>
+            {
+                listed_ranges(changed, count, &mut self.slot_bits, &mut self.slot_ranges);
+            }
+            (true, _) | (false, Since::All | Since::Listed(_)) => {
+                self.slot_ranges.push(UploadRange {
+                    start: 0,
+                    end: count,
+                });
+            }
         }
-        cx.write(
-            self.records,
-            (range.start * size_of::<DrawnRecord>()) as u64,
-            &records[range.clone()],
-        );
+        write_ranges(cx, (self.records, 0), (records, 1), &self.slot_ranges);
         if stride > 0 {
-            cx.write(
-                self.values,
-                (range.start * stride * 16) as u64,
-                &table.values()[range.start * stride..range.end * stride],
-            );
+            write_ranges(cx, (self.values, 0), (table.values(), stride), &self.slot_ranges);
         }
     }
 
@@ -792,7 +824,7 @@ impl DrawnGpu {
         poses: &DrawnPoses,
         streams: &NodeStreams<'_>,
         cx: &mut Prepare<'_, Self>,
-    ) -> Option<(bool, u64)> {
+    ) -> Option<(bool, u64, u32)> {
         let count = streams.info.len();
         self.ensure_nodes(count, streams.parents.len(), cx);
         let held = &mut self.nodes;
@@ -817,46 +849,47 @@ impl DrawnGpu {
                 true
             }
         };
-        let pose = size_of::<NodePose>();
-        let previous = (held.capacity * pose) as u64;
-        let mut bytes = 0;
-        for range in &held.ranges {
-            let (start, end) = (range.start, range.end);
-            bytes += ((end - start) * NODE_BYTES) as u64;
-            cx.write(
-                held.locals,
-                (start * pose) as u64,
-                &streams.current[start..end],
-            );
-            cx.write(
-                held.locals,
-                previous + (start * pose) as u64,
-                &streams.previous[start..end],
-            );
-            cx.write(
-                held.info,
-                (start * size_of::<NodeInfo>()) as u64,
-                &streams.info[start..end],
-            );
-            cx.write(
-                held.authority,
-                (start * size_of::<PoseRows>()) as u64,
-                &streams.authority[start..end],
-            );
+        let previous = (held.capacity * size_of::<NodePose>()) as u64;
+        let ranges = &held.ranges;
+        let sent = [
+            write_ranges(cx, (held.locals, 0), (streams.current, 1), ranges),
+            write_ranges(cx, (held.locals, previous), (streams.previous, 1), ranges),
+            write_ranges(cx, (held.info, 0), (streams.info, 1), ranges),
+            write_ranges(cx, (held.authority, 0), (streams.authority, 1), ranges),
+        ];
+        let (mut bytes, mut writes) = (0, 0);
+        for (more, calls) in sent {
+            bytes += more;
+            writes += calls;
         }
-        if !streams.parents.is_empty() {
+        if whole {
+            held.parents_sent.clear();
+            held.level_ranges.clear();
+        }
+        if !streams.parents.is_empty() && held.parents_sent.as_slice() != streams.parents {
             cx.write(held.parents, 0, streams.parents);
+            held.parents_sent.clear();
+            held.parents_sent.extend_from_slice(streams.parents);
+            writes += 1;
         }
-        held.level_ranges.clear();
         let mut start = 0;
-        for &end in streams.levels {
-            held.level_ranges.push((start, end));
+        for (level, &end) in streams.levels.iter().enumerate() {
+            let range = (start, end);
             start = end;
+            if held.level_ranges.get(level) == Some(&range) {
+                continue;
+            }
+            if level < NODE_LEVELS {
+                cx.write(held.levels[level], 0, &[range.0, range.1, 0, 0]);
+                writes += 1;
+            }
+            match held.level_ranges.get_mut(level) {
+                Some(known) => *known = range,
+                None => held.level_ranges.push(range),
+            }
         }
-        for (level, &(start, end)) in held.level_ranges.iter().enumerate().take(NODE_LEVELS) {
-            cx.write(held.levels[level], 0, &[start, end, 0, 0]);
-        }
-        Some((full, bytes))
+        held.level_ranges.truncate(streams.levels.len());
+        Some((full, bytes, writes))
     }
 
     fn prepare_poses(
@@ -938,16 +971,21 @@ impl DrawnGpu {
             },
             count,
         );
-        occlusion.written.clear();
         for (level, extent) in pyramid_extents((render.x, render.y), count)
-            .iter()
+            .into_iter()
             .enumerate()
         {
             let buffer = occlusion.extents[level];
-            let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, 16);
-            cx.write(buffer, 0, extent);
-            occlusion.written.push((extent[0], extent[1]));
+            let fresh = cx.allocate_buffer(buffer, 16) == Allocation::Fresh;
+            if fresh || occlusion.written.get(level) != Some(&extent) {
+                cx.write(buffer, 0, &extent);
+            }
+            match occlusion.written.get_mut(level) {
+                Some(known) => *known = extent,
+                None => occlusion.written.push(extent),
+            }
         }
+        occlusion.written.truncate(count as usize);
         cx.run(occlusion.pass);
         count
     }
@@ -1085,6 +1123,7 @@ impl GpuPart for DrawnGpu {
             capacity: 0,
             composed_capacity: 0,
             parent_capacity: 0,
+            parents_sent: Vec::new(),
             level_ranges: Vec::new(),
             seen: Cursor::default(),
             whole: false,
@@ -1168,6 +1207,12 @@ impl GpuPart for DrawnGpu {
             pose,
             pipeline,
             seen: Cursor::default(),
+            slot_bits: Vec::new(),
+            slot_ranges: Vec::new(),
+            entries: Vec::new(),
+            views_sent: Vec::new(),
+            words_sent: 0,
+            frame_sent: DrawnFrame::default(),
             stride: 0,
             slots: 0,
             groups: [0; 3],
@@ -1193,9 +1238,10 @@ impl GpuPart for DrawnGpu {
         let motion = self.prepare_poses((&*table, main), slots, cx);
         let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.marks, slots * 4);
         let levels = self.prepare_occlusion(main, (plan.occlusion, slots), cx);
-        let entries = cull_views(&views, passes.as_deref(), &plan, levels);
+        cull_views((&views, passes.as_deref()), &plan, levels, &mut self.entries);
+        let listed = self.entries.len();
         let words = (count as u32).div_ceil(SLOT_BITS).max(1);
-        let bytes = (1 + u64::from(words) * entries.len() as u64) * 4;
+        let bytes = (1 + u64::from(words) * listed as u64) * 4;
         if limits.storage_room != 0 && bytes > limits.storage_room {
             cx.refuse(
                 Error::new(ErrorCode::BindingLimit, "$.drawn.views")
@@ -1204,35 +1250,44 @@ impl GpuPart for DrawnGpu {
             );
             return;
         }
-        let (Allocation::Fresh | Allocation::Kept) =
-            cx.allocate_buffer(self.views, (entries.len() * size_of::<CullView>()) as u64);
-        cx.write(self.views, 0, &entries);
-        let (Allocation::Fresh | Allocation::Kept) =
-            cx.allocate_buffer(self.culled, bytes.next_power_of_two());
-        cx.write(self.culled, 0, &[words]);
+        let fresh = cx.allocate_buffer(self.views, (listed * size_of::<CullView>()) as u64)
+            == Allocation::Fresh;
+        if fresh
+            || bytemuck::cast_slice::<CullView, u8>(&self.entries)
+                != bytemuck::cast_slice::<CullView, u8>(&self.views_sent)
+        {
+            cx.write(self.views, 0, &self.entries);
+            std::mem::swap(&mut self.entries, &mut self.views_sent);
+        }
+        let fresh = cx.allocate_buffer(self.culled, bytes.next_power_of_two()) == Allocation::Fresh;
+        if fresh || self.words_sent != words {
+            cx.write(self.culled, 0, &[words]);
+            self.words_sent = words;
+        }
         self.slots = count as u32;
-        let (Allocation::Fresh | Allocation::Kept) =
-            cx.allocate_buffer(self.frame, size_of::<DrawnFrame>() as u64);
-        cx.write(
-            self.frame,
-            0,
-            &[DrawnFrame {
-                alpha: streams.alpha,
-                capacity: self.nodes.capacity as u32,
-                nodes: streams.info.len() as u32,
-                slots: self.slots,
-                views: entries.len() as u32,
-                motion: u32::from(motion),
-                pad_0: 0,
-                pad_1: 0,
-            }],
-        );
-        self.groups = [words.div_ceil(CULL_GROUP), entries.len() as u32, 1];
+        let fresh =
+            cx.allocate_buffer(self.frame, size_of::<DrawnFrame>() as u64) == Allocation::Fresh;
+        let frame = DrawnFrame {
+            alpha: streams.alpha,
+            capacity: self.nodes.capacity as u32,
+            nodes: streams.info.len() as u32,
+            slots: self.slots,
+            views: listed as u32,
+            motion: u32::from(motion),
+            pad_0: 0,
+            pad_1: 0,
+        };
+        if fresh || bytemuck::bytes_of(&frame) != bytemuck::bytes_of(&self.frame_sent) {
+            cx.write(self.frame, 0, &[frame]);
+            self.frame_sent = frame;
+        }
+        self.groups = [words.div_ceil(CULL_GROUP), listed as u32, 1];
         cx.run(self.cull);
         if engine_core::profile::active() {
             use engine_core::profile::counter;
-            let (full, bytes) = uploaded.unwrap_or((false, 0));
+            let (full, bytes, writes) = uploaded.unwrap_or((false, 0, 0));
             counter("render.gpu_node_upload_bytes", bytes as f64);
+            counter("render.gpu_node_upload_writes", f64::from(writes));
             counter("render.gpu_full_node_upload", f64::from(u8::from(full)));
             counter(
                 "render.gpu_parent_levels",
@@ -1278,7 +1333,7 @@ impl GpuPart for DrawnGpu {
 impl DrawnGpu {
     fn encode_occlusion(&self, cx: &mut Encode<'_, Self>) {
         let occlusion = &self.occlusion;
-        for (index, &(width, height)) in occlusion.written.iter().enumerate() {
+        for (index, &[width, height, _, _]) in occlusion.written.iter().enumerate() {
             let pipeline = match index.checked_sub(1) {
                 None => &occlusion.first,
                 Some(down) => match occlusion.down.get(down) {

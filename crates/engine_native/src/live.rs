@@ -43,7 +43,11 @@ pub(crate) struct LiveProfile {
 
 impl LiveProfile {
     pub(crate) fn start<G: Game>(host: &mut GameHost<G>, folder: PathBuf) -> engine::Result<Self> {
-        let threads = SampledThread::current("Main thread").into_iter().collect();
+        let threads = SampledThread::current("Main thread").map_or_else(Vec::new, |main| {
+            std::iter::once(main)
+                .chain(engine_profiler::sampler::announced_threads())
+                .collect()
+        });
         let capture = DeepCapture::start(host, threads, engine::profiling::MAX_EVENTS)?;
         Ok(Self {
             capture,

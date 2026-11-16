@@ -15,8 +15,10 @@ use std::sync::Arc;
 
 use engine_codec::{Codec, Reader, Writer};
 use engine_core::{Brick, Bricks, Error, InvalidSetting, Source, parse_value};
+use engine_heightfield::hydrology::RIVER_FAR;
 use engine_heightfield::layer::{
-    LayerFiles, LayerKind, Made, Place, TerrainLayer, maps, no_files, no_points, same_as,
+    Below, LayerFiles, LayerKind, Made, Place, Row, TerrainLayer, maps, no_files, no_points,
+    same_as,
 };
 use engine_heightfield::{
     GivenRiver, HydrologyBake, INVALID_TERRAIN, Layers, MISSING_LAYER, Pyramid, TileHeights,
@@ -28,6 +30,10 @@ use serde_json::Value;
 
 pub use given::RiversLayer;
 pub use hydrology::HydrologyLayer;
+
+pub const BEND: &str = "bend";
+pub const ABOVE: &str = "above";
+pub const HARDNESS: &str = "hardness";
 
 pub struct LayerHydrologyBrick;
 
@@ -96,7 +102,32 @@ impl TerrainLayer for HydrologyStage {
     }
 
     fn outputs(&self) -> Vec<String> {
-        maps::WATER.iter().map(|name| (*name).to_owned()).collect()
+        (maps::WATER.iter().copied())
+            .chain([BEND, ABOVE])
+            .map(str::to_owned)
+            .collect()
+    }
+
+    fn map_row(
+        &self,
+        name: &str,
+        _below: Below<'_>,
+        row: &Row<'_>,
+        heights: &[f32],
+        out: &mut [f32],
+    ) -> bool {
+        let (Some(baked), true) = (&self.baked, name == BEND || name == ABOVE) else {
+            return false;
+        };
+        for ((value, &x), &height) in out.iter_mut().zip(row.xs).zip(heights) {
+            *value = match baked.rivers.bank_at(x, row.z, row.spacing) {
+                Some((outer, _)) if name == BEND => outer,
+                Some((_, water)) if water.is_finite() => height - water,
+                Some(_) | None if name == BEND => 0.0,
+                Some(_) | None => RIVER_FAR,
+            };
+        }
+        true
     }
 
     fn needs_bake(&self) -> bool {

@@ -78,11 +78,12 @@ pub(crate) struct CardGpu {
     fading: Form<Self>,
     inputs: PerPass<DrawInput<Self, Scene>>,
     drawn: bool,
+    uploaded: bool,
 }
 
 impl GpuPart for CardGpu {
     type Reads = (
-        Query<'static, 'static, &'static ImpostorRecords, With<MeshCards>>,
+        Query<'static, 'static, Ref<'static, ImpostorRecords>, With<MeshCards>>,
         Res<'static, CullPlan>,
     );
     const NAME: &'static str = "mesh_cards";
@@ -127,6 +128,7 @@ impl GpuPart for CardGpu {
             fading,
             inputs,
             drawn: false,
+            uploaded: false,
         })
     }
 
@@ -135,10 +137,12 @@ impl GpuPart for CardGpu {
         (records, plan): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
+        let records = records.single().ok();
         let held = records
-            .single()
+            .as_ref()
             .map_or(&[][..], |records| records.records.as_slice());
         self.drawn = held.iter().any(ImpostorRecord::framed);
+        self.uploaded &= records.as_ref().is_some_and(|records| !records.is_changed());
         let sizes = [
             (
                 self.records,
@@ -148,12 +152,17 @@ impl GpuPart for CardGpu {
             (self.late_args, DRAW_ARGS),
         ];
         for (buffer, bytes) in sizes {
-            let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, bytes);
+            if cx.allocate_buffer(buffer, bytes) == Allocation::Fresh && buffer == self.records {
+                self.uploaded = false;
+            }
         }
         if !self.drawn {
             return;
         }
-        cx.write(self.records, 0, held);
+        if !self.uploaded {
+            cx.write(self.records, 0, held);
+            self.uploaded = true;
+        }
         cx.run(self.counted);
         if plan.occlusion {
             cx.run(self.late_counted);

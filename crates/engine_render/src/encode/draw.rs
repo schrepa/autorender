@@ -232,6 +232,7 @@ impl Run {
             sets,
             assets,
             frames,
+            bound,
             ..
         } = self;
         let parity = frames.parity;
@@ -240,6 +241,10 @@ impl Run {
         let built = &machine.pipelines[pipeline as usize];
         let chosen = &built.ready[ready];
         let render = &mut open.pass;
+        if open.set.pipeline.is_none() {
+            bound.vertex.clear();
+            bound.index = None;
+        }
         if open.set.pipeline != Some((pipeline, chosen.key)) {
             render.set_pipeline(&chosen.made);
             open.set.pipeline = Some((pipeline, chosen.key));
@@ -322,11 +327,11 @@ impl Run {
                 let indexed = index_input(input, indices)?;
                 for (slot, (stream, _)) in vertices.listed().iter().enumerate() {
                     let buffer = bound_input(input, *stream)?;
-                    render.set_vertex_buffer(slot as u32, buffer.slice(..));
+                    bound.vertex_buffer(render, slot as u32, buffer, 0);
                 }
                 match indexed {
                     Some(indices) => {
-                        render.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+                        bound.index_buffer(render, indices);
                         timed_draw(render, timed, |render| {
                             render.draw_indexed(elements, 0, instances)
                         });
@@ -345,11 +350,11 @@ impl Run {
                 let indexed = index_input(input, indices)?;
                 for (slot, (stream, _)) in vertices.listed().iter().enumerate() {
                     let buffer = bound_input(input, *stream)?;
-                    render.set_vertex_buffer(slot as u32, buffer.slice(..));
+                    bound.vertex_buffer(render, slot as u32, buffer, 0);
                 }
                 match indexed {
                     Some(indices) => {
-                        render.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+                        bound.index_buffer(render, indices);
                         timed_draw(render, timed, |render| {
                             render.draw_indexed_indirect(args, offset)
                         });
@@ -367,11 +372,11 @@ impl Run {
                 let indexed = index_input(input, indices)?;
                 for (slot, (stream, start)) in vertices.listed().iter().enumerate() {
                     let buffer = bound_input(input, *stream)?;
-                    render.set_vertex_buffer(slot as u32, buffer.slice(*start..));
+                    bound.vertex_buffer(render, slot as u32, buffer, *start);
                 }
                 match indexed {
                     Some(indices) => {
-                        render.set_index_buffer(indices.slice(..), wgpu::IndexFormat::Uint32);
+                        bound.index_buffer(render, indices);
                         timed_draw(render, timed, |render| {
                             render.draw_indexed_indirect(args, offset)
                         });
@@ -397,16 +402,16 @@ impl Run {
                     open.set.material = Some(material);
                     open.set.own[1] = None;
                 }
-                let bound = geometry.iter().filter_map(|&stream| draw.stream(stream));
-                for (slot, buffer) in bound.enumerate() {
-                    render.set_vertex_buffer(slot as u32, buffer.slice(..));
+                let buffers = geometry.iter().filter_map(|&stream| draw.stream(stream));
+                for (slot, buffer) in buffers.enumerate() {
+                    bound.vertex_buffer(render, slot as u32, buffer, 0);
                 }
                 for (at, (stream, start)) in streams.listed().iter().enumerate() {
                     let buffer = bound_input(input, *stream)?;
                     let slot = geometry_slots + at as u32;
-                    render.set_vertex_buffer(slot, buffer.slice(*start..));
+                    bound.vertex_buffer(render, slot, buffer, *start);
                 }
-                render.set_index_buffer(draw.indices.slice(..), wgpu::IndexFormat::Uint32);
+                bound.index_buffer(render, draw.indices);
                 timed_draw(render, timed, |render| {
                     render.draw_indexed_indirect(args, offset)
                 });
@@ -426,11 +431,11 @@ impl Run {
                     open.set.material = Some(material);
                     open.set.own[1] = None;
                 }
-                let bound = geometry.iter().filter_map(|&stream| draw.stream(stream));
-                for (slot, buffer) in bound.enumerate() {
-                    render.set_vertex_buffer(slot as u32, buffer.slice(..));
+                let buffers = geometry.iter().filter_map(|&stream| draw.stream(stream));
+                for (slot, buffer) in buffers.enumerate() {
+                    bound.vertex_buffer(render, slot as u32, buffer, 0);
                 }
-                render.set_index_buffer(draw.indices.slice(..), wgpu::IndexFormat::Uint32);
+                bound.index_buffer(render, draw.indices);
                 let indices = draw.first_index..draw.first_index + draw.index_count;
                 timed_draw(render, timed, |render| {
                     render.draw_indexed(indices, draw.base_vertex, instances)

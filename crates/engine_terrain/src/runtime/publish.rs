@@ -137,6 +137,7 @@ fn entry_of(
         pixel_error: settings.pixel_error,
         level_errors: Arc::from(state.store.errors()),
         surface_program: state.programmed().is_some(),
+        site_ranges: state.current.site().map(|site| site.ranges),
         baked: (state.around.is_none() && terrains.bake_asked(state.entity))
             .then(|| terrains.layers(state.entity))
             .flatten(),

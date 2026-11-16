@@ -6,12 +6,14 @@ use glam::{Vec2, Vec3};
 
 use crate::WaterPoint;
 use crate::state::SurfaceTerrain;
+use crate::waves::Swell;
 
 const SHEET: f32 = 1.0;
 
 pub(crate) fn water_at(
     terrains: &[SurfaceTerrain],
     baking: &[(Vec3, Pyramid)],
+    swell: &Swell,
     point: Vec3,
 ) -> GroundRead<Option<WaterSample>> {
     let mut answer = GroundRead::Off;
@@ -19,11 +21,14 @@ pub(crate) fn water_at(
         let origin = terrain.origin;
         let local = point - origin;
         let read = water_point(terrain, Vec2::new(local.x, local.z));
-        let held = read.ready().flatten().map(|water| WaterSample {
-            surface: water.surface,
-            depth: water.depth,
-            velocity: [water.flow.x, 0.0, water.flow.y],
-            falling: false,
+        let held = read.ready().flatten().map(|water| {
+            let wave = swell.height([point.x, point.z], water.depth, water.flow.length());
+            WaterSample {
+                surface: water.surface + wave,
+                depth: max(water.depth + wave, 0.0),
+                velocity: [water.flow.x, 0.0, water.flow.y],
+                falling: false,
+            }
         });
         let found = [held, fall(&terrain.falls, local)]
             .into_iter()

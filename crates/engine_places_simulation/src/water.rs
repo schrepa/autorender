@@ -11,21 +11,6 @@ pub struct WaterObstacle {
     pub center: Vec3,
     pub axes: Mat3,
     pub round: bool,
-    pub velocity: Vec3,
-}
-
-impl WaterObstacle {
-    pub fn reach(&self) -> Vec3 {
-        let rows = self.axes.transpose();
-        let along = |row: Vec3| {
-            if self.round {
-                row.length()
-            } else {
-                row.abs().element_sum()
-            }
-        };
-        Vec3::new(along(rows.x_axis), along(rows.y_axis), along(rows.z_axis))
-    }
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]

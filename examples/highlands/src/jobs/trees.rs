@@ -1,562 +1,342 @@
-use std::f32::consts::{FRAC_PI_2, TAU};
-use std::sync::{Arc, OnceLock};
-
-use engine_cards::{AlphaImage, Cards, trim_cards};
-use engine_core::{
-    AssetLibrary, Error, Mesh, MeshVertex, RecordExchange, TextureHandle, TextureSet,
-    TextureSource, TextureUsage, math,
-};
-use glam::{Vec2, Vec3};
+use engine_core::{Error, ErrorCode, Mesh, math};
+use glam::Vec3;
 
 use super::random::{golden_hash, unit};
+use super::sprigs::{Atlas, DETAILS, Foliage, Sprig};
+use super::wood::{End, Ring, Wood};
+use super::{broadleaf, conifers, deadwood};
 
-pub(crate) const DETAIL_LEVELS: usize = DETAILS.len();
+const HEADER: usize = 12;
 
-pub(crate) fn bark_atlas(
-    records: &mut RecordExchange,
-    assets: &mut AssetLibrary,
-) -> Result<TextureHandle, Error> {
-    let set = TextureSet {
-        source: super::SOURCE.hash(),
-        name: "highlands/bark_atlas".into(),
-        textures: vec![("atlas".to_owned(), TextureUsage::Color)],
-        make: Arc::new(|| {
-            Ok::<_, String>(vec![TextureSource {
-                width: ATLAS,
-                height: ATLAS,
-                pixels: texels().to_vec(),
-                usage: TextureUsage::Color,
-            }])
-        }),
-    };
-    let handles = records.textures(assets, set)?;
-    Ok(handles[0])
+const BASE: [f32; 5] = [-0.5, 0.0, 0.18, 0.4, 0.8];
+
+const FLARE_HEIGHT: f32 = 0.35;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Kind {
+    Spruce,
+    Pine,
+    Birch,
+    Shrub,
+    Snag,
+    Log,
+    Stump,
 }
 
-fn texels() -> &'static [u8] {
-    static TEXELS: OnceLock<Vec<u8>> = OnceLock::new();
-    TEXELS.get_or_init(atlas)
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Age {
+    Young,
+    Grown,
+    Old,
 }
 
-const ATLAS: u32 = 512;
-
-const CUTOFF: f32 = 0.5;
-
-const BARK: [f32; 2] = [0.01, 0.49];
-const BARK_MIDDLE: [f32; 2] = [0.5 * (BARK[0] + BARK[1]), 0.5];
-const SPRAY: [f32; 2] = [0.75, 0.235];
-const SPRAY_SPAN: [f32; 2] = [0.99, 0.01];
-
-const CROWN_NORMAL: f32 = 0.7;
-const LEAN: f32 = 0.55;
-
-const FRONT: [u32; 6] = [0, 1, 2, 1, 3, 2];
-const BACK: [u32; 6] = [0, 2, 1, 1, 2, 3];
-
-const SPACING: f32 = 0.42;
-
-const TIER: usize = 2;
-const RIM_SIDES: u32 = 8;
-const RIM: f32 = 0.8;
-const SPIKE: f32 = 0.7;
-
-struct Detail {
-    sides: u32,
-    segments: u32,
-    bends: usize,
-    keep: [f32; 2],
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Piece {
+    Foliage,
+    Wood,
 }
 
-const DETAILS: [Detail; 4] = [
-    Detail {
-        sides: 7,
-        segments: 8,
-        bends: 2,
-        keep: [1.0, 1.0],
-    },
-    Detail {
-        sides: 5,
-        segments: 4,
-        bends: 2,
-        keep: [0.55, 1.0],
-    },
-    Detail {
-        sides: 4,
-        segments: 2,
-        bends: 1,
-        keep: [0.45, 0.6],
-    },
-    Detail {
-        sides: 3,
-        segments: 1,
-        bends: 1,
-        keep: [0.3, 0.5],
-    },
+pub(crate) struct Plant {
+    pub(crate) name: &'static str,
+    kind: Kind,
+    age: Age,
+    seed: u32,
+}
+
+const fn plant(name: &'static str, kind: Kind, age: Age, seed: u32) -> Plant {
+    Plant {
+        name,
+        kind,
+        age,
+        seed,
+    }
+}
+
+pub(crate) const PLANTS: [Plant; 14] = [
+    plant("spruce_young", Kind::Spruce, Age::Young, 11),
+    plant("spruce_grown", Kind::Spruce, Age::Grown, 12),
+    plant("spruce_tall", Kind::Spruce, Age::Grown, 13),
+    plant("spruce_old", Kind::Spruce, Age::Old, 14),
+    plant("pine_young", Kind::Pine, Age::Young, 21),
+    plant("pine_grown", Kind::Pine, Age::Grown, 22),
+    plant("pine_old", Kind::Pine, Age::Old, 23),
+    plant("birch_young", Kind::Birch, Age::Young, 31),
+    plant("birch_grown", Kind::Birch, Age::Grown, 32),
+    plant("birch_old", Kind::Birch, Age::Old, 33),
+    plant("shrub", Kind::Shrub, Age::Grown, 41),
+    plant("snag", Kind::Snag, Age::Old, 51),
+    plant("log", Kind::Log, Age::Old, 52),
+    plant("stump", Kind::Stump, Age::Old, 53),
 ];
 
-pub(crate) fn conifer(seed: u32, detail: usize) -> Result<Mesh, Error> {
-    let build = &DETAILS[detail];
-    let shape = Shape::of(seed);
-    let mut builder = Builder::default();
-    builder.trunk(&shape, (build.sides, build.segments));
-    for whorl in &shape.whorls {
-        let count = whorl.branches.len();
-        let share = build.keep[0] + (build.keep[1] - build.keep[0]) * whorl.rise;
-        let kept = ((count as f32 * share).round() as usize).clamp(2, count);
-        for branch in whorl.branches.iter().filter(|branch| branch.rank < kept) {
-            builder.branch(branch, build.bends);
+impl Plant {
+    pub(crate) fn atlas(&self) -> Option<&'static str> {
+        match self.kind {
+            Kind::Spruce => Some("spruce_twigs"),
+            Kind::Pine => Some("pine_twigs"),
+            Kind::Birch | Kind::Shrub => Some("birch_leaves"),
+            Kind::Snag | Kind::Log | Kind::Stump => None,
         }
     }
-    builder.leader(shape.height);
-    let atlas = AlphaImage {
-        width: ATLAS,
-        height: ATLAS,
-        rgba: texels(),
-    };
-    builder
-        .mesh()
-        .and_then(|mesh| {
-            let cards = Cards {
-                vertices: mesh.vertices().to_vec(),
-                indices: mesh.indices().to_vec(),
-                colors: mesh.colors().map(<[_]>::to_vec),
-                uv1: None,
-            };
-            let trimmed = trim_cards(&cards, atlas, CUTOFF)?;
-            let mesh = Mesh::new(trimmed.vertices, trimmed.indices)?;
-            match trimmed.colors {
-                Some(colors) => mesh.with_colors(colors),
-                None => Ok(mesh),
-            }
-        })
-        .map_err(|error| error.within(&format!("$.conifers[{seed}].details[{detail}]")))
-}
 
-pub(crate) fn shadow_proxy(seed: u32) -> Result<Mesh, Error> {
-    let shape = Shape::of(seed);
-    let mut builder = Builder::default();
-    let foot = SPIKE * shape.radius(-0.5);
-    for side in 0..4 {
-        let (sin, cos) = math::sin_cos(FRAC_PI_2 * side as f32);
-        let corner = Vec3::new(cos * foot, -0.5, sin * foot);
-        builder.push(corner, Vec3::new(cos, 0.0, sin), BARK_MIDDLE, [1.0; 3]);
+    pub(crate) fn pieces(&self) -> &'static [Piece] {
+        match self.kind {
+            Kind::Spruce | Kind::Pine | Kind::Birch => &[Piece::Foliage, Piece::Wood],
+            Kind::Shrub => &[Piece::Foliage],
+            Kind::Snag | Kind::Log | Kind::Stump => &[Piece::Wood],
+        }
     }
-    let tip = Vec3::new(0.0, shape.height, 0.0);
-    let peak = builder.push(tip, Vec3::Y, BARK_MIDDLE, [1.0; 3]);
-    for side in 0..4 {
-        builder.indices.extend([side, peak, (side + 1) % 4]);
+
+    pub(crate) fn details(&self) -> usize {
+        match self.kind {
+            Kind::Spruce | Kind::Pine | Kind::Birch => DETAILS,
+            Kind::Shrub | Kind::Snag | Kind::Log => 3,
+            Kind::Stump => 2,
+        }
     }
-    let tiers = shape.whorls.len().div_ceil(TIER);
-    for (number, whorls) in shape.whorls.chunks(TIER).enumerate() {
-        let top = if number + 1 == tiers {
-            shape.height
-        } else {
-            whorls[whorls.len() - 1].y
+
+    pub(crate) fn mesh(&self, piece: Piece, detail: usize) -> String {
+        let part = match self.pieces().first() == Some(&piece) {
+            true => "",
+            false => "_wood",
         };
-        builder.tier(&whorls[0], top);
-    }
-    builder
-        .mesh()
-        .map_err(|error| error.within(&format!("$.conifers[{seed}].shadow")))
-}
-
-struct Shape {
-    height: f32,
-    base_radius: f32,
-    whorls: Vec<Whorl>,
-}
-
-struct Whorl {
-    y: f32,
-    length: f32,
-    dip: (f32, f32),
-    twist: f32,
-    rise: f32,
-    branches: Vec<Branch>,
-}
-
-struct Branch {
-    start: Vec3,
-    outward: Vec3,
-    direction: Vec3,
-    length: f32,
-    color: [f32; 3],
-    slot: f32,
-    reach: f32,
-    rank: usize,
-}
-
-impl Branch {
-    fn at(&self, t: f32) -> Vec3 {
-        point_along(self.start, self.direction, self.length, t)
-    }
-}
-
-fn point_along(start: Vec3, direction: Vec3, length: f32, t: f32) -> Vec3 {
-    start + direction * (length * t) - Vec3::Y * (0.18 * length * t * t)
-}
-
-impl Shape {
-    fn of(seed: u32) -> Self {
-        let random = |index: u32| unit(golden_hash(seed.wrapping_mul(0x9e37_79b9) ^ index));
-        let height = 13.0 + 4.0 * random(1);
-        let base_radius = 0.2 + 0.06 * random(2);
-        let crown_base = 1.6 + 0.8 * random(3);
-        let mut whorls = Vec::new();
-        let mut y = crown_base;
-        let mut whorl = 0_u32;
-        while y < height - 0.7 {
-            let below_top = height - y;
-            let count = 6 + golden_hash(seed ^ whorl.wrapping_mul(0x632b_e5ab)) % 3;
-            let twist = random(100 + whorl) * TAU;
-            let droop = -0.25 + 0.6 * math::clamp(below_top / height, 0.0, 1.0);
-            let (dip_sin, dip_cos) = math::sin_cos(droop);
-            let length = 0.45 + below_top * 0.19;
-            let shade = 0.5 + 0.5 * math::clamp((y - crown_base) / (0.6 * height), 0.0, 1.0);
-            let mut branches: Vec<Branch> = (0..count)
-                .map(|branch| {
-                    let index = 1000 + whorl * 16 + branch;
-                    let slot = branch as f32 + 0.35 * (random(index) - 0.5);
-                    let (sin, cos) = math::sin_cos(twist + TAU * slot / count as f32);
-                    let outward = Vec3::new(cos, 0.0, sin);
-                    let reach = random(index + 7);
-                    Branch {
-                        start: Vec3::new(0.0, y, 0.0),
-                        outward,
-                        direction: outward * dip_cos - Vec3::Y * dip_sin,
-                        length: length * (0.85 + 0.3 * reach),
-                        color: [shade * (0.94 + 0.12 * random(index + 9)), shade, shade],
-                        slot,
-                        reach,
-                        rank: 0,
-                    }
-                })
-                .collect();
-            rank(&mut branches);
-            whorls.push(Whorl {
-                y,
-                length,
-                dip: (dip_sin, dip_cos),
-                twist,
-                rise: math::clamp((y - crown_base) / (height - 0.7 - crown_base), 0.0, 1.0),
-                branches,
-            });
-            y += SPACING * (0.85 + 0.3 * random(200 + whorl));
-            whorl += 1;
+        match detail {
+            0 => format!("{}{part}", self.name),
+            _ => format!("{}{part}_lod{detail}", self.name),
         }
-        Self {
-            height,
-            base_radius,
-            whorls,
+    }
+}
+
+pub(crate) fn input(plant: usize, detail: usize, piece: Piece, atlas: Option<&Atlas>) -> Vec<u8> {
+    let piece = match piece {
+        Piece::Foliage => 0_u32,
+        Piece::Wood => 1,
+    };
+    let mut input = Vec::new();
+    for word in [plant as u32, detail as u32, piece] {
+        input.extend_from_slice(&word.to_le_bytes());
+    }
+    if let Some(atlas) = atlas.filter(|_| piece == 0) {
+        atlas.write(&mut input);
+    }
+    input
+}
+
+pub(crate) fn grow(input: &[u8]) -> Result<Mesh, Error> {
+    let invalid = |field: &str| Error::new(ErrorCode::InvalidRecord, format!("$.plant.{field}"));
+    let header = input
+        .get(..HEADER)
+        .ok_or_else(|| invalid("input").at_least(HEADER as u64).got(input.len()))?;
+    let [index, detail, piece] = [0, 4, 8].map(|at| {
+        u32::from_le_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]]) as usize
+    });
+    let plant = PLANTS
+        .get(index)
+        .ok_or_else(|| invalid("plant").at_most(PLANTS.len() as u64 - 1).got(index))?;
+    if detail >= plant.details() {
+        return Err(invalid("detail")
+            .at_most(plant.details() as u64 - 1)
+            .got(detail));
+    }
+    let at = format!("$.plant.{}", plant.name);
+    let mut build = match piece {
+        0 => Build {
+            foliage: Some(Foliage::new(&Atlas::read(&input[HEADER..], &at)?, detail)),
+            wood: None,
+            detail,
+        },
+        1 => Build {
+            foliage: None,
+            wood: Some(Wood::default()),
+            detail,
+        },
+        other => return Err(invalid("piece").at_most(1).got(other)),
+    };
+    match plant.kind {
+        Kind::Spruce => conifers::spruce(plant.age, plant.seed, &mut build),
+        Kind::Pine => conifers::pine(plant.age, plant.seed, &mut build),
+        Kind::Birch => broadleaf::birch(plant.age, plant.seed, &mut build),
+        Kind::Shrub => broadleaf::shrub(plant.seed, &mut build),
+        Kind::Snag => deadwood::snag(plant.seed, &mut build),
+        Kind::Log => deadwood::log(plant.seed, &mut build),
+        Kind::Stump => deadwood::stump(plant.seed, &mut build),
+    }
+    let mesh = match (build.foliage, build.wood) {
+        (Some(foliage), _) => foliage.mesh(),
+        (None, Some(wood)) => wood.mesh(),
+        (None, None) => Err(invalid("piece")),
+    };
+    mesh.map_err(|error| error.within(&format!("{at}.details[{detail}]")))
+}
+
+pub(crate) struct Build {
+    foliage: Option<Foliage>,
+    wood: Option<Wood>,
+    detail: usize,
+}
+
+impl Build {
+    pub(crate) fn sprig(&mut self, sprig: &Sprig) {
+        if let Some(foliage) = &mut self.foliage {
+            foliage.sprig(sprig);
         }
     }
 
-    fn radius(&self, y: f32) -> f32 {
-        self.base_radius * math::pow(math::max(1.0 - y / self.height, 0.0), 0.85) + 0.012
-    }
-}
-
-fn rank(branches: &mut [Branch]) {
-    let count = branches.len() as f32;
-    let mut ranked: Vec<usize> = Vec::with_capacity(branches.len());
-    while ranked.len() < branches.len() {
-        let mut best: Option<(usize, f32)> = None;
-        for (index, branch) in branches.iter().enumerate() {
-            if ranked.contains(&index) {
-                continue;
-            }
-            let room = ranked.iter().fold(count, |room, &other| {
-                let gap = (branch.slot - branches[other].slot).abs();
-                math::min(room, math::min(gap, count - gap))
-            });
-            let score = room + 0.5 * branch.reach;
-            if best.is_none_or(|(_, top)| score > top) {
-                best = Some((index, score));
-            }
-        }
-        let Some((index, _)) = best else { break };
-        branches[index].rank = ranked.len();
-        ranked.push(index);
-    }
-}
-
-#[derive(Default)]
-struct Builder {
-    vertices: Vec<MeshVertex>,
-    colors: Vec<[f32; 4]>,
-    indices: Vec<u32>,
-}
-
-impl Builder {
-    fn push(&mut self, position: Vec3, normal: Vec3, uv: [f32; 2], color: [f32; 3]) -> u32 {
-        self.vertices.push(MeshVertex {
-            position: position.to_array(),
-            normal: normal.normalize_or(Vec3::Y).to_array(),
-            uv,
-        });
-        let [red, green, blue] = color.map(|channel| math::clamp(channel, 0.0, 1.0));
-        self.colors.push([red, green, blue, 1.0]);
-        self.vertices.len() as u32 - 1
-    }
-
-    fn mesh(self) -> Result<Mesh, Error> {
-        let Self {
-            vertices,
-            colors,
-            indices,
-        } = self;
-        Mesh::new(vertices, indices).and_then(|mesh| mesh.with_colors(colors))
-    }
-
-    fn trunk(&mut self, shape: &Shape, (sides, segments): (u32, u32)) {
-        for segment in 0..segments {
-            let [low, high] = [segment, segment + 1]
-                .map(|ring| -0.5 + (shape.height + 0.5) * ring as f32 / segments as f32);
-            let first = self.vertices.len() as u32;
-            for side in 0..=sides {
-                let angle = TAU * side as f32 / sides as f32;
-                let (sin, cos) = math::sin_cos(angle);
-                let u = BARK[0] + (BARK[1] - BARK[0]) * side as f32 / sides as f32;
-                for (y, v) in [(low, 0.99), (high, 0.01)] {
-                    let shade = 0.55 + 0.45 * math::clamp(y / (0.35 * shape.height), 0.0, 1.0);
-                    let radius = shape.radius(y);
-                    self.push(
-                        Vec3::new(cos * radius, y, sin * radius),
-                        Vec3::new(cos, 0.15, sin),
-                        [u, v],
-                        [shade; 3],
-                    );
-                }
-            }
-            for side in 0..sides {
-                let [a, b, c, d] = [0, 1, 2, 3].map(|corner| first + side * 2 + corner);
-                self.indices.extend([a, b, c, b, d, c]);
-            }
-        }
-    }
-
-    fn branch(&mut self, branch: &Branch, bends: usize) {
-        let spine: Vec<Vec3> = (0..=bends)
-            .map(|step| branch.at(step as f32 / bends as f32))
+    pub(crate) fn tube(&mut self, rings: &[Ring], sides: [u32; DETAILS], ends: [End; 2]) {
+        let Some(wood) = &mut self.wood else {
+            return;
+        };
+        let last = rings.len().saturating_sub(1);
+        let step = self.detail + 1;
+        let kept: Vec<Ring> = rings
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| index % step == 0 || *index == last)
+            .map(|(_, ring)| *ring)
             .collect();
-        let across = Vec3::new(-branch.outward.z, 0.0, branch.outward.x);
-        let hanging = branch.direction.cross(across).normalize_or(Vec3::Y);
-        let crown = (branch.outward + Vec3::Y * LEAN).normalize_or(Vec3::Y);
-        self.card(&spine, across * (0.45 * branch.length), crown, branch.color);
-        self.card(&spine, hanging * (0.3 * branch.length), crown, branch.color);
+        wood.tube(&kept, sides[self.detail], ends);
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct Dice(u32);
+
+impl Dice {
+    pub(crate) fn new(seed: u32) -> Self {
+        Self(seed.wrapping_mul(0x9e37_79b9))
     }
 
-    fn leader(&mut self, height: f32) {
-        for turn in [0.0, FRAC_PI_2] {
-            let (sin, cos) = math::sin_cos(turn);
-            self.card(
-                &[
-                    Vec3::new(0.0, height - 1.0, 0.0),
-                    Vec3::new(0.0, height + 0.15, 0.0),
-                ],
-                Vec3::new(cos, 0.0, sin) * 0.25,
-                Vec3::Y,
-                [1.0; 3],
-            );
-        }
+    pub(crate) fn roll(self, index: u32) -> f32 {
+        unit(golden_hash(self.0 ^ index))
     }
 
-    fn card(&mut self, spine: &[Vec3], half: Vec3, crown: Vec3, color: [f32; 3]) {
-        let last = spine.len() - 1;
-        for (facing, corners) in [(1.0_f32, FRONT), (-1.0, BACK)] {
-            let first = self.vertices.len() as u32;
-            for (step, &center) in spine.iter().enumerate() {
-                let t = step as f32 / last as f32;
-                let v = SPRAY_SPAN[0] + (SPRAY_SPAN[1] - SPRAY_SPAN[0]) * t;
-                let inner = 0.5 + 0.5 * t;
-                let shade = color.map(|channel| channel * inner);
-                let way = spine[(step + 1).min(last)] - spine[step.saturating_sub(1)];
-                let face = half.cross(way).normalize_or(crown) * facing;
-                let normal = crown * CROWN_NORMAL + face * (1.0 - CROWN_NORMAL);
-                for side in [-1.0_f32, 1.0] {
-                    self.push(
-                        center + half * side,
-                        normal,
-                        [SPRAY[0] + SPRAY[1] * side, v],
-                        shade,
-                    );
+    pub(crate) fn span(self, index: u32, [low, high]: [f32; 2]) -> f32 {
+        low + (high - low) * self.roll(index)
+    }
+
+    pub(crate) fn pick(self, index: u32, count: u32) -> u32 {
+        golden_hash(self.0 ^ index ^ 0x68bc_21eb) % count
+    }
+}
+
+pub(crate) fn heading(angle: f32) -> Vec3 {
+    let (sin, cos) = math::sin_cos(angle);
+    Vec3::new(cos, 0.0, sin)
+}
+
+pub(crate) fn side_of(way: Vec3) -> Vec3 {
+    Vec3::new(-way.z, 0.0, way.x).normalize_or(Vec3::X)
+}
+
+pub(crate) fn rolled(vector: Vec3, axis: Vec3, angle: f32) -> Vec3 {
+    let (sin, cos) = math::sin_cos(angle);
+    vector * cos + axis.cross(vector) * sin + axis * (axis.dot(vector) * (1.0 - cos))
+}
+
+pub(crate) fn blend(from: [f32; 3], to: [f32; 3], share: f32) -> [f32; 3] {
+    let share = math::clamp(share, 0.0, 1.0);
+    [0, 1, 2].map(|channel| from[channel] + (to[channel] - from[channel]) * share)
+}
+
+pub(crate) struct Stem {
+    pub(crate) height: f32,
+    pub(crate) girth: f32,
+    pub(crate) taper: f32,
+    pub(crate) flare: f32,
+    pub(crate) lean: Vec3,
+    pub(crate) bend: Vec3,
+}
+
+impl Stem {
+    pub(crate) fn axis(&self, y: f32) -> Vec3 {
+        let along = math::clamp(y / self.height, 0.0, 1.0);
+        let sway = math::sin(std::f32::consts::PI * along);
+        Vec3::new(0.0, y, 0.0) + self.lean * math::max(y, 0.0) + self.bend * sway
+    }
+
+    pub(crate) fn radius(&self, y: f32) -> f32 {
+        let left = math::max(1.0 - y / self.height, 0.0);
+        let flare = 1.0 + self.flare * math::exp(-math::max(y, 0.0) / FLARE_HEIGHT);
+        self.girth * math::pow(left, self.taper) * flare + 0.012
+    }
+
+    pub(crate) fn rings(&self, count: u32, tint: impl Fn(f32) -> [f32; 3]) -> Vec<Ring> {
+        let above = (1..=count).map(|ring| {
+            let share = ring as f32 / count as f32;
+            BASE[BASE.len() - 1] + (self.height - BASE[BASE.len() - 1]) * share
+        });
+        BASE.into_iter()
+            .filter(|&y| y < self.height)
+            .chain(above)
+            .map(|y| Ring {
+                at: self.axis(y),
+                radius: self.radius(y),
+                tint: tint(y),
+            })
+            .collect()
+    }
+}
+
+pub(crate) struct Limb {
+    pub(crate) start: Vec3,
+    pub(crate) out: Vec3,
+    pub(crate) length: f32,
+    pub(crate) rise: f32,
+    pub(crate) curl: f32,
+}
+
+impl Limb {
+    pub(crate) fn at(&self, along: f32) -> Vec3 {
+        let (sin, cos) = math::sin_cos(self.rise);
+        self.start
+            + self.out * (self.length * along * cos)
+            + Vec3::Y * (self.length * (along * sin + self.curl * along * along))
+    }
+
+    pub(crate) fn way(&self, along: f32) -> Vec3 {
+        let (sin, cos) = math::sin_cos(self.rise);
+        (self.out * cos + Vec3::Y * (sin + 2.0 * self.curl * along)).normalize_or(self.out)
+    }
+
+    pub(crate) fn rings(&self, radius: [f32; 2], tint: [[f32; 3]; 2], count: u32) -> Vec<Ring> {
+        (0..=count)
+            .map(|ring| {
+                let along = ring as f32 / count as f32;
+                Ring {
+                    at: self.at(along),
+                    radius: radius[0] + (radius[1] - radius[0]) * along,
+                    tint: blend(tint[0], tint[1], along),
                 }
-            }
-            for step in 0..last as u32 {
-                let base = first + step * 2;
-                self.indices.extend(corners.map(|corner| base + corner));
-            }
-        }
-    }
-
-    fn tier(&mut self, whorl: &Whorl, top: f32) {
-        let apex = self.push(Vec3::new(0.0, top, 0.0), Vec3::Y, BARK_MIDDLE, [1.0; 3]);
-        let below = Vec3::new(0.0, whorl.y - SPACING, 0.0);
-        let under = self.push(below, Vec3::NEG_Y, BARK_MIDDLE, [1.0; 3]);
-        let start = Vec3::new(0.0, whorl.y, 0.0);
-        let (dip_sin, dip_cos) = whorl.dip;
-        let first = self.vertices.len() as u32;
-        for side in 0..RIM_SIDES {
-            let turn = whorl.twist + TAU * side as f32 / RIM_SIDES as f32;
-            let (sin, cos) = math::sin_cos(turn);
-            let outward = Vec3::new(cos, 0.0, sin);
-            let direction = outward * dip_cos - Vec3::Y * dip_sin;
-            let rim = point_along(start, direction, whorl.length, RIM);
-            self.push(rim, outward, BARK_MIDDLE, [1.0; 3]);
-        }
-        for side in 0..RIM_SIDES {
-            let [left, right] = [side, (side + 1) % RIM_SIDES].map(|corner| first + corner);
-            self.indices.extend([apex, right, left, under, left, right]);
-        }
+            })
+            .collect()
     }
 }
 
-fn atlas() -> Vec<u8> {
-    let size = ATLAS as usize;
-    let half = size / 2;
-    let needle = [0.06, 0.13, 0.06];
-    let mut color = vec![needle; size * size];
-    let mut alpha = vec![0.0_f32; size * size];
-    for y in 0..size {
-        for x in 0..half {
-            let point = Vec2::new(x as f32 / 9.0, y as f32 / 70.0);
-            let furrow = 1.0 - (noise(point) * 2.0 - 1.0).abs();
-            let grain = noise(Vec2::new(x as f32 / 3.0, y as f32 / 14.0));
-            let tone = 0.55 + 0.35 * furrow * furrow + 0.15 * grain;
-            color[y * size + x] = [0.15 * tone, 0.115 * tone, 0.09 * tone];
-            alpha[y * size + x] = 1.0;
-        }
-    }
-    let mut spray = Spray {
-        color: &mut color,
-        alpha: &mut alpha,
-        size,
-    };
-    let center = (half + half / 2) as f32;
-    let (base, tip) = (size as f32 - 6.0, 10.0);
-    let twig = [0.24, 0.17, 0.11];
-    let mut shoots = Vec::new();
-    let mut along = 0.06;
-    let mut side = 1.0;
-    while along < 0.9 {
-        let start = Vec2::new(center, base + (tip - base) * along);
-        let reach = 0.42
-            * (half as f32)
-            * (1.0 - along)
-            * (0.8 + 0.4 * unit(golden_hash(shoots.len() as u32 + 5)));
-        let end = start + Vec2::new(side * 0.72, -0.7).normalize() * reach;
-        shoots.push((start, end));
-        along += 0.058;
-        side = -side;
-    }
-    let mut needles = 0_u32;
-    let mut fringe = |spray: &mut Spray<'_>, from: Vec2, to: Vec2, length: f32| {
-        let span = to - from;
-        let steps = (span.length() / 1.7) as u32;
-        let direction = span.normalize_or(Vec2::Y);
-        for step in 0..steps {
-            let t = step as f32 / steps.max(1) as f32;
-            let root = from + span * t;
-            for side in [-1.0_f32, 1.0] {
-                needles += 1;
-                let jitter = unit(golden_hash(needles));
-                let angle = side * (0.85 + 0.35 * jitter);
-                let (sin, cos) = math::sin_cos(angle);
-                let pointing = Vec2::new(
-                    direction.x * cos - direction.y * sin,
-                    direction.x * sin + direction.y * cos,
-                );
-                let reach =
-                    length * (1.0 - 0.45 * t) * (0.8 + 0.4 * unit(golden_hash(needles ^ 0x5bd1)));
-                let shade = 0.8 + 0.35 * unit(golden_hash(needles ^ 0x27d4));
-                let tint = [0.055 * shade, (0.12 + 0.04 * t) * shade, 0.055 * shade];
-                spray.capsule(root, root + pointing * reach, 0.95, tint);
-            }
-        }
-    };
-    for &(start, end) in &shoots {
-        fringe(&mut spray, start, end, 21.0);
-    }
-    fringe(
-        &mut spray,
-        Vec2::new(center, base),
-        Vec2::new(center, tip),
-        24.0,
-    );
-    for &(start, end) in &shoots {
-        spray.capsule(start, end, 1.1, twig);
-    }
-    spray.capsule(Vec2::new(center, base), Vec2::new(center, tip), 2.2, twig);
-    let mut texels = Vec::with_capacity(size * size * 4);
-    for (rgb, coverage) in color.iter().zip(&alpha) {
-        texels.extend(rgb.map(srgb));
-        texels.push((coverage * 255.0).round() as u8);
-    }
-    texels
+pub(crate) struct Stubs {
+    pub(crate) count: u32,
+    pub(crate) heights: [f32; 2],
+    pub(crate) lengths: [f32; 2],
+    pub(crate) tint: [f32; 3],
+    pub(crate) key: u32,
 }
 
-struct Spray<'a> {
-    color: &'a mut [[f32; 3]],
-    alpha: &'a mut [f32],
-    size: usize,
-}
-
-impl Spray<'_> {
-    fn capsule(&mut self, a: Vec2, b: Vec2, radius: f32, tint: [f32; 3]) {
-        let min = a.min(b) - Vec2::splat(radius + 1.0);
-        let max = a.max(b) + Vec2::splat(radius + 1.0);
-        let half = (self.size / 2) as f32;
-        let x0 = math::max(min.x.floor(), half) as usize;
-        let x1 = math::min(max.x.ceil(), self.size as f32 - 1.0) as usize;
-        let y0 = math::max(min.y.floor(), 0.0) as usize;
-        let y1 = math::min(max.y.ceil(), self.size as f32 - 1.0) as usize;
-        let span = b - a;
-        let length2 = math::max(span.length_squared(), 1.0e-6);
-        for y in y0..=y1 {
-            for x in x0..=x1 {
-                let point = Vec2::new(x as f32 + 0.5, y as f32 + 0.5);
-                let t = math::clamp((point - a).dot(span) / length2, 0.0, 1.0);
-                let distance = (point - (a + span * t)).length();
-                let cover = math::clamp(radius + 0.5 - distance, 0.0, 1.0);
-                if cover <= 0.0 {
-                    continue;
-                }
-                let at = y * self.size + x;
-                let old = self.alpha[at];
-                let alpha = cover + old * (1.0 - cover);
-                let laid = |channel: usize| {
-                    (tint[channel] * cover + self.color[at][channel] * old * (1.0 - cover)) / alpha
-                };
-                self.color[at] = [laid(0), laid(1), laid(2)];
-                self.alpha[at] = alpha;
-            }
-        }
+pub(crate) fn stubs(build: &mut Build, dice: Dice, stem: &Stem, stubs: &Stubs) {
+    for stub in 0..stubs.count {
+        let key = stubs.key ^ stub.wrapping_mul(0x0100_0193);
+        let y = dice.span(key ^ 1, stubs.heights);
+        let out = heading(std::f32::consts::TAU * dice.roll(key ^ 2));
+        let limb = Limb {
+            start: stem.axis(y) + out * (0.6 * stem.radius(y)),
+            out,
+            length: dice.span(key ^ 3, stubs.lengths),
+            rise: dice.span(key ^ 4, [-0.35, 0.25]),
+            curl: -0.12,
+        };
+        let thick = math::clamp(0.14 * stem.radius(y) + 0.008, 0.012, 0.05);
+        build.tube(
+            &limb.rings([thick, 0.4 * thick], [stubs.tint; 2], 2),
+            [4, 3, 0, 0],
+            [End::Open, End::Broken],
+        );
     }
-}
-
-fn srgb(value: f32) -> u8 {
-    let value = math::clamp(value, 0.0, 1.0);
-    let encoded = if value <= 0.003_130_8 {
-        value * 12.92
-    } else {
-        1.055 * math::pow(value, 1.0 / 2.4) - 0.055
-    };
-    (encoded * 255.0).round() as u8
-}
-
-fn noise(point: Vec2) -> f32 {
-    let cell = point.floor();
-    let f = point - cell;
-    let u = f * f * (Vec2::splat(3.0) - 2.0 * f);
-    let corner = |dx: i32, dy: i32| {
-        let key =
-            (cell.x as i32 + dx) as u32 ^ ((cell.y as i32 + dy) as u32).wrapping_mul(0x8da6_b343);
-        unit(golden_hash(key))
-    };
-    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
-    lerp(
-        lerp(corner(0, 0), corner(1, 0), u.x),
-        lerp(corner(0, 1), corner(1, 1), u.x),
-        u.y,
-    )
 }

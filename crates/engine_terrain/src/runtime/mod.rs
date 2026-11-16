@@ -65,7 +65,7 @@ use crate::{
     TILE_QUADS, TILE_STRIDE, TileKey, WantedTile, WantedView,
 };
 use engine_core::{
-    AssetLibrary, Camera, Cut, Error, ErrorCode, Expected, ExtraRules, GeometryHandle, IDLE_JOBS,
+    AssetLibrary, Camera, Cut, Error, ErrorCode, Expected, GeometryHandle, IDLE_JOBS,
     InvalidSetting, JobFailures, Jobs, MaterialHandle, Records, Rule, Setting, Settling,
     URGENT_JOBS, VIEW_JOBS, content_hash, fields, job_priority, settings, stats,
 };

@@ -6,7 +6,7 @@ import package::face::debug::{DEBUG_NO_MATERIAL, DebugTargets, debug_record, deb
 import package::face::instances::DEBUG_LEVEL_AT;
 import package::generated::kinds::KIND_TERRAIN;
 import package::generated::terrain_shading::{shown_materials, shown_tile, terrain_debug};
-import package::terrain_shading::draw::{TerrainOutput, terrain_forward_look, terrain_holes_test, terrain_seen, terrain_shared_ground, terrain_shares};
+import package::terrain_shading::draw::{TerrainOutput, terrain_forward_look, terrain_ground_blend, terrain_holes_test, terrain_seen, terrain_shared_ground, terrain_shares};
 import package::terrain_shading::faces::heightfield::{terrain, use_terrain};
 import package::terrain_shading::sky::terrain_sky_map;
 
@@ -26,7 +26,7 @@ fn debug_terrain(input: TerrainOutput, holes: bool) -> DebugTargets {
     let relative = input.relative.xyz;
     let world = eye_world(relative);
     let seen = terrain_seen(relative, terrain_forward_look(relative));
-    let shares = terrain_shares(seen.site, seen.shading);
+    let shares = terrain_shares(seen.site, terrain_ground_blend(seen, seen.site));
     let ground = terrain_shared_ground(shares, seen.site);
     let local = world.xz - terrain.origin.xz;
     let sky = terrain_sky_map(local).r;

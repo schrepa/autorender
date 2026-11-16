@@ -3,16 +3,16 @@ use std::ops::Range;
 
 use bevy_ecs::prelude::*;
 use engine_core::Cut;
+use engine_heightfield::{TILE_QUADS, TILE_STRIDE};
 use engine_open_world_kit::ground::{
-    Cover, GroundTiles, PALETTE_ENTRIES, PlacedTiles, PooledTile, TerrainEntry, TerrainTiles,
+    GroundTiles, PlacedTiles, PooledTile, TerrainEntry, TerrainTiles, TileFace,
 };
 use engine_render::{Allocation, Buffer, Prepare};
 use engine_tiles::TileKey;
 
-use crate::gpu::{NO_PLACED, TraceTerrain};
+use crate::gpu::{NO_PLACED, PEAKS_SIDE, TRACE_LEVEL_WORDS, TraceTerrain};
+use crate::state::lighting_level;
 use crate::trace::TraceGpu;
-
-const CANOPY_WORDS: u32 = 4 * PALETTE_ENTRIES;
 
 type TileId = (Entity, TileKey);
 
@@ -20,7 +20,6 @@ pub(crate) struct TraceFrame<'a> {
     pub tiles: &'a TerrainTiles,
     pub ground: &'a GroundTiles,
     pub placed: &'a PlacedTiles,
-    pub cover: &'a Cover,
     pub room: u64,
     pub placed_changed: bool,
 }
@@ -31,14 +30,69 @@ struct Grid {
     identity: u64,
     level: u8,
     apron: f32,
-    top: f32,
+    stands: Stands,
 }
 
 struct Reach {
     slot: u32,
     middle: [f32; 2],
     radius: f32,
+    stands: Stands,
+}
+
+#[derive(Clone, Copy)]
+struct Stands {
     top: f32,
+    widest: f32,
+    tallest: f32,
+    spread: f32,
+}
+
+impl Stands {
+    const NONE: Self = Self {
+        top: -f32::MAX,
+        widest: 0.0,
+        tallest: -f32::MAX,
+        spread: 0.0,
+    };
+
+    fn with(self, other: Self) -> Self {
+        Self {
+            top: engine_core::math::max(self.top, other.top),
+            widest: engine_core::math::max(self.widest, other.widest),
+            tallest: engine_core::math::max(self.tallest, other.tallest),
+            spread: engine_core::math::max(self.spread, other.spread),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct LevelReach {
+    low: [f32; 2],
+    high: [f32; 2],
+    stands: Stands,
+}
+
+impl LevelReach {
+    const NONE: Self = Self {
+        low: [f32::MAX; 2],
+        high: [-f32::MAX; 2],
+        stands: Stands::NONE,
+    };
+
+    fn words(self, error: f32) -> [u32; TRACE_LEVEL_WORDS as usize] {
+        [
+            self.low[0],
+            self.low[1],
+            self.high[0],
+            self.high[1],
+            self.stands.top,
+            self.stands.widest,
+            self.stands.tallest + error,
+            self.stands.spread,
+        ]
+        .map(f32::to_bits)
+    }
 }
 
 pub(crate) struct WorldTrace {
@@ -52,6 +106,9 @@ pub(crate) struct WorldTrace {
     layers: u32,
     boxes: Vec<([f32; 4], [f32; 3])>,
     pooled: bool,
+    table: Range<u32>,
+    levels: u32,
+    turns: u32,
 }
 
 impl Default for WorldTrace {
@@ -67,6 +124,9 @@ impl Default for WorldTrace {
             layers: 0,
             boxes: Vec::new(),
             pooled: false,
+            table: 0..0,
+            levels: 0,
+            turns: 0,
         }
     }
 }
@@ -104,14 +164,10 @@ impl WorldTrace {
         }
         self.pooled = true;
         self.write_layer_words(frame.ground);
-        let canopies = traced(frame.tiles, frame.ground).count() as u32 * CANOPY_WORDS;
-        let pool = self.upload(cx, placed, (frame.room, canopies));
+        self.write_levels(frame);
+        let pool = self.upload(cx, placed, frame.room);
         self.write_terrains(cx, terrains, frame);
         pool
-    }
-
-    pub(crate) fn terrains(&self) -> u32 {
-        self.listed
     }
 
     fn lay_out(&mut self, layers: u32, rebuilt: bool) {
@@ -127,6 +183,7 @@ impl WorldTrace {
         }
         self.words = words;
         self.free.clear();
+        self.table = 0..0;
         self.layers = layers;
         self.dirty = std::iter::once(0..self.words.len()).collect();
         if rebuilt {
@@ -168,9 +225,9 @@ impl WorldTrace {
             let Some((built, apron)) = grid(&reaches, terrain, key.1) else {
                 continue;
             };
-            let top = reaches.iter().fold(-f32::MAX, |top, reach| {
-                engine_core::math::max(top, reach.top)
-            });
+            let stands = reaches
+                .iter()
+                .fold(Stands::NONE, |stands, reach| stands.with(reach.stands));
             let words = self.place(&built);
             self.grids.insert(
                 key,
@@ -180,7 +237,7 @@ impl WorldTrace {
                     identity: tile.identity,
                     level: key.1.level,
                     apron,
-                    top,
+                    stands,
                 },
             );
         }
@@ -249,6 +306,68 @@ impl WorldTrace {
         self.mark(layers);
     }
 
+    fn write_levels(&mut self, frame: &TraceFrame<'_>) {
+        let (first, last) = (
+            TileKey::new(0, 0, 0),
+            TileKey::new(u8::MAX, u16::MAX, u16::MAX),
+        );
+        let levels = self
+            .grids
+            .values()
+            .map(|grid| usize::from(grid.level) + 1)
+            .max()
+            .unwrap_or(0);
+        let mut built = Vec::new();
+        let mut turns = 0;
+        for (terrain, _) in traced(frame.tiles, frame.ground) {
+            let mut rows = vec![LevelReach::NONE; levels];
+            for ((_, key), grid) in self
+                .grids
+                .range((terrain.terrain, first)..=(terrain.terrain, last))
+            {
+                let size = terrain.pyramid.tile_size(u32::from(key.level));
+                let corner = [f32::from(key.x) * size, f32::from(key.z) * size];
+                let row = &mut rows[usize::from(key.level)];
+                for axis in 0..2 {
+                    row.low[axis] = engine_core::math::min(row.low[axis], corner[axis] - grid.apron);
+                    row.high[axis] =
+                        engine_core::math::max(row.high[axis], corner[axis] + size + grid.apron);
+                }
+                row.stands = row.stands.with(grid.stands);
+            }
+            let baked = lighting_level(&terrain.pyramid, terrain.pinned_levels) as usize;
+            for (level, row) in rows.iter().enumerate() {
+                if row.low[0] <= row.high[0] {
+                    let across = [row.high[0] - row.low[0], row.high[1] - row.low[1]];
+                    let far = (across[0] * across[0] + across[1] * across[1]).sqrt();
+                    let tiles = (far / terrain.pyramid.tile_size(level as u32)).ceil() as u32 + 1;
+                    turns = turns.max(3 * tiles);
+                }
+                built.extend(row.words(errors(terrain, level.min(baked)..level.max(baked))));
+            }
+        }
+        self.levels = levels as u32;
+        self.turns = turns;
+        let held = self.table.start as usize..self.table.end as usize;
+        if held.len() != built.len() {
+            if !held.is_empty() {
+                self.free_run(self.table.clone());
+            }
+            self.table = if built.is_empty() {
+                0..0
+            } else {
+                self.place(&built)
+            };
+        } else if self.words[held.clone()] != built[..] {
+            self.words[held.clone()].copy_from_slice(&built);
+            self.mark(held);
+        }
+    }
+
+    pub(crate) fn turns(&self) -> [u32; 2] {
+        [self.turns, 2 * PEAKS_SIDE]
+    }
+
     fn mark(&mut self, words: Range<usize>) {
         self.dirty.push(words);
     }
@@ -257,9 +376,9 @@ impl WorldTrace {
         &mut self,
         cx: &mut Prepare<'_, TraceGpu>,
         buffer: Buffer<TraceGpu>,
-        (room, canopies): (u64, u32),
+        room: u64,
     ) -> Cut {
-        let bytes = (self.words.len() as u64 + u64::from(canopies)) * 4;
+        let bytes = self.words.len() as u64 * 4;
         let mut dirty = std::mem::take(&mut self.dirty);
         if let Some(size) = grown(self.placed, bytes, room) {
             self.placed = size;
@@ -274,7 +393,7 @@ impl WorldTrace {
                 cx.write(buffer, (run.start * 4) as u64, &self.words[run]);
             }
         }
-        Cut::of(self.words.len() as u32 + canopies, (self.placed / 4) as u32)
+        Cut::of(self.words.len() as u32, (self.placed / 4) as u32)
     }
 
     fn write_terrains(
@@ -288,9 +407,8 @@ impl WorldTrace {
             TileKey::new(0, 0, 0),
             TileKey::new(u8::MAX, u16::MAX, u16::MAX),
         );
-        let cover = frame.cover.density;
-        let words = self.words.len() as u32;
-        for (terrain, table) in traced(frame.tiles, frame.ground) {
+        let rows = self.levels * TRACE_LEVEL_WORDS;
+        for (index, (terrain, table)) in traced(frame.tiles, frame.ground).enumerate() {
             let ground = frame
                 .ground
                 .held
@@ -308,17 +426,34 @@ impl WorldTrace {
                         (
                             levels | 1 << grid.level,
                             engine_core::math::max(apron, grid.apron),
-                            engine_core::math::max(highest, grid.top),
+                            engine_core::math::max(highest, grid.stands.top),
                         )
                     },
                 );
-            let canopy = words + records.len() as u32 * CANOPY_WORDS;
             records.push(TraceTerrain {
                 cutout: terrain
                     .cutout
                     .map_or([0.0; 4], |(low, high)| [low.x, low.y, high.x, high.y]),
-                maps: [table, levels, canopy, 0],
-                reach: [apron, cover, highest, 0.0],
+                maps: [
+                    table,
+                    levels,
+                    self.table.start + index as u32 * rows,
+                    self.levels,
+                ],
+                reach: [
+                    apron,
+                    errors(
+                        terrain,
+                        0..lighting_level(&terrain.pyramid, terrain.pinned_levels) as usize,
+                    ),
+                    highest,
+                    frame
+                        .tiles
+                        .terrains
+                        .iter()
+                        .position(|held| held.terrain == terrain.terrain)
+                        .map_or(-1.0, |at| at as f32),
+                ],
             });
         }
         let bytes = (records.len() * size_of::<TraceTerrain>()) as u64;
@@ -338,7 +473,34 @@ fn grown(held: u64, bytes: u64, room: u64) -> Option<u64> {
     (bytes > held && size > held).then_some(size)
 }
 
+fn errors(terrain: &TerrainEntry, levels: Range<usize>) -> f32 {
+    terrain
+        .level_errors
+        .iter()
+        .take(levels.end)
+        .skip(levels.start)
+        .sum()
+}
+
+fn ground_under(face: &TileFace, local: [f32; 2]) -> (f32, f32) {
+    let corner = [face.bounds.0.x, face.bounds.0.z];
+    let at = [0, 1].map(|axis| (local[axis] - corner[axis]) / face.spacing);
+    let held = at.map(|at| engine_core::math::clamp(at, 0.0, TILE_QUADS as f32));
+    let moved = [0, 1].map(|axis| (held[axis] - at[axis]) * face.spacing);
+    let first =
+        held.map(|held| engine_core::math::min(held.floor(), (TILE_QUADS - 1) as f32) as usize);
+    let stride = TILE_STRIDE as usize;
+    let mut ground = f32::MAX;
+    for z in first[1]..=first[1] + 1 {
+        for x in first[0]..=first[0] + 1 {
+            ground = engine_core::math::min(ground, face.heights[(z + 1) * stride + x + 1]);
+        }
+    }
+    (ground, (moved[0] * moved[0] + moved[1] * moved[1]).sqrt())
+}
+
 fn reaches(terrain: &TerrainEntry, key: TileKey, tile: &PooledTile) -> Vec<Reach> {
+    let face = terrain.tiles.iter().find(|face| face.key == key);
     let raised = terrain
         .level_errors
         .iter()
@@ -350,11 +512,22 @@ fn reaches(terrain: &TerrainEntry, key: TileKey, tile: &PooledTile) -> Vec<Reach
         if radius <= 0.0 || radius.is_nan() {
             continue;
         }
+        let local = [middle.x - terrain.origin.x, middle.z - terrain.origin.z];
+        let top = middle.y + half.y + raised;
+        let (tallest, moved) = face.map_or((f32::MAX, 0.0), |face| {
+            let (ground, moved) = ground_under(face, local);
+            (top - terrain.origin.y - ground, moved)
+        });
         reaches.push(Reach {
             slot,
-            middle: [middle.x - terrain.origin.x, middle.z - terrain.origin.z],
+            middle: local,
             radius,
-            top: middle.y + half.y + raised,
+            stands: Stands {
+                top,
+                widest: 2.0 * engine_core::math::max(radius, half.y),
+                tallest,
+                spread: radius + moved,
+            },
         });
     }
     reaches
@@ -420,7 +593,7 @@ fn grid(reaches: &[Reach], terrain: &TerrainEntry, key: TileKey) -> Option<(Vec<
                 let at = (z * cells + x) as usize;
                 entries[cursors[at] as usize] = reach.slot;
                 cursors[at] += 1;
-                tops[at] = engine_core::math::max(tops[at], reach.top);
+                tops[at] = engine_core::math::max(tops[at], reach.stands.top);
             }
         }
     }

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use bevy_ecs::prelude::Entity;
 use engine_core::{
     AlphaMode, AssetLibrary, AssetResidency, GeometryHandle, GpuBits, Material, MaterialHandle,
-    Mesh, ResidentMesh, SurfaceSlot, TextureHandle,
+    Mesh, ResidentMesh, SurfaceSlot, TextureHandle, kept_levels,
 };
 use engine_heightfield::tile::Placed;
 use engine_math::collections::HashMap;
@@ -14,8 +14,8 @@ use engine_render::{pack_color, pack_surface};
 use glam::Vec3;
 
 use crate::layouts::{
-    Cover, LEVELS, NO_LAYER, PlacedRecord, PlacedValues, RANK_MAX, ScatterFade, ScatterTerrain,
-    SlotColor, TERRAIN_INDEX, WIND_REACH, pose_rows,
+    LEVELS, NO_LAYER, PlacedRecord, PlacedValues, RANK_MAX, ScatterTerrain, SlotColor,
+    TERRAIN_INDEX, WIND_REACH, pose_rows,
 };
 use crate::pool::TileObjects;
 use crate::settings::{PlacedLook, ScatterSettings};
@@ -37,6 +37,10 @@ fn slot_color(material: &Material) -> SlotColor {
     }
 }
 
+fn masked(material: &Material) -> bool {
+    matches!(material.alpha_mode(), AlphaMode::Mask { .. })
+}
+
 fn reach_of(material: &Material) -> f32 {
     if material.slot(SurfaceSlot::Position.name()) == Some(crate::WIND) {
         WIND_REACH
@@ -54,15 +58,24 @@ fn origin_tint(origin: Vec3) -> u32 {
     (hash ^ (hash >> 16)) & 0xffff_0000
 }
 
+fn plant_look(material: &Material) -> [u32; 2] {
+    let [through, softness, hue, brightness] = crate::PLANT_LOOK.map(|name| {
+        let stated = material.value(name).unwrap_or(0.0);
+        (engine_math::clamp(stated, 0.0, 1.0) * 65535.0).round() as u32
+    });
+    [through | softness << 16, hue | brightness << 16]
+}
+
 fn placed_values(
     height: Option<f32>,
     (origin, normal): (Vec3, [f32; 2]),
     (sink, scale): (f32, f32),
-    sway: f32,
+    (sway, look): (f32, [u32; 2]),
 ) -> PlacedValues {
     let mut values = PlacedValues {
         tint: origin_tint(origin),
         sway,
+        look,
         ..PlacedValues::default()
     };
     let Some(height) = height else {
@@ -111,8 +124,8 @@ pub(crate) struct Resolved<'a> {
     pub(crate) material: ResolvedMaterial<'a>,
     pub(crate) textures: Vec<TextureHandle>,
     pub(crate) lods: Vec<(ResolvedMesh<'a>, f32)>,
+    pub(crate) authored: bool,
     pub(crate) parts: Vec<ResolvedPart<'a>>,
-    pub(crate) shadow: Option<ResolvedMesh<'a>>,
     pub(crate) sway: f32,
 }
 
@@ -121,7 +134,6 @@ impl<'a> Resolved<'a> {
         std::iter::once(&self.mesh)
             .chain(self.lods.iter().map(|(lod, _)| lod))
             .chain(self.parts.iter().flat_map(|part| &part.meshes))
-            .chain(&self.shadow)
     }
 
     pub(crate) fn materials(&self) -> impl Iterator<Item = MaterialHandle> + '_ {
@@ -150,7 +162,7 @@ fn material_of(library: &AssetLibrary, handle: MaterialHandle) -> Option<Resolve
 
 pub(crate) fn resolve<'a>(
     asset: &PlacedAsset,
-    look: Option<&PlacedLook>,
+    (look, errors): (Option<&PlacedLook>, &[f32]),
     library: &'a AssetLibrary,
     settings: &ScatterSettings,
     kept: &mut Kept,
@@ -166,7 +178,8 @@ pub(crate) fn resolve<'a>(
     kept.parts.1 += parts_kept as u32;
     let lods = lods_asked[..lods_kept]
         .iter()
-        .map(|lod| mesh_of(library, lod.mesh).map(|mesh| (mesh, lod.error)))
+        .zip(errors)
+        .map(|(&lod, &error)| mesh_of(library, lod).map(|mesh| (mesh, error)))
         .collect::<Option<Vec<_>>>()?;
     let parts = parts_asked[..parts_kept]
         .iter()
@@ -181,10 +194,6 @@ pub(crate) fn resolve<'a>(
             })
         })
         .collect::<Option<Vec<_>>>()?;
-    let shadow = match look.and_then(|look| look.shadow) {
-        Some(handle) => Some(mesh_of(library, handle)?),
-        None => None,
-    };
     let material = material_of(library, asset.material)?;
     let textures: Vec<TextureHandle> = std::iter::once(material.material)
         .chain(parts.iter().map(|part| part.material.material))
@@ -201,8 +210,8 @@ pub(crate) fn resolve<'a>(
         material,
         textures,
         lods,
+        authored: !lods_asked.is_empty(),
         parts,
-        shadow,
         sway: look.map_or(0.0, |look| look.sway),
     })
 }
@@ -210,28 +219,21 @@ pub(crate) fn resolve<'a>(
 pub(crate) struct DrawGroup {
     pub(crate) meshes: Vec<GeometryHandle>,
     pub(crate) material: MaterialHandle,
-    pub(crate) source: Material,
+    pub(crate) grounding: Option<f32>,
+    pub(crate) masked: bool,
     pub(crate) extended: bool,
     pub(crate) color: SlotColor,
     pub(crate) sway: f32,
+    pub(crate) look: [u32; 2],
     pub(crate) sphere: (Vec3, f32),
     pub(crate) objects: u32,
     pub(crate) part: Option<usize>,
     pub(crate) count: u32,
-    pub(crate) casters: Vec<GeometryHandle>,
-    pub(crate) proxy: Option<bool>,
-}
-
-impl DrawGroup {
-    pub(crate) fn masked(&self) -> bool {
-        matches!(self.source.alpha_mode(), AlphaMode::Mask { .. })
-    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct GroupLayout {
     pub(crate) levels: Vec<Range3>,
-    pub(crate) casters: Vec<Range3>,
     pub(crate) camera: u32,
     pub(crate) errors: [f32; LEVELS as usize - 1],
     pub(crate) impostor: (f32, u32),
@@ -243,7 +245,6 @@ pub(crate) struct GroupLayout {
 pub(crate) struct Groups {
     pub(crate) groups: Vec<DrawGroup>,
     pub(crate) layouts: Vec<GroupLayout>,
-    pub(crate) covers: Vec<Cover>,
     pub(crate) colors: Vec<[u32; 2]>,
     pub(crate) asks: Vec<Option<ImpostorAsk>>,
     indices: HashMap<(Entity, usize), u32>,
@@ -257,7 +258,6 @@ impl Groups {
     ) -> Self {
         let mut groups = Vec::new();
         let mut layouts = Vec::new();
-        let mut covers = Vec::new();
         let mut colors = Vec::new();
         let mut indices = HashMap::default();
         for (terrain, assets) in terrains {
@@ -274,24 +274,13 @@ impl Groups {
                     .is_some_and(ResidentMesh::extended);
                 let parts = resident_parts(residency, asset, levels.len());
                 let bounds = asset.mesh.mesh.bounds();
-                let proxy = asset
-                    .shadow
-                    .as_ref()
-                    .and_then(|mesh| Some((mesh, proxy_caster(residency, mesh)?)));
                 let (low, high) = parts
                     .iter()
                     .map(|&(part, _)| asset.parts[part].meshes[0].mesh.bounds())
-                    .chain(proxy.map(|(mesh, _)| mesh.mesh.bounds()))
                     .fold((bounds.min(), bounds.max()), |(low, high), held| {
                         (low.min(held.min()), high.max(held.max()))
                     });
                 let material = asset.material.material;
-                let (casters, caster_meshes, shadow) = match proxy {
-                    Some((mesh, (range, extended))) => {
-                        (vec![range], vec![mesh.handle], Some(extended))
-                    }
-                    None => (levels.clone(), meshes.clone(), None),
-                };
                 let objects = groups.len() as u32;
                 indices.insert((*terrain, asset_index), objects);
                 let color = slot_color(material);
@@ -299,43 +288,35 @@ impl Groups {
                     (low + high) * 0.5,
                     (high - low).length() * 0.5 + reach_of(material),
                 );
-                let cover = Cover::of(bounds.min(), bounds.max());
                 groups.push(DrawGroup {
                     meshes,
                     material: asset.material.handle,
-                    source: material.clone(),
+                    grounding: material.value(GROUNDING_HEIGHT),
+                    masked: masked(material),
                     extended,
                     color,
                     sway: asset.sway,
+                    look: plant_look(material),
                     sphere,
                     objects,
                     part: None,
                     count: 0,
-                    casters: caster_meshes,
-                    proxy: shadow,
                 });
                 layouts.push(GroupLayout {
                     levels,
-                    casters,
                     camera,
                     errors,
                     impostor: (0.0, 0),
                     parts: parts.len() as u32,
                     part: false,
                 });
-                covers.push(cover);
                 colors.push(color.color);
                 for (part, (part_levels, part_meshes)) in parts {
                     let rendered = &asset.parts[part];
                     let extended = residency
                         .mesh(part_meshes[0])
                         .is_some_and(ResidentMesh::extended);
-                    let (part_casters, part_caster_meshes) = match shadow {
-                        Some(_) => (Vec::new(), Vec::new()),
-                        None => (part_levels.clone(), part_meshes.clone()),
-                    };
                     layouts.push(GroupLayout {
-                        casters: part_casters,
                         camera: part_levels.len() as u32,
                         levels: part_levels,
                         errors,
@@ -346,18 +327,17 @@ impl Groups {
                     groups.push(DrawGroup {
                         meshes: part_meshes,
                         material: rendered.material.handle,
-                        source: rendered.material.material.clone(),
+                        grounding: rendered.material.material.value(GROUNDING_HEIGHT),
+                        masked: masked(rendered.material.material),
                         extended,
                         color,
                         sway: asset.sway,
+                        look: plant_look(rendered.material.material),
                         sphere,
                         objects,
                         part: Some(part),
                         count: 0,
-                        casters: part_caster_meshes,
-                        proxy: None,
                     });
-                    covers.push(cover);
                     colors.push(color.color);
                 }
             }
@@ -366,7 +346,6 @@ impl Groups {
         Self {
             groups,
             layouts,
-            covers,
             colors,
             asks,
             indices,
@@ -383,7 +362,7 @@ impl Groups {
                     && a.sway == b.sway
                     && a.sphere == b.sphere
                     && a.objects == b.objects
-                    && a.source.value(GROUNDING_HEIGHT) == b.source.value(GROUNDING_HEIGHT)
+                    && a.grounding == b.grounding
             })
     }
 
@@ -431,14 +410,13 @@ impl Groups {
                 }
                 .pack(),
                 sink: placed.sink,
-                state: ScatterFade::word(false),
-                pad: [0; 3],
+                pad: [0; 4],
             });
             objects.3.push(placed_values(
-                draw.source.value(GROUNDING_HEIGHT),
+                draw.grounding,
                 (model.w_axis.truncate(), placed.ground),
                 (placed.sink, placed.scale),
-                draw.sway,
+                (draw.sway, draw.look),
             ));
         }
         objects
@@ -546,11 +524,11 @@ fn scatter_levels(residency: &AssetResidency, asset: &Resolved<'_>) -> Option<Le
     let mut levels = vec![level(mesh, (0, mesh.index_count()))];
     let mut meshes = vec![asset.mesh.handle];
     let mut errors = [0.0; LEVELS as usize - 1];
-    if asset.lods.is_empty() {
-        for &(first_index, index_count, error) in mesh.lods().iter().take(LEVELS as usize - 1) {
-            if index_count == 0 {
-                break;
-            }
+    if !asset.authored {
+        let lods = mesh.lods();
+        let filled = lods.iter().take_while(|&&(_, count, _)| count != 0).count();
+        for kept in kept_levels(filled, LEVELS as usize - 1) {
+            let (first_index, index_count, error) = lods[kept];
             errors[levels.len() - 1] = error;
             levels.push(level(mesh, (first_index, index_count)));
             meshes.push(asset.mesh.handle);
@@ -605,12 +583,4 @@ fn part_levels(
         meshes.push(rendered.handle);
     }
     Some((ranges, meshes))
-}
-
-fn proxy_caster(residency: &AssetResidency, proxy: &ResolvedMesh<'_>) -> Option<(Range3, bool)> {
-    let mesh = residency.mesh(proxy.handle)?;
-    Some((
-        (mesh.index_count(), mesh.first_index(), mesh.base_vertex()),
-        mesh.extended(),
-    ))
 }

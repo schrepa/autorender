@@ -88,8 +88,6 @@ const RINGS: &[(&str, &[&str])] = &[
             "engine_prepass",
             "engine_ambient_occlusion",
             "engine_taa",
-            "engine_auto_exposure",
-            "engine_bloom",
             "engine_tonemap",
             "engine_dither",
             "engine_debug_view",

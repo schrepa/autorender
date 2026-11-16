@@ -25,6 +25,22 @@ fn tinted(color: [f32; 4], tint: [f32; 4]) -> [f32; 4] {
     tinted
 }
 
+pub(crate) fn restyled_slots(
+    table: &DrawnTable,
+    assets: &AssetLibrary,
+    since: u64,
+    slots: &mut Vec<u32>,
+) {
+    slots.extend((0..table.records().len() as u32).filter(|&slot| {
+        table
+            .drawn(slot)
+            .and_then(|drawn| drawn.material)
+            .is_some_and(|handle| {
+                assets.revision_of(handle).is_none_or(|revision| revision > since)
+            })
+    }));
+}
+
 pub(crate) fn color_data(table: &DrawnTable, assets: &AssetLibrary, slot: usize) -> ColorData {
     let material = table
         .drawn(slot as u32)

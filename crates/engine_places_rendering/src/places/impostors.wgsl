@@ -115,7 +115,13 @@ fn placed_card_vertex(vertex: u32, batch: u32, pose: AffinePose, previous: Affin
     return card;
 }
 
-fn placed_card_shade(input: CardVertex, impostor: ImpostorRecord) -> CardShaded {
+fn placed_card_point(input: CardVertex, impostor: ImpostorRecord) -> SurfacePoint {
+    var point: SurfacePoint;
+    return point;
+}
+
+fn placed_card_lit(input: CardVertex, impostor: ImpostorRecord, point: SurfacePoint)
+        -> CardShaded {
     var shaded: CardShaded;
     return shaded;
 }
@@ -129,7 +135,7 @@ fn placed_card_pixel(input: CardVertex) -> ViewPixel {
     return pixel;
 }
 
-fn placed_card_debug(input: CardVertex, record: u32, object: u32, impostor: ImpostorRecord)
+fn placed_card_debug(input: CardVertex, point: SurfacePoint, record: u32, object: u32)
         -> CardDebugTargets {
     var targets: CardDebugTargets;
     return targets;

@@ -35,18 +35,20 @@ type ReachKey = (GeometryHandle, Option<u64>, u64);
 struct Reach {
     key: ReachKey,
     radii: Option<Vec<f32>>,
+    pass: u64,
 }
 
 #[derive(Resource, Default)]
 pub struct Skins {
     rows: Vec<JointRows>,
-    parts: BTreeMap<Entity, SkinSlot>,
+    parts: Vec<(Entity, SkinSlot)>,
     reaches: BTreeMap<Entity, Reach>,
+    pass: u64,
 }
 
 impl Skins {
     pub(crate) fn posed(&self, part: Entity) -> bool {
-        self.parts.contains_key(&part)
+        self.parts.iter().any(|&(held, _)| held == part)
     }
 }
 
@@ -139,8 +141,11 @@ fn pose(
     if !globals.drawn(entity) || palette.is_empty() || scratch.nodes.len() != palette.len() {
         return None;
     }
-    poses.drawn_poses(globals, &scratch.nodes, &mut scratch.now);
-    poses.previous_drawn_poses(globals, &scratch.nodes, &mut scratch.was);
+    poses.drawn_and_previous_poses(
+        globals,
+        &scratch.nodes,
+        (&mut scratch.now, &mut scratch.was),
+    );
     let to_local = poses.drawn_pose(globals, entity)?.inverse();
     if !to_local.is_finite() || scratch.now.iter().any(Option::is_none) {
         return None;
@@ -187,7 +192,8 @@ pub(crate) fn pose_skins(
     let skins = &mut *skins;
     skins.rows.clear();
     skins.parts.clear();
-    let mut reaches = std::mem::take(&mut skins.reaches);
+    skins.pass = skins.pass.wrapping_add(1);
+    let pass = skins.pass;
     for (entity, animator) in &animators {
         let posed = pose(
             (entity, animator),
@@ -202,17 +208,20 @@ pub(crate) fn pose_skins(
                 assets.revision_of(part.mesh),
                 animator.rig_revision(),
             );
-            let reach = match reaches.remove(&node) {
-                Some(kept) if kept.key == key => kept,
-                Some(_) | None => Reach {
-                    key,
-                    radii: assets
-                        .mesh(part.mesh)
-                        .and_then(|mesh| reach_of(&rig.palette, mesh)),
-                },
-            };
+            let reach = skins.reaches.entry(node).or_insert(Reach {
+                key,
+                radii: None,
+                pass,
+            });
+            if reach.key != key || reach.pass == pass {
+                reach.key = key;
+                reach.radii = assets
+                    .mesh(part.mesh)
+                    .and_then(|mesh| reach_of(&rig.palette, mesh));
+            }
+            reach.pass = pass;
             if let (Some(slot), Some(radii)) = (posed, &reach.radii) {
-                skins.parts.insert(node, slot);
+                skins.parts.push((node, slot));
                 let bounds = part_bounds(radii, &scratch.spheres);
                 if let Some(bounds) = bounds
                     && held.get(node).ok() != Some(&bounds)
@@ -220,15 +229,16 @@ pub(crate) fn pose_skins(
                     spawner.insert(node, bounds);
                 }
             }
-            skins.reaches.insert(node, reach);
         }
     }
+    skins.reaches.retain(|_, reach| reach.pass == pass);
 }
 
 pub(crate) struct SkinGpu {
     rows: Buffer<Self>,
     slots: Buffer<Self>,
     table: Vec<SkinSlot>,
+    uploaded: Vec<SkinSlot>,
 }
 
 impl GpuPart for SkinGpu {
@@ -247,6 +257,7 @@ impl GpuPart for SkinGpu {
             rows,
             slots,
             table: Vec::new(),
+            uploaded: Vec::new(),
         })
     }
 
@@ -258,7 +269,7 @@ impl GpuPart for SkinGpu {
         self.table.clear();
         self.table
             .resize(table.records().len().max(1), SkinSlot::default());
-        for (&part, &slot) in &skins.parts {
+        for &(part, slot) in &skins.parts {
             if let Some(held) = table
                 .slot(part)
                 .and_then(|at| self.table.get_mut(at as usize))
@@ -267,19 +278,15 @@ impl GpuPart for SkinGpu {
             }
         }
         let rows = skins.rows.len().max(1) * size_of::<JointRows>();
-        let sizes = [
-            (self.rows, rows as u64),
-            (
-                self.slots,
-                (self.table.len() * size_of::<SkinSlot>()) as u64,
-            ),
-        ];
-        for (buffer, bytes) in sizes {
-            let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, bytes);
-        }
+        let slots = (self.table.len() * size_of::<SkinSlot>()) as u64;
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.rows, rows as u64);
+        let slots = cx.allocate_buffer(self.slots, slots);
         if !skins.rows.is_empty() {
             cx.write(self.rows, 0, &skins.rows);
         }
-        cx.write(self.slots, 0, &self.table);
+        if slots == Allocation::Fresh || self.table != self.uploaded {
+            cx.write(self.slots, 0, &self.table);
+            std::mem::swap(&mut self.table, &mut self.uploaded);
+        }
     }
 }

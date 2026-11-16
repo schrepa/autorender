@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use bevy_ecs::prelude::Entity;
 use engine_core::AssetLibrary;
 use engine_heightfield::tile::shaded_elsewhere;
@@ -9,13 +11,15 @@ use engine_render::{Allocation, Prepare};
 use engine_tiles::{Pyramid, TileKey};
 
 use super::part::{Handles, TerrainGpu};
-use super::{DIRECTORY_AT, HOLE_WORDS, NO_HOLES};
+use super::{DIRECTORY_AT, HOLE_WORDS, NO_HOLES, ROUGH_AT};
 use crate::gpu::{
-    NOT_RESIDENT, TABLE_FADES, TABLE_NOW, TABLE_TERRAINS, TABLE_VIEWS, TERRAIN_WORDS,
-    TerrainUniform, VIEW_WORDS, ViewUniform,
+    LookUniform, NOT_RESIDENT, ROUGH_WORDS, RUNG_WORDS, TABLE_FADES, TABLE_LOOK, TABLE_NOW,
+    TABLE_RUNGS, TABLE_TERRAINS, TABLE_VIEWS, TERRAIN_WORDS, TerrainUniform, VIEW_WORDS,
+    ViewUniform,
 };
 use crate::state::{Atlas, AtlasMoves, TileId, Upload, listed_tile};
 use crate::terrain_maps::TerrainMaps;
+use crate::terrain_rough::RoughLights;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Fade {
@@ -54,8 +58,13 @@ pub(crate) struct TerrainTables {
     pub(super) hole_table: u32,
     pub(super) palette_bases: Vec<u32>,
     palette: Vec<PaletteEntry>,
+    rungs: Vec<Rungs>,
+    rough: Vec<Shares>,
     pub(crate) dropped_materials: u32,
 }
+
+type Rungs = [f32; RUNG_WORDS as usize];
+type Shares = Option<Arc<[u32]>>;
 
 impl TerrainTables {
     pub(super) fn prepare(
@@ -93,6 +102,9 @@ impl TerrainTables {
         let allocation = cx.allocate_buffer(handles.tables, u64::from(total) * 4);
         let fresh = total != self.total || allocation == Allocation::Fresh || moves.all;
         self.total = total;
+        if fresh {
+            self.rough.clear();
+        }
         if fresh || !laid_out {
             self.write_directory(cx, handles, tiles, atlas);
         } else {
@@ -331,13 +343,14 @@ impl TerrainTables {
         &self,
         cx: &mut Prepare<'_, TerrainGpu>,
         handles: &Handles,
-        now: f32,
+        (now, look): (f32, &LookUniform),
     ) {
-        let mut header = [0_u32; DIRECTORY_AT as usize];
+        let mut header = [0_u32; TABLE_RUNGS as usize];
         header[TABLE_TERRAINS as usize] = self.terrains_at;
         header[TABLE_VIEWS as usize] = self.views_at;
         header[TABLE_FADES as usize] = self.fades_at;
         header[TABLE_NOW as usize] = now.to_bits();
+        header[TABLE_LOOK as usize..].copy_from_slice(bytemuck::cast_slice(&[*look]));
         cx.write(handles.tables, 0, &header);
     }
 
@@ -370,10 +383,12 @@ impl TerrainTables {
         cx: &mut Prepare<'_, TerrainGpu>,
         handles: &Handles,
         (tiles, layout): (&TerrainTiles, &[(Entity, Option<u32>)]),
-        (maps, assets): (&TerrainMaps, &AssetLibrary),
+        (maps, assets, lights): (&TerrainMaps, &AssetLibrary, &RoughLights),
     ) {
         self.palette.clear();
+        self.rungs.clear();
         self.palette_bases.clear();
+        let mut rough: Vec<Shares> = Vec::new();
         self.dropped_materials = maps.dropped;
         for terrain in tiles.terrains.iter() {
             let base = layout
@@ -389,21 +404,42 @@ impl TerrainTables {
             let end = (base as usize + terrain.materials.len()).min(PALETTE_ENTRIES as usize);
             if self.palette.len() < end {
                 self.palette.resize(end, bytemuck::Zeroable::zeroed());
+                self.rungs.resize(end, [0.0; RUNG_WORDS as usize]);
+                rough.resize(end, None);
             }
             let terrain_maps = terrain.maps.iter().chain(std::iter::repeat(&None));
-            let entries = terrain
-                .materials
-                .iter()
-                .zip(terrain_maps)
-                .map(|(look, terrain_maps)| palette_entry(look, terrain_maps, (maps, assets)));
-            for (held, entry) in self.palette[base as usize..end].iter_mut().zip(entries) {
-                *held = entry;
+            let entries = terrain.materials.iter().zip(terrain_maps).map(
+                |(look, terrain_maps)| palette_entry(look, terrain_maps, (maps, assets, lights)),
+            );
+            let held = self.palette[base as usize..end]
+                .iter_mut()
+                .zip(&mut self.rungs[base as usize..end])
+                .zip(&mut rough[base as usize..end]);
+            for (((held, rungs), shares), entry) in held.zip(entries) {
+                (*held, *rungs, *shares) = entry;
             }
         }
         let (Allocation::Fresh | Allocation::Kept) =
             cx.allocate_buffer(handles.palette, crate::gpu::PALETTE_BYTES as u64);
         if !self.palette.is_empty() {
             cx.write(handles.palette, 0, &self.palette);
+            cx.write(handles.tables, u64::from(TABLE_RUNGS) * 4, &self.rungs);
+        }
+        self.rough.resize(rough.len(), None);
+        for (index, (held, shares)) in self.rough.iter_mut().zip(rough).enumerate() {
+            let same = match (&*held, &shares) {
+                (Some(held), Some(shares)) => Arc::ptr_eq(held, shares),
+                (None, None) => true,
+                (Some(_), None) | (None, Some(_)) => false,
+            };
+            if same {
+                continue;
+            }
+            if let Some(shares) = &shares {
+                let at = ROUGH_AT + index as u32 * ROUGH_WORDS;
+                cx.write(handles.tables, u64::from(at) * 4, &shares[..]);
+            }
+            *held = shares;
         }
     }
 
@@ -460,8 +496,8 @@ fn reach(terrain: &TerrainEntry, level: u32) -> f32 {
 fn palette_entry(
     look: &SurfaceMaterial,
     terrain_maps: &Option<SurfaceMaps>,
-    (maps, assets): (&TerrainMaps, &AssetLibrary),
-) -> PaletteEntry {
+    (maps, assets, lights): (&TerrainMaps, &AssetLibrary, &RoughLights),
+) -> (PaletteEntry, Rungs, Shares) {
     let projection = match look.projection {
         SurfaceProjection::Top => 0.0,
         SurfaceProjection::Biplanar => 1.0,
@@ -484,6 +520,37 @@ fn palette_entry(
         ),
         None => (look.color, look.roughness, None, 1.0, 0.0, 0.0),
     };
+    let (tilings, site_shift, strata) = match material {
+        Some((_, material)) if layer.is_some() && material.strata[2] > 0.0 => {
+            (material.tilings, material.site_shift, material.strata)
+        }
+        Some((_, material)) if layer.is_some() => {
+            (material.tilings, material.site_shift, [0.0; 3])
+        }
+        Some((_, material)) => ([0.0; 2], material.site_shift, [0.0; 3]),
+        None => ([0.0; 2], 0.0, [0.0; 3]),
+    };
+    let held = match (terrain_maps, layer) {
+        (Some(terrain_maps), Some(_)) => maps.rungs(terrain_maps, assets),
+        _ => [None; 2],
+    };
+    let swing = 12.0_f32.sqrt() * material.map_or(0.0, |(_, material)| material.height_deviation);
+    let lowest = |mean: f32| if swing > 0.0 { mean - 0.5 * swing } else { 0.0 };
+    let mut rungs = [0.0; RUNG_WORDS as usize];
+    for (rung, (held, tiling)) in held.into_iter().zip(tilings).enumerate() {
+        let Some(held) = held else {
+            continue;
+        };
+        let means = maps.means(held);
+        rungs[rung] = tiling;
+        rungs[2 + rung] = (held + 1) as f32;
+        for (channel, mean) in means.color.into_iter().enumerate() {
+            rungs[4 + 4 * rung + channel] = 1.0 / engine_math::max(mean, 1.0e-4);
+        }
+        rungs[12 + rung] = lowest(means.height);
+    }
+    let soft_depth = material.map_or(0.0, |(_, material)| material.soft_depth);
+    let upright = material.map_or(0.0, |(_, material)| material.upright);
     let means = layer.map(|layer| maps.means(layer));
     let far = means.map_or([color[0], color[1], color[2], roughness], |means| {
         [
@@ -495,18 +562,26 @@ fn palette_entry(
     });
     let far_occlusion = means.map_or(1.0, |means| 1.0 + occlusion * (means.occlusion - 1.0));
     let slopes = means.map_or(0.0, |means| means.slopes * scale * scale);
-    let heights = means.map_or([0.0; 4], |means| [means.height, 0.0, 0.0, 0.0]);
-    PaletteEntry {
+    let heights = means.map_or(0.0, |means| means.height);
+    rungs[7] = lowest(heights);
+    rungs[11] = if swing > 0.0 { 1.0 / swing } else { 1.0 };
+    let shares = material
+        .filter(|_| layer.is_some())
+        .and_then(|(terrain_maps, _)| crate::terrain_rough::key(look, terrain_maps, assets))
+        .and_then(|key| lights.made(&key))
+        .cloned();
+    let entry = PaletteEntry {
         color: [color[0], color[1], color[2], roughness],
         params: [
             look.tiling,
-            look.height_contrast,
-            projection,
+            if shares.is_some() { 1.0 } else { 0.0 },
+            projection * (1.0 + upright),
             layer.map_or(0.0, |layer| (layer + 1) as f32),
         ],
         maps: [scale, occlusion, metalness, far_occlusion],
         far,
-        relief: [look.depth, 0.0, slopes, 0.0],
-        heights,
-    }
+        relief: [look.depth, soft_depth, slopes, strata[0]],
+        heights: [heights, site_shift, strata[1], strata[2]],
+    };
+    (entry, rungs, shares)
 }

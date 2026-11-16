@@ -16,9 +16,13 @@ use engine_core::{
     Attributes, Brick, Bricks, KindDecl, KindSkip, PassRole, PassViews, Schedule, Source,
 };
 use engine_open_world_kit::ground::{Cover, FarCover};
-use engine_render::RenderBricks;
+use engine_places_rendering::lighting::inputs;
+use engine_render::{LightingModule, RenderBricks};
 
-pub use settings::{CoverLook, GroundCover, GroundCoverStats};
+pub use settings::{
+    CoverAccent, CoverAtlas, CoverAtlasCell, CoverBladeForm, CoverCards, CoverClump, CoverLight,
+    CoverLook, CoverPatch, CoverPlants, CoverShape, CoverTuft, GroundCover, GroundCoverStats,
+};
 
 const SKIPS: &[KindSkip] = &[KindSkip::role(
     PassRole::Lit,
@@ -57,7 +61,13 @@ impl Brick for GroundCoverBrick {
                 streams: &[],
                 skips: SKIPS,
             })
-            .draws::<part::CoverGpu>(part::COVER, part::CoverGpu::draw);
+            .draws::<part::CoverGpu>(part::COVER, part::CoverGpu::draw)
+            .lighting_model(LightingModule {
+                name: surface::FIELD,
+                module: shaders::cover::field::MODULE,
+            })
+            .point_input(inputs::OCCLUSION)
+            .point_input(inputs::DIRECT_BLOCKED);
         for module in surface::slot_modules() {
             bricks.material_slot(module);
         }

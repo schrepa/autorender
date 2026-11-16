@@ -8,7 +8,7 @@ use engine_core::{
 };
 use engine_places::meshes::SKIN;
 use engine_places_rendering::animation::{
-    Animate, Animator, Attachment, Clip, Joint, Keys, Rig, Track,
+    Animate, Animator, Attachment, Clip, ClipLayer, Joint, Keys, Rig, Track,
 };
 use glam::{Quat, Vec3};
 
@@ -32,6 +32,7 @@ struct Scratch {
     locals: Vec<Transform>,
     below: Vec<Transform>,
     target: Vec<Transform>,
+    finished: Vec<bool>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -80,12 +81,6 @@ impl Raises<AnimationEnded> for AnimationEnds {
     }
 }
 
-fn finished_layers(animator: &Animator) -> Vec<bool> {
-    (0..animator.layers().len())
-        .map(|layer| animator.finished(layer))
-        .collect()
-}
-
 fn playing_clip(animator: &Animator, layer: usize) -> Option<String> {
     let playing = animator.layers().get(layer)?.playing.last()?;
     match playing.track {
@@ -103,11 +98,15 @@ fn step_ending(
     animator: &mut Animator,
     seconds: f32,
     (ends, feeds): (&mut AnimationEnds, &FeedSettings),
+    before: &mut Vec<bool>,
 ) {
-    let before = finished_layers(animator);
+    before.clear();
+    for layer in 0..animator.layers().len() {
+        before.push(animator.finished(layer));
+    }
     animator.step(seconds);
     ends.raised.resize(feeds.events as usize);
-    for (layer, was) in before.into_iter().enumerate() {
+    for (layer, &was) in before.iter().enumerate() {
         if !was && animator.finished(layer) {
             ends.raised.push(AnimationEnded {
                 animator: entity,
@@ -147,8 +146,11 @@ fn around<T: Copy>(keys: &Keys<T>, time: f32) -> Option<(T, T, f32)> {
     Some((from, to, (time - start) / (end - start)))
 }
 
-fn sample(clip: &Clip, time: f32, pose: &mut [Transform]) {
+fn sample(clip: &Clip, time: f32, layer: &ClipLayer, pose: &mut [Transform]) {
     for track in &clip.tracks {
+        if !layer.covers(track.joint as usize) {
+            continue;
+        }
         let Some(held) = pose.get_mut(track.joint as usize) else {
             continue;
         };
@@ -181,6 +183,7 @@ fn evaluate(animator: &Animator, scratch: &mut Scratch) {
         locals,
         below,
         target,
+        ..
     } = scratch;
     locals.clear();
     locals.extend(rig.joints.iter().map(rest));
@@ -191,7 +194,7 @@ fn evaluate(animator: &Animator, scratch: &mut Scratch) {
             if let Track::Clip { clip, time, .. } = playing.track
                 && let Some(clip) = rig.clips.get(clip as usize)
             {
-                sample(clip, time, target);
+                sample(clip, time, layer, target);
             }
             let weight = playing.fade.weight();
             for (joint, (local, wanted)) in locals.iter_mut().zip(target.iter()).enumerate() {
@@ -278,6 +281,7 @@ pub(crate) fn advance(
             &mut animator,
             time.delta_seconds,
             (&mut *ends, &*feeds),
+            &mut scratch.finished,
         );
         pose(&animator, skeletons.get(&entity), scratch, &mut moves);
     }
@@ -305,6 +309,7 @@ pub(crate) fn advance_real(
             &mut animator,
             frame.real_seconds as f32,
             (&mut *ends, &*feeds),
+            &mut scratch.finished,
         );
         pose(&animator, skeletons.get(&entity), scratch, &mut moves);
     }

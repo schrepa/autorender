@@ -1,70 +1,34 @@
 use bevy_ecs::prelude::Resource;
 use bytemuck::{Pod, Zeroable};
-use engine_core::{GpuBits, GpuStruct, gpu_bits, gpu_struct};
-use engine_places_rendering::shadows::SHADOW_REGIONS;
+use engine_core::{GpuBits, GpuStruct, gpu_struct};
 
 use crate::constants::SKY_LAYERS;
 
-const _: () = assert!(SHADOW_REGIONS == 7, "cull_holds_every_region");
 const _: () = assert!(SKY_LAYERS == 26, "sky_views_hold_every_layer");
 
 pub(crate) const GENERATED: &[&str] = &[
     crate::constants::WGSL,
-    <TileEntry as GpuBits>::WGSL,
     <engine_places_rendering::shadows::SunShown as GpuBits>::WGSL,
-    CasterCull::WGSL,
-    Route::WGSL,
-    <CasterMode as GpuBits>::WGSL,
+    ShadowLevel::WGSL,
     SkyViews::WGSL,
 ];
-
-#[gpu_bits]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct TileEntry {
-    #[bits(15)]
-    pub still: u16,
-    pub old_sun: bool,
-    #[bits(16)]
-    pub moving: u16,
-}
 
 gpu_struct! {
     #[derive(Resource)]
     pub struct ShadowPiece {
-        pub light: [[f32; 4]; 3],
-        pub before: [[f32; 4]; 3],
         pub state: [f32; 4],
         pub level_state: [f32; 4],
-        pub atlas: [f32; 4],
+        pub soft: [f32; 4],
         pub sky: [f32; 4],
     }
 }
 
-#[gpu_bits]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct CasterMode {
-    pub sky_refresh: bool,
-}
-
 gpu_struct! {
-    pub(crate) struct CasterCull {
-        pub light: [[f32; 4]; 3],
-        pub regions: [[f32; 4]; 7],
-        pub region_depths: [[f32; 4]; 7],
-        pub counts: [u32; 4],
-        pub moving: [u32; 4],
-        pub mode: [u32; 4],
-        pub sky: [[f32; 4]; 3],
-        pub sky_rect: [f32; 4],
-        pub sky_depths: [f32; 4],
-        pub atlas: [f32; 4],
-    }
-}
-
-gpu_struct! {
-    pub(crate) struct Route {
-        pub clip: [[f32; 4]; 4],
-        pub slot: [f32; 4],
+    pub(crate) struct ShadowLevel {
+        pub rows: [[f32; 4]; 3],
+        pub window: [f32; 4],
+        pub band: [f32; 4],
+        pub moving: [f32; 4],
     }
 }
 

@@ -28,6 +28,46 @@ pub(crate) struct Run {
     pub(crate) planning: Planning,
     pub(crate) tallies: Tallies,
     pub(crate) reading: Reading,
+    pub(crate) bound: Bound,
+}
+
+#[derive(Default)]
+pub(crate) struct Bound {
+    pub(crate) vertex: Vec<Option<(wgpu::Buffer, u64)>>,
+    pub(crate) index: Option<wgpu::Buffer>,
+}
+
+impl Bound {
+    pub(crate) fn vertex_buffer(
+        &mut self,
+        render: &mut wgpu::RenderPass<'static>,
+        slot: u32,
+        buffer: &wgpu::Buffer,
+        start: u64,
+    ) {
+        let at = slot as usize;
+        let held = self.vertex.get(at).and_then(Option::as_ref);
+        if held.is_some_and(|(held, offset)| held == buffer && *offset == start) {
+            return;
+        }
+        render.set_vertex_buffer(slot, buffer.slice(start..));
+        if self.vertex.len() <= at {
+            self.vertex.resize(at + 1, None);
+        }
+        self.vertex[at] = Some((buffer.clone(), start));
+    }
+
+    pub(crate) fn index_buffer(
+        &mut self,
+        render: &mut wgpu::RenderPass<'static>,
+        buffer: &wgpu::Buffer,
+    ) {
+        if self.index.as_ref() == Some(buffer) {
+            return;
+        }
+        render.set_index_buffer(buffer.slice(..), wgpu::IndexFormat::Uint32);
+        self.index = Some(buffer.clone());
+    }
 }
 
 pub(crate) struct Installs {
@@ -444,6 +484,7 @@ impl Run {
                 slots: 3,
                 ..Reading::default()
             },
+            bound: Bound::default(),
         }
     }
 }

@@ -8,8 +8,6 @@ use crate::scaffold::TEMPLATE_CRATE;
 pub const RULES: Rules = Rules {
     exceptions: Exceptions {
         long_files: &[
-            ("crates/engine_water/src/jobs/steady_water.rs", 2345),
-            ("crates/engine_water/src/shaders/water/sim.wgsl", 1645),
             ("tools/lodbuild/src/simplify.rs", 2009),
         ],
         wide_structs: &[],

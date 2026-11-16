@@ -201,6 +201,7 @@ impl TerrainSurface {
             material: material.into(),
             mask,
             opacity: 1.0,
+            covers: Vec::new(),
         };
         Biomes {
             assets: Vec::new(),

@@ -8,7 +8,6 @@ struct TerrainUniform {
     origin: vec4<f32>,
     directory: vec4<u32>,
     relief: vec4<f32>,
-    cover: vec4<f32>,
     macro_map: vec4<u32>,
     steep: vec4<f32>,
     pixel_error: vec4<f32>,
@@ -72,6 +71,10 @@ fn surface_leaf(index: u32) -> SurfaceTriangle {
 
 fn surface_vertex(triangle: SurfaceTriangle, vertex: u32) -> vec2<f32> {
     return vec2<f32>(0.0);
+}
+
+fn surface_drawn(triangle: SurfaceTriangle, local: vec2<f32>) -> vec3<f32> {
+    return vec3<f32>(0.0);
 }
 
 fn terrain_level_height(local: vec2<f32>, level: u32) -> TerrainLevelHeight {

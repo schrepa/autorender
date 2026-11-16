@@ -29,12 +29,13 @@ gpu_struct! {
         pub model: [f32; 4],
         pub highlights: [f32; 4],
         pub widening: [f32; 4],
+        pub thin: [f32; 4],
     }
 }
 
 const UNIT: Rule = Rule::range(0.0, 1.0);
 
-const OPEN_SLOTS: [(PointInput, &[MaterialValue]); 5] = [
+const OPEN_SLOTS: [(PointInput, &[MaterialValue]); 6] = [
     (inputs::ROUGHNESS, &[]),
     (inputs::METALNESS, &[]),
     (
@@ -54,9 +55,10 @@ const OPEN_SLOTS: [(PointInput, &[MaterialValue]); 5] = [
         }],
     ),
     (inputs::DIRECT_SOFTNESS, &[]),
+    (inputs::TANGLED, &[]),
 ];
 
-const READS: [PointInput; 10] = [
+const READS: [PointInput; 11] = [
     inputs::IGNORE_FACE,
     inputs::ADDED_LIGHT,
     inputs::ADDED_INDIRECT,
@@ -67,6 +69,7 @@ const READS: [PointInput; 10] = [
     inputs::THICKNESS,
     inputs::DIRECT_BLOCKED,
     inputs::DIRECT_KNOWN,
+    inputs::DIRECT_SHARE,
 ];
 
 const TERMS: SurfaceTerms = SurfaceTerms {
@@ -136,9 +139,20 @@ fn publish_piece(
     mut piece: ResMut<LightingPiece>,
 ) {
     piece.set_if_neq(LightingPiece {
-        model: [surface.rim, surface.emission, surface.specular, 0.0],
+        model: [
+            surface.rim,
+            surface.emission,
+            surface.specular,
+            surface.forward,
+        ],
         highlights: sized_highlights(&highlights, &sky, sized.on()),
         widening: [surface.specular_variance, surface.specular_limit, 0.0, 0.0],
+        thin: [
+            surface.crossing,
+            surface.crossing_tint,
+            surface.forward_bend,
+            surface.forward_focus,
+        ],
     });
 }
 

@@ -40,7 +40,7 @@ pub(crate) struct FramePlan {
     pub(crate) variants: Vec<Variant>,
     pub(crate) of_pipeline: Vec<u32>,
     pub(crate) skipped: Vec<bool>,
-    pub(crate) over: Vec<Error>,
+    pub(crate) over: Vec<(u32, Error)>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -274,7 +274,7 @@ pub(crate) fn plan(
             continue;
         }
         if let Err(beyond) = fits(reach, &entries, variables, limits) {
-            over.push(over_limit(reach, variables, beyond));
+            over.push((pipeline, over_limit(reach, variables, beyond)));
             skipped[index] = true;
             continue;
         }

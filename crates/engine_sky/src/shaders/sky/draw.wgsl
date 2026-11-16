@@ -1,13 +1,14 @@
 import package::engine::color::{hash3, luminance};
+import package::engine::math::PI;
 import package::engine::shading::{ViewPixel, flat};
 import package::engine::slots::flat_point;
-import package::engine::view::{camera, stable_normalize};
+import package::engine::view::{camera, stable_normalize, view_detail};
 import package::face::sun::sun_direction;
 import package::face::tonemap::exposure;
 import package::generated::writes::{Outputs, outputs};
-import package::sky::common::{air_disc, air_radius, air_transmittance, sunlight_over};
+import package::sky::common::{air_disc, air_radius, air_transmittance};
 import package::sky::light::{clouded, sky_air_light, sky_table_sampler};
-import package::sky::piece::{sky_air, sky_piece};
+import package::sky::piece::sky_piece;
 
 struct SkyOutput {
     @builtin(position) clip_position: vec4<f32>,
@@ -73,7 +74,6 @@ const MOON_CRATERS = array<vec4<f32>, 4>(
 );
 const MOON_AUREOLE: f32 = 0.06;
 const MOON_HALO: f32 = 0.012;
-const CIRRUS_REACH: f32 = 90000.0;
 
 fn turned(turn: vec4<f32>, direction: vec3<f32>) -> vec3<f32> {
     let t = 2.0 * cross(turn.xyz, direction);
@@ -276,47 +276,15 @@ fn beyond_air(ray: vec3<f32>) -> vec3<f32> {
     return along / max(up, vec3<f32>(1.0e-4));
 }
 
-fn cirrus_cover(ray: vec3<f32>, coverage: f32, seconds: f32) -> f32 {
-    if ray.y <= 0.02 {
-        return 0.0;
-    }
-    let along = sky_piece.night_shape.x / ray.y;
-    let fade = 1.0 - smoothstep(0.35 * CIRRUS_REACH, CIRRUS_REACH, along);
-    var p = (ray.xz * along + sky_piece.night_shape.yz * seconds)
-        * vec2<f32>(1.0 / 7000.0, 1.0 / 1700.0);
-    var sum = 0.0;
-    var weight = 0.5;
-    for (var octave = 0u; octave < 4u; octave++) {
-        sum += sky_noise(p, 9u + octave) * weight;
-        p = p * 2.03 + vec2<f32>(17.0, 31.0);
-        weight *= 0.5;
-    }
-    let shape = saturate((sum / 0.9375 - (1.0 - coverage)) / 0.3);
-    return shape * shape * fade * 0.6;
-}
-
-fn cirrus_light(ray: vec3<f32>) -> vec3<f32> {
-    let sun = sun_direction();
-    let height = sky_piece.night_shape.x;
-    let along = height / max(ray.y, 0.02);
-    let sunlight = sunlight_over(sky_transmittance_table, sky_table_sampler,
-        ray.xz * (along * 0.001), sky_air.radii.w + height * 0.001, sun);
-    let toward = max(dot(ray, sun), 0.0);
-    let forward = 0.25 + 1.4 * pow(toward, 6.0);
-    let moonlight = vec3<f32>(0.8, 0.85, 1.0) * (0.02 * MOON_LIGHT * sky_piece.night.y
-        * sky_piece.night.w * saturate(sky_piece.moon.y * 4.0));
-    return sunlight * (0.3 * forward) + moonlight + 0.5 * (sky_piece.zenith.rgb + sky_piece.horizon.rgb);
-}
-
 fn with_night_sky(light: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
     let night = sky_piece.night;
-    let dark = (1.0 - smoothstep(0.4 * STAR_SKY, STAR_SKY, luminance(light)))
+    let dark = (1.0 - smoothstep(0.4 * STAR_SKY, STAR_SKY, luminance(light) / PI))
         * (1.0 - smoothstep(-0.1, 0.0, sun_direction().y));
     var beyond = vec3<f32>(0.0);
     if dark > 0.0 {
         let galactic = turned(sky_piece.star_turn, ray);
-        let spread = max(0.8 * camera.pixel_angle, 1.0e-5);
-        beyond = star_light(galactic, spread) * (night.x * dark);
+        let spread = max(0.8 * view_detail().pixel_angle, 1.0e-5);
+        beyond = star_light(galactic, spread) * (night.x * dark * PI);
         let deep = dark * (1.0 - 0.85 * night.w * saturate(sky_piece.moon.y * 4.0)
             * min(night.y, 1.0)) * (1.0 - smoothstep(-0.26, -0.14, sun_direction().y));
         if deep > 0.0 {
@@ -326,7 +294,7 @@ fn with_night_sky(light: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
                 light += star_field(galactic, GRAIN_CELLS, GRAIN_SHARE * band.a, 3.0,
                     GRAIN_LIGHT, 8u, spread);
             }
-            beyond += light * (night.x * deep);
+            beyond += light * (night.x * deep * PI);
         }
     }
     let disc = moon_disc(ray, sky_piece.moon.xyz, sun_direction());
@@ -335,10 +303,6 @@ fn with_night_sky(light: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
     var sky = light;
     if any(beyond + glow > vec3<f32>(0.0)) {
         sky += (beyond + glow) * beyond_air(ray);
-    }
-    let cover = cirrus_cover(ray, night.z, camera.position.w);
-    if cover > 0.0 {
-        sky = mix(sky, cirrus_light(ray), cover);
     }
     return sky;
 }

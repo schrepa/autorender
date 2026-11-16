@@ -1,11 +1,6 @@
 {
   "id": "crystal-garden",
   "revision": 5,
-  "environment": {
-    "haze": {
-      "enabled": true
-    }
-  },
   "textures": [
     {
       "id": "garden.image0",

@@ -15,8 +15,6 @@ pub(super) struct PlanInput<'a> {
     pub(super) collides: bool,
     pub(super) collision: Vec<TileKey>,
     pub(super) remaining: usize,
-    pub(super) waiting: u32,
-    pub(super) unsettled: bool,
     pub(super) store: &'a TileStore,
 }
 
@@ -26,7 +24,6 @@ pub(super) struct Plan {
     pub(super) target: HashSet<TileKey>,
     pub(super) keep: HashSet<TileKey>,
     pub(super) missing: Vec<(TileKey, u32)>,
-    pub(super) waiting: u32,
     pub(super) fallback: u32,
     pub(super) named: Vec<WantedTile>,
 }
@@ -91,38 +88,11 @@ pub(super) fn plan(mut input: PlanInput<'_>) -> Plan {
         .chain(collision.iter().copied())
         .chain(target.iter().copied())
         .collect();
-    let (waiting, unsettled) = (input.waiting, input.unsettled);
-    let mut never = HashSet::default();
-    let mut shown = HashSet::default();
-    if waiting > 0 || unsettled {
-        let mut chain = Vec::new();
-        for key in tier(|tile| tile.score < 0.0)
-            .chain(loading.iter().copied())
-            .chain(under.iter().copied())
-        {
-            push_with_ancestors(pyramid, key, &mut chain, &mut never);
-        }
-        if unsettled {
-            chain.clear();
-            for key in tier(|tile| tile.seen) {
-                push_with_ancestors(pyramid, key, &mut chain, &mut shown);
-            }
-        }
-    }
-    let waits = |key: &TileKey| {
-        (waiting > 0 || unsettled)
-            && !never.contains(key)
-            && (u32::from(key.level) < waiting || (unsettled && !shown.contains(key)))
-    };
     let store = input.store;
-    let waiting_tiles = order
-        .iter()
-        .filter(|key| target.contains(key) && store.loads(key) && waits(key))
-        .count() as u32;
     let missing: Vec<(TileKey, u32)> = order
         .iter()
         .enumerate()
-        .filter(|(_, key)| target.contains(key) && store.loads(key) && !waits(key))
+        .filter(|(_, key)| target.contains(key) && store.loads(key))
         .map(|(index, &key)| {
             let class = if index < urgent {
                 URGENT_JOBS
@@ -141,7 +111,6 @@ pub(super) fn plan(mut input: PlanInput<'_>) -> Plan {
         target,
         keep,
         missing,
-        waiting: waiting_tiles,
         fallback,
         named: wanted.named,
     }

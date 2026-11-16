@@ -1,4 +1,4 @@
-use engine_core::{Material, glam::Mat4};
+use engine_core::{Material, ViewDetail, glam::Mat4};
 
 use crate::targets::FrameRegion;
 
@@ -22,17 +22,23 @@ impl CameraUniform {
             detail: position.extend(0.0).to_array(),
             view: [0; 4],
             transparency: crate::TransparencySettings::default().weighting(),
+            texel: 0.0,
+            pixel_error: 0.0,
+            pad_0: 0,
+            pad_1: 0,
         }
     }
 
-    pub fn set_region(&mut self, view_projection: Mat4, region: FrameRegion) {
-        self.pixel_angle = pixel_angle(view_projection, region.display.height);
+    pub fn set_region(&mut self, region: FrameRegion) {
         self.mip_bias = region.mip_bias();
         self.region = region.uniform();
     }
 
-    pub fn set_detail(&mut self, eye: glam::Vec3) {
-        self.detail = eye.extend(0.0).to_array();
+    pub fn set_detail(&mut self, detail: ViewDetail) {
+        self.detail = detail.eye.extend(0.0).to_array();
+        self.pixel_angle = detail.pixel_angle;
+        self.texel = detail.texel;
+        self.pixel_error = detail.pixel_error;
     }
 
     pub fn viewed(
@@ -55,11 +61,6 @@ impl CameraUniform {
             ..Self::exact(view_projection, position, seconds)
         }
     }
-}
-
-pub fn pixel_angle(view_projection: Mat4, height: u32) -> f32 {
-    let row = view_projection.row(1).truncate().length() * height.max(1) as f32;
-    2.0 / engine_core::math::max(row, 1.0e-12)
 }
 
 pub fn pack_surface([first, second]: [f32; 2], emission: f32) -> u32 {
@@ -130,10 +131,6 @@ pub(crate) fn level_copy(
             depth_or_array_layers: 1,
         },
     )
-}
-
-pub fn pixels_per_meter(culling: Mat4, height: f32) -> f32 {
-    culling.row(1).truncate().length() * height * 0.5
 }
 
 pub fn mip_chain_bytes(width: u32, height: u32) -> u64 {

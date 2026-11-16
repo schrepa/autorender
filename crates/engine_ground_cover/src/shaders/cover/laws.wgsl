@@ -1,49 +1,37 @@
-import package::cover::faces::cover::cover_clump_layer;
-import package::generated::cover::COVER_LEAVES;
-import package::place::cover::CoverLaw;
-
-const COVER_LUSH_REFLECTANCE: vec3<f32> = vec3<f32>(0.67, 0.8, 0.89);
-
-const COVER_CLUMP_LATTICES: vec2<f32> = vec2<f32>(0.4, 1.6);
-
-const COVER_CLUMP_HEIGHT: f32 = 0.4;
-const COVER_CLUMP_DRY: f32 = 0.4;
-const COVER_CLUMP_HUE: f32 = 0.1;
-const COVER_CLUMP_BRIGHT: f32 = 0.3;
-const COVER_CLUMP_LEAN: f32 = 0.35;
-
-const COVER_LEAF_STEPS: u32 = 255u / COVER_LEAVES;
-
-const COVER_LEAF_ASPECT: f32 = 0.1;
-
-const COVER_ROOT_OCCLUSION: f32 = 0.35;
-
 const STRAIGHT_JOINTS: u32 = 3u;
-const STRAIGHT_FIRST_VERTEX: u32 = 1024u;
+const FLAT_JOINTS: u32 = 2u;
+const CARD_JOINTS: u32 = 4u;
 
-fn cover_clump_hash(cell: vec2<i32>, layer: u32) -> vec4<f32> {
-    var h = (u32(cell.x) * 0x8da6b343u) ^ (u32(cell.y) * 0xd8163841u)
-        ^ ((layer + 1u) * 0x2c1b3c6du);
-    h = (h ^ (h >> 16u)) * 0x7feb352du;
-    h = (h ^ (h >> 15u)) * 0x846ca68bu;
-    return unpack4x8unorm(h ^ (h >> 16u));
+const COVER_DRAW_VERTICES: u32 = 64u;
+
+const BLADE_SIZE: u32 = 0x7fff7fffu;
+const BLADE_HALF: u32 = 0x80000000u;
+const BLADE_UPPER: u32 = 0x00008000u;
+
+const FOLD_STEPS: f32 = 63.0;
+const FOLD_WIDEST: f32 = 2.0;
+
+const FORM_FOLD: u32 = 0x3fu;
+const FORM_BLUNT: u32 = 0x40u;
+const FORM_FLAT: u32 = 0x80u;
+
+fn blade_taper(pointed: f32, blunt: vec2<f32>, form: u32, along: f32) -> f32 {
+    if (form & FORM_FLAT) != 0u {
+        return max(1.0 - 2.0 * along / (1.0 + pointed), 0.0);
+    }
+    if (form & FORM_BLUNT) != 0u {
+        return 1.0 - (1.0 - blunt.x) * pow(along, blunt.y);
+    }
+    return 1.0 - pow(along, pointed);
 }
 
-fn cover_clump(at: vec2<f32>) -> vec4<f32> {
-    return 0.5 * (cover_clump_layer(at, 0u) + cover_clump_layer(at, 1u));
+const LIT_LEAST: f32 = 1.0 / 255.0;
+
+fn blade_above(pointed: f32, along: f32) -> f32 {
+    let whole = 1.0 + pointed;
+    return (whole * (1.0 - along) + pow(along, whole) - 1.0) / pointed;
 }
 
-fn cover_clump_lean(at: vec2<f32>) -> vec2<f32> {
-    let layers = cover_clump_layer(at, 2u).xy + cover_clump_layer(at, 3u).xy;
-    return 0.5 * COVER_CLUMP_LEAN * layers;
-}
-
-fn cover_widening(away: f32, law: CoverLaw) -> f32 {
-    return clamp(away / max(law.span, 1.0e-6), 1.0, f32(COVER_LEAVES));
-}
-
-fn cover_tuft(away: f32, height: f32, root: f32, law: CoverLaw) -> vec2<f32> {
-    let tuft = root * cover_widening(away, law);
-    let leaf = min(tuft, max(root, COVER_LEAF_ASPECT * height));
-    return vec2<f32>(leaf, clamp(tuft / leaf, 1.0, f32(COVER_LEAVES)));
-}
+const CARD_MIRRORED: u32 = 0x80000000u;
+const CARD_CELL: u32 = 0x7fffffffu;
+const CARD_TINT_RANGE: f32 = 0.5;

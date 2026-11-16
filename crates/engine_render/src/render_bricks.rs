@@ -4,7 +4,7 @@ use engine_registry::RecordExt;
 use crate::registration;
 use crate::{
     Draw, GpuPart, LightingModule, OpenSlot, PointInput, PointSet, Scene, SceneDraw, SlotModule,
-    SurfaceKind, SurfaceTerms, TargetDecl, wgpu,
+    SurfaceKind, SurfaceTerms, TargetDecl,
 };
 
 pub trait RenderBricks {
@@ -17,7 +17,6 @@ pub trait RenderBricks {
         draw: fn(&P, &SceneDraw, &mut Draw<'_, P, Scene>) -> u32,
     ) -> &mut Self;
     fn view_target(&mut self, target: TargetDecl) -> &mut Self;
-    fn device_feature(&mut self, feature: wgpu::Features) -> &mut Self;
     fn generated(&mut self, wgsl: &'static [&'static str]) -> &mut Self;
     fn material_slot(&mut self, module: SlotModule) -> &mut Self;
     fn open_slot(&mut self, slot: OpenSlot) -> &mut Self;
@@ -84,13 +83,6 @@ impl RenderBricks for Bricks<'_> {
 
     fn view_target(&mut self, target: TargetDecl) -> &mut Self {
         self.record().render.push(Box::new(target));
-        self
-    }
-
-    fn device_feature(&mut self, feature: wgpu::Features) -> &mut Self {
-        self.record()
-            .render
-            .push(Box::new(registration::DeviceFeature(feature)));
         self
     }
 

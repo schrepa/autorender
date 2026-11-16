@@ -14,8 +14,8 @@ use super::LAYER_SIZE;
 use super::part::{Handles, TerrainGpu};
 use crate::gpu::{
     ANCESTORS_GROUP, AncestorJob, CONTROL_GROUP, CONTROL_PLANE, ControlJob, NORMAL_PLANE,
-    NORMALS_GROUP, NOT_RESIDENT, NormalJob, PEAKS_GROUP, RiverMaps, SURFACE_ERROR_MIPS,
-    TILE_PLANES,
+    NORMALS_GROUP, NOT_RESIDENT, NormalJob, PEAKS_GROUP, RiverMaps, SITE_PLANE, SUMMARY_CELLS,
+    SUMMARY_GROUP, SUMMARY_MIPS, SUMMARY_PLANES, SURFACE_ERROR_MIPS, TILE_PLANES,
 };
 use crate::state::{
     Atlas, AtlasMoves, Bakes, TerrainBakes, TileId, Upload, all_uploads, listed_tile, programmed,
@@ -39,6 +39,7 @@ pub(crate) struct TileAtlas {
     normal_jobs: Vec<NormalJob>,
     control_jobs: Vec<ControlJob>,
     peak_layers: Vec<u32>,
+    summary_layers: Vec<u32>,
     control_ancestors: Vec<AncestorJob>,
     normal_ancestors: Vec<AncestorJob>,
     pub(crate) controls: u32,
@@ -69,6 +70,10 @@ impl TileAtlas {
         self.control_ancestors.len() + self.normal_ancestors.len()
     }
 
+    pub(super) fn summary_jobs(&self) -> usize {
+        self.summary_layers.len()
+    }
+
     pub(super) fn normal_groups(&self) -> [u32; 3] {
         let side = LAYER_SIZE.div_ceil(NORMALS_GROUP);
         [side, side, self.normal_jobs.len() as u32]
@@ -88,6 +93,20 @@ impl TileAtlas {
         let mut dispatched = 0;
         for (mip, pipeline) in pipelines.iter().enumerate() {
             let groups = (ERROR_CELLS >> mip).div_ceil(PEAKS_GROUP);
+            dispatched += cx.dispatch(pipeline, Count::Groups([groups, groups, jobs]));
+        }
+        dispatched
+    }
+
+    pub(super) fn summaries(
+        &self,
+        cx: &mut Encode<'_, TerrainGpu>,
+        pipelines: &[ComputePipeline<TerrainGpu>],
+    ) -> u32 {
+        let jobs = self.summary_layers.len() as u32;
+        let mut dispatched = 0;
+        for (mip, pipeline) in pipelines.iter().enumerate() {
+            let groups = (SUMMARY_CELLS >> mip).div_ceil(SUMMARY_GROUP);
             dispatched += cx.dispatch(pipeline, Count::Groups([groups, groups, jobs]));
         }
         dispatched
@@ -118,7 +137,7 @@ impl TileAtlas {
         cx: &mut Prepare<'_, TerrainGpu>,
         handles: &Handles,
         (tiles, atlas, bakes): (&TerrainTiles, &Atlas, &Bakes),
-        (moves, [normals, control, peaks, ancestors]): (&AtlasMoves, [bool; 4]),
+        (moves, [normals, control, peaks, ancestors, summaries]): (&AtlasMoves, [bool; 5]),
         (line, watered): (&Waterline, bool),
     ) {
         let capacity = atlas.capacity.max(1);
@@ -152,6 +171,15 @@ impl TileAtlas {
             },
             1,
         ));
+        allocations.push(cx.allocate(
+            handles.summaries,
+            wgpu::Extent3d {
+                width: SUMMARY_CELLS,
+                height: SUMMARY_CELLS,
+                depth_or_array_layers: layers * SUMMARY_PLANES,
+            },
+            SUMMARY_MIPS,
+        ));
         for errors in [handles.errors, handles.water_errors] {
             allocations.push(cx.allocate(
                 errors,
@@ -182,6 +210,7 @@ impl TileAtlas {
         self.normal_jobs.retain(|job| kept(normals, job.layer));
         self.control_jobs.retain(|job| kept(control, job.layer));
         self.peak_layers.retain(|&layer| kept(peaks, layer));
+        self.summary_layers.retain(|&layer| kept(summaries, layer));
         self.control_ancestors
             .retain(|job| kept(ancestors, job.layer));
         self.normal_ancestors
@@ -211,6 +240,7 @@ impl TileAtlas {
                 tile,
             };
             let shades = shaded_elsewhere(id.1.level, entry.surroundings);
+            self.summary_layers.push(layer);
             if upload == Upload::Whole {
                 self.give_ground(
                     cx,
@@ -235,6 +265,13 @@ impl TileAtlas {
         write_jobs(cx, handles.normal_jobs, &self.normal_jobs);
         write_jobs(cx, handles.control_jobs, &self.control_jobs);
         write_jobs(cx, handles.peak_jobs, &self.peak_layers);
+        self.summary_layers
+            .extend(self.control_jobs.iter().map(|job| job.layer));
+        self.summary_layers
+            .extend(self.control_ancestors.iter().map(|job| job.layer));
+        self.summary_layers.sort_unstable();
+        self.summary_layers.dedup();
+        write_jobs(cx, handles.summary_jobs, &self.summary_layers);
         write_jobs(cx, handles.control_ancestors, &self.control_ancestors);
         write_jobs(cx, handles.normal_ancestors, &self.normal_ancestors);
         self.controls = self.control_jobs.len() as u32;
@@ -276,25 +313,77 @@ impl TileAtlas {
             };
             let held = bakes.of(terrain);
             if shaded_elsewhere(key.level, entry.surroundings) {
-                if held.and_then(|held| held.shading(tile)).is_none() {
-                    self.control_ancestors.push(ancestor_job(
-                        atlas,
-                        (entry, held),
-                        (layer, key),
-                        true,
-                    ));
+                if held.and_then(|held| held.shading(tile)).is_none() && !programmed(entry, tile)
+                {
+                    self.inherit(atlas, (entry, held), (layer, key));
                     self.normal_ancestors.push(ancestor_job(
                         atlas,
                         (entry, held),
                         (layer, key),
-                        false,
+                        NORMAL_PLANE,
                     ));
                 }
             } else if tile.control.is_none() && !programmed(entry, tile) {
-                self.control_ancestors
-                    .push(ancestor_job(atlas, (entry, held), (layer, key), true));
+                self.inherit(atlas, (entry, held), (layer, key));
             }
         }
+    }
+
+    fn inherit(
+        &mut self,
+        atlas: &Atlas,
+        (entry, held): (&TerrainEntry, Option<&TerrainBakes>),
+        tile_at: (u32, TileKey),
+    ) {
+        self.control_ancestors
+            .push(ancestor_job(atlas, (entry, held), tile_at, CONTROL_PLANE));
+        if entry.site_ranges.is_some() {
+            self.control_ancestors
+                .push(ancestor_job(atlas, (entry, held), tile_at, SITE_PLANE));
+        } else {
+            self.empty_site(tile_at.0);
+        }
+    }
+
+    fn empty_site(&mut self, layer: u32) {
+        self.control_ancestors.push(AncestorJob {
+            layer,
+            held_layer: NOT_RESIDENT,
+            shift: 0,
+            plane: SITE_PLANE,
+            first: [0; 2],
+            held_first: [0; 2],
+        });
+    }
+
+    fn program(&mut self, cx: &mut Prepare<'_, TerrainGpu>, handles: &Handles, placing: &Placing<'_>) {
+        let Placing {
+            id,
+            layer,
+            index,
+            entry,
+            tile,
+        } = *placing;
+        let mut rivers = RiverMaps::default();
+        if let Some(edges) = &tile.river_edges {
+            rivers.edges = true;
+            write_river(cx, handles.rivers, (layer, 0), edges);
+        }
+        if let Some(beds) = &tile.river_beds {
+            rivers.beds = true;
+            for (plane, bed) in beds.as_chunks::<BED_SAMPLES>().0.iter().take(3).enumerate() {
+                write_river(cx, handles.rivers, (layer, plane as u32 + 1), bed);
+            }
+        }
+        let spacing = tile.spacing;
+        self.control_jobs.push(ControlJob {
+            layer,
+            rivers: rivers.pack(),
+            first: first_sample(entry, id.1, spacing),
+            spacing,
+            terrain: index as u32,
+            pad: [0; 2],
+        });
     }
 
     fn give_ground(
@@ -371,9 +460,9 @@ impl TileAtlas {
         let Placing {
             id,
             layer,
-            index,
             entry,
             tile,
+            ..
         } = *placing;
         if let Some(values) = &tile.control {
             write_layer(
@@ -382,34 +471,19 @@ impl TileAtlas {
                 layer * TILE_PLANES + CONTROL_PLANE,
                 (bytemuck::cast_slice(&values[..]), 4),
             );
+            match &tile.site {
+                Some(site) => write_layer(
+                    cx,
+                    handles.tile_maps,
+                    layer * TILE_PLANES + SITE_PLANE,
+                    (bytemuck::cast_slice(&site[..]), 4),
+                ),
+                None => self.empty_site(layer),
+            }
         } else if programmed(entry, tile) {
-            let mut rivers = RiverMaps::default();
-            if let Some(edges) = &tile.river_edges {
-                rivers.edges = true;
-                write_river(cx, handles.rivers, (layer, 0), edges);
-            }
-            if let Some(beds) = &tile.river_beds {
-                rivers.beds = true;
-                for (plane, bed) in beds.as_chunks::<BED_SAMPLES>().0.iter().take(3).enumerate() {
-                    write_river(cx, handles.rivers, (layer, plane as u32 + 1), bed);
-                }
-            }
-            let spacing = tile.spacing;
-            self.control_jobs.push(ControlJob {
-                layer,
-                rivers: rivers.pack(),
-                first: first_sample(entry, id.1, spacing),
-                spacing,
-                terrain: index as u32,
-                pad: [0; 2],
-            });
+            self.program(cx, handles, placing);
         } else {
-            self.control_ancestors.push(ancestor_job(
-                atlas,
-                (entry, bakes.of(id.0)),
-                (layer, id.1),
-                true,
-            ));
+            self.inherit(atlas, (entry, bakes.of(id.0)), (layer, id.1));
         }
     }
 
@@ -429,11 +503,19 @@ impl TileAtlas {
         } = *placing;
         let held = bakes.of(id.0);
         let Some(shading) = held.and_then(|held| held.shading(tile)) else {
+            if programmed(entry, tile) {
+                self.program(cx, handles, placing);
+                self.normal_jobs.push(NormalJob {
+                    layer,
+                    spacing: tile.spacing.to_bits(),
+                    pad: [0; 2],
+                });
+                return;
+            }
             let tile_at = (layer, id.1);
-            self.control_ancestors
-                .push(ancestor_job(atlas, (entry, held), tile_at, true));
+            self.inherit(atlas, (entry, held), tile_at);
             self.normal_ancestors
-                .push(ancestor_job(atlas, (entry, held), tile_at, false));
+                .push(ancestor_job(atlas, (entry, held), tile_at, NORMAL_PLANE));
             return;
         };
         write_layer(
@@ -448,6 +530,16 @@ impl TileAtlas {
             layer * TILE_PLANES + NORMAL_PLANE,
             (bytemuck::cast_slice(&shading.gradient_texels()[..]), 4),
         );
+        if entry.site_ranges.is_some() {
+            write_layer(
+                cx,
+                handles.tile_maps,
+                layer * TILE_PLANES + SITE_PLANE,
+                (bytemuck::cast_slice(&shading.site_texels()[..]), 4),
+            );
+        } else {
+            self.empty_site(layer);
+        }
     }
 }
 
@@ -455,16 +547,16 @@ fn ancestor_job(
     atlas: &Atlas,
     (entry, held): (&TerrainEntry, Option<&TerrainBakes>),
     (layer, key): (u32, TileKey),
-    control: bool,
+    plane: u32,
 ) -> AncestorJob {
     let quads = engine_heightfield::TILE_QUADS as i32;
-    let plane = if control { CONTROL_PLANE } else { NORMAL_PLANE };
     let first_of = |key: TileKey| [i32::from(key.x) * quads - 1, i32::from(key.z) * quads - 1];
     let (mut at, mut shift) = (key, 0);
     while let Some(parent) = entry.pyramid.parent(at) {
         (at, shift) = (parent, shift + 1);
         let holds = listed_tile(&entry.tiles, at).is_some_and(|tile| {
-            (control && tile.control.is_some())
+            (plane == CONTROL_PLANE && tile.control.is_some())
+                || (plane == SITE_PLANE && tile.site.is_some())
                 || held.is_some_and(|held| held.shading(tile).is_some())
         });
         if let Some(held_layer) = atlas.layer_of(entry.terrain, at).filter(|_| holds) {

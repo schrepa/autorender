@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParamItem;
-use engine::prelude::Commands;
+use engine::prelude::{Commands, World};
 use engine_core::{
     AssetLibrary, Error, ErrorCode, Expected, Jobs, Operation, ProvidedAssets, RecordExchange,
     Transform,
@@ -12,6 +12,7 @@ use serde::Deserialize;
 use crate::bricks::game::cave::{Cave, CaveMouth};
 use crate::bricks::game::content::{self, Content};
 use crate::bricks::game::views::{Views, bodies_view, show};
+use crate::jobs::photographs::Photographs;
 
 #[derive(Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case", deny_unknown_fields)]
@@ -46,6 +47,7 @@ impl Operation for HighlandsControl {
         (
             Query<'static, 'static, &'static Transform, With<RigidBody>>,
             Commands<'static, 'static>,
+            Option<Res<'static, Photographs>>,
         ),
     );
     type Request = Self;
@@ -55,7 +57,7 @@ impl Operation for HighlandsControl {
         (
             (mut assets, mut records, provided, mut jobs),
             (mut content, mut cave, mut views),
-            (rigid, mut commands),
+            (rigid, mut commands, photographs),
         ): SystemParamItem<'_, '_, Self::Params>,
         control: Self,
     ) -> Result<(), Error> {
@@ -64,10 +66,18 @@ impl Operation for HighlandsControl {
                 let mut provided = provided.ok_or_else(|| {
                     Error::new(ErrorCode::MissingResource, "$.provided").expected(Expected::Present)
                 })?;
+                let photographs = photographs.ok_or_else(|| {
+                    Error::new(ErrorCode::MissingResource, "$.photographs")
+                        .expected(Expected::Present)
+                })?;
                 content::provide_land(
                     (&mut *assets, &mut *records, &mut *provided),
                     (&mut *content, &mut jobs),
+                    &photographs,
                 )?;
+                commands.queue(|world: &mut World| {
+                    world.remove_resource::<Photographs>();
+                });
             }
             Self::Cave {
                 mouth,

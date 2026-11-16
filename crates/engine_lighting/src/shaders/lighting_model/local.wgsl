@@ -1,15 +1,17 @@
+import package::engine::math::PI;
 import package::engine::shading::SurfacePoint;
 import package::face::interior::interior;
 import package::face::lights::{LIGHT_EXTERIOR, LIGHT_INTERIOR, Light};
 import package::generated::pieces::lighting_model::piece;
 import package::lighting_model::faces::lighting::{distribution, fresnel, visibility};
-import package::lighting_model::surface::{cap_share, disk_energy, dominant_direction};
+import package::lighting_model::surface::{Crossing, cap_share, crossing_back, disk_energy,
+    dominant_direction};
 
 fn tube_energy(alpha: f32, angle: f32) -> f32 {
     return alpha / saturate(alpha + 0.5 * angle);
 }
 
-fn shaped_light(point: SurfacePoint, light: Light, shaped: bool, kept: bool,
+fn shaped_light(point: SurfacePoint, crossing: Crossing, light: Light, shaped: bool, kept: bool,
         inside: ptr<function, f32>) -> vec3<f32> {
     if kept && light.region != 0u {
         if *inside < 0.0 {
@@ -70,9 +72,16 @@ fn shaped_light(point: SurfacePoint, light: Light, shaped: bool, kept: bool,
         let lobe = distribution(n_h, point.alpha)
             * visibility(point.n_v, n_l_highlight, point.alpha) * energy;
         highlight = fresnel(point.f0, max(dot(point.view, half_vector), 0.0))
-            * (lobe * n_l_highlight);
+            * (lobe * n_l_highlight * PI);
         highlight *= cap_share(highlight * (piece().model.z * falloff) * light.color);
     }
-    return (point.diffuse_color * n_l + highlight * piece().model.z) * light.color
+    let lit = (point.diffuse_color * n_l + highlight * piece().model.z) * light.color
         * falloff;
+    if !crossing.passes {
+        return lit;
+    }
+    let back = saturate(-0.5 * (dot(crossing.face, first) / first_length
+        + dot(crossing.face, last) / last_length));
+    let along = 0.5 * (dot(point.view, first) / first_length + dot(point.view, last) / last_length);
+    return lit + crossing.light * light.color * (falloff * crossing_back(crossing, back, along));
 }

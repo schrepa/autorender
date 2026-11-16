@@ -1,38 +1,65 @@
 use std::sync::Arc;
 
 use engine_core::fields;
-use engine_heightfield::bed::{HEAD_FLOOD, NARROWEST, bankfull};
+use engine_heightfield::bed::{Boulders, NARROWEST, Pools, Steps, bankfull};
+use engine_heightfield::hydraulics::{Falls, Profile, Shape};
 use engine_heightfield::hydrology::{
     Drainage, FLOW_RANGE, Grid, HydrologyBake, HydrologyStats, LAKE_RANGE, NEIGHBORS,
     WETNESS_RANGE, WaterGrid, drainage, neighbor_steps,
 };
-use engine_heightfield::rivers::{RiverLine, Rivers};
+use engine_heightfield::rivers::{Deposits, Form, RiverLine, Rivers, Section, Valley};
 use engine_heightfield::{HeightImage, MAX_LEVEL};
 use engine_math::{max, min};
 use serde::{Deserialize, Serialize};
 
 use crate::given::{Drained, GivenLayers, courses};
-use crate::rivers::{Channels, trace};
+use crate::rivers::{Channels, Land, Meanders, trace};
 
 fields! {
     #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
     #[serde(default, deny_unknown_fields)]
     pub struct HydrologyLayer {
         pub level: u32 = 0 => range(0, MAX_LEVEL),
-        pub discharge: f32 = DISCHARGE => range(0.001, 1000.0),
+        pub discharge: f32 = 1.0 => range(0.001, 1000.0),
+        pub source: f32 = 0.16 => above_to(0.0, 1000.0),
+        pub shortest: f32 = 6.0 => range(0.0, 1000.0),
+        pub lake_depth: f32 = 2.0 => range(0.0, 1000.0),
+        pub profile: Profile = Profile::default() => any,
+        pub meanders: Meanders = Meanders::default() => any,
+        pub channel: Shape = Shape::default() => any,
+        pub section: Section = Section::default() => any,
+        pub valley: Valley = Valley::default() => any,
+        pub deposits: Deposits = Deposits::default() => any,
+        pub pools: Pools = Pools::default() => any,
+        pub steps: Steps = Steps::default() => any,
+        pub boulders: Boulders = Boulders::default() => any,
+        pub falls: Falls = Falls::default() => any,
     }
 }
 
-const DISCHARGE: f32 = 1.0;
+impl HydrologyLayer {
+    pub(crate) fn form(&self) -> Form {
+        Form {
+            profile: self.profile,
+            shape: self.channel,
+            falls: self.falls,
+            pools: self.pools,
+            steps: self.steps,
+            boulders: self.boulders,
+            section: self.section,
+            valley: self.valley,
+            deposits: self.deposits,
+        }
+    }
+}
 
 const SHORE_SAMPLES: usize = 2;
 const SHORE_DROP: f32 = 0.5;
 const DRY_DEPTH: f32 = 20.0;
 
-const LAKE_DEPTH: f32 = 2.0;
 const WET: f32 = 1.0e-3;
 
-fn lakes(heights: &[f32], filled: &[f32], width: usize) -> Vec<bool> {
+fn lakes(heights: &[f32], filled: &[f32], width: usize, deep: f32) -> Vec<bool> {
     let count = heights.len();
     let height = count / width;
     let depth = |sample: usize| filled[sample] - heights[sample];
@@ -65,7 +92,7 @@ fn lakes(heights: &[f32], filled: &[f32], width: usize) -> Vec<bool> {
                 }
             }
         }
-        if deepest >= LAKE_DEPTH {
+        if deepest >= deep {
             for &sample in &region {
                 lake[sample] = true;
             }
@@ -134,7 +161,7 @@ pub(crate) fn bake(
     let count = landscape.len();
     let rows = count / across;
     let routed = drainage(landscape, across, apart);
-    let lake = lakes(landscape, &routed.filled, across);
+    let lake = lakes(landscape, &routed.filled, across, layer.lake_depth);
     let (spread_area, steepest) = spread(landscape, &routed, across, apart);
     let filled = routed.filled;
     let found = Found {
@@ -216,7 +243,9 @@ fn rivers_over(
         rank[sample as usize] = position as u32;
     }
     let runoff = layer.discharge * 1.0e-6;
-    let channel_area = HEAD_FLOOD / runoff;
+    let form = layer.form();
+    let narrowest = NARROWEST * finest;
+    let channel_area = layer.source / runoff;
     let given = courses(
         given,
         (
@@ -233,7 +262,7 @@ fn rivers_over(
             area: &area,
             lakes: in_lake,
         },
-        (runoff, NARROWEST * finest),
+        (runoff, narrowest, &form),
     );
     drop(order);
     let (area, within, continued, mut lines) = match given {
@@ -252,19 +281,33 @@ fn rivers_over(
         .chain(&area)
         .fold(0.0_f32, |most, &drained| max(most, drained));
     let given = lines.len();
-    lines.extend(trace(
-        &Channels {
+    let sized = |drained: f32| {
+        let (width, depth) = bankfull(drained * runoff, form.shape.aspect);
+        (max(width, narrowest), depth)
+    };
+    lines.extend(trace(&Land {
+        channels: &Channels {
             area: &area,
             receivers: &receivers,
             lakes: in_lake,
             rank: &rank,
             within: within.as_deref(),
             continued: &continued,
+            ground: Grid {
+                heights,
+                width,
+                spacing,
+            },
         },
-        (width, spacing),
         channel_area,
-        |drained| bankfull(drained * runoff).0,
-    ));
+        meanders: &layer.meanders,
+        bend: form.section.bend,
+        bars: 2.0 * narrowest / max(1.0 - form.section.island, 1.0e-3),
+        shortest: layer.shortest,
+        lake: &|point: glam::Vec2| water.lake_beside(point.x, point.y),
+        grade: &|drained: f32| form.profile.slope(drained * runoff),
+        bankfull: &sized,
+    }));
     (lines, channel_samples, max_area, given)
 }
 
@@ -364,4 +407,20 @@ fn water(heights: &[f32], found: &Found<'_>, width: usize, spacing: f32) -> Wate
     }
 }
 
-engine_codec::record!(HydrologyLayer { level, discharge });
+engine_codec::record!(HydrologyLayer {
+    level,
+    discharge,
+    source,
+    shortest,
+    lake_depth,
+    profile,
+    meanders,
+    channel,
+    section,
+    valley,
+    deposits,
+    pools,
+    steps,
+    boulders,
+    falls,
+});

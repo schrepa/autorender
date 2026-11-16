@@ -3,24 +3,18 @@ use std::sync::Arc;
 
 use engine_codec::Error;
 use engine_core::GpuBits;
-use engine_heightfield::noise::smooth;
 use engine_heightfield::rivers::{RiverRaster, Rivers};
 use engine_heightfield::tile::{
     Footprint, Generator, LAKE_REACH, PATCH_QUADS, PATCHES_PER_TILE, TILE_STRIDE, Tile,
     extend_water, hole_at, on_triangle, tile_cell, water_rows,
 };
 use engine_heightfield::{Layers, Pyramid, Reach, TILE_QUADS, TILE_SAMPLES, TileKey};
-use engine_math::GRAVITY;
 use engine_open_world_kit::ground::TileFace;
 use glam::Vec2;
 
 use super::gpu::WATER_SPAN_STEPS as SPAN_STEPS;
-pub use super::gpu::{
-    BREAK_FULL, BREAK_ONSET, BREAK_THINNEST, TURBULENT_SPEED, TURBULENT_SWIRL, WATER_FLOW_RANGE,
-    WATER_SHEAR_RANGE, WATER_SPAN_LEAST, WATER_SPAN_MOST,
-};
+pub use super::gpu::{WATER_FLOW_RANGE, WATER_SHEAR_RANGE, WATER_SPAN_LEAST, WATER_SPAN_MOST};
 use super::gpu::{WaterInfoWord, WaterStateWord};
-use super::shallow_water::DENSITY;
 
 pub(crate) const NONE: u32 = u32::MAX;
 const NO_RING: u8 = u8::MAX;
@@ -413,53 +407,6 @@ fn unit(value: f32) -> u8 {
     (engine_math::clamp(value, 0.0, 1.0) * 255.0).round() as u8
 }
 
-pub(crate) fn turbulence(rush: f32, speed: f32, swirl: f32) -> f32 {
-    engine_math::clamp(
-        rush / engine_math::max(speed, TURBULENT_SPEED) + swirl / TURBULENT_SWIRL,
-        0.0,
-        1.0,
-    )
-}
-
-pub(crate) fn breaking(energy: f32, depth: f32, lip: f32) -> f32 {
-    let depth = engine_math::max(depth, BREAK_THINNEST);
-    let losing = energy / (DENSITY * depth);
-    let eddies = libm::cbrtf(losing * depth);
-    let breaks = eddies / (GRAVITY * depth).sqrt();
-    let born = smooth((breaks - BREAK_ONSET) / (BREAK_FULL - BREAK_ONSET));
-    engine_math::clamp(born + lip, 0.0, 1.0)
-}
-
-pub(crate) fn shears(flows: &[Vec2], wet: &dyn Fn(usize) -> bool, spacing: f32) -> Vec<f32> {
-    let stride = TILE_STRIDE as usize;
-    let mut shears = vec![0.0; flows.len()];
-    for z in 0..stride {
-        for x in 0..stride {
-            let at = z * stride + x;
-            if !wet(at) {
-                continue;
-            }
-            let change = |before: Option<usize>, after: Option<usize>| {
-                let before = before.filter(|&near| wet(near));
-                let after = after.filter(|&near| wet(near));
-                match (before, after) {
-                    (Some(before), Some(after)) => (flows[after] - flows[before]) / (2.0 * spacing),
-                    (Some(before), None) => (flows[at] - flows[before]) / spacing,
-                    (None, Some(after)) => (flows[after] - flows[at]) / spacing,
-                    (None, None) => Vec2::ZERO,
-                }
-            };
-            let along_x = change((x > 0).then(|| at - 1), (x + 1 < stride).then(|| at + 1));
-            let along_z = change(
-                (z > 0).then(|| at - stride),
-                (z + 1 < stride).then(|| at + stride),
-            );
-            shears[at] = (along_x.length_squared() + along_z.length_squared()).sqrt();
-        }
-    }
-    shears
-}
-
 fn standing(
     wet: &[bool],
     (spacing, origin, solids): (f32, Vec2, &[Footprint]),
@@ -580,27 +527,6 @@ fn tile_water_of(rows: Option<Rows>, tile: &Tile) -> Option<TileWater> {
         (tile.heights(), spacing, tile_origin(tile.key(), spacing)),
         &[],
     )
-}
-
-fn kept(water: Option<TileWater>) -> Result<Option<TileWater>, Error> {
-    engine_codec::decode(&engine_codec::encode(&water))
-}
-
-pub(crate) fn generated(
-    generator: &mut Generator,
-    budget: &mut u64,
-    (layers, pyramid): (&Layers, &Pyramid),
-) -> Result<Option<(Tile, Option<TileWater>)>, Error> {
-    let Some(made) = generator.advance(budget) else {
-        if generator.failed() {
-            return Err(super::invalid_heights());
-        }
-        return Ok(None);
-    };
-    let rows = tile_rows(layers, pyramid, generator.key());
-    let own = kept(tile_water_of(rows, &made))?;
-    let tile: Tile = engine_codec::decode(&engine_codec::encode(&made))?;
-    Ok(Some((tile, own)))
 }
 
 pub(crate) struct BaseWater {
@@ -766,17 +692,4 @@ pub(crate) fn point(
         return Some(None);
     }
     Some(water.and_then(|water| point_on((&face.heights, water), (i, j, fu, fv))))
-}
-
-pub(crate) fn tile_point(
-    tile: &Tile,
-    water: Option<&TileWater>,
-    local: Vec2,
-) -> Option<WaterPoint> {
-    let sample = tile.sample(local)?;
-    if sample.hole {
-        return None;
-    }
-    let cell = tile_cell(tile.spacing(), local)?;
-    point_on((tile.heights(), water?), cell)
 }

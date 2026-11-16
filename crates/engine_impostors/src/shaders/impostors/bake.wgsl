@@ -3,7 +3,7 @@ import package::engine::materials::alpha_test;
 import package::engine::geometry::vertex::octahedral_normal;
 import package::engine::shading::SurfaceInput;
 import package::engine::mapped::{base_texel, emissive_texel};
-import package::engine::surface::{masked_out, opacity_cut, surface_point};
+import package::engine::surface::{masked_out, surface_point};
 import package::engine::view::stable_normalize;
 import package::face::lighting::SURFACE_THIN;
 import package::generated::impostors::ImpostorBake;
@@ -11,47 +11,10 @@ import package::impostors::faces::impostors::{impostor_basis, impostor_flags_hem
     impostor_frame_direction, impostor_frames};
 
 @group(2) @binding(0) var<uniform> impostor_bake: ImpostorBake;
-@group(2) @binding(1) var impostor_shade: texture_depth_2d;
-@group(2) @binding(2) var<storage, read_write> bake_kinds: array<atomic<u32>>;
+@group(2) @binding(1) var<storage, read_write> bake_kinds: array<atomic<u32>>;
 
 fn bake_hemisphere() -> bool {
     return impostor_flags_hemisphere(impostor_bake.flags.x);
-}
-
-fn impostor_self_visibility(position: vec3<f32>, normal: vec3<f32>) -> f32 {
-    let size = textureDimensions(impostor_shade).x;
-    let frames = impostor_frames(impostor_bake.flags.x);
-    let texel = 2.0 * f32(frames) / f32(size);
-    let p = (position - impostor_bake.sphere.xyz) / impostor_bake.sphere.w
-        + normal * (1.5 * texel);
-    let hemisphere = bake_hemisphere();
-    var seen = 0.0;
-    var total = 0.0;
-    let stride = (frames + 7u) / 8u;
-    for (var frame = 0u; frame < frames * frames; frame++) {
-        if (frame % frames) % stride != 0u || (frame / frames) % stride != 0u {
-            continue;
-        }
-        let d = impostor_frame_direction(frame, frames, hemisphere);
-        let facing = dot(normal, d);
-        if d.y < 0.0 || facing <= 0.0 {
-            continue;
-        }
-        let basis = impostor_basis(d);
-        let image = vec2<f32>(dot(p, basis.right), -dot(p, basis.up));
-        let cell = vec2<f32>(f32(frame % frames), f32(frame / frames));
-        let atlas = (cell + 0.5 + image * 0.5) / f32(frames);
-        let at = min(vec2<u32>(max(atlas, vec2<f32>(0.0)) * f32(size)), vec2<u32>(size - 1u));
-        let nearest = textureLoad(impostor_shade, at, 0);
-        total += facing;
-        if 0.5 + 0.5 * dot(p, d) >= nearest {
-            seen += facing;
-        }
-    }
-    if total <= 0.0 {
-        return 1.0;
-    }
-    return seen / total;
 }
 
 struct BakeOutput {
@@ -134,12 +97,6 @@ fn bake_input(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool)
     return surface;
 }
 
-fn bake_mask(surface: SurfaceInput) {
-    if alpha_test() && opacity_cut(surface) {
-        discard;
-    }
-}
-
 fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool)
         -> BakeTargets {
     let surface = bake_input(input, color, uv1, front);
@@ -156,25 +113,8 @@ fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool
     targets.emissive = vec4<f32>(emissive_texel(surface), base.a);
     targets.geometry = vec4<f32>(stable_normalize(point.normal) * 0.5 + 0.5,
         0.5 + 0.5 * input.depth);
-    targets.surface = vec4<f32>(point.roughness, point.metalness, point.occlusion,
-        impostor_self_visibility(surface.world, point.geometric));
+    targets.surface = vec4<f32>(point.roughness, point.metalness, point.occlusion, 0.0);
     return targets;
-}
-
-@fragment
-fn fs_impostor_shade(input: BakeOutput) {
-    let uv = vec2<f32>(input.normal_u.w, input.local_v.w);
-    bake_mask(bake_input(input, vec4<f32>(1.0), uv, true));
-}
-
-@fragment
-fn fs_impostor_shade_extended(input: BakeExtendedOutput) {
-    var vertex: BakeOutput;
-    vertex.clip_position = input.clip_position;
-    vertex.normal_u = input.normal_u;
-    vertex.local_v = input.local_v;
-    vertex.depth = input.depth;
-    bake_mask(bake_input(vertex, input.color, input.uv1, true));
 }
 
 @fragment

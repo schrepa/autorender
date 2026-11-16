@@ -407,8 +407,6 @@ pub struct Terrains {
     pub(super) stats: TerrainStats,
     pub(super) last_eye: Option<Vec3>,
     pub(super) velocity: Vec3,
-    pub(super) seconds: f32,
-    pub(super) fast_ago: Option<f32>,
     pub(super) stacks: Vec<(Arc<Layers>, RecordKey)>,
     pub(super) retired: Retired,
     pub(super) restored: u64,

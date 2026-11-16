@@ -2,17 +2,18 @@ use std::sync::Arc;
 
 use engine_heightfield::bed::NARROWEST;
 use engine_heightfield::given::GivenRiver;
-use engine_heightfield::hydraulics::{Across, BESIDE, Course, Flow, river};
+use engine_heightfield::hydraulics::{Across, BESIDE, Course, Flow, Mouth, river, surveyed};
 use engine_heightfield::hydrology::{Grid, MAP_LEVELS};
-use engine_heightfield::layer::{FineRegion, TerrainLayer};
+use engine_heightfield::layer::{FineRegion, Row, TerrainLayer};
 use engine_heightfield::rivers::Rivers;
+use engine_heightfield::tile::{producer, read_map};
 use engine_heightfield::{Gather, Layers, Pyramid, TileHeights};
 use engine_math::collections::HashMap;
 use engine_math::{clamp, max, min};
 use glam::Vec2;
 
 use crate::hydrology::{HydrologyLayer, bake};
-use crate::{HydrologyStage, RiversLayer};
+use crate::{HARDNESS, HydrologyStage, RiversLayer};
 
 pub(crate) fn hydrology_stage(
     layer: &HydrologyLayer,
@@ -52,40 +53,91 @@ pub(crate) fn hydrology_stage(
     let flow = Flow {
         runoff: layer.discharge * 1.0e-6,
         finest: pyramid.spacing(0),
+        form: layer.form(),
     };
     let water = &hydrology.water;
     let key = |point: Vec2| [point.x.to_bits(), point.y.to_bits()];
-    let mut ends: HashMap<[u32; 2], f32> = HashMap::default();
-    let mut rivers = Vec::with_capacity(lines.len());
-    let mut falls = Vec::new();
     let ground = |point: Vec2| grid.height(point.x, point.y);
     let imported = Imported::new(below, pyramid);
     let across = |point: Vec2, way: Vec2, half: f32| imported.across(point, way, half);
-    for line in &lines {
-        let first = line.points[0];
-        let start = if line.head {
-            water.lake_beside(first.x, first.y)
-        } else {
-            ends.get(&key(first)).copied()
-        };
-        let (solved, found) = river(
-            &Course {
-                line,
-                ground: &ground,
-                across: &across,
-                start,
-            },
-            &flow,
-        );
-        let end = line.points.len() - 1;
-        let level = solved.flood[end];
-        let end = line.points[end];
-        if level.is_finite() {
-            ends.entry(key(end))
-                .and_modify(|lowest| *lowest = min(*lowest, level))
-                .or_insert(level);
+    let hardness = producer(below.layers(), HARDNESS);
+    let hard = |point: Vec2, level: f32| {
+        if hardness.is_none() {
+            return 1.0;
         }
-        rivers.push(solved);
+        let row = Row {
+            xs: &[point.x],
+            z: point.y,
+            spacing: flow.finest,
+            low: point,
+            high: point,
+        };
+        let mut value = [0.0_f32];
+        read_map(below, hardness, HARDNESS, &row, &[level], &mut value);
+        value[0]
+    };
+    let mut ends: HashMap<[u32; 2], (f32, f32, usize)> = HashMap::default();
+    let mut courses = Vec::with_capacity(lines.len());
+    for (number, line) in lines.iter().enumerate() {
+        let last = line.points.len() - 1;
+        let first = line.points[0];
+        let course = Course {
+            line,
+            ground: &ground,
+            across: &across,
+            hard: &hard,
+            start: if line.head {
+                water.lake_beside(first.x, first.y)
+            } else {
+                ends.get(&key(first)).map(|&(_, level, _)| level)
+            },
+        };
+        let survey = surveyed(&course, &flow);
+        let (carried, level) = (line.area[last], survey.end());
+        let end = ends
+            .entry(key(line.points[last]))
+            .or_insert((carried, level, number));
+        *end = (
+            max(end.0, carried),
+            min(end.1, level),
+            if carried > end.0 { number } else { end.2 },
+        );
+        courses.push((course, survey));
+    }
+    let mut starts: HashMap<[u32; 2], (usize, [f32; 4])> = HashMap::default();
+    let mut solved = Vec::with_capacity(lines.len());
+    for (number, (course, survey)) in courses.into_iter().enumerate().rev() {
+        let line = course.line;
+        let last = line.points.len() - 1;
+        let joint = key(line.points[last]);
+        let mouth = starts
+            .get(&joint)
+            .map(|&(below, [level, half, rock, wall])| Mouth {
+                level,
+                half,
+                rock,
+                wall,
+                joined: ends.get(&joint).and_then(|&(largest, _, above)| {
+                    (line.area[last] < largest)
+                        .then(|| [&lines[above].points[..], &lines[below].points[..]])
+                }),
+            });
+        let (river, found) = river(&course, &flow, survey, mouth);
+        if river.flood[0].is_finite() {
+            starts.insert(
+                key(line.points[0]),
+                (
+                    number,
+                    [river.flood[0], river.half[0], river.rock[0], river.wall[0]],
+                ),
+            );
+        }
+        solved.push((river, found));
+    }
+    let mut rivers = Vec::with_capacity(lines.len());
+    let mut falls = Vec::new();
+    for (river, found) in solved.into_iter().rev() {
+        rivers.push(river);
         falls.extend(found);
     }
     for fall in &mut falls {
@@ -96,12 +148,12 @@ pub(crate) fn hydrology_stage(
         for &reach in &river.reach {
             stats.reaches[reach as usize] += 1;
         }
-        stats.steps += river.crest.iter().flatten().count();
+        stats.steps += river.crest.len();
         stats.knobs += river.knobs.len();
         stats.uncut += river.cut.iter().filter(|&&cut| !cut).count();
     }
     stats.falls = falls.len();
-    hydrology.rivers = Arc::new(Rivers::new(rivers));
+    hydrology.rivers = Arc::new(Rivers::new(rivers, flow.form));
     hydrology.falls = falls.into();
     Arc::new(HydrologyStage {
         layer: *layer,

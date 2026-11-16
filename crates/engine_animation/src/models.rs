@@ -3,8 +3,8 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Background, Drawn, Error, Files, Landed, Refusals, SceneCx, Spawner, Transform,
-    valid_uri,
+    AssetLibrary, Background, Drawn, Error, Files, FrameBudget, Jobs, Landed, Records, Refusals,
+    SceneCx, Spawner, TextureHandle, Transform, valid_uri,
 };
 use engine_places_rendering::animation::{Animator, Model, Start};
 use serde_json::Value;
@@ -25,7 +25,7 @@ type Read = Background<Arc<[u8]>, String>;
 enum Stage {
     Held(Arc<[u8]>),
     Reading(Read),
-    Loaded(ModelLoaded),
+    Loaded(ModelLoaded, Vec<TextureHandle>),
     Refused { _failure: Read },
 }
 
@@ -109,10 +109,26 @@ fn spawn_parts(
     ModelLoaded { parts, animator }
 }
 
+fn textures_of(imported: &crate::import::Model, assets: &AssetLibrary) -> Vec<TextureHandle> {
+    let rigged = imported
+        .rig
+        .iter()
+        .flat_map(|rig| rig.parts.iter().map(|part| part.material));
+    imported
+        .statics
+        .iter()
+        .map(|&(_, material)| material)
+        .chain(rigged)
+        .filter_map(|material| assets.material(material))
+        .flat_map(|material| material.textures())
+        .collect()
+}
+
 pub(crate) fn load_models(
     models: Query<(Entity, Ref<Model>)>,
     nodes: Query<(), With<Transform>>,
     (mut loads, mut files, mut assets): (ResMut<ModelLoads>, ResMut<Files>, ResMut<AssetLibrary>),
+    (mut jobs, records, mut budget): (Jobs, Res<Records>, ResMut<FrameBudget>),
     mut refusals: ResMut<Refusals>,
     mut spawner: Spawner<AnimationBrick>,
 ) {
@@ -120,11 +136,12 @@ pub(crate) fn load_models(
         models: held,
         shared,
     } = &mut *loads;
+    shared.settle(&mut assets, &records, &mut budget);
     for (entity, model) in &models {
         if !model.is_changed() && held.contains_key(&entity) {
             continue;
         }
-        if let Some(Stage::Loaded(loaded)) = held.remove(&entity) {
+        if let Some(Stage::Loaded(loaded, _)) = held.remove(&entity) {
             drop_parts(&loaded, &nodes, &mut spawner);
         }
         let stage = match &model.bytes {
@@ -141,21 +158,22 @@ pub(crate) fn load_models(
                 Landed::Ready(bytes) => Ok(Arc::clone(bytes)),
                 Landed::Failed(error) => Err(error.clone()),
             },
-            Stage::Loaded(_) | Stage::Refused { .. } => continue,
+            Stage::Loaded(..) | Stage::Refused { .. } => continue,
         };
         let Ok((_, model)) = models.get(entity) else {
             continue;
         };
         let imported = match bytes {
-            Ok(bytes) => import_glb(&bytes, &mut assets, shared),
+            Ok(bytes) => import_glb(&bytes, &mut assets, shared, &mut jobs),
             Err(error) => Err(error),
         };
         *stage = match imported {
             Ok(imported) => {
+                let textures = textures_of(&imported, &assets);
                 let loaded = spawn_parts(entity, imported, model.play.as_ref(), &mut spawner);
                 spawner.insert(entity, loaded.clone());
                 refusals.accept(entity, MODEL_PART);
-                Stage::Loaded(loaded)
+                Stage::Loaded(loaded, textures)
             }
             Err(error) => {
                 let error = error.within("$.model");
@@ -164,6 +182,25 @@ pub(crate) fn load_models(
                     _failure: Background::failed(error),
                 }
             }
+        };
+    }
+    for (&entity, stage) in held.iter_mut() {
+        let Stage::Loaded(loaded, textures) = stage else {
+            continue;
+        };
+        textures.retain(|&texture| assets.texture(texture).is_none());
+        let Some(error) = textures
+            .iter()
+            .find_map(|&texture| shared.failed(texture))
+        else {
+            continue;
+        };
+        let error = error.clone().within("$.model");
+        drop_parts(loaded, &nodes, &mut spawner);
+        spawner.remove::<ModelLoaded>(entity);
+        refusals.refuse(entity, MODEL_PART, error.clone());
+        *stage = Stage::Refused {
+            _failure: Background::failed(error),
         };
     }
 }
@@ -176,7 +213,7 @@ pub(crate) fn release(
     mut spawner: Spawner<AnimationBrick>,
 ) {
     refusals.accept(entity, MODEL_PART);
-    if let Some(Stage::Loaded(loaded)) = loads.models.remove(&entity) {
+    if let Some(Stage::Loaded(loaded, _)) = loads.models.remove(&entity) {
         drop_parts(&loaded, &nodes, &mut spawner);
     }
 }

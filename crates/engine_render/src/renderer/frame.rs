@@ -17,7 +17,7 @@ const OPAQUE_SCENE: &str = "opaque_scene";
 struct Viewed {
     view_projection: Mat4,
     eye: glam::Vec3,
-    detail: glam::Vec3,
+    detail: engine_core::ViewDetail,
     seconds: f32,
 }
 
@@ -81,7 +81,7 @@ fn camera_of(
     );
     camera.noise_phase = facts.noise - facts.noise.floor();
     camera.previous = facts.previous_eye.extend(previous_seconds).to_array();
-    camera.set_region(viewed.view_projection, region);
+    camera.set_region(region);
     camera.set_detail(viewed.detail);
     camera
 }
@@ -316,13 +316,17 @@ impl Renderer {
         let entities: Vec<bevy_ecs::entity::Entity> =
             listed.iter().map(|facts| facts.view).collect();
         run.settle_sets(&entities);
+        let detail = world
+            .get_resource::<engine_core::Detail>()
+            .cloned()
+            .unwrap_or_default();
         let mut cameras: Vec<CameraUniform> = listed
             .iter()
             .map(|facts| {
                 let viewed = Viewed {
                     view_projection: facts.view_projection,
                     eye: facts.eye,
-                    detail: facts.detail_eye,
+                    detail: facts.detail(&detail),
                     seconds,
                 };
                 camera_of(&viewed, facts, previous_seconds)
@@ -1033,11 +1037,18 @@ fn owned_camera(view: &engine_core::DrawnView, seconds: f32) -> CameraUniform {
         [0.0; 2],
         (size.width, size.height),
     );
-    camera.set_region(
+    camera.set_region(crate::targets::FrameRegion::whole(size));
+    let measured = engine_core::ViewDetail::perspective(
+        view.eye,
         view.view_projection,
-        crate::targets::FrameRegion::whole(size),
+        size.height,
+        view.detail,
     );
-    camera.set_detail(view.eye);
+    camera.set_detail(if view.view_projection.row(3).truncate() == glam::Vec3::ZERO {
+        engine_core::ViewDetail::orthographic(measured.pixel_angle, view.detail)
+    } else {
+        measured
+    });
     camera.capture = u32::from(view.capture);
     camera.view[0] = 1 + view.local;
     camera

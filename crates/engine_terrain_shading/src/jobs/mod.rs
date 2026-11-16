@@ -12,12 +12,14 @@ use engine_open_world_kit::terrain::TerrainLayers;
 use bounce::{MAX_PROBES, TerrainBounce, bounce};
 use lighting::{Ground, TerrainLighting, light};
 use macro_colors::{MACRO_BLOCK, MAX_MACRO_TEXELS, macro_colors};
+use rough::{Ground as RoughGround, Roughening};
 use shading::{ShadingMaking, TileShading};
 
 pub mod bounce;
 pub mod gpu;
 pub mod lighting;
 pub mod macro_colors;
+pub mod rough;
 pub(crate) mod shading;
 
 include!(concat!(env!("OUT_DIR"), "/jobs.rs"));
@@ -27,6 +29,7 @@ pub static BOUNCE: JobKind = JobKind::new("terrain_shading::bounce", &SOURCE, st
 pub static MACRO_COLORS: JobKind =
     JobKind::new("terrain_shading::macro_colors", &SOURCE, start_macro);
 pub static SHADING: JobKind = JobKind::new("terrain_shading::shading", &SOURCE, start_shading);
+pub static ROUGH: JobKind = JobKind::new("terrain_shading::rough", &SOURCE, start_rough);
 
 pub const MAX_LIGHTING_TEXELS: u32 = 4096;
 
@@ -143,6 +146,92 @@ impl MacroJob {
                 .range(f64::from(MACRO_BLOCK), f64::from(MAX_MACRO_TEXELS))
                 .got(self.size))
         }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RoughKey {
+    pub texture: [u64; 2],
+    pub level: u32,
+    pub tile: f32,
+    pub depth: f32,
+    pub roughness: f32,
+}
+
+record!(RoughKey {
+    texture,
+    level,
+    tile,
+    depth,
+    roughness,
+});
+
+impl RoughKey {
+    pub(crate) fn record(&self) -> RecordKey {
+        RecordKey::of(&ROUGH, &codec::encode(self))
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RoughJob {
+    pub key: RoughKey,
+    pub width: u32,
+    pub height: u32,
+    pub blocks: bool,
+    pub texels: Vec<u8>,
+}
+
+record!(RoughJob {
+    key,
+    width,
+    height,
+    blocks,
+    texels,
+});
+
+impl RoughJob {
+    fn heights(&self) -> Result<Vec<u8>, Error> {
+        if !self.blocks {
+            let bytes = self.width as usize * self.height as usize;
+            if self.texels.len() != bytes {
+                return Err(Error::new(ErrorCode::OutOfRange, "$.texels")
+                    .range(bytes as f64, bytes as f64)
+                    .got(self.texels.len()));
+            }
+            return Ok(self.texels.clone());
+        }
+        let blocks = engine_core::Texture::from_levels(
+            engine_core::TextureFormat::Bc7,
+            self.width,
+            self.height,
+            vec![self.texels.clone()],
+        )?;
+        let plain = engine_core::textures::decompress(&blocks)?;
+        Ok(plain
+            .pixels()
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|texel| texel[3])
+            .collect())
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct RoughLight {
+    pub shares: Vec<u32>,
+}
+
+record!(RoughLight { shares });
+
+pub fn rough_output(bytes: &[u8]) -> Result<RoughLight, Error> {
+    let light: RoughLight = codec::decode(bytes)?;
+    if light.shares.len() == rough::WORDS {
+        Ok(light)
+    } else {
+        Err(Error::new(ErrorCode::OutOfRange, "$.shares")
+            .range(rough::WORDS as f64, rough::WORDS as f64)
+            .got(light.shares.len()))
     }
 }
 
@@ -269,6 +358,35 @@ fn start_macro(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> 
         return Err(level_outside(job.level, &recipe.pyramid));
     }
     Ok(Box::new(MacroMaking { recipe, job }))
+}
+
+impl Job for Roughening {
+    fn step(&mut self, budget: u64, _: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
+        let mut budget = budget;
+        loop {
+            if self.advance() {
+                return Ok(Some(codec::encode(&RoughLight {
+                    shares: self.table(),
+                })));
+            }
+            budget = budget.saturating_sub(self.cost());
+            if budget == 0 {
+                return Ok(None);
+            }
+        }
+    }
+}
+
+fn start_rough(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
+    let job: RoughJob = codec::decode(input)?;
+    Ok(Box::new(Roughening::new(RoughGround {
+        width: job.width as usize,
+        height: job.height as usize,
+        heights: job.heights()?,
+        tile: job.key.tile,
+        depth: job.key.depth,
+        roughness: job.key.roughness,
+    })))
 }
 
 impl Job for ShadingMaking {

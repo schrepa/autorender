@@ -1,60 +1,82 @@
-import package::engine::math::PI;
-import package::engine::view::{DetailLevel, detail_across, detail_level, fade_noise};
+import package::engine::view::{DetailLevel, detail_across, detail_level};
 import package::generated::pieces::shadows::piece;
-import package::generated::shadows::{LEVEL_BAND, LEVEL_BEFORE, LEVEL_WINDOW, LEVEL_WORDS,
-    SHADOW_APRON, tile_entry_moving, tile_entry_old_sun, tile_entry_still};
+import package::generated::shadows::{LEVEL_MARGIN, SOFT_READS, ShadowLevel};
 import package::place::sun_blockers::SunAt;
 
-@group(0) @binding(0) var shadow_atlas: texture_depth_2d;
-@group(0) @binding(0) var<storage, read> shadow_tiles: array<u32>;
+@group(0) @binding(0) var shadow_levels: texture_depth_2d_array;
+@group(0) @binding(0) var<storage, read> shadow_level_data: array<ShadowLevel>;
 @group(0) @binding(0) var shadow_sampler: sampler_comparison;
 @group(0) @binding(0) var shadow_texels: sampler;
 
 const RECEIVER_MARGIN: f32 = 2.0 / 65535.0;
 
-struct MapPoint {
-    texel: vec2<f32>,
-    depth: f32,
-    slope: vec2<f32>,
-    soft: f32,
+struct Texels {
+    across: vec4<f32>,
+    down: vec4<f32>,
 }
 
 fn sun_shadowed() -> bool {
     return piece().state.x != 0.0;
 }
 
+fn level_count() -> u32 {
+    return u32(piece().level_state.x);
+}
+
+fn level_texel(level: u32) -> f32 {
+    return shadow_level_data[level].band.x;
+}
+
 fn crown_softness(softness: f32, per_meter: f32) -> f32 {
     return softness * abs(per_meter);
 }
 
-fn texel_slope(map_dx: vec4<f32>, map_dy: vec4<f32>, scale: vec2<f32>, limit: f32) -> vec2<f32> {
-    let texel_dx = map_dx.xy * scale;
-    let texel_dy = map_dy.xy * scale;
-    let det = texel_dx.x * texel_dy.y - texel_dx.y * texel_dy.x;
+fn texel_slope(dx: vec3<f32>, dy: vec3<f32>, limit: f32) -> vec2<f32> {
+    let det = dx.x * dy.y - dx.y * dy.x;
     var slope = vec2<f32>(0.0);
     if abs(det) > 1.0e-12 {
-        slope = vec2<f32>(map_dx.z * texel_dy.y - map_dy.z * texel_dx.y,
-            map_dy.z * texel_dx.x - map_dx.z * texel_dy.x) / det;
+        slope = vec2<f32>(dx.z * dy.y - dy.z * dx.y, dy.z * dx.x - dx.z * dy.x) / det;
     }
     return clamp(slope, vec2<f32>(-limit), vec2<f32>(limit));
 }
 
-fn atlas_depths(point: MapPoint) -> vec4<f32> {
-    let corner = floor(point.texel - vec2<f32>(0.5)) + vec2<f32>(1.0);
-    return textureGather(shadow_atlas, shadow_texels, corner * piece().atlas.zw);
+fn wrapped(texel: vec2<f32>) -> vec2<f32> {
+    let side = piece().level_state.z;
+    return texel - floor(texel / side) * side;
 }
 
-fn plane_visibility(depths: vec4<f32>, point: MapPoint) -> f32 {
-    let corner = point.texel - vec2<f32>(0.5);
-    let f = corner - floor(corner);
-    let du = vec4<f32>(-f.x, 1.0 - f.x, 1.0 - f.x, -f.x);
-    let dv = vec4<f32>(1.0 - f.y, 1.0 - f.y, -f.y, -f.y);
-    let plane = point.depth + point.slope.x * du + point.slope.y * dv - RECEIVER_MARGIN;
-    var lit = select(vec4<f32>(0.0), vec4<f32>(1.0), plane <= depths);
-    if point.soft > 0.0 {
-        lit = exp2(-max(plane - depths, vec4<f32>(0.0)) / point.soft);
-    }
-    return mix(mix(lit.w, lit.z, f.x), mix(lit.x, lit.y, f.x), f.y);
+fn gather_corner(texel: vec2<f32>) -> vec2<f32> {
+    return floor(texel - vec2<f32>(0.5)) + vec2<f32>(1.0);
+}
+
+fn still_depths(level: u32, corner: vec2<f32>) -> vec4<f32> {
+    let uv = wrapped(corner) / piece().level_state.z;
+    return textureGather(shadow_levels, shadow_texels, uv, level);
+}
+
+fn moving_depths(level: u32, corner: vec2<f32>) -> vec4<f32> {
+    let uv = corner / piece().level_state.z;
+    return textureGather(shadow_levels, shadow_texels, uv, level_count() + level);
+}
+
+fn soft_texels() -> f32 {
+    return piece().soft.x;
+}
+
+fn soft_gathers() -> u32 {
+    return u32(piece().soft.y);
+}
+
+fn gather_texels(corner: vec2<f32>, point: vec2<f32>) -> Texels {
+    let apart = corner - point;
+    return Texels(apart.x + vec4<f32>(-0.5, 0.5, 0.5, -0.5),
+        apart.y + vec4<f32>(0.5, 0.5, -0.5, -0.5));
+}
+
+fn box_shares(texels: Texels, width: vec2<f32>) -> vec4<f32> {
+    let across = saturate(vec4<f32>(0.5 * width.x + 0.5) - abs(texels.across));
+    let down = saturate(vec4<f32>(0.5 * width.y + 0.5) - abs(texels.down));
+    return across * down / (width.x * width.y);
 }
 
 fn rows_turn(rows: array<vec4<f32>, 3>, way: vec3<f32>) -> vec3<f32> {
@@ -65,82 +87,14 @@ fn rows_place(rows: array<vec4<f32>, 3>, world: vec3<f32>) -> vec3<f32> {
     return rows_turn(rows, world) + vec3<f32>(rows[0].w, rows[1].w, rows[2].w);
 }
 
-fn light_space(world: vec3<f32>) -> vec3<f32> {
-    return rows_place(piece().light, world);
-}
-
 fn shadow_level(world: vec3<f32>) -> DetailLevel {
-    return detail_level(detail_across(world), piece().level_state.y,
-        u32(piece().level_state.x));
+    return detail_level(detail_across(world) * piece().state.y, piece().level_state.y,
+        level_count());
 }
 
-fn level_words(start: u32, first: u32) -> vec4<f32> {
-    let at = start + first;
-    return bitcast<vec4<f32>>(vec4<u32>(shadow_tiles[at], shadow_tiles[at + 1u],
-        shadow_tiles[at + 2u], shadow_tiles[at + 3u]));
-}
-
-fn words_start(side: u32, levels: u32, level: u32) -> u32 {
-    return side * side * levels + level * LEVEL_WORDS;
-}
-
-fn tile_entry(side: u32, level: u32, cell: vec2<u32>) -> u32 {
-    return shadow_tiles[(level * side + cell.y) * side + cell.x];
-}
-
-fn level_start(level: u32) -> u32 {
-    return words_start(u32(piece().atlas.x), u32(piece().level_state.x), level);
-}
-
-fn level_window(level: u32) -> vec4<f32> {
-    return level_words(level_start(level), LEVEL_WINDOW);
-}
-
-fn level_band(level: u32) -> vec4<f32> {
-    return level_words(level_start(level), LEVEL_BAND);
-}
-
-fn level_before(level: u32) -> vec4<f32> {
-    return level_words(level_start(level), LEVEL_BEFORE);
-}
-
-struct LevelPoint {
-    cell: vec2<u32>,
-    across: vec2<f32>,
-    depth: f32,
-    inside: bool,
-}
-
-fn level_point(level: u32, light: vec3<f32>) -> LevelPoint {
-    return level_at(level_window(level), level_band(level), light);
-}
-
-fn level_at(window: vec4<f32>, band: vec4<f32>, light: vec3<f32>) -> LevelPoint {
-    let side = piece().atlas.x;
-    let tiles = (light.xy - window.xy) / window.z;
-    let tile = floor(tiles);
-    var point: LevelPoint;
-    point.depth = (light.z - band.x) * band.y;
-    point.inside = all(tile >= vec2<f32>(0.0)) && all(tile < vec2<f32>(side))
-        && point.depth > 0.0 && point.depth < 1.0;
-    let first = vec2<i32>(round(window.xy / window.z));
-    point.cell = vec2<u32>((first + vec2<i32>(tile)) & vec2<i32>(i32(side) - 1));
-    point.across = tiles - tile;
-    return point;
-}
-
-fn level_slots(level: u32, point: LevelPoint) -> vec3<u32> {
-    let entry = tile_entry(u32(piece().atlas.x), level, point.cell);
-    return vec3<u32>(tile_entry_still(entry), tile_entry_moving(entry),
-        select(0u, 1u, tile_entry_old_sun(entry)));
-}
-
-fn slot_texel(slot: u32, across: vec2<f32>) -> vec2<f32> {
-    let texels = piece().level_state.z;
-    let side = texels + 2.0 * f32(SHADOW_APRON);
-    let per_row = u32(piece().atlas.y);
-    let corner = vec2<f32>(vec2<u32>(slot % per_row, slot / per_row)) * side;
-    return corner + vec2<f32>(f32(SHADOW_APRON)) + vec2<f32>(across.x, 1.0 - across.y) * texels;
+fn level_inside(level: ShadowLevel, light: vec3<f32>, margin: f32) -> bool {
+    return all(light.xy >= level.window.xy + vec2<f32>(margin))
+        && all(light.xy < level.window.zw - vec2<f32>(margin)) && light.z > 0.0 && light.z < 1.0;
 }
 
 fn level_lift(level: u32, at: SunAt) -> f32 {
@@ -150,111 +104,74 @@ fn level_lift(level: u32, at: SunAt) -> f32 {
     return at.lifts[level - at.lift_first];
 }
 
-const CROWN_TAPS: u32 = 4u;
-const CROWN_REACH: f32 = 2.0;
-const CROWN_SPIRAL_TURN: f32 = 2.39996323;
+fn sun_spread() -> f32 {
+    return piece().state.w;
+}
 
-fn crown_spread(level: u32, window: vec4<f32>, band: vec4<f32>, light: vec3<f32>,
-        point: MapPoint, center: LevelPoint, slot: u32, visible: f32) -> f32 {
-    let depth_per_meter = max(band.y, 1.0e-12);
-    let crown = point.soft / depth_per_meter;
-    let turn = fade_noise(floor(point.texel) + vec2<f32>(0.5)) * 2.0 * PI;
-    var way = vec2<f32>(cos(turn), sin(turn));
-    let step = vec2<f32>(cos(CROWN_SPIRAL_TURN), sin(CROWN_SPIRAL_TURN));
-    var lit = visible;
-    for (var tap = 0u; tap < CROWN_TAPS; tap++) {
-        let across = CROWN_REACH * crown * sqrt((f32(tap) + 0.5) / f32(CROWN_TAPS));
-        let at = level_at(window, band, light + vec3<f32>(way, 0.0) * across);
-        way = vec2<f32>(way.x * step.x - way.y * step.y, way.x * step.y + way.y * step.x);
-        if !at.inside {
-            continue;
-        }
-        var held = slot;
-        if any(at.cell != center.cell) {
-            held = level_slots(level, at).x;
-            if held == 0u {
-                continue;
+fn lifted_space(level: ShadowLevel, index: u32, sun: SunAt, blend: f32) -> vec3<f32> {
+    let up = vec3<f32>(level.rows[0].y, level.rows[1].y, level.rows[2].y);
+    return rows_place(level.rows, sun.world + sun.normal * (level.band.z * (1.0 + blend)))
+        + up * level_lift(index, sun);
+}
+
+fn level_visibility(index: u32, sun: SunAt, blend: f32) -> f32 {
+    let level = shadow_level_data[index];
+    let light = lifted_space(level, index, sun, blend);
+    let gathers = soft_gathers();
+    if !level_inside(level, light, f32(gathers)) {
+        return -1.0;
+    }
+    let slope = texel_slope(rows_turn(level.rows, sun.world_dx),
+        rows_turn(level.rows, sun.world_dy), level.band.w);
+    let first = gather_corner(light.xy) - vec2<f32>(f32(gathers) - 1.0);
+    let most = vec2<f32>(soft_texels());
+    var gaps: array<vec4<f32>, SOFT_READS>;
+    var blocking = vec2<f32>(0.0);
+    for (var row = 0u; row < gathers; row++) {
+        for (var column = 0u; column < gathers; column++) {
+            let corner = first + 2.0 * vec2<f32>(f32(column), f32(row));
+            var depths = still_depths(index, corner);
+            if level.moving.z != 0.0 {
+                depths = min(depths, moving_depths(index, corner - level.moving.xy));
             }
-        }
-        let caster = textureLoad(shadow_atlas, vec2<i32>(slot_texel(held - 1u, at.across)), 0);
-        let down = max(point.depth - caster, 0.0) / depth_per_meter;
-        lit = max(lit, exp2(-(across + down) / crown));
-    }
-    return lit;
-}
-
-fn lifted_space(rows: array<vec4<f32>, 3>, level: u32, band: vec4<f32>, sun: SunAt) -> vec3<f32> {
-    let up = vec3<f32>(rows[0].y, rows[1].y, rows[2].y);
-    return rows_place(rows, sun.world + sun.normal * band.z) + up * level_lift(level, sun);
-}
-
-fn level_visibility(level: u32, sun: SunAt, spread: bool) -> f32 {
-    let window = level_window(level);
-    var band = level_band(level);
-    var rows = piece().light;
-    var light = lifted_space(rows, level, band, sun);
-    var at = level_at(window, band, light);
-    if !at.inside {
-        return -1.0;
-    }
-    var slots = level_slots(level, at);
-    if slots.x == 0u {
-        return -1.0;
-    }
-    let current = at;
-    let moving_slot = slots.y;
-    if slots.z != 0u {
-        band = level_before(level);
-        rows = piece().before;
-        light = lifted_space(rows, level, band, sun);
-        at = level_at(window, band, light);
-        if !at.inside {
-            return -1.0;
-        }
-        slots = level_slots(level, at);
-        if slots.z == 0u {
-            return -1.0;
+            let texels = gather_texels(corner, light.xy);
+            let plane = light.z + slope.x * texels.across + slope.y * texels.down
+                - RECEIVER_MARGIN;
+            let gap = max(plane - depths, vec4<f32>(0.0));
+            let share = box_shares(texels, most);
+            blocking += vec2<f32>(dot(share, gap), dot(share, sign(gap)));
+            gaps[row * gathers + column] = gap;
         }
     }
-    var point: MapPoint;
-    point.texel = slot_texel(slots.x - 1u, at.across);
-    point.depth = at.depth;
-    let per_world = vec3<f32>(1.0, 1.0, band.y);
-    point.slope = texel_slope(vec4<f32>(rows_turn(rows, sun.world_dx) * per_world, 0.0),
-        vec4<f32>(rows_turn(rows, sun.world_dy) * per_world, 0.0), vec2<f32>(1.0, -1.0) / window.w,
-        band.w);
-    point.soft = crown_softness(sun.softness, band.y);
-    var visible = plane_visibility(atlas_depths(point), point);
-    if spread && point.soft > 0.0 && visible < 1.0 {
-        visible = crown_spread(level, window, band, light, point, at, slots.x, visible);
-    }
-    if moving_slot != 0u {
-        var moving = point;
-        moving.texel = slot_texel(moving_slot - 1u, current.across);
-        moving.depth = current.depth;
-        visible = min(visible, plane_visibility(atlas_depths(moving), moving));
+    let penumbra = 2.0 * sun_spread() * blocking.x
+        / (max(blocking.y, 1.0e-6) * level.band.y * level.band.x);
+    let lean = slope / (level.band.x * level.band.y);
+    let stretch = sqrt(vec2<f32>(1.0) + lean * lean);
+    let width = clamp(penumbra * max(stretch.yx / stretch.xy, vec2<f32>(1.0)),
+        vec2<f32>(1.0 + blend), most);
+    let soft = crown_softness(sun.softness, level.band.y);
+    var visible = 0.0;
+    for (var row = 0u; row < gathers; row++) {
+        for (var column = 0u; column < gathers; column++) {
+            let corner = first + 2.0 * vec2<f32>(f32(column), f32(row));
+            let gap = gaps[row * gathers + column];
+            var lit = vec4<f32>(1.0) - sign(gap);
+            if soft > 0.0 {
+                lit = exp2(-gap / soft);
+            }
+            visible += dot(box_shares(gather_texels(corner, light.xy), width), lit);
+        }
     }
     return visible;
 }
 
 fn map_lookup(sun: SunAt) -> vec2<f32> {
     let pick = shadow_level(sun.world);
-    let count = u32(piece().level_state.x);
-    for (var level = pick.level; level < count; level++) {
-        let visible = level_visibility(level, sun, true);
-        if visible < 0.0 {
-            continue;
-        }
-        if level > pick.level || pick.blend <= 0.0 {
+    for (var level = pick.level; level < level_count(); level++) {
+        let visible = level_visibility(level, sun, select(0.0, pick.blend, level == pick.level));
+        if visible >= 0.0 {
             return vec2<f32>(visible, f32(level));
         }
-        for (var next = level + 1u; next < count; next++) {
-            let coarser = level_visibility(next, sun, false);
-            if coarser >= 0.0 {
-                return vec2<f32>(mix(visible, coarser, pick.blend), f32(level));
-            }
-        }
-        return vec2<f32>(visible, f32(level));
     }
     return vec2<f32>(1.0, -1.0);
 }
@@ -265,22 +182,18 @@ fn map_visibility(sun: SunAt) -> f32 {
 
 fn air_visibility(world: vec3<f32>) -> f32 {
     let pick = shadow_level(world);
-    let light = light_space(world);
-    for (var level = pick.level; level < u32(piece().level_state.x); level++) {
-        let at = level_point(level, light);
-        if !at.inside {
+    let side = piece().level_state.z;
+    for (var index = pick.level; index < level_count(); index++) {
+        let level = shadow_level_data[index];
+        let light = rows_place(level.rows, world);
+        if !level_inside(level, light, LEVEL_MARGIN) {
             continue;
         }
-        let slots = level_slots(level, at);
-        if slots.x == 0u {
-            continue;
-        }
-        let still = slot_texel(slots.x - 1u, at.across) * piece().atlas.zw;
-        var visible = textureSampleCompareLevel(shadow_atlas, shadow_sampler, still, at.depth);
-        if slots.y != 0u {
-            let moving = slot_texel(slots.y - 1u, at.across) * piece().atlas.zw;
-            visible = min(visible,
-                textureSampleCompareLevel(shadow_atlas, shadow_sampler, moving, at.depth));
+        var visible = textureSampleCompareLevel(shadow_levels, shadow_sampler,
+            wrapped(light.xy) / side, index, light.z);
+        if level.moving.z != 0.0 {
+            visible = min(visible, textureSampleCompareLevel(shadow_levels, shadow_sampler,
+                (light.xy - level.moving.xy) / side, level_count() + index, light.z));
         }
         return visible;
     }

@@ -46,9 +46,6 @@ impl MeshesGpu {
         }
         let workgroups = candidates.div_ceil(CULL_GROUP);
         cx.dispatch(&computes.cull, Count::Groups([workgroups, 1, 1]));
-        if self.state.lod {
-            cx.dispatch(&computes.fades, Count::Groups([workgroups, 1, 1]));
-        }
         self.compact(&computes.one, &[], cx);
         cx.dispatch(&computes.gather_one, Count::Groups([1, 1, 1]));
     }

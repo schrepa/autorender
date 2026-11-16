@@ -1,11 +1,12 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::Arc;
 
 use engine_core::math::max;
 use engine_core::{
-    AlphaMode, AssetLibrary, BASE_COLOR_MAP, Cull, EMISSIVE_MAP, Error, ErrorCode, Expected,
-    Filter, GeometryHandle, Material, MaterialHandle, Mesh, MeshVertex, NamedStream, Sampler,
-    Texture, TextureHandle, TextureRef, UvTransform, Wrap, decode_image,
+    AlphaMode, AssetLibrary, BASE_COLOR_MAP, Background, Cull, EMISSIVE_MAP, Error, ErrorCode,
+    Expected, Filter, FrameBudget, GeometryHandle, Job, JobCx, JobKind, Jobs, Landed, Material,
+    MaterialHandle, Mesh, MeshVertex, NamedStream, Records, Sampler, Taken, Texture,
+    TextureHandle, TextureRef, UvTransform, VIEW_JOBS, Wrap, decode_image, job_priority,
 };
 use engine_places::skin::{JOINTS, WEIGHTS};
 use engine_places::surface::{METALNESS, ROUGHNESS};
@@ -16,22 +17,61 @@ use gltf::animation::{Interpolation, Property};
 use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 
 const WHOLE: [f32; 4] = [1.0, 0.0, 0.0, 0.0];
+const BUDGET: &str = "model_textures";
 
 pub struct Model {
     pub statics: Vec<(GeometryHandle, MaterialHandle)>,
     pub rig: Option<Arc<Rig>>,
 }
 
+pub(crate) static IMAGE: JobKind = JobKind::new("animation::image", &crate::SOURCE, start_image);
+
+struct ImageJob(Vec<u8>);
+
+impl Job for ImageJob {
+    fn step(&mut self, _: u64, _: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
+        let image = decode_image("$", &self.0)?;
+        let mut output = Vec::with_capacity(8 + image.pixels.len());
+        output.extend_from_slice(&image.width.to_le_bytes());
+        output.extend_from_slice(&image.height.to_le_bytes());
+        output.extend_from_slice(&image.pixels);
+        Ok(Some(output))
+    }
+}
+
+fn start_image(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
+    Ok(Box::new(ImageJob(input.to_vec())))
+}
+
+fn decoded(output: Arc<[u8]>) -> Result<Texture, Error> {
+    let undecoded = || IMAGE.undecoded(output.len());
+    let (width, rest) = output.split_first_chunk::<4>().ok_or_else(undecoded)?;
+    let (height, _) = rest.split_first_chunk::<4>().ok_or_else(undecoded)?;
+    let (width, height) = (u32::from_le_bytes(*width), u32::from_le_bytes(*height));
+    Texture::from_shared_rgba(width, height, output, 8)
+}
+
 #[derive(Default)]
 pub struct ImportShared {
     textures: BTreeMap<String, BTreeMap<Vec<u8>, TextureHandle>>,
     materials: Vec<(Material, MaterialHandle)>,
+    decoding: Vec<(TextureHandle, String, Background<Texture>)>,
+    landed: VecDeque<(TextureHandle, String, Texture)>,
+    failures: Vec<(TextureHandle, Error)>,
+    seen: Option<(u64, u64)>,
 }
 
 impl ImportShared {
     fn texture(&self, assets: &AssetLibrary, mime: &str, bytes: &[u8]) -> Option<TextureHandle> {
         let held = *self.textures.get(mime)?.get(bytes)?;
-        assets.texture(held).is_some().then_some(held)
+        assets.revision_of(held).is_some().then_some(held)
+    }
+
+    pub fn failed(&self, handle: TextureHandle) -> Option<&Error> {
+        self.failures
+            .iter()
+            .find(|(held, _)| *held == handle)
+            .map(|(_, error)| error)
     }
 
     fn material(&self, assets: &AssetLibrary, built: &Material) -> Option<MaterialHandle> {
@@ -41,13 +81,49 @@ impl ImportShared {
             .map(|&(_, handle)| handle)
     }
 
-    fn settle(&mut self, assets: &AssetLibrary) {
+    pub fn settle(
+        &mut self,
+        assets: &mut AssetLibrary,
+        records: &Records,
+        budget: &mut FrameBudget,
+    ) {
+        let mut at = 0;
+        while let Some((_, _, decode)) = self.decoding.get_mut(at) {
+            if matches!(decode.poll(records), Landed::Waiting) {
+                at += 1;
+                continue;
+            }
+            let (handle, path, decode) = self.decoding.remove(at);
+            match decode.take(records) {
+                Taken::Ready(texture) => self.landed.push_back((handle, path, texture)),
+                Taken::Waiting(_) => {}
+                Taken::Failed(error) => self.failures.push((handle, error.within(&path))),
+            }
+        }
+        while let Some((handle, path, texture)) = self.landed.pop_front() {
+            if assets.revision_of(handle).is_none() {
+                continue;
+            }
+            if !budget.spend(BUDGET, texture.byte_len() as u64) {
+                self.landed.push_front((handle, path, texture));
+                break;
+            }
+            if let Err(error) = assets.fill_texture(handle, texture) {
+                self.failures.push((handle, error.within(&path)));
+            }
+        }
+        if self.seen == Some(assets.revision()) {
+            return;
+        }
+        self.seen = Some(assets.revision());
         self.materials
             .retain(|(held, handle)| assets.material(*handle) == Some(held));
         for by_bytes in self.textures.values_mut() {
-            by_bytes.retain(|_, handle| assets.texture(*handle).is_some());
+            by_bytes.retain(|_, handle| assets.revision_of(*handle).is_some());
         }
         self.textures.retain(|_, by_bytes| !by_bytes.is_empty());
+        self.failures
+            .retain(|(handle, _)| assets.revision_of(*handle).is_some());
     }
 }
 
@@ -102,9 +178,10 @@ fn with_joints(mesh: Mesh, joints: &[[u32; 4]], weights: &[[f32; 4]]) -> Result<
         .with_stream(NamedStream::new(WEIGHTS.name, WEIGHTS.format, weight_bytes))
 }
 
-struct Library<'a> {
+struct Library<'a, 'w, 's> {
     assets: &'a mut AssetLibrary,
     shared: &'a mut ImportShared,
+    jobs: &'a mut Jobs<'w, 's>,
     binary: &'a [u8],
     textures: BTreeMap<usize, TextureHandle>,
     materials: BTreeMap<Option<usize>, MaterialHandle>,
@@ -122,8 +199,8 @@ pub fn import_glb(
     bytes: &[u8],
     assets: &mut AssetLibrary,
     shared: &mut ImportShared,
+    jobs: &mut Jobs<'_, '_>,
 ) -> Result<Model, Error> {
-    shared.settle(assets);
     let gltf =
         gltf::Gltf::from_slice(bytes).map_err(|error| malformed("$").got(error.to_string()))?;
     let binary = gltf.blob.as_deref().unwrap_or_default();
@@ -140,6 +217,7 @@ pub fn import_glb(
     let mut library = Library {
         assets,
         shared,
+        jobs,
         binary,
         textures: BTreeMap::new(),
         materials: BTreeMap::new(),
@@ -558,7 +636,7 @@ fn sampler_of(texture: &gltf::Texture<'_>) -> Sampler {
     }
 }
 
-impl Library<'_> {
+impl Library<'_, '_, '_> {
     fn material(&mut self, material: &gltf::Material<'_>) -> Result<MaterialHandle, Error> {
         let index = material.index();
         if let Some(&held) = self.materials.get(&index) {
@@ -671,10 +749,11 @@ impl Library<'_> {
                 .got(mime_type)
                 .variants(["image/png", "image/jpeg"]));
         }
-        let image = decode_image(&path, bytes).map_err(|error| error.within(&path))?;
-        let texture = Texture::from_rgba(image.width, image.height, image.pixels)
-            .map_err(|error| error.within(&path))?;
-        let handle = self.assets.insert_texture(texture)?;
+        let handle = self.assets.reserve_texture()?;
+        let decode = self
+            .jobs
+            .run(&IMAGE, bytes.to_vec(), job_priority(VIEW_JOBS, 0), decoded);
+        self.shared.decoding.push((handle, path, decode));
         self.shared
             .textures
             .entry(mime_type.to_owned())

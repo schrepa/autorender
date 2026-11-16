@@ -33,6 +33,7 @@ pub(crate) static PLACES: &[PlaceDecl] = &[
 pub(crate) enum Stage {
     Color,
     Display,
+    Overlay,
 }
 
 #[derive(Clone, Debug)]
@@ -73,40 +74,74 @@ pub(crate) fn stage_of(at: AttachPoint, module: &str, text: &str) -> Result<Stag
     }
 }
 
-const FOLDS: [(Stage, &str); 2] = [(Stage::Color, "post"), (Stage::Display, "display")];
+const FOLDS: [(Stage, &str); 3] = [
+    (Stage::Color, "post"),
+    (Stage::Display, "display"),
+    (Stage::Overlay, "overlay"),
+];
+
+pub(crate) type Step = (Stage, &'static str);
 
 fn steps(order: &engine_core::FoldOrder, stage: Stage) -> &[String] {
     match stage {
         Stage::Color => &order.post,
         Stage::Display => &order.display,
+        Stage::Overlay => &order.overlay,
     }
 }
 
-fn listed(applied: &[AppliedModule], order: Option<&engine_core::FoldOrder>) -> Vec<usize> {
+pub(crate) fn folded(applied: &[AppliedModule]) -> Vec<Step> {
+    applied
+        .iter()
+        .map(|member| (member.stage, member.pass))
+        .collect()
+}
+
+pub(crate) fn stacked(passes: &[PassDecl]) -> (Vec<usize>, Vec<Step>) {
+    passes
+        .iter()
+        .enumerate()
+        .filter(|(_, pass)| pass.layer == Some(AttachPoint::Overlay))
+        .map(|(at, pass)| (at, (Stage::Overlay, pass.name)))
+        .unzip()
+}
+
+pub(crate) fn stack(passes: &mut [PassDecl], order: Option<&engine_core::FoldOrder>) {
+    let (overlays, found) = stacked(passes);
+    let overlays = ordered(overlays, &found, order);
+    for (at, &pass) in overlays.iter().enumerate() {
+        if let Some(declared) = passes.get_mut(pass) {
+            declared
+                .after
+                .extend(overlays[..at].iter().map(|&earlier| earlier as u32));
+        }
+    }
+}
+
+fn listed(found: &[Step], order: Option<&engine_core::FoldOrder>) -> Vec<usize> {
     let mut picked = Vec::new();
     let Some(order) = order else {
         return picked;
     };
     for (stage, _) in FOLDS {
         for step in steps(order, stage) {
-            let found = (0..applied.len()).find(|&at| {
-                !picked.contains(&at)
-                    && applied[at].stage == stage
-                    && applied[at].pass == step.as_str()
+            let at = (0..found.len()).find(|&at| {
+                !picked.contains(&at) && found[at].0 == stage && found[at].1 == step.as_str()
             });
-            picked.extend(found);
+            picked.extend(at);
         }
     }
     picked
 }
 
-pub(crate) fn ordered(
-    applied: Vec<AppliedModule>,
+pub(crate) fn ordered<T>(
+    members: Vec<T>,
+    found: &[Step],
     order: Option<&engine_core::FoldOrder>,
-) -> Vec<AppliedModule> {
-    let picked = listed(&applied, order);
-    let mut left: Vec<Option<AppliedModule>> = applied.into_iter().map(Some).collect();
-    let mut sorted: Vec<AppliedModule> = picked
+) -> Vec<T> {
+    let picked = listed(found, order);
+    let mut left: Vec<Option<T>> = members.into_iter().map(Some).collect();
+    let mut sorted: Vec<T> = picked
         .iter()
         .filter_map(|&at| left.get_mut(at).and_then(Option::take))
         .collect();
@@ -115,33 +150,30 @@ pub(crate) fn ordered(
 }
 
 pub(crate) fn unlisted(
-    ordered: &[AppliedModule],
+    found: &[Step],
     order: Option<&engine_core::FoldOrder>,
 ) -> Vec<(&'static str, &'static str)> {
-    let picked = listed(ordered, order);
-    ordered
+    let picked = listed(found, order);
+    found
         .iter()
         .enumerate()
         .filter(|(at, _)| !picked.contains(at))
-        .filter_map(|(_, member)| {
+        .filter_map(|(_, &(member, pass))| {
             FOLDS
                 .iter()
-                .find(|(stage, _)| *stage == member.stage)
-                .map(|&(_, field)| (field, member.pass))
+                .find(|(stage, _)| *stage == member)
+                .map(|&(_, field)| (field, pass))
         })
         .collect()
 }
 
-pub(crate) fn unknown_steps(
-    applied: &[AppliedModule],
-    order: &engine_core::FoldOrder,
-) -> Vec<Error> {
+pub(crate) fn unknown_steps(found: &[Step], order: &engine_core::FoldOrder) -> Vec<Error> {
     let mut unknown = Vec::new();
     for (stage, field) in FOLDS {
-        let known: Vec<&'static str> = applied
+        let known: Vec<&'static str> = found
             .iter()
-            .filter(|member| member.stage == stage)
-            .map(|member| member.pass)
+            .filter(|(member, _)| *member == stage)
+            .map(|&(_, pass)| pass)
             .collect();
         for (at, step) in steps(order, stage).iter().enumerate() {
             if known.contains(&step.as_str()) && !steps(order, stage)[..at].contains(step) {
@@ -169,6 +201,11 @@ pub(crate) fn applied_source(applied: &[AppliedModule]) -> String {
     );
     let mut bodies = [String::new(), String::new()];
     for (bit, member) in applied.iter().enumerate() {
+        let body = match member.stage {
+            Stage::Color => &mut bodies[0],
+            Stage::Display => &mut bodies[1],
+            Stage::Overlay => continue,
+        };
         let _ = writeln!(
             imports,
             "import package::{}::apply as apply_{bit};",
@@ -176,10 +213,6 @@ pub(crate) fn applied_source(applied: &[AppliedModule]) -> String {
         );
         let word = ["x", "y", "z", "w"][bit / 32 % 4];
         let mask = 1_u32 << (bit % 32);
-        let body = match member.stage {
-            Stage::Color => &mut bodies[0],
-            Stage::Display => &mut bodies[1],
-        };
         let _ = writeln!(
             body,
             "    if (post.applied.{word} & {mask}u) != 0u {{\n        folded = apply_{bit}(folded, at);\n    }}"

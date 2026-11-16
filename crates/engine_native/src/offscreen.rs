@@ -77,6 +77,8 @@ impl<G: Game> Offscreen<G> {
         bricks: impl FnOnce(BrickList) -> BrickList,
         build: impl FnOnce(&mut Engine) -> Result<G, E>,
     ) -> engine::Result<Self> {
+        #[cfg(feature = "profiling")]
+        engine_profiler::sampler::listen_for_threads();
         let target = RenderTarget::Offscreen { size, gpu };
         let mut host = Box::new(pollster::block_on(Box::pin(GameHost::launch(
             target, bricks, build,
@@ -217,14 +219,14 @@ impl<G: Game> Offscreen<G> {
         max_events: usize,
         cpu_samples: bool,
     ) -> engine::Result<engine_profiler::DeepCapture> {
-        let threads = if cpu_samples {
-            engine_profiler::sampler::SampledThread::current("Main thread")
-                .into_iter()
+        let main = engine_profiler::sampler::SampledThread::current("Main thread")
+            .filter(|_| cpu_samples);
+        let threads = main.map_or_else(Vec::new, |main| {
+            std::iter::once(main)
                 .chain(self.jobs.sampled_threads())
+                .chain(engine_profiler::sampler::announced_threads())
                 .collect()
-        } else {
-            Vec::new()
-        };
+        });
         engine_profiler::DeepCapture::start(&mut self.host, threads, max_events)
     }
 

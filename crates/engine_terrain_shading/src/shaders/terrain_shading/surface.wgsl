@@ -1,3 +1,5 @@
+import package::engine::detail::band;
+import package::engine::view::{camera, detail_across};
 import package::place::heightfield::SurfaceTriangle;
 import package::terrain_shading::faces::heightfield::{terrain, terrain_level_height, terrain_surface_leaves};
 import package::terrain_shading::tables::terrain_tables;
@@ -140,6 +142,53 @@ fn surface_cells(triangle: SurfaceTriangle, errors: texture_2d_array<f32>, reach
 
 fn surface_ground_error(triangle: SurfaceTriangle) -> f32 {
     return surface_cells(triangle, terrain_errors, false).error;
+}
+
+fn surface_error_at(local: vec2<f32>, piece: f32) -> f32 {
+    let octaves = i32(round(log2(piece / (256.0 * terrain.anchor.w))));
+    let level = u32(max(octaves, 0));
+    let block = u32(i32(level) - octaves);
+    let cell = vec2<i32>(floor(local / piece));
+    let held = surface_tile(vec2<u32>(cell >> vec2<u32>(block)), level);
+    let fit = u32(i32(held.x) - octaves);
+    if held.y == 0xffffffffu || fit >= SURFACE_ERROR_MIPS {
+        return 0.0;
+    }
+    let texel = cell - ((cell >> vec2<u32>(fit)) << vec2<u32>(fit));
+    let mip = SURFACE_ERROR_MIPS - 1u - fit;
+    return max(textureLoad(terrain_errors, texel, i32(held.y), i32(mip)).x, 0.0);
+}
+
+fn surface_height(triangle: SurfaceTriangle, local: vec2<f32>) -> f32 {
+    let held = terrain_true_height(local);
+    let hypotenuse = abs(triangle.a - triangle.b);
+    let unit = (hypotenuse.x + hypotenuse.y) / f32(2u << SURFACE_MESHLET_LEVEL);
+    let cells = vec2<i32>(round(local / unit));
+    let zeros = countTrailingZeros(vec2<u32>(cells));
+    let shift = min(zeros.x, zeros.y);
+    if shift + SURFACE_MESHLET_LEVEL + 1u > u32(round(log2(terrain.relief.w / unit))) {
+        return held;
+    }
+    let step = cells >> vec2<u32>(shift);
+    let odd = (step & vec2<i32>(1)) == vec2<i32>(1);
+    var along = vec2<i32>(select(0, 1, odd.x), select(0, 1, odd.y));
+    if all(odd) {
+        along = select(vec2<i32>(-1), vec2<i32>(1), ((step + 1) & vec2<i32>(3)) == vec2<i32>(0));
+    }
+    let size = unit * f32(1u << shift);
+    let first = terrain_level_height(vec2<f32>(step + along) * size, 0u);
+    let second = terrain_level_height(vec2<f32>(step - along) * size, 0u);
+    if !first.found || !second.found {
+        return held;
+    }
+    let world = terrain.origin.xyz + vec3<f32>(local.x, held, local.y);
+    let allowed = terrain.pixel_error.y * camera.pixel_error * detail_across(world);
+    let error = surface_error_at(local, 2.0 * size);
+    let middle = (first.height + second.height) * 0.5;
+    if error <= allowed {
+        return middle;
+    }
+    return mix(middle, held, band(log2(error / allowed)));
 }
 
 fn surface_water(triangle: SurfaceTriangle) -> SurfaceWater {

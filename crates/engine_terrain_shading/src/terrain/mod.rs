@@ -23,7 +23,10 @@ const RIVER_FORMAT: engine_render::wgpu::TextureFormat =
 const IDS_FORMAT: engine_render::wgpu::TextureFormat = engine_render::wgpu::TextureFormat::Rg32Uint;
 
 const NO_HOLES: u32 = u32::MAX;
-const DIRECTORY_AT: u32 = crate::gpu::TABLE_NOW + 1;
+const ROUGH_AT: u32 = crate::gpu::TABLE_RUNGS
+    + engine_open_world_kit::ground::PALETTE_ENTRIES * crate::gpu::RUNG_WORDS;
+const DIRECTORY_AT: u32 =
+    ROUGH_AT + engine_open_world_kit::ground::PALETTE_ENTRIES * crate::gpu::ROUGH_WORDS;
 const HOLE_WORDS: usize = ((LAYER_SIZE - 2) * (LAYER_SIZE - 2)).div_ceil(32) as usize;
 
 pub(crate) fn reached(

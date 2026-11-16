@@ -166,6 +166,22 @@ pub trait TerrainLayer: Send + Sync + Debug + 'static {
         None
     }
 
+    fn images(&self) -> Vec<String> {
+        Vec::new()
+    }
+
+    fn published(&self) -> Vec<Published<'_>> {
+        Vec::new()
+    }
+
+    fn rests(&self, _name: &str) -> Option<Rests> {
+        None
+    }
+
+    fn site(&self) -> Option<SiteBytes> {
+        None
+    }
+
     fn has_path(&self) -> bool {
         false
     }
@@ -324,6 +340,44 @@ impl ChangeMap<'_> {
     ) {
         image_row(self.image, self.range, (self.spacing, spacing), xs, z, each);
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rests {
+    pub slope: [f32; 2],
+    pub gather: f32,
+}
+
+impl Rests {
+    pub fn gathered(bend: f32) -> f32 {
+        1.0 + bend / (1.0 + bend.abs())
+    }
+
+    pub fn share(&self, [x, z]: [f32; 2], curvature: f32) -> f32 {
+        let steep = (x * x + z * z).sqrt();
+        let [low, high] = self.slope;
+        let fallen = if low == high {
+            if steep >= low { 1.0 } else { 0.0 }
+        } else {
+            crate::noise::smooth((steep - low) / (high - low))
+        };
+        (1.0 - fallen) * Self::gathered(self.gather * curvature)
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Published<'a> {
+    pub name: &'a str,
+    pub map: ChangeMap<'a>,
+    pub rests: Option<Rests>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SiteBytes {
+    pub sun: &'static str,
+    pub soil: &'static str,
+    pub exposure: &'static str,
+    pub ranges: [[f32; 2]; 4],
 }
 
 pub fn image_row(

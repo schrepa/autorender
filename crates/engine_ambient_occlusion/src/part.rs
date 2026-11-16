@@ -8,7 +8,7 @@ use crate::shaders::ambient_occlusion::faces::ambient_occlusion as face;
 use crate::shaders::ambient_occlusion::occlusion as shading;
 
 const RAW_OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
-const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
+const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
 
 pub(crate) struct AmbientGpu {
     occluding: Pass<Self>,

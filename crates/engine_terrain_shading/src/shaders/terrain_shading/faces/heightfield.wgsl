@@ -1,14 +1,17 @@
 import package::place::heightfield::{SurfaceTriangle, TerrainGroundRise, TerrainGroundSamples,
     TerrainLevelHeight, TerrainUniform, TerrainView};
-import package::engine::view::camera;
-import package::terrain_shading::draw::{TerrainBlend, TerrainShadingLevel, terrain_band_rise, terrain_border_blend, terrain_control_sampler, terrain_controls_blend, terrain_gradient_between, terrain_layer_fades, terrain_material, terrain_material_rises, terrain_steep_blend, terrain_tile_maps};
+import package::engine::view::{camera, eye_world};
+import package::terrain_shading::draw::{TerrainBlend, terrain_band_rise, terrain_control_sampler, terrain_controls_blend, terrain_displacement, terrain_gradient_between, terrain_layer_fades, terrain_material, terrain_material_rises, terrain_steep_blend, terrain_tile_maps};
 import package::terrain_shading::field::{surface_along, terrain_load};
-import package::terrain_shading::tables::{table_terrain, table_view, terrain_tables};
-import package::generated::terrain_shading::{CONTROL_PLANE, NORMAL_PLANE, PATCH_GRID, SUBDIVISION_ARGS, SUBDIVISION_LEAVES, SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES, TILE_PLANES};
+import package::terrain_shading::surface::{surface_height, surface_relative};
+import package::terrain_shading::tables::{table_look, table_terrain, table_view, terrain_tables};
+import package::generated::terrain_shading::{CONTROL_PLANE, LookUniform, NORMAL_PLANE, PATCH_GRID, TABLE_LOOK, SUBDIVISION_ARGS, SUBDIVISION_WATERED, SURFACE_MESHLET_INDICES, SURFACE_MESHLET_LEVEL, SURFACE_MESHLET_VERTICES, TILE_PLANES};
 
 @group(0) @binding(0) var<storage, read> terrain_surface_leaves: array<SurfaceTriangle>;
 
 @group(0) @binding(0) var<storage, read> terrain_surface_args: array<u32>;
+
+@group(0) @binding(0) var<storage, read> terrain_watered_leaves: array<u32>;
 
 const TERRAIN_GRID: u32 = PATCH_GRID;
 
@@ -20,9 +23,12 @@ var<private> terrain_view: TerrainView;
 
 var<private> terrain_index: u32;
 
+var<private> terrain_look: LookUniform;
+
 fn use_terrain(index: u32) {
     terrain_index = index;
     terrain = table_terrain(index);
+    terrain_look = table_look(TABLE_LOOK);
     terrain_view = table_view(camera.view.x);
 }
 
@@ -35,7 +41,12 @@ fn terrain_view_uniform() -> TerrainView {
 }
 
 fn surface_leaf(index: u32) -> SurfaceTriangle {
-    return terrain_surface_leaves[terrain.water.z + index];
+    return terrain_surface_leaves[terrain_watered_leaves[terrain.surface.x + index]];
+}
+
+fn surface_drawn(triangle: SurfaceTriangle, local: vec2<f32>) -> vec3<f32> {
+    let relative = surface_relative(local, surface_height(triangle, local));
+    return relative + terrain_displacement(eye_world(relative), local, 0.0).moved;
 }
 
 fn surface_vertex(triangle: SurfaceTriangle, vertex: u32) -> vec2<f32> {
@@ -131,7 +142,6 @@ fn terrain_ground_rise(samples: TerrainGroundSamples, local: vec2<f32>, height: 
     blend.weights = vec4<f32>(0.0);
     terrain_controls_blend(&blend, samples.controls, samples.within, 1.0);
     terrain_steep_blend(&blend, normal);
-    terrain_border_blend(&blend, local, TerrainShadingLevel(0u, 0.0));
     let world = terrain.origin.xyz + vec3<f32>(local.x, height, local.y);
     var raised = TerrainGroundRise(0.0, false);
     raised.rise = terrain_band_rise(blend, world, normal, vec2<f32>(meters)).x * normal.y;
@@ -147,7 +157,7 @@ fn surface_leaf_count() -> u32 {
     if terrain.water.y == 0u {
         return 0u;
     }
-    return terrain_surface_args[(terrain.water.y - 1u) * SUBDIVISION_ARGS + SUBDIVISION_LEAVES];
+    return terrain_surface_args[(terrain.water.y - 1u) * SUBDIVISION_ARGS + SUBDIVISION_WATERED];
 }
 
 fn bed_height(at: vec2<f32>) -> f32 {

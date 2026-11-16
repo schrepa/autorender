@@ -456,24 +456,20 @@ fn terrain_uniform(
         );
     let relative = (anchor - eye).as_vec3();
     let tables = parts.tables;
-    let cover = match &views.cover {
-        None => [0.0; 4],
-        Some((cover, _)) if terrain.surroundings => [0.0, 0.0, cover.density, 0.0],
-        Some((cover, pixels)) => [
-            cover.width_of(terrain.terrain) * *pixels,
-            0.0,
-            cover.density,
-            0.0,
-        ],
-    };
+    let sited = terrain.site_ranges.is_some()
+        && tables
+            .palette_of(parts.index as usize, terrain.materials.len())
+            .iter()
+            .any(|entry| entry.relief[1] > 0.0 || entry.heights[1] > 0.0);
     let deepest = tables
         .palette_of(parts.index as usize, terrain.materials.len())
         .iter()
         .filter(|entry| entry.params[3] > 0.0)
         .map(|entry| entry.relief[0])
         .fold(0.0, engine_math::max);
-    let (first, finest) = parts.surface.of(parts.index as usize);
+    let (first, finest, side) = parts.surface.of(parts.index as usize);
     let water = parts.surface.water_slot(parts.index as usize);
+    let [depth_low, depth_high] = terrain.site_ranges.map_or([0.0; 2], |ranges| ranges[2]);
     TerrainUniform {
         anchor: [relative.x, relative.y, relative.z, pyramid.spacing(0)],
         eye: eye.as_vec3().extend(0.0).to_array(),
@@ -494,10 +490,19 @@ fn terrain_uniform(
                 .unwrap_or(0),
             parts.sky.layer(parts.index as usize),
         ],
-        relief: [deepest, views.settings.relief_steps as f32, finest, 0.0],
-        cover,
-        pixel_error: [terrain.pixel_error, 0.0, 0.0, 0.0],
-        macro_map: [parts.macro_maps.layer(parts.index as usize), 0, 0, 0],
+        relief: [deepest, views.settings.relief_steps as f32, finest, side],
+        pixel_error: [
+            terrain.pixel_error,
+            views.settings.subdivision_error,
+            depth_low,
+            depth_high - depth_low,
+        ],
+        macro_map: [
+            parts.macro_maps.layer(parts.index as usize),
+            u32::from(sited),
+            0,
+            0,
+        ],
         steep: {
             let [material, low, high] = terrain.steep.map_or([0.0; 3], |steep| {
                 [
@@ -509,11 +514,6 @@ fn terrain_uniform(
             let averaged = shaded_elsewhere(1, terrain.surroundings);
             [material, low, high, if averaged { 1.0 } else { 0.0 }]
         },
-        water: [
-            0,
-            water.map_or(0, |(slot, _)| slot + 1),
-            water.map_or(0, |(_, first)| first),
-            0,
-        ],
+        water: [0, water.map_or(0, |slot| slot + 1), 0, 0],
     }
 }

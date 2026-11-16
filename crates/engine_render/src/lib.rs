@@ -58,10 +58,7 @@ mod renderer;
 mod targets;
 
 pub use engine_place::{PointInput, PointSet};
-pub use gpu_data::{
-    jitter_clip, mip_levels, pack_color, pack_surface, pixel_angle, pixels_per_meter,
-    pyramid_extents,
-};
+pub use gpu_data::{jitter_clip, mip_levels, pack_color, pack_surface, pyramid_extents};
 pub use install::FragmentUse;
 pub use kinds::{
     Channels, Form, FormColor, FormDepth, FormFragment, FormPass, FormSide, FormTarget,
@@ -395,6 +392,7 @@ pub enum Shape<'a, P, S> {
 pub enum DepthUse {
     None,
     Test,
+    TestStrictly,
     Write {
         bias: wgpu::DepthBiasState,
     },
@@ -1367,5 +1365,9 @@ gpu_struct! {
         pub detail: [f32; 4],
         pub view: [u32; 4],
         pub transparency: [f32; 4],
+        pub texel: f32,
+        pub pixel_error: f32,
+        pub pad_0: u32,
+        pub pad_1: u32,
     }
 }

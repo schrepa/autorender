@@ -9,12 +9,11 @@ struct SunAt {
     lifts: vec4<f32>,
 }
 
-struct SunOpen {
-    blocked: f32,
-    passing: f32,
+fn sun_open(open: f32, at: SunAt) -> f32 {
+    return open;
 }
 
-fn sun_open(open: SunOpen, at: SunAt) -> SunOpen {
+fn sun_air(open: f32, world: vec3<f32>) -> f32 {
     return open;
 }
 

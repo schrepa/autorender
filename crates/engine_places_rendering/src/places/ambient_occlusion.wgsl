@@ -1,3 +1,3 @@
-fn ambient_occlusion(pixel: vec2<f32>) -> f32 {
+fn ambient_occlusion(pixel: vec2<f32>, world: vec3<f32>) -> f32 {
     return 1.0;
 }

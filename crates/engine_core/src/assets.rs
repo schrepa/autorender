@@ -256,7 +256,6 @@ pub struct ResidentMesh {
     index_count: u32,
     byte_len: u64,
     lods: Vec<(u32, u32, f32)>,
-    plan: Vec<(u32, u32, f32)>,
     without_levels: bool,
 }
 
@@ -300,10 +299,6 @@ impl ResidentMesh {
         &self.lods
     }
 
-    pub fn plan(&self) -> &[(u32, u32, f32)] {
-        &self.plan
-    }
-
     pub fn without_levels(&self) -> bool {
         self.without_levels
     }
@@ -312,12 +307,6 @@ impl ResidentMesh {
     pub fn placement(&self) -> MeshResidence {
         self.placement
     }
-}
-
-fn plan_levels(lods: &[(u32, u32, f32)]) -> Vec<(u32, u32, f32)> {
-    let first = lods.first().copied().filter(|&(_, count, _)| count > 0);
-    let empty = lods.last().copied().filter(|&(_, count, _)| count == 0);
-    first.into_iter().chain(empty).collect()
 }
 
 fn resident_mesh(
@@ -346,7 +335,6 @@ fn resident_mesh(
         extended,
         index_count: mesh.indices().len() as u32,
         byte_len: mesh.byte_len() as u64,
-        plan: plan_levels(&levels),
         lods: levels,
         without_levels: lods.is_none(),
     }

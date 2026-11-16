@@ -1,4 +1,6 @@
-use std::sync::OnceLock;
+use std::fmt;
+use std::ops::Deref;
+use std::sync::{Arc, OnceLock};
 
 use engine_codec::{Error, ErrorCode, Expected};
 
@@ -52,9 +54,39 @@ impl ColorSpace {
     }
 }
 
+enum Bytes {
+    Owned(Box<[u8]>),
+    Shared(Arc<[u8]>, usize),
+}
+
+pub struct Level(Bytes);
+
+impl Deref for Level {
+    type Target = [u8];
+
+    fn deref(&self) -> &[u8] {
+        match &self.0 {
+            Bytes::Owned(bytes) => bytes,
+            Bytes::Shared(bytes, start) => &bytes[*start..],
+        }
+    }
+}
+
+impl fmt::Debug for Level {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        (**self).fmt(f)
+    }
+}
+
+impl PartialEq for Level {
+    fn eq(&self, other: &Self) -> bool {
+        **self == **other
+    }
+}
+
 #[derive(Debug)]
 enum Contents {
-    Levels(Box<[Box<[u8]>]>),
+    Levels(Box<[Level]>),
     Drawn,
 }
 
@@ -147,31 +179,36 @@ impl Texture {
         height: u32,
         levels: Vec<Vec<u8>>,
     ) -> Result<Self, Error> {
-        check_size(format, width, height)?;
-        if levels.is_empty() || levels.len() > full_chain(width, height) as usize {
-            return Err(invalid("$.levels")
-                .expected(Expected::Array)
-                .range(1.0, f64::from(full_chain(width, height)))
-                .got(levels.len()));
-        }
-        for (level, bytes) in levels.iter().enumerate() {
-            let expected = format.level_bytes((width >> level).max(1), (height >> level).max(1));
-            if bytes.len() != expected {
-                return Err(invalid(format!("$.levels[{level}]"))
-                    .expected(Expected::Matching)
-                    .range(expected as f64, expected as f64)
-                    .got(bytes.len()));
-            }
-        }
-        Ok(Self {
+        check_levels(format, width, height, &levels)?;
+        let levels = levels
+            .into_iter()
+            .map(|bytes| Level(Bytes::Owned(bytes.into_boxed_slice())))
+            .collect();
+        Ok(Self::of_levels(format, width, height, levels))
+    }
+
+    pub fn from_shared_rgba(
+        width: u32,
+        height: u32,
+        bytes: Arc<[u8]>,
+        start: usize,
+    ) -> Result<Self, Error> {
+        let start = start.min(bytes.len());
+        let levels = [Level(Bytes::Shared(bytes, start))];
+        check_levels(TextureFormat::Rgba8, width, height, &levels)?;
+        Ok(Self::of_levels(TextureFormat::Rgba8, width, height, Box::new(levels)))
+    }
+
+    fn of_levels(format: TextureFormat, width: u32, height: u32, levels: Box<[Level]>) -> Self {
+        Self {
             width,
             height,
             format,
             space: ColorSpace::Srgb,
-            contents: Contents::Levels(levels.into_iter().map(Vec::into_boxed_slice).collect()),
+            contents: Contents::Levels(levels),
             summary: OnceLock::new(),
             identity: OnceLock::new(),
-        })
+        }
     }
 
     pub fn identity(&self, hash: impl FnOnce(&[u8]) -> u128) -> u128 {
@@ -236,7 +273,7 @@ impl Texture {
         self.format
     }
 
-    pub fn levels(&self) -> &[Box<[u8]>] {
+    pub fn levels(&self) -> &[Level] {
         match &self.contents {
             Contents::Levels(levels) => levels,
             Contents::Drawn => &[],
@@ -273,6 +310,31 @@ fn check_size(format: TextureFormat, width: u32, height: u32) -> Result<(), Erro
                 .expected(Expected::Multiple)
                 .got(size)
                 .nearest(size.next_multiple_of(4)));
+        }
+    }
+    Ok(())
+}
+
+fn check_levels(
+    format: TextureFormat,
+    width: u32,
+    height: u32,
+    levels: &[impl Deref<Target = [u8]>],
+) -> Result<(), Error> {
+    check_size(format, width, height)?;
+    if levels.is_empty() || levels.len() > full_chain(width, height) as usize {
+        return Err(invalid("$.levels")
+            .expected(Expected::Array)
+            .range(1.0, f64::from(full_chain(width, height)))
+            .got(levels.len()));
+    }
+    for (level, bytes) in levels.iter().enumerate() {
+        let expected = format.level_bytes((width >> level).max(1), (height >> level).max(1));
+        if bytes.len() != expected {
+            return Err(invalid(format!("$.levels[{level}]"))
+                .expected(Expected::Matching)
+                .range(expected as f64, expected as f64)
+                .got(bytes.len()));
         }
     }
     Ok(())

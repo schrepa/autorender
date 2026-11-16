@@ -1,8 +1,9 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetLibrary, Cursor, DepthBias, DeviceLimits, Entry, Error, MaterialHandle, PassRole, Views,
+    AssetLibrary, Cursor, DepthBias, DeviceLimits, Entry, Error, MaterialHandle, PassRole,
+    ProvidedAssets, Views,
 };
-use engine_open_world_kit::ground::{Cover, GroundTiles, TerrainTiles};
+use engine_open_world_kit::ground::{GroundTiles, TerrainTiles};
 use engine_open_world_kit::water::Waterline;
 use engine_places_rendering::probes::ProbeCaptures;
 use engine_places_rendering::shadows::{CasterMap, KeptRefresh, Refresh, ShadowMaps};
@@ -11,7 +12,7 @@ use engine_render::{
     FaceCull, Form, FormColor, FormDepth, FormFragment, FormSide, FragmentPass, FragmentUse,
     GpuPart, Install, KindForm, KindSurface, Lifetime, Own, OwnFragments, Pass, PassFragment,
     PerPass, Pipeline, Prepare, RoleFragments, Sampler, Scene, SceneDraw, Shape, Texture, Varyings,
-    VertexLayout, pixels_per_meter, wgpu,
+    VertexLayout, wgpu,
 };
 use glam::{Mat4, Vec3};
 
@@ -20,7 +21,7 @@ use super::patches::{PATCH_STREAM, PatchDraws, view_uniforms};
 use super::surface::SurfaceTrees;
 use super::tables::TerrainTables;
 use super::{IDS_FORMAT, NEVER_BLENDS, SURFACE_SLOTS, TERRAIN, TerrainFrame, reached};
-use crate::gpu::{HEIGHT_FORMAT, SURFACE_ERROR_MIPS};
+use crate::gpu::{HEIGHT_FORMAT, SUMMARY_FORMAT, SUMMARY_MIPS, SURFACE_ERROR_MIPS};
 use crate::holes::HoledGround;
 use crate::settings::TerrainShading;
 use crate::state::{
@@ -30,7 +31,9 @@ use crate::terrain_bounce::{Bounce, BounceSources};
 use crate::terrain_horizons::Horizons;
 use crate::terrain_macro::MacroMaps;
 use crate::terrain_maps::TerrainMaps;
+use crate::terrain_rough::RoughLights;
 use crate::terrain_sky::SkyMaps;
+use crate::terrain_sun::{SunGpu, SunPlan};
 
 pub(crate) struct TerrainViews<'a> {
     pub(crate) camera: Mat4,
@@ -39,7 +42,6 @@ pub(crate) struct TerrainViews<'a> {
     pub(crate) regions: Vec<(usize, KeptRefresh)>,
     pub(crate) settings: &'a TerrainShading,
     pub(crate) water: &'a Waterline,
-    pub(crate) cover: Option<(Cover, f32)>,
 }
 
 pub(crate) struct Handles {
@@ -48,11 +50,13 @@ pub(crate) struct Handles {
     pub(crate) rivers: Texture<TerrainGpu>,
     pub(crate) errors: Texture<TerrainGpu>,
     pub(crate) water_errors: Texture<TerrainGpu>,
+    pub(crate) summaries: Texture<TerrainGpu>,
     pub(crate) ids: Texture<TerrainGpu>,
     pub(crate) tables: Buffer<TerrainGpu>,
     pub(crate) palette: Buffer<TerrainGpu>,
     pub(crate) leaves: Buffer<TerrainGpu>,
     pub(crate) nodes: Buffer<TerrainGpu>,
+    pub(crate) watered: Buffer<TerrainGpu>,
     pub(crate) counters: Buffer<TerrainGpu>,
     pub(crate) args: Buffer<TerrainGpu>,
     pub(crate) meshlet: Buffer<TerrainGpu>,
@@ -61,6 +65,7 @@ pub(crate) struct Handles {
     pub(crate) normal_jobs: Buffer<TerrainGpu>,
     pub(crate) control_jobs: Buffer<TerrainGpu>,
     pub(crate) peak_jobs: Buffer<TerrainGpu>,
+    pub(crate) summary_jobs: Buffer<TerrainGpu>,
     pub(crate) control_ancestors: Buffer<TerrainGpu>,
     pub(crate) normal_ancestors: Buffer<TerrainGpu>,
     pub(crate) slots: [(Buffer<TerrainGpu>, Buffer<TerrainGpu>); SURFACE_SLOTS],
@@ -73,11 +78,13 @@ struct Passes {
     control: Pass<TerrainGpu>,
     peaks: Pass<TerrainGpu>,
     ancestors: Pass<TerrainGpu>,
+    summaries: Pass<TerrainGpu>,
     clear_counters: Pass<TerrainGpu>,
     begin: Pass<TerrainGpu>,
     copy_args: Pass<TerrainGpu>,
     subdivide: Pass<TerrainGpu>,
     bounce: Pass<TerrainGpu>,
+    sun: Pass<TerrainGpu>,
     ids: Pass<TerrainGpu>,
     resolve: Pass<TerrainGpu>,
 }
@@ -87,6 +94,7 @@ struct Pipelines {
     control: ComputePipeline<TerrainGpu>,
     peaks: [ComputePipeline<TerrainGpu>; SURFACE_ERROR_MIPS as usize],
     ancestors: [ComputePipeline<TerrainGpu>; 2],
+    summaries: SummaryPipelines,
     begin: [ComputePipeline<TerrainGpu>; SURFACE_SLOTS],
     decide: [ComputePipeline<TerrainGpu>; SURFACE_SLOTS],
     apply: [ComputePipeline<TerrainGpu>; SURFACE_SLOTS],
@@ -254,6 +262,7 @@ pub(crate) struct TerrainGpu {
     maps: TerrainMaps,
     sky: SkyMaps,
     bounce: Bounce,
+    sun: SunGpu,
     macro_maps: MacroMaps,
     frame: TerrainFrame,
     cursor: Cursor,
@@ -274,7 +283,6 @@ type Lists = (
 
 type Neighbors = (
     Res<'static, Waterline>,
-    Res<'static, Cover>,
     Res<'static, ShadowMaps>,
     Res<'static, ProbeCaptures>,
 );
@@ -290,6 +298,9 @@ impl GpuPart for TerrainGpu {
             Res<'static, DeviceLimits>,
             Res<'static, AssetLibrary>,
             Res<'static, HoledGround>,
+            Option<Res<'static, ProvidedAssets>>,
+            Res<'static, RoughLights>,
+            Res<'static, SunPlan>,
         ),
     );
     const NAME: &'static str = "terrain";
@@ -313,11 +324,13 @@ impl GpuPart for TerrainGpu {
                 wgpu::TextureFormat::R16Float,
                 Lifetime::Kept,
             ),
+            summaries: cx.texture("tile_summaries", SUMMARY_FORMAT, Lifetime::Kept),
             ids: cx.texture("terrain_ids", IDS_FORMAT, Lifetime::Frame),
             tables: cx.buffer("tables", Lifetime::Kept),
             palette: cx.buffer("palette", Lifetime::Kept),
             leaves: cx.buffer("leaves", Lifetime::Kept),
             nodes: cx.buffer("nodes", Lifetime::Kept),
+            watered: cx.buffer("watered_leaves", Lifetime::Kept),
             counters: cx.buffer("counters", Lifetime::Kept),
             args: cx.buffer("surface_args", Lifetime::Kept),
             meshlet: cx.buffer("meshlet_indices", Lifetime::Kept),
@@ -326,6 +339,7 @@ impl GpuPart for TerrainGpu {
             normal_jobs: cx.buffer("normal_jobs", Lifetime::Kept),
             control_jobs: cx.buffer("control_jobs", Lifetime::Kept),
             peak_jobs: cx.buffer("peak_jobs", Lifetime::Kept),
+            summary_jobs: cx.buffer("summary_jobs", Lifetime::Kept),
             control_ancestors: cx.buffer("control_ancestors", Lifetime::Kept),
             normal_ancestors: cx.buffer("normal_ancestors", Lifetime::Kept),
             slots: std::array::from_fn(|_| {
@@ -351,6 +365,10 @@ impl GpuPart for TerrainGpu {
             faces::heightfield::TERRAIN_SURFACE_ARGS,
             Bind::Buffer(h.counters),
         )?;
+        cx.frame(
+            faces::heightfield::TERRAIN_WATERED_LEAVES,
+            Bind::Buffer(h.watered),
+        )?;
         cx.frame(field::TERRAIN_HEIGHTS, Bind::Texture(h.heights))?;
         cx.frame(draw::TERRAIN_TILE_MAPS, Bind::Texture(h.tile_maps))?;
         cx.frame(
@@ -361,7 +379,6 @@ impl GpuPart for TerrainGpu {
         cx.frame(draw::TERRAIN_ALBEDO, Bind::Texture(maps.albedo))?;
         cx.frame(draw::TERRAIN_MATERIAL_DATA, Bind::Texture(maps.data))?;
         cx.frame(draw::TERRAIN_MATERIAL_SAMPLER, Bind::Sampler(maps.sampler))?;
-        cx.frame(draw::TERRAIN_MACRO, Bind::Texture(macro_maps.texture))?;
         cx.frame(sky::TERRAIN_SKY, Bind::Texture(sky_maps.texture))?;
         cx.frame(sky::TERRAIN_SKY_SAMPLER, Bind::Sampler(h.linear))?;
         cx.frame(surface::TERRAIN_ERRORS, Bind::Texture(h.errors))?;
@@ -400,6 +417,8 @@ impl GpuPart for TerrainGpu {
             .after(control_pass)
             .after(normals_pass)
             .id();
+        let (summaries_pass, summary_pipelines) =
+            install_summaries(cx, h, [control_pass, ancestors_pass])?;
         let clear_counters = cx.clear("clear_surface_counters", h.counters);
         let begin = cx
             .pass("subdivision_begin")
@@ -426,6 +445,13 @@ impl GpuPart for TerrainGpu {
             .pass("bounce")
             .label("engine/terrain-bounce")
             .span("bounce")
+            .id();
+        let sun_pass = cx
+            .pass("terrain_sun")
+            .label("engine/terrain-sun")
+            .span("terrain_sun")
+            .after(peaks_pass)
+            .after(bounce_pass)
             .id();
         let ids_pass = cx
             .pass(IDS_PASS)
@@ -505,6 +531,7 @@ impl GpuPart for TerrainGpu {
                 (subdivision::SUBDIVISION_NODES, Bind::Buffer(h.nodes)),
                 (subdivision::SUBDIVISION_LEAVES, Bind::Buffer(h.leaves)),
                 (subdivision::SUBDIVISION_ARGS, Bind::Buffer(h.counters)),
+                (subdivision::SUBDIVISION_WATERED, Bind::Buffer(h.watered)),
             ]
         };
         let mut begins = Vec::with_capacity(SURFACE_SLOTS);
@@ -555,6 +582,7 @@ impl GpuPart for TerrainGpu {
             palette: h.palette,
         };
         let bounce = Bounce::install(cx, &sources, bounce_pass)?;
+        let sun = SunGpu::install(cx, &horizon_maps, sun_pass)?;
         let to_array = |list: Vec<ComputePipeline<TerrainGpu>>| -> [ComputePipeline<TerrainGpu>; SURFACE_SLOTS] {
             std::array::from_fn(|slot| list[slot])
         };
@@ -564,11 +592,13 @@ impl GpuPart for TerrainGpu {
                 control: control_pass,
                 peaks: peaks_pass,
                 ancestors: ancestors_pass,
+                summaries: summaries_pass,
                 clear_counters,
                 begin,
                 copy_args,
                 subdivide,
                 bounce: bounce_pass,
+                sun: sun_pass,
                 ids: ids_pass,
                 resolve: resolve_pass,
             },
@@ -577,6 +607,7 @@ impl GpuPart for TerrainGpu {
                 control: control_pipeline,
                 peaks: std::array::from_fn(|mip| peaks_pipelines[mip]),
                 ancestors: ancestors_pipelines,
+                summaries: summary_pipelines,
                 begin: to_array(begins),
                 decide: to_array(decides),
                 apply: to_array(applies),
@@ -595,6 +626,7 @@ impl GpuPart for TerrainGpu {
             maps,
             sky: sky_maps,
             bounce,
+            sun,
             macro_maps,
             frame: TerrainFrame::default(),
             cursor: Cursor::default(),
@@ -613,12 +645,16 @@ impl GpuPart for TerrainGpu {
     )]
     fn prepare(
         &mut self,
-        (lists, neighbors, frame, (limits, assets, holed)): SystemParamItem<'_, '_, Self::Reads>,
+        (lists, neighbors, frame, (limits, assets, holed, provided, lights, sun_plan)): SystemParamItem<
+            '_,
+            '_,
+            Self::Reads,
+        >,
         cx: &mut Prepare<'_, Self>,
     ) {
         self.holed.clone_from(&holed.held);
         let (settings, tiles, atlas, bakes, ground) = lists;
-        let (water, cover, shadows, captures) = neighbors;
+        let (water, shadows, captures) = neighbors;
         let main = frame.main();
         self.temporal = main.is_some_and(|main| main.jitter.is_some());
         let size = main.map_or(glam::UVec2::ZERO, |main| main.render);
@@ -630,6 +666,7 @@ impl GpuPart for TerrainGpu {
             self.tables = TerrainTables::default();
             self.surface.rest();
             self.horizons.rest();
+            self.sun.rest();
             self.drawn = false;
             self.tiles_waiting = false;
             self.deferred = false;
@@ -649,16 +686,12 @@ impl GpuPart for TerrainGpu {
         });
         let regions: Vec<(usize, KeptRefresh)> = shadows
             .views()
-            .filter(|at| at.map != CasterMap::Moving)
+            .filter(|at| at.map == CasterMap::Sky)
             .filter_map(|at| match at.refresh {
                 Refresh::Kept(kept) => Some((at.view() as usize, kept)),
                 Refresh::Redraw => None,
             })
             .collect();
-        let canopy = (cover.density > 0.0).then(|| {
-            let height = main.size().y as f32;
-            (Cover::clone(&cover), pixels_per_meter(culling, height))
-        });
         let views = TerrainViews {
             camera: jittered(culling, jitter),
             culling,
@@ -666,7 +699,6 @@ impl GpuPart for TerrainGpu {
             regions,
             settings: &settings,
             water: &water,
-            cover: canopy,
         };
         let watered = water.is_changed();
         let p = &self.passes;
@@ -675,6 +707,7 @@ impl GpuPart for TerrainGpu {
             cx.ran(p.control),
             cx.ran(p.peaks),
             cx.ran(p.ancestors),
+            cx.ran(p.summaries),
         ];
         let subdivided = cx.ran(p.subdivide);
         self.atlas.upload(
@@ -696,6 +729,9 @@ impl GpuPart for TerrainGpu {
         if self.atlas.ancestor_jobs() > 0 {
             cx.run(self.passes.ancestors);
         }
+        if self.atlas.summary_jobs() > 0 {
+            cx.run(self.passes.summaries);
+        }
         let view_list = view_uniforms(&views, &captures);
         self.tables.prepare(
             cx,
@@ -703,11 +739,17 @@ impl GpuPart for TerrainGpu {
             (&tiles, &atlas, &moves, tiles.is_changed()),
             view_list.len(),
         );
-        self.tables.write_header(cx, h, atlas.now);
+        self.tables.write_header(cx, h, (atlas.now, &settings.look()));
         self.tables.write_views(cx, h, &view_list);
-        self.maps.prepare(cx, (&tiles, &assets));
-        self.tables
-            .write_palette(cx, h, (&tiles, &ground.palette), (&self.maps, &assets));
+        let unprovided = ProvidedAssets::default();
+        let provided = provided.as_deref().unwrap_or(&unprovided);
+        self.maps.prepare(cx, (&tiles, &assets, provided));
+        self.tables.write_palette(
+            cx,
+            h,
+            (&tiles, &ground.palette),
+            (&self.maps, &assets, &lights),
+        );
         self.sky
             .prepare(cx, (&tiles, &bakes, &settings, limits.texture_layers));
         self.macro_maps
@@ -722,6 +764,8 @@ impl GpuPart for TerrainGpu {
             (&tiles, &bakes, &settings, limits.texture_layers),
             slots,
         );
+        self.sun
+            .prepare(cx, (&sun_plan, &settings, &tiles, &atlas), &self.horizons);
         let relit = self.bounce.prepare(
             cx,
             (
@@ -844,6 +888,9 @@ impl GpuPart for TerrainGpu {
         if pass == self.passes.ancestors {
             return self.atlas.ancestors(cx, &self.pipelines.ancestors);
         }
+        if pass == self.passes.summaries {
+            return self.atlas.summaries(cx, &self.pipelines.summaries);
+        }
         if pass == self.passes.begin {
             let mut dispatched = 0;
             for slot in self.surface.slots() {
@@ -868,6 +915,9 @@ impl GpuPart for TerrainGpu {
         }
         if pass == self.passes.bounce {
             return self.bounce.encode(cx);
+        }
+        if pass == self.passes.sun {
+            return self.sun.encode(cx);
         }
         if pass == self.passes.ids {
             let mut draw = cx.render(Attach::Declared);
@@ -1076,6 +1126,54 @@ impl TerrainGpu {
         }
         draws
     }
+}
+
+type SummaryPipelines = [ComputePipeline<TerrainGpu>; SUMMARY_MIPS as usize];
+
+fn install_summaries(
+    cx: &mut Install<'_, TerrainGpu>,
+    h: &Handles,
+    [control, ancestors]: [Pass<TerrainGpu>; 2],
+) -> Result<(Pass<TerrainGpu>, SummaryPipelines), Error> {
+    use crate::shaders::terrain_shading::{faces, summary};
+    cx.frame(
+        faces::ground_tiles::TILE_SUMMARIES,
+        Bind::Texture(h.summaries),
+    )?;
+    let pass = cx
+        .pass("tile_summaries")
+        .label("engine/terrain-summaries")
+        .after(control)
+        .after(ancestors)
+        .id();
+    let level = |texture: Texture<TerrainGpu>, mip: u32| Bind::Slice {
+        texture,
+        mips: mip..mip + 1,
+        layers: 0..u32::MAX,
+    };
+    let mut pipelines = Vec::with_capacity(SUMMARY_MIPS as usize);
+    pipelines.push(cx.compute_pipeline(
+        pass,
+        summary::TILE_SUMMARY_FIRST,
+        &[
+            (summary::SUMMARY_LAYERS, Bind::Buffer(h.summary_jobs)),
+            (summary::SUMMARY_IN, Bind::Texture(h.tile_maps)),
+            (summary::SUMMARY_OUT, level(h.summaries, 0)),
+            (summary::SUMMARY_HEIGHTS, level(h.heights, 0)),
+        ],
+    )?);
+    for mip in 1..SUMMARY_MIPS {
+        pipelines.push(cx.compute_pipeline(
+            pass,
+            summary::TILE_SUMMARY_DOWN,
+            &[
+                (summary::SUMMARY_LAYERS, Bind::Buffer(h.summary_jobs)),
+                (summary::SUMMARY_IN, level(h.summaries, mip - 1)),
+                (summary::SUMMARY_OUT, level(h.summaries, mip)),
+            ],
+        )?);
+    }
+    Ok((pass, std::array::from_fn(|mip| pipelines[mip])))
 }
 
 fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {

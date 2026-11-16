@@ -4,19 +4,76 @@ use engine_math::collections::HashMap;
 use engine_math::{clamp, max, min};
 use glam::Vec2;
 
-use crate::bed::{Bed, Crest, Knob, NARROWEST, Reach};
+use crate::bed::{Bed, Boulders, Crest, Knob, NARROWEST, Pools, Reach, Steps};
+use crate::hydraulics::{Falls, Profile, Shape, distances};
 use crate::hydrology::RIVER_FAR;
-use serde::Serialize;
+use crate::noise::smooth;
+use serde::{Deserialize, Serialize};
 
 pub const RIVER_STEP: f32 = 3.0;
-const RISER: f32 = 0.5;
-const BED_REACH: f32 = 1.0;
-pub const BANK_SLOPE: f32 = 0.65;
 pub const BANK_REACH: f32 = 16.0;
-const BANK_ROUNDING: f32 = 1.5;
-const LEAN: f32 = 1.0 / 3.0;
 pub const FOOTPRINT: f32 = 0.75;
 const CELL: f32 = 32.0;
+const BARE: f32 = 1.0e-7;
+
+engine_codec::fields! {
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+    #[serde(default, deny_unknown_fields)]
+    pub struct Section {
+        pub bend: f32 = 0.4 => above_to(0.0, 10.0),
+        pub lean: f32 = 0.5 => range(0.0, 0.9),
+        pub shelf: f32 = 0.8 => range(0.0, 1.0),
+        pub island: f32 = 0.5 => above_to(0.0, 1.0),
+        pub rounding: f32 = 0.5 => range(0.0, 4.0),
+    }
+}
+
+engine_codec::fields! {
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+    #[serde(default, deny_unknown_fields)]
+    pub struct Valley {
+        pub terraces: u32 = 1 => range(0, 8),
+        pub rise: f32 = 0.9 => range(0.0, 10.0),
+        pub plain_rise: f32 = 0.25 => range(0.0, 1.0),
+        pub bank: [f32; 2] = [0.25, 0.7] => above_to(0.0, 100.0),
+        pub wall: f32 = 2.0 => range(0.0, 100.0),
+        pub walled: [f32; 2] = [0.5, 2.0] => range(0.0, 100.0),
+        pub tread: f32 = 0.25 => range(0.0, 100.0),
+        pub tread_rise: f32 = 0.15 => range(0.0, 10.0),
+        pub reach: f32 = 0.5 => range(0.0, 100.0),
+        pub fade: f32 = 0.65 => range(0.0, 100.0),
+    }
+}
+
+engine_codec::fields! {
+    #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
+    #[serde(default, deny_unknown_fields)]
+    pub struct Deposits {
+        pub wet: [f32; 2] = [1.3, 0.6] => range(0.0, 10.0),
+        pub fining: f32 = 0.35 => above_to(0.0, 10.0),
+        pub sand: f32 = 5.0e-4 => range(0.0, 1.0),
+        pub earth: f32 = 3.0e-5 => range(0.0, 1.0),
+        pub earth_rise: [f32; 2] = [0.1, 0.3] => range(0.0, 10.0),
+        pub earth_reach: f32 = 0.5 => above_to(0.0, 100.0),
+        pub sand_spread: f32 = 0.35 => range(0.0, 1.0),
+        pub silt_spread: [f32; 2] = [1.0 / 3.0, 1.0] => range(0.0, 1.0),
+        pub sides: f32 = 2.0 => range(0.0, 100.0),
+        pub flood: [f32; 2] = [0.25, 1.0] => range(0.0, 100.0),
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Form {
+    pub profile: Profile,
+    pub shape: Shape,
+    pub falls: Falls,
+    pub pools: Pools,
+    pub steps: Steps,
+    pub boulders: Boulders,
+    pub section: Section,
+    pub valley: Valley,
+    pub deposits: Deposits,
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct River {
@@ -36,8 +93,14 @@ pub struct River {
     pub flood: Vec<f32>,
     pub carved: Vec<bool>,
     pub cut: Vec<bool>,
-    pub crest: Vec<Option<Crest>>,
+    pub crest: Vec<Crest>,
     pub knobs: Vec<Knob>,
+    pub bend: Vec<f32>,
+    pub plain: Vec<[f32; 2]>,
+    pub bar: Vec<f32>,
+    pub rock: Vec<f32>,
+    pub wall: Vec<f32>,
+    pub margin: Vec<[f32; 2]>,
     pub head: bool,
     pub given: Given,
 }
@@ -154,7 +217,47 @@ fn along_rivers(rivers: &[River]) -> Vec<Vec<f32>> {
                 .iter()
                 .map(|&point| Vec2::from(point))
                 .collect();
-            crate::hydraulics::distances(&points)
+            distances(&points)
+        })
+        .collect()
+}
+
+pub fn point_along(points: &[Vec2], along: &[f32], place: f32) -> Vec2 {
+    let after = along
+        .partition_point(|&at| at <= place)
+        .clamp(1, along.len() - 1);
+    let before = after - 1;
+    let run = along[after] - along[before];
+    let share = if run > 0.0 {
+        clamp((place - along[before]) / run, 0.0, 1.0)
+    } else {
+        0.0
+    };
+    points[before] + (points[after] - points[before]) * share
+}
+
+pub fn bends(points: &[Vec2], widths: &[f32], full: f32) -> Vec<f32> {
+    let along = distances(points);
+    let end = along[along.len() - 1];
+    (0..points.len())
+        .map(|index| {
+            let place = along[index];
+            let reach = min(max(widths[index], RIVER_STEP), min(place, end - place));
+            if reach < 0.5 * RIVER_STEP {
+                return 0.0;
+            }
+            let before = points[index] - point_along(points, &along, place - reach);
+            let after = point_along(points, &along, place + reach) - points[index];
+            let lengths = before.length() + after.length();
+            if lengths <= 0.0 {
+                return 0.0;
+            }
+            let curvature = 2.0
+                * before
+                    .normalize_or_zero()
+                    .perp_dot(after.normalize_or_zero())
+                / lengths;
+            clamp(curvature * widths[index] / full, -1.0, 1.0)
         })
         .collect()
 }
@@ -162,9 +265,12 @@ fn along_rivers(rivers: &[River]) -> Vec<Vec<f32>> {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Rivers {
     pub rivers: Vec<River>,
+    form: Form,
     network: RiverNetwork,
     along: Vec<Vec<f32>>,
     shifts: Vec<Vec<f32>>,
+    reaches: Vec<[f32; 2]>,
+    spans: Vec<f32>,
     widest: f32,
     min: Vec2,
     columns: usize,
@@ -174,8 +280,10 @@ pub struct Rivers {
 }
 
 impl Rivers {
-    pub fn new(rivers: Vec<River>) -> Self {
-        let shifts = rivers.iter().map(shifts).collect();
+    pub fn new(rivers: Vec<River>, form: Form) -> Self {
+        let shifts = shifts(&rivers, form.section.lean);
+        let reaches = rivers.iter().map(reaches).collect();
+        let spans: Vec<f32> = rivers.iter().map(span).collect();
         let widest = widest(&rivers);
         let network = RiverNetwork::new(&rivers);
         let along = along_rivers(&rivers);
@@ -190,21 +298,28 @@ impl Rivers {
         if rivers.iter().all(|river| river.points.len() < 2) {
             return Self {
                 rivers,
+                form,
                 network,
                 along,
                 shifts,
+                reaches,
+                spans,
                 widest,
                 ..Self::default()
             };
         }
-        let reach = widest + BANK_REACH;
+        let reach = widest
+            + spans
+                .iter()
+                .fold(0.0, |farthest, &span| max(farthest, span));
         let corner = low - Vec2::splat(reach);
         let columns = (((high.x + reach - corner.x) / CELL).ceil() as usize).max(1);
         let rows = (((high.y + reach - corner.y) / CELL).ceil() as usize).max(1);
         let mut lists: Vec<Vec<[u32; 2]>> = vec![Vec::new(); columns * rows];
         for (index, river) in rivers.iter().enumerate() {
             for segment in 0..river.points.len().saturating_sub(1) {
-                let (along, across) = listing((corner, columns, rows), river, segment);
+                let (along, across) =
+                    listing((corner, columns, rows), (river, spans[index]), segment);
                 for row in across.0..=across.1 {
                     for column in along.0..=along.1 {
                         lists[row * columns + column].push([index as u32, segment as u32]);
@@ -221,9 +336,12 @@ impl Rivers {
         starts.push(segments.len() as u32);
         Self {
             rivers,
+            form,
             network,
             along,
             shifts,
+            reaches,
+            spans,
             widest,
             min: corner,
             columns,
@@ -235,6 +353,10 @@ impl Rivers {
 
     pub fn rivers(&self) -> &[River] {
         &self.rivers
+    }
+
+    pub fn form(&self) -> &Form {
+        &self.form
     }
 
     pub fn len(&self) -> usize {
@@ -294,7 +416,7 @@ impl Rivers {
                         .half
                         .iter()
                         .fold(0.0_f32, |widest, &half| max(widest, half))
-                        + BANK_REACH,
+                        + span(river),
                 );
                 regions.push((low - pad, high + pad));
             }
@@ -305,9 +427,12 @@ impl Rivers {
     #[must_use]
     pub fn with_rivers(&self, rivers: Vec<River>) -> Self {
         Self {
-            shifts: rivers.iter().map(shifts).collect(),
+            shifts: shifts(&rivers, self.form.section.lean),
+            reaches: rivers.iter().map(reaches).collect(),
+            spans: rivers.iter().map(span).collect(),
             widest: widest(&rivers),
             rivers,
+            form: self.form,
             network: self.network.clone(),
             along: self.along.clone(),
             min: self.min,
@@ -337,7 +462,12 @@ impl Rivers {
             let gap = point - (a + run * t);
             let distance = gap.length();
             let half = line.half[index] + (line.half[index + 1] - line.half[index]) * t;
-            if distance > half + BANK_REACH || nearest.is_some_and(|(best, _)| best <= distance) {
+            let [low, high] = [0, 1].map(|side| {
+                line.margin[index][side]
+                    + (line.margin[index + 1][side] - line.margin[index][side]) * t
+            });
+            let reach = max(low, high);
+            if distance > half + reach || nearest.is_some_and(|(best, _)| best <= distance) {
                 continue;
             }
             let direction = line.heading(index, t);
@@ -420,7 +550,7 @@ impl Rivers {
             let grid = (self.min, self.columns, self.rows);
             for (index, river) in self.rivers.iter().enumerate() {
                 for segment in 0..river.points.len().saturating_sub(1) {
-                    let (along, across) = listing(grid, river, segment);
+                    let (along, across) = listing(grid, (river, self.spans[index]), segment);
                     if along.0 <= last
                         && along.1 >= first
                         && across.0 <= *rows.end()
@@ -443,14 +573,15 @@ impl Rivers {
         );
         let run = b - a;
         let length = run.dot(run);
-        let (crest, riser, drop) = line.crest[index].map_or((0.5, 1.0, 0.0), |crest| {
-            let riser = min(RISER / length.sqrt(), 1.0);
-            (
-                clamp(crest.share, 0.5 * riser, 1.0 - 0.5 * riser),
-                riser,
-                crest.drop,
-            )
-        });
+        let along = &self.along[river as usize];
+        let (start, span) = (along[index], along[index + 1] - along[index]);
+        let [above, below] = self.reaches[river as usize];
+        let crests = line
+            .crest
+            .partition_point(|crest| crest.place < start - below)
+            ..line
+                .crest
+                .partition_point(|crest| crest.place <= start + span + above);
         let first = line
             .knobs
             .partition_point(|knob| knob.segment + 1 < segment);
@@ -459,6 +590,7 @@ impl Rivers {
             .partition_point(|knob| knob.segment <= segment + 1);
         Segment {
             line,
+            form: &self.form,
             shifts: &self.shifts[river as usize],
             index,
             a,
@@ -471,9 +603,9 @@ impl Rivers {
                 Vec2::Y
             },
             next: line.points.get(index + 2).map(|&next| Vec2::from(next) - b),
-            crest,
-            riser,
-            drop,
+            start,
+            span,
+            crests: &line.crest[crests],
             knobs: &line.knobs[first..end],
         }
     }
@@ -510,7 +642,7 @@ impl Rivers {
         let at = |values: &[f32], along: f32| {
             values[index] + (values[index + 1] - values[index]) * along
         };
-        let surface = at(&line.surface, reading.stepped);
+        let surface = at(&line.surface, reading.along) + reading.lift;
         surface.is_finite().then(|| {
             (
                 RiverWater {
@@ -525,17 +657,24 @@ impl Rivers {
     }
 
     fn bed(&self, taken: &Taken, point: Vec2, spacing: f32) -> Option<Bed> {
-        if taken.holder[0] == u32::MAX || taken.edge > BED_REACH {
+        if taken.holder[0] == u32::MAX {
             return None;
         }
         let segment = self.segment(taken.holder);
         let reading = segment.read(point, spacing)?;
-        if reading.edge > BED_REACH {
-            return None;
-        }
         let (line, index) = (segment.line, segment.index);
         let at =
             |values: &[f32]| values[index] + (values[index + 1] - values[index]) * reading.along;
+        let median = at(&line.d50);
+        let grain = reading.grain(
+            &self.form.deposits,
+            median,
+            (at(&line.surface), at(&line.flood)),
+            at(&line.depth),
+        );
+        if grain < BARE {
+            return None;
+        }
         let nearer = if reading.along < 0.5 {
             index
         } else {
@@ -543,8 +682,8 @@ impl Rivers {
         };
         Some(Bed {
             reach: line.reach[nearer],
-            d50: at(&line.d50),
-            d84: at(&line.d84),
+            d50: grain,
+            d84: grain * at(&line.d84) / max(median, BARE),
             power: at(&line.power),
             flood: at(&line.flood),
             carved: line.carved[nearer],
@@ -554,6 +693,21 @@ impl Rivers {
     pub fn bed_at(&self, x: f32, z: f32) -> Option<Bed> {
         let point = Vec2::new(x, z);
         self.bed(&self.take(point, 0.0), point, 0.0)
+    }
+
+    pub fn bank_at(&self, x: f32, z: f32, spacing: f32) -> Option<(f32, f32)> {
+        let point = Vec2::new(x, z);
+        let taken = self.take(point, spacing);
+        if taken.holder[0] == u32::MAX {
+            return None;
+        }
+        let segment = self.segment(taken.holder);
+        let reading = segment.read(point, spacing)?;
+        let (line, index) = (segment.line, segment.index);
+        let water = line.surface[index]
+            + (line.surface[index + 1] - line.surface[index]) * reading.along
+            + reading.lift;
+        Some((reading.outer, water))
     }
 
     pub fn edge(&self, x: f32, z: f32, spacing: f32) -> f32 {
@@ -570,22 +724,6 @@ impl Rivers {
         let depth = water.surface - section;
         (depth > 0.0).then_some((water.surface, depth))
     }
-
-    pub fn reaches(&self, low: Vec2, high: Vec2) -> bool {
-        let pad = Vec2::splat(self.widest);
-        self.listed(low - pad, high + pad)
-            .iter()
-            .any(|&[river, segment]| {
-                let line = &self.rivers[river as usize];
-                let index = segment as usize;
-                let (a, b) = (
-                    Vec2::from(line.points[index]),
-                    Vec2::from(line.points[index + 1]),
-                );
-                let reach = Vec2::splat(2.0 * max(line.half[index], line.half[index + 1]));
-                (a.min(b) - reach).cmple(high).all() && (a.max(b) + reach).cmpge(low).all()
-            })
-    }
 }
 
 fn widest(rivers: &[River]) -> f32 {
@@ -595,37 +733,47 @@ fn widest(rivers: &[River]) -> f32 {
         .fold(0.0, |widest, &half| max(widest, half))
 }
 
-fn shifts(river: &River) -> Vec<f32> {
-    let points = &river.points;
-    let mut shifts = vec![0.0; points.len()];
-    for index in 1..points.len().saturating_sub(1) {
-        let before = Vec2::from(points[index]) - Vec2::from(points[index - 1]);
-        let after = Vec2::from(points[index + 1]) - Vec2::from(points[index]);
-        let lengths = before.length() + after.length();
-        if lengths <= 0.0 {
-            continue;
-        }
-        let curvature = 2.0
-            * before
-                .normalize_or_zero()
-                .perp_dot(after.normalize_or_zero())
-            / lengths;
-        let bend = curvature * river.half[index];
-        shifts[index] = -river.half[index] * bend / (1.0 + bend.abs() / LEAN);
-    }
-    shifts
+fn reaches(river: &River) -> [f32; 2] {
+    river.crest.iter().fold([0.0; 2], |farthest, crest| {
+        let [above, below] = crest.reach();
+        [max(farthest[0], above), max(farthest[1], below)]
+    })
+}
+
+fn shifts(rivers: &[River], lean: f32) -> Vec<Vec<f32>> {
+    rivers
+        .iter()
+        .map(|river| {
+            river
+                .half
+                .iter()
+                .zip(&river.bend)
+                .map(|(&half, &bend)| -lean * half * bend)
+                .collect()
+        })
+        .collect()
+}
+
+fn span(river: &River) -> f32 {
+    river
+        .plain
+        .iter()
+        .zip(&river.margin)
+        .fold(0.0, |widest, (plain, reach)| {
+            max(widest, max(reach[0] + plain[0], reach[1] + plain[1]))
+        })
 }
 
 fn listing(
     (corner, columns, rows): (Vec2, usize, usize),
-    river: &River,
+    (river, span): (&River, f32),
     index: usize,
 ) -> ((usize, usize), (usize, usize)) {
     let (a, b) = (
         Vec2::from(river.points[index]),
         Vec2::from(river.points[index + 1]),
     );
-    let margin = Vec2::splat(max(river.half[index], river.half[index + 1]) + BANK_REACH);
+    let margin = Vec2::splat(max(river.half[index], river.half[index + 1]) + span);
     let first = ((a.min(b) - margin - corner) / CELL).floor();
     let last = ((a.max(b) + margin - corner) / CELL).floor();
     (
@@ -643,6 +791,7 @@ fn listing(
 #[derive(Clone, Copy)]
 struct Segment<'a> {
     line: &'a River,
+    form: &'a Form,
     shifts: &'a [f32],
     index: usize,
     a: Vec2,
@@ -651,29 +800,125 @@ struct Segment<'a> {
     length: f32,
     normal: Vec2,
     next: Option<Vec2>,
-    crest: f32,
-    riser: f32,
-    drop: f32,
+    start: f32,
+    span: f32,
+    crests: &'a [Crest],
     knobs: &'a [Knob],
 }
 
 #[derive(Clone, Copy, Debug)]
 struct Reading {
     along: f32,
-    stepped: f32,
+    lift: f32,
     edge: f32,
     section: f32,
     floor: f32,
+    allow: f32,
+    round: f32,
+    outer: f32,
+    share: f32,
+    beyond: f32,
+    plain: f32,
+    hump: f32,
+}
+
+impl Reading {
+    fn grain(&self, set: &Deposits, median: f32, (surface, flood): (f32, f32), depth: f32) -> f32 {
+        let water = surface + self.lift;
+        let above = if water.is_finite() {
+            self.section - water
+        } else {
+            -1.0
+        };
+        let fades = |value: f32, [full, gone]: [f32; 2]| {
+            clamp((gone - value) / max(gone - full, 1.0e-6), 0.0, 1.0)
+        };
+        let deep = max(depth, 1.0e-3);
+        let bar = max(clamp(-set.sides * self.outer, 0.0, 1.0), self.hump);
+        let earth = set.earth * fades(above / deep, set.earth_rise);
+        if self.share <= 1.0 {
+            if above <= 0.0 {
+                return median * (set.wet[0] + (set.wet[1] - set.wet[0]) * self.share);
+            }
+            let rise = clamp(above / (set.fining * deep), 0.0, 1.0);
+            let shelf = max(median * set.wet[1] * (1.0 - rise), set.sand);
+            return earth + (shelf - earth) * bar;
+        }
+        let spread = max(set.sand_spread * self.plain, deep);
+        let sand = set.sand * smooth(1.0 - self.beyond / spread);
+        let silt = set.earth * fades(self.beyond / max(self.plain, deep), set.silt_spread);
+        let rim = earth * clamp(1.0 - self.beyond / (set.earth_reach * deep), 0.0, 1.0);
+        let reached = fades((self.section - flood) / deep, set.flood);
+        (rim + (max(sand, silt) - rim) * bar) * reached
+    }
+}
+
+fn section(shelf: f32, share: f32, outer: f32, lip: f32) -> f32 {
+    let shelf = shelf * clamp(-outer, 0.0, 1.0);
+    shelf * share * share * (3.0 - 2.0 * share) + (1.0 - shelf) * libm::powf(share, lip)
+}
+
+fn valley(
+    set: &Valley,
+    (beyond, plain): (f32, f32),
+    (rock, wall, earth): (f32, f32, f32),
+    (rise, tread): (f32, f32),
+) -> f32 {
+    let mut left = beyond;
+    let mut height = 0.0;
+    let mut scarp = rise;
+    if rise > 0.0 && plain > 0.0 {
+        if left < plain {
+            return set.plain_rise * rise * left / plain;
+        }
+        left -= plain;
+        height = set.plain_rise * rise;
+        scarp = rise - height;
+    }
+    let face = rock / wall;
+    if left < face {
+        return height + wall * left;
+    }
+    left -= face;
+    height += rock;
+    if rise > 0.0 {
+        let run = scarp / earth;
+        if left < run {
+            return height + earth * left;
+        }
+        left -= run;
+        height += scarp;
+        for _ in 0..set.terraces {
+            if left < tread {
+                return height + set.tread_rise * rise * left / tread;
+            }
+            left -= tread;
+            height += set.tread_rise * rise;
+            let run = rise / earth;
+            if left < run {
+                return height + earth * left;
+            }
+            left -= run;
+            height += rise;
+        }
+    }
+    height + earth * left
 }
 
 impl Segment<'_> {
     #[inline]
-    fn stepped(&self, along: f32) -> f32 {
-        if self.drop == 0.0 {
-            return along;
+    fn stepped(&self, along: f32, across: f32) -> (f32, f32) {
+        let place = self.start + self.span * along;
+        let (mut lift, mut scour) = (0.0, 0.0);
+        for crest in self.crests {
+            let lip = crest.lip(across);
+            let past = place - lip;
+            let [first, last] =
+                [self.start, self.start + self.span].map(|end| crest.fallen(end - crest.place));
+            lift += crest.drop * (first + (last - first) * along - crest.fallen(past));
+            scour += crest.scour(past, lip);
         }
-        let x = clamp((along - self.crest) / self.riser + 0.5, 0.0, 1.0);
-        x * x * (3.0 - 2.0 * x)
+        (lift, scour)
     }
 
     #[inline]
@@ -711,7 +956,15 @@ impl Segment<'_> {
         let reach = 0.5 * spacing * (self.normal.x.abs() + self.normal.y.abs());
         let half = at(&self.line.half);
         let edge = max(distance - reach, 0.0) - half;
-        if edge >= BANK_REACH {
+        let sides = |values: &[[f32; 2]]| {
+            [0, 1].map(|side| {
+                values[self.index][side]
+                    + (values[self.index + 1][side] - values[self.index][side]) * along
+            })
+        };
+        let [low, high] = sides(&self.line.plain);
+        let [near, off] = sides(&self.line.margin);
+        if edge >= max(near + low, off + high) {
             return None;
         }
         let across = if gap.dot(self.normal) < 0.0 {
@@ -721,19 +974,52 @@ impl Segment<'_> {
         };
         let shift = at(self.shifts);
         let nearest = across - min(max(across - shift, -reach), reach);
-        let (from, width) = if nearest < shift {
-            (shift - nearest, half + shift)
+        let (from, width, side, (plain, far)) = if nearest < shift {
+            (shift - nearest, half + shift, -1.0, (low, near))
         } else {
-            (nearest - shift, half - shift)
+            (nearest - shift, half - shift, 1.0, (high, off))
         };
-        let stepped = self.stepped(along);
-        let lift = self.drop * (along - stepped);
-        let (bed, depth) = (at(&self.line.bed) + lift, at(&self.line.depth) - lift);
-        let shaped = if from <= width {
-            let share = from / max(width, 1.0e-3);
-            bed + depth * share * share
+        if edge >= far + plain {
+            return None;
+        }
+        let outer = -side * at(&self.line.bend);
+        let share = from / max(width, 1.0e-3);
+        let unit = clamp(across / max(half, 1.0e-3), -1.0, 1.0);
+        let (lift, scour) = if share <= 1.0 {
+            self.stepped(along, unit)
         } else {
-            bed + depth + BANK_SLOPE * (from - width)
+            (0.0, 0.0)
+        };
+        let lowered = lift - scour;
+        let (bed, depth) = (at(&self.line.bed) + lowered, at(&self.line.depth) - lowered);
+        let bar = at(&self.line.bar);
+        let (set, vale) = (&self.form.section, &self.form.valley);
+        let lens = max(1.0 - unit * unit / (set.island * set.island), 0.0);
+        let hump = if share <= 1.0 && bar > 0.0 {
+            lens * lens
+        } else {
+            0.0
+        };
+        let beyond = from - width;
+        let rock = at(&self.line.rock);
+        let [gentle, steep] = vale.bank;
+        let earth = gentle + (steep - gentle) * clamp(0.5 + 0.5 * outer, 0.0, 1.0);
+        let wall = max(at(&self.line.wall), earth);
+        let shaped = if share <= 1.0 {
+            let [shallow, deep] = vale.walled;
+            let cut = (rock / max(depth, 1.0e-3) - shallow) / max(deep - shallow, 1.0e-6);
+            let bank = earth + (wall - earth) * smooth(cut);
+            let lip = max(bank * width / max(depth, 1.0e-3), 1.0);
+            bed + depth * section(set.shelf, share, outer, lip) + bar * hump
+        } else {
+            let open = clamp((low + high) / max(2.0 * half, 1.0e-3), 0.0, 1.0);
+            bed + depth
+                + valley(
+                    vale,
+                    (beyond, plain),
+                    (rock, wall, earth),
+                    (vale.rise * depth * open, open * vale.tread * 2.0 * half),
+                )
         };
         let section = shaped + self.knobs_at(point, spacing);
         let nearer = if along < 0.5 {
@@ -748,10 +1034,17 @@ impl Segment<'_> {
         };
         Some(Reading {
             along,
-            stepped,
+            lift,
             edge,
             section,
             floor,
+            allow: vale.fade * (far + plain - edge),
+            round: set.rounding * max(depth, 0.0),
+            outer,
+            share,
+            beyond,
+            plain,
+            hump,
         })
     }
 }
@@ -762,6 +1055,8 @@ struct Taken {
     holder: [u32; 2],
     edge: f32,
     floor: f32,
+    allow: f32,
+    round: f32,
 }
 
 impl Taken {
@@ -770,12 +1065,18 @@ impl Taken {
         holder: [u32::MAX; 2],
         edge: RIVER_FAR,
         floor: f32::INFINITY,
+        allow: 0.0,
+        round: 0.0,
     };
 
     #[inline]
     fn add(&mut self, id: [u32; 2], reading: &Reading) {
         self.edge = min(self.edge, reading.edge);
-        self.floor = min(self.floor, reading.floor);
+        self.allow = max(self.allow, reading.allow);
+        if reading.floor < self.floor {
+            self.floor = reading.floor;
+            self.round = reading.round;
+        }
         if reading.section < self.section || (reading.section == self.section && id < self.holder) {
             self.section = reading.section;
             self.holder = id;
@@ -786,10 +1087,10 @@ impl Taken {
         if self.holder[0] == u32::MAX {
             return ground;
         }
-        let rounding = max(min(self.edge, BANK_ROUNDING), 1.0e-3);
+        let rounding = max(min(self.edge, self.round), 1.0e-3);
         let cut = smooth_min(ground, self.floor, rounding);
         if self.edge > 0.0 {
-            max(cut, ground - BANK_SLOPE * (BANK_REACH - self.edge))
+            max(cut, ground - self.allow)
         } else {
             cut
         }
@@ -845,7 +1146,8 @@ impl RiverRaster {
             self.stamped += 1;
             let segment = rivers.segment(id);
             let (half, index) = (&segment.line.half, segment.index);
-            let reach = max(half[index], half[index + 1]) + BANK_REACH + footprint;
+            let span = rivers.spans[id[0] as usize];
+            let reach = max(half[index], half[index + 1]) + span + footprint;
             let (low, high) = (segment.a.min(segment.b), segment.a.max(segment.b));
             let rows = zs.partition_point(|&z| z < low.y - reach)
                 ..zs.partition_point(|&z| z <= high.y + reach);
@@ -913,6 +1215,10 @@ fn smooth_min(a: f32, b: f32, k: f32) -> f32 {
 pub struct RiverLine {
     pub points: Vec<Vec2>,
     pub area: Vec<f32>,
+    pub level: Vec<f32>,
+    pub bend: Vec<f32>,
+    pub plain: Vec<[f32; 2]>,
+    pub bar: Vec<f32>,
     pub head: bool,
     pub given: Option<GivenLine>,
 }
@@ -941,6 +1247,12 @@ engine_codec::record!(River {
     cut,
     crest,
     knobs,
+    bend,
+    plain,
+    bar,
+    rock,
+    wall,
+    margin,
     head,
     given,
 });
@@ -950,12 +1262,56 @@ engine_codec::record!(Given {
     depth,
     flood,
 });
+engine_codec::record!(Section {
+    bend,
+    lean,
+    shelf,
+    island,
+    rounding,
+});
+engine_codec::record!(Valley {
+    terraces,
+    rise,
+    plain_rise,
+    bank,
+    wall,
+    walled,
+    tread,
+    tread_rise,
+    reach,
+    fade,
+});
+engine_codec::record!(Deposits {
+    wet,
+    fining,
+    sand,
+    earth,
+    earth_rise,
+    earth_reach,
+    sand_spread,
+    silt_spread,
+    sides,
+    flood,
+});
+engine_codec::record!(Form {
+    profile,
+    shape,
+    falls,
+    pools,
+    steps,
+    boulders,
+    section,
+    valley,
+    deposits,
+});
 impl engine_codec::Codec for Rivers {
     fn write(&self, out: &mut engine_codec::Writer) {
+        self.form.write(out);
         self.rivers.write(out);
     }
 
     fn read(input: &mut engine_codec::Reader<'_>) -> Result<Self, engine_codec::Error> {
-        Ok(Self::new(Vec::read(input)?))
+        let form = Form::read(input)?;
+        Ok(Self::new(Vec::read(input)?, form))
     }
 }

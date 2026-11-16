@@ -20,3 +20,7 @@ fn transmission(input: SurfaceInput, point: SurfacePoint) -> f32 {
 fn direct_softness(input: SurfaceInput, point: SurfacePoint) -> f32 {
     return 0.0;
 }
+
+fn tangled(input: SurfaceInput, point: SurfacePoint) -> f32 {
+    return 0.0;
+}

@@ -30,8 +30,8 @@ pub use path::{HeightGrid, Route, RouteOptions, height_grid, route};
 pub use runtime::LayerStats;
 pub use runtime::{
     BRIDGE_SOLIDS, DECK_DEPTH, DECK_MARGIN, DECK_RISE, MAX_COLLIDER_EXTENT, MIN_COLLIDER_EXTENT,
-    MotionDetail, PlacedCollider, PlacedShape, PlacementAsset, Surroundings, SurroundingsStatus,
-    Terrain, TerrainBakes, TerrainBrick, TerrainEdit, TerrainKey, TerrainPrefetch, TerrainRiver,
+    PlacedCollider, PlacedShape, PlacementAsset, Surroundings, SurroundingsStatus, Terrain,
+    TerrainBakes, TerrainBrick, TerrainEdit, TerrainKey, TerrainPrefetch, TerrainRiver,
     TerrainSample, TerrainScene, TerrainSettings, TerrainStats, TerrainSurface, Terrains,
 };
 pub use runtime::{

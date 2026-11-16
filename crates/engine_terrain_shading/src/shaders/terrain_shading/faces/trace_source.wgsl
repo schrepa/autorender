@@ -1,11 +1,11 @@
 import package::engine::materials::MASK_MIP_SCALE;
 import package::engine::post::frame::post;
 import package::engine::surfaces::{SURFACE_GROUND, SURFACE_SOLID};
-import package::engine::view::{camera, stable_normalize};
+import package::engine::view::stable_normalize;
 import package::face::bounce::bounce_light;
-import package::face::cover::{cover_growth, cover_seen, cover_tint};
+import package::face::cover::{CoverSite, cover_ground, cover_tint};
 import package::face::ground_tiles::{
-    LevelTile, NOT_RESIDENT, PALETTE_ENTRIES, PEAK_CELLS, PEAK_MIPS, TILE_QUADS, ground_colors,
+    LevelTile, NOT_RESIDENT, PEAK_CELLS, PEAK_MIPS, TILE_QUADS, ground_colors,
     ground_colors_mip, ground_extent, ground_of, ground_sky, ground_tile, level_tiles,
     macro_color, material_look, terrain_info, tile_height, tile_layer, tile_material, tile_peak,
     triangle_height,
@@ -19,12 +19,15 @@ import package::face::lighting::sun_visibility;
 import package::face::placed_tiles::{
     Pose, placed_color, placed_impostor, placed_pose, placed_record, placed_shown,
 };
-import package::face::sky::{ambient as sky_ambient, atmospheric, sky_above, sky_average};
+import package::face::sky::{ambient as sky_ambient, sky_above, sky_average};
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
 import package::generated::pieces::terrain_shading::piece;
-import package::generated::terrain_shading::{NO_PLACED, TraceTerrain};
+import package::generated::terrain_shading::{
+    HORIZON_RECORDS, HORIZON_RECORD_VECTORS, NO_PLACED, TRACE_LEVEL_WORDS, TraceTerrain,
+};
 import package::place::trace_source::TraceHit;
+import package::terrain_shading::horizons::{horizon_clear, horizon_records};
 
 @group(0) @binding(0) var<storage, read> world_terrains: array<TraceTerrain>;
 @group(0) @binding(1) var<storage, read> world_placed: array<u32>;
@@ -32,6 +35,7 @@ import package::place::trace_source::TraceHit;
 const WORLD_STEPS: u32 = 2u * PEAK_CELLS;
 const WORLD_PAST: f32 = 1.0e-3;
 const FLOAT_MAX: f32 = 3.4028233e38f;
+const SQUARE_ACROSS: f32 = 1.4142135;
 
 struct Unposed {
     x: vec3<f32>,
@@ -227,8 +231,62 @@ fn ground_meet(tile: LevelTile, first: vec2<u32>, o: vec3<f32>, direction: vec3<
     return vec4<f32>(0.0, 1.0, 0.0, -1.0);
 }
 
+struct Clearing {
+    known: bool,
+    block: f32,
+    floor: f32,
+    span: f32,
+    slopes: vec2<f32>,
+    rise: f32,
+    flat: f32,
+    pad: f32,
+}
+
+fn ray_clearing(terrain: TraceTerrain, p: vec3<f32>, direction: vec3<f32>) -> Clearing {
+    var clearing: Clearing;
+    let flat = length(direction.xz);
+    let records = min(horizon_records(), HORIZON_RECORDS / HORIZON_RECORD_VECTORS);
+    if terrain.reach.w < 0.0 || u32(terrain.reach.w) >= records || flat < 1.0e-6 {
+        return clearing;
+    }
+    let clear = horizon_clear(HORIZON_RECORD_VECTORS * u32(terrain.reach.w), p.xz, direction.xz);
+    if !clear.known {
+        return clearing;
+    }
+    clearing.known = true;
+    clearing.block = box_span(p.xz, direction.xz, clear.low, clear.high, 0.0, FLOAT_MAX).y;
+    clearing.floor = clear.floor + terrain.reach.y;
+    clearing.span = clear.span;
+    clearing.slopes = clear.slopes;
+    clearing.rise = direction.y;
+    clearing.flat = flat;
+    clearing.pad = clear.pad;
+    return clearing;
+}
+
+fn clearing_end(clearing: Clearing, start: f32) -> f32 {
+    if !clearing.known {
+        return FLOAT_MAX;
+    }
+    let above = start - clearing.floor;
+    let slope = mix(clearing.slopes.x, clearing.slopes.y, saturate(above / clearing.span));
+    let rate = clearing.rise - slope * clearing.flat;
+    if rate <= 0.0 {
+        return FLOAT_MAX;
+    }
+    return max(clearing.block, -above / rate);
+}
+
+fn footprint_reach(spread: vec2<f32>, size: f32) -> f32 {
+    let seen = size * post.eye.w - spread.x;
+    if spread.y > 0.0 {
+        return min(seen, size / spread.y);
+    }
+    return seen;
+}
+
 fn trace_ground(index: u32, p: vec3<f32>, direction: vec3<f32>, bounds: vec2<f32>,
-        hit: ptr<function, WorldHit>) {
+        spread: vec2<f32>, hit: ptr<function, WorldHit>) {
     let terrain = world_terrains[index];
     let info = terrain_info(terrain.maps.x);
     let ground = ground_of(info);
@@ -244,7 +302,12 @@ fn trace_ground(index: u32, p: vec3<f32>, direction: vec3<f32>, bounds: vec2<f32
         }
         steps++;
         let at = o + direction * s;
-        let found = ground_tile(ground, at.xz, 0u);
+        let asked = u32(clamp(floor(log2(max(ray_footprint(spread, s) / ground.spacing, 1.0))),
+            0.0, f32(ground.levels - 1u)));
+        var found = ground_tile(ground, at.xz, asked);
+        if found.tile.layer == NOT_RESIDENT && asked > 0u {
+            found = ground_tile(ground, at.xz, 0u);
+        }
         if found.tile.layer == NOT_RESIDENT {
             let size = f32(TILE_QUADS) * ground.spacing * f32(1u << (ground.levels - 1u));
             s = square_exit(o.xz / size, direction.xz / size, floor(at.xz / size), 1.0);
@@ -437,8 +500,37 @@ fn line_shift(line: u32) -> f32 {
     return select(select(1.0, -1.0, line == 1u), 0.0, line == 0u);
 }
 
+fn level_reach(terrain: TraceTerrain, level: u32, o: vec3<f32>, height: f32,
+        direction: vec3<f32>, span: vec2<f32>, spread: vec2<f32>, clearing: Clearing)
+        -> vec4<f32> {
+    if level >= terrain.maps.w {
+        return vec4<f32>(span, span);
+    }
+    let at = terrain.maps.z + level * TRACE_LEVEL_WORDS;
+    let low = vec2<f32>(bitcast<f32>(world_placed[at]), bitcast<f32>(world_placed[at + 1u]));
+    let high = vec2<f32>(bitcast<f32>(world_placed[at + 2u]),
+        bitcast<f32>(world_placed[at + 3u]));
+    if low.x > high.x {
+        return vec4<f32>(span.y);
+    }
+    let held = box_span(o.xz, direction.xz, low, high, span.x, span.y);
+    var reach = held;
+    let above = height - bitcast<f32>(world_placed[at + 4u]);
+    if direction.y > 0.0 {
+        reach.y = min(reach.y, -above / direction.y);
+    } else if above > 0.0 {
+        reach.x = max(reach.x, select(reach.y, -above / direction.y, direction.y < 0.0));
+    }
+    reach.y = min(reach.y, footprint_reach(spread, bitcast<f32>(world_placed[at + 5u])));
+    if bitcast<f32>(world_placed[at + 7u]) < clearing.pad {
+        reach.y = min(reach.y,
+            clearing_end(clearing, height - bitcast<f32>(world_placed[at + 6u])));
+    }
+    return vec4<f32>(held, reach);
+}
+
 fn trace_placed(index: u32, p: vec3<f32>, direction: vec3<f32>, bounds: vec2<f32>,
-        spread: vec2<f32>, hit: ptr<function, WorldHit>) {
+        spread: vec2<f32>, clearing: Clearing, hit: ptr<function, WorldHit>) {
     let terrain = world_terrains[index];
     let held = terrain.maps.y;
     if held == 0u {
@@ -460,15 +552,22 @@ fn trace_placed(index: u32, p: vec3<f32>, direction: vec3<f32>, bounds: vec2<f32
         if ((held >> level) & 1u) == 0u {
             continue;
         }
+        let within = level_reach(terrain, level, o, p.y, direction, span, spread, clearing);
+        let reach = within.zw;
+        if reach.x >= reach.y {
+            continue;
+        }
         var steps = 0u;
         let size = f32(TILE_QUADS) * info.origin.w * f32(1u << level);
         let tiles = level_tiles(ground, level);
         let rate = direction.xz / size;
+        let pad = SQUARE_ACROSS * (size + 2.0 * apron) / max(flat, 1.0e-6);
+        let visit = vec2<f32>(max(within.x, reach.x - pad), min(within.y, reach.y + pad));
         for (var line = 0u; line < 3u; line++) {
             let start = (o.xz + side * (apron * line_shift(line))) / size;
-            var s = span.x;
+            var s = visit.x;
             loop {
-                if s >= min(span.y, (*hit).s) || steps >= WORLD_STEPS {
+                if s >= min(visit.y, (*hit).s) || steps >= WORLD_STEPS {
                     break;
                 }
                 steps++;
@@ -477,14 +576,14 @@ fn trace_placed(index: u32, p: vec3<f32>, direction: vec3<f32>, bounds: vec2<f32
                 var fresh = all(tile >= vec2<f32>(0.0)) && all(tile < vec2<f32>(tiles));
                 for (var earlier = 0u; earlier < line; earlier++) {
                     let before = (o.xz + side * (apron * line_shift(earlier))) / size;
-                    let entered = box_span(before, rate, tile, tile + 1.0, span.x, span.y);
+                    let entered = box_span(before, rate, tile, tile + 1.0, visit.x, visit.y);
                     fresh = fresh && entered.x >= entered.y;
                 }
                 if fresh {
                     let layer = tile_layer(ground, level, vec2<u32>(tile));
                     if layer != NOT_RESIDENT && world_placed[layer] != NO_PLACED {
                         walk_block(world_placed[layer], tile * size, size, o, p, direction,
-                            span, spread, hit, index, &steps);
+                            reach, spread, hit, index, &steps);
                     }
                 }
                 s = leave;
@@ -499,22 +598,21 @@ fn world_hit(p: vec3<f32>, direction: vec3<f32>, nearest: f32, farthest: f32,
     hit.s = farthest;
     let count = piece().trace.x;
     for (var index = 0u; index < count; index++) {
+        let terrain = world_terrains[index];
         var below = hit.s;
         if direction.y > 0.0 {
-            below = min(below, (world_terrains[index].reach.z - p.y) / direction.y);
+            below = min(below, (terrain.reach.z - p.y) / direction.y);
         }
         if below > nearest {
-            trace_ground(index, p, direction, vec2<f32>(nearest, below), &hit);
-            trace_placed(index, p, direction, vec2<f32>(nearest, below), spread, &hit);
+            let clearing = ray_clearing(terrain, p, direction);
+            let ground = min(below, clearing_end(clearing, p.y));
+            if ground > nearest {
+                trace_ground(index, p, direction, vec2<f32>(nearest, ground), spread, &hit);
+            }
+            trace_placed(index, p, direction, vec2<f32>(nearest, below), spread, clearing, &hit);
         }
     }
     return hit;
-}
-
-fn trace_canopy(terrain: TraceTerrain, material: u32) -> vec4<f32> {
-    let at = terrain.maps.z + 4u * min(material, PALETTE_ENTRIES - 1u);
-    return bitcast<vec4<f32>>(vec4<u32>(world_placed[at], world_placed[at + 1u],
-        world_placed[at + 2u], world_placed[at + 3u]));
 }
 
 fn ground_albedo(terrain: TraceTerrain, local: vec2<f32>, normal: vec3<f32>, toward: vec3<f32>,
@@ -531,25 +629,17 @@ fn ground_albedo(terrain: TraceTerrain, local: vec2<f32>, normal: vec3<f32>, tow
     let material = tile_material(found.tile, vec2<u32>(round(max(samples, vec2<f32>(0.0)))));
     let share = f32(material.share) / 255.0;
     let colors = ground_colors(ground, info.levels.w, local, ground_colors_mip(ground, footprint));
-    let growth = cover_growth(colors.a);
-    let sine = max(abs(dot(toward, normal)), 0.03);
+    let world = info.origin.xyz + vec3<f32>(local.x, 0.0, local.y);
     var albedo = vec3<f32>(0.0);
     var vegetated = 0.0;
     for (var slot = 0u; slot < 2u; slot++) {
         let weight = select(share, 1.0 - share, slot == 0u);
         let index = select(material.first, material.second, slot == 1u);
         let entry = material_look(info.levels.z, index);
-        let canopy = trace_canopy(terrain, index);
-        var color = entry.far.rgb;
-        if canopy.w > 0.0 {
-            let depth = 0.5 * canopy.w * growth.height * growth.density * terrain.reach.y / sine;
-            if depth > 0.0 {
-                let look = mix(color, canopy.rgb, cover_seen(depth).tip);
-                color = mix(color, look, 1.0 - exp(-depth));
-            }
-            vegetated += weight;
-        }
-        albedo += weight * color;
+        let far = cover_ground(CoverSite(terrain.maps.x, index, entry.far.rgb, world, colors.a,
+            toward, normal, 0.0, footprint));
+        albedo += weight * mix(entry.far.rgb, far.color, far.shown);
+        vegetated += weight * far.vegetated;
     }
     return albedo * (macro_color(colors) * cover_tint(colors.a, vegetated));
 }
@@ -558,7 +648,6 @@ struct PlacedSurface {
     albedo: vec3<f32>,
     normal: vec3<f32>,
     occlusion: f32,
-    sky: f32,
 }
 
 fn placed_surface(hit: WorldHit) -> PlacedSurface {
@@ -577,7 +666,6 @@ fn placed_surface(hit: WorldHit) -> PlacedSurface {
     placed.normal = stable_normalize(unposed.x * mesh_normal.x + unposed.y * mesh_normal.y
         + unposed.z * mesh_normal.z);
     placed.occlusion = surface.z * unpremultiply;
-    placed.sky = saturate(surface.w * unpremultiply);
     return placed;
 }
 
@@ -588,7 +676,6 @@ fn world_light(hit: WorldHit, p: vec3<f32>, direction: vec3<f32>, footprint: f32
     var albedo: vec3<f32>;
     var ambient: vec3<f32>;
     var bounce: vec3<f32>;
-    var unshaded = 1.0;
     if hit.ground {
         let local = world.xz - terrain_info(terrain.maps.x).origin.xz;
         albedo = ground_albedo(terrain, local, normal, direction, footprint, hit.level);
@@ -599,7 +686,6 @@ fn world_light(hit: WorldHit, p: vec3<f32>, direction: vec3<f32>, footprint: f32
         let placed = placed_surface(hit);
         albedo = placed.albedo;
         normal = placed.normal;
-        unshaded = placed.sky;
         let around = bounce_light(world, normal, false);
         ambient = mix(sky_average(normal), sky_above(normal) * around.sky, around.weight)
             * placed.occlusion;
@@ -607,15 +693,14 @@ fn world_light(hit: WorldHit, p: vec3<f32>, direction: vec3<f32>, footprint: f32
     }
     let sky_light = albedo * (ambient * sky_ambient() + bounce);
     let sun = sun_direction();
-    let wrapped = max((dot(normal, sun) + 0.25) / 1.25, 0.0);
+    let facing = max(dot(normal, sun), 0.0);
     var sun_light = vec3<f32>(0.0);
-    if wrapped > 0.0 {
+    if facing > 0.0 {
         let visible = sun_visibility(SunAt(world, normal, vec3<f32>(0.0), vec3<f32>(0.0), 0.0,
-            select(SURFACE_SOLID, SURFACE_GROUND, hit.ground), 0u, vec4<f32>(0.0))) * unshaded;
-        sun_light = albedo * sun_color() * (wrapped * visible);
+            select(SURFACE_SOLID, SURFACE_GROUND, hit.ground), 0u, vec4<f32>(0.0)));
+        sun_light = albedo * sun_color() * (facing * visible);
     }
-    let eye = camera.position.xyz;
-    return atmospheric(sky_light + sun_light, eye, world, stable_normalize(world - eye)).rgb;
+    return sky_light + sun_light;
 }
 
 fn trace_world(p: vec3<f32>, direction: vec3<f32>, nearest: f32, farthest: f32,

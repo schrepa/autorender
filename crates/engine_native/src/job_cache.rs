@@ -3,6 +3,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use engine::{Error, ErrorCode};
 use engine_worker::{
@@ -13,6 +14,7 @@ use serde_json::json;
 use crate::file_error;
 
 const INDEX: &str = "index.json";
+const SAVE_DELAY: Duration = Duration::from_secs(2);
 pub const DEFAULT_BUDGET: u64 = engine::host::policy::JOB_CACHE_MIB * 1024 * 1024;
 
 struct Pack {
@@ -32,6 +34,7 @@ pub struct JobStore {
     packs: Vec<Pack>,
     pack_hits: u64,
     sample: Option<BTreeSet<String>>,
+    saved: Instant,
 }
 
 pub(crate) fn keep_pipeline_cache() {
@@ -69,6 +72,7 @@ impl JobStore {
                 packs,
                 pack_hits: 0,
                 sample,
+                saved: Instant::now(),
             };
             for file in std::fs::read_dir(&store.folder)?.flatten() {
                 let name = file.file_name().to_string_lossy().into_owned();
@@ -194,10 +198,21 @@ impl JobStore {
         self.packs.clear();
     }
 
+    pub fn save_due(&mut self) {
+        if self.saved.elapsed() >= SAVE_DELAY {
+            self.save();
+        }
+    }
+
     pub fn save(&mut self) {
-        if let Some(index) = self.index.index()
-            && let Err(error) = std::fs::write(self.folder.join(INDEX), index)
-        {
+        self.saved = Instant::now();
+        let Some(index) = self.index.index() else {
+            return;
+        };
+        let partial = self.folder.join(format!("{INDEX}.partial"));
+        let written = std::fs::write(&partial, index)
+            .and_then(|()| std::fs::rename(&partial, self.folder.join(INDEX)));
+        if let Err(error) = written {
             let record = json!({"event": "record_index_unwritten", "error": error.to_string()});
             eprintln!("{record}");
         }

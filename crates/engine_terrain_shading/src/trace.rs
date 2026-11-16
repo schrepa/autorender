@@ -1,24 +1,16 @@
 use bevy_ecs::prelude::*;
 use engine_core::{DeviceLimits, Error, Joined};
-use engine_open_world_kit::ground::{
-    Cover, GroundTiles, PALETTE_ENTRIES, PlacedTiles, TerrainTiles,
-};
+use engine_open_world_kit::ground::{GroundTiles, PlacedTiles, TerrainTiles};
 use engine_places_rendering::reflections::TraceReaders;
-use engine_render::{
-    Bind, Buffer, ComputePipeline, Count, Encode, GpuPart, Install, Lifetime, Pass, Prepare,
-};
+use engine_render::{Bind, Buffer, GpuPart, Install, Lifetime, Prepare};
 
-use crate::gpu::CANOPY_GROUP;
 use crate::shaders::terrain_shading::faces::trace_source;
-use crate::shaders::terrain_shading::trace_canopy;
 use crate::state::{PartStats, TRACE_STATS};
 use crate::world_trace::{TraceFrame, WorldTrace};
 
 pub(crate) struct TraceGpu {
-    canopy: Pass<Self>,
     terrains: Buffer<Self>,
     placed: Buffer<Self>,
-    canopies: ComputePipeline<Self>,
     world: WorldTrace,
     placed_changed: bool,
 }
@@ -29,7 +21,6 @@ impl GpuPart for TraceGpu {
         Res<'static, TerrainTiles>,
         Res<'static, GroundTiles>,
         Res<'static, PlacedTiles>,
-        Res<'static, Cover>,
         Joined<'static, TraceReaders>,
     );
     const NAME: &'static str = "terrain_trace";
@@ -41,24 +32,9 @@ impl GpuPart for TraceGpu {
         let placed = cx.buffer("world_placed", Lifetime::Kept);
         cx.frame(trace_source::WORLD_TERRAINS, Bind::Buffer(terrains))?;
         cx.frame(trace_source::WORLD_PLACED, Bind::Buffer(placed))?;
-        let canopy = cx
-            .pass("trace_canopy")
-            .label("engine/terrain-trace")
-            .span("terrain_trace")
-            .id();
-        let canopies = cx.compute_pipeline(
-            canopy,
-            trace_canopy::CS_CANOPY,
-            &[
-                (trace_canopy::WORLD_TERRAINS, Bind::Buffer(terrains)),
-                (trace_canopy::WORLD_PLACED, Bind::Buffer(placed)),
-            ],
-        )?;
         Ok(Self {
-            canopy,
             terrains,
             placed,
-            canopies,
             world: WorldTrace::default(),
             placed_changed: false,
         })
@@ -66,7 +42,7 @@ impl GpuPart for TraceGpu {
 
     fn prepare(
         &mut self,
-        (limits, tiles, ground, placed, cover, readers): SystemParamItem<'_, '_, Self::Reads>,
+        (limits, tiles, ground, placed, readers): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
         self.placed_changed |= placed.is_changed();
@@ -81,29 +57,14 @@ impl GpuPart for TraceGpu {
                 tiles: &tiles,
                 ground: &ground,
                 placed: &placed,
-                cover: &cover,
                 room: limits.storage_room / 16 * 16,
                 placed_changed,
             },
         );
+        let [turns, limit] = self.world.turns();
         cx.deliver::<PartStats>(
             TRACE_STATS,
-            bytemuck::bytes_of(&[pool.asked, pool.kept]).to_vec(),
+            bytemuck::bytes_of(&[pool.asked, pool.kept, turns, limit]).to_vec(),
         );
-        if self.world.terrains() > 0 {
-            cx.run(self.canopy);
-        }
-    }
-
-    fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
-        if pass == self.canopy {
-            let groups = [
-                PALETTE_ENTRIES.div_ceil(CANOPY_GROUP),
-                self.world.terrains(),
-                1,
-            ];
-            cx.dispatch(&self.canopies, Count::Groups(groups));
-        }
-        0
     }
 }

@@ -18,6 +18,8 @@ pub const PLACES: &[PlaceDecl] = &[
     PlaceDecl::slot::<ground::Heightfield>(),
     PlaceDecl::slot::<ground::GroundBaking>(),
     PlaceDecl::slot::<ground::GroundTiles>(),
+    PlaceDecl::component::<ground::GroundLayerAsks>("ground_layer_asks"),
+    PlaceDecl::component::<ground::GroundLayersHeld>("ground_layers_held"),
     PlaceDecl::slot::<ground::Horizons>(),
     PlaceDecl::slot::<ground::Bounce>(),
     PlaceDecl::slot::<ground::PlacedTiles>(),

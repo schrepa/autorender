@@ -5,7 +5,7 @@ import package::engine::surfaces::SURFACE_SOLID;
 import package::engine::view::{camera, view_pixel};
 import package::face::lighting::sun_visibility;
 import package::face::particle_formula::{Particle, ParticleIn, custom_particle};
-import package::face::sky::{ambient, atmospheric, atmospheric_cover, sky_average};
+import package::face::sky::{ambient, sky_average};
 import package::face::sun::{sun_color, sun_direction};
 import package::face::sun_blockers::SunAt;
 import package::generated::particles::{Emitter, NO_SLOT, Particles};
@@ -201,12 +201,9 @@ fn fs_particle(input: ParticleOutput) -> Outputs {
     if alpha <= 1.0e-3 {
         discard;
     }
-    let eye = camera.position.xyz;
     let light = input.color.rgb * (sky_average(vec3<f32>(0.0, 1.0, 0.0)) * ambient()
         + sun_color() * (0.5 * input.sunlit));
-    let view = normalize(input.world - eye);
-    let fogged = atmospheric(light, eye, input.world, view).rgb;
-    return particle_outputs(input, fogged, alpha, input.world);
+    return particle_outputs(input, light, alpha, input.world);
 }
 
 @fragment
@@ -249,14 +246,7 @@ fn fs_particle_mist(input: ParticleOutput) -> Outputs {
     let sky = sky_average(vec3<f32>(0.0, 1.0, 0.0)) * ambient();
     let around = sun_color() * (0.35 * saturate(sun.y)) + sky * 0.5;
     let light = input.color.rgb * (mix(around, sky, 0.5) + sunlight);
-    let fogged = atmospheric(light, eye, closest, direction).rgb;
-    return particle_outputs(input, fogged, alpha, closest);
-}
-
-fn added(input: ParticleOutput) -> vec3<f32> {
-    let eye = camera.position.xyz;
-    let light = input.color.rgb * (input.color.a * coverage(input));
-    return light * (1.0 - atmospheric_cover(eye, input.world));
+    return particle_outputs(input, light, alpha, closest);
 }
 
 @fragment
@@ -268,7 +258,7 @@ fn fs_particle_added(input: ParticleOutput) -> Outputs {
     point.world = input.world;
     point.distance = length(input.world - camera.position.xyz);
     var shaded: Shaded;
-    shaded.linear = added(input);
+    shaded.linear = input.color.rgb * (input.color.a * coverage(input));
     shaded.opacity = 1.0;
     return added_outputs(point, shaded, view_pixel(input.clip_position, vec4<f32>(0.0)));
 }

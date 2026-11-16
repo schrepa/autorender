@@ -1,4 +1,4 @@
-import package::face::cover::{cover_tint, material_canopy};
+import package::face::cover::{CoverSite, cover_ground, cover_tint};
 import package::face::ground_tiles::{
     GroundTerrain, LevelTile, TerrainInfo, ground_colors, ground_extent, ground_of, ground_tile,
     macro_color, material_look, terrain_info, tile_height, tile_material, true_height
@@ -48,6 +48,13 @@ fn finest_ground(info: TerrainInfo, terrain: GroundTerrain, local: vec2<f32>) ->
     return ground;
 }
 
+fn snap_vegetated(index: u32, material: u32, color: vec3<f32>, world: vec3<f32>, lush: f32,
+        footprint: f32) -> f32 {
+    let up = vec3<f32>(0.0, 1.0, 0.0);
+    return cover_ground(CoverSite(index, material, color, world, lush, up, up, 0.0, footprint))
+        .vegetated;
+}
+
 fn ground_color(index: u32, info: TerrainInfo, terrain: GroundTerrain, local: vec2<f32>,
         ground: FinestGround) -> u32 {
     let samples = local / (info.origin.w * f32(1u << ground.level));
@@ -56,9 +63,12 @@ fn ground_color(index: u32, info: TerrainInfo, terrain: GroundTerrain, local: ve
     let first = material_look(info.levels.z, material.first);
     let second = material_look(info.levels.z, material.second);
     let far = mix(first.far, second.far, share);
-    let vegetated = mix(step(1.0e-6, material_canopy(index, material.first).w),
-        step(1.0e-6, material_canopy(index, material.second).w), share);
     let colors = ground_colors(terrain, info.levels.w, local, 0u);
+    let world = info.origin.xyz + vec3<f32>(local.x, 0.0, local.y);
+    let vegetated = mix(
+        snap_vegetated(index, material.first, first.far.rgb, world, colors.a, info.origin.w),
+        snap_vegetated(index, material.second, second.far.rgb, world, colors.a, info.origin.w),
+        share);
     let tint = macro_color(colors) * cover_tint(colors.a, vegetated);
     return pack4x8unorm(vec4<f32>(sqrt(saturate(far.rgb * tint)),
         max(saturate(far.w), 1.0 / 255.0)));

@@ -47,8 +47,6 @@ impl PartRecord {
 
 pub(crate) struct Generated(pub(crate) &'static [&'static str]);
 
-pub(crate) struct DeviceFeature(pub(crate) wgpu::Features);
-
 pub(crate) struct PassScope {
     pub(crate) name: &'static str,
     pub(crate) scope: Scope,

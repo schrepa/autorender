@@ -8,28 +8,26 @@ include!(concat!(env!("OUT_DIR"), "/brick.rs"));
 mod far_cover;
 mod gpu;
 mod groups;
+mod jobs;
 mod layouts;
-mod occupancy;
 mod pool;
 mod settings;
 mod systems;
 
 use engine_core::{
-    Attributes, BASE_COLOR_MAP, Brick, Bricks, KindDecl, Module, NORMAL_MAP, Schedule, Source,
-    SurfaceSlot,
+    Attributes, BASE_COLOR_MAP, Brick, Bricks, JobKind, KindDecl, Module, NORMAL_MAP, Schedule,
+    Source, SurfaceSlot,
 };
 use engine_open_world_kit::ground::{FarCover, Foliage, PlacedTiles};
 use engine_places::surface::{
     METALLIC_ROUGHNESS_MAP, METALNESS, OCCLUSION, OCCLUSION_MAP, OCCLUSION_STRENGTH, ROUGHNESS,
     TRANSMISSION,
 };
-use engine_places_rendering::lighting::{Ambient, inputs};
-use engine_places_rendering::occlusion::OcclusionSource;
-use engine_render::{RenderBricks, SlotModule};
+use engine_places_rendering::lighting::inputs;
+use engine_render::{PointInput, RenderBricks, SlotModule};
 
 pub use settings::{
-    FoliageSettings, OccupancySettings, PlacedLod, PlacedLook, PlacedPart, ScatterSettings,
-    ScatterStats,
+    CanopySettings, FoliageSettings, PlacedLook, PlacedPart, ScatterSettings, ScatterStats,
 };
 
 const SURFACE_MAPS: &[&str] = &[BASE_COLOR_MAP, NORMAL_MAP, METALLIC_ROUGHNESS_MAP];
@@ -42,6 +40,23 @@ const GROUNDED: [&str; 4] = [
 ];
 
 pub(crate) const WIND: &str = "wind";
+
+const CARD_READS: [PointInput; 3] = [inputs::ROUGHNESS, inputs::METALNESS, inputs::OCCLUSION];
+
+const CARD_SETS: [PointInput; 5] = [
+    inputs::ROUGHNESS,
+    inputs::METALNESS,
+    inputs::TRANSMISSION,
+    inputs::DIRECT_SOFTNESS,
+    inputs::DIRECT_BLOCKED,
+];
+
+pub(crate) const PLANT_LOOK: [&str; 4] = [
+    "light_through",
+    "crown_softness",
+    "hue_variation",
+    "brightness_variation",
+];
 
 type Look = (
     &'static str,
@@ -66,16 +81,24 @@ const LOOKS: [Look; 4] = [
         shaders::scatter::leaves::MODULE,
         &[
             SurfaceSlot::BaseColor.name(),
+            SurfaceSlot::Opacity.name(),
             SurfaceSlot::Cutoff.name(),
             SurfaceSlot::Normal.name(),
             ROUGHNESS,
             METALNESS,
+            OCCLUSION,
             TRANSMISSION,
             SurfaceSlot::Kind.name(),
             inputs::DIRECT_SOFTNESS.name,
         ],
         SURFACE_MAPS,
-        &[],
+        &[
+            "crown_shade",
+            PLANT_LOOK[0],
+            PLANT_LOOK[1],
+            PLANT_LOOK[2],
+            PLANT_LOOK[3],
+        ],
         0.0,
     ),
     (
@@ -119,33 +142,32 @@ pub struct ScatterBrick;
 
 impl Brick for ScatterBrick {
     const SOURCE: &'static Source = &SOURCE;
+    const JOBS: &'static [&'static JobKind] = &[&jobs::CANOPY];
+
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .settings::<ScatterSettings>()
             .settings::<FoliageSettings>()
-            .within_switch::<OccupancySettings>(|_| {})
+            .settings::<CanopySettings>()
             .stats::<ScatterStats>()
             .resource::<systems::ScatterState>()
             .resource::<systems::ScatterFeedback>()
-            .resource::<occupancy::OccupancyWindows>()
-            .resource::<far_cover::FarCoverTable>()
+            .resource::<far_cover::CanopyMaps>()
             .piece::<layouts::CanopyPiece>()
             .generated(layouts::GENERATED)
             .fill::<Foliage>(Some(shaders::scatter::faces::foliage::MODULE))
             .fill::<PlacedTiles>(Some(shaders::scatter::faces::placed_tiles::MODULE))
-            .fill::<OcclusionSource>(None)
-            .join::<Ambient>((), Some(shaders::scatter::ambient::MODULE))
             .join::<FarCover>((), Some(shaders::scatter::faces::far_cover::MODULE))
             .systems(
                 Schedule::ViewSync,
                 (
                     systems::publish_foliage,
                     systems::take_impostors,
-                    systems::place_windows,
                     systems::place_pool,
+                    far_cover::bake_canopy,
+                    systems::publish_canopy,
                     systems::publish_assets,
                     systems::plan_cull,
-                    systems::mark_moved,
                     systems::publish_tiles,
                     systems::publish_changes,
                     systems::scatter_stats,
@@ -169,6 +191,12 @@ impl Brick for ScatterBrick {
                     reach,
                 });
             }
+        }
+        for input in CARD_READS {
+            bricks.point_input(input);
+        }
+        for input in CARD_SETS {
+            bricks.point_set(input.set());
         }
     }
 }

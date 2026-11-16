@@ -1,5 +1,5 @@
 import package::generated::sky::{EYE_LAYER, MIRROR_LAYER};
-import package::sky::air::{behind_clouds, cloud_dome_direction, cloud_dome_uv};
+import package::sky::cloud_dome::{behind_clouds, cloud_dome_direction, cloud_dome_uv};
 import package::sky::common::air_sky;
 import package::sky::piece::sky_piece;
 

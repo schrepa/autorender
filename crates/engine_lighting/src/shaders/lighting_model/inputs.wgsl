@@ -1,9 +1,4 @@
 import package::face::ambient::EnvironmentLight;
-import package::face::sun_blockers::SunOpen;
-
-fn sun_seen(open: SunOpen) -> f32 {
-    return open.blocked * open.passing;
-}
 
 fn no_environment() -> EnvironmentLight {
     var light: EnvironmentLight;

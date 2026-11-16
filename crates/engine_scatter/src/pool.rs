@@ -12,7 +12,7 @@ use crate::groups::Groups;
 use engine_core::GpuBits;
 
 use crate::layouts::{
-    DEAD, NO_LAYER, PlacedRecord, PlacedValues, PoseData, ScatterFade, ScatterTerrain, SlotColor,
+    DEAD, NO_LAYER, PlacedRecord, PlacedValues, PoseData, ScatterTerrain, SlotColor,
     TERRAIN_INDEX,
 };
 
@@ -69,6 +69,10 @@ impl ScatterPool {
         self.writes.clear();
     }
 
+    pub(crate) fn pooled(&self) -> impl ExactSizeIterator<Item = (&PoolKey, &Pooled)> + '_ {
+        self.tiles.iter()
+    }
+
     pub(crate) fn tiles(&self) -> Vec<(PoolKey, &Pooled)> {
         let mut tiles: Vec<_> = self
             .tiles
@@ -111,19 +115,16 @@ impl ScatterPool {
         &mut self,
         (id, key): PoolKey,
         (placed, stamp, origin): (Arc<[Placed]>, Stamp, Vec3),
-        mut objects: TileObjects,
-        refill: bool,
+        objects: TileObjects,
     ) {
         let count = objects.2.len() as u32;
         if count == 0 {
             return;
         }
         let slots = self.allocate(count);
-        let state = ScatterFade::word(refill);
         let mut groups: Vec<(u32, u32)> = Vec::new();
         let mut far = 0;
-        for record in &mut objects.2 {
-            record.state = state;
+        for record in &objects.2 {
             far += u32::from(stands_far(record));
             match groups.iter_mut().find(|(group, _)| *group == record.group) {
                 Some((_, held)) => *held += 1,
@@ -157,7 +158,7 @@ impl ScatterPool {
             .map(move |((terrain, _), pooled)| {
                 SlotWrite::Objects(
                     pooled.slots.start,
-                    adopted(groups.tile_objects(terrain, pooled.origin, &pooled.placed)),
+                    groups.tile_objects(terrain, pooled.origin, &pooled.placed),
                 )
             })
             .chain(self.free.iter().cloned().map(SlotWrite::Dead))
@@ -206,7 +207,7 @@ impl ScatterPool {
         }
         self.writes.push(SlotWrite::Objects(
             start,
-            adopted(groups.tile_objects(key.0, pooled.origin, &pooled.placed)),
+            groups.tile_objects(key.0, pooled.origin, &pooled.placed),
         ));
         self.vacate(from);
     }
@@ -244,13 +245,6 @@ impl ScatterPool {
     }
 }
 
-fn adopted(mut objects: TileObjects) -> TileObjects {
-    for record in &mut objects.2 {
-        record.state = ScatterFade::word(true);
-    }
-    objects
-}
-
 fn bounds(records: &[PlacedRecord]) -> Option<(Vec3, Vec3)> {
     records
         .iter()
@@ -281,7 +275,6 @@ pub(crate) fn dead() -> PlacedRecord {
         }
         .pack(),
         sink: 0.0,
-        state: ScatterFade::word(true),
-        pad: [0; 3],
+        pad: [0; 4],
     }
 }

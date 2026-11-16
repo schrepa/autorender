@@ -6,7 +6,6 @@ use serde::Serialize;
 
 use std::sync::Arc;
 
-use glam::Vec2;
 
 use crate::layers::HeightImage;
 use crate::noise::hash;
@@ -343,23 +342,6 @@ impl HydrologyBake {
 
     pub fn water_at(&self, x: f32, z: f32) -> Option<(f32, f32)> {
         self.water.at(x, z).or_else(|| self.rivers.water_at(x, z))
-    }
-
-    pub fn water_reaches(&self, low: Vec2, high: Vec2) -> bool {
-        let water = &self.water;
-        let pad = Vec2::splat(water.spacing);
-        let (first, last) = ((low - pad) / water.spacing, (high + pad) / water.spacing);
-        let columns = max(first.x.floor(), 0.0) as usize
-            ..=min(last.x.ceil(), water.width as f32 - 1.0) as usize;
-        let lake = (max(first.y.floor(), 0.0) as usize
-            ..=min(last.y.ceil(), water.height as f32 - 1.0) as usize)
-            .any(|z| {
-                columns.clone().any(|x| {
-                    let sample = z * water.width + x;
-                    water.lake[sample] != 0 && water.depth[sample] > 0.0
-                })
-            });
-        lake || self.rivers.reaches(low - pad, high + pad)
     }
 }
 

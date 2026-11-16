@@ -43,3 +43,11 @@ fn surface_inputs(terrain: u32, ground: SurfaceGround, level: u32, river: vec4<f
 fn surface_control(terrain: u32, inputs: SurfaceInputs) -> u32 {
     return 0u;
 }
+
+fn surface_site(terrain: u32, inputs: SurfaceInputs) -> u32 {
+    return 0u;
+}
+
+fn surface_site_range(terrain: u32, part: u32) -> vec2<f32> {
+    return vec2<f32>(0.0, 1.0);
+}

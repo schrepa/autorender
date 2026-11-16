@@ -39,6 +39,8 @@ const SURFACES: usize = BLOCK_TEXELS * SURFACE_BYTES as usize;
 pub(crate) const PATCH_BYTES: usize = SURFACES + BLOCK_TEXELS * INFO_BYTES as usize;
 const SAMPLES: usize = (TILE_STRIDE * TILE_STRIDE) as usize;
 const EVERY_PATCH: [u64; 4] = [u64::MAX; 4];
+const REACH: usize = ((BLOCK + 1 - PATCH_QUADS) / 2) as usize;
+const SPLINE: [f32; 3] = [1.0, 4.0, 1.0];
 
 pub(crate) struct DrawnWater {
     pub(crate) record: RecordKey,
@@ -145,9 +147,47 @@ struct Ground<'a> {
     spacing: f32,
 }
 
+fn carried(mesh: &WaterMesh, heights: &[f32]) -> Vec<[f32; 2]> {
+    let stride = TILE_STRIDE as usize;
+    let wet = |at: usize| mesh.holds(at) && mesh.level(at) > heights[at];
+    let mut texels: Vec<[f32; 2]> = (0..heights.len())
+        .map(|at| {
+            let level = if wet(at) { mesh.level(at) } else { NO_WATER_SURFACE };
+            [level, heights[at]]
+        })
+        .collect();
+    let mut reached: Vec<bool> = (0..heights.len()).map(wet).collect();
+    for _ in 0..REACH {
+        let ring: Vec<(usize, f32)> = (0..texels.len())
+            .filter(|&at| !reached[at])
+            .filter_map(|at| {
+                let (x, z) = (at % stride, at / stride);
+                let (mut sum, mut weight) = (0.0, 0.0);
+                for (dz, along_z) in SPLINE.iter().enumerate() {
+                    for (dx, along_x) in SPLINE.iter().enumerate() {
+                        let (nx, nz) = ((x + dx).wrapping_sub(1), (z + dz).wrapping_sub(1));
+                        if nx >= stride || nz >= stride || !reached[nz * stride + nx] {
+                            continue;
+                        }
+                        let share = along_x * along_z;
+                        sum += share * texels[nz * stride + nx][0];
+                        weight += share;
+                    }
+                }
+                (weight > 0.0).then(|| (at, sum / weight))
+            })
+            .collect();
+        for (at, level) in ring {
+            texels[at] = [level, engine_math::max(heights[at], level)];
+            reached[at] = true;
+        }
+    }
+    texels
+}
+
 fn patch_texels(
     ground: &Ground<'_>,
-    (water, mesh): (&TileWater, &WaterMesh),
+    (water, texels): (&TileWater, &[[f32; 2]]),
     (px, pz): (usize, usize),
     (surfaces, info): (&mut Vec<[f32; 2]>, &mut Vec<[u32; 4]>),
 ) {
@@ -162,25 +202,12 @@ fn patch_texels(
             let (column, row) = (px * quads + x, pz * quads + z);
             let at = row * stride + column;
             let local = Vec2::new(column as f32 - 1.0, row as f32 - 1.0) * ground.spacing;
-            let level = mesh.level(at);
-            surfaces.push([
-                if mesh.holds(at) {
-                    level
-                } else {
-                    NO_WATER_SURFACE
-                },
-                ground.heights[at],
-            ]);
+            surfaces.push(texels[at]);
             let [packed, state] = words[at];
             let bed = ground
                 .beds
                 .and_then(|beds| bed_at(beds, ground.heights, ground.spacing, local));
-            info.push([
-                packed,
-                state,
-                level.to_bits(),
-                roughness(bed.as_ref()).to_bits(),
-            ]);
+            info.push([packed, state, 0, roughness(bed.as_ref()).to_bits()]);
         }
     }
 }
@@ -196,7 +223,8 @@ fn paint(water: &TileWater, ground: &Ground<'_>, before: Option<&TileWater>) -> 
     let mesh = water.mesh(ground.heights);
     let holding: Vec<bool> = (0..mesh.levels().len()).map(|at| mesh.holds(at)).collect();
     let errors = ErrorPyramid::over(mesh.levels(), Some(&holding[..])).shared_halves();
-    let was = before.map(|before| (before, before.mesh(ground.heights)));
+    let drawn = carried(&mesh, ground.heights);
+    let was = before.map(|before| (before, carried(&before.mesh(ground.heights), ground.heights)));
     let mut surfaces: Vec<[f32; 2]> = Vec::with_capacity(BLOCK_TEXELS);
     let mut info: Vec<[u32; 4]> = Vec::with_capacity(BLOCK_TEXELS);
     let mut old_surfaces: Vec<[f32; 2]> = Vec::with_capacity(BLOCK_TEXELS);
@@ -209,18 +237,18 @@ fn paint(water: &TileWater, ground: &Ground<'_>, before: Option<&TileWater>) -> 
                 continue;
             }
             let patch = pz * patches + px;
-            patch_texels(ground, (water, &mesh), (px, pz), (&mut surfaces, &mut info));
+            patch_texels(ground, (water, &drawn), (px, pz), (&mut surfaces, &mut info));
             let surface_bytes: &[u8] = bytemuck::cast_slice(&surfaces);
             let info_bytes: &[u8] = bytemuck::cast_slice(&info);
             texels.extend_from_slice(surface_bytes);
             texels.extend_from_slice(info_bytes);
-            let Some((before, mesh)) = &was else {
+            let Some((before, drawn_before)) = &was else {
                 continue;
             };
             let same = before.patch_holds_water(px as u32, pz as u32) && {
                 patch_texels(
                     ground,
-                    (*before, mesh),
+                    (*before, drawn_before),
                     (px, pz),
                     (&mut old_surfaces, &mut old_info),
                 );

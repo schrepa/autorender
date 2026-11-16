@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
+use std::collections::btree_map::Entry;
 use std::fmt::Write as _;
 use std::ops::Range;
 
-use bevy_ecs::change_detection::Mut;
+use bevy_ecs::change_detection::{DetectChanges, MAX_CHANGE_AGE, Mut, Ref, Tick};
 use bevy_ecs::entity::Entity;
 use bevy_ecs::lifecycle::{Insert, Remove};
 use bevy_ecs::observer::On;
+use bevy_ecs::query::QueryState;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::ResMut;
 use bevy_ecs::world::World;
@@ -15,9 +17,9 @@ use engine_registry::Registry;
 use crate::math::sin_cos;
 use crate::{
     AssetResidency, Cursor, DeviceLimits, DrawKind, Drawn, DrawnBounds, Error, ErrorCode, Expected,
-    Feed, GeometryHandle, GlobalTransforms, GpuBits, GpuStruct, Interest, KindDecl, MaterialHandle,
-    PassMask, PositionReach, Refusals, Request, Revision, ScenePasses, Since, Transform,
-    gpu_struct, settings,
+    Feed, GeometryHandle, GlobalTransforms, GpuBits, GpuStruct, InstanceValues, Interest, KindDecl,
+    MaterialHandle, PassMask, PositionReach, Refusals, Request, Revision, ScenePasses, Since,
+    Transform, gpu_struct, settings,
 };
 
 pub const DRAWN_PART: &str = "drawn";
@@ -124,6 +126,12 @@ pub struct DrawnBatch {
 
 type BatchKey = (i16, DrawKind, Option<usize>, Option<usize>);
 
+type Shape = (i16, DrawKind, Option<GeometryHandle>, Option<MaterialHandle>);
+
+type Keyed = Option<(BatchKey, Option<MaterialHandle>)>;
+
+type Edits = QueryState<(Entity, Ref<'static, Drawn>, Option<Ref<'static, DrawnBounds>>)>;
+
 struct Held {
     state: DrawnState,
     drawn: Drawn,
@@ -144,7 +152,7 @@ struct Context<'a> {
     globals: &'a GlobalTransforms,
     residency: &'a AssetResidency,
     library: &'a AssetLibrary,
-    passes: Option<&'a ScenePasses>,
+    defaults: &'a [PassMask],
     floats: usize,
     room: u64,
 }
@@ -168,6 +176,18 @@ pub struct DrawnTable {
     batches: Vec<DrawnBatch>,
     seen: Option<Seen>,
     stride: usize,
+    shapes: Vec<Option<Shape>>,
+    keys: Vec<Keyed>,
+    canonical: crate::collections::HashMap<MaterialBinding, MaterialHandle>,
+    resolved: Vec<Option<(MaterialHandle, Option<MaterialHandle>)>>,
+    drifted: bool,
+    defaults: Vec<PassMask>,
+    floats: usize,
+    loose: bool,
+    ticked: Tick,
+    clock: Tick,
+    age: u64,
+    edits: Option<Edits>,
 }
 
 impl Default for DrawnTable {
@@ -191,6 +211,18 @@ impl Default for DrawnTable {
             batches: Vec::new(),
             seen: None,
             stride: vec4s(settings.instance_floats),
+            shapes: Vec::new(),
+            keys: Vec::new(),
+            canonical: crate::collections::HashMap::default(),
+            resolved: Vec::new(),
+            drifted: false,
+            defaults: Vec::new(),
+            floats: settings.instance_floats as usize,
+            loose: true,
+            ticked: Tick::default(),
+            clock: Tick::default(),
+            age: 0,
+            edits: None,
         }
     }
 }
@@ -250,17 +282,45 @@ impl DrawnTable {
             .map(|(&entity, held)| (entity, &held.state))
     }
 
+    pub(crate) fn drawn_count(&self) -> usize {
+        self.owners.len() - self.free.len()
+    }
+
     pub fn census(&self, kind: DrawKind) -> DrawnCensus {
         let mut census = DrawnCensus::default();
-        for held in self.held.values().filter(|held| held.drawn.kind == kind) {
+        let PlanState::Built { .. } = self.plan else {
+            for held in self.held.values().filter(|held| held.drawn.kind == kind) {
+                let count = match held.state {
+                    DrawnState::Drawn { .. } => &mut census.drawn,
+                    DrawnState::Hidden => &mut census.hidden,
+                    DrawnState::Unplaced => &mut census.unplaced,
+                    DrawnState::Waiting => &mut census.waiting,
+                    DrawnState::Refused(_) => &mut census.refused,
+                };
+                *count += 1;
+            }
+            return census;
+        };
+        census.drawn = self
+            .batches
+            .iter()
+            .filter(|batch| batch.kind == kind)
+            .map(|batch| batch.instances.end - batch.instances.start)
+            .sum();
+        if self.held.len() == self.drawn_count() {
+            return census;
+        }
+        for held in self.held.values() {
             let count = match held.state {
-                DrawnState::Drawn { .. } => &mut census.drawn,
+                DrawnState::Drawn { .. } => continue,
                 DrawnState::Hidden => &mut census.hidden,
                 DrawnState::Unplaced => &mut census.unplaced,
                 DrawnState::Waiting => &mut census.waiting,
                 DrawnState::Refused(_) => &mut census.refused,
             };
-            *count += 1;
+            if held.drawn.kind == kind {
+                *count += 1;
+            }
         }
         census
     }
@@ -337,6 +397,11 @@ impl DrawnTable {
         ) else {
             return;
         };
+        let now = world.read_change_tick();
+        self.age = self
+            .age
+            .saturating_add(u64::from(now.get().wrapping_sub(self.clock.get())));
+        self.clock = now;
         self.changes.resize(settings.changes as usize);
         let stride = vec4s(settings.instance_floats);
         if stride != self.stride {
@@ -354,13 +419,55 @@ impl DrawnTable {
             stride,
             room,
         };
-        let mut touched = std::mem::take(&mut self.touched);
-        if self.seen.is_none_or(|known| known.library != seen.library) {
-            self.plan = PlanState::Stale;
+        let floats = settings.instance_floats as usize;
+        let passes = world.get_resource::<ScenePasses>();
+        let mut defaults = std::mem::take(&mut self.defaults);
+        self.loose |= floats != self.floats || defaults.len() != self.kinds.len();
+        defaults.resize(self.kinds.len(), PassMask::NONE);
+        for (held, decl) in defaults.iter_mut().zip(&self.kinds) {
+            let next = passes.map_or(PassMask::NONE, |passes| passes.defaults(decl.kind));
+            self.loose |= *held != next;
+            *held = next;
         }
-        if self.seen != Some(seen) {
+        self.floats = floats;
+        let known = self.seen;
+        let mut touched = std::mem::take(&mut self.touched);
+        let mut held = std::mem::take(&mut self.held);
+        if known != Some(seen) {
             self.seen = Some(seen);
-            touched.extend(self.held.keys().copied());
+            let narrow = known.filter(|known| {
+                !self.loose
+                    && known.library.0 == seen.library.0
+                    && seen.library.1 != u64::MAX
+                    && (known.stride, known.room) == (stride, room)
+                    && self.age < u64::from(MAX_CHANGE_AGE)
+            });
+            if let (Some(known), Some(edits)) = (narrow, self.edits.as_mut()) {
+                let since = self.ticked;
+                let edited = |tick: Tick| tick == since || tick.is_newer_than(since, now);
+                edits.update_archetypes(world);
+                for (entity, drawn, bounds) in edits.iter_manual(world) {
+                    if (edited(drawn.last_changed())
+                        || bounds.is_some_and(|bounds| edited(bounds.last_changed())))
+                        && held.contains_key(&entity)
+                    {
+                        touched.push(entity);
+                    }
+                }
+                let before = (known.library != seen.library).then_some(known.library.1);
+                touched.extend(
+                    held.iter()
+                        .filter(|&(&entity, kept)| {
+                            self.moved(entity, kept, (globals, library), before)
+                        })
+                        .map(|(&entity, _)| entity),
+                );
+            } else {
+                touched.extend(held.keys().copied());
+            }
+            self.loose = false;
+            self.ticked = now;
+            self.age = 0;
         }
         touched.sort_unstable();
         touched.dedup();
@@ -368,16 +475,39 @@ impl DrawnTable {
             globals,
             residency,
             library,
-            passes: world.get_resource::<ScenePasses>(),
-            floats: settings.instance_floats as usize,
+            defaults: &defaults,
+            floats,
             room,
         };
-        for entity in touched {
+        for &entity in &touched {
             match world.get::<Drawn>(entity) {
                 Some(drawn) => {
-                    self.refresh(entity, (drawn, world.get::<DrawnBounds>(entity)), &cx);
+                    let bounds = world.get::<DrawnBounds>(entity);
+                    self.refresh(&mut held, entity, (drawn, bounds), &cx);
                 }
-                None => self.forget(entity),
+                None => self.forget(&mut held, entity),
+            }
+        }
+        touched.clear();
+        self.touched = touched;
+        self.held = held;
+        self.defaults = defaults;
+        if known.is_none_or(|known| known.library != seen.library)
+            && self.plan != PlanState::Stale
+        {
+            let agrees = match known {
+                Some(known) if known.library.0 == seen.library.0 && !self.drifted => {
+                    self.agrees(library, known.library.1)
+                }
+                Some(_) | None => false,
+            };
+            if agrees {
+                self.generation += 1;
+                self.plan = PlanState::Built {
+                    generation: self.generation,
+                };
+            } else {
+                self.plan = PlanState::Stale;
             }
         }
         if self.plan == PlanState::Stale {
@@ -385,40 +515,88 @@ impl DrawnTable {
         }
     }
 
+    fn moved(
+        &self,
+        entity: Entity,
+        kept: &Held,
+        (globals, library): (&GlobalTransforms, &AssetLibrary),
+        before: Option<u64>,
+    ) -> bool {
+        let slot = match kept.state {
+            DrawnState::Drawn { slot } => slot,
+            DrawnState::Hidden => return globals.drawn(entity),
+            DrawnState::Unplaced => {
+                return !globals.drawn(entity)
+                    || globals
+                        .get(entity)
+                        .and_then(|global| global.matrix())
+                        .is_some();
+            }
+            DrawnState::Waiting | DrawnState::Refused(_) => return true,
+        };
+        let record = &self.records[slot as usize];
+        let node = record.node as usize;
+        let placed = globals.entity_at(record.node) == Some(entity)
+            && globals.word_at(node).is_some_and(|word| {
+                word.drawn() && word.mobility as u32 + 1 == record.mobility
+            })
+            && globals
+                .links()
+                .get(node)
+                .is_some_and(|link| link.has_global());
+        let stale = |revision: Option<u64>| {
+            before.is_some_and(|before| revision.is_none_or(|revision| revision > before))
+        };
+        !placed
+            || PartialEq::ne(record, record)
+            || kept
+                .drawn
+                .geometry
+                .is_some_and(|geometry| stale(library.revision_of(geometry)))
+            || kept.drawn.material.is_some_and(|handle| {
+                stale(library.revision_of(handle))
+                    || library.material(handle).is_some_and(|material| {
+                        material
+                            .textures()
+                            .any(|texture| stale(library.revision_of(texture)))
+                    })
+            })
+    }
+
     fn refresh(
         &mut self,
+        held: &mut BTreeMap<Entity, Held>,
         entity: Entity,
         (drawn, bounds): (&Drawn, Option<&DrawnBounds>),
         cx: &Context<'_>,
     ) {
-        let previous = self.held.remove(&entity);
-        let was = previous
-            .as_ref()
-            .and_then(|held| refused_of(&held.state))
-            .cloned();
-        let (slot, uses) = match previous {
-            Some(held) => {
-                let slot = match held.state {
-                    DrawnState::Drawn { slot } => Some(slot),
-                    DrawnState::Hidden
-                    | DrawnState::Unplaced
-                    | DrawnState::Waiting
-                    | DrawnState::Refused(_) => None,
-                };
-                if slot.is_some() && batch_key(&held.drawn) != batch_key(drawn) {
-                    self.plan = PlanState::Stale;
-                }
-                let uses = if (held.drawn.geometry, held.drawn.material)
-                    == (drawn.geometry, drawn.material)
-                {
-                    held.uses
-                } else {
-                    hold(cx.residency, drawn)
-                };
-                (slot, uses)
-            }
-            None => (None, hold(cx.residency, drawn)),
+        let kept = match held.entry(entity) {
+            Entry::Occupied(kept) => kept.into_mut(),
+            Entry::Vacant(free) => free.insert(Held {
+                state: DrawnState::Waiting,
+                drawn: drawn.clone(),
+                uses: hold(cx.residency, drawn),
+            }),
         };
+        let slot = match kept.state {
+            DrawnState::Drawn { slot } => Some(slot),
+            DrawnState::Hidden
+            | DrawnState::Unplaced
+            | DrawnState::Waiting
+            | DrawnState::Refused(_) => None,
+        };
+        let (was, shaped) = (shape(&kept.drawn), shape(drawn));
+        if slot.is_some() && was != shaped {
+            if batch_key(was) == batch_key(shaped) {
+                self.drifted = true;
+            } else {
+                self.plan = PlanState::Stale;
+            }
+        }
+        if (kept.drawn.geometry, kept.drawn.material) != (drawn.geometry, drawn.material) {
+            let uses = hold(cx.residency, drawn);
+            drop(std::mem::replace(&mut kept.uses, uses));
+        }
         let state = match (self.refusal(entity, drawn, cx), slot) {
             (None, Some(slot)) => {
                 self.write(slot, entity, (drawn, bounds), cx);
@@ -445,18 +623,15 @@ impl DrawnTable {
             (Some(state), None) => state,
         };
         let now = refused_of(&state);
-        if was.as_ref() != now {
+        if refused_of(&kept.state) != now {
             self.verdicts
                 .push((entity, now.cloned().map_or(Ok(()), Err)));
         }
-        self.held.insert(
-            entity,
-            Held {
-                state,
-                drawn: drawn.clone(),
-                uses,
-            },
-        );
+        if let DrawnState::Drawn { slot } = state {
+            self.shapes[slot as usize] = Some(shaped);
+        }
+        kept.state = state;
+        keep(&mut kept.drawn, drawn);
     }
 
     fn slot_bytes(&self) -> u64 {
@@ -573,6 +748,7 @@ impl DrawnTable {
         self.records.push(DrawnRecord::default());
         self.values
             .extend(std::iter::repeat_n([0.0; 4], self.stride));
+        self.shapes.push(None);
         (self.owners.len() - 1) as u32
     }
 
@@ -581,19 +757,20 @@ impl DrawnTable {
         self.owners[at] = None;
         self.generations[at] = self.generations[at].wrapping_add(1);
         self.records[at] = DrawnRecord::default();
+        self.shapes[at] = None;
         self.free.push(slot);
         self.changes.push(slot);
         self.plan = PlanState::Stale;
     }
 
-    fn forget(&mut self, entity: Entity) {
-        let Some(held) = self.held.remove(&entity) else {
+    fn forget(&mut self, held: &mut BTreeMap<Entity, Held>, entity: Entity) {
+        let Some(gone) = held.remove(&entity) else {
             return;
         };
-        if refused_of(&held.state).is_some() {
+        if refused_of(&gone.state).is_some() {
             self.verdicts.push((entity, Ok(())));
         }
-        if let DrawnState::Drawn { slot } = held.state {
+        if let DrawnState::Drawn { slot } = gone.state {
             self.release(slot);
         }
     }
@@ -626,10 +803,10 @@ impl DrawnTable {
                     high.map(|value| value + reach),
                 )
             });
-        let passes = drawn.passes.unwrap_or_else(|| {
-            cx.passes
-                .map_or(PassMask::NONE, |passes| passes.defaults(drawn.kind))
-        });
+        let kind = self.kinds.iter().position(|decl| decl.kind == drawn.kind);
+        let passes = drawn
+            .passes
+            .unwrap_or_else(|| kind.map_or(PassMask::NONE, |at| cx.defaults[at]));
         let projection = drawn.projection.map_or([1.0, 1.0, 0.0, 0.0], |own| {
             let (sine, cosine) = sin_cos(own.vertical_fov * 0.5);
             [cosine / sine, own.depth_scale, 0.0, 0.0]
@@ -662,7 +839,7 @@ impl DrawnTable {
             order: i32::from(drawn.order),
             values: (at * self.stride) as u32,
             floats: drawn.values.floats.len() as u32,
-            kind: self.kind_id(drawn.kind).unwrap_or(0),
+            kind: kind.map_or(0, |at| at as u32 + 1),
             mobility: cx
                 .globals
                 .mobility(entity)
@@ -685,65 +862,129 @@ impl DrawnTable {
         }
     }
 
+    fn agrees(&mut self, library: &AssetLibrary, before: u64) -> bool {
+        let Self {
+            shapes,
+            keys,
+            canonical,
+            resolved,
+            ..
+        } = self;
+        if shapes.len() != keys.len() {
+            return false;
+        }
+        resolved.clear();
+        for (shape, key) in shapes.iter().zip(keys.iter()) {
+            let (shape, kept) = match (shape, key) {
+                (Some(shape), Some((_, kept))) => (shape, *kept),
+                (None, None) => continue,
+                (Some(_), None) | (None, Some(_)) => return false,
+            };
+            let Some(handle) = shape.3 else {
+                continue;
+            };
+            if library
+                .revision_of(handle)
+                .is_some_and(|revision| revision <= before)
+            {
+                continue;
+            }
+            let at = handle.slot();
+            if resolved.len() <= at {
+                resolved.resize(at + 1, None);
+            }
+            if let Some((known, checked)) = resolved[at]
+                && known == handle
+            {
+                if checked != kept {
+                    return false;
+                }
+                continue;
+            }
+            let binding = library.material(handle).and_then(Material::binding);
+            let same = match (kept, binding) {
+                (None, None) => true,
+                (Some(kept), Some(binding)) => canonical.get(&binding) == Some(&kept),
+                (Some(_), None) | (None, Some(_)) => false,
+            };
+            if !same {
+                return false;
+            }
+            resolved[at] = Some((handle, kept));
+        }
+        true
+    }
+
     fn rebuild(&mut self, library: &AssetLibrary) {
-        let mut canonical: crate::collections::HashMap<MaterialBinding, MaterialHandle> =
-            crate::collections::HashMap::default();
-        let keys: Vec<Option<(BatchKey, Option<MaterialHandle>)>> = self
-            .owners
-            .iter()
-            .map(|owner| {
-                let held = owner.and_then(|entity| self.held.get(&entity))?;
-                let material = held.drawn.material.and_then(|handle| {
-                    let binding = library.material(handle)?.binding()?;
-                    Some(*canonical.entry(binding).or_insert(handle))
-                });
-                let (order, kind, geometry, _) = batch_key(&held.drawn);
-                Some((
-                    (
-                        order,
-                        kind,
-                        geometry,
-                        material.map(|material| material.slot()),
-                    ),
-                    material,
-                ))
-            })
-            .collect();
-        self.ordered.clear();
-        self.ordered.extend(
-            self.owners
+        let Self {
+            owners,
+            ordered,
+            batches,
+            shapes,
+            keys,
+            canonical,
+            resolved,
+            ..
+        } = self;
+        canonical.clear();
+        resolved.clear();
+        keys.clear();
+        keys.extend(shapes.iter().map(|shape| {
+            let (order, kind, geometry, material) = (*shape)?;
+            let material = material.and_then(|handle| {
+                let at = handle.slot();
+                if resolved.len() <= at {
+                    resolved.resize(at + 1, None);
+                }
+                if let Some((known, found)) = resolved[at]
+                    && known == handle
+                {
+                    return found;
+                }
+                let found = library
+                    .material(handle)
+                    .and_then(Material::binding)
+                    .map(|binding| *canonical.entry(binding).or_insert(handle));
+                resolved[at] = Some((handle, found));
+                found
+            });
+            Some((batch_key((order, kind, geometry, material)), material))
+        }));
+        ordered.clear();
+        ordered.extend(
+            owners
                 .iter()
                 .enumerate()
                 .filter(|(_, owner)| owner.is_some())
                 .map(|(slot, _)| slot as u32),
         );
-        self.ordered.sort_unstable_by_key(|&slot| {
+        ordered.sort_unstable_by_key(|&slot| {
             (keys[slot as usize].as_ref().map(|(key, _)| *key), slot)
         });
-        self.batches.clear();
+        batches.clear();
         let mut start = 0;
-        for at in 1..=self.ordered.len() {
-            let first = self.ordered[start] as usize;
-            let same = at < self.ordered.len()
-                && keys[self.ordered[at] as usize].as_ref().map(|(key, _)| key)
+        for at in 1..=ordered.len() {
+            let first = ordered[start] as usize;
+            let same = at < ordered.len()
+                && keys[ordered[at] as usize].as_ref().map(|(key, _)| key)
                     == keys[first].as_ref().map(|(key, _)| key);
             if same {
                 continue;
             }
-            let found = self.owners[first]
-                .and_then(|entity| self.held.get(&entity))
-                .zip(keys[first].as_ref());
-            if let Some((held, &(_, material))) = found {
-                self.batches.push(DrawnBatch {
-                    kind: held.drawn.kind,
-                    geometry: held.drawn.geometry,
-                    material,
-                    order: held.drawn.order,
+            if let (Some((order, kind, geometry, _)), Some((_, material))) =
+                (shapes[first], &keys[first])
+            {
+                batches.push(DrawnBatch {
+                    kind,
+                    geometry,
+                    material: *material,
+                    order,
                     instances: start as u32..at as u32,
                 });
             }
             start = at;
         }
+        self.drifted = false;
         self.generation += 1;
         self.plan = PlanState::Built {
             generation: self.generation,
@@ -761,13 +1002,45 @@ fn refused_of(state: &DrawnState) -> Option<&Error> {
     }
 }
 
-fn batch_key(drawn: &Drawn) -> BatchKey {
+fn shape(drawn: &Drawn) -> Shape {
+    (drawn.order, drawn.kind, drawn.geometry, drawn.material)
+}
+
+fn batch_key((order, kind, geometry, material): Shape) -> BatchKey {
     (
-        drawn.order,
-        drawn.kind,
-        drawn.geometry.map(|geometry| geometry.slot()),
-        drawn.material.map(|material| material.slot()),
+        order,
+        kind,
+        geometry.map(GeometryHandle::slot),
+        material.map(MaterialHandle::slot),
     )
+}
+
+fn keep(held: &mut Drawn, drawn: &Drawn) {
+    let Drawn {
+        kind,
+        geometry,
+        material,
+        passes,
+        layers,
+        order,
+        projection,
+        values:
+            InstanceValues {
+                tint,
+                emission,
+                floats,
+            },
+    } = drawn;
+    held.kind = *kind;
+    held.geometry = *geometry;
+    held.material = *material;
+    held.passes = *passes;
+    held.layers = *layers;
+    held.order = *order;
+    held.projection = *projection;
+    held.values.tint = *tint;
+    held.values.emission = *emission;
+    held.values.floats.clone_from(floats);
 }
 
 fn hold(residency: &AssetResidency, drawn: &Drawn) -> Vec<Interest<Asset>> {
@@ -803,6 +1076,8 @@ pub(crate) fn install(world: &mut World) {
     world.add_observer(dropped);
     world.add_observer(bounded);
     world.add_observer(unbounded);
+    let edits = Edits::new(world);
+    world.resource_mut::<DrawnTable>().edits = Some(edits);
 }
 
 pub(crate) fn install_kinds(world: &mut World) {

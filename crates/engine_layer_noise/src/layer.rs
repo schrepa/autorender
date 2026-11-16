@@ -27,6 +27,8 @@ fields! {
         pub erosion: f32 = 0.7 => range(0.0, 1.0),
         pub smoothing: f32 = 1.0 => range(0.0, 1.0),
         pub valleys: f32 = 0.7 => range(0.0, 1.0),
+        pub peaks: f32 = 0.0 => range(0.0, 4.0),
+        pub summits: f32 = 0.6 => range(0.0, 0.99),
         pub roughness: f32 = 0.5 => range(0.0, 1.0),
         pub blend: Blend = Blend::Add => any,
     }
@@ -42,6 +44,8 @@ engine_codec::record!(NoiseLayer {
     erosion,
     smoothing,
     valleys,
+    peaks,
+    summits,
     roughness,
     blend,
 });

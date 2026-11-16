@@ -582,6 +582,7 @@ fn read_lines() -> Receiver<String> {
     std::thread::Builder::new()
         .name("engine-dev-input".into())
         .spawn(move || {
+            engine::profiling::announce_thread(format_args!("Dev input"));
             for line in std::io::stdin().lock().lines() {
                 let Ok(line) = line else { break };
                 if !line.trim().is_empty() && send.send(line).is_err() {

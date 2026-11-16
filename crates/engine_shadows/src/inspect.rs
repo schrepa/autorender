@@ -1,5 +1,5 @@
+use crate::levels::TexelState;
 use crate::plan::ShadowPlan;
-use crate::shadow_fit::TileState;
 use bevy_ecs::prelude::*;
 use engine_core::glam::Vec3;
 use engine_core::{Error, Operation};
@@ -16,7 +16,7 @@ pub(crate) struct TileRequest {
 pub(crate) struct TileReply {
     at: [f32; 3],
     levels: usize,
-    tiles: Vec<TileState>,
+    texels: Vec<TexelState>,
 }
 
 impl Operation for InspectShadowTile {
@@ -29,11 +29,11 @@ impl Operation for InspectShadowTile {
         plan: SystemParamItem<'_, '_, Self::Params>,
         request: TileRequest,
     ) -> Result<TileReply, Error> {
-        let clipmap = plan.clipmap();
+        let levels = plan.levels();
         Ok(TileReply {
             at: request.at,
-            levels: clipmap.len(),
-            tiles: clipmap.inspect(Vec3::from_array(request.at)),
+            levels: levels.len(),
+            texels: levels.inspect(Vec3::from_array(request.at)),
         })
     }
 }

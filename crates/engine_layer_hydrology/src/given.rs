@@ -7,7 +7,7 @@ use engine_heightfield::bed::{NARROWEST, bankfull};
 use engine_heightfield::given::{GivenRiver, MAX_CREDIT, MAX_GIVEN_RIVERS, MAX_PRECISION};
 use engine_heightfield::hydrology::{Grid, WaterGrid};
 use engine_heightfield::path::distance_to_segment;
-use engine_heightfield::rivers::{FOOTPRINT, GivenLine, RIVER_STEP, RiverLine};
+use engine_heightfield::rivers::{FOOTPRINT, Form, GivenLine, RIVER_STEP, RiverLine, bends};
 use engine_math::collections::HashMap;
 use engine_math::{clamp, max, min};
 use glam::Vec2;
@@ -695,7 +695,7 @@ pub(crate) fn courses(
     given: &GivenLayers<'_>,
     (grid, water): (&Grid<'_>, &WaterGrid),
     drained: &Drained<'_>,
-    (runoff, narrowest): (f32, f32),
+    (runoff, narrowest, form): (f32, f32, &Form),
 ) -> Option<GivenCourses> {
     let rivers: Vec<(&GivenRiver, [u32; 2], f32)> = given
         .iter()
@@ -722,7 +722,7 @@ pub(crate) fn courses(
         if values[0].is_finite() {
             values[0]
         } else {
-            max(bankfull(flood).0, narrowest)
+            max(bankfull(flood, form.shape.aspect).0, narrowest)
         }
     };
     reshape(&mut pieces, &rivers, &channel);
@@ -740,9 +740,19 @@ pub(crate) fn courses(
         .map(|&number| {
             let piece = &pieces[number];
             let (river, source, _) = rivers[piece.river];
+            let widths: Vec<f32> = piece
+                .points
+                .iter()
+                .zip(&piece.along)
+                .map(|(&point, &along)| channel(river, along, point))
+                .collect();
             RiverLine {
                 points: piece.points.clone(),
                 area: areas[number].clone(),
+                level: vec![f32::INFINITY; widths.len()],
+                bend: bends(&piece.points, &widths, form.section.bend),
+                plain: vec![[0.0; 2]; widths.len()],
+                bar: vec![0.0; widths.len()],
                 head: fed[number].is_empty(),
                 given: Some(GivenLine {
                     source,

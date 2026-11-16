@@ -1,38 +1,19 @@
-import package::face::sky_cloud_shadows::cloud_shadow;
-import package::sky::air::{air_light, height_depth, marched_reach};
 import package::sky::environment::{environment_maps, environment_sampler};
 import package::sky::piece::sky_piece;
 
+fn sky_toward(normal: vec3<f32>) -> vec3<f32> {
+    let rise = select(sky_piece.sky_flat.rgb, sky_piece.sky_y.rgb, normal.y >= 0.0);
+    return max(sky_piece.sky_flat.rgb + sky_piece.sky_x.rgb * normal.x + rise * normal.y
+        + sky_piece.sky_z.rgb * normal.z, vec3<f32>(0.0));
+}
+
 fn sky_average(normal: vec3<f32>) -> vec3<f32> {
-    return mix(sky_above(normal), sky_piece.ground.rgb, max(-normal.y, 0.0));
+    return sky_toward(normal) + sky_piece.ground.rgb * (0.5 * (1.0 - normal.y));
 }
 
 fn sky_above(normal: vec3<f32>) -> vec3<f32> {
-    let side = mix(sky_piece.horizon.rgb, sky_piece.zenith.rgb, 0.5);
-    return mix(side, sky_piece.zenith.rgb, max(normal.y, 0.0));
-}
-
-fn atmospheric(light: vec3<f32>, eye: vec3<f32>, point: vec3<f32>, direction: vec3<f32>)
-        -> vec4<f32> {
-    let depth = height_depth(eye, point, sky_piece.aerial.y, sky_piece.aerial.z);
-    if !(depth > 0.0) {
-        return vec4<f32>(light, 0.0);
-    }
-    let air_lit = air_light(direction);
-    let ray = point - eye;
-    let distance = length(ray);
-    let reached = eye + ray * (min(marched_reach(), distance) / max(distance, 1.0e-6));
-    let air = 1.0 - exp(-depth);
-    let marched = 1.0 - exp(-height_depth(eye, reached, sky_piece.aerial.y, sky_piece.aerial.z));
-    return vec4<f32>(mix(light, air_lit.air, air) + air_lit.air_sun * (air - marched), air);
-}
-
-fn atmospheric_cover(eye: vec3<f32>, point: vec3<f32>) -> f32 {
-    return 1.0 - exp(-height_depth(eye, point, sky_piece.aerial.y, sky_piece.aerial.z));
-}
-
-fn cloud_passing(world: vec3<f32>) -> f32 {
-    return cloud_shadow(world);
+    let lifted = vec3<f32>(normal.x, max(normal.y, 0.0), normal.z);
+    return sky_toward(lifted) / (0.5 * (1.0 + lifted.y));
 }
 
 fn environment_levels() -> u32 {
@@ -57,8 +38,4 @@ fn ambient() -> f32 {
 
 fn sunlight() -> vec3<f32> {
     return sky_piece.sun_light.rgb;
-}
-
-fn light_level(sun: vec3<f32>) -> f32 {
-    return sky_piece.horizon.w;
 }

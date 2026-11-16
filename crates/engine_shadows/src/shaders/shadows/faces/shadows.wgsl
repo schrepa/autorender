@@ -1,29 +1,17 @@
-import package::generated::pieces::shadows::piece;
+import package::face::sun_blockers::sun_air;
 import package::place::shadows::KeptTexels;
-import package::shadows::sample::{air_visibility, level_window, shadow_level, sun_shadowed};
+import package::shadows::sample::{level_count, level_texel, shadow_level};
 
 fn air_shadow(world: vec3<f32>) -> f32 {
-    if !sun_shadowed() {
-        return 1.0;
-    }
-    return air_visibility(world);
+    return sun_air(1.0, world);
 }
 
 fn kept_texels(world: vec3<f32>) -> KeptTexels {
     var kept: KeptTexels;
     kept.first = shadow_level(world).level;
-    kept.count = u32(piece().level_state.x);
+    kept.count = level_count();
     for (var index = 0u; index < 4u && kept.first + index < kept.count; index++) {
-        kept.texels[index] = level_window(kept.first + index).w;
+        kept.texels[index] = level_texel(kept.first + index);
     }
     return kept;
-}
-
-fn kept_level(texel: f32, spacing: f32, levels: u32) -> u32 {
-    var level = 0u;
-    let finest = piece().level_state.w * texel;
-    while level + 1u < levels && spacing * f32(1u << level) < finest {
-        level++;
-    }
-    return level;
 }

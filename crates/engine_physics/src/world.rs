@@ -240,7 +240,6 @@ impl PhysicsWorld {
                 axes: glam::Mat3::from_quat(*rigid.rotation())
                     * glam::Mat3::from_diagonal(form.half),
                 round: form.round,
-                velocity: rigid.linvel(),
             })
         })
     }

@@ -1,44 +1,93 @@
+use std::sync::Arc;
+
 use engine::Error;
+use engine::host::Image;
 use engine::prelude::*;
 use engine::scene::SceneFiles;
 use engine_fly_camera::FlyCamera;
 use serde_json::json;
 
 use crate::bricks::game::HighlandsControl;
-use crate::land::{self, RockMaps};
+use crate::jobs::photographs::{self, Photographs};
+use crate::land::{self, GROUND_FILES, GroundFiles, RockMaps, WaterMaps};
 use crate::scene;
 
 const ROCK_FOLDER: &str = "highlands/";
 
-const ROCK_FILES: [&str; 6] = [
+const FOAM_FILE: &str = "highlands/water_foam.png";
+const RIPPLE_FILE: &str = "highlands/water_ripples.png";
+
+const GAME_FILES: [&str; 8] = [
     "highlands/rocks/boulder_albedo.ktx2",
     "highlands/rocks/boulder_normal.ktx2",
     "highlands/rocks/boulder_orm.ktx2",
     "highlands/rocks/cliff_albedo.ktx2",
     "highlands/rocks/cliff_normal.ktx2",
     "highlands/rocks/cliff_orm.ktx2",
+    FOAM_FILE,
+    RIPPLE_FILE,
 ];
+
+const FILE_COUNT: usize = GAME_FILES.len() + GROUND_FILES.len() + photographs::FILES.len();
+
+const ALL_FILES: [&str; FILE_COUNT] = {
+    let mut files = [""; FILE_COUNT];
+    let mut at = 0;
+    while at < files.len() {
+        files[at] = if at < GAME_FILES.len() {
+            GAME_FILES[at]
+        } else if at < GAME_FILES.len() + GROUND_FILES.len() {
+            GROUND_FILES[at - GAME_FILES.len()]
+        } else {
+            photographs::FILES[at - GAME_FILES.len() - GROUND_FILES.len()]
+        };
+        at += 1;
+    }
+    files
+};
 
 #[derive(Resource)]
 pub struct Highlands {
     rocks: RockMaps,
+    water: WaterMaps,
+    grounds: GroundFiles,
     land: bool,
 }
 
 impl Highlands {
     pub fn build(engine: &mut Engine) -> engine::Result<Self> {
-        let rocks = engine
-            .app
-            .world()
-            .get_resource::<GameFiles>()
-            .map(rocks)
-            .unwrap_or_default();
-        Ok(Self { rocks, land: false })
+        let files = engine.app.world().get_resource::<GameFiles>();
+        let photographs = files.map(Photographs::read).unwrap_or_default();
+        let highlands = Self {
+            rocks: files.map(rocks).unwrap_or_default(),
+            water: files.map(water).unwrap_or_default(),
+            grounds: files.map(grounds).unwrap_or_default(),
+            land: false,
+        };
+        engine.app.world_mut().insert_resource(photographs);
+        Ok(highlands)
     }
 }
 
+fn water(files: &GameFiles) -> WaterMaps {
+    let image = |path: &str| -> Option<Image> {
+        engine::host::decode_image(path, files.bytes(path)?).ok()
+    };
+    WaterMaps {
+        foam: image(FOAM_FILE),
+        ripples: image(RIPPLE_FILE),
+    }
+}
+
+fn grounds(files: &GameFiles) -> GroundFiles {
+    GROUND_FILES
+        .iter()
+        .filter_map(|&path| Some((path, Arc::from(files.bytes(path)?))))
+        .collect()
+}
+
 fn rocks(files: &GameFiles) -> RockMaps {
-    ROCK_FILES
+    GAME_FILES
         .iter()
         .filter_map(|path| {
             let bytes = files.bytes(path)?;
@@ -52,17 +101,22 @@ fn rocks(files: &GameFiles) -> RockMaps {
 }
 
 fn provide_land(world: &mut World, arrival: Arrival) -> engine::Result<()> {
-    let rocks = {
+    let (rocks, water, grounds) = {
         let mut highlands = world.resource_mut::<Highlands>();
         if highlands.land {
             return Ok(());
         }
-        match arrival {
+        let rocks = match arrival {
             Arrival::Opening => std::mem::take(&mut highlands.rocks),
             Arrival::Reload => RockMaps::default(),
-        }
+        };
+        (
+            rocks,
+            std::mem::take(&mut highlands.water),
+            std::mem::take(&mut highlands.grounds),
+        )
     };
-    land::provide(world, &rocks)?;
+    land::provide(world, &rocks, water, &grounds)?;
     world.resource_mut::<Highlands>().land = true;
     Ok(())
 }
@@ -76,7 +130,7 @@ fn report_failure(event: &str, error: &Error) {
 }
 
 impl Game for Highlands {
-    const FILES: &'static [&'static str] = &ROCK_FILES;
+    const FILES: &'static [&'static str] = &ALL_FILES;
 
     #[cfg(feature = "dev")]
     const SMOKES: &'static [Smoke] = &crate::smokes::SMOKES;

@@ -1,6 +1,3 @@
-use bevy_ecs::world::World;
-use engine_core::ErrorCode;
-
 use super::*;
 
 pub(super) fn device_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
@@ -9,6 +6,7 @@ pub(super) fn device_limits(adapter: &wgpu::Limits) -> wgpu::Limits {
         max_buffer_size: adapter.max_buffer_size,
         max_storage_buffer_binding_size: adapter.max_storage_buffer_binding_size,
         max_texture_dimension_2d: adapter.max_texture_dimension_2d,
+        max_texture_dimension_3d: adapter.max_texture_dimension_3d,
         max_storage_buffers_per_shader_stage: adapter
             .max_storage_buffers_per_shader_stage
             .max(required.storage_buffers),
@@ -37,53 +35,13 @@ pub(crate) struct Opened {
 pub(super) type Opening =
     std::pin::Pin<Box<dyn std::future::Future<Output = Result<Opened, Error>>>>;
 
-pub(crate) fn asked_features(world: &World) -> wgpu::Features {
-    world
-        .get_resource::<engine_registry::Registry>()
-        .map_or(wgpu::Features::empty(), |registry| {
-            registry
-                .render_entries::<crate::registration::DeviceFeature>()
-                .fold(wgpu::Features::empty(), |asked, (_, entry)| asked | entry.0)
-        })
-}
-
-pub(super) fn refuse_lacking(world: &mut World, held: wgpu::Features) {
-    let lacking: Vec<(engine_registry::BrickId, Error)> = world
-        .get_resource::<engine_registry::Registry>()
-        .map(|registry| {
-            registry
-                .render_entries::<crate::registration::DeviceFeature>()
-                .filter(|(_, entry)| !held.contains(entry.0))
-                .map(|(brick, entry)| {
-                    let package = registry.record(brick).map_or("", |record| record.package);
-                    let missing: Vec<&'static str> = entry
-                        .0
-                        .difference(held)
-                        .iter()
-                        .filter_map(|feature| feature.as_str())
-                        .collect();
-                    let error = Error::new(
-                        ErrorCode::UnsupportedFeature,
-                        format!("$.bricks.{package}.device_features"),
-                    )
-                    .got(missing);
-                    (brick, error)
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    for (brick, error) in lacking {
-        engine_registry::fault(world, brick, error);
-    }
-}
-
-fn features_of(adapter: &wgpu::Adapter, asked: wgpu::Features) -> wgpu::Features {
+fn features_of(adapter: &wgpu::Adapter) -> wgpu::Features {
     let compression = adapter.features()
         & (wgpu::Features::TEXTURE_COMPRESSION_BC
             | wgpu::Features::TEXTURE_COMPRESSION_ETC2
             | wgpu::Features::TEXTURE_COMPRESSION_ASTC);
     let core = wgpu::Features::INDIRECT_FIRST_INSTANCE | wgpu::Features::TIMESTAMP_QUERY;
-    let features = compression | (adapter.features() & (core | asked));
+    let features = compression | (adapter.features() & core);
     #[cfg(not(target_arch = "wasm32"))]
     let features = features | (adapter.features() & wgpu::Features::PIPELINE_CACHE);
     #[cfg(not(feature = "profiling"))]
@@ -93,8 +51,8 @@ fn features_of(adapter: &wgpu::Adapter, asked: wgpu::Features) -> wgpu::Features
     required
 }
 
-async fn opened(adapter: wgpu::Adapter, asked: wgpu::Features) -> Result<Opened, Error> {
-    let features = features_of(&adapter, asked);
+async fn opened(adapter: wgpu::Adapter) -> Result<Opened, Error> {
+    let features = features_of(&adapter);
     let (device, queue) = adapter
         .request_device(&wgpu::DeviceDescriptor {
             label: Some("engine/device"),
@@ -115,7 +73,6 @@ async fn opened(adapter: wgpu::Adapter, asked: wgpu::Features) -> Result<Opened,
 pub(super) async fn open(
     instance: wgpu::Instance,
     power_preference: wgpu::PowerPreference,
-    asked: wgpu::Features,
 ) -> Result<Opened, Error> {
     let adapter = instance
         .request_adapter(&wgpu::RequestAdapterOptions {
@@ -126,7 +83,7 @@ pub(super) async fn open(
         })
         .await
         .map_err(|error| failed_with("$.adapter", error))?;
-    opened(adapter, asked).await
+    opened(adapter).await
 }
 
 fn watch(device: &wgpu::Device, health: &Arc<Mutex<health::Reports>>) {
@@ -195,12 +152,7 @@ impl Renderer {
         Ok(())
     }
 
-    pub async fn new(target: RenderTarget, world: &World) -> Result<Self, Error> {
-        Self::start(target, world).await?.finish().await
-    }
-
-    pub async fn start(target: RenderTarget, world: &World) -> Result<StartingRenderer, Error> {
-        let asked = asked_features(world);
+    pub async fn start(target: RenderTarget) -> Result<StartingRenderer, Error> {
         let instance = target.instance();
         let surface = target
             .surface(&instance)
@@ -220,7 +172,7 @@ impl Renderer {
             device,
             queue: wgpu_queue,
             features: required_features,
-        } = opened(adapter, asked).await?;
+        } = opened(adapter).await?;
         let queue = crate::gpu_calls::Queue::new(wgpu_queue);
         let health = Arc::new(Mutex::new(health::Reports::default()));
         watch(&device, &health);

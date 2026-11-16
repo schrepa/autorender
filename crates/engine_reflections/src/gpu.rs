@@ -9,6 +9,7 @@ gpu_struct! {
         pub surface: [f32; 4],
         pub trace: [f32; 4],
         pub applied: [f32; 4],
+        pub counts: [u32; 4],
     }
 }
 

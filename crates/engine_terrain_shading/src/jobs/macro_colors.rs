@@ -17,18 +17,6 @@ const SEED: u32 = 0x6d61_6372;
 
 const SUN_TANGENT: f32 = 0.577_350_3;
 
-const LUMINANCE: [f32; 3] = [0.2126, 0.7152, 0.0722];
-
-const WET: [f32; 3] = [-1.0, -1.0, -1.0];
-const SANDY: [f32; 3] = [1.15, 1.0, 0.6];
-const MINERAL: [f32; 3] = [0.95, 1.0, 1.15];
-const WEATHERED: [f32; 3] = [1.0, 1.02, 0.85];
-const DEEP_SOIL: [f32; 3] = [-0.85, -1.0, -1.4];
-const SUNNY: [f32; 3] = [1.2, 1.0, 0.45];
-const MOSSY: [f32; 3] = [-1.2, -0.93, -1.2];
-const GRAY: [f32; 3] = [1.0, 1.0, 1.0];
-const WARM: [f32; 3] = [1.0, -0.1, -1.95];
-
 const LUSH_MIDDLING: f32 = 0.5;
 const LUSH_PER_SHADE: f32 = 1.0 / 0.6;
 
@@ -137,7 +125,6 @@ struct Ground {
     facing: f32,
     broad: f32,
     patchy: f32,
-    warmth: f32,
 }
 
 fn ramp(value: f32, low: f32, high: f32) -> f32 {
@@ -198,53 +185,35 @@ fn ground(
         facing: shape.between(&shape.facings, x, z),
         broad: 0.65 * patches(sx, sz, 340.0, 0) + 0.35 * patches(sx, sz, 130.0, 1),
         patchy: patches(sx, sz, 45.0, 2),
-        warmth: patches(sx, sz, 600.0, 3),
     }
-}
-
-fn shaded(tint: [f32; 3], hue: [f32; 3], amount: f32) -> [f32; 3] {
-    [0, 1, 2].map(|channel| tint[channel] * max(1.0 + amount * hue[channel], 0.0))
 }
 
 fn texel(ground: &Ground, causes: &MacroCauses) -> [u8; 4] {
     let aspect = clamp(ground.facing / SUN_TANGENT, -1.0, 1.0);
     let lighter = |noise: f32| 2.0 * noise - 1.0;
-    let shades = [
-        (WET, causes.wet * max(ground.moisture, ground.shore)),
-        (DEEP_SOIL, causes.deposit * ground.deposit),
-        (SANDY, causes.deposit * 0.6 * ground.shore),
-        (MINERAL, causes.worn * ground.worn),
-        (MINERAL, causes.steep * ground.steep),
-        (WEATHERED, causes.relief * max(ground.relief, 0.0)),
-        (DEEP_SOIL, causes.relief * max(-ground.relief, 0.0)),
-        (SANDY, causes.dust * ground.dust),
-        (SUNNY, causes.aspect * max(aspect, 0.0)),
-        (MOSSY, causes.aspect * max(-aspect, 0.0)),
-        (GRAY, causes.broad * lighter(ground.broad)),
-        (GRAY, causes.patchy * lighter(ground.patchy)),
+    let gains = [
+        -causes.wet * max(ground.moisture, ground.shore),
+        -causes.deposit * ground.deposit,
+        causes.deposit * 0.6 * ground.shore,
+        causes.worn * ground.worn,
+        causes.steep * ground.steep,
+        causes.relief * ground.relief,
+        causes.dust * ground.dust,
+        causes.aspect * aspect,
+        causes.broad * lighter(ground.broad),
+        causes.patchy * lighter(ground.patchy),
     ];
-    let tint = shades.iter().fold([1.0_f32; 3], |tint, &(hue, amount)| {
-        shaded(tint, hue, amount)
-    });
-    let brightness: f32 = LUMINANCE
+    let brightness = gains
         .iter()
-        .zip(tint)
-        .map(|(weight, channel)| weight * channel)
-        .sum();
+        .fold(1.0_f32, |held, &gain| held * max(1.0 + gain, 0.0));
     let lush = clamp(
         LUSH_MIDDLING + LUSH_PER_SHADE * (1.0 - brightness),
         0.0,
         1.0,
     );
-    let tint = shaded(tint, WARM, causes.warmth * lighter(ground.warmth));
     let byte = |value: f32| (clamp(value, 0.0, 1.0) * 255.0 + 0.5) as u8;
-    let scaled = |channel: f32| byte(channel * (128.0 / 255.0));
-    [
-        scaled(tint[0]),
-        scaled(tint[1]),
-        scaled(tint[2]),
-        byte(lush),
-    ]
+    let shade = byte(brightness * (128.0 / 255.0));
+    [shade, shade, shade, byte(lush)]
 }
 
 pub fn macro_colors(

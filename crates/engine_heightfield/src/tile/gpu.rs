@@ -1,8 +1,8 @@
-use super::surface::{BiomeRules, SampleInputs, erosion_row};
+use super::surface::{BiomeRules, Reads, SampleInputs, erosion_row, published_row, rested};
 use super::{Control, RiverInputs, SampleShape, Tile};
 use crate::HydrologyBake;
 use crate::hydrology::{FLOW_RANGE, LAKE_RANGE, WETNESS_RANGE};
-use crate::layer::{ChangeMap, TerrainLayer};
+use crate::layer::{ChangeMap, Published, TerrainLayer, maps};
 use crate::{HeightImage, HydrologySample, Layers, PathSample, TILE_STRIDE};
 
 pub const OP_CONSTANT: u32 = 0;
@@ -29,6 +29,8 @@ pub const OP_DEPOSIT: u32 = 20;
 pub const OP_FACING: u32 = 21;
 pub const OP_VALUE: u32 = 22;
 pub const OP_END: u32 = 23;
+pub const OP_MAP: u32 = 24;
+pub const OP_MAP_VALUE: u32 = 25;
 pub const H_PROGRAM: u32 = 0;
 pub const H_STACK: u32 = 1;
 pub const H_BIOMES: u32 = 2;
@@ -39,8 +41,13 @@ pub const H_PATHS: u32 = 6;
 pub const H_FADE: u32 = 7;
 pub const H_WET_BIOMES: u32 = 8;
 pub const H_EROSION: u32 = 9;
+pub const H_MAPS: u32 = 10;
+pub const H_SITE: u32 = 11;
+pub const H_DEBRIS: u32 = 12;
 pub const BIOME_WORDS: u32 = 3;
+pub const LAYER_COVERS: u32 = 0x8000_0000;
 pub const MAX_STACK: u32 = 16;
+pub const MAX_MAPS: u32 = 8;
 pub const MAX_MATERIALS: u32 = 64;
 
 pub mod op {
@@ -48,7 +55,8 @@ pub mod op {
         OP_ADD as ADD, OP_CONSTANT as CONSTANT, OP_CURVATURE as CURVATURE, OP_DEPOSIT as DEPOSIT,
         OP_END as END, OP_FACING as FACING, OP_FLOOD as FLOOD, OP_FLOW as FLOW,
         OP_GRADIENT as GRADIENT, OP_GRAIN as GRAIN, OP_HEIGHT as HEIGHT, OP_INVERT as INVERT,
-        OP_LAKE as LAKE, OP_MAX as MAX, OP_MIN as MIN, OP_MULTIPLY as MULTIPLY, OP_NOISE as NOISE,
+        OP_LAKE as LAKE, OP_MAP as MAP, OP_MAP_VALUE as MAP_VALUE, OP_MAX as MAX, OP_MIN as MIN,
+        OP_MULTIPLY as MULTIPLY, OP_NOISE as NOISE,
         OP_PATH as PATH, OP_POWER as POWER, OP_REMAP as REMAP, OP_RIVER as RIVER,
         OP_VALUE as VALUE, OP_WETNESS as WETNESS, OP_WORN as WORN,
     };
@@ -65,6 +73,9 @@ pub mod header {
     pub const FADE: usize = super::H_FADE as usize;
     pub const WET_BIOMES: usize = super::H_WET_BIOMES as usize;
     pub const EROSION: usize = super::H_EROSION as usize;
+    pub const MAPS: usize = super::H_MAPS as usize;
+    pub const SITE: usize = super::H_SITE as usize;
+    pub const DEBRIS: usize = super::H_DEBRIS as usize;
     pub const LEN: usize = 16;
 }
 
@@ -87,7 +98,12 @@ impl SurfaceData {
         words[header::BIOMES] = biomes;
         words[header::MATERIALS] = materials;
         words[header::WET_BIOMES] = rules.wet_biomes() as u32;
-        let reads = rules.reads();
+        let site = layers.site();
+        let reads = Reads {
+            water: rules.reads().water || site.is_some(),
+            erosion: rules.reads().erosion || site.is_some(),
+            ..rules.reads()
+        };
         words[header::READS] =
             u32::from(reads.water) | (u32::from(reads.path) << 1) | (u32::from(reads.erosion) << 2);
         if let Some(hydrology) = layers.hydrology() {
@@ -106,6 +122,20 @@ impl SurfaceData {
         if reads.erosion && !changes.is_empty() {
             words[header::EROSION] = words.len() as u32;
             write_erosions(&changes, &mut words);
+        }
+        if rules.users().next().is_some() {
+            words[header::MAPS] = words.len() as u32;
+            write_maps(rules.users(), layers, &mut words);
+        }
+        if let Some(rests) = layers.rests(maps::DEPOSIT) {
+            words[header::DEBRIS] = words.len() as u32;
+            push_f32(&mut words, [rests.slope[0], rests.slope[1], rests.gather]);
+        }
+        if let Some(site) = site {
+            words[header::SITE] = words.len() as u32;
+            push_f32(&mut words, site.ranges.into_iter().flatten());
+            let names = [site.sun, site.soil, site.exposure];
+            write_maps(names.into_iter(), layers, &mut words);
         }
         if let Some(fade) = layers.fade {
             words[header::FADE] = words.len() as u32;
@@ -217,7 +247,17 @@ fn control_with(
     if reads.erosion {
         erosion_row(layers, &[x], z, spacing, &mut erosion);
     }
+    let mut maps = [0.0; MAX_MAPS as usize];
+    if rules.users().next().is_some() {
+        let mut rows = Vec::new();
+        let shape = (&[shape.gradient][..], &[shape.curvature][..]);
+        published_row(layers, rules.users(), (&[x], z, spacing), shape, &mut rows);
+        for (value, row) in maps.iter_mut().zip(&rows) {
+            *value = row[0];
+        }
+    }
     let inputs = SampleInputs {
+        maps,
         x,
         z,
         height,
@@ -230,7 +270,12 @@ fn control_with(
             lake: water.lake * shown,
             ..water
         },
-        erosion: erosion[0] * shown,
+        erosion: rested(
+            erosion[0] * shown,
+            layers.rests(maps::DEPOSIT),
+            shape.gradient,
+            shape.curvature,
+        ),
         path: if shown > 0.0 && reads.path {
             layers.path_at(x, z)
         } else {
@@ -279,6 +324,31 @@ fn write_erosions(changes: &[ChangeMap<'_>], words: &mut Vec<u32>) {
             ],
         );
         write_images(&[change.image], words);
+    }
+}
+
+fn write_maps<'n>(names: impl Iterator<Item = &'n str>, layers: &Layers, words: &mut Vec<u32>) {
+    let names: Vec<&str> = names.collect();
+    let table = words.len();
+    words.push(names.len() as u32);
+    words.extend(std::iter::repeat_n(u32::MAX, names.len()));
+    for (index, name) in names.into_iter().enumerate() {
+        let Some(Published { map, rests, .. }) =
+            (layers.published()).find(|published| published.name == name)
+        else {
+            continue;
+        };
+        words[table + 1 + index] = words.len() as u32;
+        push_f32(
+            words,
+            [1.0 / map.spacing, map.spacing, map.range[0], map.range[1]],
+        );
+        words.push(u32::from(rests.is_some()));
+        let rests = rests.map_or([0.0; 3], |rests| {
+            [rests.slope[0], rests.slope[1], rests.gather]
+        });
+        push_f32(words, rests);
+        write_images(&[map.image], words);
     }
 }
 

@@ -19,24 +19,9 @@ const DRAW_OFFSET: u64 = SUBDIVISION_DRAW as u64 * 4;
 const SHALLOWEST: u32 = SUBDIVISION_COUNTED + 2;
 const _: () = assert!(SURFACE_MESHLET_VERTICES <= 1 << 16, "meshlet_fits_u16");
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum Measure {
-    Ground,
-    Water,
-}
-
-impl Measure {
-    fn code(self) -> f32 {
-        match self {
-            Self::Ground => 0.0,
-            Self::Water => 1.0,
-        }
-    }
-}
-
 #[derive(Clone, Copy, PartialEq)]
 struct Tree {
-    owner: (Entity, Measure),
+    owner: Entity,
     depth: u32,
     side: f32,
     room: u32,
@@ -45,17 +30,18 @@ struct Tree {
 #[derive(Clone, Copy)]
 struct Subdivided {
     slot: usize,
-    terrain: usize,
     first: u32,
     finest: f32,
+    side: f32,
+    watered: bool,
 }
 
 #[derive(Default)]
 pub(crate) struct SurfaceTrees {
     trees: [Option<Tree>; SURFACE_SLOTS],
     frame: Vec<Option<Subdivided>>,
-    grounds: usize,
     targets: [f32; 2],
+    unseen: f32,
     leaves_bytes: u64,
     indexed: bool,
     parity: u32,
@@ -64,23 +50,20 @@ pub(crate) struct SurfaceTrees {
 }
 
 impl SurfaceTrees {
-    fn ground(&self, index: usize) -> Option<Subdivided> {
-        (index < self.grounds)
-            .then(|| self.frame.get(index).copied().flatten())
-            .flatten()
+    fn subdivided(&self, index: usize) -> Option<Subdivided> {
+        self.frame.get(index).copied().flatten()
     }
 
-    pub(super) fn of(&self, index: usize) -> (u32, f32) {
-        self.ground(index)
-            .map_or((0, 0.0), |subdivided| (subdivided.first, subdivided.finest))
+    pub(super) fn of(&self, index: usize) -> (u32, f32, f32) {
+        self.subdivided(index).map_or((0, 0.0, 0.0), |subdivided| {
+            (subdivided.first, subdivided.finest, subdivided.side)
+        })
     }
 
-    pub(super) fn water_slot(&self, index: usize) -> Option<(u32, u32)> {
-        self.frame[self.grounds..]
-            .iter()
-            .flatten()
-            .find(|subdivided| subdivided.terrain == index)
-            .map(|subdivided| (subdivided.slot as u32, subdivided.first))
+    pub(super) fn water_slot(&self, index: usize) -> Option<u32> {
+        self.subdivided(index)
+            .filter(|subdivided| subdivided.watered)
+            .map(|subdivided| subdivided.slot as u32)
     }
 
     pub(super) fn any(&self) -> bool {
@@ -107,13 +90,12 @@ impl SurfaceTrees {
     }
 
     pub(super) fn draw_offset(&self, index: usize) -> Option<u64> {
-        self.ground(index)
+        self.subdivided(index)
             .map(|subdivided| subdivided.slot as u64 * ARGS_BYTES + DRAW_OFFSET)
     }
 
     pub(super) fn rest(&mut self) {
         self.frame.clear();
-        self.grounds = 0;
         self.shallow = 0;
     }
 
@@ -136,26 +118,15 @@ impl SurfaceTrees {
         self.dropped = 0;
         self.frame.clear();
         let (settings, water) = (views.settings, views.water);
-        let watered: Vec<usize> = tiles
-            .terrains
-            .iter()
-            .enumerate()
-            .filter(|&(index, terrain)| drawn[index] && water.watered.contains(&terrain.terrain))
-            .map(|(index, _)| index)
-            .collect();
         let count = tiles.terrains.len();
-        let slots = (count + watered.len()) as u64;
-        let share = room / 16 * 16 / LEAF_BYTES / slots.max(1);
-        let rooms = [
-            share.min(u64::from(settings.subdivision_leaves)) as u32,
-            share.min(u64::from(water.subdivision_leaves)) as u32,
-        ];
-        let leaves =
-            count as u64 * u64::from(rooms[0]) + watered.len() as u64 * u64::from(rooms[1]);
+        let share = room / 16 * 16 / LEAF_BYTES / (count as u64).max(1);
+        let capacity = share.min(u64::from(settings.subdivision_leaves)) as u32;
+        let leaves = count as u64 * u64::from(capacity);
         self.leaves_bytes = self.leaves_bytes.max(leaves * LEAF_BYTES);
         let sizes = [
             (handles.leaves, self.leaves_bytes.max(LEAF_BYTES)),
             (handles.nodes, (leaves * NODE_BYTES).max(NODE_BYTES)),
+            (handles.watered, (leaves * NODE_BYTES).max(NODE_BYTES)),
             (handles.counters, SURFACE_SLOTS as u64 * ARGS_BYTES),
             (handles.args, SURFACE_SLOTS as u64 * ARGS_BYTES),
         ];
@@ -163,6 +134,7 @@ impl SurfaceTrees {
             let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(buffer, bytes);
         }
         self.targets = [settings.subdivision_error, water.subdivision_error];
+        self.unseen = settings.subdivision_unseen;
         let planes = world_planes(views.culling, views.eye);
         let depth = settings.subdivision_depth;
         for (index, terrain) in tiles.terrains.iter().enumerate() {
@@ -170,18 +142,11 @@ impl SurfaceTrees {
                 self.frame.push(None);
                 continue;
             }
-            let leaves = (index as u32 * rooms[0], rooms[0]);
-            let tree = (terrain, index, Measure::Ground);
+            let leaves = (index as u32 * capacity, capacity);
+            let tree = (terrain, index, water.watered.contains(&terrain.terrain));
             self.lay_out(cx, handles, (tree, room), (depth, leaves), planes);
         }
-        self.grounds = count;
-        let after_ground = count as u32 * rooms[0];
-        for (place, &index) in watered.iter().enumerate() {
-            let leaves = (after_ground + place as u32 * rooms[1], rooms[1]);
-            let tree = (&tiles.terrains[index], index, Measure::Water);
-            self.lay_out(cx, handles, (tree, room), (depth, leaves), planes);
-        }
-        let held: Vec<(Entity, Measure)> = self
+        let held: Vec<Entity> = self
             .frame
             .iter()
             .flatten()
@@ -194,7 +159,7 @@ impl SurfaceTrees {
         }
     }
 
-    fn slot_of(&mut self, owner: (Entity, Measure)) -> Option<usize> {
+    fn slot_of(&mut self, owner: Entity) -> Option<usize> {
         self.trees
             .iter()
             .position(|tree| tree.is_some_and(|tree| tree.owner == owner))
@@ -213,30 +178,20 @@ impl SurfaceTrees {
         &mut self,
         cx: &mut Prepare<'_, TerrainGpu>,
         handles: &Handles,
-        ((terrain, index, measure), room): ((&TerrainEntry, usize, Measure), u64),
+        ((terrain, index, watered), room): ((&TerrainEntry, usize, bool), u64),
         (depth, (first, capacity)): (u32, (u32, u32)),
         planes: [[f32; 4]; 6],
     ) {
-        let Some(slot) = self.slot_of((terrain.terrain, measure)) else {
+        let Some(slot) = self.slot_of(terrain.terrain) else {
             self.dropped += 1;
             self.frame.push(None);
             return;
         };
-        let (side, depth) = self.tree(
-            cx,
-            handles,
-            slot,
-            (terrain, measure),
-            (depth, capacity, room),
-        );
-        let target = match measure {
-            Measure::Ground => self.targets[0],
-            Measure::Water => self.targets[1],
-        };
+        let (side, depth) = self.tree(cx, handles, slot, terrain, (depth, capacity, room));
         let uniform = SubdivisionUniform {
-            square: [side, target, measure.code(), 0.0],
+            square: [side, self.targets[0], self.targets[1], self.unseen],
             tree: [depth, counts_words(depth), first, capacity],
-            frame: [self.parity, slot as u32, index as u32, 0],
+            frame: [self.parity, slot as u32, index as u32, u32::from(watered)],
             extent: {
                 let extent = terrain.pyramid.extent();
                 [0.0, 0.0, extent.x, extent.y]
@@ -251,9 +206,10 @@ impl SurfaceTrees {
         cx.write(buffer, 0, &[uniform]);
         self.frame.push(Some(Subdivided {
             slot,
-            terrain: index,
             first,
             finest: finest_spacing(side, depth),
+            side,
+            watered,
         }));
     }
 
@@ -262,7 +218,7 @@ impl SurfaceTrees {
         cx: &mut Prepare<'_, TerrainGpu>,
         handles: &Handles,
         slot: usize,
-        (terrain, measure): (&TerrainEntry, Measure),
+        terrain: &TerrainEntry,
         (wanted, capacity, room): (u32, u32, u64),
     ) -> (f32, u32) {
         let wanted = wanted.max(SHALLOWEST);
@@ -270,11 +226,11 @@ impl SurfaceTrees {
         while depth > SHALLOWEST && tree_bytes(depth) > room {
             depth -= 1;
         }
-        self.shallow += u32::from(depth < wanted && measure == Measure::Ground);
+        self.shallow += u32::from(depth < wanted);
         let pyramid = &terrain.pyramid;
         let [tiles_x, tiles_z] = pyramid.tiles(0);
         let side = pyramid.tile_size(0) * tiles_x.max(tiles_z).next_power_of_two() as f32;
-        let owner = (terrain.terrain, measure);
+        let owner = terrain.terrain;
         match &mut self.trees[slot] {
             Some(tree)
                 if tree.owner == owner

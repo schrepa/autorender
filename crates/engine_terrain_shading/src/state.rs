@@ -4,19 +4,19 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
-    AssetLibrary, Background, Cursor, DeviceLimits, DrawnArea, DrawnAreas, Error, Feed, FrameId,
+    AssetLibrary, Background, Cursor, DeviceLimits, Error, Feed, FrameId,
     FrameTime, JobFailures, JobKind, Jobs, Landed, Progress, Readable, Readback, RecordExchange,
     RecordKey, Records, Settling, Since, Stamp, TextureHandle, TextureSet, TextureSource,
     TextureUsage, Views, codec, content_hash,
 };
 use engine_heightfield::tile::shaded_elsewhere;
 use engine_open_world_kit::ground::{
-    GroundBakes, GroundBaking, GroundTiles, Heightfield, HeldTile, PALETTE_ENTRIES, TerrainEntry,
-    TerrainTiles, TileChange, TileFace, TileMaterials,
+    GroundBakes, GroundBaking, GroundLayerAsks, GroundLayersHeld, GroundTiles, Heightfield,
+    HeldTile, PALETTE_ENTRIES, TerrainEntry, TerrainTiles, TileChange, TileFace, TileMaterials,
 };
 use engine_render::DebugShown;
 use engine_tiles::{Pyramid, TileKey};
-use glam::{Vec2, Vec3};
+use glam::Vec2;
 
 use crate::gpu::{HORIZON_RECORDS, HorizonsPiece};
 use crate::jobs::bounce::TerrainBounce;
@@ -25,11 +25,11 @@ use crate::jobs::shading::TileShading;
 use crate::jobs::{BOUNCE, BounceJob, LIGHTING, LightingJob, MACRO_COLORS, MacroJob};
 use crate::settings::{TerrainShading, TerrainShadingStats};
 use crate::shadings::Shadings;
+use crate::terrain_macro::Shape;
 use crate::world_trace::traced;
 use crate::{terrain_bounce, terrain_horizons};
 
 const VIEW_PRIORITY: u32 = 0;
-const SKIRT_SPACINGS: f32 = 4.0;
 const MOST_PROBES: u32 = 512;
 const FEWEST_PROBES: u32 = 16;
 
@@ -275,9 +275,14 @@ pub(crate) struct Bakes {
     pub(crate) terrains: BTreeMap<Entity, TerrainBakes>,
     pub(crate) failures: JobFailures,
     colors_gone: Vec<TextureHandle>,
+    lent: Vec<Option<TextureHandle>>,
 }
 
 impl Bakes {
+    pub(crate) fn lent(&self) -> &[Option<TextureHandle>] {
+        &self.lent
+    }
+
     pub(crate) fn of(&self, terrain: Entity) -> Option<&TerrainBakes> {
         self.terrains.get(&terrain)
     }
@@ -378,7 +383,6 @@ pub(crate) fn palette_layout(terrains: &[TerrainEntry]) -> Vec<(Entity, Option<u
 #[derive(Clone, Copy)]
 struct PlacedTile {
     stamp: Stamp,
-    low: f32,
     high: f32,
     control: bool,
 }
@@ -450,7 +454,7 @@ impl Atlas {
         &mut self,
         entry: &TerrainEntry,
         key: TileKey,
-        (missing, areas): (&mut Vec<(TileId, Option<u32>)>, &mut DrawnAreas),
+        missing: &mut Vec<(TileId, Option<u32>)>,
     ) {
         let id = (entry.terrain, key);
         match (
@@ -460,10 +464,7 @@ impl Atlas {
             (None, None) => {
                 self.unplaced.remove(&id);
             }
-            (None, Some(held)) => {
-                areas.push(ground_box(entry, key, (held.low, held.high)));
-                self.release(id);
-            }
+            (None, Some(_)) => self.release(id),
             (Some(_), None) => missing.push((id, None)),
             (Some(tile), Some(held)) if held.stamp == tile.stamp => {
                 let unsurfaced = !programmed(entry, tile)
@@ -473,15 +474,7 @@ impl Atlas {
                     self.changes.push(AtlasChange::Moved(id));
                 }
             }
-            (Some(tile), Some(held)) => {
-                let (low, high) = heights_of(tile);
-                let (low, high) = (
-                    engine_core::math::min(held.low, low),
-                    engine_core::math::max(held.high, high),
-                );
-                areas.push(ground_box(entry, key, (low, high)));
-                missing.push((id, self.slots.get(&id).copied()));
-            }
+            (Some(_), Some(_)) => missing.push((id, self.slots.get(&id).copied())),
         }
     }
 
@@ -491,7 +484,7 @@ impl Atlas {
         tile: &TileFace,
         replaced: Option<u32>,
         (shades, program, shading): (bool, bool, bool),
-    ) -> bool {
+    ) {
         let arriving = replaced.is_none();
         let layer = match replaced.or_else(|| self.free.pop()) {
             Some(layer) => layer,
@@ -501,7 +494,7 @@ impl Atlas {
             }
             None => {
                 self.unplaced.insert(id);
-                return false;
+                return;
             }
         };
         self.unplaced.remove(&id);
@@ -536,21 +529,18 @@ impl Atlas {
         } else if program && tile.control.is_none() {
             self.surfaced.insert(id, self.now);
         }
-        let (low, high) = heights_of(tile);
         self.slots.insert(id, layer);
         self.placed.insert(
             id,
             PlacedTile {
                 stamp: tile.stamp,
-                low,
-                high,
+                high: tile.bounds.1.y,
                 control: tile.control.is_some(),
             },
         );
         self.changes.push(AtlasChange::Moved(id));
         self.changes
             .push(AtlasChange::Placed(id, layer, Upload::Whole));
-        true
     }
 
     fn show_shading(&mut self, id: TileId, layer: u32) {
@@ -563,10 +553,6 @@ impl Atlas {
 
 pub(crate) fn programmed(entry: &TerrainEntry, tile: &TileFace) -> bool {
     entry.surface_program && tile.materials == TileMaterials::Program
-}
-
-fn heights_of(tile: &TileFace) -> (f32, f32) {
-    (tile.bounds.0.y, tile.bounds.1.y)
 }
 
 fn tile_keys(atlas: &Atlas, entry: &TerrainEntry, since: Since<'_, TileChange>) -> Vec<TileKey> {
@@ -618,7 +604,7 @@ pub(crate) fn place_tiles(
     ),
     bakes: Res<Bakes>,
     mut atlas: ResMut<Atlas>,
-    (mut ground, mut areas): (ResMut<GroundTiles>, ResMut<DrawnAreas>),
+    mut ground: ResMut<GroundTiles>,
 ) {
     let atlas = &mut *atlas;
     atlas.now = time.real_elapsed as f32;
@@ -629,9 +615,11 @@ pub(crate) fn place_tiles(
             .map(|held| held.flow.attached())
             .unwrap_or_default()
     };
-    let capacity = limits.texture_layers;
+    let capacity = limits.texture_layers / crate::gpu::TILE_PLANES;
+    let whole = macro_texels(&settings);
     if !tiles.is_changed()
         && capacity == atlas.capacity
+        && whole == ground.whole
         && (atlas.unplaced.is_empty() || !atlas.has_room())
         && tiles
             .terrains
@@ -658,6 +646,7 @@ pub(crate) fn place_tiles(
             layers: 0,
             tables,
             palette,
+            whole,
         });
         return;
     }
@@ -674,7 +663,7 @@ pub(crate) fn place_tiles(
         let keys = tile_keys(atlas, entry, entry.changes.since(&mut cursor));
         atlas.cursors.insert(entry.terrain, cursor);
         for key in keys {
-            atlas.follow_tile(entry, key, (&mut missing, &mut areas));
+            atlas.follow_tile(entry, key, &mut missing);
         }
     }
     if atlas.has_room() {
@@ -694,10 +683,7 @@ pub(crate) fn place_tiles(
         let shades = shaded_elsewhere(id.1.level, entry.surroundings);
         let shading = bakes.of(id.0).and_then(|held| held.shading(tile)).is_some();
         let program = programmed(entry, tile);
-        let placed = atlas.place(id, tile, replaced, (shades, program, shading));
-        if placed && replaced.is_none() {
-            areas.push(ground_box(entry, id.1, heights_of(tile)));
-        }
+        atlas.place(id, tile, replaced, (shades, program, shading));
     }
     for entry in tiles.terrains.iter() {
         for &key in attached(entry) {
@@ -728,6 +714,7 @@ pub(crate) fn place_tiles(
         layers: atlas.capacity,
         tables,
         palette,
+        whole,
     };
     ground.set_if_neq(published);
 }
@@ -737,25 +724,6 @@ pub(crate) fn listed_tile(tiles: &[TileFace], key: TileKey) -> Option<&TileFace>
         .binary_search_by_key(&key, |tile| tile.key)
         .ok()
         .map(|at| &tiles[at])
-}
-
-fn ground_box(terrain: &TerrainEntry, key: TileKey, (low, high): (f32, f32)) -> DrawnArea {
-    let pyramid = terrain.pyramid;
-    let level = u32::from(key.level);
-    let corner = pyramid.tile_origin(key);
-    let size = pyramid.tile_size(level);
-    let spacing = pyramid.spacing(level);
-    let skirt = SKIRT_SPACINGS * spacing;
-    let reach = if level + 1 >= pyramid.levels() {
-        f32::INFINITY
-    } else {
-        spacing
-    };
-    DrawnArea::Box {
-        min: terrain.origin + Vec3::new(corner.x, low - skirt, corner.y),
-        max: terrain.origin + Vec3::new(corner.x + size, high, corner.y + size),
-        spacing: reach,
-    }
 }
 
 pub(crate) fn lighting_level(pyramid: &Pyramid, pinned: u32) -> u32 {
@@ -954,6 +922,60 @@ pub(crate) fn color(
         .retain(|&handle| assets.texture(handle).is_none() || !assets.remove_texture(handle));
 }
 
+pub(crate) fn lend_layers(
+    (tiles, limits, assets): (Res<TerrainTiles>, Res<DeviceLimits>, Res<AssetLibrary>),
+    ground: Res<GroundTiles>,
+    mut bakes: ResMut<Bakes>,
+    mut asked: Query<(&GroundLayerAsks, &mut GroundLayersHeld)>,
+) {
+    let wanted: Vec<TextureHandle> = asked
+        .iter()
+        .flat_map(|(asks, _)| asks.textures.iter().copied())
+        .collect();
+    if wanted.is_empty() && bakes.lent.is_empty() {
+        return;
+    }
+    let bakes = &mut *bakes;
+    for slot in &mut bakes.lent {
+        if slot.is_some_and(|held| !wanted.contains(&held)) {
+            *slot = None;
+        }
+    }
+    let room = (limits.texture_layers as usize).saturating_sub(tiles.terrains.len());
+    for &texture in &wanted {
+        if bakes.lent.contains(&Some(texture)) {
+            continue;
+        }
+        match bakes.lent.iter().position(Option::is_none) {
+            Some(free) => bakes.lent[free] = Some(texture),
+            None if bakes.lent.len() < room => bakes.lent.push(Some(texture)),
+            None => {}
+        }
+    }
+    while bakes.lent.last() == Some(&None) {
+        bakes.lent.pop();
+    }
+    let shape = Shape::first(&tiles, bakes, &assets);
+    for (asks, mut held) in &mut asked {
+        let layers = asks
+            .textures
+            .iter()
+            .filter_map(|&texture| {
+                let resident = assets.texture(texture)?;
+                let slot = bakes.lent.iter().position(|lent| *lent == Some(texture));
+                let whole = resident.width() == ground.whole && resident.height() == ground.whole;
+                match slot {
+                    Some(slot) if whole => {
+                        (Some(Shape::of(resident)) == shape).then_some((texture, slot as u32 + 1))
+                    }
+                    Some(_) | None => Some((texture, 0)),
+                }
+            })
+            .collect();
+        held.set_if_neq(GroundLayersHeld { layers });
+    }
+}
+
 pub(crate) fn publish_piece(
     settings: Res<TerrainShading>,
     tiles: Res<TerrainTiles>,
@@ -1003,7 +1025,7 @@ pub(crate) const SURFACE_TOTALS: u32 = 0;
 #[derive(Resource, Default)]
 pub(crate) struct SurfaceTotals {
     pub(crate) grounds: [u32; 2],
-    pub(crate) waters: [u32; 2],
+    pub(crate) watered: u32,
     written: FrameId,
 }
 
@@ -1020,20 +1042,18 @@ impl Readable for SurfaceTotals {
             .iter()
             .map(|word| u32::from_le_bytes(*word))
             .collect();
-        let args = crate::gpu::SUBDIVISION_ARGS as usize;
-        let mut sums = [0_u32; 4];
-        for counters in words.chunks_exact(args) {
-            let sum = if counters[crate::gpu::SUBDIVISION_MEASURE as usize] == 0 {
-                0
-            } else {
-                2
-            };
-            sums[sum] = sums[sum].saturating_add(counters[crate::gpu::SUBDIVISION_LEAVES as usize]);
-            sums[sum + 1] =
-                sums[sum + 1].saturating_add(counters[crate::gpu::SUBDIVISION_REFUSED as usize]);
+        use crate::gpu::{
+            SUBDIVISION_ARGS, SUBDIVISION_LEAVES, SUBDIVISION_REFUSED, SUBDIVISION_WATERED,
+        };
+        let mut sums = [0_u32; 3];
+        for counters in words.chunks_exact(SUBDIVISION_ARGS as usize) {
+            let read = [SUBDIVISION_LEAVES, SUBDIVISION_REFUSED, SUBDIVISION_WATERED];
+            for (sum, word) in sums.iter_mut().zip(read) {
+                *sum = sum.saturating_add(counters[word as usize]);
+            }
         }
         self.grounds = [sums[0], sums[1]];
-        self.waters = [sums[2], sums[3]];
+        self.watered = sums[2];
     }
 }
 
@@ -1063,14 +1083,18 @@ pub(crate) struct DrawnStats {
 pub(crate) struct PartStats {
     drawn: DrawnStats,
     pool: engine_core::Cut,
+    turns: engine_core::Cut,
 }
 
 impl Readable for PartStats {
     fn arrived(&mut self, tag: u32, read: Readback<&[u8]>) {
         let bytes = read.value;
         if tag == TRACE_STATS {
-            if let Ok([asked, kept]) = bytemuck::try_pod_read_unaligned::<[u32; 2]>(bytes) {
+            if let Ok([asked, kept, turns, limit]) =
+                bytemuck::try_pod_read_unaligned::<[u32; 4]>(bytes)
+            {
                 self.pool = engine_core::Cut::of(asked, kept);
+                self.turns = engine_core::Cut::of(turns, turns.min(limit));
             }
         } else if let Ok(drawn) = bytemuck::try_pod_read_unaligned::<DrawnStats>(bytes) {
             self.drawn = drawn;
@@ -1079,7 +1103,6 @@ impl Readable for PartStats {
 }
 
 pub(crate) fn publish_heightfield(
-    settings: Res<TerrainShading>,
     totals: Res<SurfaceTotals>,
     mut heightfield: ResMut<Heightfield>,
 ) {
@@ -1090,8 +1113,7 @@ pub(crate) fn publish_heightfield(
     };
     heightfield.set_if_neq(Heightfield {
         leaf_indices,
-        subdivision_error: settings.subdivision_error,
-        water_leaves: totals.waters,
+        water_leaves: totals.watered,
     });
 }
 
@@ -1117,7 +1139,7 @@ pub(crate) fn count(
     atlas: Res<Atlas>,
     bakes: Res<Bakes>,
     totals: Res<SurfaceTotals>,
-    part: Res<PartStats>,
+    (part, sun): (Res<PartStats>, Res<crate::terrain_sun::SunPlan>),
     (mut stats, settling): (ResMut<TerrainShadingStats>, Res<RecordsSettling>),
 ) {
     settling.0.left(records_left(&settings, &tiles, &bakes));
@@ -1184,6 +1206,9 @@ pub(crate) fn count(
         shading_records,
         surface_slots: engine_core::Cut::of(drawn.surface_wanted, drawn.surface_kept),
         trace_pool: part.pool,
+        trace_turns: part.turns,
+        sun_walks: engine_core::Cut::of(sun.walked, sun.walked.saturating_sub(sun.short)),
+        sun_lost: sun.lost,
         lit,
         lighting,
         bounced,

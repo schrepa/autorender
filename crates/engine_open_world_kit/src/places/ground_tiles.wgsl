@@ -41,6 +41,19 @@ struct MaterialLook {
     far: vec4<f32>,
 }
 
+struct TileSummary {
+    lowest: f32,
+    highest: f32,
+    materials: u32,
+    site_low: vec4<f32>,
+    site_high: vec4<f32>,
+    wide_lowest: f32,
+    wide_highest: f32,
+    wide_materials: u32,
+    wide_site_low: vec4<f32>,
+    wide_site_high: vec4<f32>,
+}
+
 fn terrain_info(terrain: u32) -> TerrainInfo {
     var info: TerrainInfo;
     return info;
@@ -75,6 +88,11 @@ fn tile_height(tile: LevelTile, sample: vec2<u32>) -> f32 {
 
 fn tile_peak(tile: LevelTile, texel: vec2<u32>, mip: u32) -> f32 {
     return 0.0;
+}
+
+fn tile_summary(tile: LevelTile, cell: vec2<u32>, mip: u32) -> TileSummary {
+    var summary: TileSummary;
+    return summary;
 }
 
 fn tile_gradient(tile: LevelTile, sample: vec2<u32>) -> vec2<f32> {
@@ -116,9 +134,21 @@ fn macro_color(colors: vec4<f32>) -> vec3<f32> {
     return vec3<f32>(0.0);
 }
 
+fn ground_layer(layer: u32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
+    return vec4<f32>(0.0);
+}
+
 fn material_look(base: u32, material: u32) -> MaterialLook {
     var look: MaterialLook;
     return look;
+}
+
+fn tile_site(tile: LevelTile, sample: vec2<u32>) -> vec4<f32> {
+    return vec4<f32>(0.0);
+}
+
+fn site_shift(color: vec3<f32>, base: u32, material: u32, site: vec4<f32>) -> vec3<f32> {
+    return color;
 }
 
 fn ground_sky(terrain: u32, local: vec2<f32>) -> vec4<f32> {

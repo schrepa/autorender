@@ -9,10 +9,7 @@ use crate::simplify::{
     SimplifyInput, SimplifyOptions, VertexFlags, protect_attribute_seams, simplify,
 };
 
-const LEVEL_SHARES: [f32; 3] = [0.5, 0.25, 0.125];
-const LEVEL_KEEP_LIMIT: f32 = 0.85;
-const ERROR_GROWTH: f32 = 1.05;
-const EMPTY_ERROR_SCALE: f32 = 2.0;
+const OCTAVE: f32 = 2.0;
 const NORMAL_WEIGHT: f32 = 1.0;
 const UV_WEIGHT: f32 = 1.0;
 const SAMPLE_STEP: f32 = 0.5;
@@ -24,6 +21,11 @@ pub(crate) fn levels(input: &LodInput) -> Result<MeshLods, Error> {
         .map(|vertex| vertex.position)
         .collect();
     let points: Vec<Vec3> = positions.iter().map(|&point| Vec3::from(point)).collect();
+    let (least, most) = points.iter().fold(
+        (Vec3::INFINITY, Vec3::NEG_INFINITY),
+        |(least, most), &point| (least.min(point), most.max(point)),
+    );
+    let radius = (most - least).length() * 0.5;
     let (mut low, mut high) = ([f32::INFINITY; 2], [f32::NEG_INFINITY; 2]);
     for vertex in &input.vertices {
         for axis in 0..2 {
@@ -63,45 +65,79 @@ pub(crate) fn levels(input: &LodInput) -> Result<MeshLods, Error> {
         ..SimplifyOptions::default()
     };
     let own = &input.indices;
-    let simplified = |target: usize| {
+    let simplified = |target: usize, error: f32| {
         let request = SimplifyInput::new(own, &positions)
             .with_attributes(&attributes, 5, &weights)
             .with_vertex_flags(&flags);
-        simplify(&request, target, f32::INFINITY, options)
+        simplify(&request, target, error, options)
     };
     let step = mean_edge(&points, own) * SAMPLE_STEP;
-    let triangles = own.len() / 3;
+    let free = simplified(0, 0.0)?.indices.len();
+    let mut target = simplified(free.saturating_sub(3), f32::INFINITY)?.error;
     let mut lods = MeshLods::default();
     let mut indices = own.clone();
-    let mut kept = triangles;
-    let mut error = 0.0_f32;
-    for share in LEVEL_SHARES {
-        let target = ((triangles as f32 * share) as usize) * 3;
-        let level = simplified(target)?.indices;
-        let count = level.len() / 3;
-        if count == 0 || count as f32 > kept as f32 * LEVEL_KEEP_LIMIT {
+    let mut kept = own.len();
+    while target > 0.0 && target < radius {
+        let level = simplified(0, target)?.indices;
+        target *= OCTAVE;
+        if level.is_empty() {
             break;
         }
-        error = max(
-            surface_distance(&points, own, &level, step),
-            error * ERROR_GROWTH,
-        );
+        if level.len() >= kept {
+            continue;
+        }
+        kept = level.len();
+        let error = surface_distance(&points, own, &level, step);
+        if error <= 0.0 {
+            continue;
+        }
+        settle(&mut lods, &mut indices, error);
         lods.levels.push(LodLevel {
             first_index: indices.len() as u32,
             index_count: level.len() as u32,
             error,
         });
         indices.extend_from_slice(&level);
-        kept = count;
     }
-    let gone = simplified(0)?;
-    if gone.indices.is_empty() {
-        lods.levels.push(LodLevel {
-            first_index: indices.len() as u32,
-            index_count: 0,
-            error: max(error * ERROR_GROWTH, gone.error * EMPTY_ERROR_SCALE),
-        });
-    }
+    settle(&mut lods, &mut indices, radius);
+    lods.levels.push(LodLevel {
+        first_index: indices.len() as u32,
+        index_count: 0,
+        error: radius,
+    });
     lods.indices = indices.split_off(own.len());
     Ok(lods)
+}
+
+pub(crate) fn authored_errors(finest: &LodInput, levels: &[LodInput]) -> Vec<f32> {
+    let finest_points: Vec<Vec3> = finest
+        .vertices
+        .iter()
+        .map(|vertex| Vec3::from(vertex.position))
+        .collect();
+    let step = mean_edge(&finest_points, &finest.indices) * SAMPLE_STEP;
+    let mut error = 0.0_f32;
+    levels
+        .iter()
+        .map(|level| {
+            let mut points = finest_points.clone();
+            let offset = points.len() as u32;
+            points.extend(level.vertices.iter().map(|vertex| Vec3::from(vertex.position)));
+            let indices: Vec<u32> = level.indices.iter().map(|index| index + offset).collect();
+            error = max(
+                error,
+                surface_distance(&points, &finest.indices, &indices, step),
+            );
+            error
+        })
+        .collect()
+}
+
+fn settle(lods: &mut MeshLods, indices: &mut Vec<u32>, error: f32) {
+    while let Some(finer) = lods.levels.last()
+        && finer.error >= error
+    {
+        indices.truncate(finer.first_index as usize);
+        lods.levels.pop();
+    }
 }

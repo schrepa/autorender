@@ -21,7 +21,9 @@ use engine_heightfield::{INVALID_TERRAIN, Layers, Pyramid, TileHeights};
 use engine_open_world_kit::terrain::TerrainLayers;
 use serde_json::Value;
 
-pub use crate::erosion::{Erosion, ErosionLayer, ErosionStats};
+pub use crate::erosion::{
+    BRINK, Beds, CLIFF, Erosion, ErosionLayer, ErosionStats, FOOT, HARDNESS,
+};
 
 pub struct LayerErosionBrick;
 
@@ -98,7 +100,10 @@ impl TerrainLayer for ErosionStage {
     }
 
     fn outputs(&self) -> Vec<String> {
-        maps::CHANGE.map(str::to_owned).to_vec()
+        (maps::CHANGE.iter().copied())
+            .chain([CLIFF, BRINK, FOOT, HARDNESS])
+            .map(str::to_owned)
+            .collect()
     }
 
     fn apply_row(&self, below: Below<'_>, row: &Row<'_>, heights: &mut [f32]) {
@@ -106,7 +111,8 @@ impl TerrainLayer for ErosionStage {
             return;
         };
         let before = heights.to_vec();
-        baked.wear_row(row.xs, row.z, row.spacing, &before, |index, worn| {
+        let at = (row.xs, row.z, row.spacing);
+        baked.wear_row(at, self.layer.mantle, &before, |index, worn| {
             heights[index] += worn * below.shown(row.xs[index], row.z);
         });
     }
@@ -135,8 +141,33 @@ impl TerrainLayer for ErosionStage {
     fn change(&self) -> Option<ChangeMap<'_>> {
         self.baked.as_deref().map(|baked| ChangeMap {
             spacing: baked.spacing,
-            image: &baked.change,
-            range: baked.range,
+            image: &baked.cover,
+            range: baked.cover_range,
+        })
+    }
+
+    fn map_row(
+        &self,
+        name: &str,
+        below: Below<'_>,
+        row: &Row<'_>,
+        heights: &[f32],
+        out: &mut [f32],
+    ) -> bool {
+        if name == HARDNESS {
+            let beds = &self.layer.beds;
+            for ((share, &x), &height) in out.iter_mut().zip(row.xs).zip(heights) {
+                *share = beds.surface(x, row.z, height) * below.shown(x, row.z);
+            }
+            return true;
+        }
+        let Some(baked) = self.baked.as_deref() else {
+            return false;
+        };
+        let count = out.len().min(row.xs.len());
+        let at = (&row.xs[..count], row.z, row.spacing);
+        baked.share_row(name, at, |index, share| {
+            out[index] = share * below.shown(row.xs[index], row.z);
         })
     }
 

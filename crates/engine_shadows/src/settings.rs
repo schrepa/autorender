@@ -1,5 +1,7 @@
 use engine_core::{Cut, settings, stats};
 
+use crate::constants::SOFT_GATHERS;
+
 settings! {
     #[section("shadows")]
     #[switch(on)]
@@ -7,12 +9,12 @@ settings! {
     #[serde(deny_unknown_fields)]
     #[schemars(rename = "SceneShadows")]
     pub struct ShadowSettings {
-        pub levels: u32 = 16 => at_least(1),
+        pub levels: u32 = 10 => at_least(1),
         pub finest_texel: f32 = 0.04 => range(0.005, 1.0),
-        pub tile_texels: u32 = 128 => power_of_two(64, 512),
-        pub atlas_slots: u32 = 1024 => range(64, 4096),
-        pub moving_tiles: u32 = 256 => any,
+        pub pixel_error: f32 = 2.0 => range(0.5, 8.0),
+        pub moving_levels: u32 = 4 => any,
         pub sample_texels: f32 = 2.0 => at_least(0.0),
+        pub soft_texels: f32 = 3.0 => range(2.0, 2 * SOFT_GATHERS - 1),
         pub changes: u32 = 1024 => at_least(1),
     }
 }
@@ -48,15 +50,14 @@ stats! {
     pub struct ShadowStats {
         pub active: bool,
         pub draws: u32,
-        pub tiles_marked: u32,
-        pub tiles_resident: u32,
-        pub tiles_drawn: u32,
-        pub tiles_reclaimed: u32,
+        pub levels: u32,
+        pub side: u32,
+        pub bytes: u64,
+        pub regions: Cut,
+        pub redraws: u32,
+        pub moving: u32,
         pub sky_maps: u32,
         pub sky_drawn: u32,
-        pub tile_cut: Cut,
-        pub moving_cut: Cut,
         pub level_cut: Cut,
-        pub moving_slot_cut: Cut,
     }
 }

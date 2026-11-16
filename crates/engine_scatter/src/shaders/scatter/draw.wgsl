@@ -96,7 +96,3 @@ fn vs_object_extended_fading(input: GeometryVertex, extra: GeometryExtra,
     return placed_extended_vertex(input, extra, faded_slot_slot(slot), faded_entry_fade(slot),
         draw);
 }
-
-@fragment
-fn fs_whole_depth() {
-}

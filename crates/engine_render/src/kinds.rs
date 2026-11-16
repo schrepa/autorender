@@ -143,15 +143,23 @@ impl KindForm {
 pub enum FormDepth {
     Written,
     Tested,
+    TestedStrictly,
     Overwritten,
     Ignored,
+    Matched,
 }
 
 impl FormDepth {
     fn depth_use(self, bias: DepthBias) -> DepthUse {
         match self {
             Self::Written => written(bias),
+            Self::Matched => DepthUse::Compare {
+                compare: wgpu::CompareFunction::Equal,
+                write: false,
+                bias: depth_bias(bias),
+            },
             Self::Tested => DepthUse::Test,
+            Self::TestedStrictly => DepthUse::TestStrictly,
             Self::Overwritten => DepthUse::Overwrite,
             Self::Ignored => DepthUse::None,
         }
@@ -449,13 +457,17 @@ fn primitive(
     }
 }
 
+fn depth_bias(bias: DepthBias) -> wgpu::DepthBiasState {
+    wgpu::DepthBiasState {
+        constant: bias.constant,
+        slope_scale: bias.slope,
+        clamp: 0.0,
+    }
+}
+
 fn written(bias: DepthBias) -> DepthUse {
     DepthUse::Write {
-        bias: wgpu::DepthBiasState {
-            constant: bias.constant,
-            slope_scale: bias.slope,
-            clamp: 0.0,
-        },
+        bias: depth_bias(bias),
     }
 }
 

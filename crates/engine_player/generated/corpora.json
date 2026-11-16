@@ -17,8 +17,7 @@
     "replays": [
       "engine_navigation",
       "engine_terrain",
-      "engine_terrain_shading",
-      "engine_water"
+      "engine_terrain_shading"
     ]
   },
   {

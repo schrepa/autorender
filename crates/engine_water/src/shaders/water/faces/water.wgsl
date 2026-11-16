@@ -119,51 +119,48 @@ fn water_cell(local: vec2<f32>, level: u32) -> WaterCell {
     return cell;
 }
 
+fn water_height(held: vec2<f32>) -> f32 {
+    return select(held.y, held.x, held.x > NO_WATER_SURFACE * 0.5);
+}
+
 fn water_smooth(surfaces: array<vec2<f32>, 16>, within: vec2<f32>, spacing: f32)
         -> WaterLevel {
     var samples = surfaces;
     var level: WaterLevel;
     let along = water_spline(within.x);
     let across = water_spline(within.y);
-    var counted = 0.0;
-    var counting = false;
+    let counted = water_height(samples[5]);
     var total = 0.0;
     var raised = 0.0;
-    var deep = 0.0;
-    var rates = vec2<f32>(0.0);
     var rises = vec2<f32>(0.0);
+    var wet_rates = vec2<f32>(0.0);
     for (var row = 0u; row < 4u; row++) {
         for (var column = 0u; column < 4u; column++) {
             let held = samples[row * 4u + column];
-            if held.x <= NO_WATER_SURFACE * 0.5 {
-                continue;
-            }
-            if !counting {
-                counted = held.x;
-                counting = true;
-            }
             let weight = along.weights[column] * across.weights[row];
             let rate = vec2<f32>(along.rates[column] * across.weights[row],
                 along.weights[column] * across.rates[row]);
+            let height = water_height(held) - counted;
+            raised += height * weight;
+            rises += height * rate;
+            if held.x <= NO_WATER_SURFACE * 0.5 {
+                continue;
+            }
             total += weight;
-            raised += (held.x - counted) * weight;
-            deep += (held.x - held.y) * weight;
-            rates += rate;
-            rises += (held.x - counted) * rate;
             level.shares[row][column] = weight;
+            if held.x > held.y {
+                level.held += weight;
+                level.depth += (held.x - held.y) * weight;
+                wet_rates += rate;
+            }
         }
     }
-    if total <= 0.0 {
-        return level;
+    level.surface = counted + raised;
+    level.slope = -rises / spacing;
+    level.held_rate = wet_rates / spacing;
+    if total > 0.0 {
+        level.shares = level.shares * (1.0 / total);
     }
-    let share = 1.0 / total;
-    let lift = raised * share;
-    level.surface = counted + lift;
-    level.slope = (rates * lift - rises) * (share / spacing);
-    level.depth = max(deep * share, 0.0);
-    level.held = total;
-    level.held_rate = rates / spacing;
-    level.shares = level.shares * share;
     return level;
 }
 

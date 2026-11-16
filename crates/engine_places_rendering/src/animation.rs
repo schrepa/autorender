@@ -401,6 +401,7 @@ pub enum AnimatorCommand {
     Play {
         layer: usize,
         clip: String,
+        seconds: f32,
         looped: bool,
         speed: f32,
     },
@@ -418,6 +419,10 @@ pub enum AnimatorCommand {
     Speed {
         layer: usize,
         speed: f32,
+    },
+    Seek {
+        layer: usize,
+        time: f32,
     },
     Layer {
         root: String,
@@ -475,6 +480,7 @@ impl Animator {
         self.apply(&AnimatorCommand::Play {
             layer: 0,
             clip: start.clip.clone(),
+            seconds: 0.0,
             looped: start.looped,
             speed: start.speed,
         });
@@ -531,9 +537,10 @@ impl Animator {
             AnimatorCommand::Play {
                 layer,
                 clip,
+                seconds,
                 looped,
                 speed,
-            } => self.start_on(*layer, clip, 0.0, *looped, *speed),
+            } => self.start_on(*layer, clip, *seconds, *looped, *speed),
             AnimatorCommand::Blend {
                 layer,
                 clip,
@@ -573,6 +580,29 @@ impl Animator {
                 match newest.map(|newest| &mut newest.track) {
                     Some(Track::Clip { speed: held, .. }) => {
                         *held = *speed;
+                        true
+                    }
+                    Some(Track::Rest) | None => false,
+                }
+            }
+            AnimatorCommand::Seek { layer, time } => {
+                let rig = &*self.rig;
+                let newest = self
+                    .layers
+                    .get_mut(*layer)
+                    .and_then(|held| held.playing.last_mut());
+                match newest.map(|newest| &mut newest.track) {
+                    Some(Track::Clip {
+                        clip,
+                        time: held,
+                        looped,
+                        ..
+                    }) => {
+                        let duration = rig
+                            .clips
+                            .get(*clip as usize)
+                            .map_or(0.0, |clip| clip.duration);
+                        *held = wrapped(*time, duration, *looped);
                         true
                     }
                     Some(Track::Rest) | None => false,

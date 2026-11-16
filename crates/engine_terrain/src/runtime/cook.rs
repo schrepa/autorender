@@ -1,13 +1,14 @@
 use super::*;
 use bevy_ecs::world::World;
-use engine_core::CookAsks;
+use engine_core::{CookAsks, Detail, ViewDetail};
 
-const COOK_VIEW_HEIGHT: f32 = 2160.0;
+const COOK_VIEW_HEIGHT: u32 = 2160;
 
 pub(crate) fn cook(world: &World, asks: &mut CookAsks<'_>) {
-    let (Some(terrains), Some(settings)) = (
+    let (Some(terrains), Some(settings), Some(detail)) = (
         world.get_resource::<Terrains>(),
         world.get_resource::<TerrainSettings>(),
+        world.get_resource::<Detail>(),
     ) else {
         return;
     };
@@ -22,20 +23,21 @@ pub(crate) fn cook(world: &World, asks: &mut CookAsks<'_>) {
         let Some(recipe) = state.recipe.as_ref().map(|recipe| recipe.key) else {
             continue;
         };
-        for key in cooked_tiles(state, settings) {
+        for key in cooked_tiles(state, settings, detail) {
             asks.ask(&TILE_BUILD, state.tile_job(recipe.hash(), key).identity());
         }
     }
 }
 
-fn cooked_tiles(state: &TerrainState, settings: &TerrainSettings) -> Vec<TileKey> {
+fn cooked_tiles(state: &TerrainState, settings: &TerrainSettings, detail: &Detail) -> Vec<TileKey> {
     let pyramid = state.terrain.pyramid;
-    let ranges = LodRanges::new(
-        &pyramid,
-        settings.pixel_error,
+    let view = ViewDetail::perspective(
+        Vec3::ZERO,
+        Camera::default().clip(1.0),
         COOK_VIEW_HEIGHT,
-        vertical_fov(&Camera::default()),
+        detail.chosen_error().unwrap_or(0.0),
     );
+    let ranges = LodRanges::new(&pyramid, view.scaled(settings.pixel_error));
     let mut keys = Vec::new();
     for level in (0..pyramid.levels()).rev() {
         let [columns, rows] = pyramid.tiles(level);

@@ -18,11 +18,15 @@ pub(crate) enum ShadowChange {
 #[derive(Resource, Clone, Debug)]
 pub(crate) struct ShadowChanges {
     feed: Feed<ShadowChange>,
+    pub(crate) moving: u32,
 }
 
 impl Default for ShadowChanges {
     fn default() -> Self {
-        Self { feed: Feed::new(1) }
+        Self {
+            feed: Feed::new(1),
+            moving: 0,
+        }
     }
 }
 
@@ -42,7 +46,11 @@ impl ShadowChanges {
 
 type Group = (GeometryHandle, Option<MaterialHandle>);
 
-type Bounds = (Vec3, Vec3);
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Caster {
+    Still(Vec3, Vec3),
+    Moving,
+}
 
 #[derive(Default)]
 pub(crate) struct HeldCasters {
@@ -51,7 +59,12 @@ pub(crate) struct HeldCasters {
     areas: Cursor,
     generation: Option<u64>,
     groups: Vec<Group>,
-    boxes: Vec<Option<Bounds>>,
+    boxes: Vec<Option<Caster>>,
+    moving: u32,
+}
+
+fn moving(caster: Option<Caster>) -> u32 {
+    u32::from(caster == Some(Caster::Moving))
 }
 
 fn caster_box(
@@ -59,14 +72,16 @@ fn caster_box(
     globals: &GlobalTransforms,
     shadow: u32,
     slot: u32,
-) -> Option<Bounds> {
+) -> Option<Caster> {
     let record = table.records().get(slot as usize)?;
     let drawn = table.drawn(slot)?;
-    let casts = drawn.geometry.is_some()
-        && record.passes & shadow != 0
-        && !DrawnFlags::of(record).unbounded
-        && record.mobility == Mobility::Static as u32 + 1;
-    if !casts {
+    if drawn.geometry.is_none() || record.passes & shadow == 0 {
+        return None;
+    }
+    if record.mobility == Mobility::Moving as u32 + 1 {
+        return Some(Caster::Moving);
+    }
+    if DrawnFlags::of(record).unbounded || record.mobility != Mobility::Static as u32 + 1 {
         return None;
     }
     let matrix = globals.get(table.owner(slot)?)?.matrix()?;
@@ -77,7 +92,7 @@ fn caster_box(
     let axes = Mat3::from_mat4(matrix);
     let reach =
         axes.x_axis.abs() * half.x + axes.y_axis.abs() * half.y + axes.z_axis.abs() * half.z;
-    Some((center - reach, center + reach))
+    Some(Caster::Still(center - reach, center + reach))
 }
 
 fn groups(table: &DrawnTable) -> Vec<Group> {
@@ -143,9 +158,12 @@ pub(crate) fn publish_shadow_changes(
         Since::All => None,
     };
     let (Some(moved), Some(listed)) = (moved, listed) else {
+        held.moving = 0;
         for (slot, kept) in held.boxes.iter_mut().enumerate() {
             *kept = caster_box(&table, &globals, shadow, slot as u32);
+            held.moving += moving(*kept);
         }
+        shadows.moving = held.moving;
         shadows.push(ShadowChange::All);
         shadows.push(ShadowChange::Casters);
         return;
@@ -158,12 +176,15 @@ pub(crate) fn publish_shadow_changes(
         if *kept == next {
             return;
         }
-        for (min, max) in kept.iter().chain(next.iter()) {
-            shadows.push(ShadowChange::Box {
-                min: *min,
-                max: *max,
-                spacing: f32::INFINITY,
-            });
+        held.moving = held.moving + moving(next) - moving(*kept);
+        for caster in kept.iter().chain(next.iter()) {
+            if let Caster::Still(min, max) = *caster {
+                shadows.push(ShadowChange::Box {
+                    min,
+                    max,
+                    spacing: f32::INFINITY,
+                });
+            }
         }
         *kept = next;
         casters = true;
@@ -176,6 +197,9 @@ pub(crate) fn publish_shadow_changes(
         for &slot in listed {
             check(slot);
         }
+    }
+    if shadows.moving != held.moving {
+        shadows.moving = held.moving;
     }
     if casters {
         shadows.push(ShadowChange::Casters);

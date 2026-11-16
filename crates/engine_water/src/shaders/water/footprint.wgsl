@@ -1,8 +1,6 @@
 import package::face::lighting::specular_widening;
 import package::engine::view::material_detail;
-
-const WATER_SMOOTHEST: f32 = 0.03;
-const WATER_ROUGHEST: f32 = 0.6;
+import package::water::uniforms::water;
 
 fn water_spread(slopes: vec2<f32>) -> vec3<f32> {
     return vec3<f32>(slopes.x * slopes.x, slopes.y * slopes.y, slopes.x * slopes.y);
@@ -41,6 +39,6 @@ fn water_turning(slopes: vec2<f32>) -> vec3<f32> {
 fn water_roughness(hidden: vec3<f32>, heading: vec2<f32>) -> vec2<f32> {
     let variances = vec2<f32>(water_spread_toward(hidden, heading),
         water_spread_toward(hidden, vec2<f32>(-heading.y, heading.x)));
-    return clamp(sqrt(sqrt(2.0 * max(variances, vec2<f32>(0.0)))), vec2<f32>(WATER_SMOOTHEST),
-        vec2<f32>(WATER_ROUGHEST));
+    return clamp(sqrt(sqrt(2.0 * max(variances, vec2<f32>(0.0)))),
+        vec2<f32>(water.relief.roughness.x), vec2<f32>(water.relief.roughness.y));
 }

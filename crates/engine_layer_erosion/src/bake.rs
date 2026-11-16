@@ -4,7 +4,7 @@ use engine_heightfield::layer::TerrainLayer;
 use engine_heightfield::{Gather, Layers, Pyramid, TileHeights};
 
 use crate::ErosionStage;
-use crate::erosion::{ErosionLayer, Scratch, erode_round, finish};
+use crate::erosion::{ErosionLayer, Ground};
 
 pub(crate) fn erosion_stage(
     layer: &ErosionLayer,
@@ -12,27 +12,16 @@ pub(crate) fn erosion_stage(
     pyramid: &Pyramid,
     tiles: TileHeights,
 ) -> Arc<dyn TerrainLayer> {
-    let mut gather = Gather::new(layer.level, below, pyramid, tiles);
+    let gather = Gather::new(layer.level, below, pyramid, tiles);
     let spacing = pyramid.spacing(gather.level);
     let original = gather.heights.clone();
-    let mut scratch = Scratch::default();
+    let mut ground = Ground::new(gather.heights, gather.width, spacing, &layer.beds);
     for round in 0..layer.rounds {
-        erode_round(
-            &mut gather.heights,
-            (gather.width, spacing),
-            layer,
-            round,
-            &mut scratch,
-        );
+        ground.round(layer, round);
     }
+    ground.settle(layer.rounds);
     Arc::new(ErosionStage {
         layer: *layer,
-        baked: Some(Arc::new(finish(
-            &original,
-            &gather.heights,
-            gather.width,
-            spacing,
-            layer.rounds,
-        ))),
+        baked: Some(Arc::new(ground.finish(&original, layer))),
     })
 }

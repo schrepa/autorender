@@ -4,11 +4,11 @@ import package::engine::surfaces::SURFACE_THIN as THIN_KIND;
 import package::face::lights::{cluster_light, kept_regions, light_cluster, lights_on,
     shaped_lights};
 import package::face::sun::sun_direction;
-import package::face::sun_blockers::{DEBUG_SUN_NONE, SunAt, SunOpen, sun_flags, sun_open};
+import package::face::sun_blockers::{DEBUG_SUN_NONE, SunAt, sun_flags, sun_open};
 import package::generated::pieces::lighting_model::piece;
-import package::lighting_model::inputs::sun_seen;
 import package::lighting_model::local::shaped_light;
-import package::lighting_model::surface::{reflected, shade_surface};
+import package::lighting_model::surface::{Crossing, crossing_back, crossing_of, reflected,
+    shade_surface};
 import package::place::lighting::Reflecting;
 
 const SURFACE_THIN: u32 = THIN_KIND;
@@ -56,14 +56,14 @@ fn surface_sun(point: SurfacePoint) -> SunAt {
 }
 
 fn sun_visibility(at: SunAt) -> f32 {
-    return sun_seen(sun_open(SunOpen(1.0, 1.0), at));
+    return sun_open(1.0, at);
 }
 
 fn sun_debug(at: SunAt) -> u32 {
     return sun_flags(DEBUG_SUN_NONE, at);
 }
 
-fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
+fn local_light(point: SurfacePoint, pixel: vec2<f32>, crossing: Crossing) -> vec3<f32> {
     if !lights_on() {
         return vec3<f32>(0.0);
     }
@@ -83,7 +83,7 @@ fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
     for (var n = 0u; n < range.y; n++) {
         let light = cluster_light(cluster, n);
         if shaped || capped || (kept && light.region != 0u) {
-            sum += shaped_light(point, light, shaped, kept, &inside);
+            sum += shaped_light(point, crossing, light, shaped, kept, &inside);
             continue;
         }
         let to_light = light.position - point.world;
@@ -94,7 +94,11 @@ fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
         }
         let l = to_light * inverseSqrt(max(d2, 1.0e-8));
         let n_l = dot(point.normal, l);
-        if n_l <= 0.0 {
+        var back = 0.0;
+        if crossing.passes {
+            back = crossing_back(crossing, max(-dot(crossing.face, l), 0.0), dot(point.view, l));
+        }
+        if n_l <= 0.0 && back <= 0.0 {
             continue;
         }
         let ratio = d2 / r2;
@@ -106,11 +110,16 @@ fn local_light(point: SurfacePoint, pixel: vec2<f32>) -> vec3<f32> {
         if falloff == 0.0 {
             continue;
         }
-        let half_vector = normalize(point.view + l);
-        let n_h = max(dot(point.normal, half_vector), 0.0);
-        let highlight = fresnel(point.f0, max(dot(point.view, half_vector), 0.0))
-            * (distribution(n_h, point.alpha) * visibility(point.n_v, n_l, point.alpha));
-        sum += (point.diffuse_color + highlight * specular) * light.color * (falloff * n_l);
+        if n_l > 0.0 {
+            let half_vector = normalize(point.view + l);
+            let n_h = max(dot(point.normal, half_vector), 0.0);
+            let highlight = fresnel(point.f0, max(dot(point.view, half_vector), 0.0))
+                * (distribution(n_h, point.alpha) * visibility(point.n_v, n_l, point.alpha));
+            sum += (point.diffuse_color + highlight * specular) * light.color * (falloff * n_l);
+        }
+        if back > 0.0 {
+            sum += crossing.light * light.color * (falloff * back);
+        }
     }
     return sum * saturate((end - depth) / (0.1 * end));
 }
@@ -131,7 +140,9 @@ fn reflecting(point: SurfacePoint) -> Reflecting {
 
 fn lit(surface: SurfacePoint, pixel: vec2<f32>) -> Shaded {
     let point = widened(surface);
-    return shade_surface(point, pixel, local_light(point, pixel) + point.added_light);
+    let crossing = crossing_of(point);
+    return shade_surface(point, pixel, crossing,
+        local_light(point, pixel, crossing) + point.added_light);
 }
 
 fn given_reflectance(point: SurfacePoint, reflectance: vec3<f32>, diffuse: vec3<f32>)

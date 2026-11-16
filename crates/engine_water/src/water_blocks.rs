@@ -172,18 +172,6 @@ impl Blocks {
         self.tiles.get(&slot).and_then(TileState::held)
     }
 
-    pub(crate) fn shows(
-        &self,
-        slot: Slot,
-        stamp: engine_core::Stamp,
-        shown: Option<RecordKey>,
-    ) -> bool {
-        match self.tiles.get(&slot) {
-            Some(TileState::Held(tile)) => tile.stamp == stamp && tile.shown() == shown,
-            Some(TileState::Behind(_) | TileState::Waiting { .. }) | None => false,
-        }
-    }
-
     fn fall_behind(&mut self, slot: Slot, stamp: engine_core::Stamp) {
         let behind =
             matches!(self.tiles.get(&slot), Some(TileState::Held(held)) if held.stamp != stamp);

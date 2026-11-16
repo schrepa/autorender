@@ -1,12 +1,14 @@
 use std::ops::Range;
 use std::sync::Arc;
 
-use bevy_ecs::prelude::{Entity, Resource};
+use bevy_ecs::prelude::{Component, Entity, Resource};
 use engine_heightfield::tile::{
-    BIOME_WORDS, H_BIOMES, H_EROSION, H_FADE, H_HYDROLOGY, H_MATERIALS, H_PATHS, H_PROGRAM,
-    H_READS, H_STACK, H_WET_BIOMES, MAX_MATERIALS, MAX_STACK, OP_ADD, OP_CONSTANT, OP_CURVATURE,
-    OP_DEPOSIT, OP_END, OP_FACING, OP_FLOOD, OP_FLOW, OP_GRADIENT, OP_GRAIN, OP_HEIGHT, OP_INVERT,
-    OP_LAKE, OP_MAX, OP_MIN, OP_MULTIPLY, OP_NOISE, OP_PATH, OP_POWER, OP_REMAP, OP_RIVER,
+    BIOME_WORDS, H_BIOMES, H_DEBRIS, H_EROSION, H_FADE, H_HYDROLOGY, H_MAPS, H_MATERIALS, H_PATHS,
+    H_PROGRAM, H_READS, H_SITE, H_STACK, H_WET_BIOMES, LAYER_COVERS, MAX_MAPS, MAX_MATERIALS,
+    MAX_STACK, OP_ADD,
+    OP_CONSTANT, OP_CURVATURE, OP_DEPOSIT, OP_END, OP_FACING, OP_FLOOD, OP_FLOW, OP_GRADIENT,
+    OP_GRAIN, OP_HEIGHT, OP_INVERT, OP_LAKE, OP_MAP, OP_MAP_VALUE, OP_MAX, OP_MIN, OP_MULTIPLY,
+    OP_NOISE, OP_PATH, OP_POWER, OP_REMAP, OP_RIVER,
     OP_VALUE, OP_WETNESS, OP_WORN, Placed, Steep,
 };
 use engine_place::{
@@ -107,6 +109,7 @@ pub struct TileFace {
     pub holes: Option<Arc<[u64]>>,
     pub materials: TileMaterials,
     pub control: Option<Arc<[u32]>>,
+    pub site: Option<Arc<[u32]>>,
     pub river_edges: Option<Arc<[u16]>>,
     pub river_beds: Option<Arc<[u16]>>,
     pub patch_bounds: Arc<[[f32; 2]]>,
@@ -148,6 +151,7 @@ pub struct TerrainEntry {
     pub pixel_error: f32,
     pub level_errors: Arc<[f32]>,
     pub surface_program: bool,
+    pub site_ranges: Option<[[f32; 2]; 4]>,
     pub baked: Option<Arc<engine_heightfield::Layers>>,
     pub baking: bool,
     pub macro_map: Option<TextureHandle>,
@@ -209,6 +213,8 @@ impl Slot for GroundSurface {
         OP_FACING,
         OP_VALUE,
         OP_END,
+        OP_MAP,
+        OP_MAP_VALUE,
         H_PROGRAM,
         H_STACK,
         H_BIOMES,
@@ -219,17 +225,21 @@ impl Slot for GroundSurface {
         H_FADE,
         H_WET_BIOMES,
         H_EROSION,
+        H_MAPS,
+        H_SITE,
+        H_DEBRIS,
         BIOME_WORDS,
+        LAYER_COVERS,
         MAX_STACK,
         MAX_MATERIALS,
+        MAX_MAPS,
     ));
 }
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct Heightfield {
     pub leaf_indices: Arc<[u32]>,
-    pub subdivision_error: f32,
-    pub water_leaves: [u32; 2],
+    pub water_leaves: u32,
 }
 
 impl Slot for Heightfield {
@@ -268,6 +278,7 @@ pub struct GroundTiles {
     pub layers: u32,
     pub tables: Vec<(Entity, u32)>,
     pub palette: Vec<(Entity, Option<u32>)>,
+    pub whole: u32,
 }
 
 impl Slot for GroundTiles {
@@ -277,6 +288,25 @@ impl Slot for GroundTiles {
         TILE_QUADS,
         PALETTE_ENTRIES,
     ));
+}
+
+#[derive(Component, Clone, Debug, Default, PartialEq)]
+pub struct GroundLayerAsks {
+    pub textures: Vec<TextureHandle>,
+}
+
+#[derive(Component, Clone, Debug, Default, PartialEq)]
+pub struct GroundLayersHeld {
+    pub layers: Vec<(TextureHandle, u32)>,
+}
+
+impl GroundLayersHeld {
+    pub fn layer(&self, texture: TextureHandle) -> Option<u32> {
+        self.layers
+            .iter()
+            .find(|(held, _)| *held == texture)
+            .map(|&(_, layer)| layer)
+    }
 }
 
 #[derive(Resource, Default)]
@@ -316,20 +346,8 @@ impl Slot for PlacedTiles {
     const WGSL: Option<&'static str> = Some(include_str!("places/placed_tiles.wgsl"));
 }
 
-#[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub struct Cover {
-    pub density: f32,
-    pub widths: Vec<(Entity, f32)>,
-}
-
-impl Cover {
-    pub fn width_of(&self, terrain: Entity) -> f32 {
-        self.widths
-            .iter()
-            .find(|(covered, _)| *covered == terrain)
-            .map_or(0.0, |&(_, width)| width)
-    }
-}
+#[derive(Resource, Default)]
+pub struct Cover;
 
 impl Slot for Cover {
     const NAME: &'static str = "cover";

@@ -22,6 +22,7 @@ pub struct TileShading {
     key: TileKey,
     control: Box<[u32]>,
     gradients: Box<[u32]>,
+    site: Box<[u32]>,
 }
 
 impl TileShading {
@@ -87,9 +88,36 @@ impl TileShading {
         stored(&self.gradients)
     }
 
-    pub fn bytes(&self) -> u64 {
-        ((self.control.len() + self.gradients.len()) * 4) as u64
+    pub fn site_texels(&self) -> Box<[u32]> {
+        stored(&self.site)
     }
+
+    pub fn bytes(&self) -> u64 {
+        ((self.control.len() + self.gradients.len() + self.site.len()) * 4) as u64
+    }
+}
+
+fn byte_planes(words: &[u32]) -> Vec<u8> {
+    let mut bytes = vec![0_u8; 4 * AREA];
+    for (at, value) in words.iter().enumerate() {
+        for (plane, byte) in value.to_le_bytes().into_iter().enumerate() {
+            bytes[plane * AREA + at] = byte;
+        }
+    }
+    bytes
+}
+
+fn plane_words(bytes: &[u8]) -> Box<[u32]> {
+    (0..AREA)
+        .map(|at| {
+            u32::from_le_bytes([
+                bytes[at],
+                bytes[AREA + at],
+                bytes[2 * AREA + at],
+                bytes[3 * AREA + at],
+            ])
+        })
+        .collect()
 }
 
 fn stored(plane: &[u32]) -> Box<[u32]> {
@@ -106,13 +134,8 @@ fn stored(plane: &[u32]) -> Box<[u32]> {
 impl codec::Codec for TileShading {
     fn write(&self, out: &mut Writer) {
         out.put(&self.key);
-        let mut bytes = vec![0_u8; 4 * AREA];
-        for (at, value) in self.control.iter().enumerate() {
-            for (plane, byte) in value.to_le_bytes().into_iter().enumerate() {
-                bytes[plane * AREA + at] = byte;
-            }
-        }
-        codec::put_planes(out, &bytes, SIDE);
+        codec::put_planes(out, &byte_planes(&self.control), SIDE);
+        codec::put_planes(out, &byte_planes(&self.site), SIDE);
         let mut halves = vec![0_u16; 2 * AREA];
         for (at, &word) in self.gradients.iter().enumerate() {
             halves[at] = word as u16;
@@ -124,27 +147,19 @@ impl codec::Codec for TileShading {
     fn read(input: &mut Reader<'_>) -> Result<Self, Error> {
         let key = input.get()?;
         let bytes = codec::get_planes(input, SIDE)?;
+        let sited = codec::get_planes(input, SIDE)?;
         let halves = codec::get_wide_planes(input, SIDE)?;
-        if bytes.len() != 4 * AREA || halves.len() != 2 * AREA {
+        if bytes.len() != 4 * AREA || sited.len() != 4 * AREA || halves.len() != 2 * AREA {
             return Err(codec::invalid("$.shading"));
         }
-        let control = (0..AREA)
-            .map(|at| {
-                u32::from_le_bytes([
-                    bytes[at],
-                    bytes[AREA + at],
-                    bytes[2 * AREA + at],
-                    bytes[3 * AREA + at],
-                ])
-            })
-            .collect();
         let gradients = (0..AREA)
             .map(|at| u32::from(halves[at]) | u32::from(halves[AREA + at]) << 16)
             .collect();
         Ok(Self {
             key,
-            control,
+            control: plane_words(&bytes),
             gradients,
+            site: plane_words(&sited),
         })
     }
 }
@@ -171,15 +186,20 @@ struct Sums {
     total: u32,
     wet: u32,
     gradient: [f32; 2],
+    site: [u32; 4],
 }
 
 impl Sums {
     fn clear(&mut self) {
         self.materials.clear();
         (self.total, self.wet, self.gradient) = (0, 0, [0.0; 2]);
+        self.site = [0; 4];
     }
 
-    fn add(&mut self, control: Control, gradient: [f32; 2], weight: u32) {
+    fn add(&mut self, (control, site): (Control, u32), gradient: [f32; 2], weight: u32) {
+        for (sum, byte) in self.site.iter_mut().zip(site.to_le_bytes()) {
+            *sum += weight * u32::from(byte);
+        }
         let blend = u32::from(control.blend);
         for (material, share) in [(control.a, 255 - blend), (control.b, blend)] {
             let part = weight * share;
@@ -204,7 +224,7 @@ impl Sums {
         ];
     }
 
-    fn mean(&self) -> (u32, u32) {
+    fn mean(&self) -> (u32, u32, u32) {
         let heavier = |a: (u8, u32), b: (u8, u32)| a.1 > b.1 || (a.1 == b.1 && a.0 < b.0);
         let mut first: Option<(u8, u32)> = None;
         let mut second: Option<(u8, u32)> = None;
@@ -229,14 +249,15 @@ impl Sums {
         };
         let weight = total as f32;
         let gradient = [self.gradient[0] / weight, self.gradient[1] / weight];
-        (control.pack(), gradient_word(gradient))
+        let site = u32::from_le_bytes(self.site.map(|sum| ((sum + total / 2) / total) as u8));
+        (control.pack(), gradient_word(gradient), site)
     }
 }
 
 fn averaged(
     pyramid: &Pyramid,
     key: TileKey,
-    sample: &dyn Fn(i64, i64) -> (u32, [f32; 2]),
+    sample: &dyn Fn(i64, i64) -> ((u32, u32), [f32; 2]),
 ) -> TileShading {
     let finer = u32::from(key.level).saturating_sub(1);
     let quads = i64::from(TILE_QUADS);
@@ -251,29 +272,32 @@ fn averaged(
     let (columns, rows) = (along(0), along(1));
     let mut control = Vec::with_capacity(AREA);
     let mut gradients = Vec::with_capacity(AREA);
+    let mut sites = Vec::with_capacity(AREA);
     let mut sums = Sums::default();
     for (row, row_count) in &rows {
         for (column, column_count) in &columns {
             sums.clear();
             for &(z, weight_z) in &row[..*row_count] {
                 for &(x, weight_x) in &column[..*column_count] {
-                    let (value, gradient) = sample(x, z);
+                    let ((value, site), gradient) = sample(x, z);
                     sums.add(
-                        Control::unpack(value).unwrap_or_default(),
+                        (Control::unpack(value).unwrap_or_default(), site),
                         gradient,
                         weight_x * weight_z,
                     );
                 }
             }
-            let (value, gradient) = sums.mean();
+            let (value, gradient, site) = sums.mean();
             control.push(value);
             gradients.push(gradient);
+            sites.push(site);
         }
     }
     TileShading {
         key,
         control: control.into_boxed_slice(),
         gradients: gradients.into_boxed_slice(),
+        site: sites.into_boxed_slice(),
     }
 }
 
@@ -313,6 +337,7 @@ struct Window {
     first: [i64; 2],
     control: Vec<u32>,
     gradients: Vec<[f32; 2]>,
+    site: Vec<u32>,
 }
 
 impl Window {
@@ -345,6 +370,7 @@ impl ShadingMaking {
                 first,
                 control: vec![0; WINDOW * WINDOW],
                 gradients: vec![[0.0; 2]; WINDOW * WINDOW],
+                site: vec![0; WINDOW * WINDOW],
             },
             inputs: SurfaceInputs::default(),
         };
@@ -382,7 +408,7 @@ impl ShadingMaking {
                 let window = &ground.window;
                 averaged(&pyramid, key, &|x, z| {
                     let at = window.at(x, z);
-                    (window.control[at], window.gradients[at])
+                    ((window.control[at], window.site[at]), window.gradients[at])
                 })
             }
             Reads::Finer(places) => {
@@ -394,10 +420,13 @@ impl ShadingMaking {
                     let (tx, tz) = ((x / quads).min(columns - 1), (z / quads).min(rows - 1));
                     let place = ((tz - z0) * 4 + (tx - x0)) as usize;
                     let Some(shading) = places.get(place).and_then(Option::as_ref) else {
-                        return (0, [0.0; 2]);
+                        return ((0, 0), [0.0; 2]);
                     };
                     let at = (z - tz * quads) as usize * SIDE + (x - tx * quads) as usize;
-                    (shading.control[at], word_gradient(shading.gradients[at]))
+                    (
+                        (shading.control[at], shading.site[at]),
+                        word_gradient(shading.gradients[at]),
+                    )
                 })
             }
         };
@@ -470,6 +499,10 @@ impl Ground {
             (row, columns.clone()),
             (&mut window.control[start..start + columns.len()], inputs),
         );
+        let site = inputs.site();
+        if site.len() == columns.len() {
+            window.site[start..start + columns.len()].copy_from_slice(site);
+        }
         let height = |r: usize, c: usize| heights[r * stride + c];
         for (offset, column) in columns.clone().enumerate() {
             let around = [row - 1, row, row + 1]

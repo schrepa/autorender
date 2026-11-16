@@ -3,20 +3,23 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use engine_core::{Error, ErrorCode, Expected};
-use engine_math::clamp;
+use engine_math::{clamp, max, min};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use engine_codec::{Codec, Reader, Writer, get_grid, invalid, on_grid, put_grid};
 use engine_heightfield::grid::{MAX_LEVEL, Pyramid};
 use engine_heightfield::layer::{
-    Below, LayerFiles, LayerKind, Made, Place, Row, TerrainLayer, no_files, no_points, same_as,
+    Below, ChangeMap, LayerFiles, LayerKind, Made, Place, Published, Row, TerrainLayer, image_row,
+    no_files, no_points, same_as,
 };
 use engine_heightfield::tile::{
     Compiled, Expr, Input, Reads, RiverInputs, RowInputs, RowScratch, SampleShape, Scope, producer,
     read_map, terrain_error, unknown_map,
 };
-use engine_heightfield::{Blend, Gather, HydrologySample, Layers, PathSample, TileHeights};
+use engine_heightfield::{
+    Blend, Gather, HeightImage, HydrologySample, Layers, PathSample, TileHeights,
+};
 
 pub static EXPRESSION: LayerKind = LayerKind {
     name: "expression",
@@ -46,6 +49,23 @@ fn is_add(blend: &Blend) -> bool {
 }
 
 #[derive(Clone, Debug, PartialEq)]
+struct Held {
+    name: String,
+    image: HeightImage,
+    range: [f32; 2],
+}
+
+engine_codec::record!(Held { name, image, range });
+
+#[derive(Clone, Debug, PartialEq)]
+struct HeldMaps {
+    spacing: f32,
+    maps: Vec<Held>,
+}
+
+engine_codec::record!(HeldMaps { spacing, maps });
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct ExpressionLayer {
     settings: ExpressionSettings,
     height: Option<Compiled>,
@@ -54,6 +74,7 @@ pub struct ExpressionLayer {
     reads: Reads,
     shaped: bool,
     shapes: Option<Arc<ShapeGrid>>,
+    held: Option<Arc<HeldMaps>>,
 }
 
 impl ExpressionLayer {
@@ -104,11 +125,59 @@ impl ExpressionLayer {
             reads,
             shaped,
             shapes: None,
+            held: None,
         })
     }
 
     pub fn authored(&self) -> &ExpressionSettings {
         &self.settings
+    }
+
+    fn imaged(&self) -> bool {
+        self.settings.level.is_some() && !self.maps.is_empty()
+    }
+
+    fn held_maps(
+        &self,
+        below: &Layers,
+        (heights, width): (&[f32], usize),
+        spacing: f32,
+    ) -> HeldMaps {
+        let xs: Vec<f32> = (0..width).map(|x| x as f32 * spacing).collect();
+        let under = Below::new(below, below.layers().len());
+        let maps = (self.maps.iter())
+            .map(|(name, program)| {
+                let mut values = vec![0.0_f32; heights.len()];
+                for (z, (heights, values)) in
+                    (heights.chunks(width).zip(values.chunks_mut(width))).enumerate()
+                {
+                    let at = z as f32 * spacing;
+                    let row = Row {
+                        xs: &xs,
+                        z: at,
+                        spacing,
+                        low: glam::Vec2::new(0.0, at),
+                        high: glam::Vec2::new(xs[width - 1], at),
+                    };
+                    self.evaluate(program, (under, &row), heights, values);
+                }
+                let (mut low, mut high) = (f32::INFINITY, f32::NEG_INFINITY);
+                for &value in &values {
+                    (low, high) = (min(low, value), max(high, value));
+                }
+                let span = max(high - low, 1.0e-3);
+                let samples = (values.iter())
+                    .map(|&value| (clamp((value - low) / span, 0.0, 1.0) * 65_535.0 + 0.5) as u16)
+                    .collect();
+                Held {
+                    name: name.clone(),
+                    image: HeightImage::new(width as u32, (heights.len() / width) as u32, samples)
+                        .expect("grid_two_samples_each_way"),
+                    range: [low, low + span],
+                }
+            })
+            .collect();
+        HeldMaps { spacing, maps }
     }
 
     fn cost(&self) -> u64 {
@@ -219,7 +288,8 @@ impl TerrainLayer for ExpressionLayer {
             .put(&self.settings.blend)
             .put(&maps)
             .put(&self.settings.level)
-            .put(&self.shapes);
+            .put(&self.shapes)
+            .put(&self.held);
     }
 
     fn settings(&self) -> Value {
@@ -235,11 +305,36 @@ impl TerrainLayer for ExpressionLayer {
     }
 
     fn bakes(&self) -> bool {
-        self.shaped
+        self.shaped || self.imaged()
     }
 
     fn outputs(&self) -> Vec<String> {
         self.maps.iter().map(|(name, _)| name.clone()).collect()
+    }
+
+    fn images(&self) -> Vec<String> {
+        if self.imaged() {
+            self.outputs()
+        } else {
+            Vec::new()
+        }
+    }
+
+    fn published(&self) -> Vec<Published<'_>> {
+        let Some(held) = self.held.as_deref() else {
+            return Vec::new();
+        };
+        (held.maps.iter())
+            .map(|map| Published {
+                name: &map.name,
+                map: ChangeMap {
+                    spacing: held.spacing,
+                    image: &map.image,
+                    range: map.range,
+                },
+                rests: None,
+            })
+            .collect()
     }
 
     fn check(&self, place: Place<'_>) -> Result<(), Error> {
@@ -272,7 +367,7 @@ impl TerrainLayer for ExpressionLayer {
     }
 
     fn needs_bake(&self) -> bool {
-        self.shaped && self.shapes.is_none()
+        (self.shaped && self.shapes.is_none()) || (self.imaged() && self.held.is_none())
     }
 
     fn bake(
@@ -283,21 +378,26 @@ impl TerrainLayer for ExpressionLayer {
     ) -> Option<Arc<dyn TerrainLayer>> {
         let level = self.settings.level.filter(|_| self.needs_bake())?;
         let gather = Gather::new(level, below, pyramid, tiles);
-        let heights: Box<[f32]> = (gather.heights.iter())
-            .map(|&height| on_grid(height))
-            .collect();
         let spacing = pyramid.spacing(gather.level);
-        let shapes = ShapeGrid::new(spacing, gather.width, heights);
-        Some(Arc::new(Self {
-            shapes: Some(Arc::new(shapes)),
-            ..self.clone()
-        }))
+        let mut baked = self.clone();
+        if self.shaped {
+            let heights: Box<[f32]> = (gather.heights.iter())
+                .map(|&height| on_grid(height))
+                .collect();
+            baked.shapes = Some(Arc::new(ShapeGrid::new(spacing, gather.width, heights)));
+        }
+        if self.imaged() {
+            let grid = (&gather.heights[..], gather.width);
+            baked.held = Some(Arc::new(baked.held_maps(below, grid, spacing)));
+        }
+        Some(Arc::new(baked))
     }
 
     fn unbaked(&self) -> Option<Arc<dyn TerrainLayer>> {
-        self.shaped.then(|| {
+        self.bakes().then(|| {
             Arc::new(Self {
                 shapes: None,
+                held: None,
                 ..self.clone()
             }) as Arc<dyn TerrainLayer>
         })
@@ -311,6 +411,20 @@ impl TerrainLayer for ExpressionLayer {
         heights: &[f32],
         out: &mut [f32],
     ) -> bool {
+        if self.imaged() {
+            let held = (self.held.as_deref())
+                .and_then(|held| Some((held, held.maps.iter().find(|map| map.name == name)?)));
+            let Some((held, map)) = held else {
+                return false;
+            };
+            let count = out.len().min(row.xs.len());
+            let xs = row.xs[..count].iter().copied();
+            let own = (held.spacing, row.spacing);
+            image_row(&map.image, map.range, own, xs, row.z, |index, value| {
+                out[index] = value * below.shown(row.xs[index], row.z);
+            });
+            return true;
+        }
         match self.maps.iter().find(|(known, _)| known == name) {
             Some((_, program)) if self.ready(program) => {
                 self.evaluate(program, (below, row), heights, out);
@@ -415,15 +529,17 @@ fn read(input: &mut Reader<'_>) -> Made {
     let maps: Vec<(String, Expr)> = input.get()?;
     let level = input.get()?;
     let shapes: Option<Arc<ShapeGrid>> = input.get()?;
+    let held: Option<Arc<HeldMaps>> = input.get()?;
     let layer = ExpressionLayer::new(ExpressionSettings {
         height,
         blend,
         maps: maps.into_iter().collect(),
         level,
     })?;
-    let shaped = layer.shaped;
+    let (shaped, imaged) = (layer.shaped, layer.imaged());
     Ok(Arc::new(ExpressionLayer {
         shapes: shapes.filter(|_| shaped),
+        held: held.filter(|_| imaged),
         ..layer
     }))
 }

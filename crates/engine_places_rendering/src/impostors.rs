@@ -66,16 +66,8 @@ pub struct ImpostorRecords {
     pub live: u32,
 }
 
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
-pub struct Impostors {
-    pub pixels: f32,
-}
-
-impl Default for Impostors {
-    fn default() -> Self {
-        Self { pixels: 128.0 }
-    }
-}
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct Impostors;
 
 impl Slot for Impostors {
     const NAME: &'static str = "impostors";

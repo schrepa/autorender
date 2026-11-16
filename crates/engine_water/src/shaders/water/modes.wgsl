@@ -2,16 +2,12 @@ import package::face::debug::{DEBUG_EMPTY, DEBUG_OTHER, DebugShade, DebugTargets
     debug_record_kind};
 import package::generated::kinds::KIND_WATER;
 import package::generated::pieces::water::piece;
-import package::generated::water::{BREAK_FULL, BREAK_ONSET, DEBUG_SPAN_STEPS, SHOWN_WATER_DEPTH,
+import package::generated::water::{DEBUG_SPAN_STEPS, SHOWN_WATER_DEPTH,
     SHOWN_WATER_EDDIES, SHOWN_WATER_FROUDE, SHOWN_WATER_ROUGHNESS, SHOWN_WATER_SPAN,
     SHOWN_WATER_SPEED, SHOWN_WATER_TURBULENCE, SHOWN_WATER_WHITE, water_probe_detail_falls,
     water_probe_detail_roughness, water_probe_detail_span, water_probe_state_reach,
     water_probe_state_turbulence, water_probe_state_white};
 
-const DEBUG_WATER_DEEPEST: f32 = 2.0;
-const DEBUG_WATER_FASTEST: f32 = 6.0;
-const DEBUG_WATER_FROUDE_TOP: f32 = 3.0;
-const DEBUG_WATER_CRITICAL: f32 = 0.04;
 const DEBUG_WATER_DEPTHS = array<vec3<f32>, 3>(
     vec3<f32>(0.88, 0.96, 0.88), vec3<f32>(0.2, 0.62, 0.88), vec3<f32>(0.04, 0.09, 0.4),
 );
@@ -45,19 +41,21 @@ fn debug_ramp(stops: array<vec3<f32>, 3>, t: f32) -> vec3<f32> {
 }
 
 fn debug_froude_color(froude: f32) -> vec3<f32> {
-    if abs(froude - 1.0) < DEBUG_WATER_CRITICAL {
+    let ranges = piece().ranges;
+    if abs(froude - 1.0) < ranges.w {
         return vec3<f32>(0.0);
     }
     if froude < 1.0 {
         return mix(vec3<f32>(0.08, 0.2, 0.7), vec3<f32>(0.65, 0.92, 1.0), saturate(froude));
     }
     return mix(vec3<f32>(1.0, 0.9, 0.3), vec3<f32>(0.8, 0.08, 0.08),
-        saturate((froude - 1.0) / (DEBUG_WATER_FROUDE_TOP - 1.0)));
+        saturate((froude - 1.0) / (ranges.z - 1.0)));
 }
 
 fn debug_eddies_color(froude: f32) -> vec3<f32> {
-    let calm = saturate(froude / BREAK_ONSET);
-    let breaking = saturate((froude - BREAK_ONSET) / (BREAK_FULL - BREAK_ONSET));
+    let breaks = piece().breaking;
+    let calm = saturate(froude / breaks.x);
+    let breaking = saturate((froude - breaks.x) / (breaks.y - breaks.x));
     return debug_ramp(DEBUG_WATER_EDDIES, 0.5 * (calm + breaking));
 }
 
@@ -68,12 +66,13 @@ fn debug_share(byte: u32) -> f32 {
 fn debug_water_color(view: u32, ids: vec4<u32>, numbers: vec2<u32>) -> vec3<f32> {
     let motion = unpack2x16float(ids.y);
     let froudes = unpack2x16float(numbers.x);
+    let ranges = piece().ranges;
     switch view {
         case SHOWN_WATER_DEPTH: {
-            return debug_ramp(DEBUG_WATER_DEPTHS, sqrt(max(motion.x, 0.0) / DEBUG_WATER_DEEPEST));
+            return debug_ramp(DEBUG_WATER_DEPTHS, sqrt(max(motion.x, 0.0) / ranges.x));
         }
         case SHOWN_WATER_SPEED: {
-            return debug_ramp(DEBUG_WATER_SPEEDS, motion.y / DEBUG_WATER_FASTEST);
+            return debug_ramp(DEBUG_WATER_SPEEDS, motion.y / ranges.y);
         }
         case SHOWN_WATER_FROUDE: {
             return debug_froude_color(froudes.x);

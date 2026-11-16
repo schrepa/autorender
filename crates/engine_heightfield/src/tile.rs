@@ -8,7 +8,7 @@ use crate::bed::{Bed, Reach};
 use crate::errors::ErrorPyramid;
 use crate::grid::{Pyramid, TILE_QUADS, TILE_SAMPLES, TileKey};
 use crate::hydrology::{HydrologySample, RIVER_FAR, WaterGrid};
-use crate::layer::{Below, LayerTile, Row, TileFrame};
+use crate::layer::{Below, LayerTile, Row, TileFrame, maps};
 use crate::layers::{Layers, Stamp};
 use crate::path::PathSample;
 use crate::rivers::{RiverRaster, RiverWater};
@@ -24,20 +24,23 @@ pub use crate::grid::TILE_STRIDE;
 pub use beds::{RiverInputs, RiverRows};
 pub use expr::{Expr, MAX_EXPR_DEPTH, MAX_EXPR_LIST, Ramp, Remap, producer, read_map};
 pub use gpu::{
-    BIOME_WORDS, H_BIOMES, H_EROSION, H_FADE, H_HYDROLOGY, H_MATERIALS, H_PATHS, H_PROGRAM,
-    H_READS, H_STACK, H_WET_BIOMES, MAX_MATERIALS, MAX_STACK, OP_ADD, OP_CONSTANT, OP_CURVATURE,
-    OP_DEPOSIT, OP_END, OP_FACING, OP_FLOOD, OP_FLOW, OP_GRADIENT, OP_GRAIN, OP_HEIGHT, OP_INVERT,
-    OP_LAKE, OP_MAX, OP_MIN, OP_MULTIPLY, OP_NOISE, OP_PATH, OP_POWER, OP_REMAP, OP_RIVER,
-    OP_VALUE, OP_WETNESS, OP_WORN, SurfaceData, control_at, header, op,
+    BIOME_WORDS, H_BIOMES, H_EROSION, H_FADE, H_HYDROLOGY, H_MAPS, H_MATERIALS, H_PATHS, H_PROGRAM,
+    H_DEBRIS, H_READS, H_SITE, H_STACK, H_WET_BIOMES, LAYER_COVERS, MAX_MAPS, MAX_MATERIALS,
+    MAX_STACK, OP_ADD,
+    OP_CONSTANT, OP_CURVATURE, OP_DEPOSIT, OP_END, OP_FACING, OP_FLOOD, OP_FLOW, OP_GRADIENT,
+    OP_GRAIN, OP_HEIGHT, OP_INVERT, OP_LAKE, OP_MAP, OP_MAP_VALUE, OP_MAX, OP_MIN, OP_MULTIPLY,
+    OP_NOISE, OP_PATH, OP_POWER, OP_REMAP, OP_RIVER, OP_VALUE, OP_WETNESS, OP_WORN, SurfaceData,
+    control_at, header, op,
 };
 pub use placement::{
     AUTHORED_LAYER, AuthoredPlacement, FarPlacement, Obstacle, Placed, PlacementChoice,
-    PlacementLayer, Placing,
+    PlacementLayer, Placing, SizedBy,
 };
 pub use recipe::{Recipe, StackView, TerrainRecipe, stamped};
-use surface::erosion_row;
+use surface::{erosion_row, published_row, rested};
 pub use surface::{
-    Biome, BiomeLayer, BiomeRules, Biomes, Compiled, Facing, Input, MAX_BIOMES, MAX_SLOPE_DEGREES,
+    Biome, BiomeLayer, BiomeRules, Biomes, Compiled, Cover, Facing, Grows, Input, MAX_BIOMES,
+    MAX_SLOPE_DEGREES,
     MAX_SURFACE_MATERIALS, MacroCauses, NoiseMask, Reads, RowInputs, RowScratch, SampleInputs,
     Scope, Steep, SteepLayer, setting_error, terrain_error, unknown_map,
 };
@@ -343,6 +346,7 @@ pub struct Tile {
     heights: Arc<[f32]>,
     holes: Option<Arc<[u64]>>,
     control: Option<Arc<[u32]>>,
+    site: Option<Arc<[u32]>>,
     river_edges: Option<Arc<[u16]>>,
     river_beds: Option<Arc<[u16]>>,
     placed: Option<Arc<[Placed]>>,
@@ -385,6 +389,7 @@ impl Tile {
             heights,
             holes,
             control: None,
+            site: None,
             river_edges: None,
             river_beds: None,
             placed: None,
@@ -433,6 +438,22 @@ impl Tile {
             self.control = Some(Arc::from(control));
             self
         })
+    }
+
+    pub fn with_site(mut self, site: Box<[u32]>) -> Option<Self> {
+        let stride = TILE_STRIDE as usize;
+        (site.len() == stride * stride).then(|| {
+            self.site = Some(Arc::from(site));
+            self
+        })
+    }
+
+    pub fn site(&self) -> Option<&[u32]> {
+        self.site.as_deref()
+    }
+
+    pub fn shared_site(&self) -> Option<Arc<[u32]>> {
+        self.site.clone()
     }
 
     pub fn river_edges(&self) -> Option<&[u16]> {
@@ -818,6 +839,7 @@ pub struct Generator {
     max: Vec2,
     surface: Option<Arc<BiomeRules>>,
     control: Option<Box<[u32]>>,
+    site: Option<Box<[u32]>>,
     tile: Option<Tile>,
     placed: Vec<Placed>,
     rasters: Vec<Option<RiverRaster>>,
@@ -827,6 +849,7 @@ pub struct Generator {
     inputs: SurfaceInputs,
     places: placement::PlaceScratch,
     materials: bool,
+    placed_from: Option<u8>,
 }
 
 #[derive(Default)]
@@ -838,11 +861,22 @@ pub struct SurfaceInputs {
     water: Vec<HydrologySample>,
     erosion: Vec<f32>,
     path: Vec<PathSample>,
+    maps: Vec<Vec<f32>>,
+    site_maps: Vec<Vec<f32>>,
+    site: Vec<u32>,
     scratch: RowScratch,
     weights: Vec<(u8, f32)>,
 }
 
+fn site_byte(value: f32, [low, high]: [f32; 2]) -> u32 {
+    (clamp((value - low) / (high - low), 0.0, 1.0) * 255.0 + 0.5) as u32
+}
+
 impl SurfaceInputs {
+    pub fn site(&self) -> &[u32] {
+        &self.site
+    }
+
     fn clear(&mut self, len: usize) {
         for row in [&mut self.height, &mut self.curvature] {
             row.clear();
@@ -865,8 +899,14 @@ pub fn control_row(
     (out, inputs): (&mut [u32], &mut SurfaceInputs),
 ) {
     let stride = TILE_STRIDE as usize;
-    let reads = rules.reads();
+    let site = layers.site();
+    let reads = Reads {
+        water: rules.reads().water || site.is_some(),
+        erosion: rules.reads().erosion || site.is_some(),
+        ..rules.reads()
+    };
     let (up, down) = (row.saturating_sub(1), (row + 1).min(stride - 1));
+    let debris = layers.rests(maps::DEPOSIT);
     inputs.clear(columns.len());
     if reads.erosion {
         erosion_row(
@@ -901,7 +941,8 @@ pub fn control_row(
             lake: water.lake * shown,
             ..water
         });
-        inputs.erosion[index] *= shown;
+        let change = inputs.erosion[index] * shown;
+        inputs.erosion[index] = rested(change, debris, shape.gradient, shape.curvature);
         inputs.path.push(if shown > 0.0 && reads.path {
             layers.path_at(x, z)
         } else {
@@ -910,6 +951,27 @@ pub fn control_row(
     }
     inputs.zs.clear();
     inputs.zs.resize(columns.len(), z);
+    let at = (&xs[columns.clone()], z, spacing);
+    let shape = (&inputs.gradient[..], &inputs.curvature[..]);
+    published_row(layers, rules.users(), at, shape, &mut inputs.maps);
+    inputs.site.clear();
+    if let Some(site) = site {
+        let names = [site.sun, site.soil, site.exposure];
+        published_row(layers, names, at, shape, &mut inputs.site_maps);
+        let [wetness, sun, depth, exposure] = site.ranges;
+        for index in 0..columns.len() {
+            let soft = max(
+                inputs.site_maps[1][index],
+                max(inputs.erosion[index], 0.0),
+            );
+            inputs.site.push(
+                site_byte(inputs.water[index].wetness, wetness)
+                    | (site_byte(inputs.site_maps[0][index], sun) << 8)
+                    | (site_byte(soft, depth) << 16)
+                    | (site_byte(inputs.site_maps[2][index], exposure) << 24),
+            );
+        }
+    }
     let row_inputs = RowInputs {
         xs: &xs[columns],
         zs: &inputs.zs,
@@ -921,7 +983,11 @@ pub fn control_row(
         erosion: &inputs.erosion,
         path: &inputs.path,
     };
-    rules.control_row(&row_inputs, out, (&mut inputs.scratch, &mut inputs.weights));
+    rules.control_row(
+        (&row_inputs, &inputs.maps),
+        out,
+        (&mut inputs.scratch, &mut inputs.weights),
+    );
 }
 
 impl Generator {
@@ -978,6 +1044,7 @@ impl Generator {
             max,
             surface: None,
             control: None,
+            site: None,
             tile: None,
             placed: Vec::new(),
             rasters: Vec::new(),
@@ -987,7 +1054,14 @@ impl Generator {
             inputs: SurfaceInputs::default(),
             places: placement::PlaceScratch::default(),
             materials: true,
+            placed_from: None,
         }
+    }
+
+    #[must_use]
+    pub fn with_placed_from(mut self, level: u8) -> Self {
+        self.placed_from = Some(level);
+        self
     }
 
     #[must_use]
@@ -1041,6 +1115,12 @@ impl Generator {
                 &mut self.inputs,
             ),
         );
+        if self.inputs.site.len() == stride {
+            let site = self
+                .site
+                .get_or_insert_with(|| vec![0; stride * stride].into_boxed_slice());
+            site[row * stride..(row + 1) * stride].copy_from_slice(&self.inputs.site);
+        }
     }
 
     pub fn advance(&mut self, budget: &mut u64) -> Option<Tile> {
@@ -1119,6 +1199,10 @@ impl Generator {
                         Some(control) => tile.with_control(control)?,
                         None => tile,
                     };
+                    let tile = match self.site.take() {
+                        Some(site) => tile.with_site(site)?,
+                        None => tile,
+                    };
                     let tile = tile.with_rivers(self.river_edges.take(), self.river_beds.take())?;
                     let tile = match lake {
                         Some(surface) => tile.with_lake(surface),
@@ -1126,7 +1210,7 @@ impl Generator {
                     };
                     self.stage = Stage::Done;
                     match &self.surface {
-                        Some(surface) if surface.places(self.key.level, Placing::All) => {
+                        Some(surface) if surface.places_from(self.key.level, self.placed_from) => {
                             self.tile = Some(tile);
                             self.stage = Stage::Place { layer: 0, row: 0 };
                         }
@@ -1143,14 +1227,17 @@ impl Generator {
                         tile,
                         (layer, row),
                         &mut self.placed,
-                        (&self.layers, Placing::All, &mut self.places),
+                        (&self.layers, (Placing::All, self.placed_from), &mut self.places),
                     );
                     *budget = budget.saturating_sub(cost);
                     match next {
                         Some((layer, row)) => self.stage = Stage::Place { layer, row },
                         None => {
-                            *budget = budget
-                                .saturating_sub(surface.place_authored(tile, &mut self.placed));
+                            *budget = budget.saturating_sub(surface.place_authored(
+                                tile,
+                                self.placed_from,
+                                &mut self.placed,
+                            ));
                             let tile = self.tile.take()?;
                             let placed = std::mem::take(&mut self.placed);
                             return Some(tile.with_placed(placed, Placing::All));
@@ -1247,7 +1334,7 @@ impl engine_codec::Codec for Tile {
         let stride = TILE_STRIDE as usize;
         out.put(&self.key).put(&self.spacing);
         engine_codec::put_grid(out, &self.heights, stride);
-        out.put(&self.holes).put(&self.control);
+        out.put(&self.holes).put(&self.control).put(&self.site);
         for planes in [&self.river_edges, &self.river_beds] {
             match planes {
                 Some(planes) => {
@@ -1279,6 +1366,7 @@ impl engine_codec::Codec for Tile {
         let heights = engine_codec::get_grid(input, stride)?;
         let holes = input.get()?;
         let control: Option<Box<[u32]>> = input.get()?;
+        let site: Option<Box<[u32]>> = input.get()?;
         let mut rivers = [None, None];
         for planes in &mut rivers {
             let held: bool = input.get()?;
@@ -1302,6 +1390,9 @@ impl engine_codec::Codec for Tile {
         let mut tile = Self::new(key, spacing, heights, holes).ok_or_else(invalid)?;
         if let Some(control) = control {
             tile = tile.with_control(control).ok_or_else(invalid)?;
+        }
+        if let Some(site) = site {
+            tile = tile.with_site(site).ok_or_else(invalid)?;
         }
         tile = tile
             .with_rivers(river_edges, river_beds)

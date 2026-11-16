@@ -1,9 +1,8 @@
 import package::engine::color::luminance;
+import package::engine::math::PI;
 import package::engine::shading::{Shaded, SurfacePoint};
-import package::engine::view::camera;
 import package::face::ambient::{EnvironmentAt, EnvironmentLight, environment};
 import package::face::ambient_occlusion::ambient_occlusion;
-import package::face::sky::{atmospheric, atmospheric_cover};
 import package::face::sky_visibility::sky_visibility;
 import package::face::sun::{sun_color, sun_direction};
 import package::face::tonemap::exposure;
@@ -13,21 +12,61 @@ import package::lighting_model::faces::lighting::{distribution, environment_brdf
 import package::lighting_model::inputs::{ambient_light, environment_specular, no_environment};
 import package::place::lighting::Reflecting;
 
-const TRANSMISSION_BEND: f32 = 0.3;
-const TRANSMISSION_POWER: f32 = 4.0;
+struct Crossing {
+    face: vec3<f32>,
+    light: vec3<f32>,
+    passes: bool,
+    tangled: f32,
+}
 
 fn transmitted(point: SurfacePoint) -> vec3<f32> {
-    let strength = point.transmission;
+    let strength = point.transmission * piece().model.w;
     if strength <= 0.0 {
         return vec3<f32>(0.0);
     }
-    let bent = sun_direction() + point.normal * TRANSMISSION_BEND;
+    let lobe = piece().thin.zw;
+    let bent = sun_direction() + point.normal * lobe.x;
     let through = saturate(dot(point.view, -normalize(bent)));
-    return point.diffuse_color * (strength * pow(through, TRANSMISSION_POWER));
+    return point.diffuse_color * (strength * pow(through, lobe.y));
+}
+
+fn crossed(albedo: vec3<f32>) -> vec3<f32> {
+    let peak = max(max(albedo.r, albedo.g), max(albedo.b, 1.0e-4));
+    let kept = max(albedo / peak, vec3<f32>(1.0e-4));
+    return albedo * pow(kept, vec3<f32>(piece().thin.y));
+}
+
+fn crossing_of(point: SurfacePoint) -> Crossing {
+    var crossing: Crossing;
+    let plane = cross(point.world_dx, point.world_dy); // filter: none, the face's own plane across the pixel, a direction
+    let faced = dot(plane, plane) > 1.0e-20 && point.thickness == 0.0 && !point.ignore_face;
+    if faced {
+        crossing.face = normalize(plane * select(-1.0, 1.0, dot(plane, point.geometric) >= 0.0));
+    }
+    crossing.tangled = saturate(point.tangled);
+    if faced || crossing.tangled > 0.0 {
+        let share = piece().thin.x * saturate(point.transmission);
+        if share > 0.0 {
+            crossing.light = crossed(point.diffuse_color) * share;
+            crossing.passes = true;
+        }
+    }
+    return crossing;
+}
+
+fn crossing_back(crossing: Crossing, back: f32, along: f32) -> f32 {
+    return mix(back, 0.25 * (1.0 - along), crossing.tangled);
 }
 
 fn transmission_occlusion(point: SurfacePoint) -> f32 {
     return 1.0 - 0.5 * saturate(point.transmission);
+}
+
+fn interreflected(open: f32, albedo: vec3<f32>) -> vec3<f32> {
+    let a = 2.0404 * albedo - 0.3324;
+    let b = -4.7951 * albedo + 0.6417;
+    let c = 2.7552 * albedo + 0.6903;
+    return max(vec3<f32>(open), ((open * a + b) * open + c) * open);
 }
 
 fn sized_highlights() -> bool {
@@ -89,26 +128,33 @@ fn reflected(point: SurfacePoint) -> Reflecting {
     result.across = point.roughness - point.smoother_across;
     let light = environment_of(point);
     let reflectance = environment_reflectance(point);
-    let seen = 1.0 - atmospheric_cover(camera.position.xyz, point.world);
-    result.light = environment_specular(light) * reflectance * (point.occlusion * light.open * seen);
-    result.share = saturate(luminance(reflectance)) * seen;
+    result.light = environment_specular(light) * reflectance * (point.occlusion * light.open);
+    result.share = saturate(luminance(reflectance));
     return result;
 }
 
-fn shade_surface(point: SurfacePoint, pixel: vec2<f32>, local: vec3<f32>) -> Shaded {
+fn shade_surface(point: SurfacePoint, pixel: vec2<f32>, crossing: Crossing, local: vec3<f32>)
+        -> Shaded {
     let normal = point.normal;
     let view = point.view;
     let sun = sun_direction();
     let n_l = dot(normal, sun);
     let specular = piece().model.z;
     var facing = 1.0;
-    let face = cross(point.world_dx, point.world_dy); // filter: none, the face's own plane across the pixel, a direction
-    if dot(face, face) > 1.0e-20 && point.thickness == 0.0 && !point.ignore_face {
-        let toward = select(-1.0, 1.0, dot(face, point.geometric) >= 0.0);
-        facing = smoothstep(-0.05, 0.1, dot(normalize(face) * toward, sun));
+    var back = 0.0;
+    if any(crossing.face != vec3<f32>(0.0)) {
+        let toward = dot(crossing.face, sun);
+        facing = smoothstep(-0.05, 0.1, toward);
+        back = max(-toward, 0.0);
+    }
+    if crossing.tangled > 0.0 {
+        let along = clamp(dot(view, sun), -1.0, 1.0);
+        facing = mix(facing, 1.0 - acos(along) / PI, crossing.tangled);
+        back = crossing_back(crossing, back, along);
     }
     let lambert = max(n_l, 0.0);
-    let wrapped = lambert + (max((n_l + 0.25) / 1.25, 0.0) - lambert) * facing;
+    let around = saturate(point.transmission);
+    let wrapped = lambert + (max((n_l + around) / (1.0 + around), 0.0) - lambert) * facing;
     var highlight = vec3<f32>(0.0);
     if n_l > 0.0 {
         if sized_highlights() {
@@ -128,13 +174,19 @@ fn shade_surface(point: SurfacePoint, pixel: vec2<f32>, local: vec3<f32>) -> Sha
     let inside = light.inside;
     let open = light.open;
     let bounce = point.added_indirect + light.bounce * point.occlusion;
-    let seen = mix(1.0, ambient_occlusion(pixel) * sky_visibility(pixel),
-        transmission_occlusion(point));
-    let sky_light = ((point.diffuse_color * (ambient_light(light) + light.horizon * rim)
-        * inside.x + reflection) * point.occlusion * open
-        + point.diffuse_color * bounce * open * inside.x) * seen;
-    let sunlit = (point.diffuse_color * wrapped + highlight * specular + transmitted(point))
-        * sun_color();
+    let contact = ambient_occlusion(pixel, point.world);
+    let closed = transmission_occlusion(point);
+    let seen = mix(1.0, contact * sky_visibility(pixel, point.world), closed);
+    let sky_seen = interreflected(seen, point.diffuse_color);
+    let bounce_seen = interreflected(mix(1.0, contact, closed), point.diffuse_color);
+    let sky_light = (point.diffuse_color * (ambient_light(light) + light.horizon * rim)
+        * inside.x * sky_seen + reflection * seen) * point.occlusion * open
+        + point.diffuse_color * bounce * open * inside.x * bounce_seen;
+    var sunlit = (point.diffuse_color * (wrapped * point.direct_share.x)
+        + highlight * (specular * PI * point.direct_share.y) + transmitted(point)) * sun_color();
+    if crossing.passes && back > 0.0 {
+        sunlit += crossing.light * sun_color() * back;
+    }
     var visible = 1.0;
     if any(sunlit != vec3<f32>(0.0)) && point.direct_blocked != 1.0 && !point.direct_known
         && inside.y != 0.0 {
@@ -142,9 +194,7 @@ fn shade_surface(point: SurfacePoint, pixel: vec2<f32>, local: vec3<f32>) -> Sha
     }
     let sun_light = sunlit * visible * (1.0 - point.direct_blocked) * inside.y;
     let emitted = point.emissive * piece().model.y;
-    let lit = sky_light + sun_light + emitted + local;
-    let through = atmospheric(lit, camera.position.xyz, point.world, -view);
     var shaded: Shaded;
-    shaded.linear = through.rgb;
+    shaded.linear = sky_light + sun_light + emitted + local;
     return shaded;
 }

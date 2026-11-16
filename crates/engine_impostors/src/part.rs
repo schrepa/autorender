@@ -43,14 +43,11 @@ const BAKE_LABELS: [&str; 4] = [
     "impostor_bake_surface",
 ];
 const BAKE_DEPTH: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
-const SHADE_SCALE: u32 = 4;
-const SHADE_MOST: u32 = 2048;
 const MESH: &[VertexLayout] = &[VertexLayout::Geometry(GeometryStream::Vertex)];
 const EXTENDED: &[VertexLayout] = &[
     VertexLayout::Geometry(GeometryStream::Vertex),
     VertexLayout::Geometry(GeometryStream::Extra),
 ];
-const SHADE_PASS: &str = "impostor_shade";
 const BAKE_PASS: &str = "impostor_bake";
 
 const fn bake_form(vertex: Entry, streams: &'static [VertexLayout]) -> KindForm {
@@ -108,9 +105,9 @@ fn flat(side: u32) -> wgpu::Extent3d {
     }
 }
 
-fn baked(pass: &'static str, entry: Entry, two_sided: bool) -> PassFragment {
+fn baked(entry: Entry, two_sided: bool) -> PassFragment {
     PassFragment {
-        pass: FragmentPass::Own(pass),
+        pass: FragmentPass::Own(BAKE_PASS),
         side: None,
         fragment: FormFragment::Entry {
             entry,
@@ -135,22 +132,20 @@ struct Asked {
 }
 
 struct Drawn {
-    serial: u32,
+    asked: Asked,
     shape: AtlasShape,
     draws: Vec<(GeometryHandle, Option<MaterialHandle>, usize)>,
+    skipped: bool,
 }
 
 pub(crate) struct ImpostorGpu {
     atlas: [Texture<Self>; 4],
     colors: [Texture<Self>; 4],
     depth: Texture<Self>,
-    shade: Texture<Self>,
     uniform: Buffer<Self>,
     kinds: Buffer<Self>,
     read: Buffer<Self>,
-    shading: Pass<Self>,
     baking: Pass<Self>,
-    shade_forms: Vec<Form<Self>>,
     bake_forms: Vec<Form<Self>>,
     cursor: Cursor,
     shape: Option<AtlasShape>,
@@ -166,7 +161,6 @@ impl ImpostorGpu {
             cx.release(texture);
         }
         cx.release(self.depth);
-        cx.release(self.shade);
         cx.release_buffer(self.read);
     }
 
@@ -278,7 +272,12 @@ impl ImpostorGpu {
         cx: &mut Prepare<'_, Self>,
     ) {
         let shape = self.shape.map(|shape| shape.facing(asked.hemisphere));
-        let (Some(shape), true) = (shape, cx.drawable(asked.mesh, asked.material)) else {
+        let held = residency.resident(asked.mesh)
+            && asked.parts.iter().all(|&(mesh, material)| {
+                residency.resident(mesh) && residency.material_resident(material)
+            });
+        let (Some(shape), true, true) = (shape, held, cx.drawable(asked.mesh, asked.material))
+        else {
             cx.deliver::<BakeReads>(asked.serial, Vec::new());
             return;
         };
@@ -303,6 +302,10 @@ impl ImpostorGpu {
                     ))
                 })
                 .collect();
+        if draws.len() <= asked.parts.len() {
+            self.asked.push_back(asked);
+            return;
+        }
         let size = shape.size();
         let baking = record_of(asked.bounds, 0, ([0.0; 3], false), shape);
         let uniform = ImpostorBake {
@@ -316,13 +319,11 @@ impl ImpostorGpu {
         let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.kinds, 4);
         cx.clear_buffer_range(self.kinds, 0..4);
         self.drawing = Some(Drawn {
-            serial: asked.serial,
+            asked,
             shape,
             draws,
+            skipped: false,
         });
-        let (Allocation::Fresh | Allocation::Kept) =
-            cx.allocate(self.shade, flat((size * SHADE_SCALE).min(SHADE_MOST)), 1);
-        cx.run(self.shading);
         for texture in self.colors {
             let (Allocation::Fresh | Allocation::Kept) =
                 cx.allocate(texture, flat(size), shape.levels());
@@ -370,8 +371,9 @@ impl ImpostorGpu {
                 size: 4,
             }],
         );
-        if !cx.read_back_once::<BakeReads>(drawn.serial, self.read, 0..total, AfterRead::Keep) {
-            cx.deliver::<BakeReads>(drawn.serial, Vec::new());
+        let serial = drawn.asked.serial;
+        if !cx.read_back_once::<BakeReads>(serial, self.read, 0..total, AfterRead::Keep) {
+            cx.deliver::<BakeReads>(serial, Vec::new());
         }
     }
 }
@@ -392,7 +394,6 @@ impl GpuPart for ImpostorGpu {
             cx.texture(BAKE_LABELS[kind], FORMATS[kind], Lifetime::Kept)
         });
         let depth = cx.texture("impostor_bake_depth", BAKE_DEPTH, Lifetime::Kept);
-        let shade = cx.texture("impostor_shade", BAKE_DEPTH, Lifetime::Kept);
         let uniform = cx.buffer("impostor_bake", Lifetime::Kept);
         let kinds = cx.buffer("impostor_bake_kinds", Lifetime::Kept);
         let read = cx.buffer("impostor_bake_read", Lifetime::Kept);
@@ -407,45 +408,27 @@ impl GpuPart for ImpostorGpu {
             cx.frame(var, Bind::Texture(texture))?;
         }
         cx.frame(face::ATLAS_SAMPLER, Bind::Sampler(sampler))?;
-        let shading = cx
-            .pass(SHADE_PASS)
-            .label("engine/impostor-shade")
-            .makes_records()
-            .depth_cleared(shade, 0.0)
-            .id();
         let mut baking = cx
             .pass(BAKE_PASS)
             .label("engine/impostor-bake")
-            .makes_records()
-            .after(shading);
+            .makes_records();
         for color in colors {
             baking = baking.color_cleared(color, wgpu::Color::TRANSPARENT);
         }
         let baking = baking.depth_cleared(depth, 0.0).id();
-        let mut shade_forms = Vec::with_capacity(4);
         let mut bake_forms = Vec::with_capacity(4);
         for index in 0..4_usize {
             let (extended, two_sided) = (index & 1 != 0, index & 2 != 0);
-            let (form, shaded, baked_entry) = if extended {
-                (
-                    &BAKE_EXTENDED_FORM,
-                    bake::FS_IMPOSTOR_SHADE_EXTENDED,
-                    bake::FS_IMPOSTOR_BAKE_EXTENDED,
-                )
+            let (form, entry) = if extended {
+                (&BAKE_EXTENDED_FORM, bake::FS_IMPOSTOR_BAKE_EXTENDED)
             } else {
-                (&BAKE_FORM, bake::FS_IMPOSTOR_SHADE, bake::FS_IMPOSTOR_BAKE)
+                (&BAKE_FORM, bake::FS_IMPOSTOR_BAKE)
             };
-            shade_forms.push(cx.form_owning(
-                form,
-                &[baked(SHADE_PASS, shaded, two_sided)],
-                &[(bake::IMPOSTOR_BAKE, Bind::Buffer(uniform))],
-            )?);
             bake_forms.push(cx.form_owning(
                 form,
-                &[baked(BAKE_PASS, baked_entry, two_sided)],
+                &[baked(entry, two_sided)],
                 &[
                     (bake::IMPOSTOR_BAKE, Bind::Buffer(uniform)),
-                    (bake::IMPOSTOR_SHADE, Bind::Texture(shade)),
                     (bake::BAKE_KINDS, Bind::Buffer(kinds)),
                 ],
             )?);
@@ -454,13 +437,10 @@ impl GpuPart for ImpostorGpu {
             atlas,
             colors,
             depth,
-            shade,
             uniform,
             kinds,
             read,
-            shading,
             baking,
-            shade_forms,
             bake_forms,
             cursor: Cursor::default(),
             shape: None,
@@ -480,7 +460,11 @@ impl GpuPart for ImpostorGpu {
             self.announced = true;
             cx.deliver::<BakeReads>(DEVICE, Vec::new());
         }
-        let drawn = self.drawing.take();
+        let mut drawn = self.drawing.take();
+        let ran = cx.ran(self.baking);
+        if let Some(again) = drawn.take_if(|drawn| drawn.skipped || !ran) {
+            self.asked.push_front(again.asked);
+        }
         if let Some(drawn) = &drawn {
             self.read_back(drawn, cx);
         }
@@ -509,19 +493,15 @@ impl GpuPart for ImpostorGpu {
         }
     }
 
-    fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
-        let Some(drawn) = self.drawing.as_ref() else {
+    fn encode(&mut self, _: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
+        let Some(drawn) = self.drawing.as_mut() else {
             return 0;
-        };
-        let forms = if pass == self.shading {
-            &self.shade_forms
-        } else {
-            &self.bake_forms
         };
         let frames = drawn.shape.frames * drawn.shape.frames;
         let mut draw = cx.render(Attach::Declared);
         for &(mesh, material, index) in &drawn.draws {
-            let Some(pipeline) = draw.form(&forms[index]) else {
+            let Some(pipeline) = draw.form(&self.bake_forms[index]) else {
+                drawn.skipped = true;
                 continue;
             };
             draw.draw(

@@ -39,11 +39,18 @@ const SKIPS: &[KindSkip] = &[
     ),
 ];
 
-const READS: [PointInput; 3] = [inputs::ROUGHNESS, inputs::METALNESS, inputs::OCCLUSION];
+const READS: [PointInput; 5] = [
+    inputs::ROUGHNESS,
+    inputs::METALNESS,
+    inputs::OCCLUSION,
+    inputs::DIRECT_SOFTNESS,
+    inputs::DIRECT_BLOCKED,
+];
 
-const SETS: [PointInput; 6] = [
+const SETS: [PointInput; 7] = [
     inputs::THICKNESS,
     inputs::DIRECT_BLOCKED,
+    inputs::TANGLED,
     inputs::ROUGHNESS,
     inputs::METALNESS,
     inputs::OCCLUSION,

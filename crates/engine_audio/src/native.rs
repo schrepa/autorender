@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::io::Cursor;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 
 use engine_core::Ticket;
 use engine_core::math::clamp;
@@ -144,10 +144,23 @@ fn on_track<D: SoundData>(
     played.map_err(|failure| failure.to_string())
 }
 
+fn held_data(bytes: Arc<[u8]>) -> Result<Decoded, String> {
+    StaticSoundData::from_cursor(Cursor::new(bytes))
+        .map(|data| Decoded::Held(Box::new(data)))
+        .map_err(|failure| failure.to_string())
+}
+
+fn lock<T>(held: &Mutex<T>) -> MutexGuard<'_, T> {
+    held.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+type Arrival = ((u32, Ticket), Result<Decoded, String>);
+
 #[derive(Default)]
 pub(crate) struct Backend {
     device: Option<Device>,
     voices: BTreeMap<u32, Voice>,
+    landing: Arc<Mutex<Vec<Arrival>>>,
 }
 
 impl Backend {
@@ -183,23 +196,33 @@ impl Backend {
 
     pub(crate) fn decode(
         &mut self,
-        _sound: (u32, Ticket),
+        sound: (u32, Ticket),
         bytes: Arc<[u8]>,
         stream: bool,
         _may_open: bool,
     ) -> Option<Result<Decoded, String>> {
-        let decoded = if stream {
-            StreamingSoundData::from_cursor(Cursor::new(Arc::clone(&bytes)))
+        if stream {
+            let decoded = StreamingSoundData::from_cursor(Cursor::new(Arc::clone(&bytes)))
                 .map(|_| Decoded::Streamed(bytes))
-        } else {
-            StaticSoundData::from_cursor(Cursor::new(bytes))
-                .map(|data| Decoded::Held(Box::new(data)))
-        };
-        Some(decoded.map_err(|failure| failure.to_string()))
+                .map_err(|failure| failure.to_string());
+            return Some(decoded);
+        }
+        let landing = Arc::clone(&self.landing);
+        let moved = Arc::clone(&bytes);
+        let spawned = std::thread::Builder::new()
+            .name("engine_sound_decode".to_owned())
+            .spawn(move || {
+                let decoded = held_data(moved);
+                lock(&landing).push((sound, decoded));
+            });
+        match spawned {
+            Ok(_) => None,
+            Err(_) => Some(held_data(bytes)),
+        }
     }
 
-    pub(crate) fn arrivals(&mut self) -> Vec<((u32, Ticket), Result<Decoded, String>)> {
-        Vec::new()
+    pub(crate) fn arrivals(&mut self) -> Vec<Arrival> {
+        std::mem::take(&mut *lock(&self.landing))
     }
 
     pub(crate) fn start(

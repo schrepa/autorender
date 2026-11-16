@@ -4,28 +4,27 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::math::max;
 use engine_core::{
-    DrawKind, Entry, Error, KindDecl, PassName, PassPurpose, PassViews, SlotSet, Var, Writes,
+    AssetLibrary, DrawKind, Entry, Error, KindDecl, PassName, PassPurpose, PassViews, SlotSet, Var,
+    Writes,
 };
 use engine_heightfield::Fall;
 use engine_open_world_kit::ground::{GroundTiles, Heightfield};
 use engine_render::{
-    Access, Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, Count, Draw, DrawInput,
-    Encode, FaceCull, Form, FormColor, FormDepth, FormFragment, FormSide, FragmentPass, GpuPart,
-    Install, KindForm, Lifetime, OwnFragments, Pass, PassFragment, PerPass, Prepare, RoleFragments,
-    Scene, SceneDraw, Shape, TargetName, Texture, Varyings, VertexLayout, wgpu,
+    Allocation, AttachPoint, Bind, Buffer, ComputePipeline, Count, Draw, DrawInput, Encode,
+    FaceCull, Form, FormSide, GpuPart, Install, KindForm, Lifetime, OwnFragments, Pass, PerPass,
+    Prepare, RoleFragments, Scene, SceneDraw, Shape, TargetName, Varyings, VertexLayout,
 };
 use glam::Vec3;
 
 use crate::Water;
 use crate::gpu::{FallVertex, WATER_LEAF_FIRST, WaterUniform};
+use crate::look::looked;
+use crate::settings::WaterFallSheets;
 use crate::state::WaterState;
 use crate::water_blocks::{BlocksGpu, INFO_FORMAT, SURFACE_FORMAT};
+use crate::water_detail::DetailGpu;
 use crate::water_falls::{FALL_LAYOUT, sheets};
-use crate::water_particles::ParticlesGpu;
-use crate::water_settle::{SettleFeedback, SettleGpu};
-use crate::water_sim::SimGpu;
-
-const FOAM_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+use crate::waves::{Waves, WavesGpu};
 
 pub(crate) const WATER_KIND: DrawKind = DrawKind("water");
 
@@ -93,54 +92,6 @@ const FALL_FORM: KindForm = KindForm {
     varyings: Varyings::Own(&FALL_FRAGMENTS),
 };
 
-const FOAM_PASS: &str = "water_foam";
-
-const ADDED: wgpu::BlendComponent = wgpu::BlendComponent {
-    src_factor: wgpu::BlendFactor::One,
-    dst_factor: wgpu::BlendFactor::One,
-    operation: wgpu::BlendOperation::Add,
-};
-
-const FOAM_FORM: KindForm = KindForm {
-    kind: WATER_KIND,
-    placed: FormSide::pulled(crate::shaders::water::particles::VS_FOAM),
-    owned: None,
-    varyings: Varyings::Own(&OwnFragments::NONE),
-};
-
-const FOAM: PassFragment = PassFragment {
-    pass: FragmentPass::Own(FOAM_PASS),
-    side: None,
-    fragment: FormFragment::Entry {
-        entry: crate::shaders::water::particles::FS_FOAM,
-        cull: FaceCull::None,
-        depth: FormDepth::Ignored,
-        color: FormColor::Blended(wgpu::BlendState {
-            color: ADDED,
-            alpha: ADDED,
-        }),
-    },
-};
-
-pub(crate) fn copied<P>(bound: &Bind<P>) -> Bind<P> {
-    match bound {
-        Bind::Texture(texture) => Bind::Texture(*texture),
-        Bind::Slice {
-            texture,
-            mips,
-            layers,
-        } => Bind::Slice {
-            texture: *texture,
-            mips: mips.clone(),
-            layers: layers.clone(),
-        },
-        Bind::Buffer(buffer) => Bind::Buffer(*buffer),
-        Bind::Sampler(sampler) => Bind::Sampler(*sampler),
-        Bind::Target(view) => Bind::Target(*view),
-        Bind::Asset => Bind::Asset,
-    }
-}
-
 pub(crate) fn reached(
     cx: &mut Install<'_, WaterGpu>,
     entries: &[Entry],
@@ -163,24 +114,21 @@ struct Sheets {
 
 pub(crate) struct WaterGpu {
     uniform: Buffer<Self>,
-    foam: Texture<Self>,
     leaf_args: Buffer<Self>,
     leaf_pattern: Buffer<Self>,
     fall_vertices: Buffer<Self>,
     fall_indices: Buffer<Self>,
     count_leaves: Pass<Self>,
-    foam_pass: Pass<Self>,
     counting: ComputePipeline<Self>,
-    foaming: Form<Self>,
     surface: Form<Self>,
     falls: Form<Self>,
     leaves: PerPass<Leaves>,
     sheets: PerPass<Sheets>,
     blocks: BlocksGpu,
-    settle: SettleGpu,
-    sim: SimGpu,
-    particles: ParticlesGpu,
+    detail: DetailGpu,
+    waves: WavesGpu,
     built: Vec<BuiltFalls>,
+    sheeted: Option<WaterFallSheets>,
     vertices: Vec<FallVertex>,
     indices: Vec<u32>,
     pattern_written: Option<Arc<[u32]>>,
@@ -191,17 +139,16 @@ impl GpuPart for WaterGpu {
     type Reads = (
         Res<'static, Water>,
         Res<'static, WaterState>,
-        Res<'static, SettleFeedback>,
-        Res<'static, engine_core::Views>,
         Res<'static, GroundTiles>,
         Res<'static, Heightfield>,
+        Res<'static, AssetLibrary>,
+        Res<'static, Waves>,
     );
     const NAME: &'static str = "water";
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        use crate::shaders::water::{faces::water as face, foam, refraction, surface};
+        use crate::shaders::water::{faces::water as face, refraction, surface, uniforms};
         let uniform = cx.buffer("water", Lifetime::Kept);
-        let foam_texture = cx.texture("water_foam", FOAM_FORMAT, Lifetime::Frame);
         let leaf_args = cx.buffer("water_leaf_args", Lifetime::Frame);
         let leaf_pattern = cx.buffer("water_leaf_pattern", Lifetime::Kept);
         let fall_vertices = cx.buffer("water_falls", Lifetime::Kept);
@@ -219,26 +166,14 @@ impl GpuPart for WaterGpu {
         cx.frame(face::WATER_SURFACE, Bind::Texture(blocks.surface))?;
         cx.frame(face::WATER_INFO, Bind::Texture(blocks.info))?;
         cx.frame(face::WATER_DIRECTORY, Bind::Buffer(blocks.directory))?;
-        let settle = SettleGpu::install(cx)?;
-        let sim = SimGpu::install(cx)?;
-        let shared = vec![
-            (surface::WATER, Bind::Buffer(uniform)),
-            (surface::WATER_LIVE, Bind::Buffer(sim.looks())),
-        ];
-        let mut particles_gpu = ParticlesGpu::install(cx, sim.after(), &shared)?;
+        let detail = DetailGpu::install(cx);
+        let waves = WavesGpu::install(cx);
         let count_leaves = cx.pass("water_leaf_args").id();
-        let foam_pass = cx
-            .pass(FOAM_PASS)
-            .at(AttachPoint::Opaque)
-            .after(particles_gpu.after())
-            .color(foam_texture, Access::Clear)
-            .label("engine/water-foam")
-            .id();
         let counting_bound = reached(
             cx,
             &[surface::CS_WATER_LEAF_ARGS],
             vec![
-                (surface::WATER, Bind::Buffer(uniform)),
+                (uniforms::WATER, Bind::Buffer(uniform)),
                 (surface::WATER_LEAF_ARGS, Bind::Buffer(leaf_args)),
             ],
         );
@@ -246,23 +181,15 @@ impl GpuPart for WaterGpu {
             cx.compute_pipeline(count_leaves, surface::CS_WATER_LEAF_ARGS, &counting_bound)?;
         let behind = || {
             let mut all = vec![
-                (surface::WATER, Bind::Buffer(uniform)),
-                (surface::WATER_LIVE, Bind::Buffer(sim.looks())),
+                (uniforms::WATER, Bind::Buffer(uniform)),
                 (surface::WATER_LEAF_SPANS, Bind::Buffer(leaf_args)),
                 (surface::WATER_DEPTH, Bind::Target(TargetName::DEPTH)),
                 (surface::WATER_SCENE, Bind::Target(TargetName::COLOR)),
-                (foam::WATER_FOAM_DRAWN, Bind::Texture(foam_texture)),
             ];
-            all.extend(particles_gpu.bound());
+            all.extend(detail.bound());
+            all.extend(waves.bound());
             all
         };
-        let mut foam_all = vec![
-            (surface::WATER, Bind::Buffer(uniform)),
-            (surface::WATER_LIVE, Bind::Buffer(sim.looks())),
-            (surface::WATER_DEPTH, Bind::Target(TargetName::DEPTH)),
-        ];
-        foam_all.extend(particles_gpu.bound());
-        let foaming = cx.form_owning(&FOAM_FORM, &[FOAM], &foam_all)?;
         let surface_form = cx.form(&SURFACE_FORM, &behind())?;
         let fall_form = cx.form(&FALL_FORM, &behind())?;
         let leaves = PerPass::of(surface_form.passes(), |pass| Leaves {
@@ -273,27 +200,23 @@ impl GpuPart for WaterGpu {
             vertices: cx.draw_input(pass.scene, fall_vertices),
             indices: cx.draw_input(pass.scene, fall_indices),
         });
-        particles_gpu.foam_args = Some(cx.draw_input(foam_pass, particles_gpu.args()));
         Ok(Self {
             uniform,
-            foam: foam_texture,
             leaf_args,
             leaf_pattern,
             fall_vertices,
             fall_indices,
             count_leaves,
-            foam_pass,
             counting,
-            foaming,
             surface: surface_form,
             falls: fall_form,
             leaves,
             sheets,
             blocks,
-            settle,
-            sim,
-            particles: particles_gpu,
+            detail,
+            waves,
             built: Vec::new(),
+            sheeted: None,
             vertices: Vec::new(),
             indices: Vec::new(),
             pattern_written: None,
@@ -303,9 +226,10 @@ impl GpuPart for WaterGpu {
 
     fn prepare(
         &mut self,
-        (water, state, feedback, views, ground, heightfield): SystemParamItem<'_, '_, Self::Reads>,
+        reads: SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
+        let (water, state, ground, heightfield, assets, waves) = reads;
         let pattern = &heightfield.leaf_indices;
         let made = cx.allocate_buffer(
             self.leaf_pattern,
@@ -324,82 +248,39 @@ impl GpuPart for WaterGpu {
         }
         let (Allocation::Fresh | Allocation::Kept) =
             cx.allocate_buffer(self.uniform, size_of::<WaterUniform>() as u64);
-        self.settle.prepare(&feedback.work, cx);
         self.blocks
             .prepare(&state.blocks, (&ground, &state.terrains), cx);
-        self.sim.prepare(&state.live, cx);
-        self.particles.prepare(&state.particles, cx);
+        self.detail.prepare(&water, &assets, cx);
+        let waves = self.waves.prepare(&waves, cx);
         let watering = !state.watered.is_empty();
-        self.prepare_falls(&state, &ground, cx);
+        self.prepare_falls(&state, &ground, &water.fall_sheets, cx);
         let terrains = ground.tables.len() as u32;
         let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(
             self.leaf_args,
             u64::from(WATER_LEAF_FIRST + 2 * terrains.max(1)) * 4,
         );
-        let size = views.frame().display_size;
-        let (Allocation::Fresh | Allocation::Kept) = cx.allocate(
-            self.foam,
-            wgpu::Extent3d {
-                width: size.x.max(1),
-                height: size.y.max(1),
-                depth_or_array_layers: 1,
-            },
-            1,
-        );
         self.drawn = watering;
         if !self.drawn {
             return;
         }
-        let running = state.live.work.drawn.as_ref().map(|drawn| {
-            let [wrap_x, wrap_z] = drawn.wrap;
-            (
-                [
-                    drawn.origin[0],
-                    drawn.origin[1],
-                    drawn.cell,
-                    drawn.cells as f32,
-                ],
-                [drawn.datum, wrap_x as f32, wrap_z as f32, drawn.pool as f32],
-                [drawn.pixels, 0.0, 0.0, 0.0],
-            )
-        });
         let [red, green, blue] = water.color;
         let sediment = water.sediment_color;
-        let values = WaterUniform {
+        let frame = WaterUniform {
             color: [red, green, blue, water.clarity],
             absorption: absorption(water.color, water.clarity),
-            foam: state.particles.shading(),
-            sim: running.map_or([0.0; 4], |(square, _, _)| square),
-            sim_datum: running.map_or([0.0; 4], |(_, datum, _)| datum),
-            sim_pixels: running.map_or([0.0; 4], |(_, _, pixels)| pixels),
             sediment: [sediment[0], sediment[1], sediment[2], water.sediment],
-            lift: [
-                heightfield.subdivision_error,
-                water.subdivision_error,
-                0.0,
-                0.0,
-            ],
             terrains: [terrains, 0, 0, 0],
+            waves,
+            ..WaterUniform::default()
         };
-        cx.write(self.uniform, 0, &[values]);
+        let look = looked(&water, self.detail.measured(), frame);
+        cx.write(self.uniform, 0, &[look]);
         cx.run(self.count_leaves);
-        cx.run(self.foam_pass);
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
-        if self.settle.encode(pass, cx)
-            || self.sim.encode(pass, cx)
-            || self.particles.encode(pass, cx)
-        {
-            return 0;
-        }
         if pass == self.count_leaves {
             cx.dispatch(&self.counting, Count::Groups([1, 1, 1]));
-            return 0;
-        }
-        if pass == self.foam_pass {
-            let mut draw = cx.render(Attach::Color(self.foam, None));
-            self.particles.draw_foam(&mut draw, &self.foaming);
         }
         0
     }
@@ -453,6 +334,7 @@ impl WaterGpu {
         &mut self,
         state: &WaterState,
         ground: &GroundTiles,
+        look: &WaterFallSheets,
         cx: &mut Prepare<'_, Self>,
     ) {
         let index_of = |entity: Entity| {
@@ -463,35 +345,39 @@ impl WaterGpu {
                 .map(|&(_, index)| index)
         };
         let falling = || {
-            state
-                .terrains
-                .iter()
-                .filter(|terrain| !terrain.falls.is_empty())
-                .map(|terrain| {
-                    let drawn = index_of(terrain.entity)
-                        .filter(|_| state.watered.contains(&terrain.entity));
-                    (terrain, drawn)
-                })
+            state.terrains.iter().filter_map(|terrain| {
+                let falls = state.emitters.get(&terrain.entity)?.falling()?;
+                let drawn =
+                    index_of(terrain.entity).filter(|_| state.watered.contains(&terrain.entity));
+                (!falls.is_empty()).then_some((terrain, falls, drawn))
+            })
         };
-        let same = self.built.len() == falling().count()
-            && self.built.iter().zip(falling()).all(|(a, (b, drawn))| {
-                a.0 == b.entity && a.1 == b.origin && a.2[..] == b.falls[..] && a.3 == drawn
-            });
+        let same = self.sheeted.as_ref() == Some(look)
+            && self.built.len() == falling().count()
+            && self
+                .built
+                .iter()
+                .zip(falling())
+                .all(|(a, (b, falls, drawn))| {
+                    a.0 == b.entity && a.1 == b.origin && a.2[..] == falls[..] && a.3 == drawn
+                });
         if same || (self.built.is_empty() && falling().next().is_none()) {
             return;
         }
+        self.sheeted = Some(*look);
         let runs = sheets(
-            falling().map(|(terrain, drawn)| (terrain.origin, &*terrain.falls, drawn.unwrap_or(0))),
+            falling().map(|(terrain, falls, drawn)| (terrain.origin, &**falls, drawn.unwrap_or(0))),
+            look,
             &mut self.vertices,
             &mut self.indices,
         );
         self.built = falling()
             .zip(runs)
-            .map(|((terrain, drawn), run)| {
+            .map(|((terrain, falls, drawn), run)| {
                 (
                     terrain.entity,
                     terrain.origin,
-                    terrain.falls.clone(),
+                    Arc::clone(falls),
                     drawn,
                     run,
                 )

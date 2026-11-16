@@ -1,9 +1,11 @@
 import package::place::ground_surface::{
-    BIOME_WORDS, H_BIOMES, H_EROSION, H_FADE, H_HYDROLOGY, H_PATHS, H_PROGRAM, H_READS,
-    H_WET_BIOMES, MAX_MATERIALS, MAX_STACK, OP_ADD, OP_CONSTANT, OP_CURVATURE, OP_DEPOSIT, OP_END,
-    OP_FACING, OP_FLOOD, OP_FLOW, OP_GRADIENT, OP_GRAIN, OP_HEIGHT, OP_INVERT, OP_LAKE, OP_MAX,
-    OP_MIN, OP_MULTIPLY, OP_NOISE, OP_PATH, OP_POWER, OP_REMAP, OP_RIVER, OP_VALUE, OP_WETNESS,
-    OP_WORN, SurfaceGround, SurfaceInputs,
+    BIOME_WORDS, H_BIOMES, H_DEBRIS, H_EROSION, H_FADE, H_HYDROLOGY, H_MAPS, H_PATHS, H_PROGRAM,
+    H_READS,
+    H_SITE, H_WET_BIOMES, LAYER_COVERS, MAX_MAPS, MAX_MATERIALS, MAX_STACK, OP_ADD, OP_CONSTANT,
+    OP_CURVATURE, OP_DEPOSIT, OP_END, OP_FACING, OP_FLOOD, OP_FLOW, OP_GRADIENT, OP_GRAIN,
+    OP_HEIGHT, OP_INVERT, OP_LAKE, OP_MAP, OP_MAP_VALUE, OP_MAX, OP_MIN, OP_MULTIPLY, OP_NOISE,
+    OP_PATH, OP_POWER, OP_REMAP, OP_RIVER, OP_VALUE, OP_WETNESS, OP_WORN, SurfaceGround,
+    SurfaceInputs,
 };
 import package::generated::terrain::{
     NONE, SURFACE_PATH_FAR, SURFACE_RIVER_EDGE_FAR, SURFACE_RIVER_EDGE_STEP, SURFACE_RIVER_EDGE_ZERO,
@@ -14,6 +16,7 @@ import package::generated::terrain::{
 @group(0) @binding(0) var<storage, read> surface_materials: array<SurfaceEntry>;
 
 var<private> surface_base: u32;
+var<private> surface_maps: array<f32, MAX_MAPS>;
 
 fn word(at: u32) -> u32 {
     return surface_program[surface_base + at];
@@ -201,6 +204,81 @@ fn erosion_change(point: vec2<f32>, spacing: f32) -> f32 {
     return change;
 }
 
+fn rest_share(at: u32, gradient: vec2<f32>, curvature: f32) -> f32 {
+    let bend = real(at + 2u) * curvature;
+    let steep = sqrt(gradient.x * gradient.x + gradient.y * gradient.y);
+    let fallen = ramp(steep, real(at), real(at + 1u));
+    return (1.0 - fallen) * (1.0 + bend / (1.0 + abs(bend)));
+}
+
+fn rested(change: f32, gradient: vec2<f32>, curvature: f32) -> f32 {
+    let section = word(H_DEBRIS);
+    if section == NONE || change <= 0.0 {
+        return change;
+    }
+    return change * rest_share(section, gradient, curvature);
+}
+
+fn map_value(map: u32, inputs: SurfaceInputs, show: f32) -> f32 {
+    if map == NONE {
+        return 0.0;
+    }
+    let table = map + 8u;
+    let level = image_level(real(map + 1u), word(table) - 1u, inputs.spacing);
+    let scale = real(map);
+    let value = decode(image_sample(table, inputs.x * scale, inputs.z * scale, level),
+        real(map + 2u), real(map + 3u));
+    var rests = 1.0;
+    if word(map + 4u) != 0u {
+        rests = rest_share(map + 5u, inputs.gradient, inputs.curvature);
+    }
+    return value * rests * show;
+}
+
+fn read_maps(inputs: SurfaceInputs) {
+    let section = word(H_MAPS);
+    if section == NONE {
+        return;
+    }
+    let show = shown(vec2<f32>(inputs.x, inputs.z));
+    let count = min(word(section), MAX_MAPS);
+    for (var index = 0u; index < count; index++) {
+        surface_maps[index] = map_value(word(section + 1u + index), inputs, show);
+    }
+}
+
+fn site_byte(value: f32, low: f32, high: f32) -> u32 {
+    return u32(clamp_rule((value - low) / (high - low), 0.0, 1.0) * 255.0 + 0.5);
+}
+
+fn surface_site_range(terrain: u32, part: u32) -> vec2<f32> {
+    surface_base = surface_materials[terrain].base;
+    let section = word(H_SITE);
+    if section == NONE {
+        return vec2<f32>(0.0, 1.0);
+    }
+    let at = section + 2u * min(part, 3u);
+    return vec2<f32>(real(at), real(at + 1u));
+}
+
+fn surface_site(terrain: u32, inputs: SurfaceInputs) -> u32 {
+    surface_base = surface_materials[terrain].base;
+    let section = word(H_SITE);
+    if section == NONE {
+        return 0u;
+    }
+    let show = shown(vec2<f32>(inputs.x, inputs.z));
+    let table = section + 8u;
+    let sun = map_value(word(table + 1u), inputs, show);
+    let soil = map_value(word(table + 2u), inputs, show);
+    let exposure = map_value(word(table + 3u), inputs, show);
+    let soft = pmax(soil, pmax(inputs.erosion, 0.0));
+    return site_byte(inputs.wetness, real(section), real(section + 1u))
+        | (site_byte(sun, real(section + 2u), real(section + 3u)) << 8u)
+        | (site_byte(soft, real(section + 4u), real(section + 5u)) << 16u)
+        | (site_byte(exposure, real(section + 6u), real(section + 7u)) << 24u);
+}
+
 fn path_at(point: vec2<f32>) -> vec2<f32> {
     let section = word(H_PATHS);
     var nearest = vec2<f32>(SURFACE_PATH_FAR, 0.0);
@@ -348,7 +426,8 @@ fn surface_inputs(terrain: u32, ground: SurfaceGround, level: u32, river: vec4<f
         inputs.flood = river.w;
     }
     if (reads & 4u) != 0u && show > 0.0 {
-        inputs.erosion = erosion_change(point, spacing) * show;
+        inputs.erosion = rested(erosion_change(point, spacing) * show, inputs.gradient,
+            inputs.curvature);
     }
     if (reads & 2u) != 0u && show > 0.0 {
         let road = path_at(point);
@@ -435,6 +514,17 @@ fn evaluate(start: u32, inputs: SurfaceInputs) -> f32 {
                 top += 1u;
                 pc += 2u;
             }
+            case OP_MAP: {
+                stack[top] = ramp(surface_maps[min(word(pc + 1u), MAX_MAPS - 1u)],
+                    real(pc + 2u), real(pc + 3u));
+                top += 1u;
+                pc += 4u;
+            }
+            case OP_MAP_VALUE: {
+                stack[top] = surface_maps[min(word(pc + 1u), MAX_MAPS - 1u)];
+                top += 1u;
+                pc += 2u;
+            }
             case OP_NOISE: {
                 stack[top] = noise_mask(inputs.x, inputs.z, inputs.spacing, real(pc + 1u),
                     word(pc + 2u), word(pc + 3u));
@@ -489,6 +579,7 @@ fn evaluate(start: u32, inputs: SurfaceInputs) -> f32 {
 
 fn surface_control(terrain: u32, inputs: SurfaceInputs) -> u32 {
     surface_base = surface_materials[terrain].base;
+    read_maps(inputs);
     let program = word(H_PROGRAM);
     let biomes = word(H_BIOMES);
     let wet_biomes = word(H_WET_BIOMES);
@@ -522,26 +613,54 @@ fn surface_control(terrain: u32, inputs: SurfaceInputs) -> u32 {
             for (var layer = layers; layer > 0u; layer--) {
                 let l = layer - 1u;
                 let entry = list + 1u + 3u * l;
+                var held = 1.0;
                 var cover = 1.0;
                 if l > 0u {
-                    cover = clamp_rule(evaluate(word(entry + 2u), inputs) * real(entry + 1u), 0.0, 1.0);
+                    let value = evaluate(word(entry + 2u), inputs);
+                    held = clamp_rule(value, 0.0, 1.0);
+                    cover = clamp_rule(value * real(entry + 1u), 0.0, 1.0);
                 }
                 let weight = cover * left;
                 left *= 1.0 - cover;
                 if weight > 0.0 {
-                    let material = word(entry);
-                    var placed = false;
-                    for (var m = 0u; m < count; m++) {
-                        if materials[m] == material {
-                            weights[m] += weight;
-                            placed = true;
-                            break;
+                    var pair = vec2<u32>(word(entry), word(entry));
+                    var split = 0.0;
+                    if (pair.x & LAYER_COVERS) != 0u {
+                        let sequence = pair.x & ~LAYER_COVERS;
+                        let members = word(sequence);
+                        var total = 0.0;
+                        var along = 0.0;
+                        for (var c = 0u; c < members; c++) {
+                            let grows = clamp_rule(
+                                evaluate(word(sequence + 2u + 2u * c), inputs), 0.0, 1.0);
+                            total += grows;
+                            along += grows * f32(c);
                         }
+                        let place = pmin(along / pmax(total, 1.0e-6) * held, f32(members - 1u));
+                        let lower = u32(place);
+                        let upper = min(lower + 1u, members - 1u);
+                        pair = vec2<u32>(word(sequence + 1u + 2u * lower),
+                            word(sequence + 1u + 2u * upper));
+                        split = place - f32(lower);
                     }
-                    if !placed && count < MAX_MATERIALS {
-                        materials[count] = material;
-                        weights[count] = weight;
-                        count += 1u;
+                    for (var side = 0u; side < 2u; side++) {
+                        let material = select(pair.x, pair.y, side == 1u);
+                        let part = select(weight * (1.0 - split), weight * split, side == 1u);
+                        if part > 0.0 {
+                            var placed = false;
+                            for (var m = 0u; m < count; m++) {
+                                if materials[m] == material {
+                                    weights[m] += part;
+                                    placed = true;
+                                    break;
+                                }
+                            }
+                            if !placed && count < MAX_MATERIALS {
+                                materials[count] = material;
+                                weights[count] = part;
+                                count += 1u;
+                            }
+                        }
                     }
                 }
                 if left <= 0.0 {

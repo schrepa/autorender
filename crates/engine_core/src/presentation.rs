@@ -271,20 +271,55 @@ struct Drawn {
     composed: bool,
 }
 
-type Memo = HashMap<usize, Option<Drawn>>;
+#[derive(Default)]
+struct Memo {
+    call: u32,
+    stamps: Vec<(u32, u32)>,
+    drawn: Vec<Option<Drawn>>,
+}
+
+impl Memo {
+    fn begin(&mut self, nodes: usize) {
+        self.drawn.clear();
+        self.call = self.call.wrapping_add(1);
+        if self.call == 0 {
+            self.stamps.fill((0, 0));
+            self.call = 1;
+        }
+        if self.stamps.len() < nodes {
+            self.stamps.resize(nodes, (0, 0));
+        }
+    }
+
+    fn get(&self, index: usize) -> Option<Option<Drawn>> {
+        match self.stamps.get(index) {
+            Some(&(call, at)) if call == self.call => Some(self.drawn[at as usize]),
+            Some(_) | None => None,
+        }
+    }
+
+    fn insert(&mut self, index: usize, drawn: Option<Drawn>) {
+        if let Some(stamp) = self.stamps.get_mut(index) {
+            *stamp = (self.call, self.drawn.len() as u32);
+            self.drawn.push(drawn);
+        }
+    }
+}
 
 #[derive(Default)]
 struct Reads {
     frame: u64,
     now: HashMap<Entity, Mat4>,
     last: HashMap<Entity, Mat4>,
+    memo: Memo,
 }
 
 impl Reads {
     fn roll(&mut self, frame: u64) {
         if self.frame != frame {
             self.frame = frame;
-            self.last = std::mem::take(&mut self.now);
+            std::mem::swap(&mut self.last, &mut self.now);
+            self.now.clear();
         }
     }
 }
@@ -311,6 +346,7 @@ pub struct DrawnPoses {
     levels: Vec<u32>,
     sorted: Vec<(u8, u32)>,
     moving: Vec<u32>,
+    moved: Vec<u32>,
     fresh: Vec<u32>,
     touched: Vec<u32>,
     asked: Vec<Entity>,
@@ -350,6 +386,7 @@ impl FromWorld for DrawnPoses {
             levels: Vec::new(),
             sorted: Vec::new(),
             moving: Vec::new(),
+            moved: Vec::new(),
             fresh: Vec::new(),
             touched: Vec::new(),
             asked: Vec::new(),
@@ -415,12 +452,8 @@ impl DrawnPoses {
     }
 
     pub fn drawn_pose(&self, globals: &GlobalTransforms, node: Entity) -> Option<Mat4> {
-        let mut memo = Memo::default();
-        let drawn = self.drawn_of(globals, node, &mut memo);
-        if let Some(matrix) = drawn {
-            self.reads().now.insert(node, matrix);
-        }
-        drawn
+        let mut held = self.reading(globals);
+        self.read(globals, node, self.index_of(globals, node), &mut held)
     }
 
     pub fn drawn_poses(
@@ -431,21 +464,34 @@ impl DrawnPoses {
     ) {
         out.clear();
         out.reserve(nodes.len());
-        let mut memo = Memo::default();
-        let mut reads = self.reads();
+        let mut held = self.reading(globals);
         for &node in nodes {
-            let drawn = self.drawn_of(globals, node, &mut memo);
-            if let Some(matrix) = drawn {
-                reads.now.insert(node, matrix);
-            }
-            out.push(drawn);
+            out.push(self.read(globals, node, self.index_of(globals, node), &mut held));
+        }
+    }
+
+    pub fn drawn_and_previous_poses(
+        &self,
+        globals: &GlobalTransforms,
+        nodes: &[Entity],
+        (now, was): (&mut Vec<Option<Mat4>>, &mut Vec<Option<Mat4>>),
+    ) {
+        now.clear();
+        now.reserve(nodes.len());
+        was.clear();
+        was.reserve(nodes.len());
+        let mut held = self.reading(globals);
+        for &node in nodes {
+            let index = self.index_of(globals, node);
+            let drawn = self.read(globals, node, index, &mut held);
+            now.push(drawn);
+            was.push(self.last_read(&held, node, index).or(drawn));
         }
     }
 
     pub fn previous_drawn_pose(&self, globals: &GlobalTransforms, node: Entity) -> Option<Mat4> {
-        let mut out = Vec::with_capacity(1);
-        self.previous_drawn_poses(globals, &[node], &mut out);
-        out.pop().flatten()
+        let mut held = self.reading(globals);
+        self.previous_of(globals, node, &mut held)
     }
 
     pub fn previous_drawn_poses(
@@ -456,36 +502,59 @@ impl DrawnPoses {
     ) {
         out.clear();
         out.reserve(nodes.len());
-        let mut memo = Memo::default();
-        let mut reads = self.reads();
+        let mut held = self.reading(globals);
         for &node in nodes {
-            let fresh = self.span(globals, node) == Some(Span::Fresh);
-            let last = reads.last.get(&node).copied().filter(|_| !fresh);
-            let previous = match last {
-                Some(matrix) => Some(matrix),
-                None => {
-                    let drawn = self.drawn_of(globals, node, &mut memo);
-                    if let Some(matrix) = drawn {
-                        reads.now.insert(node, matrix);
-                    }
-                    drawn
-                }
-            };
-            out.push(previous);
+            out.push(self.previous_of(globals, node, &mut held));
         }
+    }
+
+    fn previous_of(
+        &self,
+        globals: &GlobalTransforms,
+        node: Entity,
+        reads: &mut Reads,
+    ) -> Option<Mat4> {
+        let index = self.index_of(globals, node);
+        match self.last_read(reads, node, index) {
+            Some(matrix) => Some(matrix),
+            None => self.read(globals, node, index, reads),
+        }
+    }
+
+    fn last_read(&self, reads: &Reads, node: Entity, index: Option<usize>) -> Option<Mat4> {
+        if index.is_some_and(|index| self.spans[index] == Span::Fresh) {
+            return None;
+        }
+        reads.last.get(&node).copied()
+    }
+
+    fn read(
+        &self,
+        globals: &GlobalTransforms,
+        node: Entity,
+        index: Option<usize>,
+        reads: &mut Reads,
+    ) -> Option<Mat4> {
+        let drawn = match index {
+            Some(index) => self
+                .drawn(globals, index, 0, &mut reads.memo)
+                .map(|drawn| drawn.display),
+            None => globals.get(node)?.matrix(),
+        };
+        if let Some(matrix) = drawn {
+            reads.now.insert(node, matrix);
+        }
+        drawn
     }
 
     fn reads(&self) -> MutexGuard<'_, Reads> {
         self.reads.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
-    fn drawn_of(&self, globals: &GlobalTransforms, node: Entity, memo: &mut Memo) -> Option<Mat4> {
-        match self.index_of(globals, node) {
-            Some(index) => self
-                .drawn(globals, index, 0, memo)
-                .map(|drawn| drawn.display),
-            None => globals.get(node)?.matrix(),
-        }
+    fn reading(&self, globals: &GlobalTransforms) -> MutexGuard<'_, Reads> {
+        let mut held = self.reads();
+        held.memo.begin(globals.links().len());
+        held
     }
 
     pub fn streams<'a>(&'a self, globals: &'a GlobalTransforms) -> NodeStreams<'a> {
@@ -522,6 +591,7 @@ impl DrawnPoses {
                 + self.parents.capacity()
                 + self.levels.capacity()
                 + self.moving.capacity()
+                + self.moved.capacity()
                 + self.fresh.capacity()
                 + self.touched.capacity()
                 + self.marks.capacity())
@@ -544,7 +614,7 @@ impl DrawnPoses {
         depth: usize,
         memo: &mut Memo,
     ) -> Option<Drawn> {
-        if let Some(&known) = memo.get(&index) {
+        if let Some(known) = memo.get(index) {
             return known;
         }
         let drawn = self.drawn_once(globals, index, depth, memo);
@@ -728,20 +798,20 @@ impl DrawnPoses {
     }
 
     fn age_fresh(&mut self, world: &World) {
-        let mut kept = Vec::with_capacity(self.fresh.len());
-        for index in std::mem::take(&mut self.fresh) {
+        let mut fresh = std::mem::take(&mut self.fresh);
+        fresh.retain(|&index| {
             let at = index as usize;
             if self.spans.get(at) != Some(&Span::Fresh) {
-                continue;
+                return false;
             }
             if self.fresh_at[at] < self.frame && !tick_paced(world, self.entities[at]) {
                 self.spans[at] = Span::Still;
                 self.touched.push(index);
-            } else {
-                kept.push(index);
+                return false;
             }
-        }
-        self.fresh = kept;
+            true
+        });
+        self.fresh = fresh;
     }
 
     fn observe(&mut self, world: &World, globals: &GlobalTransforms, index: usize, tick: u64) {
@@ -774,15 +844,19 @@ impl DrawnPoses {
     fn capture(&mut self, world: &World, globals: &GlobalTransforms, tick: u64) {
         let _profile = engine_profile::span("presentation", "capture_tick");
         self.index(globals);
-        for index in std::mem::take(&mut self.fresh) {
+        let mut fresh = std::mem::take(&mut self.fresh);
+        for &index in &fresh {
             let index = index as usize;
             if self.spans.get(index) == Some(&Span::Fresh) {
                 self.spans[index] = Span::Still;
                 self.touched.push(index as u32);
             }
         }
+        fresh.clear();
+        self.fresh = fresh;
         self.next_mark();
-        let moved = std::mem::take(&mut self.moving);
+        let mut moved = std::mem::take(&mut self.moved);
+        std::mem::swap(&mut moved, &mut self.moving);
         match globals.changes_since(&mut self.seen.tick) {
             Since::Same => {}
             Since::Listed(listed) => {
@@ -796,7 +870,7 @@ impl DrawnPoses {
                 }
             }
         }
-        for index in moved {
+        for &index in &moved {
             let index = index as usize;
             if let Some(Span::Moving { from }) = self.spans.get(index).copied()
                 && from.saturating_add(1) != tick
@@ -805,6 +879,8 @@ impl DrawnPoses {
                 self.touched.push(index as u32);
             }
         }
+        moved.clear();
+        self.moved = moved;
         self.apply_fresh(globals);
     }
 
