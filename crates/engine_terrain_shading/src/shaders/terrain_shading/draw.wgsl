@@ -6,17 +6,16 @@ import package::face::foliage::foliage;
 import package::face::shadows::kept_texels;
 import package::face::sun::sun_direction;
 import package::engine::math::PI;
-import package::engine::view::{camera, detail_across, detail_level, eye_world, fade_noise,
+import package::engine::view::{camera, detail_across, detail_level, eye_world,
     material_detail, stable_normalize, view_pixel};
-import package::engine::shading::{Shaded, SurfacePoint, ViewPixel};
+import package::engine::shading::{SurfacePoint, ViewPixel};
 import package::engine::slots::{derived, set_added_indirect, set_ambient_bend,
     set_direct_blocked, set_direct_share, set_ignore_face, set_metalness, set_mirrored,
     set_occlusion,
     set_receiver_lift_first, set_receiver_lifts, set_roughness, set_tangled, set_transmission,
-    shade, standard_point};
+    standard_point};
 import package::engine::surfaces::SURFACE_GROUND;
 import package::face::water::{WATER_HELD, WaterCell, water_cell, water_level};
-import package::generated::writes::{DepthOutputs, depth_outputs};
 import package::terrain_shading::draw_shared::{terrain_hash2, terrain_site_gain,
     terrain_site_lush, terrain_value};
 import package::terrain_shading::faces::ground_tiles::{DETAIL_EDGE_ON, detail_resolved,
@@ -885,7 +884,7 @@ fn terrain_slot_rank(held: TerrainSlot, material: u32, site: TerrainSite, contes
         let fine = terrain_material(material).params.x;
         for (var rung = 0u; rung < 2u; rung++) {
             let part = held.chain[rung];
-            if part <= 0.0 {
+            if !terrain_detailed || part <= 0.0 {
                 continue;
             }
             let mapping = terrain_rung_mapping(held, rung);
@@ -894,7 +893,7 @@ fn terrain_slot_rank(held: TerrainSlot, material: u32, site: TerrainSite, contes
             rank += part * (terrain_height_rank(material, 12u + rung, height) - 0.5);
         }
     }
-    if held.far < 1.0 {
+    if terrain_detailed && held.far < 1.0 {
         let height = terrain_pixel_height(held.mapping, site.world, site.world_dx,
             site.world_dy);
         rank = mix(terrain_height_rank(material, 7u, height), rank, held.far);
@@ -973,7 +972,7 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
     if banding {
         banded = terrain_strata(entry, site);
     }
-    if slot.faded < 1.0 {
+    if terrain_detailed && slot.faded < 1.0 {
         let mapping = slot.mapping;
         let tiled = terrain_near(mapping, site.world, site.world_dx, site.world_dy,
             slot.hexes, slot.opened, site.geometric, select(0.0, scale, slot.far < 1.0), 0.0);
@@ -995,7 +994,7 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
         }
     }
     for (var rung = 0u; rung < 2u; rung++) {
-        if slot.shown[rung] <= 0.0 {
+        if !terrain_detailed || slot.shown[rung] <= 0.0 {
             continue;
         }
         let mapping = terrain_rung_mapping(slot, rung);
@@ -1204,7 +1203,7 @@ fn terrain_shared_ground(shares: TerrainShares, site: TerrainSite) -> TerrainGro
         let material = shares.held[slot];
         var held = terrain_slot(material,
             terrain_marked(shares.marks, TERRAIN_MARK_SHARED + slot), site);
-        held.opened = !(terrain_marked(shares.marks, TERRAIN_MARK_REACHED + slot)
+        held.opened = !(terrain_detailed && terrain_marked(shares.marks, TERRAIN_MARK_REACHED + slot)
             && held.far < 1.0);
         held.lush = shares.lush;
         if !held.opened {
@@ -1230,6 +1229,8 @@ fn terrain_shared_ground(shares: TerrainShares, site: TerrainSite) -> TerrainGro
 const TERRAIN_MESH_CARRIES: f32 = 2.0;
 
 const TERRAIN_BAND_PIXELS: f32 = 1.0;
+
+var<private> terrain_detailed: bool = true;
 
 fn terrain_band_height(mapping: TerrainMapping, world: vec3<f32>, level: f32) -> f32 {
     return terrain_hexed(mapping, world, vec3<f32>(0.0), vec3<f32>(0.0), level).texel.a;
@@ -1584,7 +1585,7 @@ fn terrain_seen(relative: vec3<f32>, look: TerrainLook) -> TerrainSeen {
     var rises: TerrainReliefSeen;
     var marches = false;
     var lift = vec3<f32>(0.0);
-    if terrain.relief.x >= TERRAIN_BAND_PIXELS * reach {
+    if terrain_detailed && terrain.relief.x >= TERRAIN_BAND_PIXELS * reach {
         rises = terrain_relief_seen(blend, drawn, geometric);
         let range = terrain_relief_range(rises.depths, rises.means);
         marches = (range.x + range.y) * rises.fade * rises.pixels >= TERRAIN_BAND_PIXELS;
@@ -1681,8 +1682,6 @@ fn terrain_point_seen(relative: vec3<f32>, seen: TerrainSeen, marched: bool) -> 
     return derived(point);
 }
 
-@group(1) @binding(0) var terrain_ids_texture: texture_2d<u32>;
-
 fn terrain_ids(input: TerrainOutput, holes: bool) -> vec2<u32> {
     use_terrain(input.terrain);
     terrain_holes_test(input.cell, holes);
@@ -1697,80 +1696,6 @@ fn fs_terrain_ids(input: TerrainOutput) -> @location(0) vec2<u32> {
 @fragment
 fn fs_terrain_ids_holes(input: TerrainOutput) -> @location(0) vec2<u32> {
     return terrain_ids(input, true);
-}
-
-fn terrain_relative_at(pixel: vec2<f32>, depth: f32, size: vec2<f32>) -> vec3<f32> {
-    let ndc = vec2<f32>(pixel.x * 2.0 / size.x - 1.0, 1.0 - pixel.y * 2.0 / size.y);
-    let point = terrain_view.inverse_relative_view_projection * vec4<f32>(ndc, depth, 1.0);
-    return point.xyz / point.w;
-}
-
-fn terrain_ray_at(pixel: vec2<f32>, size: vec2<f32>) -> vec3<f32> {
-    let relative = terrain_relative_at(pixel, 1.0, size);
-    return relative / max(length(relative), 1.0e-30);
-}
-
-struct TerrainResolveInput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) @interpolate(flat) terrain: u32,
-}
-
-@vertex
-fn vs_terrain_resolve(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index: u32)
-        -> TerrainResolveInput {
-    let x = f32((vertex << 1u) & 2u) * 2.0 - 1.0;
-    let y = f32(vertex & 2u) * 2.0 - 1.0;
-    return TerrainResolveInput(vec4<f32>(x, y, 0.0, 1.0), index);
-}
-
-@fragment
-fn fs_terrain_resolve(input: TerrainResolveInput) -> DepthOutputs {
-    use_terrain(input.terrain);
-    let dither = select(0.5, fade_noise(input.position.xy), terrain_view.eye_offset.w > 0.5);
-    let position = input.position;
-    let size = camera.region.xy;
-    let texel = textureLoad(terrain_ids_texture, vec2<i32>(position.xy), 0);
-    let mine = texel.x == terrain.directory.x + 1u;
-    if !mine {
-        discard;
-    }
-    let depth = bitcast<f32>(texel.y);
-    let relative = terrain_relative_at(position.xy, depth, size);
-    let away = length(relative);
-    let here = select(0.0, 1.0, mine);
-    let reach = 0.05 * away + 0.5;
-    let others = vec2<f32>(dpdxFine(here), dpdyFine(here));
-    let farther = vec2<f32>(dpdxFine(away), dpdyFine(away));
-    let same = (others == vec2<f32>(0.0)) & (abs(farther) < vec2<f32>(reach));
-    let row = max(here, abs(others.x));
-    let quad = max(row, abs(dpdyFine(row))) > 0.0;
-    let ray = terrain_ray_at(position.xy, size);
-    let look = TerrainLook(dpdxCoarse(ray), dpdyCoarse(ray), dither);
-    var point: SurfacePoint;
-    var beyond = 0.0;
-    if quad {
-        let seen = terrain_seen(relative, look);
-        beyond = seen.beyond;
-        point = terrain_point_seen(relative, seen, true);
-    }
-    point.normal_dx = select(vec3<f32>(0.0), dpdxFine(point.normal), same.x);
-    point.normal_dy = select(vec3<f32>(0.0), dpdyFine(point.normal), same.y);
-    point.world_dx = select(point.world_dx, dpdxFine(relative), same.x);
-    point.world_dy = select(point.world_dy, dpdyFine(relative), same.y);
-    var shaded: Shaded;
-    var previous = vec4<f32>(0.0);
-    var written = depth;
-    if quad {
-        shaded = shade(point, position.xy);
-        let met = relative + relative * (beyond / max(away, 1.0e-6));
-        let moved = (camera.previous_view_projection * vec4<f32>(eye_world(met), 1.0)).xyw;
-        previous = vec4<f32>(moved.xy, 0.0, moved.z);
-        if beyond != 0.0 {
-            let clip = terrain_view.relative_view_projection * vec4<f32>(met, 1.0);
-            written = select(1.0, saturate(clip.z / clip.w), clip.w > 0.0);
-        }
-    }
-    return depth_outputs(point, shaded, view_pixel(position, previous), written);
 }
 
 fn terrain_surfaced(input: TerrainOutput, holes: bool) -> KindPoint {
