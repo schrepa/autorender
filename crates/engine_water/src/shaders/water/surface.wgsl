@@ -10,7 +10,7 @@ import package::engine::surfaces::SURFACE_WATER;
 import package::engine::view::{camera, detail_across, detail_level, eye_world, stable_normalize,
     view_pixel};
 import package::face::ground_tiles::{GroundTerrain, NOT_RESIDENT, level_tiles, tile_layer};
-import package::face::heightfield::{SURFACE_LEAF_INDICES, TERRAIN_GRID, surface_drawn,
+import package::face::heightfield::{SURFACE_LEAF_INDICES, TERRAIN_GRID, surface_drawn_at,
     surface_leaf, surface_leaf_count, surface_vertex, terrain_level_height, terrain_uniform,
     terrain_view_uniform, use_terrain};
 import package::face::lighting::{distribution, environment_brdf, fresnel, given_reflectance,
@@ -268,7 +268,8 @@ fn water_output(index: u32, instance: u32) -> WaterOutput {
         return output;
     }
     let at = stored.at;
-    let bed = surface_drawn(triangle, local) + terrain_view_uniform().eye_offset.xyz;
+    let bed = surface_drawn_at(triangle, local, ground.height)
+        + terrain_view_uniform().eye_offset.xyz;
     let still = water_relative(local, at.surface).y;
     var swell: WaterSwell;
     let calm = water_calm(length(at.words.flow));
