@@ -59,6 +59,7 @@ pub(crate) struct SnapHeld {
     pub(crate) snapped: Option<u64>,
     pub(crate) snapping: bool,
     pub(crate) dispatched: bool,
+    pub(crate) unseen: bool,
     pub(crate) threads: u32,
     written: Vec<Range<u32>>,
     whole: bool,

@@ -2215,6 +2215,7 @@
             "subdivision_args",
             "terrain_subdivision",
             "terrain_leaf_lists",
+            "terrain_seen_lists",
             "bounce",
             "terrain_sun",
             "terrain_ids",
@@ -2444,7 +2445,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "96bfde06693428b0cdf481545a22f784c12d5636713a69ec0b50803d4d961f45"
+      "version": "88525c487894b50f41aa4f724d229826beb504983d1d996fa1c405f31f663ca6"
     },
     {
       "dependencies": [
@@ -2636,7 +2637,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "0ebcddcf352411916848ea476b232357a856c7b5546eb86ced491e2d54ae2c2c"
+      "version": "233dd3df2b1fa381dc83840ed6d15ca53ebff198d38fcf646cafe402a202d7b1"
     },
     {
       "dependencies": [
@@ -5768,22 +5769,5 @@
       ]
     }
   ],
-  "unmet": [
-    {
-      "code": "read_before_write",
-      "got": {
-        "before": "depth",
-        "listed_writers": [
-          "engine_render",
-          "engine_water",
-          "engine_meshes",
-          "engine_impostors",
-          "engine_sky",
-          "engine_reflections",
-          "engine_terrain_shading"
-        ]
-      },
-      "path": "$.bricks.engine_terrain_shading.passes.terrain_leaf_lists.reads.color"
-    }
-  ]
+  "unmet": []
 }
