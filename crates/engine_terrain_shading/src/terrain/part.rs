@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     AssetLibrary, Cursor, DepthBias, Detail, DeviceLimits, Entry, Error, MaterialHandle, PassRole,
-    PassViews, ProvidedAssets, Views,
+    ProvidedAssets, Views,
 };
 use engine_open_world_kit::ground::{GroundTiles, TerrainTiles};
 use engine_open_world_kit::water::Waterline;
@@ -87,7 +87,7 @@ struct Passes {
     begin: Pass<TerrainGpu>,
     copy_args: Pass<TerrainGpu>,
     subdivide: Pass<TerrainGpu>,
-    listed: [Pass<TerrainGpu>; 2],
+    listed: Pass<TerrainGpu>,
     bounce: Pass<TerrainGpu>,
     sun: Pass<TerrainGpu>,
     ids: Pass<TerrainGpu>,
@@ -103,7 +103,7 @@ struct Pipelines {
     begin: [ComputePipeline<TerrainGpu>; SURFACE_SLOTS],
     decide: [ComputePipeline<TerrainGpu>; SURFACE_SLOTS],
     apply: [ComputePipeline<TerrainGpu>; SURFACE_SLOTS],
-    listed: [[ComputePipeline<TerrainGpu>; SURFACE_SLOTS]; 2],
+    listed: [ComputePipeline<TerrainGpu>; SURFACE_SLOTS],
 }
 
 struct Inputs {
@@ -111,18 +111,19 @@ struct Inputs {
     meshlet: DrawInput<TerrainGpu, Own>,
     subdivision_args: DrawInput<TerrainGpu, Own>,
     lists: DrawInput<TerrainGpu, Own>,
-    listed: [DrawInput<TerrainGpu, Own>; 2],
+    listed: DrawInput<TerrainGpu, Own>,
 }
 
 #[derive(Default)]
 struct Listing {
     main: bool,
-    built: [bool; 2],
+    surface: bool,
+    built: bool,
 }
 
 impl Listing {
-    fn ready(&self, list: usize) -> bool {
-        self.main && self.built[..=list].iter().all(|&built| built)
+    fn ready(&self) -> bool {
+        self.main && self.built
     }
 }
 
@@ -131,9 +132,8 @@ struct SubdivisionInstall {
     begin: Pass<TerrainGpu>,
     copy_args: Pass<TerrainGpu>,
     subdivide: Pass<TerrainGpu>,
-    list_drawn: Pass<TerrainGpu>,
-    list_seen: Pass<TerrainGpu>,
-    pipelines: [[ComputePipeline<TerrainGpu>; SURFACE_SLOTS]; 5],
+    listed: Pass<TerrainGpu>,
+    pipelines: [[ComputePipeline<TerrainGpu>; SURFACE_SLOTS]; 4],
 }
 
 const CASTER_STREAMS: &[VertexLayout] = &[PATCH_STREAM];
@@ -213,7 +213,7 @@ const fn ids_fragment(entry: Entry) -> PassFragment {
         fragment: FormFragment::Entry {
             entry,
             cull: FaceCull::Back,
-            depth: FormDepth::Matched,
+            depth: FormDepth::Written,
             color: FormColor::Written,
         },
     }
@@ -282,14 +282,11 @@ const NO_FORM: &str = "terrain has no form in this pass";
 const TERRAIN_TILES: &str = "the terrain tiles";
 const HOLED_MATERIAL: &str = "the holed ground material";
 const NOT_LAID_OUT: &str = "no terrain is laid out this frame";
+const DRAWN_WITH_IDS: &str = "terrain depth is drawn with its ids";
 const NO_PATCHES: &str = "no terrain patch is laid out for this view";
 
 enum Joined {
-    Ground {
-        args: DrawInput<TerrainGpu, Scene>,
-        meshlet: DrawInput<TerrainGpu, Scene>,
-        lists: DrawInput<TerrainGpu, Scene>,
-    },
+    Ground,
     Seen {
         args: DrawInput<TerrainGpu, Scene>,
         meshlet: DrawInput<TerrainGpu, Scene>,
@@ -503,8 +500,8 @@ impl GpuPart for TerrainGpu {
         let ids_pass = cx
             .pass(IDS_PASS)
             .label("engine/terrain-ids")
-            .at(AttachPoint::Opaque)
-            .after(tree.list_seen)
+            .at(AttachPoint::Depth)
+            .after(tree.listed)
             .color(h.ids, engine_render::Access::Clear)
             .id();
         let resolve_pass = cx
@@ -582,11 +579,7 @@ impl GpuPart for TerrainGpu {
                 patches: cx.draw_input(pass.scene, h.patches),
                 grid: cx.draw_input(pass.scene, h.grid),
             },
-            (PassRole::Depth, false) => Joined::Ground {
-                args: cx.args_input(pass.scene, h.args),
-                meshlet: cx.draw_input(pass.scene, h.meshlet),
-                lists: cx.draw_input(pass.scene, h.counters),
-            },
+            (PassRole::Depth, false) => Joined::Ground,
             (PassRole::Lit | PassRole::Shown, _) => Joined::Seen {
                 args: cx.args_input(pass.scene, h.args),
                 meshlet: cx.draw_input(pass.scene, h.meshlet),
@@ -599,10 +592,7 @@ impl GpuPart for TerrainGpu {
             meshlet: cx.draw_input(ids_pass, h.meshlet),
             subdivision_args: cx.draw_input(tree.subdivide, h.args),
             lists: cx.draw_input(ids_pass, h.counters),
-            listed: [
-                cx.draw_input(tree.list_drawn, h.args),
-                cx.draw_input(tree.list_seen, h.args),
-            ],
+            listed: cx.draw_input(tree.listed, h.args),
         };
         let sources = BounceSources {
             horizons: &horizon_maps,
@@ -612,7 +602,7 @@ impl GpuPart for TerrainGpu {
         };
         let bounce = Bounce::install(cx, &sources, bounce_pass)?;
         let sun = SunGpu::install(cx, &horizon_maps, sun_pass)?;
-        let [begin, decide, apply, list_drawn, list_seen] = tree.pipelines;
+        let [begin, decide, apply, listed] = tree.pipelines;
         Ok(Self {
             passes: Passes {
                 normals: normals_pass,
@@ -624,7 +614,7 @@ impl GpuPart for TerrainGpu {
                 begin: tree.begin,
                 copy_args: tree.copy_args,
                 subdivide: tree.subdivide,
-                listed: [tree.list_drawn, tree.list_seen],
+                listed: tree.listed,
                 bounce: bounce_pass,
                 sun: sun_pass,
                 ids: ids_pass,
@@ -639,7 +629,7 @@ impl GpuPart for TerrainGpu {
                 begin,
                 decide,
                 apply,
-                listed: [list_drawn, list_seen],
+                listed,
             },
             inputs,
             form,
@@ -907,7 +897,7 @@ impl GpuPart for TerrainGpu {
         inputs.extend_from_slice(bytemuck::cast_slice(palette));
         inputs.extend_from_slice(bytemuck::cast_slice(rungs));
         self.surface.settle(cx, h, (inputs, changed));
-        self.listing.built = [false; 2];
+        self.listing.built = false;
         self.run_subdivision(cx);
         self.deferred = !self.frame.terrains.is_empty();
         if self.deferred {
@@ -926,8 +916,9 @@ impl GpuPart for TerrainGpu {
         self.deliver_stats(cx);
     }
 
-    fn view(&mut self, _facts: &engine_core::ViewFacts, cx: &mut Prepare<'_, Self>) {
+    fn view(&mut self, facts: &engine_core::ViewFacts, cx: &mut Prepare<'_, Self>) {
         self.listing.main = cx.view_index() == 0;
+        self.listing.surface = facts.target.surface();
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
@@ -985,15 +976,15 @@ impl GpuPart for TerrainGpu {
             self.subdivision_recorded = dispatched == 2 * self.surface.slots().count() as u32;
             return dispatched;
         }
-        if let Some(list) = self.passes.listed.iter().position(|&listed| listed == pass) {
+        if pass == self.passes.listed {
             let mut dispatched = 0;
             for slot in self.surface.slots() {
                 dispatched += cx.dispatch(
-                    &self.pipelines.listed[list][slot],
-                    Count::Indirect(self.inputs.listed[list], self.surface.listed_offset(slot)),
+                    &self.pipelines.listed[slot],
+                    Count::Indirect(self.inputs.listed, self.surface.listed_offset(slot)),
                 );
             }
-            self.listing.built[list] =
+            self.listing.built =
                 cx.view_index() == 0 && dispatched == self.surface.slots().count() as u32;
             return dispatched;
         }
@@ -1032,8 +1023,7 @@ impl TerrainGpu {
             }],
         );
         cx.run(self.passes.subdivide);
-        cx.run(self.passes.listed[0]);
-        cx.run(self.passes.listed[1]);
+        cx.run(self.passes.listed);
         cx.read_back::<SurfaceTotals>(
             SURFACE_TOTALS,
             self.handles.counters,
@@ -1065,23 +1055,28 @@ impl TerrainGpu {
 
     fn draw_ids(&self, draw: &mut Draw<'_, Self, Own>) -> u32 {
         let mut draws = 0;
+        if !self.listing.surface {
+            return draws;
+        }
         let pipelines = [draw.form(&self.seen[0]), draw.form(&self.seen[1])];
-        let list = [1, 0].into_iter().find(|&list| self.listing.ready(list));
-        let args = if list.is_some() {
+        let listed = self.listing.ready();
+        let args = if listed {
             self.inputs.lists
         } else {
             self.inputs.args
         };
+        let held = matches!(self.holed, Ok(Some(_)));
         for holes in [false, true] {
             for terrain in self
                 .frame
                 .terrains
                 .iter()
-                .filter(|terrain| terrain.holes == holes)
+                .filter(|terrain| terrain.holes == holes && (held || !holes))
             {
-                let split = match list {
-                    Some(list) => self.listed_draws(terrain, pipelines, list),
-                    None => self.split_draws(terrain, pipelines),
+                let split = if listed {
+                    self.listed_draws(terrain, pipelines)
+                } else {
+                    self.split_draws(terrain, pipelines)
                 };
                 for (pipeline, offset, cut) in split {
                     draw.draw_timed(
@@ -1106,9 +1101,8 @@ impl TerrainGpu {
         &self,
         terrain: &FrameTerrain,
         [plain, holed]: [Option<T>; 2],
-        list: usize,
     ) -> Vec<(T, u64, bool)> {
-        let Some([whole, cut]) = self.surface.list_offsets(terrain.terrain, list == 1) else {
+        let Some([whole, cut]) = self.surface.list_offsets(terrain.terrain) else {
             return Vec::new();
         };
         if !terrain.holes {
@@ -1186,24 +1180,15 @@ impl TerrainGpu {
             return draw.skip(NO_FORM);
         };
         match joined {
-            Joined::Ground {
-                args,
-                meshlet,
-                lists,
-            } => {
-                let Some(pipeline) = draw.form(&self.form) else {
-                    return draw.skip(NO_FORM);
-                };
-                let holed = match &self.holed {
-                    Ok(Some(material)) => Ok((pipeline, Some(*material))),
-                    Ok(None) => Err(None),
-                    Err(error) => Err(Some(error)),
-                };
-                self.draw_surface(
-                    (scene, draw),
-                    [Ok((pipeline, None)), holed],
-                    [*args, *meshlet, *lists],
-                )
+            Joined::Ground => {
+                let holed = self.frame.terrains.iter().any(|terrain| {
+                    terrain.holes && self.surface.draw_offset(terrain.terrain).is_some()
+                });
+                match &self.holed {
+                    Ok(None) if holed => draw.wait(HOLED_MATERIAL),
+                    Err(error) if holed => draw.refuse(HOLED_MATERIAL, error),
+                    Ok(_) | Err(_) => draw.skip(DRAWN_WITH_IDS),
+                }
             }
             Joined::Seen {
                 args,
@@ -1269,7 +1254,7 @@ impl TerrainGpu {
         let mut draws = 0;
         let mut unheld = None;
         let pipelines = [surfaces[0].ok(), surfaces[1].ok()];
-        let listed = scene.view.is_none() && self.listing.ready(0);
+        let listed = scene.view.is_none() && self.listing.ready();
         for holes in [false, true] {
             for terrain in self
                 .frame
@@ -1284,7 +1269,7 @@ impl TerrainGpu {
                     continue;
                 }
                 let (args, split) = if listed {
-                    (lists, self.listed_draws(terrain, pipelines, 0))
+                    (lists, self.listed_draws(terrain, pipelines))
                 } else {
                     (args, self.split_draws(terrain, pipelines))
                 };
@@ -1363,17 +1348,10 @@ fn install_subdivision(
         .after(copy_args)
         .after(begin)
         .id();
-    let list_drawn = cx
+    let listed = cx
         .pass("terrain_leaf_lists")
         .label("engine/terrain-leaf-lists")
         .after(subdivide)
-        .id();
-    let list_seen = cx
-        .pass("terrain_seen_lists")
-        .label("engine/terrain-seen-lists")
-        .at(AttachPoint::Opaque)
-        .views(PassViews::Main)
-        .after(list_drawn)
         .id();
     let slot_binds = |slot: usize| {
         let (uniform, tree) = h.slots[slot];
@@ -1391,8 +1369,7 @@ fn install_subdivision(
         (begin, subdivision::SUBDIVIDE_BEGIN),
         (subdivide, subdivision::SUBDIVIDE_DECIDE),
         (subdivide, subdivision::SUBDIVIDE_APPLY),
-        (list_drawn, subdivision::SUBDIVIDE_LIST_DRAWN),
-        (list_seen, subdivision::SUBDIVIDE_LIST_SEEN),
+        (listed, subdivision::SUBDIVIDE_LIST_DRAWN),
     ];
     let mut pipelines = Vec::with_capacity(entries.len() * SURFACE_SLOTS);
     for (pass, entry) in entries {
@@ -1406,8 +1383,7 @@ fn install_subdivision(
         begin,
         copy_args,
         subdivide,
-        list_drawn,
-        list_seen,
+        listed,
         pipelines: std::array::from_fn(|entry| {
             std::array::from_fn(|slot| pipelines[entry * SURFACE_SLOTS + slot])
         }),
