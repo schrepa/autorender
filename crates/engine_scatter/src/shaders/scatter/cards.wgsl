@@ -161,11 +161,11 @@ struct LaidCard {
     seen: bool,
 }
 
-fn laid_card(input: PlacedCardVertex) -> LaidCard {
-    let laid = textureLoad(laid_depth, vec2<i32>(input.clip_position.xy), 0).r;
-    if !quad_any(!(nearest_depth(input) < laid)) {
-        discard;
-    }
+fn laid_at(input: PlacedCardVertex) -> f32 {
+    return textureLoad(laid_depth, vec2<i32>(input.clip_position.xy), 0).r;
+}
+
+fn laid_card(input: PlacedCardVertex, laid: f32) -> LaidCard {
     let card = card_of(input);
     let impostor = placed_impostor(faded_slot_slot(card.batch));
     let level = placed_card_level(card, impostor);
@@ -186,7 +186,11 @@ fn laid_shaded(input: PlacedCardVertex, laid: LaidCard) -> CardShaded {
 
 @fragment
 fn fs_placed_card_laid(input: PlacedCardVertex) -> DepthOutputs {
-    let laid = laid_card(input);
+    let at = laid_at(input);
+    if !quad_any(!(nearest_depth(input) < at)) {
+        discard;
+    }
+    let laid = laid_card(input, at);
     var written: DepthOutputs;
     if laid.seen {
         let shaded = laid_shaded(input, laid);
@@ -198,7 +202,7 @@ fn fs_placed_card_laid(input: PlacedCardVertex) -> DepthOutputs {
 
 @fragment
 fn fs_placed_card_tested(input: PlacedCardVertex) -> Outputs {
-    let laid = laid_card(input);
+    let laid = laid_card(input, laid_at(input));
     var written: Outputs;
     if laid.seen {
         let shaded = laid_shaded(input, laid);
