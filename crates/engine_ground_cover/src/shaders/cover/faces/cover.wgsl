@@ -394,6 +394,16 @@ fn cover_accent_row(kinds: vec4<u32>, pick: f32) -> u32 {
     return COVER_NO_LAYER;
 }
 
+fn cover_accent(spec: CoverMaterial, pick: f32) -> CoverMaterial {
+    let at = cover_accent_row(spec.accents, pick);
+    if at == COVER_NO_LAYER {
+        return spec;
+    }
+    var accent = cover_look(at);
+    accent.shape.x = spec.shape.x;
+    return accent;
+}
+
 fn cover_beside(spec: CoverMaterial, index: u32) -> CoverMaterial {
     return cover_look(spec.accents.z + index * COVER_MATERIAL_ROWS);
 }
