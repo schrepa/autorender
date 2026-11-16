@@ -27,7 +27,7 @@ import package::terrain_shading::holes::terrain_holed;
 import package::engine::kinds::KindPoint;
 import package::generated::kinds::KIND_TERRAIN;
 import package::terrain_shading::sky::terrain_sky_map;
-import package::terrain_shading::surface::surface_leaf;
+import package::terrain_shading::surface::{surface_leaf, surface_seen};
 import package::terrain_shading::tables::{table_fades, table_floats, terrain_tables};
 import package::generated::terrain_shading::{CONTROL_PLANE, NORMAL_PLANE, PaletteEntry,
     ROUGH_SUN, ROUGH_TURN, ROUGH_UNIT, ROUGH_VIEW, ROUGH_WORDS,
@@ -99,9 +99,14 @@ fn terrain_surface_vertex(leaf: u32, vertex: u32) -> TerrainSurfaceVertex {
 }
 
 fn terrain_output(leaf: u32, vertex: u32, index: u32) -> TerrainOutput {
+    var output: TerrainOutput;
+    if !surface_seen(surface_leaf(leaf)) {
+        output.clip_position = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        output.terrain = index;
+        return output;
+    }
     let point = terrain_surface_vertex(leaf, vertex);
     let relative = point.relative + terrain_view.eye_offset.xyz;
-    var output: TerrainOutput;
     output.clip_position = terrain_view.relative_view_projection * vec4<f32>(relative, 1.0);
     output.relative = vec4<f32>(relative, point.spacing);
     output.cell = point.local / terrain.anchor.w;

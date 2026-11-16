@@ -383,6 +383,7 @@ pub(crate) fn palette_layout(terrains: &[TerrainEntry]) -> Vec<(Entity, Option<u
 #[derive(Clone, Copy)]
 struct PlacedTile {
     stamp: Stamp,
+    low: f32,
     high: f32,
     control: bool,
 }
@@ -427,6 +428,21 @@ impl Atlas {
 
     pub(crate) fn stamp_of(&self, id: TileId) -> Option<Stamp> {
         self.placed.get(&id).map(|placed| placed.stamp)
+    }
+
+    pub(crate) fn heights_of(&self, terrain: Entity) -> (f32, f32) {
+        self.placed
+            .iter()
+            .filter(|((held, _), _)| *held == terrain)
+            .fold(
+                (f32::INFINITY, f32::NEG_INFINITY),
+                |(low, high), (_, placed)| {
+                    (
+                        engine_math::min(low, placed.low),
+                        engine_math::max(high, placed.high),
+                    )
+                },
+            )
     }
 
     pub(crate) fn tile<'a>(&self, entry: &'a TerrainEntry, key: TileKey) -> Option<&'a TileFace> {
@@ -534,6 +550,7 @@ impl Atlas {
             id,
             PlacedTile {
                 stamp: tile.stamp,
+                low: tile.bounds.0.y,
                 high: tile.bounds.1.y,
                 control: tile.control.is_some(),
             },

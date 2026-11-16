@@ -1,8 +1,8 @@
 import package::engine::detail::band;
 import package::engine::view::{camera, detail_across};
 import package::place::heightfield::SurfaceTriangle;
-import package::terrain_shading::faces::heightfield::{terrain, terrain_level_height, terrain_surface_leaves};
-import package::terrain_shading::tables::terrain_tables;
+import package::terrain_shading::faces::heightfield::{terrain, terrain_level_height, terrain_surface_leaves, terrain_view};
+import package::terrain_shading::tables::{table_floats, terrain_tables};
 import package::generated::terrain_shading::{SURFACE_ERROR_MIPS, SURFACE_MESHLET_LEVEL};
 
 fn surface_leaf(leaf: u32) -> SurfaceTriangle {
@@ -26,6 +26,50 @@ fn surface_relative(local: vec2<f32>, height: f32) -> vec3<f32> {
     let from_anchor = local - vec2<f32>(bitcast<vec2<i32>>(terrain.surface.zw)) * top;
     return vec3<f32>(from_anchor.x + terrain.anchor.x, height + terrain.anchor.y,
         from_anchor.y + terrain.anchor.z);
+}
+
+fn surface_beyond(plane: vec4<f32>, sizes: vec4<f32>, low: vec3<f32>, high: vec3<f32>,
+        margin: f32) -> bool {
+    let support = select(low, high, plane.xyz >= vec3<f32>(0.0));
+    let size = max(abs(low), abs(high));
+    return dot(plane.xyz, support) + plane.w < -margin * (dot(sizes.xyz, size) + sizes.w);
+}
+
+fn surface_seen(triangle: SurfaceTriangle) -> bool {
+    if all(triangle.a == triangle.b) && all(triangle.b == triangle.c) {
+        return false;
+    }
+    let levels = terrain.directory.y;
+    if levels == 0u {
+        return true;
+    }
+    let header = terrain.directory.x + 4u * (levels - 1u);
+    let bounds = table_floats(terrain_tables[header]
+        + terrain_tables[header + 1u] * terrain_tables[header + 2u]);
+    let margin = bounds.w;
+    if !(margin > 0.0) {
+        return true;
+    }
+    let low = min(min(triangle.a, triangle.b), triangle.c);
+    let high = max(max(triangle.a, triangle.b), triangle.c);
+    let top = terrain.anchor.w * f32(1u << (levels - 1u));
+    let shift = abs(vec2<f32>(bitcast<vec2<i32>>(terrain.surface.zw)) * top);
+    let offset = terrain_view.eye_offset.xyz;
+    let across = max(abs(low), abs(high)) + shift + abs(terrain.anchor.xz) + abs(offset.xz);
+    let tall = max(abs(bounds.x), abs(bounds.y)) + abs(terrain.anchor.y) + abs(offset.y);
+    let lift = bounds.z * (1.0 + margin);
+    let reach = vec3<f32>(lift) + margin * (vec3<f32>(across.x, tall, across.y) + lift);
+    let near = surface_relative(low, bounds.x) + offset - reach;
+    let far = surface_relative(high, bounds.y) + offset + reach;
+    let rows = transpose(terrain_view.relative_view_projection);
+    let w = rows[3];
+    let sizes = abs(w);
+    return !(surface_beyond(w + rows[0], sizes + abs(rows[0]), near, far, margin)
+        || surface_beyond(w - rows[0], sizes + abs(rows[0]), near, far, margin)
+        || surface_beyond(w + rows[1], sizes + abs(rows[1]), near, far, margin)
+        || surface_beyond(w - rows[1], sizes + abs(rows[1]), near, far, margin)
+        || surface_beyond(rows[2], abs(rows[2]), near, far, margin)
+        || surface_beyond(w - rows[2], sizes + abs(rows[2]), near, far, margin));
 }
 
 @group(0) @binding(62) var terrain_errors: texture_2d_array<f32>;

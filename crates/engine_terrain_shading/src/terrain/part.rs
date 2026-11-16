@@ -183,7 +183,7 @@ const fn ids_fragment(entry: Entry) -> PassFragment {
         fragment: FormFragment::Entry {
             entry,
             cull: FaceCull::Back,
-            depth: FormDepth::Written,
+            depth: FormDepth::Matched,
             color: FormColor::Written,
         },
     }
@@ -764,7 +764,7 @@ impl GpuPart for TerrainGpu {
         self.tables.write_palette(
             cx,
             h,
-            (&tiles, &ground.palette),
+            (&tiles, &ground.palette, &atlas),
             (&self.maps, &assets, &lights),
         );
         self.sky
