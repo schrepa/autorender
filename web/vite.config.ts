@@ -1,9 +1,11 @@
 import { defineConfig } from "vite";
 import { relative, resolve, sep } from "node:path";
 import { createReadStream, existsSync, readdirSync } from "node:fs";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import { json } from "node:stream/consumers";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
+import { brotliCompress, constants, gzip } from "node:zlib";
 import clients from "./src/generated/clients.json";
 import { wasmImport } from "./scripts/wasm-alias.mjs";
 
@@ -66,6 +68,22 @@ export default defineConfig(async ({ command, mode }) => ({
           stream.pipe(response);
         } catch { response.statusCode = 404; response.end("Scene source not found"); }
       });
+    },
+  }, {
+    name: "precompressed-copies",
+    apply: () => command === "build" && mode === "production",
+    async writeBundle(options, bundle) {
+      const brotli = promisify(brotliCompress);
+      const zip = promisify(gzip);
+      await Promise.all(Object.keys(bundle).filter(name => /\.(js|wasm)$/.test(name)).map(async name => {
+        const file = resolve(options.dir ?? "", name);
+        const bytes = await readFile(file);
+        const [br, gz] = await Promise.all([
+          brotli(bytes, { params: { [constants.BROTLI_PARAM_QUALITY]: constants.BROTLI_MAX_QUALITY, [constants.BROTLI_PARAM_SIZE_HINT]: bytes.length } }),
+          zip(bytes, { level: constants.Z_BEST_COMPRESSION }),
+        ]);
+        await Promise.all([writeFile(`${file}.br`, br), writeFile(`${file}.gz`, gz)]);
+      }));
     },
   }, {
     name: "public-lists-restart",

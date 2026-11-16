@@ -1,5 +1,5 @@
 import { engineFailure } from "../generated/errors";
-import { type JobBindings, type JobWorkerClass, useJobs } from "./jobs";
+import { type JobBindings, type JobWorkerClass, jobPool, useJobs } from "./jobs";
 
 const simdProbe = new Uint8Array([
   0, 97, 115, 109, 1, 0, 0, 0,
@@ -34,5 +34,6 @@ export async function loadGame<T extends GameBindings>(load: () => Promise<T>, w
   const bindings = await load();
   await bindings.default();
   useJobs(bindings, worker);
+  jobPool();
   return bindings;
 }

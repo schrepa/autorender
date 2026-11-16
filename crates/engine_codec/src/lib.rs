@@ -9,6 +9,7 @@
 mod codes;
 mod error;
 pub mod fields;
+mod hash;
 
 use std::sync::Arc;
 
@@ -16,6 +17,7 @@ use glam::{Vec2, Vec3};
 
 pub use codes::{BrickCode, ErrorCode};
 pub use error::{Allowed, Detail, Error, Expected, MAX_GOT_BYTES, closest};
+pub use hash::content_hash;
 pub use fields::{
     ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, is_id, state, stated,
     valid_uri,

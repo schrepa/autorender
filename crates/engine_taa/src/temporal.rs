@@ -26,8 +26,14 @@ gpu_struct! {
     }
 }
 
-#[derive(Resource, Default)]
+#[derive(Resource)]
 pub(crate) struct TaaSettling(Settling);
+
+impl Default for TaaSettling {
+    fn default() -> Self {
+        Self(Settling::on_frames())
+    }
+}
 
 fn cycled(facts: &ViewFacts) -> bool {
     match facts.history {

@@ -36,7 +36,8 @@ fn compiled(renderer: &Renderer) -> u32 {
         .compiled_per_pass()
         .iter()
         .map(|(_, count)| *count)
-        .sum()
+        .sum::<u32>()
+        .saturating_add(renderer.pipelines_warmed())
 }
 
 fn key_of(identity: &[u8]) -> RecordKey {
@@ -111,7 +112,7 @@ impl PipelineList {
     }
 
     pub(crate) fn after_frame(&mut self, engine: &mut Engine, renderer: &Renderer) {
-        if engine.readiness().compiling > 0 {
+        if engine.readiness().compiling > 0 || renderer.pipelines_warming() > 0 {
             return;
         }
         let total = compiled(renderer);

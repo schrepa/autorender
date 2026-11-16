@@ -11,6 +11,10 @@ function requested(): Promise<GpuAdapter | null> {
   return adapter;
 }
 
+export function warmAdapter(): void {
+  void requested();
+}
+
 export async function adapterInfo(): Promise<AdapterInfo | null> {
   const info = (await requested())?.info;
   return info ? { vendor: info.vendor, architecture: info.architecture, device: info.device, description: info.description } : null;

@@ -11,48 +11,32 @@ use serde::Deserialize;
 
 use super::sprays::{self, Sheet, Source};
 use super::sprigs::Atlas;
+use crate::sources::sets::{ATLAS_PARTS, BARK_PARTS, cells_file, map_files, spray_files};
+use crate::sources::{self, Sources};
 
-pub(crate) const FILES: [&str; 20] = [
-    "highlands/plants/spruce_twigs_albedo.png",
-    "highlands/plants/spruce_twigs_normal.png",
+pub(crate) const FILES: [&str; 3] = [
     "highlands/plants/spruce_twigs.json",
-    "highlands/plants/pine_twigs_albedo.png",
-    "highlands/plants/pine_twigs_normal.png",
     "highlands/plants/pine_twigs.json",
-    "highlands/plants/birch_leaves_albedo.png",
-    "highlands/plants/birch_leaves_normal.png",
     "highlands/plants/birch_leaves.json",
-    "highlands/plants/undergrowth_albedo.png",
-    "highlands/plants/undergrowth_normal.png",
-    "highlands/bark/spruce_albedo.png",
-    "highlands/bark/spruce_normal.png",
-    "highlands/bark/spruce_orm.png",
-    "highlands/bark/pine_albedo.png",
-    "highlands/bark/pine_normal.png",
-    "highlands/bark/pine_orm.png",
-    "highlands/bark/birch_albedo.png",
-    "highlands/bark/birch_normal.png",
-    "highlands/bark/birch_orm.png",
 ];
 
 pub(crate) const ATLAS_MAPS: [(&str, TextureUsage); 2] = [
-    ("albedo", TextureUsage::Color),
-    ("normal", TextureUsage::Normal),
+    (ATLAS_PARTS[0], TextureUsage::Color),
+    (ATLAS_PARTS[1], TextureUsage::Normal),
 ];
 
 pub(crate) const BARK_MAPS: [(&str, TextureUsage); 3] = [
-    ("albedo", TextureUsage::Color),
-    ("normal", TextureUsage::Normal),
-    ("orm", TextureUsage::Data),
+    (BARK_PARTS[0], TextureUsage::Color),
+    (BARK_PARTS[1], TextureUsage::Normal),
+    (BARK_PARTS[2], TextureUsage::Data),
 ];
-
-const PNG_HEADER: &[u8; 8] = b"\x89PNG\r\n\x1a\n";
 
 const COVERED: u8 = 8;
 
 #[derive(Resource, Default)]
 pub struct Photographs {
-    files: HashMap<&'static str, Arc<[u8]>>,
+    cells: HashMap<&'static str, Arc<[u8]>>,
+    sources: Sources,
 }
 
 #[derive(Deserialize)]
@@ -66,29 +50,47 @@ struct Cell {
     root: [f32; 2],
 }
 
+fn missing(path: &str) -> Error {
+    Error::new(ErrorCode::MissingFile, "$.photographs")
+        .expected(Expected::File)
+        .got(path)
+}
+
+fn set_digest(files: &[String]) -> Result<u64, Error> {
+    sources::set_digest(files).ok_or_else(|| {
+        let absent = files.iter().find(|path| sources::file(path).is_none());
+        missing(absent.map_or("", String::as_str))
+    })
+}
+
+fn read_all(sources: &Sources, files: &[String]) -> Result<Option<Vec<Arc<[u8]>>>, String> {
+    let read = files
+        .iter()
+        .map(|path| sources.bytes(path))
+        .collect::<Result<Vec<_>, String>>()?;
+    Ok(read.into_iter().collect())
+}
+
 impl Photographs {
-    pub fn read(files: &GameFiles) -> Self {
+    pub(crate) fn read(files: &GameFiles, sources: &Sources) -> Self {
         Self {
-            files: FILES
+            cells: FILES
                 .iter()
                 .filter_map(|&path| Some((path, Arc::from(files.bytes(path)?))))
                 .collect(),
+            sources: sources.clone(),
         }
-    }
-
-    fn file(&self, path: &str) -> Result<&Arc<[u8]>, Error> {
-        self.files.get(path).ok_or_else(|| {
-            Error::new(ErrorCode::MissingFile, "$.photographs")
-                .expected(Expected::File)
-                .got(path)
-        })
     }
 
     fn cells(&self, name: &str) -> Result<Vec<Cell>, Error> {
         let invalid = |problem: String| {
             Error::new(ErrorCode::InvalidRecord, format!("$.photographs.{name}")).got(problem)
         };
-        let cells = self.file(&format!("highlands/plants/{name}.json"))?;
+        let path = cells_file(name);
+        let cells = self
+            .cells
+            .get(path.as_str())
+            .ok_or_else(|| missing(&path))?;
         let cells: Vec<Cell> =
             serde_json::from_slice(cells).map_err(|error| invalid(error.to_string()))?;
         match cells.is_empty() {
@@ -98,13 +100,17 @@ impl Photographs {
     }
 
     pub(crate) fn atlas(&self, name: &str) -> Result<Atlas, Error> {
-        let image = self.file(&format!("highlands/plants/{name}_albedo.png"))?;
-        let size = png_size(image).ok_or_else(|| {
-            Error::new(ErrorCode::InvalidRecord, format!("$.photographs.{name}"))
-                .expected(Expected::Image)
-        })?;
+        let files = map_files("plants", name, &ATLAS_PARTS[..1]);
+        let path = files.first().map_or("", String::as_str);
+        let size = sources::file(path).ok_or_else(|| missing(path))?.size;
+        if size == [0, 0] {
+            return Err(
+                Error::new(ErrorCode::InvalidRecord, format!("$.photographs.{name}"))
+                    .expected(Expected::Image),
+            );
+        }
         Ok(Atlas::new(
-            size,
+            size.map(|side| side as f32),
             self.cells(name)?
                 .iter()
                 .map(|cell| [cell.x, cell.y, cell.w, cell.h, cell.root[0], cell.root[1]]),
@@ -125,19 +131,9 @@ impl Photographs {
                 cluster: cell.name.starts_with("twig"),
             })
             .collect();
-        let files = ["albedo", "normal", "json"].map(|part| match part {
-            "json" => format!("highlands/plants/{name}.json"),
-            map => format!("highlands/plants/{name}_{map}.png"),
-        });
-        let [leaves, relief, cells] = [
-            self.file(&files[0])?,
-            self.file(&files[1])?,
-            self.file(&files[2])?,
-        ]
-        .map(Arc::clone);
-        let digest = [&leaves, &relief, &cells]
-            .iter()
-            .fold(0xcbf2_9ce4_8422_2325, |hash, bytes| mixed(hash, bytes));
+        let files = spray_files(name);
+        let digest = set_digest(&files)?;
+        let photographs = self.sources.clone();
         let set = TextureSet {
             source: super::SOURCE.hash(),
             name: format!("highlands/plants/{name}/sprays/{digest:016x}"),
@@ -146,6 +142,9 @@ impl Photographs {
                 .map(|&(map, usage)| (map.to_owned(), usage))
                 .collect(),
             make: Arc::new(move || {
+                let Some(sheets) = read_all(&photographs, &files[..2])? else {
+                    return Ok(None);
+                };
                 let sheet = |path: &str, bytes: &[u8]| {
                     let image = decode_image(path, bytes).map_err(|error| error.to_string())?;
                     Ok::<_, String>(Sheet {
@@ -155,12 +154,12 @@ impl Photographs {
                     })
                 };
                 let [color, normal] = sprays::compose(
-                    &sheet(&files[0], &leaves)?,
-                    &sheet(&files[1], &relief)?,
+                    &sheet(&files[0], &sheets[0])?,
+                    &sheet(&files[1], &sheets[1])?,
                     &sources,
                 );
                 let size = sprays::SIZE as u32;
-                Ok(vec![
+                Ok(Some(vec![
                     TextureSource {
                         width: size,
                         height: size,
@@ -173,7 +172,7 @@ impl Photographs {
                         pixels: normal,
                         usage: TextureUsage::Normal,
                     },
-                ])
+                ]))
             }),
         };
         records.textures(assets, set)
@@ -185,16 +184,10 @@ impl Photographs {
         (folder, name): (&str, &str),
         maps: &'static [(&'static str, TextureUsage)],
     ) -> Result<Vec<TextureHandle>, Error> {
-        let files = maps
-            .iter()
-            .map(|(map, _)| {
-                let path = format!("highlands/{folder}/{name}_{map}.png");
-                self.file(&path).map(|bytes| (path, Arc::clone(bytes)))
-            })
-            .collect::<Result<Vec<_>, Error>>()?;
-        let digest = files
-            .iter()
-            .fold(0xcbf2_9ce4_8422_2325, |hash, (_, bytes)| mixed(hash, bytes));
+        let parts: Vec<&str> = maps.iter().map(|&(map, _)| map).collect();
+        let files = map_files(folder, name, &parts);
+        let digest = set_digest(&files)?;
+        let photographs = self.sources.clone();
         let set = TextureSet {
             source: super::SOURCE.hash(),
             name: format!("highlands/{folder}/{name}/{digest:016x}"),
@@ -203,11 +196,16 @@ impl Photographs {
                 .map(|&(map, usage)| (map.to_owned(), usage))
                 .collect(),
             make: Arc::new(move || {
+                let Some(read) = read_all(&photographs, &files)? else {
+                    return Ok(None);
+                };
                 files
                     .iter()
+                    .zip(read)
                     .zip(maps)
-                    .map(|((path, bytes), &(_, usage))| source(path, bytes, usage))
-                    .collect()
+                    .map(|((path, bytes), &(_, usage))| source(path, &bytes, usage))
+                    .collect::<Result<Vec<_>, String>>()
+                    .map(Some)
             }),
         };
         records.textures(assets, set)
@@ -230,23 +228,6 @@ fn source(path: &str, bytes: &[u8], usage: TextureUsage) -> Result<TextureSource
         pixels,
         usage,
     })
-}
-
-fn mixed(hash: u64, bytes: &[u8]) -> u64 {
-    bytes.iter().fold(hash, |hash, &byte| {
-        (hash ^ u64::from(byte)).wrapping_mul(0x0000_0100_0000_01b3)
-    })
-}
-
-fn png_size(bytes: &[u8]) -> Option<[f32; 2]> {
-    let header = bytes.get(..24)?;
-    if &header[..8] != PNG_HEADER {
-        return None;
-    }
-    let word = |at: usize| {
-        u32::from_be_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]]) as f32
-    };
-    Some([word(16), word(20)])
 }
 
 struct Level {

@@ -9,6 +9,7 @@ use crate::bricks::game::HighlandsStats;
 use crate::jobs::photographs::{ATLAS_MAPS, BARK_MAPS, Photographs};
 use crate::jobs::trees::{self, PLANTS};
 use crate::jobs::{BOULDER, CAVE_POINTS, PLANT, sprays};
+use crate::sources::sets::{ATLASES, BARKS, LEAVES};
 
 const BOULDERS: u32 = 5;
 
@@ -16,13 +17,7 @@ const ROCK_SHAPE: u32 = 8;
 
 const SHAPED_ROCKS: [(&str, u32, u32); 3] = [("outcrop", 1, 4), ("ledge", 2, 4), ("block", 3, 6)];
 
-const ATLASES: [&str; 3] = ["spruce_twigs", "pine_twigs", "undergrowth"];
-
 const TWIGS: [&str; 2] = ["spruce_twigs", "pine_twigs"];
-
-const LEAVES: &str = "birch_leaves";
-
-const BARKS: [&str; 3] = ["spruce", "pine", "birch"];
 
 #[derive(Resource, Default)]
 pub(crate) struct Content {

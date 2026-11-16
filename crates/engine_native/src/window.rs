@@ -6,8 +6,8 @@ use engine::host::{FramePhase, HostPause, HostSettings};
 use engine::{BrickList, Engine, ErrorCode, Game, GameHost, GpuPreference, RenderTarget};
 use winit::application::ApplicationHandler;
 use winit::dpi::{LogicalSize, PhysicalSize};
-use winit::event::{DeviceEvent, DeviceId, WindowEvent};
-use winit::event_loop::{ActiveEventLoop, EventLoop};
+use winit::event::{DeviceEvent, DeviceId, StartCause, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::keyboard::PhysicalKey;
 use winit::window::WindowId;
 
@@ -293,9 +293,26 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                     event_loop.exit();
                     return;
                 }
-                running.window.request_redraw();
+                match phase {
+                    FramePhase::Compiling | FramePhase::Preparing => {
+                        let interval = running.host.refresh_interval() / 1000.0;
+                        let wait = Duration::try_from_secs_f64(interval).unwrap_or_default();
+                        event_loop.set_control_flow(ControlFlow::WaitUntil(start + wait));
+                    }
+                    FramePhase::Collecting
+                    | FramePhase::Started
+                    | FramePhase::Playing
+                    | FramePhase::Idle => running.window.request_redraw(),
+                }
             }
             _ => {}
+        }
+    }
+
+    fn new_events(&mut self, event_loop: &ActiveEventLoop, cause: StartCause) {
+        if let (StartCause::ResumeTimeReached { .. }, Some(running)) = (cause, &self.running) {
+            event_loop.set_control_flow(ControlFlow::Wait);
+            running.window.request_redraw();
         }
     }
 
@@ -336,7 +353,9 @@ impl<G: Game> Running<G> {
         self.exchange_jobs();
         match phase {
             FramePhase::Playing => self.title.frame(&self.window, timestamp, &self.host),
-            FramePhase::Compiling | FramePhase::Preparing => self.title.loading(&self.window),
+            FramePhase::Compiling | FramePhase::Preparing | FramePhase::Collecting => {
+                self.title.loading(&self.window);
+            }
             FramePhase::Started | FramePhase::Idle => {}
         }
         Ok(phase)

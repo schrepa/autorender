@@ -218,6 +218,9 @@ impl Run {
         }
         let (variant, painted) = self.drawn_variant(&shape)?;
         let ready = self.render_pipeline(pipeline, variant)?;
+        if self.recording.collecting() {
+            return Ok(());
+        }
         let Self {
             machine,
             recording,

@@ -30,13 +30,15 @@ export const FRAME_CORES = 2;
 
 export const JOB_CACHE_MIB = 1024;
 
+export const PACK_CACHE_MIB = 1024;
+
 export const WHEEL_PIXELS = 100.0;
 
 export const BENCHMARK_LIMIT_MS = 10000;
 
 export const READ_BACK_LIMIT_MS = 120000;
 
-export const FRAME_PHASES = {"compiling":0,"idle":4,"playing":3,"preparing":1,"started":2};
+export const FRAME_PHASES = {"collecting":5,"compiling":0,"idle":4,"playing":3,"preparing":1,"started":2};
 
 export const HOST_PAUSES = {"focus":0,"hidden":1,"suspended":2};
 

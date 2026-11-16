@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use engine::collections::HashMap;
 use engine::host::Image;
 
@@ -15,10 +13,9 @@ use serde_json::Value;
 use crate::bricks::game::HighlandsControl;
 use crate::jobs::ground;
 use crate::records;
+use crate::sources::{self, Sources};
 
 pub type RockMaps = HashMap<String, Image>;
-
-pub type GroundFiles = HashMap<&'static str, Arc<[u8]>>;
 
 #[derive(Default)]
 pub struct WaterMaps {
@@ -35,7 +32,7 @@ macro_rules! grounds {
     ($($kind:literal),* $(,)?) => {
         const GROUNDS: [&str; GROUND_FILES.len() / 9] = [$($kind),*];
 
-        pub const GROUND_FILES: [&str; 108] = [$(
+        const GROUND_FILES: [&str; 108] = [$(
             concat!("highlands/ground/", $kind, "_albedo.png"),
             concat!("highlands/ground/", $kind, "_normal.png"),
             concat!("highlands/ground/", $kind, "_orm.png"),
@@ -137,14 +134,14 @@ pub(crate) fn provide(
     world: &mut World,
     files: &RockMaps,
     water: WaterMaps,
-    ground_files: &GroundFiles,
+    ground: &Sources,
 ) -> engine::Result<()> {
     world.insert_resource(ProvidedAssets::default());
     control(world, HighlandsControl::Land)?;
     let hashed = |paths: &[&'static str]| {
         let mut hashes = Vec::with_capacity(16 * paths.len());
         for &path in paths {
-            let hash = ground_files.get(path).map_or(0, |file| content_hash(file));
+            let hash = sources::file(path).map_or(0, |file| file.digest);
             hashes.extend_from_slice(&hash.to_le_bytes());
         }
         content_hash(&hashes)
@@ -160,8 +157,7 @@ pub(crate) fn provide(
             .map(|(&name, paths)| {
                 let mut sets = Vec::with_capacity(GROUND_RUNGS.len());
                 for (rung, paths) in GROUND_RUNGS.iter().zip(paths.as_chunks::<3>().0) {
-                    let files = paths.map(|path| ground_files.get(path).cloned());
-                    if !rung.is_empty() && files.iter().all(Option::is_none) {
+                    if !rung.is_empty() && paths.iter().all(|path| sources::file(path).is_none()) {
                         sets.push(Vec::new());
                         continue;
                     }
@@ -173,7 +169,7 @@ pub(crate) fn provide(
                     sets.push(ground_textures(
                         (&mut records, &mut assets),
                         (&set, content),
-                        (paths, files),
+                        (paths, ground.clone()),
                     )?);
                 }
                 Ok(sets)
@@ -296,20 +292,19 @@ fn scene_layer<'a>(
 fn ground_textures(
     (records, assets): (&mut RecordExchange, &mut AssetLibrary),
     (name, content): (&str, u128),
-    (paths, files): (&[&'static str; 3], [Option<Arc<[u8]>>; 3]),
+    (paths, files): (&[&'static str; 3], Sources),
 ) -> engine::Result<Vec<TextureHandle>> {
     let maps: Vec<ground::Map> = paths
         .iter()
-        .zip(files)
         .zip(&GROUND_MAPS)
-        .map(|((&path, file), &(_, usage))| ground::Map { path, file, usage })
+        .map(|(&path, &(_, usage))| ground::Map { path, usage })
         .collect();
     records::textures(
         (records, assets),
         crate::jobs::SOURCE.hash(),
         format!("highlands/ground/{content:032x}/{name}"),
         &GROUND_MAPS,
-        move || ground::sources(&maps),
+        move || ground::sources(&maps, &files),
     )
 }
 

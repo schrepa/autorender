@@ -407,6 +407,7 @@ pub(crate) enum Work {
     Sent {
         kind: Option<JobRef>,
         asked: f64,
+        looking: bool,
         then: Option<JobRequest>,
     },
 }
@@ -573,61 +574,7 @@ pub const fn job_class(priority: u32) -> u8 {
     (priority >> 24) as u8
 }
 
-pub fn content_hash(bytes: &[u8]) -> u128 {
-    const C1: u64 = 0x87c3_7b91_1142_53d5;
-    const C2: u64 = 0x4cf5_ad43_2745_937f;
-    let mix = |mut k: u64| {
-        k ^= k >> 33;
-        k = k.wrapping_mul(0xff51_afd7_ed55_8ccd);
-        k ^= k >> 33;
-        k = k.wrapping_mul(0xc4ce_b9fe_1a85_ec53);
-        k ^ (k >> 33)
-    };
-    let word = |bytes: &[u8]| {
-        let mut word = [0_u8; 8];
-        word[..bytes.len()].copy_from_slice(bytes);
-        u64::from_le_bytes(word)
-    };
-    let (mut h1, mut h2) = (0_u64, 0_u64);
-    let (blocks, tail) = bytes.as_chunks::<16>();
-    for block in blocks {
-        let (k1, k2) = (word(&block[..8]), word(&block[8..]));
-        h1 ^= k1.wrapping_mul(C1).rotate_left(31).wrapping_mul(C2);
-        h1 = h1
-            .rotate_left(27)
-            .wrapping_add(h2)
-            .wrapping_mul(5)
-            .wrapping_add(0x52dc_e729);
-        h2 ^= k2.wrapping_mul(C2).rotate_left(33).wrapping_mul(C1);
-        h2 = h2
-            .rotate_left(31)
-            .wrapping_add(h1)
-            .wrapping_mul(5)
-            .wrapping_add(0x3849_5ab5);
-    }
-    if tail.len() > 8 {
-        h2 ^= word(&tail[8..])
-            .wrapping_mul(C2)
-            .rotate_left(33)
-            .wrapping_mul(C1);
-    }
-    if !tail.is_empty() {
-        h1 ^= word(&tail[..tail.len().min(8)])
-            .wrapping_mul(C1)
-            .rotate_left(31)
-            .wrapping_mul(C2);
-    }
-    let len = bytes.len() as u64;
-    h1 ^= len;
-    h2 ^= len;
-    h1 = h1.wrapping_add(h2);
-    h2 = h2.wrapping_add(h1);
-    h1 = mix(h1);
-    h2 = mix(h2);
-    h1 = h1.wrapping_add(h2);
-    h2 = h2.wrapping_add(h1);
-    (u128::from(h2) << 64) | u128::from(h1)
-}
+pub use engine_codec::content_hash;
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum JobShare {
@@ -928,11 +875,14 @@ impl JobExchange {
                 } => {
                     let key = RecordKey(key);
                     if let Some(ticket) = records.ticket(&key) {
-                        let sent = matches!(records.work(&key), Some(Work::Sent { .. }));
+                        let sent = match records.work(&key) {
+                            Some(Work::Sent { looking, .. }) => Some(*looking),
+                            Some(Work::Waiting { .. }) | None => None,
+                        };
                         records.ready(&key, ticket, Arc::from(bytes.as_slice()));
                         self.queue.retain(|queued| *queued != key);
-                        if sent {
-                            self.cancel(JobId(ticket.number()));
+                        if let Some(looking) = sent {
+                            self.cancel(JobId(ticket.number()), !looking);
                         }
                     }
                     self.keep_with(key, kind, bytes, parity);
@@ -985,12 +935,20 @@ impl JobExchange {
         *self.admitted.get_mut() = 0;
         self.running = records
             .works()
-            .filter(|(_, work)| matches!(work, Work::Sent { .. }))
+            .filter(|(_, work)| matches!(work, Work::Sent { looking: false, .. }))
             .count();
+        self.admit_queued(records, firsts);
+    }
+
+    fn admit_queued(&mut self, records: &mut RecordSet, firsts: &[JobBatch]) {
         let mut budgets: Vec<(JobBatch, JobBudget)> = Vec::new();
         for key in std::mem::take(&mut self.queue) {
             let begun = match records.work_mut(&key) {
                 Some(Work::Waiting { admitted: true, .. }) => true,
+                Some(Work::Waiting {
+                    message: JobMessage::Fetch(_),
+                    ..
+                }) => true,
                 Some(Work::Waiting { batch, message, .. }) => {
                     let held = if batch.run == LEFT_OVER {
                         firsts
@@ -1032,13 +990,17 @@ impl JobExchange {
         let Some(work) = records.work_mut(&key) else {
             return;
         };
-        let kind = match &*work {
-            Work::Waiting { message, .. } => message.asked().and_then(|(_, kind, _)| kind.cloned()),
+        let (kind, looking) = match &*work {
+            Work::Waiting { message, .. } => (
+                message.asked().and_then(|(_, kind, _)| kind.cloned()),
+                matches!(message, JobMessage::Fetch(_)),
+            ),
             Work::Sent { .. } => return,
         };
         let sent = Work::Sent {
             kind,
             asked: crate::profile::now_ms(),
+            looking,
             then: None,
         };
         let Work::Waiting { message, .. } = std::mem::replace(work, sent) else {
@@ -1049,8 +1011,10 @@ impl JobExchange {
 
     fn send(&mut self, records: &mut RecordSet, message: JobMessage) {
         self.stats.submitted += 1;
-        if self.hosted {
+        if matches!(message, JobMessage::Run(_)) {
             self.running += 1;
+        }
+        if self.hosted {
             self.sent.push(message);
             return;
         }
@@ -1062,7 +1026,6 @@ impl JobExchange {
             JobMessage::Fetch(fetch) => (fetch.id, Err(MISSING_RECORD.to_owned())),
             JobMessage::Cancel(_) | JobMessage::Share(_) | JobMessage::Keep(..) => return,
         };
-        self.running += 1;
         self.land(records, id, output);
     }
 
@@ -1076,21 +1039,31 @@ impl JobExchange {
         let Some(&key) = records.key_of(ticket) else {
             return;
         };
-        let Some(Work::Sent { kind, asked, then }) = records.work_mut(&key) else {
+        let Some(Work::Sent {
+            kind,
+            asked,
+            looking,
+            then,
+        }) = records.work_mut(&key)
+        else {
             return;
         };
-        let (name, asked, then) = (
+        let (name, asked, looking, then) = (
             kind.as_ref()
                 .map_or("records", |kind| kind.name())
                 .to_owned(),
             *asked,
+            *looking,
             then.take(),
         );
-        self.running = self.running.saturating_sub(1);
+        if !looking {
+            self.running = self.running.saturating_sub(1);
+        }
         let missing = matches!(&output, Err(message) if message == MISSING_RECORD);
         if let (true, Some(request)) = (missing, then) {
-            if let Some(Work::Sent { kind, .. }) = records.work_mut(&key) {
+            if let Some(Work::Sent { kind, looking, .. }) = records.work_mut(&key) {
                 *kind = Some(request.kind.clone());
+                *looking = false;
             }
             self.send(records, JobMessage::Run(request));
             return;
@@ -1112,19 +1085,26 @@ impl JobExchange {
                 records.fail(&key, ticket, error);
             }
         }
+        if self.hosted && !looking && !self.queue.is_empty() {
+            self.admit_queued(records, &[]);
+        }
     }
 
     fn abandon(&mut self, key: RecordKey, released: &Request<Arc<[u8]>>, work: Option<Work>) {
         match (work, released.asked()) {
             (Some(Work::Waiting { .. }), _) => self.queue.retain(|queued| *queued != key),
-            (Some(Work::Sent { .. }), Some(ticket)) => self.cancel(JobId(ticket.number())),
+            (Some(Work::Sent { looking, .. }), Some(ticket)) => {
+                self.cancel(JobId(ticket.number()), !looking);
+            }
             (Some(Work::Sent { .. }) | None, _) => {}
         }
     }
 
-    fn cancel(&mut self, id: JobId) {
+    fn cancel(&mut self, id: JobId, heavy: bool) {
         self.stats.cancelled += 1;
-        self.running = self.running.saturating_sub(1);
+        if heavy {
+            self.running = self.running.saturating_sub(1);
+        }
         match self
             .sent
             .iter()

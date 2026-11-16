@@ -3,6 +3,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 
+use crate::collections::HashSet;
 use crate::{Background, Delivers, Error, ErrorCode, Interest, Requests, Ticket};
 
 type Landing = Arc<Mutex<Vec<(String, Ticket, Result<Vec<u8>, String>)>>>;
@@ -13,6 +14,7 @@ struct Reading;
 pub struct Files {
     requests: Requests<String, Arc<[u8]>, Reading>,
     root: String,
+    rooted: HashSet<String>,
     landing: Landing,
 }
 
@@ -33,6 +35,12 @@ impl Files {
         Background::asked(self.requests.ask(path.to_owned()), move |bytes| {
             decode(&bytes[..])
         })
+    }
+
+    pub fn read_from(&mut self, root: &str, path: &str) -> Background<Arc<[u8]>, String> {
+        let at = joined(root, path);
+        self.rooted.insert(at.clone());
+        Background::asked(self.requests.ask(at), Ok)
     }
 
     pub fn census(&self) -> crate::Census {
@@ -79,11 +87,11 @@ pub(crate) fn read_files(world: &mut World) {
         .collect();
     for (path, ticket) in fresh {
         files.requests.set_work(&path, Reading);
-        start(
-            joined(&files.root, &path),
-            (path, ticket),
-            Arc::clone(&files.landing),
-        );
+        let at = match files.rooted.contains(&path) {
+            true => path.clone(),
+            false => joined(&files.root, &path),
+        };
+        start(at, (path, ticket), Arc::clone(&files.landing));
     }
 }
 

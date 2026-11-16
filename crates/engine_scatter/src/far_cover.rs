@@ -293,6 +293,7 @@ fn texture_set(input: &[u8], bytes: Arc<[u8]>) -> Option<(CanopyMade, TextureSet
                     usage: TextureUsage::Data,
                 },
             ])
+            .map(Some)
         }),
     };
     Some((made, set))

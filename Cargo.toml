@@ -187,4 +187,5 @@ debug = 1
 
 [patch.crates-io]
 glam = { path = "vendor/glam" }
+wgpu = { path = "vendor/wgpu" }
 wgpu-hal = { path = "vendor/wgpu-hal" }

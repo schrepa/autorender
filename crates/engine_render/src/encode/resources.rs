@@ -19,20 +19,36 @@ impl Run {
             self.fault(error);
             return;
         }
+        self.owed_mips.retain(|(owed, _)| *owed != texture);
+        self.owed_mips.push((texture, layers));
+        self.record_mips();
+    }
+
+    pub(crate) fn record_mips(&mut self) {
         let device = self.device.clone();
         let mut encoder = self.queued.before.take().unwrap_or_else(|| {
             device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
                 label: Some("engine/part-mips"),
             })
         });
-        let (mut compiler, assets) = self.split();
-        for layer in layers {
-            assets.materials.mips().record(
-                (&device, &mut encoder),
-                &mut compiler,
-                &made,
-                Some(layer),
-            );
+        for (texture, layers) in std::mem::take(&mut self.owed_mips) {
+            let Some(made) = self
+                .written_texture(texture)
+                .map(|made| made.texture.clone())
+            else {
+                continue;
+            };
+            let (mut compiler, assets) = self.split();
+            let recorded = layers.clone().all(|layer| {
+                assets
+                    .materials
+                    .mips()
+                    .record((&device, &mut encoder), &mut compiler, &made, Some(layer))
+                    .is_some()
+            });
+            if !recorded {
+                self.owed_mips.push((texture, layers));
+            }
         }
         self.queued.before = Some(encoder);
     }

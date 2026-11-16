@@ -69,6 +69,7 @@ pub(crate) struct Core {
 
 pub struct Renderer {
     surface: Option<DisplayFrame>,
+    hidden: frame::Hidden,
     core: Core,
     run: Option<Run>,
     assets: Option<Assets>,

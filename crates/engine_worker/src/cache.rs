@@ -45,6 +45,10 @@ impl JobCache {
         self.verify
     }
 
+    pub fn budget(&self) -> u64 {
+        self.budget
+    }
+
     pub fn counters(&self) -> (u64, u64, u64, u64) {
         (self.hits, self.misses, self.total, self.mismatches)
     }

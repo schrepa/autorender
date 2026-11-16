@@ -262,6 +262,12 @@ pub enum Lifetime {
     Previous,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Picture {
+    Shown,
+    Hidden,
+}
+
 #[must_use]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Allocation {

@@ -8,6 +8,8 @@ interface JobWorker {
   hold(id: number, kind: string, source: string, input: Uint8Array, priority: number): void;
   busy(): boolean;
   slice(): unknown;
+  wants(): { id: number; keys: string[] }[];
+  resume(id: number): void;
   cancel(id: number): void;
 }
 
@@ -17,6 +19,7 @@ export interface WorkerBindings {
     new (hash: Uint8Array): JobWorker;
     start(): void;
     unpack(stored: Uint8Array, raw: number): Uint8Array;
+    compress(bytes: Uint8Array): Uint8Array;
     decode_image(uri: string, bytes: Uint8Array): unknown;
   };
 }
@@ -28,9 +31,11 @@ type Request =
   | { type: "share"; key: string; blob: Blob }
   | { type: "unshare"; key: string }
   | { type: "run"; id: number; kind: string; source: string; input: Uint8Array; priority: number }
+  | { type: "resume"; id: number }
   | { type: "cancel"; id: number }
   | { type: "image"; task: number; uri: string; bytes: Uint8Array }
-  | { type: "unpack"; task: number; bytes: Uint8Array; raw: number };
+  | { type: "unpack"; task: number; bytes: Uint8Array; raw: number }
+  | { type: "compress"; task: number; bytes: Uint8Array };
 
 type Report = { type: "done"; id: number; output: Uint8Array } | { type: "failed"; id: number; error: string };
 
@@ -83,6 +88,7 @@ async function work() {
       try {
         const report = worker.slice() as Report | undefined;
         if (report) scope.postMessage(report, "output" in report ? [report.output.buffer as ArrayBuffer] : []);
+        for (const want of worker.wants()) scope.postMessage({ type: "wants", id: want.id, keys: want.keys });
       } catch (error) {
         if (fatal(error)) stopped(error); else fail(error);
         return;
@@ -141,13 +147,19 @@ async function handle(request: Request) {
       }
       void work();
       return;
+    case "resume":
+      worker?.resume(request.id);
+      void work();
+      return;
     case "cancel":
       worker?.cancel(request.id);
       return;
     case "unpack":
+    case "compress":
       try {
-        const record = loaded().JobWorker.unpack(request.bytes, request.raw);
-        scope.postMessage({ type: "task", task: request.task, result: record }, [record.buffer as ArrayBuffer]);
+        const coder = loaded().JobWorker;
+        const bytes = request.type === "unpack" ? coder.unpack(request.bytes, request.raw) : coder.compress(request.bytes);
+        scope.postMessage({ type: "task", task: request.task, result: bytes }, [bytes.buffer as ArrayBuffer]);
       } catch (error) {
         scope.postMessage({ type: "task_failed", task: request.task, error: String(error) });
       }

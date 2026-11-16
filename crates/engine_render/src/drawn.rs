@@ -607,6 +607,7 @@ pub(crate) struct DrawnGpu {
     slots: u32,
     groups: [u32; 3],
     motion_generation: Option<u64>,
+    posed: bool,
 }
 
 fn var(module: &str, name: &'static str) -> Var {
@@ -904,6 +905,7 @@ impl DrawnGpu {
         let previous =
             cx.allocate_buffer(self.previous, if kept { bytes } else { storage_bytes(0) });
         let fresh = poses == Allocation::Fresh || previous == Allocation::Fresh;
+        let posed = std::mem::take(&mut self.posed);
         let generation = match table.plan() {
             PlanState::Built { generation } => Some(generation),
             PlanState::Stale => None,
@@ -912,7 +914,7 @@ impl DrawnGpu {
         let motion = kept
             && history
             && !fresh
-            && cx.ran(self.cull)
+            && posed
             && generation.is_some()
             && self.motion_generation == generation;
         self.motion_generation = if kept { generation } else { None };
@@ -1217,6 +1219,7 @@ impl GpuPart for DrawnGpu {
             slots: 0,
             groups: [0; 3],
             motion_generation: None,
+            posed: false,
         })
     }
 
@@ -1320,12 +1323,11 @@ impl GpuPart for DrawnGpu {
                 );
             }
         }
-        if self.slots != 0 {
-            cx.dispatch(
+        self.posed = self.slots == 0
+            || cx.dispatch(
                 &self.pose,
                 Count::Groups([self.slots.div_ceil(CULL_GROUP), 1, 1]),
-            );
-        }
+            ) != 0;
         cx.dispatch(&self.pipeline, Count::Groups(self.groups))
     }
 }

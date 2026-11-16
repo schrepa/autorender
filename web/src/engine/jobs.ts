@@ -1,7 +1,7 @@
 import { engineFailure } from "../generated/errors";
 import { FRAME_CORES, PANIC_PREFIX } from "../generated/host";
 import type { Runtime } from "../generated/runtime";
-import { type IndexBindings, JobStore, jobCacheSettings, type Unpacker } from "./job-cache";
+import { type Coder, type IndexBindings, JobStore, jobCacheSettings } from "./job-cache";
 import { fatal, type PanicReport } from "./panic";
 
 export type JobRuntime = Pick<Runtime, "set_job_workers" | "set_job_cache" | "take_jobs" | "complete_job" | "fail_job"
@@ -17,9 +17,12 @@ export type JobOrder =
   | { keep: string; output: Uint8Array }
   | { mismatch: string };
 
+type Lookup = Extract<JobOrder, { lookup: number }>;
+
 type WorkerMessage =
   | { type: "done"; id: number; output: Uint8Array }
   | { type: "failed"; id: number; error: string }
+  | { type: "wants"; id: number; keys: string[] }
   | { type: "task"; task: number; result: unknown }
   | { type: "task_failed"; task: number; error: string }
   | { type: "broken"; error: string }
@@ -30,11 +33,15 @@ export interface Pixels { width: number; height: number; pixels: Uint8Array }
 export type JobWorkerClass = new (options?: { name?: string }) => Worker;
 
 export interface JobBindings extends IndexBindings {
-  JobWorker: { module(): WebAssembly.Module };
+  JobWorker: {
+    module(): WebAssembly.Module;
+    unpack(stored: Uint8Array, raw: number): Uint8Array;
+    compress(bytes: Uint8Array): Uint8Array;
+  };
 }
 
 interface JobGame {
-  index: IndexBindings;
+  bindings: JobBindings;
   module: WebAssembly.Module;
   worker: JobWorkerClass;
 }
@@ -42,7 +49,7 @@ interface JobGame {
 let game: JobGame | undefined;
 
 export function useJobs(bindings: JobBindings, worker: JobWorkerClass) {
-  game ??= { index: bindings, module: bindings.JobWorker.module(), worker };
+  game ??= { bindings, module: bindings.JobWorker.module(), worker };
 }
 
 interface Task {
@@ -52,7 +59,7 @@ interface Task {
 }
 
 type Slot =
-  | { state: "live"; worker: Worker; tasks: Map<number, Task> }
+  | { state: "live"; worker: Worker; tasks: Map<number, Task>; shared: Set<string> }
   | { state: "broken" };
 
 type Live = Extract<Slot, { state: "live" }>;
@@ -60,6 +67,7 @@ type Live = Extract<Slot, { state: "live" }>;
 export class JobPool {
   private readonly slots: Slot[] = [];
   private readonly shares = new Map<string, Blob>();
+  private swept = false;
   private runtime: JobRuntime | undefined;
   private hash: Uint8Array | undefined;
   private failed: ((error: unknown) => void) | undefined;
@@ -71,7 +79,7 @@ export class JobPool {
   private readonly store: Promise<JobStore | undefined>;
 
   constructor(private readonly count: number, private readonly game: JobGame) {
-    this.store = openStore(game.index, (bytes, raw) => this.unpack(bytes, raw));
+    this.store = openStore(game.bindings, { unpack: (bytes, raw) => this.unpack(bytes, raw), compress: bytes => this.compress(bytes) });
     for (let index = 0; index < count; index++) this.slots.push(this.spawn(index));
   }
 
@@ -84,7 +92,10 @@ export class JobPool {
     this.failed = failed;
     this.ready = false;
     this.hash = this.call(runtime => runtime.job_hash());
-    if (this.hash) this.broadcast({ type: "list", hash: this.hash });
+    if (this.hash) {
+      for (const slot of this.slots) if (slot.state === "live") slot.shared.clear();
+      this.broadcast({ type: "list", hash: this.hash });
+    }
     this.call(runtime => runtime.set_job_workers(this.size));
     void this.store.then(store => {
       if (this.runtime !== runtime) return;
@@ -127,6 +138,12 @@ export class JobPool {
     }
   }
 
+  started() {
+    if (this.swept) return;
+    this.swept = true;
+    void this.store.then(store => store?.sweep());
+  }
+
   private stop(error: unknown) {
     const failed = this.failed;
     this.terminate();
@@ -136,28 +153,30 @@ export class JobPool {
   exchange() {
     if (!this.ready) return;
     const orders = this.call(runtime => runtime.take_jobs()) ?? [];
-    for (const order of orders) this.carry(order);
+    const lookups: Lookup[] = [];
+    for (const order of orders) {
+      if ("lookup" in order) lookups.push(order);
+      else this.carry(order);
+    }
+    if (lookups.length > 0) void this.lookup(lookups);
     void this.report();
   }
 
-  private carry(order: JobOrder) {
+  private carry(order: Exclude<JobOrder, Lookup>) {
     if ("clear" in order) {
       this.shares.clear();
+      for (const slot of this.slots) if (slot.state === "live") slot.shared.clear();
       this.broadcast({ type: "clear" });
     } else if ("share" in order) {
-      const blob = new Blob([order.bytes as Uint8Array<ArrayBuffer>]);
-      this.shares.set(order.share, blob);
-      this.broadcast({ type: "share", key: order.share, blob });
+      this.shares.set(order.share, new Blob([order.bytes as Uint8Array<ArrayBuffer>]));
     } else if ("unshare" in order) {
       this.shares.delete(order.unshare);
-      this.broadcast({ type: "unshare", key: order.unshare });
+      this.forget(order.unshare);
     } else if ("run" in order) {
       this.post(this.slots[order.worker], { type: "run", id: order.run, kind: order.kind, source: order.source, input: order.input,
         priority: order.priority }, [order.input.buffer as ArrayBuffer]);
     } else if ("cancel" in order) {
       this.post(this.slots[order.worker], { type: "cancel", id: order.cancel });
-    } else if ("lookup" in order) {
-      void this.lookup(order.lookup, order.key);
     } else if ("keep" in order) {
       void this.store.then(store => store?.keep(order.keep, order.output));
     } else {
@@ -165,13 +184,33 @@ export class JobPool {
     }
   }
 
-  private async lookup(id: number, key: string) {
+  private forget(key: string) {
+    for (const slot of this.slots) {
+      if (slot.state !== "live" || !slot.shared.delete(key)) continue;
+      this.post(slot, { type: "unshare", key });
+    }
+  }
+
+  private async lookup(lookups: Lookup[]) {
     const runtime = this.runtime;
     const store = await this.store;
-    const kept = store ? await store.lookup(key) : undefined;
-    if (this.runtime !== runtime) return;
-    this.call(runtime => runtime.job_kept(id, key, kept));
-    this.exchange();
+    const answers = store?.lookup(lookups.map(order => order.key));
+    await Promise.all(lookups.map(async (order, at) => {
+      const kept = await answers?.[at].catch(() => undefined);
+      if (this.runtime !== runtime) return;
+      this.call(runtime => runtime.job_kept(order.lookup, order.key, kept));
+      this.exchange();
+    }));
+  }
+
+  private supply(slot: Live, id: number, keys: string[]) {
+    for (const key of keys) {
+      const blob = this.shares.get(key);
+      if (!blob || slot.shared.has(key)) continue;
+      slot.shared.add(key);
+      this.post(slot, { type: "share", key, blob });
+    }
+    this.post(slot, { type: "resume", id });
   }
 
   private async report() {
@@ -185,9 +224,14 @@ export class JobPool {
     this.call(runtime => runtime.report_job_cache(hits, misses, bytes, mismatches));
   }
 
-  private unpack(stored: Uint8Array, raw: number): Promise<Uint8Array> | undefined {
-    if (this.size === 0) return undefined;
+  private unpack(stored: Uint8Array, raw: number): Promise<Uint8Array> {
+    if (this.size === 0) return Promise.resolve().then(() => this.game.bindings.JobWorker.unpack(stored, raw));
     return this.task({ type: "unpack", bytes: stored, raw }, [stored.buffer as ArrayBuffer]) as Promise<Uint8Array>;
+  }
+
+  private compress(bytes: Uint8Array): Promise<Uint8Array> {
+    if (this.size === 0) return Promise.resolve().then(() => this.game.bindings.JobWorker.compress(bytes));
+    return this.task({ type: "compress", bytes }, [bytes.buffer as ArrayBuffer]) as Promise<Uint8Array>;
   }
 
   decodeImage(uri: string, bytes: Uint8Array): Promise<Pixels> {
@@ -213,12 +257,11 @@ export class JobPool {
 
   private spawn(index: number): Live {
     const worker = new this.game.worker({ name: "engine-jobs" });
-    const slot: Live = { state: "live", worker, tasks: new Map() };
+    const slot: Live = { state: "live", worker, tasks: new Map(), shared: new Set() };
     worker.onmessage = (event: MessageEvent<WorkerMessage>) => this.receive(index, worker, event.data);
     worker.onerror = (event) => { event.preventDefault(); this.lose(index, worker, event.message || "worker error"); };
     this.post(slot, { type: "init", module: this.game.module });
     if (this.hash) this.post(slot, { type: "list", hash: this.hash });
-    for (const [key, blob] of this.shares) this.post(slot, { type: "share", key, blob });
     return slot;
   }
 
@@ -242,9 +285,14 @@ export class JobPool {
     switch (message.type) {
       case "done":
         this.call(runtime => runtime.complete_job(message.id, message.output));
+        this.exchange();
         break;
       case "failed":
         this.call(runtime => runtime.fail_job(message.id, message.error));
+        this.exchange();
+        break;
+      case "wants":
+        this.supply(slot, message.id, message.keys);
         break;
       case "task":
       case "task_failed": {
@@ -278,10 +326,10 @@ export class JobPool {
   }
 }
 
-async function openStore(bindings: IndexBindings, unpack: Unpacker): Promise<JobStore | undefined> {
+async function openStore(bindings: IndexBindings, coder: Coder): Promise<JobStore | undefined> {
   const settings = jobCacheSettings();
   if (!settings) return undefined;
-  return JobStore.open(bindings, settings.budget, settings.verify, unpack);
+  return JobStore.open(bindings, settings, coder);
 }
 
 let pool: JobPool | null | undefined;

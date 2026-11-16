@@ -133,17 +133,35 @@ impl<G> Copy for GameEntry<G> {}
 #[derive(Resource, Default)]
 pub struct GameFiles {
     files: SceneFiles,
+    root: String,
 }
 
 impl GameFiles {
+    pub fn new(files: SceneFiles, root: impl Into<String>) -> Self {
+        Self {
+            files,
+            root: root.into(),
+        }
+    }
+
     pub fn bytes(&self, name: &str) -> Option<&[u8]> {
         self.files.buffer(name, "$").ok()
     }
+
+    pub fn root(&self) -> &str {
+        &self.root
+    }
 }
 
-pub fn report_missing<G: Game>(files: &SceneFiles) {
+impl From<SceneFiles> for GameFiles {
+    fn from(files: SceneFiles) -> Self {
+        Self::new(files, "")
+    }
+}
+
+pub fn report_missing<G: Game>(files: &GameFiles) {
     for file in G::FILES {
-        if files.buffer(file, "$").is_ok() {
+        if files.bytes(file).is_some() {
             continue;
         }
         let record = serde_json::json!({
@@ -165,9 +183,9 @@ pub fn default_build<G: Default>(_: &mut Engine) -> crate::Result<G> {
 pub fn built<G: Game>(
     entry: &GameEntry<G>,
     engine: &mut Engine,
-    files: SceneFiles,
+    files: impl Into<GameFiles>,
 ) -> crate::Result<G> {
-    engine.app.world_mut().insert_resource(GameFiles { files });
+    engine.app.world_mut().insert_resource(files.into());
     let game = (entry.build)(engine);
     engine.app.world_mut().remove_resource::<GameFiles>();
     game

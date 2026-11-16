@@ -40,7 +40,7 @@ export interface FrameStats {
 
 export type Allowed = { kind: "range"; max: number; min: number } | { kind: "at_most"; max: number } | { kind: "at_least"; min: number } | { kind: "variants"; values: string[] };
 
-export type Awaits = "work" | "view";
+export type Awaits = "work" | "view" | "frames";
 
 export interface BrickCost {
   allocations: number;
@@ -125,6 +125,7 @@ export interface Progress {
 
 export interface Readiness {
   compiling: number;
+  drawing: number;
   failed: [string, Error][];
   loading: Progress;
   settling: number;

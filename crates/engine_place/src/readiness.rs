@@ -11,6 +11,7 @@ pub enum Awaits {
     #[default]
     Work,
     View,
+    Frames,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
@@ -26,12 +27,17 @@ pub struct Readiness {
     pub loading: Progress,
     pub compiling: u32,
     pub settling: u32,
+    pub drawing: u32,
     pub unsettled: Vec<Unsettled>,
     pub failed: Vec<(String, Error)>,
 }
 
 impl Readiness {
     pub fn settled(&self) -> bool {
+        self.worked() && self.drawing == 0
+    }
+
+    pub fn worked(&self) -> bool {
         self.loading.total == 0 && self.compiling == 0 && self.settling == 0
     }
 
@@ -48,6 +54,11 @@ impl Readiness {
 
     pub fn await_view(&mut self, brick: &'static str, left: u32) {
         self.note(brick, u64::from(left), Awaits::View);
+    }
+
+    pub fn await_frames(&mut self, brick: &'static str, left: u32) {
+        self.drawing = self.drawing.saturating_add(left);
+        self.note(brick, u64::from(left), Awaits::Frames);
     }
 
     pub fn fail(&mut self, by: &str, error: Error) {

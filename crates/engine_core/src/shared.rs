@@ -1,7 +1,10 @@
 use bevy_ecs::world::World;
 use engine_registry::CORE_ROW;
 
-use crate::{Board, FrameBudget, GlobalTransforms, Level, Readiness, Views, WorkClock, settings};
+use crate::{
+    Board, FrameBudget, GlobalTransforms, Level, Pause, PauseReason, Readiness, Views, WorkClock,
+    settings,
+};
 
 settings! {
     #[section("feeds")]
@@ -28,11 +31,16 @@ pub(crate) fn start_frame(world: &mut World, spare_ms: f64) {
     let clock = world
         .get_resource::<WorkClock>()
         .and_then(|clock| clock.reading);
-    world.insert_resource(FrameBudget::start(
-        clock,
-        (f64::from(budget.work_ms), spare_ms),
-        u64::from(budget.upload_bytes),
-    ));
+    let work_ms = f64::from(budget.work_ms);
+    let preparing = world
+        .get_resource::<Pause>()
+        .is_some_and(|pause| pause.holds(PauseReason::Preparing));
+    let upload_bytes = if preparing {
+        (f64::from(budget.upload_bytes) * (work_ms + spare_ms) / work_ms) as u64
+    } else {
+        u64::from(budget.upload_bytes)
+    };
+    world.insert_resource(FrameBudget::start(clock, (work_ms, spare_ms), upload_bytes));
     let transforms = world
         .get_resource::<FeedSettings>()
         .map_or(FeedSettings::default().transforms, |feeds| feeds.transforms);

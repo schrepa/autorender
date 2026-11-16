@@ -1,5 +1,6 @@
+use engine_core::RecordKey;
 use js_sys::wasm_bindgen::JsValue;
-use js_sys::{Object, Reflect, Uint8Array};
+use js_sys::{Array, Object, Reflect, Uint8Array};
 
 use crate::{Image, Report};
 
@@ -37,4 +38,19 @@ pub fn image(image: &Image) -> JsValue {
         &Uint8Array::from(image.pixels.as_slice()),
     );
     object.into()
+}
+
+pub fn wants(wants: Vec<(u64, Vec<RecordKey>)>) -> JsValue {
+    let out = Array::new();
+    for (id, keys) in wants {
+        let object = Object::new();
+        let listed = Array::new();
+        for key in keys {
+            listed.push(&JsValue::from_str(&key.hex()));
+        }
+        set(&object, "id", &JsValue::from_f64(id as f64));
+        set(&object, "keys", &listed);
+        out.push(&object);
+    }
+    out.into()
 }

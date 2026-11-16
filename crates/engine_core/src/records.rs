@@ -35,7 +35,7 @@ impl TextureSampling {
     }
 }
 
-pub type MakeTextures = Arc<dyn Fn() -> Result<Vec<TextureSource>, String> + Send + Sync>;
+pub type MakeTextures = Arc<dyn Fn() -> Result<Option<Vec<TextureSource>>, String> + Send + Sync>;
 
 pub struct TextureJobs;
 
@@ -62,10 +62,12 @@ impl TextureSet {
         record_key(&self.source, TEXTURE_RECORD, &identity)
     }
 
-    pub fn sources(&self) -> Result<Vec<TextureSource>, String> {
-        let made = (self.make)().map_err(|error| format!("{}: {error}", self.name))?;
+    pub fn sources(&self) -> Result<Option<Vec<TextureSource>>, String> {
+        let Some(made) = (self.make)().map_err(|error| format!("{}: {error}", self.name))? else {
+            return Ok(None);
+        };
         if made.len() == self.textures.len() {
-            Ok(made)
+            Ok(Some(made))
         } else {
             Err(format!(
                 "{}: {} sources made for {} textures",
@@ -240,19 +242,29 @@ impl RecordExchange {
         }
     }
 
-    fn plain(&mut self, id: u64, index: usize) -> Result<Vec<u8>, String> {
+    fn plain(&mut self, id: u64, index: usize) -> Result<Option<Vec<u8>>, String> {
         let batch = self
             .batches
             .iter_mut()
             .find(|batch| batch.id == id)
             .ok_or("its sources are gone")?;
-        let set = &batch.set;
-        let made = batch
-            .sources
-            .get_or_insert_with(|| set.sources().map(Arc::new))
-            .clone()?;
+        let made = match &batch.sources {
+            Some(made) => made.clone()?,
+            None => match batch.set.sources() {
+                Ok(None) => return Ok(None),
+                Ok(Some(made)) => {
+                    let made = Arc::new(made);
+                    batch.sources = Some(Ok(Arc::clone(&made)));
+                    made
+                }
+                Err(error) => {
+                    batch.sources = Some(Err(error.clone()));
+                    return Err(error);
+                }
+            },
+        };
         engine_textures::plain(&made[index])
-            .map(|texture| engine_textures::record(&texture))
+            .map(|texture| Some(engine_textures::record(&texture)))
             .map_err(|error| format!("{}: {error}", batch.set.name))
     }
 }
@@ -312,17 +324,18 @@ fn step(
             Stage::Making => {
                 let made = match &mut request.make {
                     Make::Here(make) => match make.take() {
-                        Some(make) => make(),
+                        Some(make) => make().map(Some),
                         None => Err("it was made already".into()),
                     },
                     &mut Make::Texture { batch, index } => records.plain(batch, index),
                 };
                 return match made {
-                    Ok(bytes) => Step::Arrived {
+                    Ok(Some(bytes)) => Step::Arrived {
                         request,
                         bytes: Arc::from(bytes),
                         fetched: false,
                     },
+                    Ok(None) => Step::Waiting(request),
                     Err(error) => Step::Failed(request, error),
                 };
             }

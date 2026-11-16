@@ -3,7 +3,7 @@ use engine_core::{
     JobId, JobMessage, JobRef, PauseReason, RecordExchange, RenderScale, RenderStats, WorkClock,
 };
 use engine_registry::Registry;
-use engine_render::{RenderTarget, Renderer};
+use engine_render::{Picture, RenderTarget, Renderer};
 
 use crate::frame_stats::{FrameStats, ResolutionStats};
 use crate::host::InputSource;
@@ -449,7 +449,12 @@ impl AppHost {
         self.renderer.deliver(self.engine.app.world_mut());
     }
 
-    pub fn frame(&mut self, timestamp_ms: f64, width: u32, height: u32) -> Result<()> {
+    pub fn frame(
+        &mut self,
+        timestamp_ms: f64,
+        (width, height): (u32, u32),
+        picture: Picture,
+    ) -> Result<bool> {
         if !timestamp_ms.is_finite() {
             return Err(Error::new(ErrorCode::InvalidInput, "$.timestamp")
                 .expected(crate::Expected::Finite)
@@ -459,7 +464,7 @@ impl AppHost {
         #[cfg(feature = "profiling")]
         self.begin_profile_frame();
         let profile = engine_profile::span("cpu", "host.frame");
-        {
+        let drawn = {
             let _core = attribution::core_scope();
             self.deliver();
             let start = now_ms();
@@ -467,16 +472,15 @@ impl AppHost {
             let simulation_ms = now_ms() - start;
             let time = self.engine.frame_time();
             self.render_frame(
-                width,
-                height,
-                simulation_ms,
-                time.ticks,
+                (width, height),
+                (simulation_ms, time.ticks),
                 Some(time.real_seconds * 1000.0),
-            )?;
-        }
+                picture,
+            )?
+        };
         drop(profile);
         self.end_attribution();
-        Ok(())
+        Ok(drawn)
     }
 
     #[cfg(feature = "dev")]
@@ -500,7 +504,12 @@ impl AppHost {
                 fixed_steps += self.engine.frame_time().ticks;
             }
             let simulation_ms = now_ms() - start;
-            self.render_frame(width, height, simulation_ms, fixed_steps, None)?;
+            self.render_frame(
+                (width, height),
+                (simulation_ms, fixed_steps),
+                None,
+                Picture::Shown,
+            )?;
         }
         drop(profile);
         self.end_attribution();
@@ -521,7 +530,7 @@ impl AppHost {
             let _core = attribution::core_scope();
             self.deliver();
             self.engine.frame_without_ticks();
-            self.render_frame(width, height, 0.0, 0, None)?;
+            self.render_frame((width, height), (0.0, 0), None, Picture::Shown)?;
         }
         self.end_attribution();
         Ok(())
@@ -537,7 +546,7 @@ impl AppHost {
             self.deliver();
             self.engine
                 .present(engine_core::Presented::Between { alpha })?;
-            self.render_frame(width, height, 0.0, 0, None)?;
+            self.render_frame((width, height), (0.0, 0), None, Picture::Shown)?;
         }
         self.end_attribution();
         Ok(())
@@ -555,12 +564,11 @@ impl AppHost {
 
     fn render_frame(
         &mut self,
-        width: u32,
-        height: u32,
-        simulation_ms: f64,
-        fixed_steps: u32,
+        (width, height): (u32, u32),
+        (simulation_ms, fixed_steps): (f64, u32),
         interval: Option<f64>,
-    ) -> Result<()> {
+        picture: Picture,
+    ) -> Result<bool> {
         if self.size != (width, height) {
             self.renderer.resize(width, height);
             self.size = (width, height);
@@ -574,10 +582,10 @@ impl AppHost {
             .resource::<engine_core::FixedTime>()
             .tick;
         let before_acquire = now_ms();
-        let acquired = self.renderer.acquire_frame()?;
+        let acquired = self.renderer.acquire_frame(picture)?;
         let acquire_ms = now_ms() - before_acquire;
         let (extraction_ms, draw_ms, rendered) = if acquired {
-            self.draw_frame((width, height))?
+            self.draw_frame((width, height), picture)?
         } else {
             (0.0, 0.0, RenderStats::default())
         };
@@ -605,10 +613,14 @@ impl AppHost {
         };
         self.pipeline_list
             .after_frame(&mut self.engine, &self.renderer);
-        Ok(())
+        Ok(acquired)
     }
 
-    fn draw_frame(&mut self, (width, height): (u32, u32)) -> Result<(f64, f64, RenderStats)> {
+    fn draw_frame(
+        &mut self,
+        (width, height): (u32, u32),
+        picture: Picture,
+    ) -> Result<(f64, f64, RenderStats)> {
         let before_extraction = now_ms();
         self.engine.start_frame();
         let (render_width, render_height) = self.size_frame((width, height));
@@ -641,11 +653,32 @@ impl AppHost {
         self.engine.report_drawing(reports);
         self.collect_pipelines();
         self.report_shader_errors();
+        if picture == Picture::Hidden {
+            self.cut_shown_views();
+        }
         Ok((
             after_extraction - before_extraction,
             now_ms() - after_extraction,
             rendered,
         ))
+    }
+
+    fn cut_shown_views(&mut self) {
+        let world = self.engine.app.world_mut();
+        let shown: Vec<bevy_ecs::entity::Entity> = world
+            .get_resource::<engine_core::Views>()
+            .map(|views| {
+                views
+                    .listed()
+                    .iter()
+                    .filter(|facts| facts.target.surface())
+                    .map(|facts| facts.view)
+                    .collect()
+            })
+            .unwrap_or_default();
+        for view in shown {
+            engine_core::send_ask(world, engine_core::ViewCut { view });
+        }
     }
 
     pub(crate) fn collect_pipelines(&mut self) {

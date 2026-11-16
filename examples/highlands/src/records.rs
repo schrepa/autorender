@@ -8,7 +8,7 @@ pub(crate) fn textures(
     source: [u8; 32],
     name: String,
     textures: &[(&str, TextureUsage)],
-    make: impl Fn() -> Result<Vec<TextureSource>, String> + Send + Sync + 'static,
+    make: impl Fn() -> Result<Option<Vec<TextureSource>>, String> + Send + Sync + 'static,
 ) -> engine::Result<Vec<TextureHandle>> {
     let set = TextureSet {
         source,

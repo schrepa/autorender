@@ -1,6 +1,8 @@
-use engine_core::PauseReason;
+use engine_core::{PauseReason, Readiness};
+use engine_render::Picture;
 
 use super::now_ms;
+use crate::frame_stats::FrameStats;
 use crate::{Game, GameHost};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -11,15 +13,17 @@ pub enum FramePhase {
     Started = 2,
     Playing = 3,
     Idle = 4,
+    Collecting = 5,
 }
 
 impl FramePhase {
-    pub const ALL: [(Self, &'static str); 5] = [
+    pub const ALL: [(Self, &'static str); 6] = [
         (Self::Compiling, "compiling"),
         (Self::Preparing, "preparing"),
         (Self::Started, "started"),
         (Self::Playing, "playing"),
         (Self::Idle, "idle"),
+        (Self::Collecting, "collecting"),
     ];
 }
 
@@ -54,11 +58,30 @@ impl HostPause {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum Stage {
     Unprepared,
-    Preparing { since: f64 },
+    Preparing {
+        since: f64,
+        picture: Picture,
+        before: Option<Sample>,
+    },
     Playing,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+struct Sample {
+    readiness: Readiness,
+    landed: u64,
+}
+
+impl Sample {
+    fn of(stats: &FrameStats) -> Self {
+        Self {
+            readiness: stats.readiness.clone(),
+            landed: stats.jobs.completed + stats.jobs.failed,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -127,7 +150,7 @@ impl FrameLoop {
         timestamp: f64,
         (width, height): (u32, u32),
     ) -> crate::Result<(Stage, FramePhase)> {
-        let since = match self.stage {
+        let (since, picture, before) = match &self.stage {
             Stage::Playing => {
                 host.frame(timestamp, width, height)?;
                 host.paced();
@@ -137,26 +160,62 @@ impl FrameLoop {
             Stage::Unprepared => {
                 host.suspend();
                 host.hold_preparation(true);
-                now_ms()
+                (now_ms(), Picture::Hidden, None)
             }
-            Stage::Preparing { since } => since,
+            Stage::Preparing {
+                since,
+                picture,
+                before,
+            } => (*since, *picture, before.clone()),
         };
-        let preparing = Stage::Preparing { since };
         host.set_preparation_ms(now_ms() - since);
-        host.frame(timestamp, width, height)?;
-        self.spare(host);
+        if picture == Picture::Hidden {
+            whole_tick(host);
+        }
+        let drawn = host.framed(timestamp, (width, height), picture)?;
+        if picture == Picture::Shown {
+            self.spare(host);
+        }
         let after = host.frame_stats();
-        if after.readiness.compiling > 0 {
-            return Ok((preparing, FramePhase::Compiling));
-        }
         let listing = host.prepare_pipelines();
-        if listing || after.render.pipelines_created > 0 || !after.readiness.settled() {
-            return Ok((preparing, FramePhase::Preparing));
+        let busy = listing || after.render.pipelines_created > 0 || in_flight(host, &after);
+        let waiting = if after.readiness.compiling > 0 {
+            FramePhase::Compiling
+        } else {
+            FramePhase::Preparing
+        };
+        let preparing = |picture, before| Stage::Preparing {
+            since,
+            picture,
+            before,
+        };
+        if picture == Picture::Shown {
+            if busy {
+                return Ok((preparing(Picture::Hidden, None), waiting));
+            }
+            if !after.readiness.settled() {
+                return Ok((preparing(Picture::Shown, None), waiting));
+            }
+            host.set_preparation_ms(now_ms() - since);
+            host.hold_preparation(false);
+            host.suspend();
+            return Ok((Stage::Playing, FramePhase::Started));
         }
-        host.set_preparation_ms(now_ms() - since);
-        host.hold_preparation(false);
-        host.suspend();
-        Ok((Stage::Playing, FramePhase::Started))
+        if !drawn {
+            return Ok((preparing(Picture::Hidden, before), waiting));
+        }
+        let sample = Sample::of(&after);
+        let uploaded = after.render.mesh_upload_bytes + after.render.texture_upload_bytes > 0;
+        let progressed = uploaded || before.as_ref() != Some(&sample);
+        if !busy && (after.readiness.worked() || !progressed) {
+            return Ok((preparing(Picture::Shown, None), waiting));
+        }
+        let phase = if progressed {
+            FramePhase::Collecting
+        } else {
+            waiting
+        };
+        Ok((preparing(Picture::Hidden, Some(sample)), phase))
     }
 
     fn spare<G: Game>(&self, host: &mut GameHost<G>) {
@@ -164,4 +223,25 @@ impl FrameLoop {
         let spare = self.started + host.refresh_interval() - now_ms() - margin;
         host.set_spare_time(spare);
     }
+}
+
+fn whole_tick<G: Game>(host: &mut GameHost<G>) {
+    let margin = crate::pacing::of(host.engine().app.world()).margin_ms;
+    let tick = host.refresh_interval() - margin;
+    host.set_spare_time(tick);
+}
+
+fn in_flight<G: Game>(host: &GameHost<G>, after: &FrameStats) -> bool {
+    let world = host.engine().app.world();
+    let records = world
+        .get_resource::<engine_core::Records>()
+        .is_some_and(|records| records.census().asked > 0);
+    let files = world
+        .get_resource::<engine_core::Files>()
+        .is_some_and(|files| files.census().asked > 0);
+    after.readiness.loading.total > 0
+        || after.readiness.compiling > 0
+        || host.jobs_held() > 0
+        || records
+        || files
 }

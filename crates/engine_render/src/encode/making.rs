@@ -1,7 +1,8 @@
-#[cfg(not(target_arch = "wasm32"))]
 use std::collections::VecDeque;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError, mpsc};
+#[cfg(target_arch = "wasm32")]
+use std::{cell::RefCell, future::Future, pin::Pin, rc::Rc};
 
 use super::Compiled;
 
@@ -9,6 +10,11 @@ pub(crate) enum Created {
     Render(wgpu::RenderPipeline),
     Compute(wgpu::ComputePipeline),
 }
+
+#[cfg(not(target_arch = "wasm32"))]
+pub(crate) type Creating = Result<Created, wgpu::Error>;
+#[cfg(target_arch = "wasm32")]
+pub(crate) type Creating = Pin<Box<dyn Future<Output = Result<Created, wgpu::Error>>>>;
 
 pub(crate) struct Finished {
     pub(crate) program: u64,
@@ -27,7 +33,10 @@ pub(crate) struct Making {
     started: bool,
     #[cfg(not(target_arch = "wasm32"))]
     threads: Option<Threads>,
+    #[cfg(not(target_arch = "wasm32"))]
     inline: Vec<Finished>,
+    #[cfg(target_arch = "wasm32")]
+    flights: Option<Flights>,
     pending: Vec<(u64, u64)>,
     refused: Vec<(u64, u64)>,
 }
@@ -64,27 +73,54 @@ impl Making {
     pub(crate) fn submit(
         &mut self,
         made: (u64, u64),
-        job: impl FnOnce() -> Finished + wgpu::WasmNotSend + 'static,
+        (pass, noted): (&'static str, Option<(Compiled, bool)>),
+        job: impl FnOnce() -> Creating + wgpu::WasmNotSend + 'static,
     ) {
         self.pending.push(made);
         #[cfg(not(target_arch = "wasm32"))]
         {
+            let (program, key) = made;
+            let job = move || Finished {
+                program,
+                key,
+                pass,
+                noted,
+                made: job(),
+            };
             if !self.started {
                 self.started = true;
                 self.threads = Threads::start();
             }
-            if let Some(threads) = &self.threads {
-                threads.hand(made, Box::new(job));
-                return;
+            match &self.threads {
+                Some(threads) => threads.hand(made, Box::new(job)),
+                None => self.inline.push(job()),
             }
         }
-        self.inline.push(job());
+        #[cfg(target_arch = "wasm32")]
+        self.flights
+            .get_or_insert_with(Flights::start)
+            .hand(Queued {
+                made,
+                pass,
+                noted,
+                job: Box::new(job),
+            });
     }
 
     pub(crate) fn take(&mut self, waited: Option<(u64, u64)>) -> Vec<Finished> {
-        let mut taken = std::mem::take(&mut self.inline);
-        let arrived = self.arrive(&taken, waited);
-        taken.extend(arrived);
+        #[cfg(not(target_arch = "wasm32"))]
+        let taken = {
+            let mut taken = std::mem::take(&mut self.inline);
+            let arrived = self.arrive(&taken, waited);
+            taken.extend(arrived);
+            taken
+        };
+        #[cfg(target_arch = "wasm32")]
+        let taken = self
+            .flights
+            .as_ref()
+            .map(|flights| flights.arrive(waited))
+            .unwrap_or_default();
         self.pending.retain(|made| {
             !taken
                 .iter()
@@ -125,10 +161,101 @@ impl Making {
         }
         arrived
     }
+}
 
-    #[cfg(target_arch = "wasm32")]
-    fn arrive(&self, _: &[Finished], _: Option<(u64, u64)>) -> Vec<Finished> {
-        Vec::new()
+#[cfg(target_arch = "wasm32")]
+struct Queued {
+    made: (u64, u64),
+    pass: &'static str,
+    noted: Option<(Compiled, bool)>,
+    job: Box<dyn FnOnce() -> Creating>,
+}
+
+#[cfg(target_arch = "wasm32")]
+#[derive(Default)]
+struct Flight {
+    jobs: VecDeque<Queued>,
+    arrived: Vec<Finished>,
+    flying: usize,
+}
+
+#[cfg(target_arch = "wasm32")]
+struct Flights {
+    shared: Rc<RefCell<Flight>>,
+    slots: usize,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Flights {
+    fn start() -> Self {
+        let cores = js_sys::Reflect::get(&js_sys::global(), &"navigator".into())
+            .and_then(|navigator| js_sys::Reflect::get(&navigator, &"hardwareConcurrency".into()))
+            .ok()
+            .and_then(|cores| cores.as_f64())
+            .map_or(1, |cores| cores as usize);
+        Self {
+            shared: Rc::default(),
+            slots: cores.saturating_sub(1).max(1),
+        }
+    }
+
+    fn hand(&self, queued: Queued) {
+        let starting = {
+            let mut flight = self.shared.borrow_mut();
+            flight.jobs.push_back(queued);
+            let starting = self
+                .slots
+                .saturating_sub(flight.flying)
+                .min(flight.jobs.len());
+            flight.flying += starting;
+            starting
+        };
+        for _ in 0..starting {
+            wasm_bindgen_futures::spawn_local(fly(Rc::clone(&self.shared)));
+        }
+    }
+
+    fn arrive(&self, waited: Option<(u64, u64)>) -> Vec<Finished> {
+        let mut flight = self.shared.borrow_mut();
+        if let Some(at) =
+            waited.and_then(|made| flight.jobs.iter().position(|queued| queued.made == made))
+            && let Some(queued) = flight.jobs.remove(at)
+        {
+            flight.jobs.push_front(queued);
+        }
+        std::mem::take(&mut flight.arrived)
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+async fn fly(shared: Rc<RefCell<Flight>>) {
+    loop {
+        let next = {
+            let mut flight = shared.borrow_mut();
+            let next = flight.jobs.pop_front();
+            if next.is_none() {
+                flight.flying -= 1;
+            }
+            next
+        };
+        let Some(queued) = next else {
+            return;
+        };
+        let made = (queued.job)().await;
+        shared.borrow_mut().arrived.push(Finished {
+            program: queued.made.0,
+            key: queued.made.1,
+            pass: queued.pass,
+            noted: queued.noted,
+            made,
+        });
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl Drop for Flights {
+    fn drop(&mut self) {
+        self.shared.borrow_mut().jobs.clear();
     }
 }
 

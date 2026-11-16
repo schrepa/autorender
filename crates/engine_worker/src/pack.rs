@@ -105,8 +105,17 @@ pub fn unpack_bytes(stored: &[u8], raw: u32) -> Result<Vec<u8>, Error> {
     decompress(stored, raw as usize)
 }
 
+pub fn compress(bytes: &[u8]) -> Vec<u8> {
+    ruzstd::encoding::compress_to_vec(bytes, ruzstd::encoding::CompressionLevel::Fastest)
+}
+
 fn decompress(stored: &[u8], raw: usize) -> Result<Vec<u8>, Error> {
-    let mut out = Vec::with_capacity(raw);
+    let mut out = Vec::new();
+    out.try_reserve_exact(raw).map_err(|_| {
+        Error::new(ErrorCode::InvalidPack, "$.record")
+            .at_most(u64::from(u32::MAX))
+            .got(raw)
+    })?;
     ruzstd::decoding::FrameDecoder::new()
         .decode_all_to_vec(stored, &mut out)
         .map_err(|error| Error::new(ErrorCode::InvalidPack, "$.record").got(error.to_string()))?;

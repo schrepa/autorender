@@ -2,7 +2,7 @@ import { engineFailure } from "../generated/errors";
 import { jobPool } from "./jobs.ts";
 
 export async function loadSceneSource(url: string, signal: AbortSignal): Promise<string> {
-  const response = await fetch(url, { cache: "no-store", signal });
+  const response = await fetch(url, { cache: "no-cache", signal });
   if (!response.ok) {
     await response.body?.cancel().catch(() => {});
     throw engineFailure({ code: "source_io", path: "$", got: { url, status: response.status } });
@@ -76,7 +76,7 @@ export async function loadSceneFiles<Files>(sceneUrl: string, source: string, bi
 }
 
 export async function fetchBytes(url: string, signal?: AbortSignal): Promise<Uint8Array> {
-  const response = await fetch(url, { cache: "no-store", signal });
+  const response = await fetch(url, { cache: "no-cache", signal });
   if (!response.ok) {
     await response.body?.cancel().catch(() => {});
     throw engineFailure({ code: "missing_file", path: "$", got: { url, status: response.status } });

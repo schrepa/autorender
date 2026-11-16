@@ -1,4 +1,4 @@
-use super::making::{Created, Finished};
+use super::making::{Created, Creating};
 use super::run::Pipelines;
 use super::*;
 use crate::install::{Faces, FragmentUse, RenderDecl};
@@ -387,7 +387,7 @@ impl RenderJob {
         clippy::disallowed_methods,
         reason = "the machine keys every pipeline, which the pipeline list records"
     )]
-    fn make(self) -> Result<wgpu::RenderPipeline, wgpu::Error> {
+    fn make(self) -> Creating {
         #[cfg(not(target_arch = "wasm32"))]
         let scope = crate::gpu_calls::validation_scope(&self.device);
         let vertex_constants = named(&self.vertex.2);
@@ -400,39 +400,45 @@ impl RenderJob {
             .fragment
             .as_ref()
             .map(|(_, _, constants)| named(constants));
-        let made = self
-            .device
-            .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(&self.label),
-                layout: Some(&self.layout),
-                vertex: wgpu::VertexState {
-                    module: &self.vertex.0,
-                    entry_point: Some(self.vertex.1),
-                    compilation_options: options(&vertex_constants),
-                    buffers: &buffers,
+        let desc = wgpu::RenderPipelineDescriptor {
+            label: Some(&self.label),
+            layout: Some(&self.layout),
+            vertex: wgpu::VertexState {
+                module: &self.vertex.0,
+                entry_point: Some(self.vertex.1),
+                compilation_options: options(&vertex_constants),
+                buffers: &buffers,
+            },
+            primitive: self.primitive,
+            depth_stencil: self.depth_stencil.clone(),
+            multisample: wgpu::MultisampleState {
+                count: self.samples,
+                ..Default::default()
+            },
+            fragment: self.fragment.as_ref().zip(fragment_constants.as_ref()).map(
+                |((module, entry, _), constants)| wgpu::FragmentState {
+                    module,
+                    entry_point: Some(*entry),
+                    compilation_options: options(constants),
+                    targets: &self.targets,
                 },
-                primitive: self.primitive,
-                depth_stencil: self.depth_stencil.clone(),
-                multisample: wgpu::MultisampleState {
-                    count: self.samples,
-                    ..Default::default()
-                },
-                fragment: self.fragment.as_ref().zip(fragment_constants.as_ref()).map(
-                    |((module, entry, _), constants)| wgpu::FragmentState {
-                        module,
-                        entry_point: Some(*entry),
-                        compilation_options: options(constants),
-                        targets: &self.targets,
-                    },
-                ),
-                multiview_mask: None,
-                cache: self.cache.as_ref(),
-            });
+            ),
+            multiview_mask: None,
+            cache: self.cache.as_ref(),
+        };
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(Some(error)) = crate::platform::ready(scope.pop()) {
-            return Err(error);
+        {
+            let made = self.device.create_render_pipeline(&desc);
+            if let Some(Some(error)) = crate::platform::ready(scope.pop()) {
+                return Err(error);
+            }
+            Ok(Created::Render(made))
         }
-        Ok(made)
+        #[cfg(target_arch = "wasm32")]
+        {
+            let made = self.device.create_render_pipeline_async(&desc);
+            Box::pin(async move { made.await.map(Created::Render) })
+        }
     }
 }
 
@@ -441,25 +447,31 @@ impl ComputeJob {
         clippy::disallowed_methods,
         reason = "the machine keys every pipeline, which the pipeline list records"
     )]
-    fn make(self) -> Result<wgpu::ComputePipeline, wgpu::Error> {
+    fn make(self) -> Creating {
         #[cfg(not(target_arch = "wasm32"))]
         let scope = crate::gpu_calls::validation_scope(&self.device);
         let constants = named(&self.constants);
-        let made = self
-            .device
-            .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(&self.label),
-                layout: Some(&self.layout),
-                module: &self.module,
-                entry_point: Some(self.entry),
-                compilation_options: options(&constants),
-                cache: self.cache.as_ref(),
-            });
+        let desc = wgpu::ComputePipelineDescriptor {
+            label: Some(&self.label),
+            layout: Some(&self.layout),
+            module: &self.module,
+            entry_point: Some(self.entry),
+            compilation_options: options(&constants),
+            cache: self.cache.as_ref(),
+        };
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(Some(error)) = crate::platform::ready(scope.pop()) {
-            return Err(error);
+        {
+            let made = self.device.create_compute_pipeline(&desc);
+            if let Some(Some(error)) = crate::platform::ready(scope.pop()) {
+                return Err(error);
+            }
+            Ok(Created::Compute(made))
         }
-        Ok(made)
+        #[cfg(target_arch = "wasm32")]
+        {
+            let made = self.device.create_compute_pipeline_async(&desc);
+            Box::pin(async move { made.await.map(Created::Compute) })
+        }
     }
 }
 
@@ -493,6 +505,88 @@ fn note(pipelines: &mut Pipelines, compiled: Compiled, from_list: bool) {
     pipelines.compiled.push(compiled);
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Asked {
+    Drawn,
+    Waited,
+    Warmed,
+}
+
+struct WarmShape {
+    formats: Vec<Option<wgpu::TextureFormat>>,
+    depth: Option<(wgpu::TextureFormat, bool)>,
+    shown: (bool, bool),
+    variant: Option<crate::surface::MaterialVariant>,
+}
+
+struct Warm {
+    pipeline: u32,
+    shape: Option<WarmShape>,
+    switches: Vec<(u32, bool)>,
+    listed: bool,
+}
+
+impl Warm {
+    fn same(&self, other: &Self) -> bool {
+        self.pipeline == other.pipeline
+            && self.switches == other.switches
+            && match (&self.shape, &other.shape) {
+                (Some(first), Some(second)) => {
+                    first.formats == second.formats
+                        && first.depth == second.depth
+                        && first.shown == second.shown
+                        && first.variant == second.variant
+                }
+                (None, None) => true,
+                (Some(_), None) | (None, Some(_)) => false,
+            }
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct Warming {
+    queue: std::collections::VecDeque<Warm>,
+    fed: Option<(u64, u64)>,
+    open: bool,
+    made: u32,
+    passes: Vec<bool>,
+    running: Vec<bool>,
+}
+
+impl Warming {
+    pub(crate) fn left(&self) -> u32 {
+        u32::try_from(self.queue.len())
+            .unwrap_or(u32::MAX)
+            .saturating_add(u32::from(self.fed.is_some()))
+    }
+
+    pub(crate) fn made(&self) -> u32 {
+        self.made
+    }
+
+    pub(crate) fn open(&mut self, open: bool) {
+        self.open = open;
+    }
+
+    fn promote(&mut self, made: (u64, u64)) {
+        if self.fed == Some(made) {
+            self.fed = None;
+        }
+    }
+}
+
+struct Keyed {
+    program: u64,
+    key: u64,
+    switches: Vec<(u32, bool)>,
+    bits: Option<crate::surface::MaterialVariant>,
+    specialized: bool,
+    styled: bool,
+    fragment: Option<engine_core::Entry>,
+    faces: Option<crate::surface::FaceCull>,
+    raster: engine_core::PassRaster,
+}
+
 impl Run {
     pub(crate) fn split(&mut self) -> (Compiler<'_>, &mut Assets) {
         (
@@ -508,7 +602,48 @@ impl Run {
 
     pub(crate) fn take_made(&mut self) -> u32 {
         self.split().0.collect(None);
-        self.pipelines.making.pending()
+        self.feed_warming();
+        let warming = u32::from(self.pipelines.warming.fed.is_some());
+        self.pipelines.making.pending().saturating_sub(warming)
+    }
+
+    fn feed_warming(&mut self) {
+        let warming = &mut self.pipelines.warming;
+        if let Some(fed) = warming.fed
+            && !self.pipelines.making.waits(fed)
+        {
+            warming.fed = None;
+        }
+        if !warming.open || warming.fed.is_some() || self.pipelines.making.pending() > 0 {
+            return;
+        }
+        while let Some(warm) = self.pipelines.warming.queue.pop_front() {
+            self.make_warm(warm, Asked::Warmed);
+            if self.pipelines.warming.fed.is_some() {
+                return;
+            }
+        }
+    }
+
+    fn make_warm(&mut self, warm: Warm, asked: Asked) {
+        let real = std::mem::replace(&mut self.pipelines.switches, warm.switches);
+        self.pipelines.listing = warm.listed;
+        match warm.shape {
+            Some(shape) => {
+                let _ = self.split().0.compile_with(
+                    warm.pipeline,
+                    (&shape.formats, shape.depth),
+                    shape.shown,
+                    shape.variant,
+                    asked,
+                );
+            }
+            None => {
+                let _ = self.compute_with(warm.pipeline, asked);
+            }
+        }
+        self.pipelines.listing = false;
+        self.pipelines.switches = real;
     }
 
     pub(crate) fn wait_made(&mut self) {
@@ -603,12 +738,16 @@ impl Run {
             return Ok(at);
         }
         let program = built.program_key;
-        let Some((key, made)) = self.compile(
-            pipeline,
-            (layout.formats(), layout.depth),
-            (layout.plain, layout.main),
-            variant,
-        ) else {
+        let targets = (layout.formats(), layout.depth);
+        let shown = (layout.plain, layout.main);
+        let found = match variant.and_then(|variant| Some((variant, variant.dynamic()?))) {
+            Some(variants) => self
+                .split()
+                .0
+                .standing_in(pipeline, targets, shown, variants),
+            None => self.compile(pipeline, targets, shown, variant),
+        };
+        let Some((key, made)) = found else {
             return Err(if self.pipelines.making.program_waits(program) {
                 DropReason::PipelineCompiling
             } else {
@@ -635,6 +774,7 @@ impl Run {
             return;
         }
         self.pipelines.switches = switches;
+        self.pipelines.warming.running.clear();
         for built in &mut self.machine.pipelines {
             built.ready.clear();
             built.compute_ready = None;
@@ -646,6 +786,11 @@ impl Run {
         pipeline: u32,
         wait: bool,
     ) -> Option<wgpu::ComputePipeline> {
+        self.compute_with(pipeline, if wait { Asked::Waited } else { Asked::Drawn })
+    }
+
+    fn compute_with(&mut self, pipeline: u32, asked: Asked) -> Option<wgpu::ComputePipeline> {
+        let wait = asked == Asked::Waited;
         self.split().0.collect(None);
         let built = self.machine.pipelines.get(pipeline as usize)?;
         let (Program::Compute(_), Some(stage), false) =
@@ -682,13 +827,14 @@ impl Run {
                 cache: self.pipelines.cache.clone(),
             };
             let pass = self.machine.pass_name(pipeline);
-            self.pipelines.making.submit(made, move || Finished {
-                program,
-                key,
-                pass,
-                noted: None,
-                made: job.make().map(Created::Compute),
-            });
+            self.pipelines
+                .making
+                .submit(made, (pass, None), move || job.make());
+            if asked == Asked::Warmed {
+                self.pipelines.warming.fed = Some(made);
+            }
+        } else if asked != Asked::Warmed {
+            self.pipelines.warming.promote(made);
         }
         self.split().0.collect(wait.then_some(made));
         let found = computed_by_program(&self.machine.pipelines, program, key)?;
@@ -721,6 +867,10 @@ impl Compiler<'_> {
 
     pub(crate) fn collect(&mut self, waited: Option<(u64, u64)>) {
         for finished in self.pipelines.making.take(waited) {
+            let warmed = self.pipelines.warming.fed == Some((finished.program, finished.key));
+            if warmed {
+                self.pipelines.warming.fed = None;
+            }
             let made = match finished.made {
                 Ok(made) => made,
                 Err(error) => {
@@ -743,7 +893,16 @@ impl Compiler<'_> {
                 Created::Render(made) => built.made.push((finished.key, made)),
                 Created::Compute(made) => built.computed.push((finished.key, made)),
             }
-            crate::pipelines::count(finished.pass, 1);
+            if warmed {
+                self.pipelines.warming.made += 1;
+                for built in &mut self.machine.pipelines {
+                    if built.program_key == finished.program {
+                        built.ready.clear();
+                    }
+                }
+            } else {
+                crate::pipelines::count(finished.pass, 1);
+            }
             if let Some((compiled, from_list)) = finished.noted {
                 note(self.pipelines, compiled, from_list);
             }
@@ -770,7 +929,7 @@ impl Compiler<'_> {
         shown: (bool, bool),
         variant: Option<crate::surface::MaterialVariant>,
     ) -> Option<(u64, wgpu::RenderPipeline)> {
-        self.compile_with(pipeline, targets, shown, variant, false)
+        self.compile_with(pipeline, targets, shown, variant, Asked::Drawn)
     }
 
     pub(crate) fn compile_now(
@@ -783,11 +942,56 @@ impl Compiler<'_> {
         shown: (bool, bool),
         variant: Option<crate::surface::MaterialVariant>,
     ) -> Option<(u64, wgpu::RenderPipeline)> {
-        self.compile_with(pipeline, targets, shown, variant, true)
+        self.compile_with(pipeline, targets, shown, variant, Asked::Waited)
     }
 
-    fn compile_with(
+    fn standing_in(
         &mut self,
+        pipeline: u32,
+        targets: (
+            &[Option<wgpu::TextureFormat>],
+            Option<(wgpu::TextureFormat, bool)>,
+        ),
+        shown: (bool, bool),
+        (specialized, dynamic): (
+            crate::surface::MaterialVariant,
+            crate::surface::MaterialVariant,
+        ),
+    ) -> Option<(u64, wgpu::RenderPipeline)> {
+        self.collect(None);
+        let keyed = self.keyed(pipeline, targets, shown, Some(specialized))?;
+        let made = (keyed.program, keyed.key);
+        if let Some(found) = self.made(pipeline, made) {
+            return Some((keyed.key, found));
+        }
+        if self.pipelines.making.refused(made) {
+            return None;
+        }
+        let standing = self.keyed(pipeline, targets, shown, Some(dynamic))?;
+        if standing.key == keyed.key {
+            return self.compile_with(pipeline, targets, shown, Some(specialized), Asked::Drawn);
+        }
+        let warm = Warm {
+            pipeline,
+            shape: Some(WarmShape {
+                formats: targets.0.to_vec(),
+                depth: targets.1,
+                shown,
+                variant: Some(specialized),
+            }),
+            switches: self.pipelines.switches.clone(),
+            listed: false,
+        };
+        let warming = &mut self.pipelines.warming;
+        let queued = warming.queue.iter().any(|known| known.same(&warm));
+        if !queued && !self.pipelines.making.waits(made) {
+            warming.queue.push_front(warm);
+        }
+        self.compile_with(pipeline, targets, shown, Some(dynamic), Asked::Drawn)
+    }
+
+    fn keyed(
+        &self,
         pipeline: u32,
         (formats, depth): (
             &[Option<wgpu::TextureFormat>],
@@ -795,9 +999,7 @@ impl Compiler<'_> {
         ),
         (plain, main): (bool, bool),
         variant: Option<crate::surface::MaterialVariant>,
-        wait: bool,
-    ) -> Option<(u64, wgpu::RenderPipeline)> {
-        self.collect(None);
+    ) -> Option<Keyed> {
         let built = self.machine.pipelines.get(pipeline as usize)?;
         let Program::Render(desc) = &built.decl.program else {
             return None;
@@ -836,23 +1038,53 @@ impl Compiler<'_> {
             raster.cull,
         )
             .hash(&mut hasher);
-        let key = hasher.finish();
-        let program = built.program_key;
+        Some(Keyed {
+            program: built.program_key,
+            key: hasher.finish(),
+            switches,
+            bits,
+            specialized,
+            styled,
+            fragment,
+            faces,
+            raster,
+        })
+    }
+
+    fn compile_with(
+        &mut self,
+        pipeline: u32,
+        (formats, depth): (
+            &[Option<wgpu::TextureFormat>],
+            Option<(wgpu::TextureFormat, bool)>,
+        ),
+        (plain, main): (bool, bool),
+        variant: Option<crate::surface::MaterialVariant>,
+        asked: Asked,
+    ) -> Option<(u64, wgpu::RenderPipeline)> {
+        self.collect(None);
+        let wait = asked == Asked::Waited;
+        let keyed = self.keyed(pipeline, (formats, depth), (plain, main), variant)?;
+        let (program, key) = (keyed.program, keyed.key);
         let made = (program, key);
         if self.made(pipeline, made).is_none()
             && !self.pipelines.making.refused(made)
             && !self.pipelines.making.waits(made)
         {
+            let bits = keyed.bits;
             let shape = Shape {
                 formats,
                 depth,
                 main,
-                switches,
-                material: material_constants(bits.filter(|_| specialized), raster.clamp_near),
-                styling: bits.filter(|_| styled),
-                raster,
-                fragment,
-                faces,
+                switches: keyed.switches,
+                material: material_constants(
+                    bits.filter(|_| keyed.specialized),
+                    keyed.raster.clamp_near,
+                ),
+                styling: bits.filter(|_| keyed.styled),
+                raster: keyed.raster,
+                fragment: keyed.fragment,
+                faces: keyed.faces,
             };
             let job = self.render_job(pipeline, shape)?;
             let noted = (!self.machine.makes_records(pipeline)).then(|| {
@@ -869,16 +1101,20 @@ impl Compiler<'_> {
                 )
             });
             let pass = self.machine.pass_name(pipeline);
-            self.pipelines.making.submit(made, move || Finished {
-                program,
-                key,
-                pass,
-                noted,
-                made: job.make().map(Created::Render),
-            });
+            self.pipelines
+                .making
+                .submit(made, (pass, noted), move || job.make());
+            if asked == Asked::Warmed {
+                self.pipelines.warming.fed = Some(made);
+            }
             self.collect(wait.then_some(made));
-        } else if wait {
-            self.collect(Some(made));
+        } else {
+            if asked != Asked::Warmed {
+                self.pipelines.warming.promote(made);
+            }
+            if wait {
+                self.collect(Some(made));
+            }
         }
         self.made(pipeline, made).map(|found| (key, found))
     }
@@ -1061,10 +1297,158 @@ impl Run {
                 .collect(),
             sides: [side(true), side(false)],
         };
+        let mut passes = vec![true; self.machine.declared.passes.len()];
+        for &(pass, gate) in &self.installs.pass_gates {
+            let on = in_play.contains(&gate) || states.is_none_or(|states| states.on(gate));
+            if let Some(reached) = passes.get_mut(pass as usize) {
+                *reached &= on;
+            }
+        }
+        let warming = &mut self.pipelines.warming;
+        warming.queue.clear();
+        warming.passes = passes;
+        warming.running.clear();
+        for built in &mut self.machine.pipelines {
+            built.ready.clear();
+        }
         self.at_reached_switches(|run| {
             run.compile_listed();
-            run.warm();
+            run.queue_reached();
         });
+    }
+
+    fn pass_reached(&self, pass: u32) -> bool {
+        self.pipelines
+            .warming
+            .passes
+            .get(pass as usize)
+            .copied()
+            .unwrap_or(true)
+            && self
+                .machine
+                .declared
+                .passes
+                .get(pass as usize)
+                .is_some_and(|declared| self.part_reached(declared.part))
+    }
+
+    fn pipeline_reached(&self, pipeline: usize) -> bool {
+        let Some(built) = self.machine.pipelines.get(pipeline) else {
+            return false;
+        };
+        if !self.part_reached(built.decl.part) {
+            return false;
+        }
+        let passes = self.scope_passes(pipeline);
+        passes.is_empty() || passes.iter().any(|&pass| self.pass_reached(pass))
+    }
+
+    fn pass_warms(&self, pipeline: usize, pass: u32) -> Vec<Warm> {
+        let switches = &self.pipelines.switches;
+        let warm = |shape| Warm {
+            pipeline: pipeline as u32,
+            shape,
+            switches: switches.clone(),
+            listed: false,
+        };
+        let (formats, depth, shown) = self.pass_formats(pass);
+        let mut warms = Vec::new();
+        for layered in self.layered_formats(pipeline, pass, formats.len()) {
+            if self.writes_fit(pipeline, &layered) {
+                warms.push(warm(Some(WarmShape {
+                    formats: layered,
+                    depth: None,
+                    shown,
+                    variant: None,
+                })));
+            }
+        }
+        if self.writes_fit(pipeline, &formats) {
+            warms.insert(
+                0,
+                warm(Some(WarmShape {
+                    formats,
+                    depth,
+                    shown,
+                    variant: None,
+                })),
+            );
+        }
+        warms
+    }
+
+    fn reached_warms(&self) -> Vec<Warm> {
+        let mut warms = Vec::new();
+        for pipeline in 0..self.machine.pipelines.len() {
+            if !self.pipeline_reached(pipeline) {
+                continue;
+            }
+            if matches!(
+                self.machine.pipelines[pipeline].decl.program,
+                Program::Compute(_)
+            ) {
+                warms.push(Warm {
+                    pipeline: pipeline as u32,
+                    shape: None,
+                    switches: self.pipelines.switches.clone(),
+                    listed: false,
+                });
+                continue;
+            }
+            for pass in self.scope_passes(pipeline) {
+                if self.pass_reached(pass) {
+                    warms.extend(self.pass_warms(pipeline, pass));
+                }
+            }
+        }
+        warms
+    }
+
+    fn queue_reached(&mut self) {
+        let warms = self.reached_warms();
+        self.pipelines.warming.queue.extend(warms);
+    }
+
+    pub(crate) fn warm_running(&mut self) {
+        let declared = self.machine.declared.passes.len();
+        let warmed = &self.pipelines.warming.running;
+        let running: Vec<usize> = self
+            .planning
+            .runs
+            .iter()
+            .filter(|&pass| pass < declared && !warmed.get(pass).copied().unwrap_or(false))
+            .collect();
+        if running.is_empty() {
+            return;
+        }
+        self.pipelines.warming.running.resize(declared, false);
+        for pass in running {
+            self.pipelines.warming.running[pass] = true;
+            if !self.drawable(self.machine.declared.passes[pass].part) {
+                continue;
+            }
+            for pipeline in 0..self.machine.pipelines.len() {
+                let built = &self.machine.pipelines[pipeline];
+                if built.skipped || built.decl.scope != Scoped::Pass(pass as u32) {
+                    continue;
+                }
+                let warms = match &built.decl.program {
+                    Program::Compute(_) => vec![Warm {
+                        pipeline: pipeline as u32,
+                        shape: None,
+                        switches: self.pipelines.switches.clone(),
+                        listed: false,
+                    }],
+                    Program::Render(desc) if desc.faces == Faces::Declared => {
+                        self.pass_warms(pipeline, pass as u32)
+                    }
+                    Program::Render(_) => Vec::new(),
+                };
+                for warm in warms {
+                    self.make_warm(warm, Asked::Drawn);
+                }
+            }
+        }
     }
 
     pub(super) fn at_reached_switches(&mut self, work: impl Fn(&mut Self)) {
@@ -1083,24 +1467,27 @@ impl Run {
         let Some(keys) = self.pipelines.listed.take() else {
             return;
         };
-        self.pipelines.listing = true;
         for key in &keys {
             let found = self
                 .machine
                 .pipelines
                 .iter()
                 .position(|built| built.program_key == key.program)
-                .filter(|&at| self.part_reached(self.machine.pipelines[at].decl.part));
+                .filter(|&at| self.pipeline_reached(at));
             if let Some(pipeline) = found {
-                let _ = self.compile(
-                    pipeline as u32,
-                    (&key.formats, key.depth),
-                    (key.plain, key.main),
-                    specialized(key),
-                );
+                self.pipelines.warming.queue.push_back(Warm {
+                    pipeline: pipeline as u32,
+                    shape: Some(WarmShape {
+                        formats: key.formats.clone(),
+                        depth: key.depth,
+                        shown: (key.plain, key.main),
+                        variant: specialized(key),
+                    }),
+                    switches: self.pipelines.switches.clone(),
+                    listed: true,
+                });
             }
         }
-        self.pipelines.listing = false;
         self.pipelines.listed = Some(keys);
     }
 
@@ -1114,34 +1501,8 @@ impl Run {
     }
 
     pub(crate) fn warm(&mut self) {
-        for pipeline in 0..self.machine.pipelines.len() {
-            if !self.part_reached(self.machine.pipelines[pipeline].decl.part) {
-                continue;
-            }
-            if matches!(
-                self.machine.pipelines[pipeline].decl.program,
-                Program::Compute(_)
-            ) {
-                let _ = self.compute_pipeline(pipeline as u32, false);
-                continue;
-            }
-            for pass in self.scope_passes(pipeline) {
-                let Some(declared) = self.machine.declared.passes.get(pass as usize) else {
-                    continue;
-                };
-                if !self.part_reached(declared.part) {
-                    continue;
-                }
-                let (formats, depth, shown) = self.pass_formats(pass);
-                if self.writes_fit(pipeline, &formats) {
-                    let _ = self.compile(pipeline as u32, (&formats, depth), shown, None);
-                }
-                for layered in self.layered_formats(pipeline, pass, formats.len()) {
-                    if self.writes_fit(pipeline, &layered) {
-                        let _ = self.compile(pipeline as u32, (&layered, None), shown, None);
-                    }
-                }
-            }
+        for warm in self.reached_warms() {
+            self.make_warm(warm, Asked::Drawn);
         }
     }
 

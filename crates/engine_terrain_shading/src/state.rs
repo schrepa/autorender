@@ -893,6 +893,7 @@ fn colors_set(job: &MacroJob, pixels: Arc<[u8]>) -> TextureSet {
                 pixels: pixels.to_vec(),
                 usage: TextureUsage::Data,
             }])
+            .map(Some)
         }),
     }
 }

@@ -8,7 +8,7 @@ use engine_core::{
     BrickList, CursorMode, CursorRequests, Engine, ErrorCode, Gathered, Input, Level, MouseButton,
     Pause, PauseReason, Progress, TouchPhase,
 };
-use engine_render::RenderTarget;
+use engine_render::{Picture, RenderTarget};
 use engine_scene::SceneFiles;
 
 pub struct GameHost<G: Game> {
@@ -165,13 +165,23 @@ impl<G: Game> GameHost<G> {
     }
 
     pub fn frame(&mut self, timestamp: f64, width: u32, height: u32) -> crate::Result<()> {
+        self.framed(timestamp, (width, height), Picture::Shown)
+            .map(drop)
+    }
+
+    pub(crate) fn framed(
+        &mut self,
+        timestamp: f64,
+        size: (u32, u32),
+        picture: Picture,
+    ) -> crate::Result<bool> {
         self.step_level();
         self.prepare_pipelines();
         let source = self.input_source();
         self.app.follow_focus(source);
         let input = self.frame_input(source);
         self.app.accept(input);
-        let framed = self.app.frame(timestamp, width, height);
+        let framed = self.app.frame(timestamp, size, picture);
         self.apply_cursor();
         framed
     }

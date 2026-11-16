@@ -259,7 +259,9 @@ impl Run {
                     } else {
                         self.canvas.view.clone()
                     };
-                    if let (Some(ops), Some(canvas)) = (ops_of(id), canvas) {
+                    if let Some(ops) = ops_of(id)
+                        && (canvas.is_some() || self.recording.collecting())
+                    {
                         let format = self.canvas_format();
                         let ops = if self.canvas.load {
                             Ops {
@@ -269,7 +271,7 @@ impl Run {
                         } else {
                             ops
                         };
-                        colors.insert(0, (key(Target::Canvas), Some(canvas), format, ops));
+                        colors.insert(0, (key(Target::Canvas), canvas, format, ops));
                     }
                 }
                 for &view in &pass.targets {
@@ -449,13 +451,25 @@ impl Run {
         let current = self.pass;
         self.group(current);
         let label = self.label_of(current).unwrap_or(pass.name);
+        let collecting = self.recording.collecting();
         let layout = pass_layout(
             &colors,
             depth
                 .as_ref()
                 .map(|(_, _, format, _, view)| (*format, *view)),
             (plain, main),
+            collecting.then(|| key(Target::Canvas)),
         );
+        if collecting {
+            self.recording.collected(super::recording::Opened {
+                layout,
+                shared: is_shared,
+            });
+            colors.clear();
+            self.spare.colors = colors;
+            self.spare.attachments = attachments;
+            return true;
+        }
         let Some(encoder) = self.recording.encoder() else {
             return false;
         };
@@ -625,6 +639,15 @@ impl Run {
         self.closed(ended);
     }
 
+    pub(crate) fn collect(&mut self) {
+        self.leave();
+        self.recording.collect();
+    }
+
+    pub(crate) fn record(&mut self) {
+        self.recording.record();
+    }
+
     pub(super) fn end_open(&mut self) {
         let ended = self.recording.transition(Step::EndRender);
         self.closed(ended);
@@ -652,10 +675,11 @@ fn pass_layout(
     colors: &[(u64, Option<wgpu::TextureView>, wgpu::TextureFormat, Ops)],
     depth: Option<(wgpu::TextureFormat, bool)>,
     (plain, main): (bool, bool),
+    canvas: Option<u64>,
 ) -> PassLayout {
     let mut formats = [None; MOST_COLORS];
-    for (format, (_, view, known, _)) in formats.iter_mut().zip(colors) {
-        *format = view.as_ref().map(|_| *known);
+    for (format, (key, view, known, _)) in formats.iter_mut().zip(colors) {
+        *format = (view.is_some() || canvas == Some(*key)).then_some(*known);
     }
     PassLayout {
         formats,

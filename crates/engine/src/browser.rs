@@ -97,6 +97,7 @@ impl<G: Game> PageHost<G> {
         files: SceneFiles,
     ) -> Result<Self, JsValue> {
         let bricks = (game.bricks)(BrickList::default());
+        let files = crate::GameFiles::from(files);
         crate::game::report_missing::<G>(&files);
         let target = engine_render::RenderTarget::Canvas(canvas);
         let mut host = GameHost::launch(
@@ -227,16 +228,15 @@ impl<G: Game> PageHost<G> {
         out
     }
 
-    pub fn job_kept(&mut self, id: f64, key: String, output: Option<Vec<u8>>) {
+    pub fn job_kept(&mut self, id: f64, key: String, output: Option<js_sys::Uint8Array>) {
         if let Some(id) = job_id(id) {
-            self.host
-                .job_kept(id, key, output.map(std::sync::Arc::from));
+            self.host.job_kept(id, key, output.as_ref().map(shared));
         }
     }
 
-    pub fn complete_job(&mut self, id: f64, output: Vec<u8>) {
+    pub fn complete_job(&mut self, id: f64, output: js_sys::Uint8Array) {
         if let Some(id) = job_id(id) {
-            self.host.complete_job(id, std::sync::Arc::from(output));
+            self.host.complete_job(id, shared(&output));
         }
     }
 
@@ -360,6 +360,15 @@ fn read<T: serde::de::DeserializeOwned>(json: &str, at: &str) -> crate::Result<T
 #[cfg(feature = "dev")]
 fn written(step: &engine_dev::Step) -> String {
     serde_json::to_string(step).expect("step_serializes")
+}
+
+fn shared(bytes: &js_sys::Uint8Array) -> std::sync::Arc<[u8]> {
+    let mut shared: std::sync::Arc<[u8]> =
+        std::iter::repeat_n(0, bytes.length() as usize).collect();
+    if let Some(target) = std::sync::Arc::get_mut(&mut shared) {
+        bytes.copy_to(target);
+    }
+    shared
 }
 
 fn job_id(id: f64) -> Option<JobId> {

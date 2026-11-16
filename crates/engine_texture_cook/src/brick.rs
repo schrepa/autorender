@@ -56,6 +56,10 @@ fn cook(world: &World, asks: &mut CookAsks<'_>) {
         let Ok(sources) = set.sources() else {
             continue;
         };
+        let Some(sources) = sources else {
+            asks.left(keys.len() as u64);
+            continue;
+        };
         for (index, family, key) in keys {
             asks.ask_as(
                 key,

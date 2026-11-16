@@ -83,6 +83,18 @@ impl Renderer {
         self.core.ledger.compiling().saturating_add(pending)
     }
 
+    pub fn pipelines_warming(&self) -> u32 {
+        self.run
+            .as_ref()
+            .map_or(0, |run| run.pipelines.warming.left())
+    }
+
+    pub fn pipelines_warmed(&self) -> u32 {
+        self.run
+            .as_ref()
+            .map_or(0, |run| run.pipelines.warming.made())
+    }
+
     pub fn keep_pipeline_cache(&self) {
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(kept) = &self.core.pipeline_cache {

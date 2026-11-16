@@ -150,6 +150,11 @@ let disposeDevelopment: (() => void) | undefined;
 let request = 0;
 const hud = new FrameHud(canvas);
 let jobs: JobPool | undefined;
+const ticks = new MessageChannel();
+let tickCount = 0;
+ticks.port1.onmessage = (event: MessageEvent<number>) => {
+  if (event.data === request) frame(performance.now());
+};
 let pixelWidth = 1;
 let pixelHeight = 1;
 let inputEnabled = true;
@@ -216,7 +221,7 @@ observer.observe(canvas);
 window.addEventListener("resize", resize, listenerOptions);
 
 function halt() {
-  cancelAnimationFrame(request);
+  if (request > 0) cancelAnimationFrame(request);
   request = 0;
   hud.reset();
 }
@@ -241,7 +246,7 @@ function fail(error: unknown) {
   pause.disabled = true;
   reset.disabled = true;
   halt();
-  jobs?.terminate();
+  (jobs ?? jobPool())?.terminate();
   jobs = undefined;
   console.error(error);
 }
@@ -252,6 +257,7 @@ function guarded(work: () => void) {
 
 function started(current: Live<T>) {
   current.kind = "playing";
+  jobs?.started();
   hud.reset();
   canvas.style.visibility = "";
   message.hidden = true;
@@ -281,6 +287,7 @@ function frame(timestamp: number) {
   const game = current.game;
   try {
     if (current.kind === "playing") options.beforeFrame?.(game, timestamp);
+    jobs?.exchange();
     input.pollPads();
     const phase = game.animation_frame(timestamp, pixelWidth, pixelHeight);
     input.setCursorMode(game.cursor_mode());
@@ -296,8 +303,17 @@ function frame(timestamp: number) {
       hud.reset();
       return;
     }
-    if (live()) request = requestAnimationFrame(frame);
+    if (live()) schedule(phase);
   } catch (error) { fail(error); }
+}
+
+function schedule(phase: number) {
+  if (phase === FRAME_PHASES.collecting) {
+    request = -++tickCount;
+    ticks.port2.postMessage(request);
+  } else {
+    request = requestAnimationFrame(frame);
+  }
 }
 
 function resume() {
@@ -439,7 +455,7 @@ if (import.meta.hot) import.meta.hot.dispose(() => {
   jobs?.detach();
   disposeDevelopment?.();
   lifecycle.abort();
-  stopClock(); observer.disconnect(); input.dispose();
+  stopClock(); observer.disconnect(); input.dispose(); ticks.port1.close();
   state = { kind: "disposed" };
   current?.game.free();
 });

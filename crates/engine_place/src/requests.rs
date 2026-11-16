@@ -210,10 +210,10 @@ impl Board {
             };
             let tally = lock(&tally);
             readiness.load(tally.owner, tally.loading);
-            if tally.awaits == Awaits::View && !viewed {
-                readiness.await_view(tally.owner, tally.settling);
-            } else {
-                readiness.settle(tally.owner, tally.settling);
+            match tally.awaits {
+                Awaits::View if !viewed => readiness.await_view(tally.owner, tally.settling),
+                Awaits::Frames => readiness.await_frames(tally.owner, tally.settling),
+                Awaits::Work | Awaits::View => readiness.settle(tally.owner, tally.settling),
             }
             for (_, error) in &tally.failed {
                 readiness.fail(tally.owner, error.clone());
@@ -261,6 +261,12 @@ impl Settling {
     pub fn on_view() -> Self {
         let settling = Self::default();
         lock(&settling.0).awaits = Awaits::View;
+        settling
+    }
+
+    pub fn on_frames() -> Self {
+        let settling = Self::default();
+        lock(&settling.0).awaits = Awaits::Frames;
         settling
     }
 

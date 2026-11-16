@@ -54,6 +54,7 @@ pub struct MaterialStore {
     synced: Option<u64>,
     defaults: Defaults,
     mips: MipGenerator,
+    owed: Vec<TextureHandle>,
     refused: Vec<Error>,
 }
 
@@ -95,6 +96,7 @@ impl MaterialStore {
                 variant,
             },
             mips: MipGenerator::new(device),
+            owed: Vec::new(),
             refused: Vec::new(),
         }
     }
@@ -137,8 +139,9 @@ impl MaterialStore {
             return (0, 0);
         };
         let generation = residency.revision();
+        let mut levels = self.record_owed(device, (&mut *encoder, &mut *compiler));
         if self.synced == Some(generation) {
-            return (0, 0);
+            return (0, levels);
         }
         let before = self.textures.len();
         self.textures.retain(|handle, gpu| {
@@ -161,7 +164,6 @@ impl MaterialStore {
             self.generation += 1;
         }
         let mut bytes = 0;
-        let mut levels = 0;
         for (handle, revision) in residency.materials() {
             if self
                 .materials
@@ -187,7 +189,7 @@ impl MaterialStore {
                     (texture, source, revision),
                     (&self.mips, &mut *compiler),
                     encoder,
-                    (&mut levels, &mut self.refused),
+                    (&mut levels, &mut self.refused, &mut self.owed),
                 );
                 bytes += gpu.byte_len;
                 self.textures.insert(texture, gpu);
@@ -217,6 +219,32 @@ impl MaterialStore {
         (bytes, levels)
     }
 
+    fn record_owed(
+        &mut self,
+        device: &wgpu::Device,
+        (encoder, compiler): (&mut Option<wgpu::CommandEncoder>, &mut Compiler<'_>),
+    ) -> u32 {
+        let mut levels = 0;
+        for handle in std::mem::take(&mut self.owed) {
+            let Some(gpu) = self.textures.get(&handle) else {
+                continue;
+            };
+            let encoder = encoder.get_or_insert_with(|| {
+                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("engine/texture-mips"),
+                })
+            });
+            match self
+                .mips
+                .record((device, encoder), compiler, &gpu.texture, None)
+            {
+                Some(more) => levels += more,
+                None => self.owed.push(handle),
+            }
+        }
+        levels
+    }
+
     pub(crate) fn forget_sync(&mut self) {
         self.synced = None;
     }
@@ -239,7 +267,7 @@ impl MaterialStore {
             (handle, source, revision),
             (&self.mips, compiler),
             encoder,
-            (&mut levels, &mut self.refused),
+            (&mut levels, &mut self.refused, &mut self.owed),
         );
         let bytes = gpu.byte_len;
         entry.insert(gpu);
@@ -593,7 +621,7 @@ fn create_texture(
     (handle, source, revision): (TextureHandle, &Texture, u64),
     (mips, compiler): (&MipGenerator, &mut Compiler<'_>),
     encoder: &mut Option<wgpu::CommandEncoder>,
-    (generated, refused): (&mut u32, &mut Vec<Error>),
+    (generated, refused, owed): (&mut u32, &mut Vec<Error>, &mut Vec<TextureHandle>),
 ) -> GpuTexture {
     let most = device.limits().max_texture_dimension_2d;
     let fits = source.width().max(source.height()) <= most;
@@ -664,7 +692,10 @@ fn create_texture(
                 label: Some("engine/texture-mips"),
             })
         });
-        *generated += mips.record((device, encoder), compiler, &texture, None);
+        match mips.record((device, encoder), compiler, &texture, None) {
+            Some(levels) => *generated += levels,
+            None => owed.push(handle),
+        }
     }
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     GpuTexture {

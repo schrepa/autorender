@@ -1,5 +1,3 @@
-use std::sync::Arc;
-
 use engine::Error;
 use engine::host::Image;
 use engine::prelude::*;
@@ -9,8 +7,9 @@ use serde_json::json;
 
 use crate::bricks::game::HighlandsControl;
 use crate::jobs::photographs::{self, Photographs};
-use crate::land::{self, GROUND_FILES, GroundFiles, RockMaps, WaterMaps};
+use crate::land::{self, RockMaps, WaterMaps};
 use crate::scene;
+use crate::sources::Sources;
 
 const ROCK_FOLDER: &str = "highlands/";
 
@@ -28,7 +27,7 @@ const GAME_FILES: [&str; 8] = [
     RIPPLE_FILE,
 ];
 
-const FILE_COUNT: usize = GAME_FILES.len() + GROUND_FILES.len() + photographs::FILES.len();
+const FILE_COUNT: usize = GAME_FILES.len() + photographs::FILES.len();
 
 const ALL_FILES: [&str; FILE_COUNT] = {
     let mut files = [""; FILE_COUNT];
@@ -36,10 +35,8 @@ const ALL_FILES: [&str; FILE_COUNT] = {
     while at < files.len() {
         files[at] = if at < GAME_FILES.len() {
             GAME_FILES[at]
-        } else if at < GAME_FILES.len() + GROUND_FILES.len() {
-            GROUND_FILES[at - GAME_FILES.len()]
         } else {
-            photographs::FILES[at - GAME_FILES.len() - GROUND_FILES.len()]
+            photographs::FILES[at - GAME_FILES.len()]
         };
         at += 1;
     }
@@ -50,21 +47,23 @@ const ALL_FILES: [&str; FILE_COUNT] = {
 pub struct Highlands {
     rocks: RockMaps,
     water: WaterMaps,
-    grounds: GroundFiles,
     land: bool,
 }
 
 impl Highlands {
     pub fn build(engine: &mut Engine) -> engine::Result<Self> {
         let files = engine.app.world().get_resource::<GameFiles>();
-        let photographs = files.map(Photographs::read).unwrap_or_default();
+        let sources = Sources::new(files.map_or("", GameFiles::root));
+        let photographs = files
+            .map(|files| Photographs::read(files, &sources))
+            .unwrap_or_default();
         let highlands = Self {
             rocks: files.map(rocks).unwrap_or_default(),
             water: files.map(water).unwrap_or_default(),
-            grounds: files.map(grounds).unwrap_or_default(),
             land: false,
         };
         engine.app.world_mut().insert_resource(photographs);
+        engine.app.world_mut().insert_resource(sources);
         Ok(highlands)
     }
 }
@@ -77,13 +76,6 @@ fn water(files: &GameFiles) -> WaterMaps {
         foam: image(FOAM_FILE),
         ripples: image(RIPPLE_FILE),
     }
-}
-
-fn grounds(files: &GameFiles) -> GroundFiles {
-    GROUND_FILES
-        .iter()
-        .filter_map(|&path| Some((path, Arc::from(files.bytes(path)?))))
-        .collect()
 }
 
 fn rocks(files: &GameFiles) -> RockMaps {
@@ -101,7 +93,7 @@ fn rocks(files: &GameFiles) -> RockMaps {
 }
 
 fn provide_land(world: &mut World, arrival: Arrival) -> engine::Result<()> {
-    let (rocks, water, grounds) = {
+    let (rocks, water) = {
         let mut highlands = world.resource_mut::<Highlands>();
         if highlands.land {
             return Ok(());
@@ -110,13 +102,10 @@ fn provide_land(world: &mut World, arrival: Arrival) -> engine::Result<()> {
             Arrival::Opening => std::mem::take(&mut highlands.rocks),
             Arrival::Reload => RockMaps::default(),
         };
-        (
-            rocks,
-            std::mem::take(&mut highlands.water),
-            std::mem::take(&mut highlands.grounds),
-        )
+        (rocks, std::mem::take(&mut highlands.water))
     };
-    land::provide(world, &rocks, water, &grounds)?;
+    let sources = world.get_resource::<Sources>().cloned().unwrap_or_default();
+    land::provide(world, &rocks, water, &sources)?;
     world.resource_mut::<Highlands>().land = true;
     Ok(())
 }

@@ -1,4 +1,5 @@
 import clients from "../generated/clients.json";
+import { warmAdapter } from "./adapter";
 import { type GameBindings, loadGame } from "./bindings";
 import { type Runtime, startGame } from "./host";
 import type { JobWorkerClass } from "./jobs";
@@ -54,8 +55,15 @@ async function gameFiles(set: FileSet, paths: string[], signal: AbortSignal): Pr
   return set;
 }
 
+function settled<T>(promise: Promise<T>): Promise<T> {
+  promise.catch(() => undefined);
+  return promise;
+}
+
 export function playGame<T extends Runtime, B extends PlayedBindings>(game: PlayedGame<T, B>) {
-  const bindings = () => loadGame(game.load, game.worker);
+  warmAdapter();
+  const loading = settled(loadGame(game.load, game.worker));
+  const bindings = () => loading;
   const folder = clients.find(client => client.wasm === game.wasm)?.folder;
   const declared = import.meta.env.DEV && game.scene && folder ? `/_engine/source/${folder}/${game.scene}` : undefined;
   const url = new URLSearchParams(location.search).get("scene") ?? declared;
@@ -65,15 +73,20 @@ export function playGame<T extends Runtime, B extends PlayedBindings>(game: Play
     load: (signal: AbortSignal) => loadSceneSource(sceneUrl(), signal),
     files: async (text: string, signal: AbortSignal) => loadSceneFiles(sceneUrl(), text, await bindings(), signal),
   };
+  const opening = new AbortController();
+  const firstText = source && settled(Promise.resolve().then(() => source.load(opening.signal)));
   startGame<T>({
     parameters: { scene: "PATH" },
     source,
     async create(canvas, signal) {
+      signal.addEventListener("abort", () => opening.abort(signal.reason), { once: true });
       const loaded = await bindings();
       const played = game.game(loaded);
-      const text = source && await source.load(signal);
-      const files = source && text !== undefined ? await source.files(text, signal) : undefined;
-      const found = await gameFiles(new loaded.SceneFileSet(), played.files(), signal);
+      const scene = (async () => {
+        const text = await firstText;
+        return { text, files: source && text !== undefined ? await source.files(text, signal) : undefined };
+      })();
+      const [{ text, files }, found] = await Promise.all([scene, gameFiles(new loaded.SceneFileSet(), played.files(), signal)]);
       signal.throwIfAborted();
       const running = await played.create(canvas, text, files, found);
       if (url !== undefined) running.set_file_root(new URL(".", sceneUrl()).href);

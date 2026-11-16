@@ -6,8 +6,8 @@ use engine::command_line::CommandOption;
 use engine::host::{HostSettings, JobRef, OVERLAY, SETTINGS, SceneLoad};
 use engine::scene::{SceneFiles, SceneKinds};
 use engine::{
-    BrickList, DefaultScene, Engine, Error, ErrorCode, Expected, Game, GameEntry, GameHost,
-    GpuPreference,
+    BrickList, DefaultScene, Engine, Error, ErrorCode, Expected, Game, GameEntry, GameFiles,
+    GameHost, GpuPreference,
 };
 use serde_json::json;
 
@@ -614,17 +614,17 @@ impl HostOptions {
         }
     }
 
-    fn game_files<G: Game>(&self) -> SceneFiles {
+    fn game_files<G: Game>(&self) -> GameFiles {
         let mut files = SceneFiles::default();
         let Some(folder) = &self.assets else {
-            return files;
+            return files.into();
         };
         for name in G::FILES {
             if let Ok(bytes) = std::fs::read(folder.join(name)) {
                 files.add_buffer(name, bytes);
             }
         }
-        files
+        GameFiles::new(files, folder.to_string_lossy())
     }
 
     #[cfg(feature = "dev")]

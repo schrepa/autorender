@@ -134,6 +134,21 @@ impl MaterialVariant {
         ]
     }
 
+    pub(crate) fn dynamic(self) -> Option<Self> {
+        let draw = self.draw();
+        draw.fixed.then(|| Self {
+            state: DrawState {
+                fixed: false,
+                ..draw
+            }
+            .pack(),
+            maps: 0,
+            model: 0,
+            slots: [0, 0],
+            ..self
+        })
+    }
+
     pub(crate) fn keyed(self, used: [bool; 5], styled: bool, faced: bool) -> Option<Self> {
         let [stated, mapped, modeled, low, high] = used;
         if !used.contains(&true) && !styled && !faced {

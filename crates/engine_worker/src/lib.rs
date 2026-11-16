@@ -4,7 +4,7 @@
 )]
 
 use std::collections::BTreeMap;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use engine_core::{BrickList, Job, JobCx, JobMemo, JobRef, RecordKey};
 use engine_registry::{JobList, Shares};
@@ -18,8 +18,8 @@ mod pack;
 pub use cache::JobCache;
 pub use engine_core::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
 pub use pack::{
-    LISTING_KIND, PACK_HEADER, PackEntry, PackIndex, key_from_hex, listing_bytes, listing_key,
-    pack_bytes, pack_directory, read_listing, unpack, unpack_bytes,
+    LISTING_KIND, PACK_HEADER, PackEntry, PackIndex, compress, key_from_hex, listing_bytes,
+    listing_key, pack_bytes, pack_directory, read_listing, unpack, unpack_bytes,
 };
 
 pub const SLICE_MS: f64 = 8.0;
@@ -54,11 +54,30 @@ pub enum Report {
 #[derive(Default)]
 struct Shared {
     bytes: BTreeMap<[u8; 32], Arc<[u8]>>,
+    asking: bool,
+    missing: Mutex<Vec<[u8; 32]>>,
+}
+
+impl Shared {
+    fn take_missing(&self) -> Vec<[u8; 32]> {
+        self.missing
+            .lock()
+            .map(|mut missing| std::mem::take(&mut *missing))
+            .unwrap_or_default()
+    }
 }
 
 impl Shares for Shared {
     fn share(&self, key: [u8; 32]) -> Option<&[u8]> {
-        self.bytes.get(&key).map(|bytes| &**bytes)
+        let found = self.bytes.get(&key).map(|bytes| &**bytes);
+        if found.is_none()
+            && self.asking
+            && let Ok(mut missing) = self.missing.lock()
+            && !missing.contains(&key)
+        {
+            missing.push(key);
+        }
+        found
     }
 }
 
@@ -68,6 +87,8 @@ struct Held {
     input: Vec<u8>,
     priority: u32,
     job: Option<Box<dyn Job>>,
+    parked: bool,
+    asked: Vec<[u8; 32]>,
 }
 
 pub struct Worker {
@@ -77,6 +98,7 @@ pub struct Worker {
     memo: JobMemo,
     held: Vec<Held>,
     stepped: Vec<(u64, Box<dyn Job>)>,
+    wants: Vec<(u64, Vec<RecordKey>)>,
 }
 
 impl Worker {
@@ -88,7 +110,13 @@ impl Worker {
             memo: JobMemo::default(),
             held: Vec::new(),
             stepped: Vec::new(),
+            wants: Vec::new(),
         }
+    }
+
+    pub fn asking(mut self) -> Self {
+        self.shares.asking = true;
+        self
     }
 
     pub fn hash(&self) -> [u8; 32] {
@@ -117,6 +145,7 @@ impl Worker {
         self.memo = JobMemo::default();
         self.held.clear();
         self.stepped.clear();
+        self.wants.clear();
     }
 
     pub fn hold(&mut self, id: u64, kind: JobRef, input: Vec<u8>, priority: u32) {
@@ -126,11 +155,25 @@ impl Worker {
             input,
             priority,
             job: None,
+            parked: false,
+            asked: Vec::new(),
         });
     }
 
     pub fn busy(&self) -> bool {
-        !self.held.is_empty()
+        self.held.iter().any(|held| !held.parked)
+    }
+
+    pub fn resume(&mut self, id: u64) {
+        for held in &mut self.held {
+            if held.id == id {
+                held.parked = false;
+            }
+        }
+    }
+
+    pub fn take_wants(&mut self) -> Vec<(u64, Vec<RecordKey>)> {
+        std::mem::take(&mut self.wants)
     }
 
     pub fn cancel(&mut self, id: u64) {
@@ -139,13 +182,24 @@ impl Worker {
     }
 
     pub fn slice(&mut self) -> Option<Report> {
-        let at =
-            (0..self.held.len()).min_by_key(|&at| (self.held[at].priority, self.held[at].id))?;
+        let at = (0..self.held.len())
+            .filter(|&at| !self.held[at].parked)
+            .min_by_key(|&at| (self.held[at].priority, self.held[at].id))?;
         let id = self.held[at].id;
         let stepped = {
             let mut cx = JobCx::new(&self.list, &self.shares, &mut self.memo);
             sliced(&mut self.held[at], &mut cx, self.clock)
         };
+        let missing = self.shares.take_missing();
+        let held = &mut self.held[at];
+        if !missing.is_empty() && !missing.iter().any(|key| held.asked.contains(key)) {
+            held.asked.extend_from_slice(&missing);
+            held.parked = true;
+            held.job = None;
+            self.wants
+                .push((id, missing.into_iter().map(RecordKey::from_hash).collect()));
+            return None;
+        }
         match stepped {
             Ok(Some(output)) => {
                 self.held.remove(at);
@@ -232,7 +286,7 @@ pub fn now_ms() -> f64 {
 #[doc(hidden)]
 pub mod __private {
     #[cfg(target_arch = "wasm32")]
-    pub use crate::browser::{image, report};
+    pub use crate::browser::{image, report, wants};
     pub use engine_core::BrickList;
     #[cfg(target_arch = "wasm32")]
     pub use engine_panic::install;
@@ -282,7 +336,8 @@ macro_rules! __export_worker {
                 $crate::__private::install();
                 let list =
                     $crate::job_list(|list| $list(list)).map_err($crate::__private::js_error)?;
-                let worker = $crate::Worker::new(::std::sync::Arc::new(list), performance_now);
+                let worker =
+                    $crate::Worker::new(::std::sync::Arc::new(list), performance_now).asking();
                 worker
                     .handshake(hash)
                     .map_err($crate::__private::js_error)?;
@@ -342,8 +397,20 @@ macro_rules! __export_worker {
                 self.worker.cancel(id as u64);
             }
 
+            pub fn wants(&mut self) -> $crate::__private::JsValue {
+                $crate::__private::wants(self.worker.take_wants())
+            }
+
+            pub fn resume(&mut self, id: f64) {
+                self.worker.resume(id as u64);
+            }
+
             pub fn unpack(stored: &[u8], raw: u32) -> Result<Vec<u8>, $crate::__private::JsValue> {
                 $crate::unpack_bytes(stored, raw).map_err($crate::__private::js_error)
+            }
+
+            pub fn compress(bytes: &[u8]) -> Vec<u8> {
+                $crate::compress(bytes)
             }
 
             pub fn decode_image(
@@ -432,6 +499,10 @@ macro_rules! __export_worker {
 
             pub fn verify(&self) -> bool {
                 self.cache.verify()
+            }
+
+            pub fn budget(&self) -> f64 {
+                self.cache.budget() as f64
             }
 
             pub fn counters(&self) -> Vec<f64> {

@@ -25,6 +25,7 @@ dev = ["engine/dev", "engine_native/dev"]
 profiling = ["engine/profiling", "engine_native/profiling"]
 
 [build-dependencies]
+engine_codec.workspace = true
 engine_sources.workspace = true
 
 [dependencies]

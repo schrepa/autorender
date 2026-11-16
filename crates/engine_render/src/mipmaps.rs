@@ -72,20 +72,18 @@ impl MipGenerator {
         compiler: &mut Compiler<'_>,
         texture: &wgpu::Texture,
         layer: Option<u32>,
-    ) -> u32 {
+    ) -> Option<u32> {
         let Some(pipeline) = compiler.part::<Mipmaps>().map(|mipmaps| mipmaps.pipeline) else {
-            return 0;
+            return Some(0);
         };
-        let made = compiler
-            .compile_now(
-                pipeline,
-                (&[Some(texture.format())], None),
-                (false, false),
-                None,
-            )
-            .map(|(_, made)| made);
-        let (Some(made), Some(layout)) = (made, compiler.group_layout(pipeline, GROUP)) else {
-            return 0;
+        let (_, made) = compiler.compile_now(
+            pipeline,
+            (&[Some(texture.format())], None),
+            (false, false),
+            None,
+        )?;
+        let Some(layout) = compiler.group_layout(pipeline, GROUP) else {
+            return Some(0);
         };
         let levels = texture.mip_level_count();
         let views: Vec<wgpu::TextureView> = (0..levels)
@@ -137,6 +135,6 @@ impl MipGenerator {
             pass.set_bind_group(GROUP, &group, &[]);
             pass.draw(0..3, 0..1);
         }
-        levels - 1
+        Some(levels - 1)
     }
 }

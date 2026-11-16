@@ -416,6 +416,7 @@ pub(crate) struct ProbeGpu {
     pass: Pass<Self>,
     reading: ComputePipeline<Self>,
     capturing: bool,
+    dispatched: bool,
 }
 
 impl ProbeGpu {
@@ -519,6 +520,7 @@ impl GpuPart for ProbeGpu {
             pass,
             reading,
             capturing: false,
+            dispatched: false,
         })
     }
 
@@ -538,7 +540,9 @@ impl GpuPart for ProbeGpu {
             Stage::Capturing => {
                 let (Allocation::Fresh | Allocation::Kept) =
                     cx.allocate_buffer(self.probed, PROBED_BYTES);
-                self.capture(&probe, (size, at), cx);
+                if self.dispatched {
+                    self.capture(&probe, (size, at), cx);
+                }
             }
             Stage::Waiting => cx.release_buffer(self.rows),
             Stage::Idle | Stage::Armed | Stage::Read(_) => {}
@@ -552,7 +556,7 @@ impl GpuPart for ProbeGpu {
     }
 
     fn encode(&mut self, _: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
-        cx.dispatch(&self.reading, Count::Groups([1, 1, 1]));
+        self.dispatched = cx.dispatch(&self.reading, Count::Groups([1, 1, 1])) != 0;
         0
     }
 }

@@ -13,6 +13,7 @@ pub(crate) struct Run {
     pub(crate) recording: Recording,
     pub(crate) timed: Timed,
     pub(crate) queued: Queued,
+    pub(crate) owed_mips: Vec<(u32, Range<u32>)>,
     pub(crate) region: Option<(u32, u32)>,
     pub(crate) sets: views::Sets,
     pub(crate) tables: views::Tables,
@@ -147,6 +148,7 @@ pub(crate) struct Pipelines {
     pub(crate) making: super::making::Making,
     pub(crate) refused: Vec<String>,
     pub(crate) cache: Option<wgpu::PipelineCache>,
+    pub(crate) warming: super::compile::Warming,
 }
 
 pub(crate) struct Planning {
@@ -436,6 +438,7 @@ impl Run {
             recording: Recording::Idle,
             timed: Timed::default(),
             queued: Queued::default(),
+            owed_mips: Vec::new(),
             region: None,
             sets,
             tables,

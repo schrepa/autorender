@@ -2874,6 +2874,7 @@ version = "0.1.0"
 dependencies = [
  "engine",
  "engine_cards",
+ "engine_codec",
  "engine_core",
  "engine_ecs",
  "engine_fly_camera",
@@ -5516,8 +5517,6 @@ dependencies = [
 [[package]]
 name = "wgpu"
 version = "30.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "527ccdf43dd5b2e8676eed9984ce00e2bbb0a1b85b70c1969dcb6cd2eb55ab9e"
 dependencies = [
  "arrayvec",
  "bitflags 2.13.2",
