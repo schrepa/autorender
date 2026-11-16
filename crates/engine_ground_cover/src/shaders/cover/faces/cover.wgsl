@@ -456,6 +456,11 @@ fn cover_canopy(site: CoverSite, drawn: bool) -> CoverCanopy {
     var shade = vec3<f32>(0.0);
     var drift = vec3<f32>(0.0);
     var lean = vec4<f32>(0.0);
+    var tall = 0.0;
+    if cover_kept(first.clump.x, site.footprint) > 0.0 {
+        tall = cover_tall(cover_clump(site.world.xz, first.clump.x, 0u), first, scale,
+            site.footprint);
+    }
     for (var index = 0u; index <= accents.y; index++) {
         let accent = index < accents.y;
         let spec = cover_look(select(at, accents.x + index * COVER_MATERIAL_ROWS, accent));
@@ -485,11 +490,6 @@ fn cover_canopy(site: CoverSite, drawn: bool) -> CoverCanopy {
         return canopy;
     }
     let base = cover_look(at);
-    var tall = 0.0;
-    if cover_kept(base.clump.x, site.footprint) > 0.0 {
-        tall = cover_tall(cover_clump(site.world.xz, base.clump.x, 0u), base, scale,
-            site.footprint);
-    }
     let clumped = cover_clumped(base, tall);
     let leaves = 0.5 * dense * clumped.height * clumped.height;
     canopy.depth = cover_depth(leaves * hidden.w, view.x);
@@ -512,11 +512,15 @@ fn cover_far(site: CoverSite) -> CoverFar {
     if far.shown <= 0.0 {
         return far;
     }
+    far.sun = cover_lit(canopy.depth, canopy.fall * cover_sunward());
     let header = cover_header();
     let light = cover_light();
     let bands = cover_bands();
     let up = vec3<f32>(0.0, 1.0, 0.0);
     let along = dot(canopy.reached, bands.along);
+    far.through = mix(light.glow.x, light.glow.y, along);
+    let near = 1.0 - cover_merged(light, distance(site.world, camera.position.xyz));
+    let rough = header.shading.w * mix(1.0, header.shading.z, near * along);
     let faces = cover_faces(site.toward, canopy.tilt);
     let bent = mix(faces, up, header.shading.y);
     let upright = stable_normalize(bent);
@@ -532,12 +536,8 @@ fn cover_far(site: CoverSite) -> CoverFar {
         / max(dot(bent, bent), COVER_ROUNDING);
     let spread = (dot(canopy.reached, held * held) - risen * risen) * dot(apart, apart)
         + risen * risen * swing * (1.0 - dot(faces, faces));
-    let near = 1.0 - cover_merged(light, distance(site.world, camera.position.xyz));
-    let rough = header.shading.w * mix(1.0, header.shading.z, near * along);
     let alpha = rough * rough;
     far.roughness = sqrt(sqrt(min(alpha * alpha + spread, 1.0)));
-    far.through = mix(light.glow.x, light.glow.y, along);
-    far.sun = cover_lit(canopy.depth, canopy.fall * cover_sunward());
     return far;
 }
 

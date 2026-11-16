@@ -993,6 +993,7 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
         let alpha = roughness * roughness;
         roughness = sqrt(sqrt(min(alpha * alpha + lost, 1.0)));
     }
+    (*ground).metalness += weight * metalness;
     let far = cover_far(CoverSite(terrain_index, material, color, site.world, site.colors.a,
         site.toward, site.geometric, site.across * camera.pixel_error, site.footprint.resolved));
     let grown = far.shown * (1.0 - rim);
@@ -1009,7 +1010,6 @@ fn terrain_slot_ground(ground: ptr<function, TerrainGround>, normal: ptr<functio
     (*ground).albedo += weight * color;
     (*ground).roughness += weight * roughness;
     (*ground).occlusion += weight * occlusion;
-    (*ground).metalness += weight * metalness;
     var share = vec2<f32>(1.0);
     if entry.params.y > 0.5 && grown < 1.0 {
         share = mix(terrain_rough(material, terrain_rough_at(site.geometric, site.toward)),
