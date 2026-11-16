@@ -246,7 +246,7 @@ fn resolve_forms(
         Bind::Texture(ids),
     )];
     Ok([
-        cx.form_owning(&RESOLVE_FORMS[0], &[RESOLVES[0]], &bound)?,
+        cx.speedup_form_owning(&RESOLVE_FORMS[0], &[RESOLVES[0]], &bound)?,
         cx.form_owning(&RESOLVE_FORMS[1], &[RESOLVES[1]], &bound)?,
     ])
 }

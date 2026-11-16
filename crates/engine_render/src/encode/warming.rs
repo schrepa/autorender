@@ -360,6 +360,7 @@ impl Run {
                 .pipelines
                 .iter()
                 .position(|built| built.program_key == key.program)
+                .filter(|&at| !self.machine.pipelines[at].decl.speedup_only)
                 .filter(|&at| self.pipeline_reached(at));
             if let Some(pipeline) = found {
                 let warm = Warm {

@@ -571,6 +571,21 @@ impl<P: GpuPart> Install<'_, P> {
         self.form_built(form, (&EVERY_ROLE, owns), FormTopology::List, bound)
     }
 
+    pub fn speedup_form_owning(
+        &mut self,
+        form: &KindForm,
+        owns: &[PassFragment],
+        bound: &[(Var, Bind<P>)],
+    ) -> Result<Form<P>, Error> {
+        let built = self.form_owning(form, owns, bound)?;
+        let scenes = built.scenes.iter().flat_map(|scene| [scene.plain, scene.mirrored]);
+        let owned = built.owns.iter().map(|own| Some(own.pipeline));
+        for pipeline in scenes.chain(owned).flatten() {
+            self.core.speedup_only(pipeline);
+        }
+        Ok(built)
+    }
+
     fn form_built(
         &mut self,
         form: &KindForm,
