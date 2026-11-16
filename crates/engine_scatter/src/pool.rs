@@ -25,12 +25,14 @@ pub(crate) type TileObjects = (
 
 pub(crate) type PoolKey = (Entity, TileKey);
 
+pub(crate) type Reach = (Vec3, Vec3, f32);
+
 pub(crate) struct Pooled {
     pub(crate) placed: Arc<[Placed]>,
     pub(crate) stamp: Stamp,
     pub(crate) origin: Vec3,
     pub(crate) slots: Range<u32>,
-    bounds: Option<(Vec3, Vec3)>,
+    bounds: Option<Reach>,
     stands: (Vec2, Vec2),
     groups: Vec<(u32, u32)>,
     far: u32,
@@ -77,7 +79,7 @@ pub(crate) struct ScatterPool {
     pub(crate) writes: Vec<SlotWrite>,
     tiles: HashMap<PoolKey, Pooled>,
     free: Vec<Range<u32>>,
-    moved: Vec<(Vec3, Vec3)>,
+    moved: Vec<Reach>,
 }
 
 impl ScatterPool {
@@ -218,7 +220,7 @@ impl ScatterPool {
     pub(crate) fn nearest(&self, eye: Vec3) -> Vec<f32> {
         let mut nearest = vec![f32::INFINITY; self.spreads.len()];
         for pooled in self.tiles.values() {
-            let Some((low, high)) = pooled.bounds else {
+            let Some((low, high, _)) = pooled.bounds else {
                 continue;
             };
             let outside = (low - eye).max(eye - high).max(Vec3::ZERO);
@@ -234,7 +236,7 @@ impl ScatterPool {
         nearest
     }
 
-    pub(crate) fn take_moved(&mut self) -> Vec<(Vec3, Vec3)> {
+    pub(crate) fn take_moved(&mut self) -> Vec<Reach> {
         std::mem::take(&mut self.moved)
     }
 
@@ -315,15 +317,17 @@ impl ScatterPool {
     }
 }
 
-fn bounds(records: &[PlacedRecord]) -> Option<(Vec3, Vec3)> {
+fn bounds(records: &[PlacedRecord]) -> Option<Reach> {
     records
         .iter()
         .map(|record| {
             let center = Vec3::from(record.center);
             let reach = Vec3::new(record.radius, 2.0 * record.radius, record.radius);
-            (center - reach, center + reach)
+            (center - reach, center + reach, record.radius)
         })
-        .reduce(|(low, high), (min, max)| (low.min(min), high.max(max)))
+        .reduce(|(low, high, widest), (min, max, radius)| {
+            (low.min(min), high.max(max), engine_math::max(widest, radius))
+        })
 }
 
 fn stands(poses: &[PoseData]) -> (Vec2, Vec2) {
