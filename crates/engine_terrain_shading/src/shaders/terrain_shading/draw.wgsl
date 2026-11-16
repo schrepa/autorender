@@ -1162,11 +1162,10 @@ fn terrain_shares(site: TerrainSite, blend: TerrainBlend) -> TerrainShares {
 fn terrain_shared_ground(shares: TerrainShares, site: TerrainSite) -> TerrainGround {
     var ground: TerrainGround;
     var normal = vec3<f32>(0.0);
-    for (var slot = 0u; slot < 4u; slot++) {
+    for (var left = terrain_marks(!(shares.given <= vec4<f32>(0.0)), 0u); left != 0u;
+            left &= left - 1u) {
+        let slot = countTrailingZeros(left);
         let weight = shares.given[slot];
-        if weight <= 0.0 {
-            continue;
-        }
         let material = shares.held[slot];
         var held = terrain_slot(material,
             terrain_marked(shares.marks, TERRAIN_MARK_SHARED + slot), site);
