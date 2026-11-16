@@ -115,13 +115,17 @@ fn placed_card_vertex(vertex: u32, batch: u32, pose: AffinePose, previous: Affin
     return card;
 }
 
-fn placed_card_point(input: CardVertex, impostor: ImpostorRecord) -> SurfacePoint {
+fn placed_card_level(input: CardVertex, impostor: ImpostorRecord) -> f32 {
+    return 0.0;
+}
+
+fn placed_card_point(input: CardVertex, impostor: ImpostorRecord, level: f32) -> SurfacePoint {
     var point: SurfacePoint;
     return point;
 }
 
-fn placed_card_lit(input: CardVertex, impostor: ImpostorRecord, point: SurfacePoint)
-        -> CardShaded {
+fn placed_card_lit(input: CardVertex, impostor: ImpostorRecord, point: SurfacePoint,
+        level: f32) -> CardShaded {
     var shaded: CardShaded;
     return shaded;
 }
