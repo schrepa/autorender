@@ -145,6 +145,7 @@ pub(crate) struct Linker {
     prepared: Option<Result<driver::Prepared, String>>,
     parsed: driver::Parsed,
     wholes: engine_core::collections::HashMap<(String, String), driver::Slot>,
+    bound: BTreeMap<(String, String), Option<Vec<String>>>,
 }
 
 pub(crate) fn path_of(var_or_entry: (engine_core::Module, &str)) -> (&'static str, String) {
@@ -218,8 +219,9 @@ impl Linker {
     fn changed(&mut self) {
         self.composed.clear();
         self.prepared = None;
-        self.parsed.clear();
+        self.parsed.changed();
         self.wholes.clear();
+        self.bound.clear();
     }
 
     pub(crate) fn hand(&mut self, path: String, package: &'static str, parts: Vec<Part>) {
@@ -469,10 +471,6 @@ impl Linker {
             .copied()
     }
 
-    pub(crate) fn compose(&mut self, entry: Entry) -> Result<Arc<Composed>, Error> {
-        self.compose_in(entry, None)
-    }
-
     pub(crate) fn compose_in(
         &mut self,
         entry: Entry,
@@ -534,12 +532,8 @@ impl Linker {
         });
         let linked = match whole {
             Some(linked) => linked,
-            None => {
-                let mut result = driver::compile(&main, kept, (prepared, writes), &mut self.parsed)
-                    .map_err(|error| failed(&error))?;
-                driver::sort(&mut result.modules, &main, prepared);
-                driver::linked(&wesl::pass::link(&result.modules, Some(&result.used_items)))
-            }
+            None => driver::linked_entry(&main, kept, (prepared, writes), &mut self.parsed)
+                .map_err(|error| failed(&error))?,
         };
         let text = pieces_read_in_place(&prepared.pieces, linked.text, &linked.functions);
         let switches = switch_ids(&text);
@@ -563,16 +557,29 @@ impl Linker {
         Ok(composed)
     }
 
-    pub(crate) fn reaches(&self, composed: &Composed, path: &str, name: &str) -> bool {
-        let mangled = if path == composed.module {
-            name.to_owned()
-        } else {
-            match module_path(path) {
-                Ok(module) => wesl::mangler::EscapeMangler.mangle(&module, name),
-                Err(_) => return false,
-            }
+    pub(crate) fn reaches(&mut self, entry: Entry, var: Var) -> bool {
+        let (module, name) = path_of((entry.module(), entry.name()));
+        let (path, var) = path_of((var.module(), var.name()));
+        let key = (module.to_owned(), name);
+        if !self.bound.contains_key(&key) {
+            let bindings = self.bindings(module, &key.1);
+            self.bound.insert(key.clone(), bindings);
+        }
+        let Some(bindings) = &self.bound[&key] else {
+            return true;
         };
-        composed.bindings.contains(&mangled)
+        named_in(module, path, &var).is_some_and(|named| bindings.contains(&named))
+    }
+
+    fn bindings(&mut self, module: &str, entry: &str) -> Option<Vec<String>> {
+        self.module(module)?;
+        let prepared = self
+            .prepared
+            .get_or_insert_with(|| prepare(&self.modules, &self.numbers))
+            .as_ref()
+            .ok()?;
+        let main = module_path(module).ok()?;
+        driver::bindings(&main, entry, (prepared, None), &mut self.parsed).ok()
     }
 
     pub(crate) fn reached(&self, composed: &Composed) -> Vec<(String, Declaration)> {
@@ -599,7 +606,9 @@ impl Linker {
         let mut found = Vec::new();
         for module in &self.modules {
             for declared in &module.declared {
-                if self.reaches(composed, &module.path, &declared.name) {
+                if named_in(&composed.module, &module.path, &declared.name)
+                    .is_some_and(|named| composed.bindings.contains(&named))
+                {
                     found.push((module.path.clone(), declared.clone()));
                 }
             }
@@ -704,6 +713,14 @@ impl Linker {
         }
         problems
     }
+}
+
+fn named_in(main: &str, path: &str, name: &str) -> Option<String> {
+    if path == main {
+        return Some(name.to_owned());
+    }
+    let module = module_path(path).ok()?;
+    Some(wesl::mangler::EscapeMangler.mangle(&module, name))
 }
 
 fn prepare(

@@ -560,11 +560,7 @@ impl InstallCore {
     pub(crate) fn reaches(&mut self, entry: Entry, var: Var) -> bool {
         self.linker.add_source(entry.module().source());
         self.linker.add_source(var.module().source());
-        let Ok(composed) = self.linker.compose(entry) else {
-            return true;
-        };
-        let (path, name) = crate::linker::path_of((var.module(), var.name()));
-        self.linker.reaches(&composed, path, &name)
+        self.linker.reaches(entry, var)
     }
 
     pub(crate) fn draw_input(&mut self, scope: Scoped, buffer: u32) -> u32 {
