@@ -624,37 +624,33 @@ fn subdivision_hidden(triangle: SurfaceTriangle) -> bool {
         surface_relative(high, highest) + offset + reach);
 }
 
-fn subdivision_kind(index: u32, args: u32, occluded: bool) -> vec2<u32> {
+fn subdivision_kind_drawn(index: u32, args: u32) -> vec2<u32> {
+    if index >= atomicLoad(&subdivision_args[args + SUBDIVISION_LEAVES]) {
+        return vec2<u32>(0u);
+    }
+    let stored = subdivision_leaves[subdivision.tree.z + index];
+    if !surface_seen(surface_kept(stored)) {
+        return vec2<u32>(0u);
+    }
+    return vec2<u32>(select(2u, 1u, surface_whole(stored)), index);
+}
+
+fn subdivision_kind_seen(index: u32, args: u32) -> vec2<u32> {
     let whole = atomicLoad(&subdivision_args[args + SUBDIVISION_LISTS + 1u]);
     let holed = atomicLoad(&subdivision_args[args + SUBDIVISION_LISTS + 6u]);
-    let leaves = atomicLoad(&subdivision_args[args + SUBDIVISION_LEAVES]);
-    if index >= select(leaves, whole + holed, occluded) {
+    if index >= whole + holed {
         return vec2<u32>(0u);
     }
     let cut = index >= whole;
-    var leaf = index;
-    if occluded {
-        let at = subdivision.tree.z + select(index, index - whole, cut);
-        leaf = subdivision_lists[at * SURFACE_LISTS + select(0u, 1u, cut)];
-    }
-    let stored = subdivision_leaves[subdivision.tree.z + leaf];
-    let triangle = surface_kept(stored);
-    if occluded {
-        return vec2<u32>(select(select(1u, 2u, cut), 0u, subdivision_hidden(triangle)), leaf);
-    }
-    if !surface_seen(triangle) {
-        return vec2<u32>(0u);
-    }
-    return vec2<u32>(select(2u, 1u, surface_whole(stored)), leaf);
+    let at = subdivision.tree.z + select(index, index - whole, cut);
+    let leaf = subdivision_lists[at * SURFACE_LISTS + select(0u, 1u, cut)];
+    let triangle = surface_kept(subdivision_leaves[subdivision.tree.z + leaf]);
+    return vec2<u32>(select(select(1u, 2u, cut), 0u, subdivision_hidden(triangle)), leaf);
 }
 
-fn subdivision_list(id: u32, local: u32, occluded: bool) {
-    use_terrain(subdivision.frame.z);
-    let args = subdivision.frame.y * SUBDIVISION_ARGS;
-    let listed = subdivision_kind(id, args, occluded);
+fn subdivision_list(local: u32, args: u32, listed: vec2<u32>, lists: u32) {
     let kind = listed.x;
     listed_kinds[local] = kind;
-    let lists = select(0u, 2u, occluded);
     workgroupBarrier();
     if local == 0u {
         var whole = 0u;
@@ -682,11 +678,15 @@ fn subdivision_list(id: u32, local: u32, occluded: bool) {
 @compute @workgroup_size(SUBDIVISION_GROUP)
 fn subdivide_list_drawn(@builtin(global_invocation_id) id: vec3<u32>,
         @builtin(local_invocation_index) local: u32) {
-    subdivision_list(id.x, local, false);
+    use_terrain(subdivision.frame.z);
+    let args = subdivision.frame.y * SUBDIVISION_ARGS;
+    subdivision_list(local, args, subdivision_kind_drawn(id.x, args), 0u);
 }
 
 @compute @workgroup_size(SUBDIVISION_GROUP)
 fn subdivide_list_seen(@builtin(global_invocation_id) id: vec3<u32>,
         @builtin(local_invocation_index) local: u32) {
-    subdivision_list(id.x, local, true);
+    use_terrain(subdivision.frame.z);
+    let args = subdivision.frame.y * SUBDIVISION_ARGS;
+    subdivision_list(local, args, subdivision_kind_seen(id.x, args), 2u);
 }
