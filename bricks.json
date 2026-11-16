@@ -2215,7 +2215,6 @@
             "subdivision_args",
             "terrain_subdivision",
             "terrain_leaf_lists",
-            "terrain_seen_lists",
             "bounce",
             "terrain_sun",
             "terrain_ids",
@@ -2401,20 +2400,6 @@
             "engine_scatter"
           ],
           "required": false
-        },
-        {
-          "kind": "target",
-          "place": "depth",
-          "providers": [
-            "engine_render",
-            "engine_prepass",
-            "engine_debug_view",
-            "engine_water",
-            "engine_meshes",
-            "engine_impostors",
-            "engine_terrain_shading"
-          ],
-          "required": true
         }
       ],
       "resources": [
@@ -2445,7 +2430,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "45708160b1e04f59c9eedf401a2e796d8bfdd973a48af707f4cd586bb3e4e940"
+      "version": "5fa3940a547d08617b6fc57969ad2ecec5fa6ac9a6ab7c9f2f1e4cdda65aaced"
     },
     {
       "dependencies": [
@@ -2637,7 +2622,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "cfeb4fd5a33a3f1ce64736e25352ac5594b7e896e4df812cda638f71a6a3b63f"
+      "version": "4989a142928a2ed161be12e09758e41be3742777feab4cf49ca1e68b774fc5f4"
     },
     {
       "dependencies": [
@@ -2771,7 +2756,7 @@
         }
       ],
       "type": "engine_ground_cover::GroundCoverBrick",
-      "version": "0a6cb7b2402d48b48d298c3825efffa5ad63a71c45a39d93355b456e073215ef"
+      "version": "29fd1514e5b918d1595dfc241385f3870317e38efb013f370417ee0572671cb0"
     },
     {
       "dependencies": [
@@ -2998,7 +2983,7 @@
         }
       ],
       "type": "engine_water::WaterBrick",
-      "version": "4f8d01904973be6d9513fd2425091d1f6347bcbb724abccdba15b46395942759"
+      "version": "dfb9e37c03066f43bf4758147e49f543c26f09c4d824530799341fbac8a2f07b"
     },
     {
       "dependencies": [
