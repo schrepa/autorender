@@ -263,11 +263,8 @@ macro_rules! __export_game {
             }
         }
 
-        $crate::__if_profiling! {
-            #[global_allocator]
-            static ALLOCATOR: $crate::profiling::TrackingAllocator<::std::alloc::System> =
-                $crate::profiling::TrackingAllocator::new(::std::alloc::System);
-        }
+        #[global_allocator]
+        static ALLOCATOR: $crate::__private::PageAllocator = $crate::__private::page_allocator();
 
         #[$crate::__private::bindgen(wasm_bindgen = $crate::__private::wasm_bindgen)]
         impl $name {

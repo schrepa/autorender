@@ -110,6 +110,23 @@ pub mod __private {
     pub use wasm_bindgen::JsValue;
     pub use wasm_bindgen::prelude::wasm_bindgen as bindgen;
     pub use web_sys;
+
+    #[cfg(feature = "profiling")]
+    pub type PageAllocator = engine_profile::TrackingAllocator<engine_profile::GrowingHeap>;
+    #[cfg(not(feature = "profiling"))]
+    pub type PageAllocator = engine_profile::GrowingHeap;
+
+    #[cfg(feature = "profiling")]
+    #[must_use]
+    pub const fn page_allocator() -> PageAllocator {
+        engine_profile::TrackingAllocator::new(engine_profile::GrowingHeap::new())
+    }
+
+    #[cfg(not(feature = "profiling"))]
+    #[must_use]
+    pub const fn page_allocator() -> PageAllocator {
+        engine_profile::GrowingHeap::new()
+    }
 }
 
 #[cfg(feature = "dev")]
@@ -123,20 +140,6 @@ macro_rules! __if_dev {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __if_dev {
-    ($($item:item)*) => {};
-}
-
-#[cfg(feature = "profiling")]
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __if_profiling {
-    ($($item:item)*) => { $($item)* };
-}
-
-#[cfg(not(feature = "profiling"))]
-#[doc(hidden)]
-#[macro_export]
-macro_rules! __if_profiling {
     ($($item:item)*) => {};
 }
 

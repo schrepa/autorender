@@ -18,6 +18,10 @@ pub struct Row {
 mod allocator;
 #[cfg(feature = "bricks")]
 mod bricks;
+#[cfg(target_arch = "wasm32")]
+mod heap;
+#[cfg(target_arch = "wasm32")]
+pub use heap::GrowingHeap;
 #[cfg(feature = "enabled")]
 mod collector;
 #[cfg(feature = "enabled")]
