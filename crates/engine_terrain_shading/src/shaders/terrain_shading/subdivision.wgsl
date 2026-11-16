@@ -622,23 +622,35 @@ fn subdivision_hidden(triangle: SurfaceTriangle) -> bool {
         surface_relative(high, highest) + offset + reach);
 }
 
-fn subdivision_kind(index: u32, leaves: u32, occluded: bool) -> u32 {
-    if index >= leaves {
-        return 0u;
+fn subdivision_kind(index: u32, args: u32, occluded: bool) -> vec2<u32> {
+    let whole = atomicLoad(&subdivision_args[args + SUBDIVISION_LISTS + 1u]);
+    let holed = atomicLoad(&subdivision_args[args + SUBDIVISION_LISTS + 6u]);
+    let leaves = atomicLoad(&subdivision_args[args + SUBDIVISION_LEAVES]);
+    if index >= select(leaves, whole + holed, occluded) {
+        return vec2<u32>(0u);
     }
-    let stored = subdivision_leaves[subdivision.tree.z + index];
+    let cut = index >= whole;
+    var leaf = index;
+    if occluded {
+        let at = subdivision.tree.z + select(index, index - whole, cut);
+        leaf = subdivision_lists[at * SURFACE_LISTS + select(0u, 1u, cut)];
+    }
+    let stored = subdivision_leaves[subdivision.tree.z + leaf];
     let triangle = surface_kept(stored);
-    if !surface_seen(triangle) || (occluded && subdivision_hidden(triangle)) {
-        return 0u;
+    if occluded {
+        return vec2<u32>(select(select(1u, 2u, cut), 0u, subdivision_hidden(triangle)), leaf);
     }
-    return select(2u, 1u, surface_whole(stored));
+    if !surface_seen(triangle) {
+        return vec2<u32>(0u);
+    }
+    return vec2<u32>(select(2u, 1u, surface_whole(stored)), leaf);
 }
 
 fn subdivision_list(id: u32, local: u32, occluded: bool) {
     use_terrain(subdivision.frame.z);
     let args = subdivision.frame.y * SUBDIVISION_ARGS;
-    let leaves = atomicLoad(&subdivision_args[args + SUBDIVISION_LEAVES]);
-    let kind = subdivision_kind(id, leaves, occluded);
+    let listed = subdivision_kind(id, args, occluded);
+    let kind = listed.x;
     listed_kinds[local] = kind;
     let lists = select(0u, 2u, occluded);
     workgroupBarrier();
@@ -662,7 +674,7 @@ fn subdivision_list(id: u32, local: u32, occluded: bool) {
         before += select(0u, 1u, listed_kinds[at] == kind);
     }
     let place = subdivision.tree.z + listed_firsts[kind - 1u] + before;
-    subdivision_lists[place * SURFACE_LISTS + lists + kind - 1u] = id;
+    subdivision_lists[place * SURFACE_LISTS + lists + kind - 1u] = listed.y;
 }
 
 @compute @workgroup_size(SUBDIVISION_GROUP)

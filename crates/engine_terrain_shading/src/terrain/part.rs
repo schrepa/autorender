@@ -122,7 +122,7 @@ struct Listing {
 
 impl Listing {
     fn ready(&self, list: usize) -> bool {
-        self.main && self.built[list]
+        self.main && self.built[..=list].iter().all(|&built| built)
     }
 }
 
