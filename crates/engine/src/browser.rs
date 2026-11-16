@@ -112,10 +112,10 @@ impl<G: Game> PageHost<G> {
             None => {
                 if let Some(scene) = game.scene {
                     let kinds = engine_scene::SceneKinds::of(host.engine().app.world());
-                    let files = crate::host::SceneLoad::new(scene.text, &kinds)
-                        .and_then(crate::host::SceneLoad::finish)
+                    let (document, files) = crate::host::SceneLoad::new(scene.text, &kinds)
+                        .and_then(crate::host::SceneLoad::opened)
                         .map_err(js)?;
-                    host.open_scene(scene.text, &files).map_err(js)?;
+                    host.open_document(&document, &files).map_err(js)?;
                 }
             }
         }

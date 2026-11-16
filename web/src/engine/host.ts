@@ -67,8 +67,21 @@ class FrameHud {
   private extraction = 0;
   private submission = 0;
   private samples = 0;
+  private marked = { at: -Infinity, phase: -1 };
 
   constructor(private readonly canvas: HTMLCanvasElement) {}
+
+  preparing(runtime: Runtime, phase: number) {
+    const at = performance.now();
+    if (phase === this.marked.phase && at - this.marked.at < 250) return;
+    this.marked = { at, phase };
+    const stats = readStats(runtime);
+    performance.mark("engine-preparing", { detail: {
+      phase, tick: stats.tick, preparation_ms: stats.preparation_ms, readiness: stats.readiness,
+      pipelines: stats.pipelines, pipelines_created: stats.pipelines_created, jobs: stats.jobs, upload_bytes: stats.upload_bytes,
+      waiting: stats.kind_passes.filter(pass => pass.state.state === "waiting"),
+    } });
+  }
 
   reset() {
     this.span = undefined;
@@ -292,6 +305,7 @@ function frame(timestamp: number) {
     const phase = game.animation_frame(timestamp, pixelWidth, pixelHeight);
     input.setCursorMode(game.cursor_mode());
     jobs?.exchange();
+    if (current.kind === "preparing") hud.preparing(game, phase);
     if (phase === FRAME_PHASES.started) {
       started(current);
     } else if (phase === FRAME_PHASES.playing) {
@@ -371,6 +385,7 @@ async function start() {
   reset.disabled = true;
   if (!("gpu" in navigator)) throw engineFailure({ code: "runtime_unavailable", path: "$", expected: "gpu" });
   const created = await options.create(canvas, lifecycle.signal);
+  performance.mark("engine-created");
   if (disposed()) { created.free(); return; }
   state = { kind: prepares ? "preparing" : "playing", game: created, paused: development && !preparedDevelopment, busy: false, level: false };
   created.apply_host_settings(location.search);

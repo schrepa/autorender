@@ -478,7 +478,15 @@ impl<G: Game> GameHost<G> {
 
     pub fn open_scene(&mut self, source: &str, files: &SceneFiles) -> crate::Result<()> {
         let document = engine_scene::SceneDocument::from_json(source)?;
-        self.arrive(&document, files, Arrival::Opening)
+        self.open_document(&document, files)
+    }
+
+    pub fn open_document(
+        &mut self,
+        document: &engine_scene::SceneDocument,
+        files: &SceneFiles,
+    ) -> crate::Result<()> {
+        self.arrive(document, files, Arrival::Opening)
     }
 
     pub fn reload_scene(&mut self, source: &str, files: &SceneFiles) -> crate::Result<()> {

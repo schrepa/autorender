@@ -255,12 +255,13 @@ fn faces(
                 switches.push((id, gate));
                 id
             });
+            let provided = linker.provided(&module);
             let mut implements: Vec<String> = contract
                 .answers
                 .iter()
                 .filter(|answer| {
                     if answer.constant {
-                        linker.provides(&module, &answer.name)
+                        provided.contains(&answer.name)
                     } else {
                         linker.defines(&module, &answer.name)
                     }
@@ -274,7 +275,7 @@ fn faces(
                 contract
                     .aliases
                     .iter()
-                    .filter(|alias| linker.provides(&module, alias))
+                    .filter(|alias| provided.contains(alias))
                     .cloned(),
             );
             Some(Fed {
@@ -709,14 +710,20 @@ fn scene_passes(world: &World) -> engine_core::ScenePasses {
         .unwrap_or_default()
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Lint {
+    Launch,
+    Check,
+}
+
 pub(crate) fn install(
     device: &wgpu::Device,
     limits: engine_core::DeviceLimits,
     world: &mut World,
-    edited: std::collections::BTreeMap<String, String>,
+    (edited, lint): (std::collections::BTreeMap<String, String>, Lint),
 ) -> Result<Built, Vec<Error>> {
     let built = world.resource_scope::<Registry, _>(|world, registry| {
-        install_with((device, limits), world, &registry, edited)
+        install_with((device, limits), world, &registry, (edited, lint))
     })?;
     let scenes = scene_passes(world);
     let unknown = world
@@ -746,7 +753,7 @@ fn install_with(
     (device, limits): (&wgpu::Device, engine_core::DeviceLimits),
     world: &mut World,
     registry: &Registry,
-    edited: std::collections::BTreeMap<String, String>,
+    (edited, lint): (std::collections::BTreeMap<String, String>, Lint),
 ) -> Result<Built, Vec<Error>> {
     let mut problems = Vec::new();
     names_twice(registry, world, &mut problems);
@@ -954,17 +961,19 @@ fn install_with(
     let Some(mut machine) = machine.filter(|_| problems.is_empty()) else {
         return Err(problems);
     };
-    let composed: Vec<std::sync::Arc<crate::linker::Composed>> = machine
-        .pipelines
-        .iter()
-        .flat_map(|pipeline| {
-            pipeline
-                .stages
-                .iter()
-                .map(|stage| std::sync::Arc::clone(&stage.composed))
-        })
-        .collect();
-    problems.extend(machine.linker.unused(&composed, &roots));
+    if lint == Lint::Check {
+        let composed: Vec<std::sync::Arc<crate::linker::Composed>> = machine
+            .pipelines
+            .iter()
+            .flat_map(|pipeline| {
+                pipeline
+                    .stages
+                    .iter()
+                    .map(|stage| std::sync::Arc::clone(&stage.composed))
+            })
+            .collect();
+        problems.extend(machine.linker.unused(&composed, &roots));
+    }
     let pass_gates = pass_gates(registry, &machine.declared.passes);
     if problems.is_empty() {
         Ok(Built {
@@ -1012,7 +1021,12 @@ impl Renderer {
     }
 
     pub fn install(&mut self, world: &mut World) -> Result<(), Vec<Error>> {
-        let installed = install(&self.core.device, self.core.limits, world, self.edited())?;
+        let installed = install(
+            &self.core.device,
+            self.core.limits,
+            world,
+            (self.edited(), Lint::Launch),
+        )?;
         self.adopt_installed(installed, world);
         Ok(())
     }
@@ -1116,7 +1130,12 @@ impl Renderer {
 pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
     let (device, queue) = noop_device().map_err(|error| vec![error])?;
     let limits = device_limits(&device.limits(), device.features(), 0);
-    let mut installed = install(&device, limits, world, std::collections::BTreeMap::new())?;
+    let mut installed = install(
+        &device,
+        limits,
+        world,
+        (std::collections::BTreeMap::new(), Lint::Check),
+    )?;
     let over: Vec<Error> = (installed.machine.over_limit.iter())
         .map(|(_, error)| error.clone())
         .collect();

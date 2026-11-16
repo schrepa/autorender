@@ -75,7 +75,7 @@ impl Renderer {
             &self.core.device,
             self.core.limits,
             world,
-            self.watched.edited(),
+            (self.watched.edited(), super::install::Lint::Check),
         )?;
         if let Some(run) = &self.run {
             installed.machine.shaders = run.machine.shaders.clone();

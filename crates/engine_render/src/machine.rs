@@ -636,14 +636,16 @@ impl Machine {
             staged.push((decl.clone(), stages, reached));
         }
         let doubled = doubled_of(&declared, &staged, &frame_bound, &linker);
+        let owned: Vec<Vec<Handle>> = staged
+            .iter()
+            .map(|(decl, _, reached)| own_writes(decl, reached, &linker))
+            .collect();
         let writes: Vec<Vec<(Handle, Usage)>> = staged
             .iter()
-            .map(|(decl, _, reached)| {
+            .zip(&owned)
+            .map(|((decl, _, _), own)| {
                 if let Program::Compute(_) = decl.program {
-                    return own_writes(decl, reached, &linker)
-                        .into_iter()
-                        .map(|handle| (handle, Usage::Stored))
-                        .collect();
+                    return own.iter().map(|&handle| (handle, Usage::Stored)).collect();
                 }
                 let mut written = Vec::new();
                 for (index, pass) in declared.passes.iter().enumerate() {
@@ -656,15 +658,11 @@ impl Machine {
                             .into_iter()
                             .map(|handle| (handle, Usage::Attached)),
                     );
-                    for (other, _, reached) in staged.iter().filter(|(other, _, _)| {
+                    for (_, own) in staged.iter().zip(&owned).filter(|((other, _, _), _)| {
                         matches!(other.program, Program::Render(_))
                             && decl_in_pass(other, index as u32, pass)
                     }) {
-                        written.extend(
-                            own_writes(other, reached, &linker)
-                                .into_iter()
-                                .map(|handle| (handle, Usage::Stored)),
-                        );
+                        written.extend(own.iter().map(|&handle| (handle, Usage::Stored)));
                     }
                 }
                 written
@@ -968,9 +966,16 @@ impl Machine {
 
 fn binding_bytes_of(pipelines: &[BuiltPipeline]) -> BTreeMap<(Option<usize>, u32, u32), u64> {
     let mut known = BTreeMap::new();
+    let mut sized: engine_core::collections::HashMap<
+        *const crate::linker::Composed,
+        Vec<(u32, u32, u64)>,
+    > = engine_core::collections::HashMap::default();
     for (at, pipeline) in pipelines.iter().enumerate() {
         for stage in &pipeline.stages {
-            for (group, binding, bytes) in crate::sizes::binding_sizes(&stage.composed.text) {
+            let sizes = sized
+                .entry(Arc::as_ptr(&stage.composed))
+                .or_insert_with(|| crate::sizes::binding_sizes(&stage.composed.text));
+            for &(group, binding, bytes) in sizes.iter() {
                 known.entry((Some(at), group, binding)).or_insert(bytes);
                 if group == 0 {
                     known.entry((None, group, binding)).or_insert(bytes);

@@ -131,13 +131,14 @@ impl Game for Highlands {
         arrival: Arrival,
     ) -> Result<SceneInstance, Error> {
         let world = engine.app.world_mut();
-        let highlands = engine::scene::parse_json::<SceneDocument>(scene::SCENE)?;
         match arrival {
             Arrival::Opening => {
                 provide_land(world, arrival)?;
                 scene::furnish(world, document, files, true)
             }
-            Arrival::Reload if document.id == highlands.id => {
+            Arrival::Reload
+                if document.id == engine::scene::parse_json::<SceneDocument>(scene::SCENE)?.id =>
+            {
                 provide_land(world, arrival)?;
                 scene::furnish(world, document, files, false)
             }

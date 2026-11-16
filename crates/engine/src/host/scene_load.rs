@@ -19,6 +19,7 @@ enum Stage {
 
 #[derive(Debug)]
 pub struct SceneLoad {
+    document: SceneDocument,
     files: SceneFiles,
     entries: Vec<(String, SceneFileKind, Stage)>,
     reads: Vec<FileRead>,
@@ -38,6 +39,7 @@ impl SceneLoad {
             .map(|(uri, _, _)| FileRead { uri: uri.clone() })
             .collect();
         Ok(Self {
+            document,
             files: SceneFiles::default(),
             entries,
             reads,
@@ -89,6 +91,10 @@ impl SceneLoad {
     }
 
     pub fn finish(self) -> Result<SceneFiles> {
+        self.opened().map(|(_, files)| files)
+    }
+
+    pub fn opened(self) -> Result<(SceneDocument, SceneFiles)> {
         if let Some((uri, _, _)) = self
             .entries
             .iter()
@@ -98,7 +104,7 @@ impl SceneLoad {
                 .expected(Expected::Present)
                 .got(uri));
         }
-        Ok(self.files)
+        Ok((self.document, self.files))
     }
 
     fn held(&mut self, uri: &str) {
