@@ -372,14 +372,6 @@ pub(crate) struct Filled {
     pub(crate) groups: Vec<(u32, wgpu::BindGroup)>,
 }
 
-#[derive(Default)]
-pub(crate) struct Set {
-    pipeline: Option<(u32, u64)>,
-    frame: Option<(u32, u32)>,
-    own: [Option<(u32, Option<usize>, usize)>; MOST_GROUPS],
-    material: Option<Option<MaterialHandle>>,
-}
-
 pub(crate) struct Open {
     pub(crate) pass: wgpu::RenderPass<'static>,
     pub(crate) attachments: Vec<u64>,
@@ -389,7 +381,6 @@ pub(crate) struct Open {
     pub(crate) viewed: Option<u32>,
     pub(crate) layered: bool,
     pub(crate) label: Option<u32>,
-    pub(crate) set: Set,
 }
 
 pub(crate) struct Assets {

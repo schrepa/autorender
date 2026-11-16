@@ -394,6 +394,7 @@ pub(crate) struct FrameState {
     pub occlusion: bool,
     pub views: Vec<ViewSlot>,
     pub view_frames: Vec<crate::layouts::PresentationFrame>,
+    pub view_room: [u64; 2],
     pub instance_count: usize,
     pub watched: Option<u32>,
 }

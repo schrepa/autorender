@@ -159,6 +159,7 @@ pub(crate) struct LightsGpu {
     regions: bool,
     count: u32,
     views: u32,
+    data_room: u64,
 }
 
 impl LightsGpu {
@@ -332,6 +333,7 @@ impl GpuPart for LightsGpu {
             regions: false,
             count: 0,
             views: 1,
+            data_room: 0,
         })
     }
 
@@ -345,6 +347,9 @@ impl GpuPart for LightsGpu {
         cx: &mut Prepare<'_, Self>,
     ) {
         let room = limits.storage_room / 16 * 16;
+        if room != self.room {
+            self.data_room = 0;
+        }
         if list.lights.is_empty() || room != self.room {
             self.reset(room);
         }
@@ -373,8 +378,8 @@ impl GpuPart for LightsGpu {
             .any(|light| light.region != LightRegion::Both);
         let needed = totals.needed().max(count as u64 * 32);
         self.grow_indices(needed * 4);
-        let (Allocation::Fresh | Allocation::Kept) =
-            cx.allocate_buffer(self.data, self.data_bytes());
+        self.data_room = self.data_room.max(self.data_bytes());
+        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.data, self.data_room);
         let (Allocation::Fresh | Allocation::Kept) =
             cx.allocate_buffer(self.counts, u64::from(self.arena) * CLUSTERS * 4);
         let (Allocation::Fresh | Allocation::Kept) =
