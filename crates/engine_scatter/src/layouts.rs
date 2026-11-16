@@ -88,6 +88,7 @@ gpu_consts! {
     pub(crate) const DEAD: u32 = 0xffffffff;
     pub(crate) const NO_LAYER: u32 = 0x7f;
     pub(crate) const SCATTER_GROUP: u32 = 64;
+    pub(crate) const LAID_GROUP: u32 = 8;
     pub(crate) const WIND_REACH: f32 = 4.0;
 }
 
