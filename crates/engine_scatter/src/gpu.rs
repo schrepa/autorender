@@ -1109,7 +1109,7 @@ impl ScatterGpu {
             )
         };
         let Some((cards, offset)) = self.card_source(view) else {
-            return draws;
+            return (draws, empty);
         };
         let record = DrawRecord::of(DrawKind::PlacedCard, 0);
         for (card, what) in [first, second].into_iter().flatten() {
