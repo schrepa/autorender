@@ -141,14 +141,14 @@ fn cover_color(blade: CoverBlade, along: f32, reach: f32) -> vec3<f32> {
     return mix(root * root, tip * tip, smoothstep(0.0, reach, along));
 }
 
-fn cover_varyings(instance: u32, vertex: u32, moved: bool) -> CoverVaryings {
+fn cover_varyings(instance: u32, vertex: u32) -> CoverVaryings {
     let shape = cover_shape();
     let at = blade_vertex(instance, vertex);
     let wind = cover_lean_wind(at.blade.lean);
     let before = cover_lean_wind_before(at.blade.lean);
     let point = cover_point(at, shape, f32(wind) / 127.5);
     var previous = point.world;
-    if moved && before != wind {
+    if before != wind {
         previous = cover_point(at, shape, f32(before) / 127.5).world;
     }
     var output: CoverVaryings;
@@ -171,7 +171,17 @@ fn cover_varyings(instance: u32, vertex: u32, moved: bool) -> CoverVaryings {
 @vertex
 fn vs_cover(@builtin(instance_index) instance: u32, @builtin(vertex_index) vertex: u32)
         -> CoverVaryings {
-    return cover_varyings(instance, vertex, true);
+    return cover_varyings(instance, vertex);
+}
+
+fn cover_depth(instance: u32, vertex: u32) -> CoverVaryings {
+    let shape = cover_shape();
+    let at = blade_vertex(instance, vertex);
+    let wind = cover_lean_wind(at.blade.lean);
+    let point = cover_point(at, shape, f32(wind) / 127.5);
+    var output: CoverVaryings;
+    output.clip_position = camera.view_projection * vec4<f32>(point.world, 1.0);
+    return output;
 }
 
 struct CastVertex {
@@ -190,7 +200,7 @@ fn cast_vertex(instance: u32, vertex: u32, locals: u32) -> CastVertex {
 fn vs_cover_cast(@builtin(instance_index) instance: u32, @builtin(vertex_index) vertex: u32)
         -> CoverVaryings {
     let placed = cast_vertex(instance, vertex, 2u);
-    return cover_varyings(placed.instance, placed.vertex, false);
+    return cover_depth(placed.instance, placed.vertex);
 }
 
 struct CardCorner {
@@ -257,17 +267,19 @@ fn card_varyings(instance: u32, vertex: u32, moved: bool) -> CoverVaryings {
     let wind = cover_lean_wind(card.lean);
     let before = cover_lean_wind_before(card.lean);
     let point = card_point(card, corner, shape, form, f32(wind) / 127.5);
-    var previous = point.world;
-    if moved && before != wind {
-        previous = card_point(card, corner, shape, form, f32(before) / 127.5).world;
-    }
     let tint = unpack4x8unorm(card.tint).rgb;
     var output: CoverVaryings;
     output.clip_position = camera.view_projection * vec4<f32>(point.world, 1.0);
     output.normal_u = vec4<f32>(point.normal, corner.uv.x);
     output.world_v = vec4<f32>(point.world, corner.uv.y);
     output.material = vec4<u32>(COVER_WHITE, COVER_WHITE, card.tint >> 24u, 0u);
-    output.previous = (camera.previous_view_projection * vec4<f32>(previous, 1.0)).xyw;
+    if moved {
+        var previous = point.world;
+        if before != wind {
+            previous = card_point(card, corner, shape, form, f32(before) / 127.5).world;
+        }
+        output.previous = (camera.previous_view_projection * vec4<f32>(previous, 1.0)).xyw;
+    }
     output.color = vec4<f32>(tint * tint / CARD_TINT_RANGE, saturate(corner.along));
     output.object = vec4<u32>(0u, 0u, 0u, KIND_COVER);
     return output;

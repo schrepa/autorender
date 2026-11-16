@@ -1244,7 +1244,7 @@ fn walk_next(walk: ptr<function, Walk>, planned: vec4<u32>, cell: vec2<u32>, lan
             (*walk).stage = WALK_QUAD;
             continue;
         }
-        *pick = Pick(at, (*walk).order, (*walk).next / run.finest,
+        *pick = Pick(at, (*walk).order, (*walk).next >> countTrailingZeros(run.finest),
             vec3<u32>(look.row, bitcast<vec2<u32>>(clump.id)));
         (*walk).next += run.finest;
         (*walk).tried += 1u;
@@ -1406,6 +1406,7 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
     let walking = any(planned.zw != vec2<u32>(COVER_NO_LAYER));
     var walk: Walk;
     var plain = lane;
+    let finest_bits = countTrailingZeros(finest);
     loop {
         var pick: Pick;
         if walking {
@@ -1416,9 +1417,9 @@ fn grow_cover(@builtin(workgroup_id) group: vec3<u32>,
             if plain >= total {
                 break;
             }
-            let order = plain % finest;
+            let order = plain & (finest - 1u);
             pick = Pick(ordered_cell(home, below, below, order >> (2u * lane_levels), slot), order,
-                plain / finest, NO_OWNER);
+                plain >> finest_bits, NO_OWNER);
             plain += 64u;
         }
         grow_candidate(pick.at, pick.order, pick.candidate, pick.owner);
