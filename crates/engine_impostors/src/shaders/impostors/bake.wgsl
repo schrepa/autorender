@@ -1,9 +1,9 @@
 import package::engine::drawn::{GeometryExtra, GeometryVertex};
-import package::engine::materials::alpha_test;
+import package::engine::materials::{alpha_cutoff, alpha_test};
 import package::engine::geometry::vertex::octahedral_normal;
 import package::engine::shading::SurfaceInput;
-import package::engine::mapped::{base_texel, emissive_texel};
-import package::engine::surface::{masked_out, surface_point};
+import package::engine::mapped::{base_texel, emissive_texel, mask_coverage};
+import package::engine::surface::surface_point;
 import package::engine::view::stable_normalize;
 import package::face::lighting::SURFACE_THIN;
 import package::generated::impostors::ImpostorBake;
@@ -102,7 +102,8 @@ fn bake_targets(input: BakeOutput, color: vec4<f32>, uv1: vec2<f32>, front: bool
     let surface = bake_input(input, color, uv1, front);
     let point = surface_point(surface);
     let base = base_texel(surface);
-    if alpha_test() && masked_out(surface, point) {
+    let cutoff = alpha_cutoff() / mask_coverage(surface);
+    if alpha_test() && point.opacity < cutoff {
         discard;
     }
     if point.kind == SURFACE_THIN {
