@@ -64,16 +64,13 @@ fn lattice_hash(x: i32, z: i32, seed: u32) -> u32 {
 }
 
 fn gradient_at(x: i32, z: i32, seed: u32) -> vec2<f32> {
-    var gradients = array<vec2<f32>, 16>(
-        vec2<f32>(0.9807853, 0.19509032), vec2<f32>(0.8314696, 0.5555702),
-        vec2<f32>(0.5555702, 0.8314696), vec2<f32>(0.19509032, 0.9807853),
-        vec2<f32>(-0.19509032, 0.9807853), vec2<f32>(-0.5555702, 0.8314696),
-        vec2<f32>(-0.8314696, 0.5555702), vec2<f32>(-0.9807853, 0.19509032),
-        vec2<f32>(-0.9807853, -0.19509032), vec2<f32>(-0.8314696, -0.5555702),
-        vec2<f32>(-0.5555702, -0.8314696), vec2<f32>(-0.19509032, -0.9807853),
-        vec2<f32>(0.19509032, -0.9807853), vec2<f32>(0.5555702, -0.8314696),
-        vec2<f32>(0.8314696, -0.5555702), vec2<f32>(0.9807853, -0.19509032));
-    return gradients[lattice_hash(x, z, seed) & 15u];
+    let hash = lattice_hash(x, z, seed);
+    let odd = (hash & 1u) != 0u;
+    let low = select(vec2<f32>(0.9807853, 0.19509032), vec2<f32>(0.8314696, 0.5555702), odd);
+    let high = select(vec2<f32>(0.5555702, 0.8314696), vec2<f32>(0.19509032, 0.9807853), odd);
+    let first = select(low, high, (hash & 2u) != 0u);
+    let turned = select(first, vec2<f32>(-first.y, first.x), (hash & 4u) != 0u);
+    return select(turned, -turned, (hash & 8u) != 0u);
 }
 
 fn quintic(t: f32) -> f32 {

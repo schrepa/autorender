@@ -97,15 +97,17 @@ fn sun_block(under: f32, span: f32, tall: f32, crests: ptr<function, SunCrests>)
     (*crests).spans = select((*crests).spans, vec2<f32>(reach), won);
 }
 
+fn sun_heights(tile: LevelTile, first: vec2<u32>, z: u32) -> vec3<f32> {
+    return vec3<f32>(tile_height(tile, first + vec2<u32>(0u, z)),
+        tile_height(tile, first + vec2<u32>(1u, z)), tile_height(tile, first + vec2<u32>(2u, z)));
+}
+
 fn sun_crest(tile: LevelTile, first: vec2<u32>, o: vec3<f32>, heading: vec2<f32>,
         span: vec2<f32>, spacing: f32, cutout: vec4<f32>, tall: f32,
         crests: ptr<function, SunCrests>) {
-    var h: array<f32, 9>;
-    for (var z = 0u; z < 3u; z++) {
-        for (var x = 0u; x < 3u; x++) {
-            h[z * 3u + x] = tile_height(tile, first + vec2<u32>(x, z));
-        }
-    }
+    let near = sun_heights(tile, first, 0u);
+    let middle = sun_heights(tile, first, 1u);
+    let far = sun_heights(tile, first, 2u);
     let start = o.xz / spacing - vec2<f32>(first);
     let rate = heading / spacing;
     var s = span.x;
@@ -115,11 +117,13 @@ fn sun_crest(tile: LevelTile, first: vec2<u32>, o: vec3<f32>, heading: vec2<f32>
         }
         let quad = min(vec2<u32>(max(floor(start + rate * s), vec2<f32>(0.0))), vec2<u32>(1u));
         let leave = min(square_exit(start, rate, vec2<f32>(quad), 1.0), span.y);
-        let corner = quad.y * 3u + quad.x;
-        let a = h[corner];
-        let b = h[corner + 1u];
-        let c = h[corner + 3u];
-        let d = h[corner + 4u];
+        let lower = select(near, middle, quad.y == 1u);
+        let upper = select(middle, far, quad.y == 1u);
+        let right = quad.x == 1u;
+        let a = select(lower.x, lower.y, right);
+        let b = select(lower.y, lower.z, right);
+        let c = select(upper.x, upper.y, right);
+        let d = select(upper.y, upper.z, right);
         let f0 = start - vec2<f32>(quad);
         let across = rate.x + rate.y;
         var split = leave;

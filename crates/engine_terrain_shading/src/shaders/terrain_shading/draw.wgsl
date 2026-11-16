@@ -706,7 +706,7 @@ fn terrain_ends(entry: PaletteEntry, material: u32, resolved: vec2<f32>) -> Terr
     var ends: TerrainEnds;
     ends.maps = 1.0;
     ends.albedo = 1.0;
-    if entry.params.w <= 0.0 {
+    if !terrain_detailed || entry.params.w <= 0.0 {
         return ends;
     }
     ends.albedo = terrain_gone(resolved.x, entry.params.x, terrain_look.reach.z);
@@ -1167,7 +1167,7 @@ fn terrain_shared_ground(shares: TerrainShares, site: TerrainSite) -> TerrainGro
         let material = shares.held[slot];
         var held = terrain_slot(material,
             terrain_marked(shares.marks, TERRAIN_MARK_SHARED + slot), site);
-        held.opened = !(terrain_detailed && terrain_marked(shares.marks, TERRAIN_MARK_REACHED + slot)
+        held.opened = !(terrain_marked(shares.marks, TERRAIN_MARK_REACHED + slot)
             && held.far < 1.0);
         held.lush = shares.lush;
         if terrain_marked(shares.marks, TERRAIN_MARK_EDGED) {
