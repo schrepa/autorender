@@ -568,7 +568,7 @@
         }
       ],
       "type": "engine_shadows::ShadowsBrick",
-      "version": "49d92901b32e69837d3a771cea6ebff4262d1a8d73cdb79f0ee76380bfbea9f7"
+      "version": "03a2107fbb2f140b8f249eaf34f6c64182646a937fa09f4a9a5ec26a15691286"
     },
     {
       "dependencies": [
@@ -2158,7 +2158,7 @@
         }
       ],
       "type": "engine_terrain::runtime::brick::TerrainBrick",
-      "version": "1272474b23469921d36c542058c313de866b6d00150c0dcfc3483fa677bc5afc"
+      "version": "9af791fdf8826eebbaa18d00ae5ca6429b9c8e3d2e3fdf6d07a92bdf4581c57c"
     },
     {
       "dependencies": [
@@ -2444,7 +2444,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "f622272633d8e7f41868095d57156845626f7c75148e48f6d889727ecb40b8c4"
+      "version": "acab8c9306e666628bff0d3ff3901b4e05e1e9ced05678fb5e96f20a8a720148"
     },
     {
       "dependencies": [
@@ -2769,7 +2769,7 @@
         }
       ],
       "type": "engine_ground_cover::GroundCoverBrick",
-      "version": "99d903cc94f51afa9cce91d61a2eab7fa94640a6c58cb8de036324c1990e3e3a"
+      "version": "177c547218a6379d3378e0fa7aed31903590041cd4036e9766f8051763597b58"
     },
     {
       "dependencies": [
