@@ -81,11 +81,15 @@ fn fs_card(input: CardOutput) -> DepthOutputs {
     let record = card_records[input.batch];
     let sun = CardSun(input.slot_sun.y, input.sun.xyz, input.sun.w);
     let level = card_level(card, record);
-    let shaded = card_lit(card, record, card_point(card, record, fade, level), fade_word_on(fade),
-        sun, level);
-    return depth_outputs(shaded.point, shaded.shaded,
-        view_pixel(input.clip_position, vec4<f32>(input.previous.xy, 0.0, input.previous.z)),
-        shaded.depth);
+    let point = card_point(card, record, fade, level);
+    var written: DepthOutputs;
+    if point.opacity >= 0.0 {
+        let shaded = card_lit(card, record, point, fade_word_on(fade), sun, level);
+        written = depth_outputs(shaded.point, shaded.shaded,
+            view_pixel(input.clip_position, vec4<f32>(input.previous.xy, 0.0, input.previous.z)),
+            shaded.depth);
+    }
+    return written;
 }
 
 @fragment

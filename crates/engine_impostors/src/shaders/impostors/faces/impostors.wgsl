@@ -29,6 +29,8 @@ import package::place::impostors::{CardDebugTargets, CardShaded, CardVertex, Imp
 @group(0) @binding(0) var atlas_surface: texture_2d_array<f32>;
 @group(0) @binding(0) var atlas_sampler: sampler;
 
+const CARD_HIDDEN: f32 = -1.0;
+
 fn card_corner(vertex: u32) -> vec2<f32> {
     let right = vertex == 1u || vertex == 2u || vertex == 4u;
     let up = vertex == 2u || vertex == 4u || vertex == 5u;
@@ -373,6 +375,14 @@ fn card_sample(held: CardSample, tap: CardTap, uv: vec2<f32>, weight: f32, cover
     return next;
 }
 
+fn card_quad_any(here: bool) -> bool {
+    let own = select(0.0, 1.0, here);
+    let across = dpdxFine(own);
+    let down = dpdyFine(own);
+    let diagonal = dpdyFine(across);
+    return here | (across != 0.0) | (down != 0.0) | (diagonal != 0.0);
+}
+
 fn card_point(input: CardVertex, record: ImpostorRecord, fade: u32, level: f32)
         -> SurfacePoint {
     let weights = vec3<f32>(input.normal_x.w, input.normal_y.w,
@@ -397,37 +407,50 @@ fn card_point(input: CardVertex, record: ImpostorRecord, fade: u32, level: f32)
     let covered = vec3<f32>(impostor_albedo(probe_a, layer, level).a,
         impostor_albedo(probe_b, layer, level).a, impostor_albedo(probe_c, layer, level).a);
     let probed = dot(weights, covered);
-    if probed * scale < 1.0 / 255.0 {
+    let empty = probed * scale < 1.0 / 255.0;
+    if empty {
         discard;
     }
-    var met = 0.0;
-    met += weights.x * tap_met(a, impostor_geometry(probe_a, layer, level).w, covered.x);
-    met += weights.y * tap_met(b, impostor_geometry(probe_b, layer, level).w, covered.y);
-    met += weights.z * tap_met(c, impostor_geometry(probe_c, layer, level).w, covered.z);
-    let along = clamp(met / probed, -1.0, 1.0);
-    let uv_a = tap_uv(a, a.crossed + a.slope * (0.5 * span * along), inset, span);
-    let uv_b = tap_uv(b, b.crossed + b.slope * (0.5 * span * along), inset, span);
-    let uv_c = tap_uv(c, c.crossed + c.slope * (0.5 * span * along), inset, span);
-    let texel_a = impostor_albedo(uv_a, layer, level);
-    let texel_b = impostor_albedo(uv_b, layer, level);
-    let texel_c = impostor_albedo(uv_c, layer, level);
+    var uv_a = vec2<f32>(0.0);
+    var uv_b = vec2<f32>(0.0);
+    var uv_c = vec2<f32>(0.0);
+    var texel_a = vec4<f32>(0.0);
+    var texel_b = vec4<f32>(0.0);
+    var texel_c = vec4<f32>(0.0);
+    if card_quad_any(!empty) {
+        var met = 0.0;
+        met += weights.x * tap_met(a, impostor_geometry(probe_a, layer, level).w, covered.x);
+        met += weights.y * tap_met(b, impostor_geometry(probe_b, layer, level).w, covered.y);
+        met += weights.z * tap_met(c, impostor_geometry(probe_c, layer, level).w, covered.z);
+        let along = clamp(met / probed, -1.0, 1.0);
+        uv_a = tap_uv(a, a.crossed + a.slope * (0.5 * span * along), inset, span);
+        uv_b = tap_uv(b, b.crossed + b.slope * (0.5 * span * along), inset, span);
+        uv_c = tap_uv(c, c.crossed + c.slope * (0.5 * span * along), inset, span);
+        texel_a = impostor_albedo(uv_a, layer, level);
+        texel_b = impostor_albedo(uv_b, layer, level);
+        texel_c = impostor_albedo(uv_c, layer, level);
+    }
     var albedo = vec4<f32>(0.0);
     albedo += weights.x * texel_a;
     albedo += weights.y * texel_b;
     albedo += weights.z * texel_c;
     let coverage = albedo.a;
-    if coverage * scale < impostor_cutoff() {
+    let cut = coverage * scale < impostor_cutoff();
+    if cut {
         discard;
     }
-    if fade_hidden(fade, input.clip_position.xy) {
+    let faded = fade_hidden(fade, input.clip_position.xy);
+    if faded {
         discard;
     }
     let slot_surface = unpack4x8unorm(input.material.z);
     let emits = any(record.emissive != vec3<f32>(0.0));
     var sampled = CardSample(vec3<f32>(0.0), vec4<f32>(0.0), vec4<f32>(0.0), 0.0);
-    sampled = card_sample(sampled, a, uv_a, weights.x, texel_a.a, layer, level, emits);
-    sampled = card_sample(sampled, b, uv_b, weights.y, texel_b.a, layer, level, emits);
-    sampled = card_sample(sampled, c, uv_c, weights.z, texel_c.a, layer, level, emits);
+    if card_quad_any(!(empty || cut || faded)) {
+        sampled = card_sample(sampled, a, uv_a, weights.x, texel_a.a, layer, level, emits);
+        sampled = card_sample(sampled, b, uv_b, weights.y, texel_b.a, layer, level, emits);
+        sampled = card_sample(sampled, c, uv_c, weights.z, texel_c.a, layer, level, emits);
+    }
     let emissive = sampled.emissive;
     let geometry = sampled.geometry;
     let surface = sampled.surface;
@@ -462,7 +485,11 @@ fn card_point(input: CardVertex, record: ImpostorRecord, fade: u32, level: f32)
     point = set_metalness(point, slot_surface.y * surface.y * unpremultiply);
     point = set_occlusion(point, surface.z * unpremultiply);
     point = set_transmission(point, 0.0);
-    return derived(point);
+    var made = derived(point);
+    if empty || cut || faded {
+        made.opacity = CARD_HIDDEN;
+    }
+    return made;
 }
 
 fn card_fading(fade: u32) -> bool {

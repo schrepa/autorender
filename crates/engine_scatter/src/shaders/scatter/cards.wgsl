@@ -121,10 +121,14 @@ fn fs_placed_card(input: PlacedCardVertex) -> DepthOutputs {
     let card = card_of(input);
     let impostor = placed_impostor(faded_slot_slot(card.batch));
     let level = placed_card_level(card, impostor);
-    let shaded = placed_card_lit(card, impostor,
-        plant_point(placed_card_point(card, impostor, level), input.object.y), level);
-    return depth_outputs(shaded.point, shaded.shaded, placed_card_pixel(card),
-        shaded.depth);
+    let baked = placed_card_point(card, impostor, level);
+    var written: DepthOutputs;
+    if baked.opacity >= 0.0 {
+        let shaded = placed_card_lit(card, impostor, plant_point(baked, input.object.y), level);
+        written = depth_outputs(shaded.point, shaded.shaded, placed_card_pixel(card),
+            shaded.depth);
+    }
+    return written;
 }
 
 fn nearest_depth(input: PlacedCardVertex) -> f32 {
@@ -171,7 +175,7 @@ fn laid_card(input: PlacedCardVertex) -> LaidCard {
     let baked = placed_card_point(card, impostor, level);
     let clip = camera.view_projection * vec4<f32>(baked.world, 1.0);
     let depth = saturate(clip.z / clip.w);
-    let seen = depth >= laid;
+    let seen = baked.opacity >= 0.0 && depth >= laid;
     if !seen {
         discard;
     }
