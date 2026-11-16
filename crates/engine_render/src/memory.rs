@@ -13,7 +13,7 @@ pub struct GpuMemory {
 pub fn buffer(device: &wgpu::Device, descriptor: &wgpu::BufferDescriptor<'_>) -> wgpu::Buffer {
     let buffer = device.create_buffer(descriptor);
     #[cfg(any(feature = "dev", feature = "profiling"))]
-    ledger::created(ledger::id_of(&buffer), descriptor.size);
+    ledger::created(ledger::buffer_key(&buffer), descriptor.size);
     buffer
 }
 
@@ -27,7 +27,7 @@ pub fn buffer_init(
 ) -> wgpu::Buffer {
     let buffer = wgpu::util::DeviceExt::create_buffer_init(device, descriptor);
     #[cfg(any(feature = "dev", feature = "profiling"))]
-    ledger::created(ledger::id_of(&buffer), buffer.size());
+    ledger::created(ledger::buffer_key(&buffer), buffer.size());
     buffer
 }
 
@@ -38,7 +38,7 @@ pub fn buffer_init(
 pub fn texture(device: &wgpu::Device, descriptor: &wgpu::TextureDescriptor<'_>) -> wgpu::Texture {
     let texture = device.create_texture(descriptor);
     #[cfg(any(feature = "dev", feature = "profiling"))]
-    ledger::created(ledger::id_of(&texture), texture_bytes(descriptor));
+    ledger::created(ledger::texture_key(&texture), texture_bytes(descriptor));
     texture
 }
 
@@ -48,7 +48,7 @@ pub fn texture(device: &wgpu::Device, descriptor: &wgpu::TextureDescriptor<'_>) 
 )]
 pub fn release_buffer(buffer: &wgpu::Buffer) {
     #[cfg(any(feature = "dev", feature = "profiling"))]
-    ledger::released(ledger::id_of(buffer));
+    ledger::released(ledger::buffer_key(buffer));
 }
 
 #[cfg_attr(
@@ -66,7 +66,7 @@ pub fn release_any(value: &dyn std::any::Any) {
 )]
 pub fn uploaded_buffer(buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {
     #[cfg(any(feature = "dev", feature = "profiling"))]
-    ledger::uploaded(ledger::id_of(&(ledger::id_of(buffer), offset)), data);
+    ledger::uploaded(ledger::id_of(&(ledger::buffer_key(buffer), offset)), data);
 }
 
 #[cfg_attr(
@@ -77,7 +77,7 @@ pub fn uploaded_texture(texture: &wgpu::TexelCopyTextureInfo<'_>, data: &[u8]) {
     #[cfg(any(feature = "dev", feature = "profiling"))]
     ledger::uploaded(
         ledger::id_of(&(
-            ledger::id_of(texture.texture),
+            ledger::texture_key(texture.texture),
             texture.mip_level,
             texture.origin.x,
             texture.origin.y,
@@ -182,8 +182,19 @@ mod ledger {
         static OWNER: Cell<Owner> = const { Cell::new(None) };
     }
 
+    const BUFFER: u8 = 0;
+    const TEXTURE: u8 = 1;
+
     pub(super) fn id_of(value: &impl Hash) -> u64 {
         FixedState::default().hash_one(value)
+    }
+
+    pub(super) fn buffer_key(buffer: &wgpu::Buffer) -> u64 {
+        id_of(&(BUFFER, buffer))
+    }
+
+    pub(super) fn texture_key(texture: &wgpu::Texture) -> u64 {
+        id_of(&(TEXTURE, texture))
     }
 
     fn owner() -> Owner {
@@ -216,11 +227,11 @@ mod ledger {
 
     pub(super) fn released_any(value: &dyn std::any::Any) {
         let id = if let Some(buffer) = value.downcast_ref::<wgpu::Buffer>() {
-            id_of(buffer)
+            buffer_key(buffer)
         } else if let Some(Some(buffer)) = value.downcast_ref::<Option<wgpu::Buffer>>() {
-            id_of(buffer)
+            buffer_key(buffer)
         } else if let Some(texture) = value.downcast_ref::<wgpu::Texture>() {
-            id_of(texture)
+            texture_key(texture)
         } else {
             return;
         };
