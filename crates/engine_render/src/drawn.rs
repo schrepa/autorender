@@ -1047,7 +1047,9 @@ impl Pyramid {
             display.x.div_ceil(2).max(1).next_power_of_two(),
             display.y.div_ceil(2).max(1).next_power_of_two(),
         );
-        let count = mip_levels(base.0, base.1).min(PYRAMID_LEVELS as u32);
+        let count = mip_levels(base.0, base.1)
+            .min(covering_levels(render.x.max(render.y)))
+            .min(PYRAMID_LEVELS as u32);
         let (Allocation::Fresh | Allocation::Kept) = cx.allocate(
             self.texture,
             wgpu::Extent3d {
@@ -1105,6 +1107,11 @@ impl Pyramid {
             );
         }
     }
+}
+
+fn covering_levels(widest: u32) -> u32 {
+    let last = widest.max(1) - 1;
+    (u32::BITS - last.leading_zeros()).max(2) - 1
 }
 
 fn install_occlusion(
