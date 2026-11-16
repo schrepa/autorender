@@ -5,13 +5,10 @@ use engine_codec::{Codec, Reader, record};
 use engine_core::{Error, ErrorCode, Job, JobCx, RecordKey};
 use engine_heightfield::ErrorPyramid;
 use engine_heightfield::rivers::Rivers;
-use engine_heightfield::tile::{
-    Footprint, PATCH_QUADS, PATCHES_PER_TILE, TILE_STRIDE, TileJob, bed_at,
-};
+use engine_heightfield::tile::{Footprint, PATCH_QUADS, PATCHES_PER_TILE, TILE_STRIDE, TileJob};
 use glam::Vec2;
 
 use super::gpu::{NO_WATER_SURFACE, WATER_BLOCK as BLOCK};
-use super::shallow_water::roughness;
 use super::tile_water::{TileWater, WaterMesh, rewatered};
 use super::{Finished, kinds, outside, recipe};
 
@@ -33,7 +30,7 @@ record!(Levels {
 });
 
 pub(crate) const SURFACE_BYTES: u32 = 8;
-pub(crate) const INFO_BYTES: u32 = 16;
+pub(crate) const INFO_BYTES: u32 = 8;
 const BLOCK_TEXELS: usize = (BLOCK * BLOCK) as usize;
 const SURFACES: usize = BLOCK_TEXELS * SURFACE_BYTES as usize;
 pub(crate) const PATCH_BYTES: usize = SURFACES + BLOCK_TEXELS * INFO_BYTES as usize;
@@ -68,21 +65,12 @@ pub(crate) fn is_dry(record: &[u8]) -> Result<bool, Error> {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(crate) struct DrawHead {
-    pub(crate) spacing: f32,
-    pub(crate) beds: u64,
-}
-
-record!(DrawHead { spacing, beds });
-
-#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct FloodHead {
     pub(crate) tile: TileJob,
     pub(crate) flow: [u8; 32],
     pub(crate) running: u64,
     pub(crate) regions: Vec<[f32; 4]>,
     pub(crate) spacing: f32,
-    pub(crate) beds: u64,
     pub(crate) wet: bool,
     pub(crate) held: [u64; 4],
     pub(crate) solids: Box<[Footprint]>,
@@ -94,7 +82,6 @@ record!(FloodHead {
     running,
     regions,
     spacing,
-    beds,
     wet,
     held,
     solids,
@@ -141,12 +128,6 @@ fn take_words<T: Pod>(bytes: &mut &[u8], count: usize) -> Result<Vec<T>, Error> 
     Ok(words(take(bytes, count * size_of::<T>())?))
 }
 
-struct Ground<'a> {
-    heights: &'a [f32],
-    beds: Option<&'a [u16]>,
-    spacing: f32,
-}
-
 fn carried(mesh: &WaterMesh, heights: &[f32]) -> Vec<[f32; 2]> {
     let stride = TILE_STRIDE as usize;
     let wet = |at: usize| mesh.holds(at) && mesh.level(at) > heights[at];
@@ -186,10 +167,9 @@ fn carried(mesh: &WaterMesh, heights: &[f32]) -> Vec<[f32; 2]> {
 }
 
 fn patch_texels(
-    ground: &Ground<'_>,
     (water, texels): (&TileWater, &[[f32; 2]]),
     (px, pz): (usize, usize),
-    (surfaces, info): (&mut Vec<[f32; 2]>, &mut Vec<[u32; 4]>),
+    (surfaces, info): (&mut Vec<[f32; 2]>, &mut Vec<[u32; 2]>),
 ) {
     surfaces.clear();
     info.clear();
@@ -201,13 +181,8 @@ fn patch_texels(
         for x in 0..side {
             let (column, row) = (px * quads + x, pz * quads + z);
             let at = row * stride + column;
-            let local = Vec2::new(column as f32 - 1.0, row as f32 - 1.0) * ground.spacing;
             surfaces.push(texels[at]);
-            let [packed, state] = words[at];
-            let bed = ground
-                .beds
-                .and_then(|beds| bed_at(beds, ground.heights, ground.spacing, local));
-            info.push([packed, state, 0, roughness(bed.as_ref()).to_bits()]);
+            info.push(words[at]);
         }
     }
 }
@@ -218,17 +193,17 @@ struct Painted {
     changed: [u64; 4],
 }
 
-fn paint(water: &TileWater, ground: &Ground<'_>, before: Option<&TileWater>) -> Painted {
+fn paint(water: &TileWater, heights: &[f32], before: Option<&TileWater>) -> Painted {
     let patches = PATCHES_PER_TILE as usize;
-    let mesh = water.mesh(ground.heights);
+    let mesh = water.mesh(heights);
     let holding: Vec<bool> = (0..mesh.levels().len()).map(|at| mesh.holds(at)).collect();
     let errors = ErrorPyramid::over(mesh.levels(), Some(&holding[..])).shared_halves();
-    let drawn = carried(&mesh, ground.heights);
-    let was = before.map(|before| (before, carried(&before.mesh(ground.heights), ground.heights)));
+    let drawn = carried(&mesh, heights);
+    let was = before.map(|before| (before, carried(&before.mesh(heights), heights)));
     let mut surfaces: Vec<[f32; 2]> = Vec::with_capacity(BLOCK_TEXELS);
-    let mut info: Vec<[u32; 4]> = Vec::with_capacity(BLOCK_TEXELS);
+    let mut info: Vec<[u32; 2]> = Vec::with_capacity(BLOCK_TEXELS);
     let mut old_surfaces: Vec<[f32; 2]> = Vec::with_capacity(BLOCK_TEXELS);
-    let mut old_info: Vec<[u32; 4]> = Vec::with_capacity(BLOCK_TEXELS);
+    let mut old_info: Vec<[u32; 2]> = Vec::with_capacity(BLOCK_TEXELS);
     let mut texels = Vec::new();
     let mut changed = if was.is_some() { [0; 4] } else { EVERY_PATCH };
     for pz in 0..patches {
@@ -237,7 +212,7 @@ fn paint(water: &TileWater, ground: &Ground<'_>, before: Option<&TileWater>) -> 
                 continue;
             }
             let patch = pz * patches + px;
-            patch_texels(ground, (water, &drawn), (px, pz), (&mut surfaces, &mut info));
+            patch_texels((water, &drawn), (px, pz), (&mut surfaces, &mut info));
             let surface_bytes: &[u8] = bytemuck::cast_slice(&surfaces);
             let info_bytes: &[u8] = bytemuck::cast_slice(&info);
             texels.extend_from_slice(surface_bytes);
@@ -247,13 +222,12 @@ fn paint(water: &TileWater, ground: &Ground<'_>, before: Option<&TileWater>) -> 
             };
             let same = before.patch_holds_water(px as u32, pz as u32) && {
                 patch_texels(
-                    ground,
                     (*before, drawn_before),
                     (px, pz),
                     (&mut old_surfaces, &mut old_info),
                 );
                 bytemuck::cast_slice::<[f32; 2], u8>(&old_surfaces) == surface_bytes
-                    && bytemuck::cast_slice::<[u32; 4], u8>(&old_info) == info_bytes
+                    && bytemuck::cast_slice::<[u32; 2], u8>(&old_info) == info_bytes
             };
             if !same {
                 changed[patch / 64] |= 1 << (patch % 64);
@@ -327,18 +301,10 @@ pub(crate) fn landed(
 }
 
 pub(crate) fn start_drawn(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
-    let (head, mut rest) = headed::<DrawHead>(input)?;
+    let mut rest = input;
     let heights = take_words::<f32>(&mut rest, SAMPLES)?;
-    let beds = take_words::<u16>(&mut rest, head.beds as usize)?;
     let output = match engine_codec::decode::<Option<TileWater>>(rest)? {
-        Some(water) => {
-            let ground = Ground {
-                heights: &heights,
-                beds: (!beds.is_empty()).then_some(&beds[..]),
-                spacing: head.spacing,
-            };
-            drawn_output(&water, &paint(&water, &ground, None))
-        }
+        Some(water) => drawn_output(&water, &paint(&water, &heights, None)),
         None => dry_output(),
     };
     Ok(Box::new(Finished(Some(output))))
@@ -348,7 +314,6 @@ pub(crate) fn start_rewater(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn 
     let (head, mut rest) = headed::<FloodHead>(input)?;
     let running = take(&mut rest, head.running as usize)?;
     let heights = take_words::<f32>(&mut rest, SAMPLES)?;
-    let beds = take_words::<u16>(&mut rest, head.beds as usize)?;
     let before = if head.wet {
         let surface = take_words::<f32>(&mut rest, SAMPLES)?;
         let info = take_words::<[u32; 2]>(&mut rest, SAMPLES)?;
@@ -393,14 +358,7 @@ pub(crate) fn start_rewater(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn 
         &regions,
     );
     let output = match made {
-        Some(water) => {
-            let ground = Ground {
-                heights: &heights,
-                beds: (!beds.is_empty()).then_some(&beds[..]),
-                spacing: head.spacing,
-            };
-            drawn_output(&water, &paint(&water, &ground, before.as_ref()))
-        }
+        Some(water) => drawn_output(&water, &paint(&water, &heights, before.as_ref())),
         None => dry_output(),
     };
     Ok(Box::new(Finished(Some(output))))

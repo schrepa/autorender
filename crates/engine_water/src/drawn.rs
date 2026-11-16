@@ -4,7 +4,7 @@ use engine_heightfield::TileKey;
 use engine_heightfield::tile::TileJob;
 
 use crate::TileWater;
-use crate::jobs::drawn::{DrawHead, DrawnWater, FloodHead, landed};
+use crate::jobs::drawn::{DrawnWater, FloodHead, landed};
 use crate::state::{HeldWater, WaterState, Work};
 
 pub(crate) type DrawnWork = Background<Option<(TileWater, DrawnWater)>>;
@@ -22,14 +22,7 @@ pub(crate) fn start_drawing(
 }
 
 pub(crate) fn draw_input(held: &HeldWater, record: &[u8]) -> Vec<u8> {
-    let beds = held.face.river_beds.as_deref().unwrap_or(&[]);
-    let head = DrawHead {
-        spacing: held.face.spacing,
-        beds: beds.len() as u64,
-    };
-    let mut input = engine_codec::encode(&head);
-    input.extend_from_slice(bytemuck::cast_slice(&held.face.heights));
-    input.extend_from_slice(bytemuck::cast_slice(beds));
+    let mut input = bytemuck::cast_slice::<f32, u8>(&held.face.heights).to_vec();
     input.extend_from_slice(record);
     input
 }
@@ -40,7 +33,6 @@ pub(crate) fn flood_input(
     (flow, running): ([u8; 32], &[u8]),
     regions: Vec<[f32; 4]>,
 ) -> Vec<u8> {
-    let beds = held.face.river_beds.as_deref().unwrap_or(&[]);
     let water = held.water.as_deref();
     let head = FloodHead {
         tile,
@@ -48,7 +40,6 @@ pub(crate) fn flood_input(
         running: running.len() as u64,
         regions,
         spacing: held.face.spacing,
-        beds: beds.len() as u64,
         wet: water.is_some(),
         held: water.map_or([0; 4], TileWater::holding),
         solids: water.map_or(&[][..], TileWater::solids).into(),
@@ -56,7 +47,6 @@ pub(crate) fn flood_input(
     let mut input = engine_codec::encode(&head);
     input.extend_from_slice(running);
     input.extend_from_slice(bytemuck::cast_slice(&held.face.heights));
-    input.extend_from_slice(bytemuck::cast_slice(beds));
     if let Some(water) = water {
         input.extend_from_slice(bytemuck::cast_slice(water.surfaces()));
         input.extend_from_slice(bytemuck::cast_slice(water.info()));

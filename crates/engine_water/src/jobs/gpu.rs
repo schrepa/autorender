@@ -11,7 +11,6 @@ gpu_consts! {
     pub const DRY: f32 = 1.0e-4;
     pub const DENSITY: f32 = 1000.0;
     pub const GRAVITY: f32 = 9.81;
-    pub const COARSE_GRAVEL_D84: f32 = 0.05;
     pub const WATER_RUSH_RANGE: f32 = 0.5;
     pub const WATER_BREAK_RANGE: f32 = 2.0;
     pub const FROUDE_GUARD_DEPTH: f32 = 0.02;
