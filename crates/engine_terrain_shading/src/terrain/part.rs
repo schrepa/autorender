@@ -42,6 +42,7 @@ pub(crate) struct TerrainViews<'a> {
     pub(crate) regions: Vec<(usize, KeptRefresh)>,
     pub(crate) settings: &'a TerrainShading,
     pub(crate) water: &'a Waterline,
+    pub(crate) temporal: bool,
 }
 
 pub(crate) struct Handles {
@@ -213,10 +214,8 @@ const fn resolve_fragment(entry: Entry) -> PassFragment {
     }
 }
 
-const RESOLVE_POST: PassFragment =
-    resolve_fragment(crate::shaders::terrain_shading::draw::FS_TERRAIN_RESOLVE_POST);
-const RESOLVE_TEMPORAL: PassFragment =
-    resolve_fragment(crate::shaders::terrain_shading::draw::FS_TERRAIN_RESOLVE_TEMPORAL);
+const RESOLVE: PassFragment =
+    resolve_fragment(crate::shaders::terrain_shading::draw::FS_TERRAIN_RESOLVE);
 
 const NO_FORM: &str = "terrain has no form in this pass";
 const TERRAIN_TILES: &str = "the terrain tiles";
@@ -251,7 +250,7 @@ pub(crate) struct TerrainGpu {
     inputs: Inputs,
     form: Form<TerrainGpu>,
     seen: [Form<TerrainGpu>; 2],
-    resolves: [Form<TerrainGpu>; 2],
+    resolve: Form<TerrainGpu>,
     holed: Result<Option<MaterialHandle>, Error>,
     joined: PerPass<Joined>,
     atlas: TileAtlas,
@@ -549,10 +548,7 @@ impl GpuPart for TerrainGpu {
             applies.push(cx.compute_pipeline(subdivide, subdivision::SUBDIVIDE_APPLY, &bound)?);
         }
         let resolve_bound = [(draw::TERRAIN_IDS_TEXTURE, Bind::Texture(h.ids))];
-        let resolves = [
-            cx.form_owning(&RESOLVE_FORM, &[RESOLVE_POST], &resolve_bound)?,
-            cx.form_owning(&RESOLVE_FORM, &[RESOLVE_TEMPORAL], &resolve_bound)?,
-        ];
+        let resolve = cx.form_owning(&RESOLVE_FORM, &[RESOLVE], &resolve_bound)?;
         let form = cx.form_for(&TERRAIN_FORM, &[PassRole::Depth], &[])?;
         let seen = [
             cx.form_owning(&SEEN_FORM, &[IDS], &[])?,
@@ -618,7 +614,7 @@ impl GpuPart for TerrainGpu {
             inputs,
             form,
             seen,
-            resolves,
+            resolve,
             holed: Ok(None),
             joined,
             atlas: TileAtlas::default(),
@@ -705,6 +701,7 @@ impl GpuPart for TerrainGpu {
             regions,
             settings: &settings,
             water: &water,
+            temporal: self.temporal,
         };
         let watered = water.is_changed();
         let p = &self.passes;
@@ -1043,7 +1040,7 @@ impl TerrainGpu {
     }
 
     fn draw_resolve(&self, draw: &mut Draw<'_, Self, Own>) -> u32 {
-        let Some(pipeline) = draw.form(&self.resolves[usize::from(self.temporal)]) else {
+        let Some(pipeline) = draw.form(&self.resolve) else {
             return 0;
         };
         let mut draws = 0;
