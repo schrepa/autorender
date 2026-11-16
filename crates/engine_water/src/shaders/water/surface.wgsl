@@ -23,7 +23,7 @@ import package::generated::writes::{Outputs, outputs};
 import package::generated::water::{FROUDE_GUARD_DEPTH, GRAVITY, NO_WATER_BLOCK,
     WATER_LEAF_DRAW_WORDS, WATER_LEAF_FIRST, WATER_LEAF_GROUPS, WATER_LEAF_TOTAL, WATER_LIST_GROUP,
     WATER_LIST_GROUPS, WATER_RAW_VERTEX, WATER_SCAN_GROUP, WATER_TILE_PATCHES, WATER_TILE_WORDS,
-    WATER_WAITING, WATER_WET_AREAS};
+    WATER_UNKNOWN_HEIGHT, WATER_WAITING, WATER_WET_AREAS};
 import package::place::water::{WATER_HELD, WaterAt, WaterCell};
 import package::water::faces::water::{water_cell, water_directory, water_extent, water_read};
 import package::water::flow::{water_relief, water_stirring, water_stream};
@@ -37,6 +37,7 @@ import package::water::waves::{WaterSwell, water_calm, water_piece, water_swell}
 @group(1) @binding(57) var<storage, read> water_leaf_spans: array<u32>;
 @group(1) @binding(59) var<storage, read> water_leaf_order: array<u32>;
 @group(1) @binding(62) var<storage, read> water_block_wet: array<u32>;
+@group(1) @binding(63) var<storage, read> water_patch_heights: array<vec2<f32>>;
 @group(2) @binding(22) var water_depth: texture_depth_2d;
 @group(2) @binding(23) var water_scene: texture_2d<f32>;
 
@@ -189,7 +190,24 @@ fn water_leaf_drawn(leaf: u32) -> bool {
         + ROUNDING_MARGIN * (placed.x + placed.y));
     let low = water_relative(corner_low - moved, water.reach.x - terrain.origin.y);
     let high = water_relative(corner_high + moved, water.reach.y - terrain.origin.y);
-    return water_leaf_seen(low, high) && water_leaf_wet(low, high);
+    let clip = terrain_view_uniform().relative_view_projection;
+    if !water_leaf_framed(clip, low, high) {
+        return false;
+    }
+    let walk = water_leaf_walk(low, high);
+    if !walk.wet {
+        return false;
+    }
+    if !walk.known || walk.heights.x > walk.heights.y {
+        return !water_behind_opaque(clip, low, high);
+    }
+    let swell = water.reach.w;
+    let margin = 4.0 * ROUNDING_MARGIN
+        * (max(abs(walk.heights.x), abs(walk.heights.y)) + swell);
+    let tight_low = water_relative(corner_low - moved, walk.heights.x - swell - margin);
+    let tight_high = water_relative(corner_high + moved, walk.heights.y + swell + margin);
+    return water_leaf_framed(clip, tight_low, tight_high)
+        && !water_behind_opaque(clip, tight_low, tight_high);
 }
 
 const WATER_LEVEL_SLACK: f32 = 0.0009765625;
@@ -203,43 +221,58 @@ fn water_area_bits(low: vec2<u32>, high: vec2<u32>) -> u32 {
     return bits;
 }
 
-fn water_tile_wet(layer: u32, corner_low: vec2<u32>, corner_high: vec2<u32>) -> vec2<bool> {
+struct WaterWalk {
+    wet: bool,
+    known: bool,
+    open: bool,
+    heights: vec2<f32>,
+}
+
+fn water_tile_walk(walked: WaterWalk, layer: u32, corner_low: vec2<u32>, corner_high: vec2<u32>)
+        -> WaterWalk {
     let quads = TERRAIN_GRID - 1u;
     let cells = quads / WATER_WET_AREAS;
-    var open = false;
+    var walk = walked;
     for (var pz = corner_low.y / quads; pz <= corner_high.y / quads; pz++) {
         for (var px = corner_low.x / quads; px <= corner_high.x / quads; px++) {
-            let block = water_directory[layer * WATER_TILE_WORDS + pz * WATER_TILE_PATCHES + px];
+            let at = layer * WATER_TILE_WORDS + pz * WATER_TILE_PATCHES + px;
+            let block = water_directory[at];
             if block == WATER_WAITING {
-                open = true;
+                walk.open = true;
                 continue;
             }
-            if block == NO_WATER_BLOCK {
+            let heights = water_patch_heights[at];
+            walk.known = walk.known && heights.x > WATER_UNKNOWN_HEIGHT;
+            walk.heights = vec2<f32>(min(walk.heights.x, heights.x),
+                max(walk.heights.y, heights.y));
+            if block == NO_WATER_BLOCK || walk.wet {
                 continue;
             }
             if block >= arrayLength(&water_block_wet) {
-                return vec2<bool>(true, open);
+                walk.wet = true;
+                continue;
             }
             let base = vec2<u32>(px, pz) * quads;
             let areas_low = (max(corner_low, base) - base) / cells;
             let areas_high = (min(corner_high, base + vec2<u32>(quads - 1u)) - base) / cells;
-            if (water_block_wet[block] & water_area_bits(areas_low, areas_high)) != 0u {
-                return vec2<bool>(true, open);
-            }
+            walk.wet = (water_block_wet[block] & water_area_bits(areas_low, areas_high)) != 0u;
         }
     }
-    return vec2<bool>(false, open);
+    return walk;
 }
 
-fn water_leaf_wet(low: vec3<f32>, high: vec3<f32>) -> bool {
+fn water_leaf_walk(low: vec3<f32>, high: vec3<f32>) -> WaterWalk {
+    var walk = WaterWalk(false, true, false, vec2<f32>(WATER_LARGEST, -WATER_LARGEST));
     let terrain = terrain_uniform();
     let world_low = eye_world(low);
     let world_high = eye_world(high);
     let flat_low = max(world_low.xz - terrain.origin.xz, vec2<f32>(0.0));
     let flat_high = min(world_high.xz - terrain.origin.xz, water_extent());
     if any(flat_low > flat_high) {
-        return false;
+        return walk;
     }
+    walk.known = all(flat_low == world_low.xz - terrain.origin.xz)
+        && all(flat_high == world_high.xz - terrain.origin.xz);
     let eye = camera.detail.xyz;
     let nearest = clamp(eye, world_low, world_high);
     let farthest = select(world_low, world_high, abs(world_high - eye) > abs(world_low - eye));
@@ -256,42 +289,37 @@ fn water_leaf_wet(low: vec3<f32>, high: vec3<f32>) -> bool {
         let tiles = level_tiles(ground, level) - vec2<u32>(1u);
         let tile_low = min(vec2<u32>(samples_low / f32(tile_quads)), tiles);
         let tile_high = min(vec2<u32>(samples_high / f32(tile_quads)), tiles);
-        var open = false;
+        walk.open = false;
         for (var tz = tile_low.y; tz <= tile_high.y; tz++) {
             for (var tx = tile_low.x; tx <= tile_high.x; tx++) {
                 let tile = vec2<u32>(tx, tz);
                 let layer = tile_layer(ground, level, tile);
                 if layer == NOT_RESIDENT {
-                    open = true;
+                    walk.open = true;
                     continue;
                 }
                 let start = vec2<f32>(tile * tile_quads);
                 let edge = vec2<u32>(tile_quads - 1u);
-                let found = water_tile_wet(layer,
+                walk = water_tile_walk(walk, layer,
                     min(vec2<u32>(clamp(samples_low - start, vec2<f32>(0.0), span)), edge),
                     min(vec2<u32>(clamp(samples_high - start, vec2<f32>(0.0), span)), edge));
-                if found.x {
-                    return true;
-                }
-                open = open || found.y;
             }
         }
-        if level >= last && !open {
-            return false;
+        if level >= last && !walk.open {
+            return walk;
         }
     }
-    return false;
+    walk.known = false;
+    return walk;
 }
 
-fn water_leaf_seen(low: vec3<f32>, high: vec3<f32>) -> bool {
-    let clip = terrain_view_uniform().relative_view_projection;
+fn water_leaf_framed(clip: mat4x4<f32>, low: vec3<f32>, high: vec3<f32>) -> bool {
     return !(water_beyond(vec4<f32>(1.0, 0.0, 0.0, 1.0) * clip, low, high)
         || water_beyond(vec4<f32>(-1.0, 0.0, 0.0, 1.0) * clip, low, high)
         || water_beyond(vec4<f32>(0.0, 1.0, 0.0, 1.0) * clip, low, high)
         || water_beyond(vec4<f32>(0.0, -1.0, 0.0, 1.0) * clip, low, high)
         || water_beyond(vec4<f32>(0.0, 0.0, -1.0, 1.0) * clip, low, high)
-        || water_beyond(vec4<f32>(0.0, 0.0, 1.0, 0.0) * clip, low, high)
-        || water_behind_opaque(clip, low, high));
+        || water_beyond(vec4<f32>(0.0, 0.0, 1.0, 0.0) * clip, low, high));
 }
 
 const WATER_LARGEST: f32 = 3.4028233e38;

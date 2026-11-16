@@ -12,8 +12,8 @@ use glam::{Vec2, Vec3};
 
 use crate::TileWater;
 use crate::gpu::{
-    NO_WATER_BLOCK, WATER_BLOCKS_SIDE as SIDE, WATER_TILE_WORDS as TILE_WORDS, WATER_WAITING,
-    WATER_WET_AREAS as WET_AREAS,
+    NO_WATER_BLOCK, WATER_BLOCKS_SIDE as SIDE, WATER_TILE_WORDS as TILE_WORDS,
+    WATER_UNKNOWN_HEIGHT, WATER_WAITING, WATER_WET_AREAS as WET_AREAS,
 };
 use crate::jobs::drawn::{DrawnWater, INFO_BYTES, PATCH_BYTES, SURFACE_BYTES};
 use crate::jobs::gpu::{NO_WATER_SURFACE, WATER_BLOCK as BLOCK};
@@ -32,6 +32,7 @@ struct TileBlocks {
     water: Option<Arc<TileWater>>,
     drawn: Option<Arc<DrawnWater>>,
     blocks: Box<[u32]>,
+    ground: Arc<[[f32; 2]]>,
 }
 
 impl TileBlocks {
@@ -115,7 +116,10 @@ struct Placed {
     heights: [f32; 2],
     area: [f32; 4],
     wet: u32,
+    stored: [f32; 2],
 }
+
+const UNKNOWN_HEIGHTS: [f32; 2] = [WATER_UNKNOWN_HEIGHT, -WATER_UNKNOWN_HEIGHT];
 
 const UNPLACED: Placed = Placed {
     heights: [f32::NEG_INFINITY, f32::INFINITY],
@@ -126,11 +130,13 @@ const UNPLACED: Placed = Placed {
         f32::INFINITY,
     ],
     wet: u32::MAX,
+    stored: UNKNOWN_HEIGHTS,
 };
 
 fn placed(area: Option<TileArea>, (px, pz): (usize, usize), surfaces: &[u8]) -> Placed {
+    let stored = texel_heights(surfaces, 0.0);
     let Some(area) = area else {
-        return UNPLACED;
+        return Placed { stored, ..UNPLACED };
     };
     let step = area.size / PATCHES_PER_TILE as f32;
     let low = area.corner + Vec2::new(px as f32, pz as f32) * step;
@@ -144,6 +150,7 @@ fn placed(area: Option<TileArea>, (px, pz): (usize, usize), surfaces: &[u8]) -> 
             area.base.z + high.y,
         ],
         wet: wet_areas(surfaces),
+        stored,
     }
 }
 
@@ -204,7 +211,7 @@ pub(crate) fn surface_reach(state: &WaterState, ground: &GroundTiles, swell: f32
     if !(low <= high && low.is_finite() && high.is_finite() && swell.is_finite()) {
         return [0.0; 4];
     }
-    [low - swell, high + swell, 1.0, 0.0]
+    [low - swell, high + swell, 1.0, swell]
 }
 
 fn ground_heights(
@@ -349,12 +356,39 @@ impl Blocks {
         self.tiles.get(&slot).and_then(TileState::held)
     }
 
-    fn fall_behind(&mut self, slot: Slot, stamp: engine_core::Stamp) {
-        let behind =
-            matches!(self.tiles.get(&slot), Some(TileState::Held(held)) if held.stamp != stamp);
+    fn fall_behind(&mut self, tile: &HeldTile) {
+        let slot = (tile.terrain, tile.key);
+        let behind = matches!(
+            self.tiles.get(&slot),
+            Some(TileState::Held(held)) if held.stamp != tile.stamp
+        );
         if behind && let Some(TileState::Held(held)) = self.tiles.remove(&slot) {
             self.tiles.insert(slot, TileState::Behind(held));
+            self.layer_writes.push((tile.layer, slot));
         }
+    }
+
+    fn patch_heights(&self, tile: &HeldTile) -> Vec<[f32; 2]> {
+        let Some(held) = self.held((tile.terrain, tile.key)) else {
+            return vec![UNKNOWN_HEIGHTS; TILE_WORDS as usize];
+        };
+        let current = held.stamp == tile.stamp;
+        held.blocks
+            .iter()
+            .enumerate()
+            .map(|(at, &block)| match block {
+                NO_WATER_BLOCK if current => {
+                    held.ground.get(at).copied().unwrap_or(UNKNOWN_HEIGHTS)
+                }
+                NO_WATER_BLOCK => UNKNOWN_HEIGHTS,
+                block => self
+                    .placed
+                    .get(block as usize)
+                    .copied()
+                    .flatten()
+                    .map_or(UNKNOWN_HEIGHTS, |placed| placed.stored),
+            })
+            .collect()
     }
 
     pub(crate) fn caught_up(
@@ -420,7 +454,7 @@ impl Blocks {
                 Shown::Ready(water) => water,
                 Shown::Coming => {
                     if let Some(tile) = tile {
-                        self.fall_behind(slot, tile.stamp);
+                        self.fall_behind(tile);
                     }
                     continue;
                 }
@@ -441,6 +475,9 @@ impl Blocks {
         for slot in caught {
             if let Some(TileState::Behind(held)) = self.tiles.remove(&slot) {
                 self.tiles.insert(slot, TileState::Held(held));
+            }
+            if let Some(tile) = ground_tile(ground, slot) {
+                self.layer_writes.push((tile.layer, slot));
             }
         }
         self.free.sort_unstable_by(|a, b| b.cmp(a));
@@ -602,6 +639,7 @@ impl Blocks {
             water: tile.water.clone(),
             drawn: tile.drawn.clone(),
             blocks,
+            ground: Arc::clone(&tile.face.patch_bounds),
         }
     }
 
@@ -685,19 +723,21 @@ pub(crate) struct BlocksGpu {
     pub(crate) info: Texture<WaterGpu>,
     pub(crate) directory: Buffer<WaterGpu>,
     pub(crate) wet: Buffer<WaterGpu>,
+    pub(crate) heights: Buffer<WaterGpu>,
 }
 
 impl BlocksGpu {
     pub(crate) fn new(
         (surface, info): (Texture<WaterGpu>, Texture<WaterGpu>),
         directory: Buffer<WaterGpu>,
-        wet: Buffer<WaterGpu>,
+        (wet, heights): (Buffer<WaterGpu>, Buffer<WaterGpu>),
     ) -> Self {
         Self {
             surface,
             info,
             directory,
             wet,
+            heights,
         }
     }
 
@@ -762,11 +802,22 @@ impl BlocksGpu {
                 block,
             );
         }
+        self.prepare_directory(blocks, (ground, terrains), cx);
+    }
+
+    fn prepare_directory(
+        &self,
+        blocks: &Blocks,
+        (ground, terrains): (&GroundTiles, &[WaterTerrain]),
+        cx: &mut Prepare<'_, WaterGpu>,
+    ) {
         let entry = TILE_WORDS as usize;
         let words = ground.layers as usize * entry;
         let made = cx.allocate_buffer(self.directory, (words * 4) as u64);
-        if blocks.whole_directory || made == Allocation::Fresh {
+        let ranged = cx.allocate_buffer(self.heights, (words * 8) as u64);
+        if blocks.whole_directory || made == Allocation::Fresh || ranged == Allocation::Fresh {
             let mut directory = vec![NO_WATER_BLOCK; words];
+            let mut heights = vec![UNKNOWN_HEIGHTS; words];
             for tile in &ground.held {
                 let at = tile.layer as usize * entry;
                 let Some(slot) = directory.get_mut(at..at + entry) else {
@@ -777,9 +828,11 @@ impl BlocksGpu {
                     None if knows(terrains, tile.terrain) => slot.fill(WATER_WAITING),
                     None => {}
                 }
+                heights[at..at + entry].copy_from_slice(&blocks.patch_heights(tile));
             }
             if !directory.is_empty() {
                 cx.write(self.directory, 0, &directory);
+                cx.write(self.heights, 0, &heights);
             }
             return;
         }
@@ -798,6 +851,13 @@ impl BlocksGpu {
                 };
                 cx.write(self.directory, at, &vec![fill; entry]);
             }
+            let heights = ground_tile(ground, slot)
+                .filter(|tile| tile.layer == layer)
+                .map_or_else(
+                    || vec![UNKNOWN_HEIGHTS; entry],
+                    |tile| blocks.patch_heights(tile),
+                );
+            cx.write(self.heights, 2 * at, &heights);
         }
     }
 }
