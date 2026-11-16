@@ -850,7 +850,9 @@ impl ScatterGpu {
         if cx.grow_buffer(self.snap_list, 2 * size_of::<Snap>() as u64) == Allocation::Fresh {
             snap.snapped = None;
         }
+        let changed = tiles.is_changed() || ground.is_changed() || baking.is_changed();
         if ground.layers == 0 || terrains == 0 || state.resident == 0 {
+            snap.unseen |= changed;
             return;
         }
         let inputs = SnapInputs {
@@ -858,7 +860,7 @@ impl ScatterGpu {
             ground,
             baking,
             assets: (state.library, residency.revision()),
-            changed: tiles.is_changed() || ground.is_changed() || baking.is_changed(),
+            changed: changed || std::mem::take(&mut snap.unseen),
         };
         let planned = snap.plan(&inputs, (&state.pool, state.generation, objects));
         if planned.is_empty() {
