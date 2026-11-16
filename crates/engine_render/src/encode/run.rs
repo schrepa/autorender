@@ -150,8 +150,6 @@ pub(crate) struct Pipelines {
     pub(crate) cache: Option<wgpu::PipelineCache>,
     pub(crate) warming: super::warming::Warming,
     pub(crate) settled: bool,
-    pub(crate) standing: bool,
-    pub(crate) wanted: Vec<(u64, u64)>,
 }
 
 pub(crate) struct Planning {
