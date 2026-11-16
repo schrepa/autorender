@@ -19,6 +19,7 @@ gpu_consts! {
     pub const WATER_LIST_GROUPS: u32 = 65535;
     pub const WATER_SCAN_GROUP: u32 = 256;
     pub const WATER_RAW_VERTEX: u32 = 65536;
+    pub const WATER_WET_AREAS: u32 = 4;
     pub const DEBUG_SPAN_STEPS: f32 = 254.0;
     pub const WATER_RIPPLE_LEVELS: u32 = 16;
     pub const WATER_NOISE_WRAP: i32 = 256;
@@ -28,6 +29,7 @@ gpu_consts! {
     pub const WATER_GUST_FINE_SALT: u32 = 0x2545f491;
     pub const WATER_PUSH_SALT: u32 = 0x9e3779b1;
     pub const WATER_PUSH_FINE_SALT: u32 = 0x7f4a7c15;
+    pub const WATER_WAVES_MOST: u32 = 256;
 }
 
 pub(crate) type RippleKept = [[f32; 4]; 8];
@@ -35,6 +37,12 @@ pub(crate) type RippleKept = [[f32; 4]; 8];
 const _: () = assert!(
     WATER_TILE_PATCHES == PATCHES_PER_TILE,
     "WATER_TILE_PATCHES differs from PATCHES_PER_TILE"
+);
+
+const _: () = assert!(
+    engine_heightfield::tile::PATCH_QUADS.is_multiple_of(WATER_WET_AREAS)
+        && WATER_WET_AREAS * WATER_WET_AREAS <= u32::BITS,
+    "WATER_WET_AREAS does not split a patch into areas one word can mark"
 );
 
 const _: () = assert!(

@@ -22,9 +22,10 @@ import package::face::sun_blockers::SunAt;
 import package::generated::writes::{Outputs, outputs};
 import package::generated::water::{FROUDE_GUARD_DEPTH, GRAVITY, NO_WATER_BLOCK,
     WATER_LEAF_DRAW_WORDS, WATER_LEAF_FIRST, WATER_LEAF_GROUPS, WATER_LEAF_TOTAL, WATER_LIST_GROUP,
-    WATER_LIST_GROUPS, WATER_RAW_VERTEX, WATER_SCAN_GROUP, WATER_TILE_PATCHES};
+    WATER_LIST_GROUPS, WATER_RAW_VERTEX, WATER_SCAN_GROUP, WATER_TILE_PATCHES, WATER_TILE_WORDS,
+    WATER_WAITING, WATER_WET_AREAS};
 import package::place::water::{WATER_HELD, WaterAt, WaterCell};
-import package::water::faces::water::{water_cell, water_read};
+import package::water::faces::water::{water_cell, water_directory, water_extent, water_read};
 import package::water::flow::{water_relief, water_stirring, water_stream};
 import package::water::foam::{WaterWhite, water_blocking, water_contact, water_filming,
     water_foam, water_sheer, water_white, water_whitening};
@@ -35,6 +36,7 @@ import package::water::waves::{WaterSwell, water_calm, water_piece, water_swell}
 
 @group(1) @binding(57) var<storage, read> water_leaf_spans: array<u32>;
 @group(1) @binding(59) var<storage, read> water_leaf_order: array<u32>;
+@group(1) @binding(62) var<storage, read> water_block_wet: array<u32>;
 @group(2) @binding(22) var water_depth: texture_depth_2d;
 @group(2) @binding(23) var water_scene: texture_2d<f32>;
 
@@ -91,16 +93,22 @@ fn water_stored_read(local: vec2<f32>, cell: WaterCell) -> WaterStored {
 
 fn water_stored(local: vec2<f32>, seen: f32) -> WaterStored {
     let picked = detail_level(seen, terrain_uniform().anchor.w, terrain_uniform().directory.y);
-    let cell = water_cell(local, picked.level);
-    let fine = water_stored_read(local, cell);
-    if !fine.found || picked.blend <= 0.0 || cell.level != picked.level {
-        return fine;
+    var fine: WaterStored;
+    for (var step = 0u; step < 2u; step++) {
+        let cell = water_cell(local, picked.level + step);
+        let read = water_stored_read(local, cell);
+        if step == 1u {
+            if read.found {
+                return WaterStored(water_blend(fine.at, read.at, picked.blend), true);
+            }
+            break;
+        }
+        fine = read;
+        if !fine.found || picked.blend <= 0.0 || cell.level != picked.level {
+            break;
+        }
     }
-    let coarser = water_stored_read(local, water_cell(local, picked.level + 1u));
-    if !coarser.found {
-        return fine;
-    }
-    return WaterStored(water_blend(fine.at, coarser.at, picked.blend), true);
+    return fine;
 }
 
 fn water_blend(first: WaterAt, second: WaterAt, toward: f32) -> WaterAt {
@@ -162,7 +170,12 @@ fn water_leaf_grounded(low: vec2<f32>, high: vec2<f32>) -> bool {
     return true;
 }
 
-fn water_leaf_seen(corner_low: vec2<f32>, corner_high: vec2<f32>) -> bool {
+fn water_leaf_drawn(leaf: u32) -> bool {
+    let at = water_leaf_terrain(leaf);
+    use_terrain(at.x);
+    let triangle = surface_leaf(at.y);
+    let corner_low = min(min(triangle.a, triangle.b), triangle.c);
+    let corner_high = max(max(triangle.a, triangle.b), triangle.c);
     if water.reach.z == 0.0 {
         return true;
     }
@@ -176,6 +189,101 @@ fn water_leaf_seen(corner_low: vec2<f32>, corner_high: vec2<f32>) -> bool {
         + ROUNDING_MARGIN * (placed.x + placed.y));
     let low = water_relative(corner_low - moved, water.reach.x - terrain.origin.y);
     let high = water_relative(corner_high + moved, water.reach.y - terrain.origin.y);
+    return water_leaf_seen(low, high) && water_leaf_wet(low, high);
+}
+
+const WATER_LEVEL_SLACK: f32 = 0.0009765625;
+
+fn water_area_bits(low: vec2<u32>, high: vec2<u32>) -> u32 {
+    let row = ((2u << high.x) - 1u) & ~((1u << low.x) - 1u);
+    var bits = 0u;
+    for (var z = low.y; z <= high.y; z++) {
+        bits |= row << (z * WATER_WET_AREAS);
+    }
+    return bits;
+}
+
+fn water_tile_wet(layer: u32, corner_low: vec2<u32>, corner_high: vec2<u32>) -> vec2<bool> {
+    let quads = TERRAIN_GRID - 1u;
+    let cells = quads / WATER_WET_AREAS;
+    var open = false;
+    for (var pz = corner_low.y / quads; pz <= corner_high.y / quads; pz++) {
+        for (var px = corner_low.x / quads; px <= corner_high.x / quads; px++) {
+            let block = water_directory[layer * WATER_TILE_WORDS + pz * WATER_TILE_PATCHES + px];
+            if block == WATER_WAITING {
+                open = true;
+                continue;
+            }
+            if block == NO_WATER_BLOCK {
+                continue;
+            }
+            if block >= arrayLength(&water_block_wet) {
+                return vec2<bool>(true, open);
+            }
+            let base = vec2<u32>(px, pz) * quads;
+            let areas_low = (max(corner_low, base) - base) / cells;
+            let areas_high = (min(corner_high, base + vec2<u32>(quads - 1u)) - base) / cells;
+            if (water_block_wet[block] & water_area_bits(areas_low, areas_high)) != 0u {
+                return vec2<bool>(true, open);
+            }
+        }
+    }
+    return vec2<bool>(false, open);
+}
+
+fn water_leaf_wet(low: vec3<f32>, high: vec3<f32>) -> bool {
+    let terrain = terrain_uniform();
+    let world_low = eye_world(low);
+    let world_high = eye_world(high);
+    let flat_low = max(world_low.xz - terrain.origin.xz, vec2<f32>(0.0));
+    let flat_high = min(world_high.xz - terrain.origin.xz, water_extent());
+    if any(flat_low > flat_high) {
+        return false;
+    }
+    let eye = camera.detail.xyz;
+    let nearest = clamp(eye, world_low, world_high);
+    let farthest = select(world_low, world_high, abs(world_high - eye) > abs(world_low - eye));
+    let ground = GroundTerrain(terrain.directory.x, terrain.directory.y, terrain.anchor.w);
+    let first = detail_level(detail_across(nearest) * (1.0 - WATER_LEVEL_SLACK),
+        terrain.anchor.w, ground.levels).level;
+    let last = detail_level(detail_across(farthest) * (1.0 + WATER_LEVEL_SLACK),
+        terrain.anchor.w, ground.levels).level + 1u;
+    let tile_quads = WATER_TILE_PATCHES * (TERRAIN_GRID - 1u);
+    let span = vec2<f32>(f32(tile_quads));
+    for (var level = first; level < ground.levels; level++) {
+        let samples_low = flat_low / (ground.spacing * f32(1u << level));
+        let samples_high = flat_high / (ground.spacing * f32(1u << level));
+        let tiles = level_tiles(ground, level) - vec2<u32>(1u);
+        let tile_low = min(vec2<u32>(samples_low / f32(tile_quads)), tiles);
+        let tile_high = min(vec2<u32>(samples_high / f32(tile_quads)), tiles);
+        var open = false;
+        for (var tz = tile_low.y; tz <= tile_high.y; tz++) {
+            for (var tx = tile_low.x; tx <= tile_high.x; tx++) {
+                let tile = vec2<u32>(tx, tz);
+                let layer = tile_layer(ground, level, tile);
+                if layer == NOT_RESIDENT {
+                    open = true;
+                    continue;
+                }
+                let start = vec2<f32>(tile * tile_quads);
+                let edge = vec2<u32>(tile_quads - 1u);
+                let found = water_tile_wet(layer,
+                    min(vec2<u32>(clamp(samples_low - start, vec2<f32>(0.0), span)), edge),
+                    min(vec2<u32>(clamp(samples_high - start, vec2<f32>(0.0), span)), edge));
+                if found.x {
+                    return true;
+                }
+                open = open || found.y;
+            }
+        }
+        if level >= last && !open {
+            return false;
+        }
+    }
+    return false;
+}
+
+fn water_leaf_seen(low: vec3<f32>, high: vec3<f32>) -> bool {
     let clip = terrain_view_uniform().relative_view_projection;
     return !(water_beyond(vec4<f32>(1.0, 0.0, 0.0, 1.0) * clip, low, high)
         || water_beyond(vec4<f32>(-1.0, 0.0, 0.0, 1.0) * clip, low, high)
@@ -727,10 +835,11 @@ fn shade_water(pixel: vec2<f32>, at: WaterAt, face: WaterFace, behind: WaterBehi
     surface.transmit = transmit;
     surface.path = vec2<f32>(through, luminance(water_extinction(aerated)));
     surface.calm = face.calm;
-    let lit = water_light(surface, pixel);
-    let caustic = 1.0 + (gathered - 1.0) * lit.sunny
-        * exp(-bed_depth * (1.0 / water.optics.caustic_depth + water.optics.bubbles * aerated));
+    let sinking = exp(-bed_depth
+        * (1.0 / water.optics.caustic_depth + water.optics.bubbles * aerated));
     let wet = water_ramp(standing, water.shore.soaked, standing_change) * water.shore.wet;
+    let lit = water_light(surface, pixel);
+    let caustic = 1.0 + (gathered - 1.0) * lit.sunny * sinking;
     let let_through = (1.0 - lit.reflectance) * (1.0 - cover);
     var result: WaterShade;
     result.point = lit.point;
@@ -786,14 +895,18 @@ fn fs_water(input: WaterOutput) -> Outputs {
     let gathered = water_gathered(face);
     let held_change = fwidth(at.held);
     var targets: Outputs;
-    if risen {
+    if !shallow && !dry && rise.standing > 0.0 {
         let behind = water_behind(face.point, face.normal, face.view, pixel, water_ground(pixel),
             face.plane);
         let shade = shade_water(pixel, at, face, behind, vec2<f32>(0.0), gathered, held_change);
         let previous = water_previous(input.relative, shade.velocity, saturate(shade.coverage));
         targets = outputs(shade.point, shade.shaded,
             view_pixel(input.clip_position, vec4<f32>(previous.xy, 0.0, previous.z)));
-        targets.color = water_covering(shade, water_seen(pixel));
+        var seen = vec3<f32>(0.0);
+        if shade.fade != 1.0 {
+            seen = water_seen(pixel);
+        }
+        targets.color = water_covering(shade, seen);
     }
     return targets;
 }
@@ -832,14 +945,6 @@ fn cs_water_leaf_args() {
     water_leaf_args[4] = 0u;
     water_leaf_args[WATER_LEAF_TOTAL] = total;
     water_leaf_args[WATER_LEAF_GROUPS] = select(0u, groups, listed);
-}
-
-fn water_leaf_drawn(leaf: u32) -> bool {
-    let at = water_leaf_terrain(leaf);
-    use_terrain(at.x);
-    let triangle = surface_leaf(at.y);
-    return water_leaf_seen(min(min(triangle.a, triangle.b), triangle.c),
-        max(max(triangle.a, triangle.b), triangle.c));
 }
 
 fn water_list_masks() -> u32 {

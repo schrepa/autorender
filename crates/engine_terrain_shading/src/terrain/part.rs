@@ -1,7 +1,7 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     AssetLibrary, Cursor, DepthBias, Detail, DeviceLimits, Entry, Error, MaterialHandle, PassRole,
-    ProvidedAssets, Views,
+    PassViews, ProvidedAssets, Views,
 };
 use engine_open_world_kit::ground::{GroundTiles, TerrainTiles};
 use engine_open_world_kit::water::Waterline;
@@ -27,7 +27,8 @@ use crate::gpu::{HEIGHT_FORMAT, SUMMARY_FORMAT, SUMMARY_MIPS, SURFACE_ERROR_MIPS
 use crate::holes::HoledGround;
 use crate::settings::TerrainShading;
 use crate::state::{
-    Atlas, AtlasMoves, Bakes, DrawnStats, PART_STATS, PartStats, SURFACE_TOTALS, SurfaceTotals,
+    Atlas, AtlasMoves, Bakes, DERIVED_LAYERS, Derived, DrawnStats, GROUND_LOOKS, PART_STATS,
+    PartStats, SURFACE_TOTALS, SurfaceTotals,
 };
 use crate::terrain_bounce::{Bounce, BounceSources};
 use crate::terrain_horizons::Horizons;
@@ -735,6 +736,10 @@ impl GpuPart for TerrainGpu {
             cx.ran(p.summaries) && !short[4],
         ];
         let subdivided = cx.ran(p.subdivide) && self.subdivision_recorded;
+        let derived_layers = self.atlas.derived_layers(ran);
+        if !derived_layers.is_empty() {
+            cx.deliver::<Derived>(DERIVED_LAYERS, bytemuck::cast_slice(&derived_layers).to_vec());
+        }
         let uploaded = self.atlas.upload(
             cx,
             h,
@@ -891,6 +896,12 @@ impl GpuPart for TerrainGpu {
             seen.pixel_error,
         ])
         .to_vec();
+        let macros: Vec<_> = (tiles.terrains.iter().enumerate())
+            .map(|(at, entry)| (bakes.macro_map(entry.terrain), self.macro_maps.layer(at)))
+            .collect();
+        if let Some(looks) = self.tables.looks(self.patches.uniforms(), &macros) {
+            cx.deliver::<Derived>(GROUND_LOOKS, looks.to_le_bytes().to_vec());
+        }
         let (palette, rungs) = self.tables.palette_rows();
         inputs.extend_from_slice(bytemuck::cast_slice(self.patches.uniforms()));
         inputs.extend_from_slice(bytemuck::cast_slice(&[look]));
@@ -1346,6 +1357,8 @@ fn install_subdivision(
     let listed = cx
         .pass("terrain_leaf_lists")
         .label("engine/terrain-leaf-lists")
+        .at(AttachPoint::Depth)
+        .views(PassViews::Main)
         .after(subdivide)
         .id();
     let slot_binds = |slot: usize| {

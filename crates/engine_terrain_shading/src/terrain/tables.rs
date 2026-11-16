@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use bevy_ecs::prelude::Entity;
-use engine_core::AssetLibrary;
+use engine_core::{AssetLibrary, TextureHandle};
 use engine_core::presentation_bounds::ROUNDING_MARGIN;
 use engine_heightfield::tile::shaded_elsewhere;
 use engine_open_world_kit::ground::{
@@ -63,6 +63,7 @@ pub(crate) struct TerrainTables {
     rough: Vec<Shares>,
     lifted: f32,
     pub(crate) dropped_materials: u32,
+    looks: Option<u64>,
 }
 
 const BOUND_WORDS: u32 = 4;
@@ -480,6 +481,27 @@ impl TerrainTables {
             let bounds = [low, high, self.lifted, ROUNDING_MARGIN];
             cx.write(handles.tables, u64::from(at) * 4, &bounds);
         }
+    }
+
+    pub(super) fn looks(
+        &mut self,
+        uniforms: &[TerrainUniform],
+        macros: &[(Option<TextureHandle>, u32)],
+    ) -> Option<u64> {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::hash::DefaultHasher::new();
+        for uniform in uniforms {
+            let origin = uniform.origin.map(f32::to_bits);
+            let directory = &uniform.directory[..3];
+            (origin, uniform.anchor[3].to_bits(), directory, uniform.macro_map[0])
+                .hash(&mut hasher);
+        }
+        for entry in &self.palette {
+            entry.far.map(f32::to_bits).hash(&mut hasher);
+        }
+        macros.hash(&mut hasher);
+        let looks = hasher.finish();
+        (self.looks.replace(looks) != Some(looks)).then_some(looks)
     }
 
     pub(super) fn palette_rows(&self) -> (&[PaletteEntry], &[Rungs]) {

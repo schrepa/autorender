@@ -139,6 +139,19 @@ pub(crate) struct ShadowCamera;
 
 type Lenses<'w, 's> = Query<'w, 's, &'static mut Camera, With<ShadowCamera>>;
 
+fn live(node: Entity, (moves, lenses): (&Moves<'_, '_, ShadowsBrick>, &Lenses<'_, '_>)) -> bool {
+    lenses.contains(node) && moves.local(node).is_some()
+}
+
+fn live_cameras(
+    pool: &[Entity],
+    found: (&Moves<'_, '_, ShadowsBrick>, &Lenses<'_, '_>),
+) -> usize {
+    pool.iter()
+        .position(|&node| !live(node, found))
+        .unwrap_or(usize::MAX)
+}
+
 fn place_cameras(
     placed: &[Placed],
     eye: Vec3,
@@ -150,8 +163,9 @@ fn place_cameras(
     ),
 ) {
     for (at, placed) in placed.iter().enumerate() {
-        let Some(&node) = pool.get(at) else {
-            pool.push(spawner.spawn((
+        let held = pool.get(at).copied();
+        let Some(node) = held.filter(|&node| live(node, (moves, lenses))) else {
+            let made = spawner.spawn((
                 ShadowCamera,
                 Node::default(),
                 Transform::from_translation(eye),
@@ -160,7 +174,11 @@ fn place_cameras(
                     by: mover_of::<ShadowsBrick>(),
                     pace: Pace::Frame,
                 },
-            )));
+            ));
+            match pool.get_mut(at) {
+                Some(held) => *held = made,
+                None => pool.push(made),
+            }
             continue;
         };
         if let Some(mut transform) = moves.get_mut(node)
@@ -297,7 +315,7 @@ pub(crate) fn plan_shadows(
             casters_changed = true;
         }
     }
-    plan.levels.plan();
+    plan.levels.plan(live_cameras(&plan.cameras, (&moves, &lenses)));
     plan.moving = if changes.moving > 0 { key.moving } else { 0 };
     let quiet = readiness.loading.total == 0 && readiness.compiling == 0;
     let occludes = occluding.on();

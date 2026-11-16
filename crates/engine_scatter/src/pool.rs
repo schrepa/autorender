@@ -79,7 +79,7 @@ pub(crate) struct ScatterPool {
     pub(crate) writes: Vec<SlotWrite>,
     tiles: HashMap<PoolKey, Pooled>,
     free: Vec<Range<u32>>,
-    moved: Vec<Reach>,
+    moved: Vec<(Entity, Reach)>,
 }
 
 impl ScatterPool {
@@ -124,7 +124,7 @@ impl ScatterPool {
             false
         });
         for (slots, bounds, groups, far) in freed {
-            self.moved.extend(bounds);
+            self.moved.extend(bounds.map(|bounds| (id, bounds)));
             for (group, count) in groups {
                 self.counts[group as usize] -= count;
             }
@@ -166,7 +166,7 @@ impl ScatterPool {
         self.far += far;
         let reach = bounds(&objects.2);
         let stands = stands(&objects.0);
-        self.moved.extend(reach);
+        self.moved.extend(reach.map(|reach| (id, reach)));
         self.writes.push(SlotWrite::Objects(slots.start, objects));
         self.tiles.insert(
             (id, key),
@@ -186,7 +186,7 @@ impl ScatterPool {
     pub(crate) fn standing_in<'a>(
         &'a self,
         rects: &'a [(Entity, Vec2, Vec2)],
-    ) -> impl Iterator<Item = (Range<u32>, bool)> + 'a {
+    ) -> impl Iterator<Item = (Range<u32>, bool, Option<(Entity, Reach)>)> + 'a {
         self.tiles
             .iter()
             .filter(|((terrain, _), pooled)| {
@@ -199,9 +199,11 @@ impl ScatterPool {
                         && high.y >= from.y
                 })
             })
-            .map(|(_, pooled)| {
+            .map(|(&(terrain, _), pooled)| {
                 let (low, high) = pooled.stands;
-                (pooled.slots.clone(), low.is_finite() && high.is_finite())
+                let finite = low.is_finite() && high.is_finite();
+                let bounds = pooled.bounds.map(|bounds| (terrain, bounds));
+                (pooled.slots.clone(), finite, bounds)
             })
     }
 
@@ -236,7 +238,7 @@ impl ScatterPool {
         nearest
     }
 
-    pub(crate) fn take_moved(&mut self) -> Vec<Reach> {
+    pub(crate) fn take_moved(&mut self) -> Vec<(Entity, Reach)> {
         std::mem::take(&mut self.moved)
     }
 

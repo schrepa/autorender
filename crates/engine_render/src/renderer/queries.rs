@@ -83,6 +83,10 @@ impl Renderer {
         self.core.ledger.compiling().saturating_add(pending)
     }
 
+    pub fn pipelines_stood_in(&self) -> u32 {
+        self.run.as_ref().map_or(0, |run| run.pipelines.stood_in())
+    }
+
     pub fn pipelines_warming(&self) -> u32 {
         self.run
             .as_ref()

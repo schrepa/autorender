@@ -717,10 +717,15 @@ impl AppHost {
     pub fn stats(&self) -> FrameStats {
         let (pipelines_listed, pipelines_unlisted) = self.renderer.pipelines_listed();
         let world = self.engine.app.world();
+        let readiness = self.engine.readiness();
+        let stood_in = self.renderer.pipelines_stood_in();
         FrameStats {
             pipelines_listed,
             pipelines_unlisted,
-            readiness: self.engine.readiness().clone(),
+            readiness: engine_core::Readiness {
+                compiling: readiness.compiling.saturating_add(stood_in),
+                ..readiness.clone()
+            },
             jobs: world
                 .get_resource::<JobExchange>()
                 .map(JobExchange::stats)

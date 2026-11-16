@@ -135,7 +135,7 @@ impl LeafList {
     fn install(
         cx: &mut Install<'_, WaterGpu>,
         uniform: Buffer<WaterGpu>,
-        leaf_args: Buffer<WaterGpu>,
+        (leaf_args, wet): (Buffer<WaterGpu>, Buffer<WaterGpu>),
     ) -> Result<Self, Error> {
         use crate::shaders::water::{surface, uniforms};
         let count = cx.pass("water_leaf_args").id();
@@ -157,6 +157,7 @@ impl LeafList {
                     (surface::WATER_LEAF_SPANS, Bind::Buffer(leaf_args)),
                     (surface::WATER_LEAF_LIST, Bind::Buffer(list)),
                     (surface::WATER_LEAF_DRAW, Bind::Buffer(draw)),
+                    (surface::WATER_BLOCK_WET, Bind::Buffer(wet)),
                 ],
             );
             cx.compute_pipeline(pass, entry, &bound)
@@ -252,16 +253,19 @@ impl GpuPart for WaterGpu {
             Bind::Sampler(refraction_sampler),
         )?;
         let blocks = BlocksGpu::new(
-            cx.texture("water_surfaces", SURFACE_FORMAT, Lifetime::Kept),
-            cx.texture("water_info", INFO_FORMAT, Lifetime::Kept),
+            (
+                cx.texture("water_surfaces", SURFACE_FORMAT, Lifetime::Kept),
+                cx.texture("water_info", INFO_FORMAT, Lifetime::Kept),
+            ),
             cx.buffer("water_directory", Lifetime::Kept),
+            cx.buffer("water_block_wet", Lifetime::Kept),
         );
         cx.frame(face::WATER_SURFACE, Bind::Texture(blocks.surface))?;
         cx.frame(face::WATER_INFO, Bind::Texture(blocks.info))?;
         cx.frame(face::WATER_DIRECTORY, Bind::Buffer(blocks.directory))?;
         let detail = DetailGpu::install(cx);
         let waves = WavesGpu::install(cx);
-        let listing = LeafList::install(cx, uniform, leaf_args)?;
+        let listing = LeafList::install(cx, uniform, (leaf_args, blocks.wet))?;
         let behind = || {
             let mut all = vec![
                 (uniforms::WATER, Bind::Buffer(uniform)),
@@ -361,7 +365,7 @@ impl GpuPart for WaterGpu {
         let reach = surface_reach(&state, &ground, swell.swell().reach());
         self.surface = views
             .main()
-            .is_none_or(|view| surface_seen(view, state.blocks.areas(), reach));
+            .is_none_or(|view| surface_seen(view, state.blocks.wet_areas(), reach));
         let [red, green, blue] = water.color;
         let sediment = water.sediment_color;
         let room = self.listing.room(heightfield.water_leaves, cx);

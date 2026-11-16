@@ -71,6 +71,14 @@ mod disabled {
     pub fn current_frame() -> u64 {
         0
     }
+    #[inline(always)]
+    pub fn recording_frame() -> u64 {
+        0
+    }
+    #[inline(always)]
+    pub fn record_for<R>(_: u64, record: impl FnOnce() -> R) -> R {
+        record()
+    }
     pub struct RowScope;
     impl Drop for RowScope {
         #[inline(always)]

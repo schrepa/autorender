@@ -427,7 +427,7 @@
         }
       ],
       "type": "engine_impostors::ImpostorsBrick",
-      "version": "17af9e968db259c9a805d5afb8205889fa9b35ae92636ca08491bab2cf256d58"
+      "version": "96cd6cfa7a7f6d5dff688c9f323f659ff7ebe284c4bb83af5414c8eb3acbd01f"
     },
     {
       "dependencies": [
@@ -568,7 +568,7 @@
         }
       ],
       "type": "engine_shadows::ShadowsBrick",
-      "version": "5a791f5c8b7da6570446c4609bcc661ce2cb70bf6acdbcf4c47003a6d4b59845"
+      "version": "6472ff2ef6dc1d165dea80ec41fde0e6bb214b0b3171500a5dbee630fe3f4403"
     },
     {
       "dependencies": [
@@ -2158,7 +2158,7 @@
         }
       ],
       "type": "engine_terrain::runtime::brick::TerrainBrick",
-      "version": "9af791fdf8826eebbaa18d00ae5ca6429b9c8e3d2e3fdf6d07a92bdf4581c57c"
+      "version": "ea9ea76ed4e45db7fcdf6b103d94060d74bcd9cf43c579c8e7b23ea470fa7037"
     },
     {
       "dependencies": [
@@ -2400,6 +2400,20 @@
             "engine_scatter"
           ],
           "required": false
+        },
+        {
+          "kind": "target",
+          "place": "depth",
+          "providers": [
+            "engine_render",
+            "engine_prepass",
+            "engine_debug_view",
+            "engine_water",
+            "engine_meshes",
+            "engine_impostors",
+            "engine_terrain_shading"
+          ],
+          "required": true
         }
       ],
       "resources": [
@@ -2409,6 +2423,7 @@
         "engine_terrain_shading::state::Atlas",
         "engine_terrain_shading::state::SurfaceTotals",
         "engine_terrain_shading::state::PartStats",
+        "engine_terrain_shading::state::Derived",
         "engine_terrain_shading::state::RecordsSettling",
         "engine_terrain_shading::terrain_sun::SunPlan",
         "engine_terrain_shading::holes::HoledGround",
@@ -2429,7 +2444,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "d72a63e832861c98cd68e8083072b8c5925b4e110d075dc7b4ceeff2392b7a5a"
+      "version": "96bfde06693428b0cdf481545a22f784c12d5636713a69ec0b50803d4d961f45"
     },
     {
       "dependencies": [
@@ -2595,6 +2610,7 @@
         "engine_scatter::settings::ScatterStats",
         "engine_scatter::systems::ScatterState",
         "engine_scatter::systems::ScatterFeedback",
+        "engine_scatter::systems::Resnapped",
         "engine_scatter::far_cover::CanopyMaps",
         "engine_scatter::layouts::CanopyPiece"
       ],
@@ -2620,7 +2636,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "e549ec1ce2620a7f9acadadbc97e2d6befb0fd7f126d51f4362b46140ccbe456"
+      "version": "0ebcddcf352411916848ea476b232357a856c7b5546eb86ced491e2d54ae2c2c"
     },
     {
       "dependencies": [
@@ -2754,7 +2770,7 @@
         }
       ],
       "type": "engine_ground_cover::GroundCoverBrick",
-      "version": "d2252bfec5776ca23c7227443221d7c6c23897e4a8e1a0beff82b51d8e815378"
+      "version": "151339da033ce4133098bc2012377bef0a6161fcbab439fd2191d3a80c324f46"
     },
     {
       "dependencies": [
@@ -2981,7 +2997,7 @@
         }
       ],
       "type": "engine_water::WaterBrick",
-      "version": "491b9b0fc58dbc7240325b0db5cd3c52dda21bf3c90c9b4ee229a91b17538553"
+      "version": "5840053ea7c4e62fc24eecab9e7ac69bcd30d7eaea364b4c4f2ee24f54b7b311"
     },
     {
       "dependencies": [
@@ -3007,7 +3023,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_noise::LayerNoiseBrick",
-      "version": "eb74bd8e016b8f7694e834807a5d08a65be758005022e567b6789801443a17df"
+      "version": "cf63af12c22dbe1547a4aa53f1e67b0473ed67c3c951d270b5a86020cab04b29"
     },
     {
       "dependencies": [
@@ -3033,7 +3049,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_stamps::LayerStampsBrick",
-      "version": "eb57861f12b35cd450f32c4477632a9bf47735cba6c8384fadec7b9ea1d0b86e"
+      "version": "0ab91284d55ad43daf02f62c0fb69a91419fffd9fae5dd9c95ccdb6ba1eb2d06"
     },
     {
       "dependencies": [
@@ -3060,7 +3076,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_heightmap::LayerHeightmapBrick",
-      "version": "d5cee4c0bb16fdfd4a410ced11feac7b53334cf35a3257303e4e9ba4bdbf5598"
+      "version": "59a3fccbb1a9f2118c318251ff37f4e89054b4fc9c541e4cdf431c8393335eae"
     },
     {
       "dependencies": [
@@ -3086,7 +3102,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_paths::LayerPathsBrick",
-      "version": "3a37d3c5307a76ad77b95b8c46ad510e954698c7f2c25ac6c0a54a91c15ca987"
+      "version": "516bb0c0e22e1e4d2943d1be9e572eb8295f42e582e360fc35004c138a37f63d"
     },
     {
       "dependencies": [
@@ -3112,7 +3128,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_erosion::LayerErosionBrick",
-      "version": "f2477d2d03af183ca85a3896449f0d8e248ab800f7d79ea72384cd6fec2472d7"
+      "version": "6a6a53ec88c249a899a8b91ea3c066b98a64fa3f720954440680fed9708708d6"
     },
     {
       "dependencies": [
@@ -3139,7 +3155,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_hydrology::LayerHydrologyBrick",
-      "version": "2c470dd46f3ce77640180ed4739cb3f06b98c648b5dff19de48fb4aa8d08e5d6"
+      "version": "7e174d40c6cae00586f46f7c9b2d0f23d727fe6c6fd4cf01293b3be0753c56d3"
     },
     {
       "dependencies": [
@@ -3168,7 +3184,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_layer_relief::LayerReliefBrick",
-      "version": "09f2d8f9ccb30794990d8fd0e05d9efb6b36100fb8089dbef6ab50fd0a367f48"
+      "version": "7acf6923a7b1061a9e4dd72b9ecd4ef5a7d7aacbf1fea6301dea163999531532"
     },
     {
       "dependencies": [
@@ -3275,7 +3291,7 @@
         }
       ],
       "type": "engine_world_streaming::WorldStreamingBrick",
-      "version": "0871eafe4b84aae6b126114e4eb84a5011e415352b7153024276faf85d366a4d"
+      "version": "a075704e8f03160dac9ab236ee3c5dc7b43f9015159474ab2effc7e4218e3738"
     },
     {
       "dependencies": [
@@ -5752,5 +5768,22 @@
       ]
     }
   ],
-  "unmet": []
+  "unmet": [
+    {
+      "code": "read_before_write",
+      "got": {
+        "before": "depth",
+        "listed_writers": [
+          "engine_render",
+          "engine_water",
+          "engine_meshes",
+          "engine_impostors",
+          "engine_sky",
+          "engine_reflections",
+          "engine_terrain_shading"
+        ]
+      },
+      "path": "$.bricks.engine_terrain_shading.passes.terrain_leaf_lists.reads.color"
+    }
+  ]
 }

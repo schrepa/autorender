@@ -34,12 +34,16 @@ impl Submission {
     }
 
     pub(super) fn hand(&self, queue: &wgpu::Queue, handover: Handover) {
+        let frame = engine_profile::current_frame();
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(threads) = &self.threads {
-            threads.hand(handover);
+            threads.hand(frame, handover);
             return;
         }
-        super::submit(queue, handover.finish());
+        super::submit(
+            queue,
+            engine_profile::record_for(frame, || handover.finish()),
+        );
     }
 
     pub(super) fn settle(&self) {
@@ -52,7 +56,7 @@ impl Submission {
 
 #[cfg(not(target_arch = "wasm32"))]
 struct Threads {
-    inbox: Option<mpsc::Sender<(u64, Handover)>>,
+    inbox: Option<mpsc::Sender<Handed>>,
     workers: Vec<std::thread::JoinHandle<()>>,
     handed: Cell<u64>,
     turns: Arc<Turns>,
@@ -62,7 +66,7 @@ struct Threads {
 impl Threads {
     fn start(queue: &wgpu::Queue) -> Option<Self> {
         let spare = std::thread::available_parallelism().map_or(1, usize::from) - 1;
-        let (inbox, handovers) = mpsc::channel::<(u64, Handover)>();
+        let (inbox, handovers) = mpsc::channel::<Handed>();
         let handovers = Arc::new(Mutex::new(handovers));
         let turns = Arc::new(Turns::default());
         let workers: Vec<_> = (0..spare.max(1))
@@ -89,11 +93,11 @@ impl Threads {
         })
     }
 
-    fn hand(&self, handover: Handover) {
+    fn hand(&self, frame: u64, handover: Handover) {
         let number = self.handed.get();
         self.handed.set(number + 1);
         if let Some(inbox) = &self.inbox {
-            let _ = inbox.send((number, handover));
+            let _ = inbox.send((number, frame, handover));
         }
         crate::platform::run_arrived_maps();
     }
@@ -106,16 +110,19 @@ impl Threads {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-fn work(queue: &wgpu::Queue, handovers: &Mutex<mpsc::Receiver<(u64, Handover)>>, turns: &Turns) {
+type Handed = (u64, u64, Handover);
+
+#[cfg(not(target_arch = "wasm32"))]
+fn work(queue: &wgpu::Queue, handovers: &Mutex<mpsc::Receiver<Handed>>, turns: &Turns) {
     loop {
         let next = handovers
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .recv();
-        let Ok((number, handover)) = next else {
+        let Ok((number, frame, handover)) = next else {
             return;
         };
-        let buffers = handover.finish();
+        let buffers = engine_profile::record_for(frame, || handover.finish());
         turns.take(number, || {
             super::submit(queue, buffers);
         });

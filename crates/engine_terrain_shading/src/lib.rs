@@ -82,6 +82,7 @@ impl Brick for TerrainShadingBrick {
             .resource::<state::Atlas>()
             .resource::<state::SurfaceTotals>()
             .resource::<state::PartStats>()
+            .resource::<state::Derived>()
             .resource::<state::RecordsSettling>()
             .resource::<terrain_sun::SunPlan>()
             .resource::<holes::HoledGround>()

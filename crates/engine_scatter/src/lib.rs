@@ -154,6 +154,7 @@ impl Brick for ScatterBrick {
             .stats::<ScatterStats>()
             .resource::<systems::ScatterState>()
             .resource::<systems::ScatterFeedback>()
+            .resource::<systems::Resnapped>()
             .resource::<far_cover::CanopyMaps>()
             .piece::<layouts::CanopyPiece>()
             .generated(layouts::GENERATED)

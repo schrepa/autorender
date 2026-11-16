@@ -13,6 +13,7 @@ use crate::readback::{Arrival, Reader};
 
 const BATCHES: [&str; 3] = ["batch_0", "batch_1", "batch_2"];
 const OPAQUE_SCENE: &str = "opaque_scene";
+const VIEW_COPY: &str = "stage_view_copy";
 
 #[derive(Default)]
 pub(super) struct Hidden {
@@ -639,6 +640,13 @@ impl Renderer {
                     if !collected
                         && let Some(&(layer, view)) = run.machine.view_copies.get(index - declared)
                     {
+                        let mut encoder = run.take_encoder();
+                        if timed != Some(VIEW_COPY) {
+                            self.mark(encoder.as_mut(), timed, Some(VIEW_COPY));
+                            timed = Some(VIEW_COPY);
+                        }
+                        let Some(run) = self.run.as_mut() else { break };
+                        run.recording = Recording::of(encoder);
                         run.copy_view(layer, view);
                     }
                     continue;
