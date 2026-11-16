@@ -644,8 +644,12 @@ impl Run {
             return Ok(at);
         }
         let program = built.program_key;
+        let speedup_only = built.decl.speedup_only;
         let targets = (layout.formats(), layout.depth);
         let shown = (layout.plain, layout.main);
+        if speedup_only {
+            self.split().0.speedup_unmade(pipeline, targets, shown, variant)?;
+        }
         let found = match variant.and_then(|variant| Some((variant, variant.dynamic()?))) {
             Some(variants) => self
                 .split()
@@ -858,6 +862,46 @@ impl Compiler<'_> {
         variant: Option<crate::surface::MaterialVariant>,
     ) -> Option<(u64, wgpu::RenderPipeline)> {
         self.compile_with(pipeline, targets, shown, variant, Asked::Waited)
+    }
+
+    fn speedup_unmade(
+        &mut self,
+        pipeline: u32,
+        targets: (
+            &[Option<wgpu::TextureFormat>],
+            Option<(wgpu::TextureFormat, bool)>,
+        ),
+        shown: (bool, bool),
+        variant: Option<crate::surface::MaterialVariant>,
+    ) -> Result<(), engine_core::DropReason> {
+        self.collect(None);
+        let keyed = self
+            .keyed(pipeline, targets, shown, variant)
+            .ok_or(engine_core::DropReason::PipelineRefused)?;
+        let made = (keyed.program, keyed.key);
+        if self.made(pipeline, made).is_some() {
+            return Ok(());
+        }
+        if self.pipelines.making.refused(made) {
+            return Err(engine_core::DropReason::PipelineRefused);
+        }
+        let warm = Warm {
+            pipeline,
+            shape: Some(WarmShape {
+                formats: targets.0.to_vec(),
+                depth: targets.1,
+                shown,
+                variant,
+            }),
+            switches: self.pipelines.switches.clone(),
+            listed: false,
+        };
+        let warming = &mut self.pipelines.warming;
+        let queued = warming.queue.iter().any(|known| known.same(&warm));
+        if !queued && !self.pipelines.making.waits(made) {
+            warming.queue.push_front(warm);
+        }
+        Err(engine_core::DropReason::PipelineCompiling)
     }
 
     fn standing_in(

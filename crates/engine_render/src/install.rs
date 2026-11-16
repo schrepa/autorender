@@ -151,6 +151,7 @@ pub(crate) struct PipelineDecl {
     pub(crate) scope: Scoped,
     pub(crate) program: Program,
     pub(crate) bound: Vec<(Var, Bound)>,
+    pub(crate) speedup_only: bool,
 }
 
 impl PassDecl {
@@ -476,6 +477,12 @@ impl InstallCore {
             .filter(|declared| declared.part == part)
     }
 
+    pub(crate) fn speedup_only(&mut self, pipeline: u32) {
+        if let Some(declared) = self.declared.pipelines.get_mut(pipeline as usize) {
+            declared.speedup_only = true;
+        }
+    }
+
     pub(crate) fn pipeline(
         &mut self,
         scope: Scoped,
@@ -520,6 +527,7 @@ impl InstallCore {
             scope,
             program,
             bound,
+            speedup_only: false,
         };
         for entry in decl.entries() {
             if !core_entry(entry) {
