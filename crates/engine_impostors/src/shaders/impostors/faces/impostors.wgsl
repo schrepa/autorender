@@ -293,7 +293,7 @@ fn card_reach(facing: CardFacing, record: ImpostorRecord, margin: f32) -> f32 {
     var corners: array<vec3<f32>, 4>;
     var reach = vec3<f32>(0.0);
     for (var vertex = 0u; vertex < 4u; vertex++) {
-        let corner = card_corner(vertex);
+        let corner = card_corner(select(vertex, 5u, vertex == 3u));
         let across = facing.basis.right * (corner.x * facing.outline.x)
             + facing.basis.up * (corner.y * facing.outline.y);
         corners[vertex] = (model * vec4<f32>(center + across, 1.0)).xyz;
