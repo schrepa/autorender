@@ -736,6 +736,7 @@ impl GpuPart for TerrainGpu {
             cx.ran(p.summaries) && !short[4],
         ];
         let subdivided = cx.ran(p.subdivide) && self.subdivision_recorded;
+        let peaks_missed = self.atlas.peak_jobs() > 0 && !ran[2];
         let derived_layers = self.atlas.derived_layers(ran);
         if !derived_layers.is_empty() {
             cx.deliver::<Derived>(DERIVED_LAYERS, bytemuck::cast_slice(&derived_layers).to_vec());
@@ -804,8 +805,11 @@ impl GpuPart for TerrainGpu {
             (&tiles, &bakes, &settings, limits.texture_layers),
             slots,
         );
-        self.sun
-            .prepare(cx, (&sun_plan, &settings, &tiles, &atlas), &self.horizons);
+        self.sun.prepare(
+            cx,
+            (&sun_plan, &settings, &tiles, &atlas),
+            (&self.horizons, peaks_missed),
+        );
         let relit = self.bounce.prepare(
             cx,
             (

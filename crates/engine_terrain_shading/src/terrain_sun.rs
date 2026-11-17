@@ -411,10 +411,10 @@ impl SunGpu {
         &mut self,
         cx: &mut Prepare<'_, TerrainGpu>,
         (plan, settings, tiles, atlas): (&SunPlan, &TerrainShading, &TerrainTiles, &Atlas),
-        horizons: &Horizons,
+        (horizons, peaks_missed): (&Horizons, bool),
     ) {
         if let Some(before) = self.issued.take()
-            && !(cx.ran(self.pass) && self.recorded)
+            && (peaks_missed || !(cx.ran(self.pass) && self.recorded))
         {
             self.at = before;
         }
