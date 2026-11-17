@@ -140,7 +140,7 @@ pub(super) struct TerrainBake {
     pub(super) ahead: Option<(RecordKey, TileMaterials)>,
 }
 
-pub(super) type Looked = (Vec<u8>, u32, TileWork);
+pub(super) type Looked = (Vec<u8>, u32, Option<TileWork>);
 
 pub(super) const TILE_ARRAY_BYTES: u64 = (TILE_STRIDE as u64) * (TILE_STRIDE as u64) * 4;
 
