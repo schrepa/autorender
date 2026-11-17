@@ -212,6 +212,7 @@ impl Board {
             readiness.load(tally.owner, tally.loading);
             match tally.awaits {
                 Awaits::View if !viewed => readiness.await_view(tally.owner, tally.settling),
+                Awaits::Finished => readiness.finish(tally.owner, tally.settling),
                 Awaits::Frames => readiness.await_frames(tally.owner, tally.settling),
                 Awaits::Work | Awaits::View => readiness.settle(tally.owner, tally.settling),
             }
@@ -261,6 +262,12 @@ impl Settling {
     pub fn on_view() -> Self {
         let settling = Self::default();
         lock(&settling.0).awaits = Awaits::View;
+        settling
+    }
+
+    pub fn on_finished() -> Self {
+        let settling = Self::default();
+        lock(&settling.0).awaits = Awaits::Finished;
         settling
     }
 

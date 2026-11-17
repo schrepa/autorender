@@ -444,7 +444,7 @@ impl Default for ProbeState {
             words: Vec::new(),
             words_changed: false,
             stats: ReflectionProbeStats::default(),
-            settling: Settling::default(),
+            settling: Settling::on_finished(),
             reported: 0,
             cameras: Vec::new(),
         }
