@@ -8,6 +8,7 @@ use engine::{Error, ErrorCode};
 use crate::file_error;
 
 const LEVEL: i32 = 19;
+const FRAME: usize = 8 << 20;
 
 #[derive(Default)]
 pub(crate) struct PackWriter {
@@ -57,7 +58,7 @@ impl PackWriter {
                     scope.spawn(move || {
                         records
                             .iter()
-                            .map(|(_, bytes)| compress(bytes))
+                            .map(|(_, bytes)| framed(bytes))
                             .collect::<Result<Vec<_>, Error>>()
                     })
                 })
@@ -88,6 +89,17 @@ impl PackWriter {
         std::fs::rename(&partial, path).map_err(|error| file_error("$", path, &error))?;
         Ok(bytes.len() as u64)
     }
+}
+
+fn framed(bytes: &[u8]) -> Result<Vec<u8>, Error> {
+    if bytes.len() <= FRAME {
+        return compress(bytes);
+    }
+    let mut stored = Vec::new();
+    for frame in bytes.chunks(FRAME) {
+        stored.extend(compress(frame)?);
+    }
+    Ok(stored)
 }
 
 fn compress(bytes: &[u8]) -> Result<Vec<u8>, Error> {
