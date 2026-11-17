@@ -10,14 +10,16 @@ pub(super) use measured::{Attribution, core_scope};
 pub(super) use unmeasured::core_scope;
 
 impl AppHost {
-    pub(super) fn claim_passes(&mut self) -> Result<()> {
+    pub(super) fn claim_passes(&mut self, ahead: Option<engine_render::Ahead>) -> Result<()> {
         let world = self.engine.app.world_mut();
         if !world.contains_resource::<Registry>() {
             return Ok(());
         }
-        self.renderer
-            .install(world)
-            .map_err(|mut problems| match problems.len() {
+        match ahead {
+            Some(ahead) => self.renderer.install_ahead(world, ahead),
+            None => self.renderer.install(world),
+        }
+        .map_err(|mut problems| match problems.len() {
                 1 => problems.remove(0),
                 _ => Error::new(ErrorCode::RenderFailed, "$.bricks").got(&problems),
             })

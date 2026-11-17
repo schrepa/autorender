@@ -158,15 +158,22 @@ impl AppHost {
         build: impl FnOnce(&mut Engine) -> Result<()>,
     ) -> Result<Self> {
         let display_paced = target.on_display();
-        let engine = built(|| {
+        let mut engine = built(|| {
             let mut engine = crate::engine(bricks)?;
             build(&mut engine)?;
             Ok(engine)
         })?;
-        let starting = Renderer::start(target).await?;
+        let mut start = std::pin::pin!(Renderer::start(target));
+        let started =
+            std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(start.as_mut(), cx))).await;
+        let ahead = Renderer::ahead(engine.app.world_mut());
+        let starting = match started {
+            std::task::Poll::Ready(starting) => starting,
+            std::task::Poll::Pending => start.await,
+        }?;
         let renderer = Box::new(starting.finish().await?);
         let mut host = Self::with(engine, renderer, display_paced);
-        host.claim_passes()?;
+        host.claim_passes(ahead)?;
         log_unmet(&host.engine);
         Ok(host)
     }
@@ -227,7 +234,7 @@ impl AppHost {
         wire(&mut engine, &self.renderer, jobs, self.job_clock);
         let replaced = std::mem::replace(&mut self.engine, engine);
         self.reloaded();
-        if let Err(error) = self.claim_passes() {
+        if let Err(error) = self.claim_passes(None) {
             panic!("{error}");
         }
         if let Err(error) = self.replay_settings() {

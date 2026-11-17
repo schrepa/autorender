@@ -2430,7 +2430,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "1ad424f19c3f737bcec945acf6019c9559841e59e42ccde3245199f17abcf305"
+      "version": "3fd136c8bbe89c199cb27aad1fb452e36152dabda08c1dd85f089ce2d2e2cb8a"
     },
     {
       "dependencies": [
@@ -2974,7 +2974,7 @@
         }
       ],
       "type": "engine_water::WaterBrick",
-      "version": "0af3b27a6a31bdb88f1ff08f8d801e55abe2f7d308963d1c2167c565f0882da2"
+      "version": "df36454b9592a6f6c67e3f604a2e1d6da7d55f394140f0fa6a552a78194d3a6c"
     },
     {
       "dependencies": [

@@ -21,7 +21,6 @@ pub(crate) struct DetailGpu {
     ripples: Detail,
     measured: RippleMeasure,
     sampler: Sampler<WaterGpu>,
-    features: wgpu::Features,
 }
 
 struct Detail {
@@ -37,7 +36,6 @@ impl DetailGpu {
             ripples: Detail::install(cx, "water_ripples", FLAT_RIPPLES),
             measured: RippleMeasure::default(),
             sampler: cx.sampler(engine_core::Sampler::REPEAT),
-            features: cx.features(),
         }
     }
 
@@ -59,12 +57,13 @@ impl DetailGpu {
         assets: &AssetLibrary,
         cx: &mut Prepare<'_, WaterGpu>,
     ) {
-        if let Some(texture) = self.foam.changed(water.foam.texture, self.features, assets) {
+        let features = cx.features();
+        if let Some(texture) = self.foam.changed(water.foam.texture, features, assets) {
             self.foam.show(texture, cx);
         }
         let Some(texture) = self
             .ripples
-            .changed(water.ripples.texture, self.features, assets)
+            .changed(water.ripples.texture, features, assets)
         else {
             return;
         };

@@ -73,7 +73,6 @@ impl Renderer {
     fn reinstall_edited(&mut self, world: &mut World) -> Result<(), Vec<Error>> {
         let mut installed = super::install::install(
             &self.core.device,
-            self.core.limits,
             world,
             (self.watched.edited(), super::install::Lint::Check),
         )?;

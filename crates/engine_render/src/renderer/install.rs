@@ -745,13 +745,6 @@ pub fn device_limits(
     }
 }
 
-fn held_limits(limits: engine_core::DeviceLimits, world: &World) -> engine_core::DeviceLimits {
-    let cores = world
-        .get_resource::<engine_core::DeviceLimits>()
-        .map_or(0, |held| held.cores);
-    engine_core::DeviceLimits { cores, ..limits }
-}
-
 fn scene_passes(world: &World) -> engine_core::ScenePasses {
     world
         .get_resource::<engine_core::ScenePasses>()
@@ -765,15 +758,49 @@ pub(crate) enum Lint {
     Check,
 }
 
+pub struct Ahead {
+    edited: std::collections::BTreeMap<String, String>,
+    lint: Lint,
+    problems: Vec<Error>,
+    roots: Vec<(String, String)>,
+    composing: crate::machine::Composing,
+    parts: Vec<Option<Box<dyn Installed>>>,
+    gates: Vec<Option<GateId>>,
+    reinstalls: Vec<Reinstall>,
+    draws: Vec<KindMember>,
+    pieces: Vec<(usize, crate::pieces::PieceAt)>,
+    passes: Vec<&'static str>,
+    linked: engine_core::LinkedStats,
+    placed: Placed,
+    material: crate::surface::MaterialLayout,
+    applied: Vec<crate::shared::AppliedModule>,
+}
+
 pub(crate) fn install(
     device: &wgpu::Device,
-    limits: engine_core::DeviceLimits,
     world: &mut World,
     (edited, lint): (std::collections::BTreeMap<String, String>, Lint),
 ) -> Result<Built, Vec<Error>> {
-    let built = world.resource_scope::<Registry, _>(|world, registry| {
-        install_with((device, limits), world, &registry, (edited, lint))
-    })?;
+    let ahead = ahead(world, (edited, lint));
+    finish(device, world, ahead)
+}
+
+pub(crate) fn ahead(
+    world: &mut World,
+    (edited, lint): (std::collections::BTreeMap<String, String>, Lint),
+) -> Ahead {
+    world.resource_scope::<Registry, _>(|world, registry| {
+        install_with(world, &registry, (edited, lint))
+    })
+}
+
+pub(crate) fn finish(
+    device: &wgpu::Device,
+    world: &mut World,
+    ahead: Ahead,
+) -> Result<Built, Vec<Error>> {
+    let built =
+        world.resource_scope::<Registry, _>(|_, registry| built(device, &registry, ahead))?;
     let scenes = scene_passes(world);
     let unknown = world
         .get_resource::<engine_core::FoldOrder>()
@@ -799,15 +826,14 @@ pub(crate) fn install(
     reason = "longer than the line ceiling; it may only shrink"
 )]
 fn install_with(
-    (device, limits): (&wgpu::Device, engine_core::DeviceLimits),
     world: &mut World,
     registry: &Registry,
     (edited, lint): (std::collections::BTreeMap<String, String>, Lint),
-) -> Result<Built, Vec<Error>> {
+) -> Ahead {
     let mut problems = Vec::new();
     names_twice(registry, world, &mut problems);
     let mut roots = Vec::new();
-    let mut linker = Linker::edited(crate::shared::core_source(), edited);
+    let mut linker = Linker::edited(crate::shared::core_source(), edited.clone());
     for (path, text) in crate::shaders::generated_core() {
         linker.add_generated(path.to_owned(), CORE_PACKAGE, text);
     }
@@ -907,7 +933,7 @@ fn install_with(
             }
         }
     }
-    let mut core = InstallCore::new(linker, device.features(), held_limits(limits, world));
+    let mut core = InstallCore::new(linker);
     core.passes = scene_passes(world);
     core.outputs = outputs.clone();
     for entry in &listed {
@@ -993,24 +1019,38 @@ fn install_with(
             passes.push(name);
         }
     }
+    let composing = crate::machine::compose(linker, (declared, outputs), switches, &mut problems);
+    Ahead {
+        edited,
+        lint,
+        problems,
+        roots,
+        composing,
+        parts,
+        gates,
+        reinstalls,
+        draws: entries,
+        pieces,
+        passes,
+        linked: links.stats(),
+        placed,
+        material,
+        applied,
+    }
+}
+
+fn built(device: &wgpu::Device, registry: &Registry, ahead: Ahead) -> Result<Built, Vec<Error>> {
+    let mut problems = ahead.problems;
     let limits = crate::pipelines::StageLimits::of(&device.limits());
     let scope = crate::gpu_calls::validation_scope(device);
-    let machine = Machine::build(
-        device,
-        linker,
-        declared,
-        outputs,
-        switches,
-        &limits,
-        &mut problems,
-    );
+    let machine = Machine::build(device, ahead.composing, &limits, &mut problems);
     if let Some(Some(error)) = crate::platform::ready(scope.pop()) {
         problems.push(failed_with("$.pipelines", error));
     }
     let Some(mut machine) = machine.filter(|_| problems.is_empty()) else {
         return Err(problems);
     };
-    if lint == Lint::Check {
+    if ahead.lint == Lint::Check {
         let composed: Vec<std::sync::Arc<crate::linker::Composed>> = machine
             .pipelines
             .iter()
@@ -1021,24 +1061,24 @@ fn install_with(
                     .map(|stage| std::sync::Arc::clone(&stage.composed))
             })
             .collect();
-        problems.extend(machine.linker.unused(&composed, &roots));
+        problems.extend(machine.linker.unused(&composed, &ahead.roots));
     }
     machine.linker.forget_wholes();
     let pass_gates = pass_gates(registry, &machine.declared.passes);
     if problems.is_empty() {
         Ok(Built {
-            run_parts: parts,
-            gates,
+            run_parts: ahead.parts,
+            gates: ahead.gates,
             pass_gates,
-            reinstalls,
-            draws: entries,
+            reinstalls: ahead.reinstalls,
+            draws: ahead.draws,
             machine,
-            pieces,
-            passes,
-            linked: links.stats(),
-            placed,
-            material,
-            applied,
+            pieces: ahead.pieces,
+            passes: ahead.passes,
+            linked: ahead.linked,
+            placed: ahead.placed,
+            material: ahead.material,
+            applied: ahead.applied,
         })
     } else {
         Err(problems)
@@ -1071,12 +1111,21 @@ impl Renderer {
     }
 
     pub fn install(&mut self, world: &mut World) -> Result<(), Vec<Error>> {
-        let installed = install(
-            &self.core.device,
-            self.core.limits,
-            world,
-            (self.edited(), Lint::Launch),
-        )?;
+        let installed = install(&self.core.device, world, (self.edited(), Lint::Launch))?;
+        self.adopt_installed(installed, world);
+        Ok(())
+    }
+
+    pub fn ahead(world: &mut World) -> Option<Ahead> {
+        let launch = (std::collections::BTreeMap::new(), Lint::Launch);
+        world.contains_resource::<Registry>().then(|| ahead(world, launch))
+    }
+
+    pub fn install_ahead(&mut self, world: &mut World, ahead: Ahead) -> Result<(), Vec<Error>> {
+        if ahead.edited != self.edited() {
+            return self.install(world);
+        }
+        let installed = finish(&self.core.device, world, ahead)?;
         self.adopt_installed(installed, world);
         Ok(())
     }
@@ -1109,11 +1158,7 @@ impl Renderer {
             (&mut assets.meshes, &mut assets.materials),
         );
         let mut run = Run::new(
-            (
-                self.core.device.clone(),
-                self.core.queue.clone(),
-                self.core.limits,
-            ),
+            (self.core.device.clone(), self.core.queue.clone()),
             installed.machine,
             installed.run_parts,
             assets,
@@ -1179,10 +1224,8 @@ impl Renderer {
 #[doc(hidden)]
 pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
     let (device, queue) = noop_device().map_err(|error| vec![error])?;
-    let limits = device_limits(&device.limits(), device.features(), 0);
     let mut installed = install(
         &device,
-        limits,
         world,
         (std::collections::BTreeMap::new(), Lint::Check),
     )?;
@@ -1204,7 +1247,7 @@ pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
         .configure(&device, installed.material.clone());
     let scope = crate::gpu_calls::validation_scope(&device);
     let mut run = Run::new(
-        (device.clone(), queue.clone(), limits),
+        (device.clone(), queue.clone()),
         installed.machine,
         installed.run_parts,
         assets,
@@ -1390,11 +1433,7 @@ pub(crate) fn reinstall(
         &mut run.machine.linker,
         Linker::new(crate::shared::core_source()),
     );
-    let mut core = InstallCore::new(
-        linker,
-        run.device.features(),
-        held_limits(run.limits, world),
-    );
+    let mut core = InstallCore::new(linker);
     core.passes = scene_passes(world);
     core.outputs = run.machine.outputs.clone();
     core.part = part;

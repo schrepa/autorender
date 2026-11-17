@@ -60,7 +60,6 @@ pub(crate) struct TerrainMaps {
     pub(crate) albedo: engine_render::Texture<TerrainGpu>,
     pub(crate) data: engine_render::Texture<TerrainGpu>,
     pub(crate) sampler: Sampler<TerrainGpu>,
-    features: wgpu::Features,
     filled: bool,
     layers: Vec<LayerKey>,
     listed: Vec<LayerKey>,
@@ -120,7 +119,6 @@ impl TerrainMaps {
                 Lifetime::Kept,
             ),
             sampler: cx.sampler(engine_core::Sampler::REPEAT),
-            features: cx.features(),
             filled: false,
             layers: Vec::new(),
             listed: Vec::new(),
@@ -242,7 +240,7 @@ impl TerrainMaps {
             return filled;
         }
         self.listed.clone_from(&self.listing);
-        let features = self.features;
+        let features = cx.features();
         let shape = self
             .listing
             .iter()

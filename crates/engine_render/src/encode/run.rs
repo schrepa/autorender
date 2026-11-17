@@ -3,7 +3,6 @@ use super::*;
 pub(crate) struct Run {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: crate::gpu_calls::Queue,
-    pub(crate) limits: engine_core::DeviceLimits,
     pub(crate) machine: Machine,
     pub(crate) parts: Vec<Option<Box<dyn Installed>>>,
     pub(crate) assets: Assets,
@@ -208,10 +207,11 @@ pub(crate) struct Installs {
     pub(crate) gates: Vec<Option<engine_registry::GateId>>,
     pub(crate) pass_gates: Vec<(u32, engine_registry::GateId)>,
     pub(crate) applied: Vec<crate::shared::AppliedModule>,
+    pub(crate) features: wgpu::Features,
 }
 
 impl Installs {
-    fn of(count: usize) -> Self {
+    fn of(count: usize, features: wgpu::Features) -> Self {
         Self {
             turned: vec![Some(0); count],
             faults: Vec::new(),
@@ -221,6 +221,7 @@ impl Installs {
             gates: Vec::new(),
             pass_gates: Vec::new(),
             applied: Vec::new(),
+            features,
         }
     }
 }
@@ -533,11 +534,7 @@ fn fresh_groups(machine: &Machine) -> (Vec<Groups>, Vec<Vec<Groups>>) {
 
 impl Run {
     pub(crate) fn new(
-        (device, queue, limits): (
-            wgpu::Device,
-            crate::gpu_calls::Queue,
-            engine_core::DeviceLimits,
-        ),
+        (device, queue): (wgpu::Device, crate::gpu_calls::Queue),
         machine: Machine,
         parts: Vec<Option<Box<dyn Installed>>>,
         assets: Assets,
@@ -556,6 +553,7 @@ impl Run {
             .map(|desc| crate::materials::gpu_sampler(&device, "engine/part-sampler", *desc))
             .collect();
         let count = parts.len();
+        let features = device.features();
         let dimensions = (0..machine.declared.textures.len())
             .map(|texture| texture_dimension(&machine, texture as u32))
             .collect();
@@ -582,7 +580,6 @@ impl Run {
         Self {
             device,
             queue,
-            limits,
             machine,
             parts,
             assets,
@@ -599,7 +596,7 @@ impl Run {
             spare: Spare::default(),
             reached: Reached::default(),
             filled: Vec::new(),
-            installs: Installs::of(count),
+            installs: Installs::of(count, features),
             frames: Frames::default(),
             bindings: Bindings {
                 holders,

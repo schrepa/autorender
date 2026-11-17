@@ -188,7 +188,9 @@ export class JobStore {
       const growth = Math.max(0, records.index.budget() - records.index.counters()[2]);
       const left = available === undefined ? undefined : Math.max(0, available - growth);
       const outputs = await Shelf.open(root, OUTPUTS, saved => new bindings.JobCacheIndex(settings.outputs, left, settings.verify, saved));
-      return new JobStore(bindings, outputs, records, coder);
+      const store = new JobStore(bindings, outputs, records, coder);
+      if (records.index.counters()[2] === 0) void store.opened();
+      return store;
     } catch (error) {
       console.warn(`The record store is off: ${String(error)}`);
       return undefined;
@@ -230,6 +232,10 @@ export class JobStore {
     await this.outputs.sweep();
   }
 
+  private opened(): Promise<Pack[]> {
+    return this.packs ??= openPacks(this.bindings);
+  }
+
   private size(key: string): number {
     return Math.max(this.records.size(key), this.outputs.size(key));
   }
@@ -251,7 +257,7 @@ export class JobStore {
 
   private fetch(keys: string[]): Map<string, Promise<Uint8Array | undefined>> {
     if (keys.length === 0) return new Map();
-    const planned = (this.packs ??= openPacks(this.bindings)).then(packs => this.plan(keys, packs));
+    const planned = this.opened().then(packs => this.plan(keys, packs));
     return new Map(keys.map(key => [key, planned.then(answers => answers.get(key))]));
   }
 
