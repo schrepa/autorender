@@ -737,22 +737,32 @@ impl AppHost {
         &self.stats
     }
 
+    pub fn progress(&self) -> (engine_core::Readiness, engine_core::JobStats) {
+        let readiness = self.engine.readiness();
+        let stood_in = self.renderer.pipelines_stood_in();
+        let readiness = engine_core::Readiness {
+            compiling: readiness.compiling.saturating_add(stood_in),
+            ..readiness.clone()
+        };
+        let jobs = self
+            .engine
+            .app
+            .world()
+            .get_resource::<JobExchange>()
+            .map(JobExchange::stats)
+            .unwrap_or_default();
+        (readiness, jobs)
+    }
+
     pub fn stats(&self) -> FrameStats {
         let (pipelines_listed, pipelines_unlisted) = self.renderer.pipelines_listed();
         let world = self.engine.app.world();
-        let readiness = self.engine.readiness();
-        let stood_in = self.renderer.pipelines_stood_in();
+        let (readiness, jobs) = self.progress();
         FrameStats {
             pipelines_listed,
             pipelines_unlisted,
-            readiness: engine_core::Readiness {
-                compiling: readiness.compiling.saturating_add(stood_in),
-                ..readiness.clone()
-            },
-            jobs: world
-                .get_resource::<JobExchange>()
-                .map(JobExchange::stats)
-                .unwrap_or_default(),
+            readiness,
+            jobs,
             refused_views: world
                 .get_resource::<engine_core::Views>()
                 .map_or(0, |views| views.refused().len() as u32),
