@@ -84,7 +84,7 @@ impl Run {
         }
         while let Some(warm) = self.pipelines.warming.queue.pop_front() {
             self.make_warm(warm, Asked::Warmed);
-            if self.pipelines.warming.fed.is_some() {
+            if self.pipelines.making.pending() > 0 {
                 return;
             }
         }
