@@ -1,7 +1,7 @@
 use engine_core::{Error, ErrorCode};
 use wgpu::ShaderStages;
 
-use crate::pipelines::StageLimits;
+use crate::pipelines::{REQUIRED_LIMITS, StageLimits};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Class {
@@ -27,6 +27,7 @@ pub(crate) struct Reach {
     pub(crate) own_groups: u32,
     pub(crate) own: Vec<(Class, ShaderStages)>,
     pub(crate) reached: Vec<(u32, ShaderStages)>,
+    pub(crate) fragment: Option<u64>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -200,6 +201,58 @@ fn adds_storage(
     })
 }
 
+fn vertex_storage(variables: &[FrameVariable], (variable, stages): (u32, ShaderStages)) -> bool {
+    storage(variables[variable as usize].kind) && stages == ShaderStages::VERTEX
+}
+
+fn unshared(reach: &Reach, variables: &[FrameVariable]) -> Vec<(u32, ShaderStages)> {
+    let kept: Vec<(u32, ShaderStages)> = reach
+        .reached
+        .iter()
+        .copied()
+        .filter(|&entry| !vertex_storage(variables, entry))
+        .collect();
+    joined(&[], &kept)
+}
+
+fn shared(
+    reaches: &[Reach],
+    variables: &[FrameVariable],
+    pipeline: usize,
+    conflict: &dyn Fn(u32, u32) -> bool,
+) -> Reach {
+    let reach = &reaches[pipeline];
+    let mut extra: Vec<(u32, ShaderStages)> = Vec::new();
+    if reach.fragment.is_some() && !reach.alone {
+        let base = unshared(reach, variables);
+        for other in reaches.iter().filter(|other| {
+            other.fragment == reach.fragment
+                && !other.alone
+                && other.own_groups == reach.own_groups
+                && other.own == reach.own
+                && unshared(other, variables) == base
+        }) {
+            for &entry in &other.reached {
+                let known =
+                    |list: &[(u32, ShaderStages)]| list.iter().any(|&(at, _)| at == entry.0);
+                if vertex_storage(variables, entry) && !known(&reach.reached) && !known(&extra) {
+                    extra.push(entry);
+                }
+            }
+        }
+    }
+    let entries = joined(&reach.reached, &extra);
+    let fitting = fits(reach, &entries, variables, &REQUIRED_LIMITS).is_ok();
+    let free = !extra
+        .iter()
+        .any(|&(variable, _)| conflict(pipeline as u32, variable));
+    let mut held = reach.clone();
+    if !extra.is_empty() && fitting && free {
+        held.reached = entries;
+    }
+    held
+}
+
 fn merge(
     exact: Vec<Variant>,
     reaches: &[Reach],
@@ -256,6 +309,10 @@ pub(crate) fn plan(
     limits: &StageLimits,
     conflict: &dyn Fn(u32, u32) -> bool,
 ) -> Result<FramePlan, Vec<Error>> {
+    let held: Vec<Reach> = (0..reaches.len())
+        .map(|pipeline| shared(reaches, variables, pipeline, conflict))
+        .collect();
+    let reaches = held.as_slice();
     let mut exact: Vec<Variant> = Vec::new();
     let mut conflicts = Vec::new();
     let mut over = Vec::new();
