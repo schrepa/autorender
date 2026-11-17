@@ -518,6 +518,10 @@ macro_rules! __export_worker {
                 self.cache.holds(key)
             }
 
+            pub fn bytes(&self, key: &str) -> Option<f64> {
+                self.cache.bytes(key).map(|bytes| bytes as f64)
+            }
+
             pub fn hit(&mut self, key: &str, bytes: Option<f64>) -> bool {
                 self.cache.hit(key, bytes.map(|bytes| bytes as u64))
             }

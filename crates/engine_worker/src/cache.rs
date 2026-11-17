@@ -61,6 +61,10 @@ impl JobCache {
         !self.broken && self.entries.contains_key(key)
     }
 
+    pub fn bytes(&self, key: &str) -> Option<u64> {
+        self.entries.get(key).map(|entry| entry.bytes)
+    }
+
     pub fn hit(&mut self, key: &str, bytes: Option<u64>) -> bool {
         match self.entries.get_mut(key) {
             Some(entry) if bytes == Some(entry.bytes) && !self.broken => {

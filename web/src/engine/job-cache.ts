@@ -18,6 +18,7 @@ interface JobCacheIndex {
   counters(): Float64Array;
   lists(name: string): boolean;
   holds(key: string): boolean;
+  bytes(key: string): number | undefined;
   hit(key: string, bytes?: number): boolean;
   miss(): void;
   store(key: string, bytes: number): boolean;
@@ -60,6 +61,7 @@ export function jobCacheSettings(): JobCacheSettings | undefined {
 class Shelf {
   private timer = 0;
   private readonly writing = new Map<string, Promise<void>>();
+  private readonly handles = new Map<string, FileSystemFileHandle>();
 
   private constructor(private readonly directory: FileSystemDirectoryHandle, readonly index: JobCacheIndex) {}
 
@@ -68,7 +70,21 @@ class Shelf {
     const saved = await directory.getFileHandle(INDEX).then(handle => handle.getFile()).then(file => file.text()).catch(() => undefined);
     const shelf = new Shelf(directory, index(saved));
     shelf.changed();
+    void shelf.list();
     return shelf;
+  }
+
+  private async list() {
+    const entries = this.directory as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> };
+    try {
+      for await (const [name, handle] of entries.entries()) {
+        if (handle.kind === "file" && this.index.lists(name) && !this.handles.has(name)) this.handles.set(name, handle as FileSystemFileHandle);
+      }
+    } catch {}
+  }
+
+  size(key: string): number {
+    return this.index.bytes(key) ?? 0;
   }
 
   holds(key: string): boolean {
@@ -80,7 +96,8 @@ class Shelf {
     if (!this.index.holds(key)) return undefined;
     let file: Uint8Array | undefined;
     try {
-      file = new Uint8Array(await (await (await this.directory.getFileHandle(key)).getFile()).arrayBuffer());
+      const handle = this.handles.get(key) ?? await this.directory.getFileHandle(key);
+      file = new Uint8Array(await (await handle.getFile()).arrayBuffer());
     } catch {}
     const hit = this.index.hit(key, file?.length);
     this.changed();
@@ -104,7 +121,10 @@ class Shelf {
   async sweep() {
     const names = this.directory as unknown as { keys(): AsyncIterable<string> };
     for await (const name of names.keys()) {
-      if (name !== INDEX && !this.writing.has(name) && !this.index.lists(name)) await this.directory.removeEntry(name).catch(() => undefined);
+      if (name !== INDEX && !this.writing.has(name) && !this.index.lists(name)) {
+        this.handles.delete(name);
+        await this.directory.removeEntry(name).catch(() => undefined);
+      }
     }
   }
 
@@ -115,9 +135,11 @@ class Shelf {
     if (!this.index.store(key, file.size)) return;
     this.changed();
     try {
-      const writable = await (await this.directory.getFileHandle(key, { create: true })).createWritable();
+      const handle = await this.directory.getFileHandle(key, { create: true });
+      const writable = await handle.createWritable();
       await writable.write(file);
       await writable.close();
+      this.handles.set(key, handle);
     } catch (error) {
       this.index.failed();
       console.warn(`The record store stopped keeping records: ${String(error)}`);
@@ -125,7 +147,10 @@ class Shelf {
   }
 
   changed() {
-    for (const key of this.index.take_removed()) void this.directory.removeEntry(key).catch(() => undefined);
+    for (const key of this.index.take_removed()) {
+      this.handles.delete(key);
+      void this.directory.removeEntry(key).catch(() => undefined);
+    }
     if (this.timer) return;
     this.timer = window.setTimeout(() => {
       this.timer = 0;
@@ -183,7 +208,10 @@ export class JobStore {
   lookup(keys: string[]): Promise<Uint8Array | undefined>[] {
     const remote = keys.filter(key => !this.records.holds(key) && !this.outputs.holds(key));
     const fetched = this.fetch(remote);
-    return keys.map(key => fetched.get(key) ?? this.local(key));
+    const held = [...new Set(keys.filter(key => !fetched.has(key)))];
+    held.sort((a, b) => this.size(b) - this.size(a));
+    const local = new Map(held.map(key => [key, this.local(key)]));
+    return keys.map(key => fetched.get(key) ?? local.get(key) ?? this.local(key));
   }
 
   keep(key: string, output: Uint8Array) {
@@ -200,6 +228,10 @@ export class JobStore {
   async sweep() {
     await this.records.sweep();
     await this.outputs.sweep();
+  }
+
+  private size(key: string): number {
+    return Math.max(this.records.size(key), this.outputs.size(key));
   }
 
   private async local(key: string): Promise<Uint8Array | undefined> {
