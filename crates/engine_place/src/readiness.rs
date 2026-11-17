@@ -11,6 +11,7 @@ pub enum Awaits {
     #[default]
     Work,
     View,
+    Finished,
     Frames,
 }
 
@@ -27,6 +28,7 @@ pub struct Readiness {
     pub loading: Progress,
     pub compiling: u32,
     pub settling: u32,
+    pub finishing: u32,
     pub drawing: u32,
     pub unsettled: Vec<Unsettled>,
     pub failed: Vec<(String, Error)>,
@@ -39,6 +41,16 @@ impl Readiness {
 
     pub fn worked(&self) -> bool {
         self.loading.total == 0 && self.compiling == 0 && self.settling == 0
+    }
+
+    pub fn only_finishing(&self) -> bool {
+        self.loading.total == 0 && self.settling == self.finishing
+    }
+
+    pub fn finish(&mut self, brick: &'static str, left: u32) {
+        self.settling = self.settling.saturating_add(left);
+        self.finishing = self.finishing.saturating_add(left);
+        self.note(brick, u64::from(left), Awaits::Finished);
     }
 
     pub fn settle(&mut self, brick: &'static str, left: u32) {
