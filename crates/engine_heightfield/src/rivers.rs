@@ -154,18 +154,32 @@ impl RiverNetwork {
     pub fn new(rivers: &[River]) -> Self {
         let count = rivers.len();
         let mut into = vec![None; count];
+        let mut starts: HashMap<[i64; 2], Vec<usize>> = HashMap::default();
+        for (other, next) in rivers.iter().enumerate() {
+            if next.points.len() >= 2 {
+                starts
+                    .entry(joining_cell(Vec2::from(next.points[0])))
+                    .or_default()
+                    .push(other);
+            }
+        }
         for (index, river) in rivers.iter().enumerate() {
             let (Some(&end), true) = (river.points.last(), river.points.len() >= 2) else {
                 continue;
             };
             let end = Vec2::from(end);
+            let [x, z] = joining_cell(end);
             let mut nearest: Option<(f32, usize)> = None;
-            for (other, next) in rivers.iter().enumerate() {
-                if other == index || next.points.len() < 2 {
+            let near = (-2..=2_i64).flat_map(|dz| {
+                (-2..=2).map(move |dx| [x.saturating_add(dx), z.saturating_add(dz)])
+            });
+            for other in near.filter_map(|cell| starts.get(&cell)).flatten().copied() {
+                if other == index {
                     continue;
                 }
-                let distance = end.distance(Vec2::from(next.points[0]));
-                if distance < 1.5 * RIVER_STEP && nearest.is_none_or(|(best, _)| distance < best) {
+                let distance = end.distance(Vec2::from(rivers[other].points[0]));
+                let closer = nearest.is_none_or(|(best, at)| (distance, other) < (best, at));
+                if distance < JOINING && closer {
                     nearest = Some((distance, other));
                 }
             }
@@ -206,6 +220,15 @@ impl RiverNetwork {
             order,
         }
     }
+}
+
+const JOINING: f32 = 1.5 * RIVER_STEP;
+
+fn joining_cell(point: Vec2) -> [i64; 2] {
+    [
+        (point.x / JOINING).floor() as i64,
+        (point.y / JOINING).floor() as i64,
+    ]
 }
 
 fn along_rivers(rivers: &[River]) -> Vec<Vec<f32>> {
