@@ -3,7 +3,7 @@ use bevy_ecs::world::World;
 use engine_core::{
     BrickList, Bricks, Camera, DeviceLimits, Engine, Error, Transform, main_camera, place_camera,
 };
-use engine_render::{Renderer, wgpu};
+use engine_render::{RenderSettings, wgpu};
 use engine_scene::{
     RemoveOperation, SceneDocument, SceneFiles, SceneInstance, SceneMaterialControl,
     SpawnOperation,
@@ -14,8 +14,9 @@ pub fn engine(bricks: impl FnOnce(BrickList) -> BrickList) -> crate::Result<Engi
 }
 
 pub(crate) fn listed(list: BrickList) -> crate::Result<Engine> {
-    let mut engine = Engine::listed(list.with_core(Renderer::register_places))?;
+    let mut engine = Engine::listed(list)?;
     engine
+        .settings::<RenderSettings>()
         .operation::<SceneMaterialControl>()
         .operation::<SpawnOperation>()
         .operation::<RemoveOperation>();

@@ -16,16 +16,10 @@ mod readiness;
 mod requests;
 mod views;
 
-use std::any::{Any, TypeId};
-
-use bevy_ecs::{
-    component::{Component, Mutable},
-    resource::Resource,
-    world::World,
-};
+use bevy_ecs::world::World;
 use serde_json::Value;
 
-pub use asks::{Applied, ApplyAt, Ask, Asked, Moment};
+pub use asks::Asked;
 pub use calls::{
     AUTHORED_COMPONENTS, Call, Callable, Each, Lands, NamedRun, Operation, RESERVED_REPLY_KEYS,
     Refusal, Rows, SCENE_SCHEMA, SchemaIn, access_of, answer, authored_component, open_parts,
@@ -53,154 +47,12 @@ pub use readiness::{Awaits, CORE_ROW, Readiness, Unsettled};
 pub use requests::{Board, Census, Interest, Progress, Request, Requests, Settling, Ticket};
 pub use views::{Clear, Rect, Target, View, ViewCut, ViewHistory, ViewLayer};
 
-pub trait Slot: Resource + Default {
-    const NAME: &'static str;
-    const CALLS: &'static [Call] = &[];
-}
-
 pub trait List: Send + Sync + 'static {
     const NAME: &'static str;
     type Member: Send + Sync + 'static;
 
     fn dropped(_world: &mut World, _member: &Self::Member) {}
 }
-
-type ReadMembers = fn(&World, &mut dyn FnMut(&dyn Any));
-
-#[derive(Clone, Copy)]
-pub struct PlaceDecl {
-    name: &'static str,
-    kind: PlaceKind,
-    insert: fn(&mut World),
-    read: ReadMembers,
-    reset: Option<fn(&mut World)>,
-    ty: fn() -> TypeId,
-}
-
-impl PlaceDecl {
-    pub const fn slot<S: Slot>() -> Self {
-        Self {
-            name: S::NAME,
-            kind: PlaceKind::Slot,
-            insert: insert_resource::<S>,
-            read: read_resource::<S>,
-            reset: None,
-            ty: TypeId::of::<S>,
-        }
-    }
-
-    pub const fn ask<A: Ask>() -> Self {
-        Self::slot::<Asked<A>>()
-    }
-
-    pub const fn ledger<R: Resource + Default>(name: &'static str) -> Self {
-        Self {
-            name,
-            kind: PlaceKind::Ledger,
-            insert: insert_resource::<R>,
-            read: read_resource::<R>,
-            reset: None,
-            ty: TypeId::of::<R>,
-        }
-    }
-
-    pub const fn list<L: List>() -> Self {
-        Self {
-            name: L::NAME,
-            kind: PlaceKind::List,
-            insert: insert_nothing,
-            read: read_nothing,
-            reset: None,
-            ty: TypeId::of::<L>,
-        }
-    }
-
-    pub const fn component<C: Component>(name: &'static str) -> Self {
-        Self {
-            name,
-            kind: PlaceKind::Component,
-            insert: insert_component::<C>,
-            read: read_nothing,
-            reset: None,
-            ty: TypeId::of::<C>,
-        }
-    }
-
-    pub const fn state<C: Component<Mutability = Mutable> + Default>(name: &'static str) -> Self {
-        Self {
-            name,
-            kind: PlaceKind::Component,
-            insert: insert_component::<C>,
-            read: read_nothing,
-            reset: Some(reset_component::<C>),
-            ty: TypeId::of::<C>,
-        }
-    }
-
-    #[doc(hidden)]
-    pub fn reset(&self) -> Option<fn(&mut World)> {
-        self.reset
-    }
-
-    #[doc(hidden)]
-    pub fn name(&self) -> &'static str {
-        self.name
-    }
-
-    #[doc(hidden)]
-    pub fn kind(&self) -> PlaceKind {
-        self.kind
-    }
-
-    #[doc(hidden)]
-    pub fn insert(&self, world: &mut World) {
-        (self.insert)(world)
-    }
-
-    #[doc(hidden)]
-    pub fn read(&self, world: &World, each: &mut dyn FnMut(&dyn Any)) {
-        (self.read)(world, each)
-    }
-
-    #[doc(hidden)]
-    pub fn type_id(&self) -> TypeId {
-        (self.ty)()
-    }
-}
-
-#[doc(hidden)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PlaceKind {
-    Slot,
-    List,
-    Component,
-    Ledger,
-}
-
-fn insert_resource<R: Resource + Default>(world: &mut World) {
-    world.init_resource::<R>();
-}
-
-fn insert_component<C: Component>(world: &mut World) {
-    world.register_component::<C>();
-}
-
-fn reset_component<C: Component<Mutability = Mutable> + Default>(world: &mut World) {
-    let mut held = world.query::<&mut C>();
-    for mut value in held.iter_mut(world) {
-        *value = C::default();
-    }
-}
-
-fn insert_nothing(_: &mut World) {}
-
-fn read_resource<R: Resource>(world: &World, each: &mut dyn FnMut(&dyn Any)) {
-    if let Some(value) = world.get_resource::<R>() {
-        each(value);
-    }
-}
-
-fn read_nothing(_: &World, _: &mut dyn FnMut(&dyn Any)) {}
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Stamp(u64);

@@ -166,8 +166,7 @@ pub fn apply_settings(world: &mut World, entries: &[(String, Value)]) -> Result<
             .collect::<Result<_, _>>()?;
         let applied = entries
             .iter()
-            .try_for_each(|(key, value)| set_one(world, key, value))
-            .and_then(|()| engine_registry::check_sections(world));
+            .try_for_each(|(key, value)| set_one(world, key, value));
         if applied.is_err() {
             for (entry, value) in &before {
                 if entry.current(world).ok().as_ref() != Some(value) {

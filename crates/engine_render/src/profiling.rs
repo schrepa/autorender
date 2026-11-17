@@ -157,15 +157,12 @@ mod capture {
                     ty: wgpu::QueryType::Timestamp,
                     count: QUERIES,
                 }),
-                resolve: crate::memory::buffer(
-                    device,
-                    &wgpu::BufferDescriptor {
-                        label: Some("engine/profile-resolve"),
-                        size: SLOT_BYTES,
-                        usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-                        mapped_at_creation: false,
-                    },
-                ),
+                resolve: device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("engine/profile-resolve"),
+                    size: SLOT_BYTES,
+                    usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                }),
                 origin: None,
                 spans: RefCell::new(Vec::with_capacity(SPANS)),
                 draw_stamps,
@@ -243,32 +240,6 @@ mod capture {
         draws: Vec<DrawSample>,
     }
 
-    pub struct Latest {
-        pub frame_ms: f64,
-        pub idle_ms: f64,
-        pub spans: Vec<(&'static str, f64)>,
-    }
-
-    impl Latest {
-        fn of(
-            frame_ms: f64,
-            idle_ms: Option<f64>,
-            names: &[&'static str],
-            stamps: &[(u64, u64)],
-            duration: impl Fn((u64, u64)) -> Option<f64>,
-        ) -> Self {
-            Self {
-                frame_ms,
-                idle_ms: idle_ms.unwrap_or(0.0),
-                spans: names
-                    .iter()
-                    .zip(stamps)
-                    .filter_map(|(&name, &stamps)| Some((name, duration(stamps)?)))
-                    .collect(),
-            }
-        }
-    }
-
     pub struct GpuProfiler {
         supported: bool,
         draw_support: Support,
@@ -276,7 +247,6 @@ mod capture {
         slots: Vec<Slot>,
         current: Option<usize>,
         drawing: bool,
-        latest: Option<Latest>,
         capture: Option<u64>,
         submission: u64,
         attempted: u64,
@@ -304,7 +274,6 @@ mod capture {
                 slots: Vec::new(),
                 current: None,
                 drawing: false,
-                latest: None,
                 capture: None,
                 submission: 0,
                 attempted: 0,
@@ -393,10 +362,6 @@ mod capture {
                 self.drawing = true;
             }
             self.current = Some(index);
-        }
-
-        pub fn latest(&self) -> Option<&Latest> {
-            self.latest.as_ref()
         }
 
         pub fn capturing(&self) -> bool {
@@ -585,7 +550,6 @@ mod capture {
                 self.last_span = Some((origin.frame, first, last));
             }
             let idle_ms = span.and_then(|span| idle(&recorded, &stamps, span).map(to_ms));
-            self.latest = frame_ms.map(|ms| Latest::of(ms, idle_ms, &names, &stamps, duration));
             if Some(origin.capture) != self.capture {
                 return;
             }

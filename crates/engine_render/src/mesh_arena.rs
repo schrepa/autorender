@@ -6,9 +6,9 @@ use engine_core::{
     GeometryClass, GeometryHandle, GeometryStream, Mesh, MeshLods, MeshPlacement, MeshResidence,
     ResidentMesh, Since, math::clamp,
 };
+use wgpu::util::DeviceExt as _;
 
 use crate::gpu_calls::Queue;
-use crate::memory::buffer_init;
 
 const fn format_of(stored: AttributeFormat) -> wgpu::VertexFormat {
     match stored {
@@ -178,15 +178,12 @@ fn buffer(
     size: u64,
     usage: wgpu::BufferUsages,
 ) -> wgpu::Buffer {
-    crate::memory::buffer(
-        device,
-        &wgpu::BufferDescriptor {
-            label: Some(label),
-            size: size.max(4).next_multiple_of(4),
-            usage,
-            mapped_at_creation: false,
-        },
-    )
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size: size.max(4).next_multiple_of(4),
+        usage,
+        mapped_at_creation: false,
+    })
 }
 
 fn regrown(
@@ -474,14 +471,11 @@ impl GpuMeshes {
             }
             MeshResidence::Own => {
                 let buffer = |label, contents: &[u8], usage| {
-                    buffer_init(
-                        device,
-                        &wgpu::util::BufferInitDescriptor {
-                            label: Some(label),
-                            contents,
-                            usage,
-                        },
-                    )
+                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                        label: Some(label),
+                        contents,
+                        usage,
+                    })
                 };
                 let vertex = wgpu::BufferUsages::VERTEX;
                 Some(OwnMesh {

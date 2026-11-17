@@ -20,10 +20,8 @@ pub struct FrameStats {
     pub resolution: ResolutionStats,
     pub jobs: engine_core::JobStats,
     pub refused_views: u32,
-    pub disabled_features: engine_core::Names,
     #[serde(flatten)]
     pub render: engine_core::RenderStats,
-    pub bricks_cost: Option<engine_registry::BrickCosts>,
     pub bricks: BTreeMap<&'static str, serde_json::Value>,
     pub pipelines_per_pass: BTreeMap<&'static str, PassPipelines>,
 }
@@ -45,8 +43,6 @@ pub fn frame_stats_schema() -> serde_json::Value {
 pub struct ResolutionStats {
     pub display_width: u32,
     pub display_height: u32,
-    pub render_width: u32,
-    pub render_height: u32,
     pub dropped_pixels: u64,
     pub gpu_ms: Option<f32>,
 }

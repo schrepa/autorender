@@ -73,21 +73,20 @@ pub use engine_place::{
     authored_component, entity_removed, open_parts, open_schema, scene_references, schema_of,
 };
 pub use engine_place::{
-    Applied, ApplyAt, Ask, Asked, AttachPoint, Awaits, BlendedPass, Board, Census, Clock,
-    ColorPass, Cursor, DrawKind, Drawn, DrawnBounds, DrawnProjection, Error, ErrorCode, Events,
-    Feed, FeedView, GeometryHandle, GpuStruct, InstanceValues, Interest, JobRef, KindCell,
-    KindDecl, KindJoin, KindSkip, Layers, List, MaterialHandle, Mobility, Moment, Mover, MoverId,
-    Node, NodeId, NodeWord, Pace, Pass, PassBit, PassCull, PassEntry, PassMask, PassName,
-    PassRaster, PassRole, PassViews, PlaceDecl, PositionReach, Progress, Readiness, Request,
-    Requests, Ring, ScenePass, ScenePasses, Settling, Since, Slot, SlotSet, Stamp, StoreId,
-    TargetName, TextureHandle, Ticket, Unsettled, Writes, every, gpu_consts, never,
+    Asked, AttachPoint, Awaits, BlendedPass, Board, Census, Clock, ColorPass, Cursor, DrawKind,
+    Drawn, DrawnBounds, DrawnProjection, Error, ErrorCode, Events, Feed, FeedView, GeometryHandle,
+    GpuStruct, InstanceValues, Interest, JobRef, KindCell, KindDecl, KindJoin, KindSkip, Layers,
+    List, MaterialHandle, Mobility, Mover, MoverId, Node, NodeId, NodeWord, Pace, Pass, PassBit,
+    PassCull, PassEntry, PassMask, PassName, PassRaster, PassRole, PassViews, PositionReach,
+    Progress, Readiness, Request, Requests, Ring, ScenePass, ScenePasses, Settling, Since, SlotSet,
+    Stamp, StoreId, TargetName, TextureHandle, Ticket, Unsettled, Writes, every, gpu_consts, never,
 };
 pub use engine_place::{
     BitField, BitValue, FrameId, GpuBits, Readable, Readback, decode_bits, gpu_bits,
 };
 pub use engine_place::{Clear, Rect, Target, View, ViewCut, ViewHistory, ViewLayer};
 pub use engine_registry::call;
-pub use engine_registry::{FrameFacts, RecordParity, fault_of};
+pub use engine_registry::{FrameFacts, RecordParity};
 pub use engine_settings::{
     Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, fields,
     is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
@@ -99,7 +98,7 @@ pub use hierarchy::*;
 pub use input::*;
 pub use jobs::*;
 pub use mesh_lods::MeshLevels;
-pub use moves::{Applies, Asks, Moves, Teleport, mover_of, send_ask, take_asks};
+pub use moves::{Moves, Teleport, mover_of, send_ask, take_asks};
 pub use presentation::*;
 pub use provided::*;
 pub use records::*;
@@ -111,8 +110,8 @@ pub use schedules::{RunPace, RunPoint};
 pub use section::{Cut, Section, Switch};
 pub use services::{
     Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, Levels, PartDraws, Placed,
-    Placement, Prepared, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneForm, SubScene,
-    SubSceneEntity, scene_component, scene_components,
+    Placement, Prepared, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneForm,
+    scene_component, scene_components,
 };
 pub use shared::FeedSettings;
 pub use source::{Entry, Module, ShaderText, Source, Var};
@@ -144,38 +143,18 @@ macro_rules! gpu_struct {
 
 use std::sync::Arc;
 
-use bevy_ecs::change_detection::CheckChangeTicks;
-use bevy_ecs::component::{ComponentId, Immutable};
+use bevy_ecs::component::Immutable;
 use bevy_ecs::hierarchy::ChildOf;
 use bevy_ecs::lifecycle::Add;
 use bevy_ecs::observer::On;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::schedule::{InternedScheduleLabel, ScheduleLabel, Schedules, SingleThreadedExecutor};
-use bevy_ecs::system::ResMut;
 use bevy_ecs::world::World;
 use clock::{Advanced, FixedClock, Interval};
 use engine_registry::{
-    BrickHooks, GateDriver, JobList, JobListed, MembersOf, OperationEntry, Registry,
-    RegistryBuilder,
+    JobList, JobListed, MembersOf, OperationEntry, Registry, RegistryBuilder, Switches,
 };
 use schedules::{FixedSimulation, FrameStart, Presentation, TransformPropagation};
-
-static CORE_PLACES: &[PlaceDecl] = &[
-    PlaceDecl::list::<SceneComponents>(),
-    PlaceDecl::list::<Pause>(),
-    PlaceDecl::list::<CookList>(),
-    PlaceDecl::list::<TextureJobs>(),
-    PlaceDecl::ledger::<Readiness>("readiness"),
-    PlaceDecl::ledger::<AssetLibrary>("asset_library"),
-    PlaceDecl::ledger::<RecordExchange>("record_exchange"),
-    PlaceDecl::ledger::<Refusals>("refusals"),
-    PlaceDecl::ledger::<Files>("files"),
-    PlaceDecl::component::<Drawn>("drawn"),
-    PlaceDecl::ask::<Teleport>(),
-    PlaceDecl::ask::<ViewCut>(),
-    PlaceDecl::component::<View>("view"),
-    PlaceDecl::component::<Camera>("camera"),
-];
 
 #[cfg(feature = "dev")]
 pub fn check_dev_ticks(ticks: u32) -> Result<(), Error> {
@@ -192,7 +171,7 @@ pub struct Engine {
     pub app: App,
     clock: FixedClock,
     interval: Interval,
-    gates: Option<GateDriver>,
+    gates: Option<Switches>,
     facts: Option<FrameFacts>,
     finalized: bool,
     board: Board,
@@ -208,13 +187,6 @@ impl<'a> RenderFrame<'a> {
     pub fn world(self) -> &'a World {
         self.world
     }
-}
-
-#[derive(Resource, Default)]
-struct TickCheck(Option<CheckChangeTicks>);
-
-fn note_tick_check(check: On<CheckChangeTicks>, mut held: ResMut<TickCheck>) {
-    held.0 = Some(*check.event());
 }
 
 fn single_threaded(schedule: &mut bevy_ecs::schedule::Schedule) {
@@ -243,13 +215,7 @@ fn core_entries(registry: &mut RegistryBuilder) {
     registry.core_settings(bricks::settings_entry::<DrawnSettings>());
     registry.core_settings(bricks::settings_entry::<Culling>());
     registry.core_settings(bricks::settings_entry::<FrameLimits>());
-    registry.mover_rule(moves::rule());
     registry.despawn_rule(hierarchy::despawn_owned);
-    registry.fill_core::<Asked<Teleport>>();
-    registry.fill_core::<Asked<ViewCut>>();
-    registry.writers_first::<Pause>();
-    registry.writers_first::<TimeScale>();
-    registry.writers_first::<JobExchange>();
 }
 
 fn install_passes(world: &mut World) {
@@ -303,7 +269,6 @@ impl Engine {
             .remove(bevy_app::First);
         hierarchy::tracking::track_nodes(app.world_mut());
         app.add_observer(refuse_bevy_hierarchy);
-        app.add_observer(note_tick_check);
         app.add_observer(services::scene_entity_inserted);
         app.add_observer(services::scene_entity_discarded);
         for schedule in Schedule::ALL {
@@ -346,9 +311,6 @@ impl Engine {
             .init_resource::<ProvidedAssets>()
             .init_resource::<PresentationState>()
             .init_resource::<DrawnPoses>()
-            .init_resource::<TickCheck>()
-            .init_resource::<moves::Key>()
-            .init_resource::<moves::MovingKinds>()
             .init_resource::<Asked<Teleport>>()
             .init_resource::<Asked<ViewCut>>()
             .insert_resource(TransformNodeLimit(config.max_transform_nodes))
@@ -381,13 +343,6 @@ impl Engine {
     fn install(&mut self, list: &BrickList) -> Result<(), Error> {
         let jobs = list.job_list()?;
         let mut registry = RegistryBuilder::default();
-        registry.places(CORE_PLACES);
-        for &places in list.place_sets() {
-            registry.places(places);
-        }
-        for register in list.core_places() {
-            register(&mut registry);
-        }
         core_entries(&mut registry);
         for listed in list.listed() {
             registry.add(listed.record());
@@ -395,6 +350,9 @@ impl Engine {
         let world = self.app.world_mut();
         world.insert_resource(JobListed::of(&jobs));
         world.resource_mut::<JobExchange>().set_list(jobs);
+        world.register_component::<Camera>();
+        world.register_component::<Drawn>();
+        world.register_component::<View>();
         let labels: [InternedScheduleLabel; 3] = Schedule::ALL.map(Schedule::label);
         let mut gates = registry.install(world, &labels);
         for default in list.defaults() {
@@ -409,16 +367,7 @@ impl Engine {
             .map(|members| members.names_twice(|kind| kind.key()))
             .unwrap_or_default();
         twice.extend(authoring::keys_taken(world));
-        let registrars: Vec<fn(&mut World) -> ComponentId> = world
-            .get_resource::<MembersOf<SceneComponents>>()
-            .map(|members| members.all().iter().map(ComponentKind::registrar).collect())
-            .unwrap_or_default();
-        let authored: Vec<ComponentId> = registrars
-            .into_iter()
-            .map(|register| register(world))
-            .collect();
         let mut registry = world.resource_mut::<Registry>();
-        registry.keep_authored(&authored);
         for error in twice {
             registry.report(error);
         }
@@ -451,18 +400,6 @@ impl Engine {
         self
     }
 
-    pub fn ask_on(&mut self, package: &str) -> Result<(), Error> {
-        self.scoped(|engine| {
-            let world = engine.app.world_mut();
-            let brick = world
-                .get_resource::<Registry>()
-                .and_then(|registry| registry.id(package))
-                .ok_or_else(|| Error::new(ErrorCode::UnknownValue, "$.brick").got(package))?;
-            engine_registry::ask_on(world, brick);
-            Ok(())
-        })
-    }
-
     #[doc(hidden)]
     pub fn set_frame(&mut self, facts: FrameFacts) {
         self.facts = Some(facts);
@@ -480,13 +417,6 @@ impl Engine {
 
     pub fn readiness(&self) -> &Readiness {
         self.app.world().resource::<Readiness>()
-    }
-
-    pub fn unmet(&self) -> &[Error] {
-        self.app
-            .world()
-            .get_resource::<Registry>()
-            .map_or(&[], Registry::unmet)
     }
 
     pub fn notices(&self) -> &[Error] {
@@ -656,22 +586,6 @@ impl Engine {
         gates.run(world);
     }
 
-    fn check_gate_ticks(&mut self) {
-        let world = self.app.world_mut();
-        if world.resource::<TickCheck>().0.is_none() {
-            return;
-        }
-        let check = world.resource_mut::<TickCheck>().0.take();
-        if let Some(check) = check
-            && let Some(mut hooks) = world.get_resource_mut::<BrickHooks>()
-        {
-            hooks.check_change_ticks(check);
-        }
-        if let (Some(check), Some(gates)) = (check, self.gates.as_mut()) {
-            gates.check_change_ticks(check);
-        }
-    }
-
     fn run_frame(
         &mut self,
         presented: Presented,
@@ -714,7 +628,6 @@ impl Engine {
         }
         self.refresh_transforms();
         self.app.world_mut().clear_trackers();
-        self.check_gate_ticks();
     }
 
     fn run_fixed_tick(&mut self) {

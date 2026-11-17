@@ -4,16 +4,14 @@ use std::{
 };
 
 use engine::Engine;
-use engine_checks::Repository;
 use engine_core::{DrawnTable, ScenePasses};
-use engine_place::PlaceKind;
 use engine_registry::Registry;
 use serde_json::json;
 
 use crate::process::{Client, Project, WASM_TARGET, project_option, read_clients, run};
 
 const USAGE: &str = "usage: cargo xtask new app --project DIR | new brick NAME --project DIR \
-                     [--kind gameplay|drawn] [--place PLACE]";
+                     [--kind gameplay|drawn]";
 
 const APP_TEMPLATE: &str = "crates/engine/examples/app_template";
 
@@ -63,7 +61,7 @@ const TEMPLATE_ONLY: [(&str, &str); 4] = [
     ),
 ];
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy)]
 enum BrickKind {
     Gameplay,
     Drawn,
@@ -114,7 +112,7 @@ impl BrickKind {
     }
 }
 
-const RESERVED: [&str; 4] = ["engine", "generated", "face", "place"];
+const RESERVED: [&str; 2] = ["engine", "generated"];
 
 pub fn new(root: &Path, options: &[String]) -> Result<(), String> {
     match options.split_first() {
@@ -337,15 +335,9 @@ serveJobs(() => import("../../pkg/{wasm}"));
     )
 }
 
-struct Claim {
-    path: String,
-    package: String,
-}
-
 struct BrickArguments {
     project: String,
     name: String,
-    place: Option<String>,
     kind: BrickKind,
 }
 
@@ -354,36 +346,22 @@ fn brick_arguments(options: &[String]) -> Result<BrickArguments, String> {
     let (Some(project), Some((name, rest))) = (project, rest.split_first()) else {
         return Err(USAGE.into());
     };
-    let (mut place, mut kind) = (None, BrickKind::Gameplay);
+    let mut kind = BrickKind::Gameplay;
     let mut given = rest.iter();
     while let Some(flag) = given.next() {
         match (flag.as_str(), given.next()) {
-            ("--place", Some(value)) => place = Some(value.as_str()),
             ("--kind", Some(value)) => kind = BrickKind::named(value)?,
             _ => return Err(USAGE.into()),
         }
     }
-    if place.is_some() && kind != BrickKind::Drawn {
+    if !lowercase_words(name, '_') {
         return Err(json!({
-            "code": "invalid_arguments",
-            "path": "--place",
-            "expected": "--kind drawn",
-            "got": kind.name(),
+            "code": "invalid_name",
+            "path": "NAME",
+            "got": name,
+            "expected": "lowercase words of letters and digits joined by underscores",
         })
         .to_string());
-    }
-    let named_options =
-        std::iter::once(("NAME", name.as_str())).chain(place.map(|place| ("--place", place)));
-    for (path, given) in named_options {
-        if !lowercase_words(given, '_') {
-            return Err(json!({
-                "code": "invalid_name",
-                "path": path,
-                "got": given,
-                "expected": "lowercase words of letters and digits joined by underscores",
-            })
-            .to_string());
-        }
     }
     if RESERVED.contains(&name.as_str()) {
         return Err(json!({
@@ -397,7 +375,6 @@ fn brick_arguments(options: &[String]) -> Result<BrickArguments, String> {
     Ok(BrickArguments {
         project,
         name: name.clone(),
-        place: place.map(str::to_owned),
         kind,
     })
 }
@@ -406,10 +383,9 @@ fn brick(root: &Path, options: &[String]) -> Result<(), String> {
     let BrickArguments {
         project,
         name,
-        place,
         kind,
     } = brick_arguments(options)?;
-    let (name, place) = (&name, place.as_deref());
+    let name = &name;
     let project = project
         .trim_start_matches("./")
         .trim_end_matches('/')
@@ -419,28 +395,9 @@ fn brick(root: &Path, options: &[String]) -> Result<(), String> {
     if root.join(&module).exists() {
         return Err(format!("{module} already exists"));
     }
-    let repository = crate::rules::repository(root)?;
     let engine = crate::bricks::standard_engine().map_err(|error| error.to_string())?;
-    let registry = engine
-        .app
-        .world()
-        .get_resource::<Registry>()
-        .ok_or("the standard engine holds no brick registry")?;
     taken(root, &project, name, &engine)?;
     let named = pascal(name, '_');
-    let claim = match place {
-        Some(place) => {
-            let found = claim(root, repository, registry, place)?;
-            if found.is_none() {
-                println!(
-                    "{}",
-                    json!({"event": "part_undeclared", "part": place, "brick": name})
-                );
-            }
-            found
-        }
-        None => None,
-    };
     let upper = name.to_ascii_uppercase();
     let template = kind.template();
     let template_named = pascal(template, '_');
@@ -456,15 +413,11 @@ fn brick(root: &Path, options: &[String]) -> Result<(), String> {
             .components()
             .map(|part| rename(&part.as_os_str().to_string_lossy()))
             .collect();
-        let mut text = rename(&text);
-        if inside == Path::new("mod.rs") {
-            text = registered(text, &named, claim.as_ref())?;
-        }
-        files.push((root.join(&module).join(inside), text));
+        files.push((root.join(&module).join(inside), rename(&text)));
     }
     write_files(root, &files)?;
     let listed = declare_module(root, &project, name, &named)?;
-    need_dependencies(root, &project, kind, claim.as_ref())?;
+    need_dependencies(root, &project, kind)?;
     run(root, "cargo", &["check", "-p", &game])?;
     run(
         root,
@@ -481,8 +434,6 @@ fn brick(root: &Path, options: &[String]) -> Result<(), String> {
             "brick": format!("{}::bricks::{name}::{named}Brick", game.replace('-', "_")),
             "kind": kind.name(),
             "listed": listed,
-            "part": place,
-            "claims": claim.as_ref().map(|_| "list"),
         })
     );
     Ok(())
@@ -568,21 +519,6 @@ fn taken(root: &Path, project: &str, name: &str, engine: &Engine) -> Result<(), 
     Ok(())
 }
 
-fn registered(text: String, named: &str, claim: Option<&Claim>) -> Result<String, String> {
-    let Some(claim) = claim else {
-        return Ok(text);
-    };
-    let line = format!(".join::<{}>(Default::default())", claim.path);
-    let anchor = format!(".settings::<{named}>()\n");
-    if !text.contains(&anchor) {
-        return Err(format!(
-            "{APP_TEMPLATE}/{}/mod.rs no longer registers its settings",
-            BrickKind::Drawn.folder()
-        ));
-    }
-    Ok(text.replacen(&anchor, &format!("{anchor}            {line}\n"), 1))
-}
-
 fn edited(path: &Path, edit: impl FnOnce(&str) -> String) -> Result<(), String> {
     let text = fs::read_to_string(path)
         .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
@@ -639,24 +575,14 @@ fn declare_module(root: &Path, project: &str, name: &str, named: &str) -> Result
     Ok(listed)
 }
 
-fn need_dependencies(
-    root: &Path,
-    project: &str,
-    kind: BrickKind,
-    claim: Option<&Claim>,
-) -> Result<(), String> {
+fn need_dependencies(root: &Path, project: &str, kind: BrickKind) -> Result<(), String> {
     let path = root.join(project).join("Cargo.toml");
-    let mut needs: Vec<&str> = kind.needs().to_vec();
-    if let Some(claim) = claim
-        && !needs.contains(&claim.package.as_str())
-    {
-        needs.push(&claim.package);
-    }
+    let needs = kind.needs();
     let mut added = Vec::new();
     edited(&path, |text| {
         let mut text = text.to_owned();
         let table = "\n[dependencies]\n";
-        for need in needs {
+        for &need in needs {
             let held = [format!("\n{need}.workspace"), format!("\n{need} =")]
                 .iter()
                 .any(|line| text.contains(line.as_str()));
@@ -682,99 +608,6 @@ fn need_dependencies(
         );
     }
     Ok(())
-}
-
-fn claim(
-    root: &Path,
-    repository: &Repository,
-    registry: &Registry,
-    part: &str,
-) -> Result<Option<Claim>, String> {
-    if !registry
-        .place(part)
-        .is_some_and(|decl| matches!(decl.kind(), PlaceKind::List))
-    {
-        return Ok(None);
-    }
-    let Some(declared) = declared(root, repository, part)? else {
-        return Ok(None);
-    };
-    let kind = declared.kind.as_str();
-    let core = matches!(declared.package.as_str(), "engine_core" | "engine_render");
-    if !matches!(kind, "place" | "kit") && !core {
-        return Err(format!(
-            "{part} is declared in {} (kind {kind}), which a brick cannot depend on",
-            declared.package
-        ));
-    }
-    Ok(Some(Claim {
-        path: declared.path,
-        package: declared.package,
-    }))
-}
-
-struct Declared {
-    path: String,
-    package: String,
-    kind: String,
-}
-
-fn declared(root: &Path, repository: &Repository, part: &str) -> Result<Option<Declared>, String> {
-    let declaration = format!("const NAME: &'static str = \"{part}\";");
-    for path in engine_checks::files::sources(root)? {
-        if !path.ends_with(".rs") || !path.starts_with("crates/") {
-            continue;
-        }
-        let text = fs::read_to_string(root.join(&path))
-            .map_err(|error| format!("cannot read {path}: {error}"))?;
-        let marker = "impl List for ";
-        for (at, _) in text.match_indices(marker) {
-            let rest = &text[at + marker.len()..];
-            let block = &rest[..rest.find('}').unwrap_or(rest.len())];
-            if !block.contains(&declaration) {
-                continue;
-            }
-            let name: String = rest
-                .chars()
-                .take_while(|character| character.is_alphanumeric() || *character == '_')
-                .collect();
-            let Some(package) = repository.own().find(|package| {
-                package
-                    .path
-                    .as_deref()
-                    .is_some_and(|folder| path.starts_with(&format!("{folder}/src/")))
-            }) else {
-                continue;
-            };
-            let module = module_of(&path, package.path.as_deref().unwrap_or_default());
-            let inner = if module.is_empty() {
-                name.clone()
-            } else {
-                format!("{module}::{name}")
-            };
-            return Ok(Some(Declared {
-                path: format!("{}::{inner}", package.crate_name()),
-                package: package.name.clone(),
-                kind: package.engine["kind"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned(),
-            }));
-        }
-    }
-    Ok(None)
-}
-
-fn module_of(path: &str, folder: &str) -> String {
-    let inside = path
-        .strip_prefix(&format!("{folder}/src/"))
-        .unwrap_or(path)
-        .trim_end_matches(".rs");
-    let inside = inside.strip_suffix("/mod").unwrap_or(inside);
-    if inside == "lib" {
-        return String::new();
-    }
-    inside.replace('/', "::")
 }
 
 fn join_workspace(root: &Path, project: &str) -> Result<(), String> {

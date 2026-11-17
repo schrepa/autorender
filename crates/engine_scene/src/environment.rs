@@ -88,21 +88,13 @@ impl SceneEnvironment {
             if let Some(first) = skipped.first() {
                 return Err(first.clone());
             }
-            let mut before = Vec::new();
             for key in self.keys() {
                 let Some(section) = listed(world, key) else {
                     continue;
                 };
-                before.push((section, section.current(world)?));
                 section.set_at(world, &self.sections[key], &format!("{path}.{key}"))?;
             }
-            let Err(refused) = engine_registry::check_sections(world) else {
-                return Ok(skipped);
-            };
-            for (section, value) in &before {
-                section.set_at(world, value, &format!("{path}.{}", section.key))?;
-            }
-            Err(refused.within(path))
+            Ok(skipped)
         })
     }
 
@@ -115,7 +107,7 @@ impl SceneEnvironment {
                 .unwrap_or_else(|| section.default_value());
             section.set_at(world, &value, &format!("{path}.{}", section.key))?;
         }
-        engine_registry::check_sections(world).map_err(|refused| refused.within(path))
+        Ok(())
     }
 }
 

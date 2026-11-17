@@ -1,9 +1,7 @@
-use bevy_ecs::component::ComponentId;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 
 use super::{GlobalTransforms, tracking};
-use crate::moves::MovingKinds;
 use crate::{Mobility, Mover, Node, NodeWord};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -13,14 +11,13 @@ pub(super) struct Declared {
 }
 
 impl Declared {
-    fn read(world: &World, entity: Entity, kinds: &[ComponentId]) -> Self {
+    fn read(world: &World, entity: Entity) -> Self {
         let Ok(held) = world.get_entity(entity) else {
             return Self::default();
         };
-        let moved = held.contains::<Mover>() || kinds.iter().any(|&kind| held.contains_id(kind));
         Self {
             node: held.get::<Node>().copied().unwrap_or_default(),
-            owned: if moved {
+            owned: if held.contains::<Mover>() {
                 Mobility::Moving
             } else {
                 Mobility::Static
@@ -44,20 +41,17 @@ impl GlobalTransforms {
             std::mem::swap(&mut self.touched, &mut invalidation.touched);
         }
         let world: &World = world;
-        let kinds = world
-            .get_resource::<MovingKinds>()
-            .map_or(&[][..], |kinds| kinds.0.as_slice());
         let mut changed = rebuilt;
         if rebuilt {
             for (declared, &entity) in self.declared.iter_mut().zip(&self.entities) {
-                *declared = Declared::read(world, entity, kinds);
+                *declared = Declared::read(world, entity);
             }
         } else {
             for &entity in &self.touched {
                 let Some(&index) = self.indices.get(&entity) else {
                     continue;
                 };
-                let next = Declared::read(world, entity, kinds);
+                let next = Declared::read(world, entity);
                 if self.declared[index] != next {
                     self.declared[index] = next;
                     changed = true;

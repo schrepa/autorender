@@ -216,14 +216,6 @@ pub(crate) struct PartInfo {
     pub(crate) package: &'static str,
     pub(crate) name: &'static str,
     pub(crate) memory: &'static [&'static str],
-    pub(crate) owner: &'static str,
-    pub(crate) profile: u16,
-}
-
-impl PartInfo {
-    pub(crate) fn owned(&self) -> crate::memory::Owned {
-        crate::memory::owned(self.owner, self.profile)
-    }
 }
 
 #[derive(Clone, Default)]

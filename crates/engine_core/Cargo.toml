@@ -7,7 +7,7 @@ publish.workspace = true
 
 [features]
 default = []
-dev = ["engine_profile/bricks", "engine_registry/profiling"]
+dev = ["engine_profile/rows", "engine_registry/profiling"]
 profiling = ["engine_profile/enabled", "engine_registry/profiling"]
 schema = ["engine_assets/schema", "engine_settings/schema", "engine_place/schema"]
 

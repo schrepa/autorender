@@ -488,7 +488,6 @@ impl DevTools {
             inspectors: self.all_inspectors(&bricks).count(),
             culling_enabled: frustum_culling(world),
             features: registry.map(|registry| registry.names().collect()),
-            unmet: engine.unmet().iter().map(Refusal::of).collect(),
             notices: engine.notices().iter().map(Refusal::of).collect(),
             presentation: *engine.presentation(),
             fixed_delta_seconds: world
@@ -551,8 +550,7 @@ impl DevTools {
                 return Ok(DescribeResult::Catalog {
                     name: name.to_owned(),
                     kind: TypeKind::Catalog,
-                    codes: registry
-                        .map_or_else(|| ErrorCode::NAMES.to_vec(), Registry::error_codes),
+                    codes: ErrorCode::NAMES.to_vec(),
                 });
             }
             KIND_PASSES => {
@@ -1007,15 +1005,10 @@ fn described_brick(brick: &BrickRecord, full: bool) -> DescribedBrick {
     DescribedBrick {
         name: brick.package,
         crate_name: brick.package,
-        fills: brick
-            .fills()
-            .iter()
-            .map(|filled| filled.place.name())
-            .collect(),
         joins: brick
             .joins()
             .iter()
-            .map(|joined| joined.place.name())
+            .map(|joined| joined.name)
             .collect(),
         settings: brick
             .settings_entries()

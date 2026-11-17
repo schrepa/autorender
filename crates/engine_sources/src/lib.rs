@@ -11,7 +11,7 @@ use sha2::{Digest, Sha256};
 use toml_edit::{ArrayOfTables, Document, Item, Table, Value};
 use wgsl_parse::syntax::TranslationUnit;
 
-const RESERVED: &[&str] = &["engine", "generated", "face", "place"];
+const RESERVED: &[&str] = &["engine", "generated"];
 
 const KEYWORDS: &[&str] = &[
     "as", "async", "await", "box", "break", "const", "continue", "dyn", "else", "enum", "extern",
@@ -589,8 +589,7 @@ fn reach(dir: &Path, root: &Path, found: &mut BTreeSet<PathBuf>, every: bool) {
             let Some(reached) = read(&target.join("Cargo.toml")) else {
                 continue;
             };
-            let followed =
-                every || matches!(kind(&reached), Some("support" | "place" | "shared" | "kit"));
+            let followed = every || kind(&reached) == Some("support");
             if followed && found.insert(target.clone()) {
                 reach(&target, root, found, every);
             }

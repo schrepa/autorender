@@ -221,14 +221,10 @@ error_codes! {
     JobUnsupported => "job_unsupported",
     SectionUnlisted => "section_unlisted",
 
-    SlotFilledTwice => "slot_filled_twice",
     PlaceNotFilled => "place_not_filled",
     ForeignAccess => "foreign_access",
-    ForeignEntity => "foreign_entity",
-    WrittenTwice => "written_twice",
     NameTwice => "name_twice",
     PlaceCycle => "place_cycle",
-    UnownedSystem => "unowned_system",
     AmbiguousPasses => "ambiguous_passes",
     ReadBeforeWrite => "read_before_write",
     ViewWriterUnplaced => "view_writer_unplaced",
@@ -254,5 +250,4 @@ error_codes! {
     ExceptionUnused => "exception_unused",
     FileTooLong => "file_too_long",
     StructTooWide => "struct_too_wide",
-    ScheduleAmbiguity => "schedule_ambiguity",
 }

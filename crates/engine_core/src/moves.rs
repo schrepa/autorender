@@ -1,29 +1,16 @@
-use std::any::TypeId;
 use std::marker::PhantomData;
 
 use bevy_ecs::change_detection::Mut;
-use bevy_ecs::component::{Component, ComponentId};
+use bevy_ecs::component::Component;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::lifecycle::{Add, Remove};
 use bevy_ecs::observer::On;
-use bevy_ecs::prelude::{Commands, Query, Res, ResMut, Without};
-use bevy_ecs::resource::Resource;
+use bevy_ecs::prelude::{Commands, Query, Res, Without};
 use bevy_ecs::system::SystemParam;
 use bevy_ecs::world::World;
-use engine_registry::{MoverRule, Registry};
+use engine_registry::Registry;
 
-use crate::hierarchy::tracking::Invalidation;
-use crate::{
-    ApplyAt, Ask, Asked, Brick, FixedTime, FrameTime, GlobalTransforms, Moment, Mover, MoverId,
-    Pace, Transform, edit_transform,
-};
-
-mod key {
-    #[derive(bevy_ecs::resource::Resource, Default)]
-    pub struct Key;
-}
-
-pub(crate) use key::Key;
+use crate::{Asked, Brick, GlobalTransforms, Mover, MoverId, Pace, Transform, edit_transform};
 
 pub const fn mover_of<B: Brick>() -> MoverId {
     if B::SOURCE.game() {
@@ -33,20 +20,11 @@ pub const fn mover_of<B: Brick>() -> MoverId {
     }
 }
 
-pub(crate) fn rule() -> MoverRule {
-    MoverRule {
-        transform: TypeId::of::<Transform>(),
-        mover: TypeId::of::<Mover>(),
-        key: TypeId::of::<Key>(),
-    }
-}
-
 #[derive(SystemParam)]
 pub struct Moves<'w, 's, B: Brick> {
     nodes: Query<'w, 's, (Entity, &'static mut Transform, &'static Mover)>,
     still: Query<'w, 's, &'static Transform, Without<Mover>>,
     globals: Res<'w, GlobalTransforms>,
-    _key: Res<'w, Key>,
     brick: PhantomData<fn() -> B>,
 }
 
@@ -110,72 +88,17 @@ pub struct Teleport {
     pub to: Transform,
 }
 
-impl Ask for Teleport {
-    const NAME: &'static str = "teleport";
-    const AT: ApplyAt = ApplyAt::TickEnd;
-
-    fn node(&self) -> Option<Entity> {
-        Some(self.node)
-    }
-}
-
-#[derive(SystemParam)]
-pub struct Asks<'w, 's, A: Ask> {
-    commands: Commands<'w, 's>,
-    ask: PhantomData<fn() -> A>,
-}
-
-impl<A: Ask> Asks<'_, '_, A> {
-    pub fn send(&mut self, ask: A) {
-        self.commands
-            .queue(move |world: &mut World| send_ask(world, ask));
-    }
-}
-
-#[derive(SystemParam)]
-pub struct Applies<'w, A: Ask> {
-    asked: ResMut<'w, Asked<A>>,
-    fixed: Res<'w, FixedTime>,
-    frame: Res<'w, FrameTime>,
-}
-
-impl<A: Ask> Applies<'_, A> {
-    pub fn take(&mut self) -> Vec<A> {
-        if self.asked.is_empty() {
-            return Vec::new();
-        }
-        let now = Moment {
-            tick: self.fixed.tick,
-            frame: self.frame.frame,
-        };
-        self.asked.take(now)
-    }
-}
-
-pub fn send_ask<A: Ask>(world: &mut World, ask: A) {
-    let at = moment(world);
+pub fn send_ask<A: Send + Sync + 'static>(world: &mut World, ask: A) {
     if let Some(mut asked) = world.get_resource_mut::<Asked<A>>() {
-        asked.ask(ask, at);
+        asked.ask(ask);
     }
 }
 
-pub fn take_asks<A: Ask>(world: &mut World) -> Vec<A> {
+pub fn take_asks<A: Send + Sync + 'static>(world: &mut World) -> Vec<A> {
     if world.get_resource::<Asked<A>>().is_none_or(Asked::is_empty) {
         return Vec::new();
     }
-    let now = moment(world);
-    world.resource_mut::<Asked<A>>().take(now)
-}
-
-pub(crate) fn moment(world: &World) -> Moment {
-    Moment {
-        tick: world
-            .get_resource::<FixedTime>()
-            .map_or(0, |time| time.tick),
-        frame: world
-            .get_resource::<FrameTime>()
-            .map_or(0, |time| time.frame),
-    }
+    world.resource_mut::<Asked<A>>().take()
 }
 
 pub(crate) fn end_tick(world: &mut World) -> bool {
@@ -212,10 +135,9 @@ fn frame_teleports(world: &mut World) -> Vec<Teleport> {
     if framed.is_empty() {
         return Vec::new();
     }
-    let now = moment(world);
     world
         .resource_mut::<Asked<Teleport>>()
-        .take_where(now, |teleport| framed.contains(&teleport.node))
+        .take_where(|teleport| framed.contains(&teleport.node))
 }
 
 pub(crate) fn start_frame(world: &mut World) -> bool {
@@ -233,17 +155,11 @@ pub(crate) fn start_frame(world: &mut World) -> bool {
     true
 }
 
-#[derive(Resource, Default)]
-pub(crate) struct MovingKinds(pub(crate) Vec<ComponentId>);
-
 #[derive(Clone, Copy)]
 pub(crate) enum NodeKind {
     Claimed {
         claim: fn(&mut World, Mover),
         mover: Mover,
-    },
-    Moving {
-        track: fn(&mut World) -> ComponentId,
     },
 }
 
@@ -275,16 +191,6 @@ fn released(world: &mut World, node: Entity, mover: Mover) {
     }
 }
 
-pub(crate) fn moving<C: Component>(world: &mut World) -> ComponentId {
-    world.add_observer(|add: On<Add, C>, mut held: ResMut<Invalidation>| {
-        held.touched.push(add.entity);
-    });
-    world.add_observer(|remove: On<Remove, C>, mut held: ResMut<Invalidation>| {
-        held.touched.push(remove.entity);
-    });
-    world.register_component::<C>()
-}
-
 pub(crate) fn install_kinds(world: &mut World) {
     let kinds: Vec<NodeKind> = world
         .get_resource::<Registry>()
@@ -295,12 +201,9 @@ pub(crate) fn install_kinds(world: &mut World) {
                 .flat_map(|record| record.entries::<NodeKind>().copied())
                 .collect()
         });
-    let mut moving = Vec::new();
     for kind in kinds {
         match kind {
             NodeKind::Claimed { claim, mover } => claim(world, mover),
-            NodeKind::Moving { track } => moving.push(track(world)),
         }
     }
-    world.insert_resource(MovingKinds(moving));
 }

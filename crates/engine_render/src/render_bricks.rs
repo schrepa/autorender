@@ -28,11 +28,9 @@ pub trait RenderBricks {
 
 impl RenderBricks for Bricks<'_> {
     fn part<P: GpuPart>(&mut self) -> &mut Self {
-        let record = self.record();
-        let scope = record.scope();
-        record
+        self.record()
             .render
-            .push(Box::new(registration::PartRecord::of::<P>(scope)));
+            .push(Box::new(registration::PartRecord::of::<P>()));
         self
     }
 
@@ -42,12 +40,7 @@ impl RenderBricks for Bricks<'_> {
             .render_entries::<PassEntry>()
             .any(|entry| entry.name == N::NAME)
         {
-            let scope = record.scope();
             record.render.push(Box::new(PassEntry::of::<N>()));
-            record.render.push(Box::new(registration::PassScope {
-                name: N::NAME,
-                scope,
-            }));
         }
         self
     }
@@ -58,10 +51,9 @@ impl RenderBricks for Bricks<'_> {
         draw: fn(&P, &SceneDraw, &mut Draw<'_, P, Scene>) -> u32,
     ) -> &mut Self {
         let record = self.record();
-        let scope = record.scope();
         record
             .render
-            .push(Box::new(registration::PartRecord::of::<P>(scope)));
+            .push(Box::new(registration::PartRecord::of::<P>()));
         record
             .render
             .push(Box::new(registration::KindDraw::of::<P>(kind, draw)));

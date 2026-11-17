@@ -1,29 +1,22 @@
 use std::any::{Any, TypeId};
 use std::collections::BTreeMap;
 
-use bevy_ecs::component::ComponentId;
+use bevy_ecs::change_detection::Res;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::schedule::{
-    Chain, InternedScheduleLabel, IntoScheduleConfigs, ScheduleConfigs, Schedules, SystemSet,
+    Chain, InternedScheduleLabel, IntoScheduleConfigs, ScheduleBuildError, ScheduleConfigs,
+    ScheduleGraph, Schedules, SystemSet,
 };
-use bevy_ecs::system::{IntoSystem, ScheduleSystem};
+use bevy_ecs::system::ScheduleSystem;
 use bevy_ecs::world::World;
-use engine_place::{Board, Callable, Error, ErrorCode, PlaceDecl, PlaceKind, Slot};
+use engine_place::{Board, CORE_ROW, Callable, Error, ErrorCode};
 use engine_settings::Expected;
 use serde_json::Value;
 
-use crate::access::{AccessRule, MoverRule};
-use crate::attribution::CORE_ROW;
-use crate::entries::{Kept, OperationEntry, SettingsEntry, StatsEntry};
-use crate::hooks::{Named, add_removal};
+use crate::entries::{OperationEntry, SettingsEntry, StatsEntry};
 use crate::jobs::JobQueue;
-use crate::needs::{Read, RequiredFill};
-use crate::order::{self, PlaceRules};
-use crate::owners::{Shared, Used, ValueKind, Values, note, ownership};
-use crate::record::{BrickRecord, crate_segment};
-use crate::state::{
-    BrickStates, Despawn, GateDriver, GateFn, GateId, Reset, Scope, Turning, state_on,
-};
+use crate::record::BrickRecord;
+use crate::state::{BrickStates, Despawn, Switches};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct BrickId(pub(crate) u32);
@@ -32,14 +25,10 @@ impl BrickId {
     pub fn index(self) -> usize {
         self.0 as usize
     }
-
-    pub fn profile_index(self) -> u16 {
-        u16::try_from(self.0 + 1).unwrap_or(u16::MAX)
-    }
 }
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct BrickSet(pub &'static str);
+struct BrickSet(&'static str);
 
 fn unregistered(name: &str) -> Error {
     Error::new(ErrorCode::UnknownVariant, "$.name")
@@ -72,48 +61,23 @@ pub fn call<O: Callable>(world: &mut World, request: O::Request) -> Result<O::Re
 #[derive(Resource, Default)]
 pub struct Registry {
     bricks: Vec<BrickRecord>,
-    catalog: Vec<PlaceDecl>,
-    core_fills: Vec<PlaceDecl>,
     core_sections: Vec<SettingsEntry>,
     core_operations: Vec<OperationEntry>,
-    bases: Vec<u32>,
-    rule: AccessRule,
-    named: Vec<Named>,
-    eachers: Vec<(TypeId, MemberEach)>,
-    owners: Vec<Shared>,
-    private: Vec<Vec<(ComponentId, Reset)>>,
-    movers: Option<MoverRule>,
-    despawn: Option<Despawn>,
+    pub(crate) despawn: Option<Despawn>,
     problems: Vec<Error>,
-    required: Vec<RequiredFill>,
-    unmet: Vec<Error>,
-    gated: Vec<Error>,
     notices: Vec<Error>,
 }
 
 #[derive(Default)]
 pub struct RegistryBuilder {
     registry: Registry,
-    listed: Vec<&'static str>,
-    firsts: Vec<TypeId>,
-    orders: Vec<(&'static str, &'static str)>,
 }
-
-pub(crate) type MemberEach = fn(&World, &mut dyn FnMut(&dyn Any));
-
-type Orders = Vec<(&'static str, &'static str)>;
 
 impl RegistryBuilder {
     pub fn add(&mut self, mut record: BrickRecord) {
         let registry = &mut self.registry;
         registry.problems.append(&mut record.take_problems());
         let package = record.package;
-        if record.owner().is_none() {
-            let path = format!("$.bricks.{package}");
-            registry
-                .problems
-                .push(Error::new(ErrorCode::ForeignAccess, path).got(record.type_name()));
-        }
         if registry.has(package) {
             let path = format!("$.bricks.{package}");
             registry
@@ -122,33 +86,7 @@ impl RegistryBuilder {
             return;
         }
         registry.check_names(&record);
-        self.listed.push(package);
         registry.bricks.push(record);
-    }
-
-    pub fn places(&mut self, places: &'static [PlaceDecl]) {
-        for decl in places {
-            self.registry.catalog_add(*decl);
-        }
-    }
-
-    #[track_caller]
-    pub fn fill_core<S: Slot>(&mut self) {
-        let registry = &mut self.registry;
-        let slot = TypeId::of::<S>();
-        if let Some(filler) = registry.filler(slot) {
-            let path = format!("$.places.{}", S::NAME);
-            registry
-                .problems
-                .push(Error::new(ErrorCode::SlotFilledTwice, path).got(filler));
-            return;
-        }
-        let decl = PlaceDecl::slot::<S>();
-        registry.core_fills.push(decl);
-        registry.catalog_add(decl);
-        for call in S::CALLS {
-            registry.core_operation(OperationEntry::of(*call));
-        }
     }
 
     pub fn core_settings(&mut self, entry: SettingsEntry) {
@@ -159,35 +97,13 @@ impl RegistryBuilder {
         self.registry.core_operation(entry);
     }
 
-    pub fn mover_rule(&mut self, rule: MoverRule) {
-        self.registry.movers = Some(rule);
-    }
-
     pub fn despawn_rule(&mut self, despawn: Despawn) {
         self.registry.despawn = Some(despawn);
     }
 
-    pub fn writers_first<T: 'static>(&mut self) {
-        let type_id = TypeId::of::<T>();
-        if !self.firsts.contains(&type_id) {
-            self.firsts.push(type_id);
-        }
-    }
-
-    pub fn install(self, world: &mut World, schedules: &[InternedScheduleLabel]) -> GateDriver {
-        let Self {
-            mut registry,
-            listed,
-            firsts,
-            orders,
-        } = self;
-        registry.number();
-        registry.catalog_records();
-        registry.rule = registry.rule_of();
+    pub fn install(self, world: &mut World, schedules: &[InternedScheduleLabel]) -> Switches {
+        let Self { mut registry } = self;
         registry.check_owned();
-        for decl in &registry.catalog {
-            decl.insert(world);
-        }
         for entry in &registry.core_sections {
             entry.owned().init(world);
         }
@@ -199,31 +115,16 @@ impl RegistryBuilder {
             });
         }
         registry.join_members(world);
-        registry.resolve_named(world);
-        world.insert_resource(registry.states());
+        world.insert_resource(BrickStates::new(registry.bricks.len()));
         if !world.contains_resource::<JobQueue>() {
             world.init_resource::<JobQueue>();
         }
-        let orders = registry.order_games(&listed, orders);
-        registry.order_schedules(world, schedules, &firsts, &orders);
-        registry.add_systems(world, &listed);
-        let mut uses: Vec<Used> = Vec::new();
-        let (conditions, switches) = registry.conditions(world, &mut uses);
-        registry.add_hooks(world, &mut uses);
-        registry.check_operations(world, &mut uses);
-        let (mut refused, mut found) = order::build(world, schedules);
+        registry.add_systems(world);
+        let mut refused = build(world, schedules);
         registry.problems.append(&mut refused);
-        uses.append(&mut found);
-        let (needs, unmet) = registry.analyze(world, &uses);
-        let required = registry.required_gates();
-        {
-            let mut states = world.resource_mut::<BrickStates>();
-            states.set_needs(needs);
-            states.set_unmet(unmet);
-            states.set_required(required);
-        }
+        let switches = registry.bricks.iter().map(BrickRecord::switch_fn).collect();
         world.insert_resource(registry);
-        GateDriver::new(conditions, switches)
+        Switches::new(switches)
     }
 }
 
@@ -260,50 +161,8 @@ impl Registry {
         self.core_operations.push(entry);
     }
 
-    pub fn holds(&self, package: &str, type_id: TypeId) -> bool {
-        let owner = self.brick(package).and_then(BrickRecord::owner);
-        owner.is_some()
-            && self
-                .bricks
-                .iter()
-                .any(|record| record.owner() == owner && record.owns(type_id))
-    }
-
-    pub fn private_type(&self, package: &str, type_id: TypeId, type_name: &str) -> bool {
-        self.brick(package)
-            .and_then(BrickRecord::owner)
-            .is_some_and(|owner| crate_segment(type_name) == owner)
-            && !self.rule.catalogued(type_id)
-    }
-
-    pub fn ownership(&self) -> &[Shared] {
-        &self.owners
-    }
-
-    pub(crate) fn private(&self, brick: BrickId) -> &[(ComponentId, Reset)] {
-        self.private.get(brick.index()).map_or(&[], Vec::as_slice)
-    }
-
-    pub fn keep_authored(&mut self, authored: &[ComponentId]) {
-        for resets in &mut self.private {
-            resets.retain(|(id, reset)| {
-                !(authored.contains(id) && matches!(reset, Reset::Remove(_)))
-            });
-        }
-    }
-
     pub fn report(&mut self, error: Error) {
         self.problems.push(error);
-    }
-
-    pub fn report_unmet(&mut self, error: Error) {
-        if !self.unmet.contains(&error) {
-            self.unmet.push(error);
-        }
-    }
-
-    pub fn unmet(&self) -> &[Error] {
-        &self.unmet
     }
 
     pub fn report_notice(&mut self, error: Error) {
@@ -316,56 +175,8 @@ impl Registry {
         &self.notices
     }
 
-    pub(crate) fn hold_gated(&mut self, rows: Vec<Error>) {
-        let held = std::mem::replace(&mut self.gated, rows);
-        self.unmet.retain(|row| !held.contains(row));
-        for row in &self.gated {
-            if !self.unmet.contains(row) {
-                self.unmet.push(row.clone());
-            }
-        }
-    }
-
-    pub(crate) fn gated_change(&self, states: &BrickStates) -> Option<Vec<Error>> {
-        let rows: Vec<Error> = self
-            .required
-            .iter()
-            .filter(|required| !states.on(required.filler))
-            .filter_map(|required| {
-                let reader = self.record(required.reader)?;
-                let filler = self.record(states.brick(required.filler)?)?;
-                let state = states.gate_state(required.filler)?.view();
-                Some(
-                    Error::new(
-                        ErrorCode::PlaceNotFilled,
-                        format!("$.bricks.{}.reads.{}", reader.package, required.place),
-                    )
-                    .expected(Expected::Present)
-                    .got(serde_json::json!({ "filler": filler.package, "state": state })),
-                )
-            })
-            .collect();
-        (rows != self.gated).then_some(rows)
-    }
-
-    fn required_gates(&self) -> Vec<Vec<GateId>> {
-        let mut gates: Vec<Vec<GateId>> = vec![Vec::new(); self.bricks.len()];
-        for required in &self.required {
-            if let Some(held) = gates.get_mut(required.reader.index())
-                && !held.contains(&required.filler)
-            {
-                held.push(required.filler);
-            }
-        }
-        gates
-    }
-
     pub fn problems(&self) -> &[Error] {
         &self.problems
-    }
-
-    pub fn take_problems(&mut self) -> Vec<Error> {
-        std::mem::take(&mut self.problems)
     }
 
     pub fn bricks(&self) -> &[BrickRecord] {
@@ -407,72 +218,6 @@ impl Registry {
             .flat_map(|(id, record)| record.render_entries::<T>().map(move |entry| (id, entry)))
     }
 
-    pub fn gate(&self, brick: BrickId, scope: Scope) -> Option<GateId> {
-        let base = *self.bases.get(brick.index())?;
-        let record = self.record(brick)?;
-        (scope.index() < record.scopes()).then_some(GateId(base + scope.0))
-    }
-
-    pub fn switch_gate(&self, section: &str) -> Option<GateId> {
-        self.iter().find_map(|(brick, record)| {
-            record
-                .switched(section)
-                .and_then(|scope| self.gate(brick, scope))
-        })
-    }
-
-    pub fn catalog(&self) -> &[PlaceDecl] {
-        &self.catalog
-    }
-
-    pub fn place(&self, name: &str) -> Option<&PlaceDecl> {
-        self.catalog.iter().find(|decl| decl.name() == name)
-    }
-
-    pub fn filler(&self, slot: TypeId) -> Option<&'static str> {
-        if self.core_fills.iter().any(|decl| decl.type_id() == slot) {
-            return Some(CORE_ROW);
-        }
-        self.bricks
-            .iter()
-            .find(|record| record.fills_slot(slot))
-            .map(|record| record.package)
-    }
-
-    pub fn filler_id(&self, slot: TypeId) -> Option<BrickId> {
-        self.iter()
-            .find(|(_, record)| record.fills_slot(slot))
-            .map(|(id, _)| id)
-    }
-
-    pub fn filler_named(&self, name: &str) -> Option<&'static str> {
-        let decl = self.place(name)?;
-        (decl.kind() == PlaceKind::Slot)
-            .then(|| self.filler(decl.type_id()))
-            .flatten()
-    }
-
-    pub fn each_slot(&self, world: &World, slot: TypeId, each: &mut dyn FnMut(&dyn Any)) {
-        if let Some(decl) = self
-            .core_fills
-            .iter()
-            .chain(&self.catalog)
-            .find(|decl| decl.kind() == PlaceKind::Slot && PlaceDecl::type_id(decl) == slot)
-        {
-            decl.read(world, each);
-        }
-    }
-
-    pub fn error_codes(&self) -> Vec<&'static str> {
-        let mut codes = ErrorCode::NAMES.to_vec();
-        for code in self.bricks.iter().flat_map(BrickRecord::error_codes) {
-            if !codes.contains(&code.as_str()) {
-                codes.push(code.as_str());
-            }
-        }
-        codes
-    }
-
     pub fn sections(&self) -> impl Iterator<Item = &SettingsEntry> + '_ {
         self.core_sections.iter().chain(
             self.bricks
@@ -503,57 +248,18 @@ impl Registry {
         self.operations().find(|entry| entry.name == name)
     }
 
-    pub fn check_named(&self, key: &str, value: &Value, path: &str) -> Result<(), Error> {
-        self.named
-            .iter()
-            .filter(|named| named.section == key)
-            .try_for_each(|named| named.check(value, path))
-    }
-
     pub fn check_section(&self, key: &str, value: &Value, path: &str) -> Result<(), Error> {
-        let Some(entry) = self.section(key) else {
-            return Ok(());
-        };
-        if self.named.iter().any(|named| named.section == key) {
-            entry.parse(value, path)?;
-            self.check_named(key, value, path)?;
-        }
-        entry.check(value, path)
+        self.section(key)
+            .map_or(Ok(()), |entry| entry.check(value, path))
     }
 
     pub fn section_schema(&self, key: &str) -> Option<schemars::Schema> {
-        let mut schema = self.section(key)?.schema();
-        for named in self.named.iter().filter(|named| named.section == key) {
-            named.schema(&mut schema);
-        }
-        Some(schema)
-    }
-
-    pub fn slot_on(&self, states: &BrickStates, slot: TypeId) -> bool {
-        if self.core_fills.iter().any(|decl| decl.type_id() == slot) {
-            return true;
-        }
-        self.iter()
-            .find_map(|(brick, record)| {
-                record
-                    .fills()
-                    .iter()
-                    .find(|filled| filled.slot == slot)
-                    .map(|filled| (brick, filled.scope))
-            })
-            .and_then(|(brick, scope)| self.gate(brick, scope))
-            .is_some_and(|gate| states.on(gate))
-    }
-
-    pub fn each_member(&self, world: &World, list: TypeId, each: &mut dyn FnMut(&dyn Any)) {
-        if let Some((_, members)) = self.eachers.iter().find(|(known, _)| *known == list) {
-            members(world, each);
-        }
+        Some(self.section(key)?.schema())
     }
 
     pub fn corpora<C: Any>(&self) -> impl Iterator<Item = (&'static str, &'static C)> + '_ {
         self.bricks.iter().flat_map(|record| {
-            let owner = record.owner().unwrap_or(record.package);
+            let owner = record.crate_name();
             record.corpora::<C>().map(move |corpus| (owner, corpus))
         })
     }
@@ -562,53 +268,6 @@ impl Registry {
         self.stats()
             .map(|entry| (entry.key, entry.read(world)))
             .collect()
-    }
-
-    pub(crate) fn turning(&self, brick: BrickId, gate: GateId) -> Turning {
-        let (Some(record), Some(&base)) = (self.record(brick), self.bases.get(brick.index()))
-        else {
-            return Turning::default();
-        };
-        let scope = Scope(gate.0.saturating_sub(base));
-        let slots = record
-            .fills()
-            .iter()
-            .filter(|filled| filled.scope == scope)
-            .map(|filled| filled.reset)
-            .collect();
-        let joins = record
-            .joins()
-            .iter()
-            .filter(|joined| joined.scope == scope)
-            .map(|joined| joined.left)
-            .collect();
-        if scope != Scope::BRICK {
-            return Turning {
-                slots,
-                joins,
-                ..Turning::default()
-            };
-        }
-        let mut turning = Turning {
-            slots,
-            joins,
-            private: self
-                .private(brick)
-                .iter()
-                .map(|&(_, reset)| reset)
-                .collect(),
-            spawned: Some(record.spawned),
-            despawn: self.despawn,
-            ..Turning::default()
-        };
-        for owned in record.owned() {
-            match owned.kept {
-                Kept::Survives(touch) => turning.settings.push(touch),
-                Kept::Dropped(_) if self.rule.catalogued(owned.type_id) => {}
-                Kept::Dropped(remove) => turning.resources.push((owned.init, remove)),
-            }
-        }
-        turning
     }
 
     fn check_names(&mut self, record: &BrickRecord) {
@@ -655,80 +314,12 @@ impl Registry {
                 );
             }
         }
-        for filled in record.fills() {
-            if let Some(owner) = self.filler(filled.slot) {
-                let path = format!("$.places.{}", filled.place.name());
-                self.problems.push(
-                    Error::new(ErrorCode::SlotFilledTwice, path)
-                        .got(owner)
-                        .nearest(package),
-                );
-            }
-        }
-    }
-
-    fn catalog_add(&mut self, decl: PlaceDecl) {
-        match self
-            .catalog
-            .iter()
-            .find(|known| known.name() == decl.name())
-        {
-            Some(known) if known.type_id() == decl.type_id() => {}
-            Some(known) => {
-                let path = format!("$.places.{}", decl.name());
-                let error = Error::new(ErrorCode::NameTwice, path).got(known.name());
-                self.problems.push(error);
-            }
-            None => self.catalog.push(decl),
-        }
-    }
-
-    fn number(&mut self) {
-        self.bases.clear();
-        let mut next = 0_u32;
-        for record in &self.bricks {
-            self.bases.push(next);
-            next += record.scopes() as u32;
-        }
-    }
-
-    fn catalog_records(&mut self) {
-        let decls: Vec<PlaceDecl> = self
-            .bricks
-            .iter()
-            .flat_map(|record| record.places().copied())
-            .collect();
-        for decl in decls {
-            self.catalog_add(decl);
-        }
-        self.catalog.sort_by(|a, b| a.name().cmp(b.name()));
-    }
-
-    fn rule_of(&self) -> AccessRule {
-        let mut rule = AccessRule::new(
-            self.bricks
-                .iter()
-                .map(|record| (record.package, record.owner()))
-                .collect(),
-            self.bricks.iter().map(BrickRecord::game).collect(),
-            self.movers,
-        );
-        for decl in &self.catalog {
-            let filler = match decl.kind() {
-                PlaceKind::Slot => self.filler_id(decl.type_id()),
-                PlaceKind::List | PlaceKind::Component | PlaceKind::Ledger => None,
-            };
-            rule.place(decl.type_id(), decl.kind(), filler);
-        }
-        rule
     }
 
     fn check_owned(&mut self) {
         let mut seen: Vec<(TypeId, &'static str)> = Vec::new();
-        for (index, record) in self.bricks.iter().enumerate() {
-            let brick = BrickId(index as u32);
+        for record in &self.bricks {
             for owned in record.owned() {
-                self.rule.check_type(brick, owned.name, &mut self.problems);
                 match seen.iter().find(|(known, _)| *known == owned.type_id) {
                     Some(&(_, first)) => {
                         let path = format!("$.bricks.{}.registers.{}", record.package, owned.name);
@@ -746,175 +337,24 @@ impl Registry {
 
     fn join_members(&mut self, world: &mut World) {
         for (index, record) in self.bricks.iter_mut().enumerate() {
-            let base = self.bases[index];
-            let (package, brick) = (record.package, record.brick());
+            let owner = (record.package, record.brick());
             for joined in &mut record.joins {
                 (joined.init)(world);
                 if let Some(member) = joined.member.take() {
-                    let owner = (package, brick);
-                    (joined.add)(world, member, GateId(base + joined.scope.0), owner);
-                }
-                if !self.eachers.iter().any(|(list, _)| *list == joined.list) {
-                    self.eachers.push((joined.list, joined.each));
+                    (joined.add)(world, member, BrickId(index as u32), owner);
                 }
             }
         }
     }
 
-    fn resolve_named(&mut self, world: &World) {
-        for record in &mut self.bricks {
-            for named in std::mem::take(&mut record.named) {
-                if !record
-                    .settings_entries()
-                    .iter()
-                    .any(|entry| entry.key == named.section)
-                {
-                    let path = format!("$.bricks.{}.named.{}", record.package, named.section);
-                    self.problems
-                        .push(Error::new(ErrorCode::ForeignAccess, path).got(named.section));
-                    continue;
-                }
-                let variants = named
-                    .kept
-                    .iter()
-                    .copied()
-                    .chain((named.names)(world))
-                    .collect();
-                self.named.push(Named {
-                    section: named.section,
-                    field: named.field,
-                    variants,
-                });
-            }
-        }
-    }
-
-    fn add_hooks(&mut self, world: &mut World, uses: &mut Vec<Used>) {
+    fn add_systems(&mut self, world: &mut World) {
+        let mut all = world.get_resource_or_init::<Schedules>();
+        let mut last: Vec<(InternedScheduleLabel, BrickSet)> = Vec::new();
         for (index, record) in self.bricks.iter_mut().enumerate() {
-            let brick = BrickId(index as u32);
-            let root = GateId(self.bases[index]);
-            let package = record.package;
-            for mut removal in record.removals.drain(..) {
-                let access = removal.system.initialize(world);
-                let name = removal.system.name();
-                self.rule
-                    .check_into(brick, &name, &access, world, &mut self.problems);
-                note(uses, brick, &access);
-                if let Err(error) = add_removal(world, package, root, removal) {
-                    self.problems.push(error);
-                }
-            }
-        }
-    }
-
-    fn states(&self) -> BrickStates {
-        let mut parents: Vec<Option<GateId>> = Vec::new();
-        let mut bricks: Vec<BrickId> = Vec::new();
-        for (index, record) in self.bricks.iter().enumerate() {
-            let base = self.bases[index];
-            for local in 0..record.scopes() {
-                let scope = Scope(local as u32);
-                parents.push(record.parent(scope).map(|parent| GateId(base + parent.0)));
-                bricks.push(BrickId(index as u32));
-            }
-        }
-        let roots = self.bases.iter().map(|&base| GateId(base)).collect();
-        let types = self.bricks.iter().map(BrickRecord::brick).collect();
-        BrickStates::new(parents, bricks, roots, types)
-    }
-
-    fn order_games(&self, listed: &[&'static str], mut orders: Orders) -> Orders {
-        let mut order = |first: &'static str, then: &'static str| {
-            if !orders.contains(&(first, then)) {
-                orders.push((first, then));
-            }
-        };
-        let games: Vec<&'static str> = listed
-            .iter()
-            .copied()
-            .filter(|&package| self.brick(package).is_some_and(BrickRecord::game))
-            .collect();
-        let engine: Vec<&'static str> = self
-            .bricks
-            .iter()
-            .filter(|record| !record.game())
-            .map(|record| record.package)
-            .collect();
-        for (at, &game) in games.iter().enumerate() {
-            for &brick in &engine {
-                order(brick, game);
-            }
-            for &later in &games[at + 1..] {
-                order(game, later);
-            }
-        }
-        orders
-    }
-
-    fn order_schedules(
-        &self,
-        world: &mut World,
-        schedules: &[InternedScheduleLabel],
-        firsts: &[TypeId],
-        orders: &[(&'static str, &'static str)],
-    ) {
-        let bricks: Box<[_]> = self
-            .iter()
-            .map(|(id, record)| (BrickSet(record.package).intern(), id))
-            .collect();
-        let slots: Box<[(ComponentId, Option<BrickId>)]> = self
-            .catalog
-            .iter()
-            .filter(|decl| decl.kind() == PlaceKind::Slot)
-            .filter_map(|decl| {
-                let id = world.components().get_id(decl.type_id())?;
-                Some((id, self.filler_id(decl.type_id())))
-            })
-            .collect();
-        let firsts: Box<[ComponentId]> = firsts
-            .iter()
-            .filter_map(|&type_id| world.components().get_id(type_id))
-            .collect();
-        let orders: Box<[(BrickId, BrickId)]> = orders
-            .iter()
-            .filter_map(|&(first, then)| Some((self.id(first)?, self.id(then)?)))
-            .collect();
-        let shared: Box<[ComponentId]> = self
-            .catalog
-            .iter()
-            .filter(|decl| decl.kind() != PlaceKind::Slot)
-            .map(PlaceDecl::type_id)
-            .chain(self.movers.map(|rule| rule.transform))
-            .filter_map(|type_id| world.components().get_id(type_id))
-            .collect();
-        let mut all = world.get_resource_or_init::<Schedules>();
-        for &schedule in schedules {
-            let rules = PlaceRules {
-                schedule,
-                bricks: bricks.clone(),
-                slots: slots.clone(),
-                firsts: firsts.clone(),
-                orders: orders.clone(),
-                shared: shared.clone(),
-                rule: self.rule.clone(),
-            };
-            order::order(all.entry(schedule), rules);
-        }
-    }
-
-    fn add_systems(&mut self, world: &mut World, listed: &[&'static str]) {
-        let mut all = world.get_resource_or_init::<Schedules>();
-        for &package in listed {
-            let Some(brick) = self.id(package) else {
-                continue;
-            };
-            let calls = std::mem::take(&mut self.bricks[brick.index()].systems);
+            let (package, brick) = (record.package, BrickId(index as u32));
             let mut groups: Vec<Group> = Vec::new();
-            for call in calls {
-                let mut configs = (call.make)();
-                if let Some(gate) = self.gate(brick, call.scope) {
-                    configs.run_if_dyn(Box::new(IntoSystem::into_system(state_on(gate))));
-                }
+            for call in std::mem::take(&mut record.systems) {
+                let configs = (call.make)();
                 match groups
                     .iter_mut()
                     .find(|group| group.schedule == call.schedule)
@@ -927,6 +367,7 @@ impl Registry {
                 }
             }
             for group in groups {
+                let schedule = group.schedule;
                 let mut chain = Chain::Unchained;
                 chain.set_chained();
                 let chained = ScheduleConfigs::Configs {
@@ -934,179 +375,22 @@ impl Registry {
                     collective_conditions: Vec::new(),
                     metadata: chain,
                 };
-                let before = crate::attributed::keys(all.entry(group.schedule));
-                all.add_systems(group.schedule, chained.in_set(BrickSet(package)));
-                crate::attributed::wrap(
-                    all.entry(group.schedule),
-                    &before,
-                    (package, brick.profile_index()),
-                );
-            }
-        }
-    }
-
-    fn conditions(
-        &mut self,
-        world: &mut World,
-        uses: &mut Vec<Used>,
-    ) -> (Vec<Option<GateFn>>, Vec<Option<&'static str>>) {
-        let mut conditions: Vec<Option<GateFn>> = Vec::new();
-        let mut switches: Vec<Option<&'static str>> = Vec::new();
-        for (index, record) in self.bricks.iter_mut().enumerate() {
-            let brick = BrickId(index as u32);
-            for scope in &mut record.scopes {
-                let condition = scope.condition.take().map(|mut condition| {
-                    let access = condition.initialize(world);
-                    let name = condition.name();
-                    self.rule
-                        .check_into(brick, &name, &access, world, &mut self.problems);
-                    note(uses, brick, &access);
-                    condition
-                });
-                conditions.push(condition);
-                switches.push(scope.switch);
-            }
-        }
-        (conditions, switches)
-    }
-
-    fn analyze(&mut self, world: &World, uses: &[Used]) -> (Vec<Vec<BrickId>>, Vec<BrickId>) {
-        let rule = &self.rule;
-        let catalog = &self.catalog;
-        let catalogued = |type_id: TypeId| {
-            rule.catalogued(type_id).then(|| {
-                catalog
-                    .iter()
-                    .find(|decl| PlaceDecl::type_id(decl) == type_id)
-                    .and_then(PlaceDecl::reset)
-            })
-        };
-        let dropped: Vec<Vec<TypeId>> = self
-            .bricks
-            .iter()
-            .map(|record| {
-                record
-                    .owned()
-                    .iter()
-                    .filter(|owned| !owned.survives() && !rule.catalogued(owned.type_id))
-                    .map(|owned| owned.type_id)
-                    .collect()
-            })
-            .collect();
-        let values = Values {
-            bricks: &self.bricks,
-            catalogued: &catalogued,
-            dropped: &dropped,
-        };
-        let held = ownership(world, &values, uses);
-        for shared in &held.shared {
-            let kind = match shared.kind {
-                ValueKind::Resource => "resources",
-                ValueKind::Component => "components",
-            };
-            self.problems.push(
-                Error::new(
-                    ErrorCode::WrittenTwice,
-                    format!("$.{kind}.{}", shared.value),
-                )
-                .got(&shared.bricks),
-            );
-        }
-        self.owners = held.shared;
-        self.private = held.private;
-        let (reads, unmet, lacking) = self.slot_reads(world, uses);
-        self.required = self.required_fills(&reads);
-        for error in unmet {
-            self.report_unmet(error);
-        }
-        (held.needs, lacking)
-    }
-
-    fn slot_reads(&self, world: &World, uses: &[Used]) -> (Vec<Read>, Vec<Error>, Vec<BrickId>) {
-        let mut reads = Vec::new();
-        let mut unmet = Vec::new();
-        let mut lacking = Vec::new();
-        for decl in self
-            .catalog
-            .iter()
-            .filter(|decl| decl.kind() == PlaceKind::Slot)
-        {
-            let slot = decl.type_id();
-            let filler = self.filler(slot);
-            let mut readers: Vec<BrickId> = Vec::new();
-            if let Some(id) = world.components().get_id(slot) {
-                for used in uses.iter().filter(|used| used.id == id && !used.write) {
-                    if !readers.contains(&used.brick) {
-                        readers.push(used.brick);
+                let before = crate::attributed::keys(all.entry(schedule));
+                all.add_systems(schedule, chained.in_set(BrickSet(package)));
+                crate::attributed::wrap(all.entry(schedule), &before, package);
+                let set =
+                    BrickSet(package).run_if(move |states: Res<BrickStates>| states.on(brick));
+                match last.iter_mut().find(|(known, _)| *known == schedule) {
+                    Some((_, previous)) => {
+                        all.configure_sets(schedule, set.after(*previous));
+                        *previous = BrickSet(package);
+                    }
+                    None => {
+                        all.configure_sets(schedule, set);
+                        last.push((schedule, BrickSet(package)));
                     }
                 }
             }
-            for (brick, record) in self.iter() {
-                if record.requires(slot) && !readers.contains(&brick) {
-                    readers.push(brick);
-                }
-            }
-            for brick in readers {
-                let Some(record) = self.bricks.get(brick.index()) else {
-                    continue;
-                };
-                if Some(record.package) == filler {
-                    continue;
-                }
-                let required = record.requires(slot);
-                reads.push(Read {
-                    reader: record.package,
-                    place: decl.name().to_owned(),
-                    providers: filler.into_iter().collect(),
-                    required,
-                });
-                if required && filler.is_none() {
-                    unmet.push(
-                        Error::new(
-                            ErrorCode::PlaceNotFilled,
-                            format!("$.bricks.{}.reads.{}", record.package, decl.name()),
-                        )
-                        .expected(Expected::Present),
-                    );
-                    lacking.push(brick);
-                }
-            }
-        }
-        (reads, unmet, lacking)
-    }
-
-    fn required_fills(&self, reads: &[Read]) -> Vec<RequiredFill> {
-        reads
-            .iter()
-            .filter(|read| read.required)
-            .filter_map(|read| {
-                let decl = self.place(&read.place)?;
-                let filler = self.filler_id(decl.type_id())?;
-                let scope = self
-                    .record(filler)?
-                    .fills()
-                    .iter()
-                    .find(|filled| filled.slot == decl.type_id())?
-                    .scope;
-                Some(RequiredFill {
-                    reader: self.id(read.reader)?,
-                    filler: self.gate(filler, scope)?,
-                    place: decl.name(),
-                })
-            })
-            .collect()
-    }
-
-    fn check_operations(&mut self, world: &mut World, uses: &mut Vec<Used>) {
-        let operations: Vec<(BrickId, OperationEntry)> = self
-            .iter()
-            .flat_map(|(id, record)| record.operations().iter().map(move |entry| (id, *entry)))
-            .collect();
-        for (brick, entry) in operations {
-            let access = entry.access(world);
-            self.rule
-                .check_into(brick, entry.name, &access, world, &mut self.problems);
-            note(uses, brick, &access);
         }
     }
 }
@@ -1116,20 +400,43 @@ struct Group {
     configs: Vec<ScheduleConfigs<ScheduleSystem>>,
 }
 
+fn build(world: &mut World, labels: &[InternedScheduleLabel]) -> Vec<Error> {
+    let mut refused: Vec<Error> = Vec::new();
+    for &label in labels {
+        let built =
+            world.try_schedule_scope(label, |world, schedule| match schedule.initialize(world) {
+                Ok(_) => None,
+                Err(error) => Some(refusal(label, &error, schedule.graph(), world)),
+            });
+        if let Ok(Some(error)) = built {
+            refused.push(error);
+        }
+    }
+    refused
+}
+
+fn refusal(
+    label: InternedScheduleLabel,
+    error: &ScheduleBuildError,
+    graph: &ScheduleGraph,
+    world: &World,
+) -> Error {
+    let code = if matches!(
+        error,
+        ScheduleBuildError::DependencySort(_) | ScheduleBuildError::FlatDependencySort(_)
+    ) {
+        ErrorCode::PlaceCycle
+    } else {
+        ErrorCode::InvalidValue
+    };
+    let text = error.to_string(graph, world);
+    let lines = text.lines().collect::<Vec<_>>();
+    Error::new(code, format!("$.schedules.{label:?}")).got(lines)
+}
+
 pub fn settings(world: &World, key: &str) -> Result<SettingsEntry, Error> {
     world
         .get_resource::<Registry>()
         .and_then(|registry| registry.section(key).copied())
         .ok_or_else(|| Error::new(ErrorCode::UnknownValue, format!("$.settings.{key}")).got(key))
-}
-
-pub fn check_sections(world: &World) -> Result<(), Error> {
-    let Some(registry) = world.get_resource::<Registry>() else {
-        return Ok(());
-    };
-    registry
-        .bricks
-        .iter()
-        .flat_map(|record| record.section_rules())
-        .try_for_each(|rule| rule(world))
 }

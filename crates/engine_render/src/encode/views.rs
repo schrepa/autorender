@@ -8,15 +8,12 @@ impl Run {
     pub(crate) fn write_cameras(&mut self) -> u64 {
         let bytes = self.uniforms.cameras.len() as u64 * CAMERA_STRIDE;
         if self.uniforms.camera.size() < bytes {
-            self.uniforms.camera = crate::memory::buffer(
-                &self.device,
-                &wgpu::BufferDescriptor {
-                    label: Some("engine/cameras"),
-                    size: bytes.next_power_of_two(),
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                },
-            );
+            self.uniforms.camera = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("engine/cameras"),
+                size: bytes.next_power_of_two(),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
             self.tallies.rebuilt.buffers += 1;
             self.touch(Held::Cameras);
         }
@@ -604,17 +601,13 @@ impl ViewSet {
         let owned = |owner: u32| part.is_none_or(|part| owner == part);
         for (texture, made) in self.tables.textures.iter_mut().enumerate() {
             if owned(machine.declared.textures[texture].part) {
-                if let Some(held) = made.take() {
-                    crate::memory::release_any(&held.texture);
-                }
+                *made = None;
                 self.tables.sizes[texture] = None;
             }
         }
         for (buffer, made) in self.tables.buffers.iter_mut().enumerate() {
-            if owned(machine.declared.buffers[buffer].part)
-                && let Some((held, _)) = made.take()
-            {
-                crate::memory::release_buffer(&held);
+            if owned(machine.declared.buffers[buffer].part) {
+                *made = None;
             }
         }
         self.stale.extend(self.groups.keys().copied());
@@ -684,15 +677,12 @@ pub(super) fn view_passes(machine: &Machine) -> (Bits, Bits) {
 fn placeholder(device: &wgpu::Device, (ty, bytes): (Ty, u64)) -> Placeholder {
     use crate::linker::Sample;
     let buffer = |usage| {
-        Placeholder::Buffer(crate::memory::buffer(
-            device,
-            &wgpu::BufferDescriptor {
-                label: Some("engine/placeholder"),
-                size: bytes.max(PLACEHOLDER_BYTES),
-                usage,
-                mapped_at_creation: false,
-            },
-        ))
+        Placeholder::Buffer(device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("engine/placeholder"),
+            size: bytes.max(PLACEHOLDER_BYTES),
+            usage,
+            mapped_at_creation: false,
+        }))
     };
     match ty {
         Ty::Uniform => buffer(wgpu::BufferUsages::UNIFORM),
@@ -746,23 +736,20 @@ fn placeholder_texture(
         | wgpu::TextureViewDimension::Cube
         | wgpu::TextureViewDimension::CubeArray => wgpu::TextureDimension::D2,
     };
-    let texture = crate::memory::texture(
-        device,
-        &wgpu::TextureDescriptor {
-            label: Some("engine/placeholder"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: layers,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension,
-            format,
-            usage,
-            view_formats: &[],
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("engine/placeholder"),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: layers,
         },
-    );
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension,
+        format,
+        usage,
+        view_formats: &[],
+    });
     Placeholder::Texture(texture.create_view(&wgpu::TextureViewDescriptor {
         dimension: Some(view),
         ..Default::default()

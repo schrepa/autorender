@@ -438,6 +438,10 @@ impl DrawnTable {
         self.touched = touched;
         self.held = held;
         self.defaults = defaults;
+        self.replan(library, known, seen);
+    }
+
+    fn replan(&mut self, library: &AssetLibrary, known: Option<Seen>, seen: Seen) {
         if known.is_none_or(|known| known.library != seen.library)
             && self.plan != PlanState::Stale
         {

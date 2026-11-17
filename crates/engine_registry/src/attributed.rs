@@ -9,8 +9,6 @@ use engine_place::Board;
 struct Attributed {
     brick: &'static str,
     #[cfg(feature = "profiling")]
-    index: u16,
-    #[cfg(feature = "profiling")]
     row: usize,
 }
 
@@ -28,8 +26,6 @@ impl Adapt<SystemWithAccess> for Attributed {
         #[cfg(feature = "profiling")]
         let _span = engine_profile::span("brick", self.brick);
         #[cfg(feature = "profiling")]
-        let _scope = engine_profile::enter(self.index);
-        #[cfg(feature = "profiling")]
         let _row = engine_profile::timed(self.row);
         Board::owned_by(self.brick, || run_system(input))
     }
@@ -46,13 +42,7 @@ pub(crate) fn keys(schedule: &Schedule) -> Vec<SystemKey> {
         .collect()
 }
 
-pub(crate) fn wrap(
-    schedule: &mut Schedule,
-    before: &[SystemKey],
-    (brick, index): (&'static str, u16),
-) {
-    #[cfg(not(feature = "profiling"))]
-    let _ = index;
+pub(crate) fn wrap(schedule: &mut Schedule, before: &[SystemKey], brick: &'static str) {
     let systems = &mut schedule.graph_mut().systems;
     let added: Vec<SystemKey> = systems
         .iter()
@@ -72,8 +62,6 @@ pub(crate) fn wrap(
         let name = inner.name();
         let attributed = Attributed {
             brick,
-            #[cfg(feature = "profiling")]
-            index,
             #[cfg(feature = "profiling")]
             row: engine_profile::row(Box::leak(name.to_string().into_boxed_str())),
         };

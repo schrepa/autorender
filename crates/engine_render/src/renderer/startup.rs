@@ -213,12 +213,8 @@ impl Renderer {
             plans: PlanCache::default(),
             passes: &[],
             spans: Vec::new(),
-            #[cfg(feature = "profiling")]
-            prelude_owners: Vec::new(),
             installing: None,
-            part_names: &[],
             recovering: None,
-            lost_bricks: Vec::new(),
             #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
             watched: super::reload::Watched::default(),
         };

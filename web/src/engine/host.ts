@@ -99,7 +99,6 @@ class FrameHud {
   }
 }
 
-// Starts a frame once the GPU is done when the browser holds the animation frame past a refresh.
 class GpuPace {
   private drawn = 0;
   private since = 0;

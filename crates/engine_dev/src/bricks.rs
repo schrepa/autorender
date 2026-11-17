@@ -23,7 +23,7 @@ fn gated_off(world: &World, brick: &str) -> bool {
     ) else {
         return false;
     };
-    registry.id(brick).is_some_and(|id| !states.brick_on(id))
+    registry.id(brick).is_some_and(|id| !states.on(id))
 }
 
 fn brick_states(world: &World) -> Value {
@@ -35,9 +35,12 @@ fn brick_states(world: &World) -> Value {
     };
     states
         .iter()
-        .filter_map(|(brick, state)| {
+        .filter_map(|(brick, on)| {
             let record = registry.record(brick)?;
-            Some((record.package.to_owned(), json!(state)))
+            Some((
+                record.package.to_owned(),
+                json!({ "on": on, "switch": record.switch_key() }),
+            ))
         })
         .collect::<serde_json::Map<String, Value>>()
         .into()
@@ -209,20 +212,6 @@ impl DevTools {
                 kind: InspectorKind::Resource,
                 has: Box::new(|_, _| true),
                 read: Box::new(|world, _, _| Some(brick_states(world))),
-                brick: None,
-            },
-        );
-        inspectors.insert(
-            "Ownership".to_owned(),
-            Inspector {
-                descriptor: InspectorDescriptor::new("Ownership", json!({ "type": "array" })),
-                kind: InspectorKind::Resource,
-                has: Box::new(|_, _| true),
-                read: Box::new(|world, _, _| {
-                    world
-                        .get_resource::<Registry>()
-                        .map(|registry| json!(registry.ownership()))
-                }),
                 brick: None,
             },
         );

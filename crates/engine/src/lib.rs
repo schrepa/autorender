@@ -28,7 +28,7 @@ pub use engine_core::collections;
 mod games {
     pub use crate::frame_stats::ResolutionStats;
     pub use engine_core::{
-        Aabb, AlphaMode, Asks, AssetBudget, AssetLibrary, Attribute, Attributes, Brick, BrickList,
+        Aabb, AlphaMode, AssetBudget, AssetLibrary, Attribute, Attributes, Brick, BrickList,
         Bricks, Camera, Clear, Clock, ColorSpace, Compare, ComponentKind, Cull, CursorMode,
         DepthBias, Devices, DrawKind, Drawn, DrawnProjection, DrawnState, DrawnTable, Engine,
         EngineConfig, Filter, FixedTime, FrameLimits, FrameTime, GeometryHandle, GlobalTransform,
@@ -51,7 +51,6 @@ pub use engine_core::{
 
 pub mod bricks {
     pub use engine_core::{BrickList, Listing};
-    pub use engine_registry::{BrickCost, BrickCosts, BrickRow, BrickTable};
     pub use engine_settings::{parse_json, parse_value, parse_value_at};
 }
 

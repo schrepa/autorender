@@ -4,12 +4,13 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::world::{Mut, World};
 use engine_place::{Error, ErrorCode, List};
 
-use crate::state::{BrickStates, GateId};
+use crate::BrickId;
+use crate::state::BrickStates;
 
 #[derive(Resource)]
 pub struct MembersOf<L: List> {
     members: Vec<L::Member>,
-    gates: Vec<GateId>,
+    ids: Vec<BrickId>,
     owners: Vec<&'static str>,
     bricks: Vec<TypeId>,
     locals: Vec<u32>,
@@ -19,7 +20,7 @@ impl<L: List> Default for MembersOf<L> {
     fn default() -> Self {
         Self {
             members: Vec::new(),
-            gates: Vec::new(),
+            ids: Vec::new(),
             owners: Vec::new(),
             bricks: Vec::new(),
             locals: Vec::new(),
@@ -31,8 +32,8 @@ impl<L: List> MembersOf<L> {
     pub fn live<'a>(&'a self, states: &'a BrickStates) -> impl Iterator<Item = &'a L::Member> + 'a {
         self.members
             .iter()
-            .zip(&self.gates)
-            .filter(|(_, gate)| states.on(**gate))
+            .zip(&self.ids)
+            .filter(|(_, brick)| states.on(**brick))
             .map(|(member, _)| member)
     }
 
@@ -42,9 +43,9 @@ impl<L: List> MembersOf<L> {
     ) -> impl Iterator<Item = (TypeId, u32, &'a L::Member)> + 'a {
         self.members
             .iter()
-            .zip(&self.gates)
+            .zip(&self.ids)
             .zip(self.bricks.iter().zip(&self.locals))
-            .filter(|((_, gate), _)| states.on(**gate))
+            .filter(|((_, brick), _)| states.on(**brick))
             .map(|((member, _), (&brick, &local))| (brick, local, member))
     }
 
@@ -63,18 +64,10 @@ impl<L: List> MembersOf<L> {
         &self.owners
     }
 
-    pub fn len(&self) -> usize {
-        self.members.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.members.is_empty()
-    }
-
-    pub fn push(&mut self, member: L::Member, gate: GateId, owner: &'static str, brick: TypeId) {
+    pub fn push(&mut self, member: L::Member, id: BrickId, owner: &'static str, brick: TypeId) {
         let local = self.bricks.iter().filter(|&&known| known == brick).count() as u32;
         self.members.push(member);
-        self.gates.push(gate);
+        self.ids.push(id);
         self.owners.push(owner);
         self.bricks.push(brick);
         self.locals.push(local);
@@ -103,24 +96,13 @@ impl<L: List> MembersOf<L> {
 pub(crate) fn add_member<L: List>(
     world: &mut World,
     member: Box<dyn Any + Send + Sync>,
-    gate: GateId,
+    id: BrickId,
     (owner, brick): (&'static str, TypeId),
 ) {
     if let Ok(member) = member.downcast::<L::Member>() {
         world
             .get_resource_or_init::<MembersOf<L>>()
-            .push(*member, gate, owner, brick);
-    }
-}
-
-pub(crate) fn each_member<L: List>(world: &World, each: &mut dyn FnMut(&dyn Any)) {
-    if let (Some(members), Some(states)) = (
-        world.get_resource::<MembersOf<L>>(),
-        world.get_resource::<BrickStates>(),
-    ) {
-        for member in members.live(states) {
-            each(member);
-        }
+            .push(*member, id, owner, brick);
     }
 }
 
@@ -128,13 +110,13 @@ pub(crate) fn init_members<L: List>(world: &mut World) {
     world.init_resource::<MembersOf<L>>();
 }
 
-pub(crate) fn drop_members<L: List>(world: &mut World, gate: GateId) {
+pub(crate) fn drop_members<L: List>(world: &mut World, brick: BrickId) {
     world.try_resource_scope(|world, members: Mut<MembersOf<L>>| {
         for (member, _) in members
             .members
             .iter()
-            .zip(&members.gates)
-            .filter(|(_, held)| **held == gate)
+            .zip(&members.ids)
+            .filter(|(_, held)| **held == brick)
         {
             L::dropped(world, member);
         }

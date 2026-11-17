@@ -130,13 +130,7 @@ impl Readbacks {
                     .iter()
                     .position(|slot| slot.reusable(reader) && slot.capacity >= bytes);
                 if found.is_none() {
-                    self.slots.retain(|slot| {
-                        let small = slot.reusable(reader) && slot.capacity < bytes;
-                        if small {
-                            crate::memory::release_buffer(&slot.buffer);
-                        }
-                        !small
-                    });
+                    self.slots.retain(|slot| !(slot.reusable(reader) && slot.capacity < bytes));
                     let held = self
                         .slots
                         .iter()
@@ -152,15 +146,12 @@ impl Readbacks {
         let at = found.unwrap_or_else(|| {
             let capacity = bytes.max(4);
             self.slots.push(Slot {
-                buffer: crate::memory::buffer(
-                    device,
-                    &wgpu::BufferDescriptor {
-                        label: Some("engine/readback"),
-                        size: capacity,
-                        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
-                        mapped_at_creation: false,
-                    },
-                ),
+                buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("engine/readback"),
+                    size: capacity,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                }),
                 capacity,
                 reader,
                 once: keep == Keep::Once,
@@ -235,12 +226,6 @@ impl Readbacks {
             }
             slot.phase.set(Phase::Idle);
         }
-        self.slots.retain(|slot| {
-            let spent = slot.once && slot.phase.get() == Phase::Idle;
-            if spent {
-                crate::memory::release_buffer(&slot.buffer);
-            }
-            !spent
-        });
+        self.slots.retain(|slot| !(slot.once && slot.phase.get() == Phase::Idle));
     }
 }

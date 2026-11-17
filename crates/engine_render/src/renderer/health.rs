@@ -7,8 +7,7 @@ enum Health {
     #[default]
     Live,
     Failed(Error),
-    Lost(Error),
-    Faulted,
+    Lost,
     Recovering,
     Recovered,
 }
@@ -19,15 +18,13 @@ pub enum DeviceHealth {
     Live,
     Failed,
     Lost,
-    Faulted,
     Recovering,
     Recovered,
 }
 
 enum Change {
     Failed(Error),
-    Lost(Error),
-    BricksFaulted,
+    Lost,
     Recovering,
     Recovered,
     Settled,
@@ -39,46 +36,24 @@ impl Health {
             (Self::Live | Self::Recovering | Self::Recovered, Change::Failed(error)) => {
                 Self::Failed(error)
             }
-            (
-                Self::Live | Self::Failed(_) | Self::Recovering | Self::Recovered,
-                Change::Lost(error),
-            ) => Self::Lost(error),
-            (Self::Lost(_), Change::BricksFaulted) => Self::Faulted,
-            (Self::Faulted, Change::Recovering) => Self::Recovering,
+            (Self::Live | Self::Failed(_) | Self::Recovering | Self::Recovered, Change::Lost) => {
+                Self::Lost
+            }
+            (Self::Lost, Change::Recovering) => Self::Recovering,
             (Self::Recovering, Change::Recovered) => Self::Recovered,
             (Self::Recovered, Change::Settled) => Self::Live,
-            (state @ (Self::Failed(_) | Self::Lost(_) | Self::Faulted), Change::Failed(_))
-            | (state @ (Self::Lost(_) | Self::Faulted), Change::Lost(_))
+            (state @ (Self::Failed(_) | Self::Lost), Change::Failed(_))
+            | (state @ Self::Lost, Change::Lost)
             | (
-                state @ (Self::Live
-                | Self::Failed(_)
-                | Self::Faulted
-                | Self::Recovering
-                | Self::Recovered),
-                Change::BricksFaulted,
-            )
-            | (
-                state @ (Self::Live
-                | Self::Failed(_)
-                | Self::Lost(_)
-                | Self::Recovering
-                | Self::Recovered),
+                state @ (Self::Live | Self::Failed(_) | Self::Recovering | Self::Recovered),
                 Change::Recovering,
             )
             | (
-                state @ (Self::Live
-                | Self::Failed(_)
-                | Self::Lost(_)
-                | Self::Faulted
-                | Self::Recovered),
+                state @ (Self::Live | Self::Failed(_) | Self::Lost | Self::Recovered),
                 Change::Recovered,
             )
             | (
-                state @ (Self::Live
-                | Self::Failed(_)
-                | Self::Lost(_)
-                | Self::Faulted
-                | Self::Recovering),
+                state @ (Self::Live | Self::Failed(_) | Self::Lost | Self::Recovering),
                 Change::Settled,
             ) => state,
         };
@@ -87,7 +62,7 @@ impl Health {
     fn fatal(&self) -> Option<&Error> {
         match self {
             Self::Failed(error) => Some(error),
-            Self::Live | Self::Lost(_) | Self::Faulted | Self::Recovering | Self::Recovered => None,
+            Self::Live | Self::Lost | Self::Recovering | Self::Recovered => None,
         }
     }
 
@@ -95,8 +70,7 @@ impl Health {
         match self {
             Self::Live => DeviceHealth::Live,
             Self::Failed(_) => DeviceHealth::Failed,
-            Self::Lost(_) => DeviceHealth::Lost,
-            Self::Faulted => DeviceHealth::Faulted,
+            Self::Lost => DeviceHealth::Lost,
             Self::Recovering => DeviceHealth::Recovering,
             Self::Recovered => DeviceHealth::Recovered,
         }
@@ -112,11 +86,11 @@ pub(crate) struct Reports {
 
 impl Reports {
     pub(super) fn lost(&mut self, reason: wgpu::DeviceLostReason, message: &str) {
-        self.health.after(Change::Lost(
-            failed("$.device")
-                .expected(Expected::Live)
-                .got_whole((format!("{reason:?}"), message)),
-        ));
+        let error = failed("$.device")
+            .expected(Expected::Live)
+            .got_whole((format!("{reason:?}"), message));
+        self.notices.push(error);
+        self.health.after(Change::Lost);
     }
 
     pub(super) fn uncaptured(&mut self, error: &wgpu::Error) {
@@ -214,7 +188,7 @@ impl Renderer {
             .ok()
             .map(|reports| reports.health.clone());
         match state {
-            Some(Health::Faulted) => {
+            Some(Health::Lost) => {
                 self.recovering = Some(Box::pin(super::startup::open(
                     self.core.display.instance(),
                     self.core.display.power_preference(),
@@ -242,50 +216,12 @@ impl Renderer {
                     })
                 });
                 match installed {
-                    Ok(()) => {
-                        for brick in std::mem::take(&mut self.lost_bricks) {
-                            engine_registry::ask_on(world, brick);
-                        }
-                        self.change(Change::Recovered);
-                    }
+                    Ok(()) => self.change(Change::Recovered),
                     Err(error) => self.change(Change::Failed(error)),
                 }
             }
             Some(Health::Recovered) => self.change(Change::Settled),
-            Some(Health::Live | Health::Failed(_) | Health::Lost(_)) | None => {}
+            Some(Health::Live | Health::Failed(_)) | None => {}
         }
-    }
-
-    pub(super) fn fault_bricks(&mut self, world: &mut World) {
-        let lost = self
-            .core
-            .health
-            .lock()
-            .ok()
-            .and_then(|reports| match &reports.health {
-                Health::Lost(error) => Some(error.clone()),
-                Health::Live
-                | Health::Failed(_)
-                | Health::Faulted
-                | Health::Recovering
-                | Health::Recovered => None,
-            });
-        let Some(error) = lost else {
-            return;
-        };
-        let states = world.get_resource::<engine_registry::BrickStates>();
-        let mut bricks: Vec<engine_registry::BrickId> = self
-            .run
-            .iter()
-            .flat_map(|run| run.installs.gates.iter().flatten())
-            .filter_map(|gate| states.and_then(|states| states.brick(*gate)))
-            .collect();
-        bricks.sort_unstable();
-        bricks.dedup();
-        for &brick in &bricks {
-            engine_registry::fault(world, brick, error.clone());
-        }
-        self.lost_bricks = bricks;
-        self.change(Change::BricksFaulted);
     }
 }

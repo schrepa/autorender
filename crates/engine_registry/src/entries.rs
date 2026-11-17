@@ -1,18 +1,17 @@
 use std::any::{Any, TypeId};
 use std::panic::Location;
 
-use bevy_ecs::component::{ComponentId, Mutable};
+use bevy_ecs::component::Mutable;
 use bevy_ecs::query::FilteredAccessSet;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
-use engine_place::{Call, Callable, Error, ErrorCode, Lands, List, PlaceDecl};
+use engine_place::{Call, Callable, Error, ErrorCode, Lands, List};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::members::{add_member, drop_members, each_member, init_members};
-use crate::registry::MemberEach;
-use crate::state::{GateId, Scope};
+use crate::members::{add_member, drop_members, init_members};
+use crate::registry::BrickId;
 
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Kept {
@@ -41,53 +40,27 @@ impl Owned {
     pub fn init(&self, world: &mut World) {
         (self.init)(world);
     }
-
-    pub fn survives(&self) -> bool {
-        matches!(self.kept, Kept::Survives(_))
-    }
 }
 
-pub struct Filled {
-    pub place: PlaceDecl,
-    pub slot: TypeId,
-    pub scope: Scope,
-    pub(crate) reset: fn(&mut World),
-    pub(crate) id: fn(&mut World) -> ComponentId,
-}
-
-impl Filled {
-    pub fn reset(&self, world: &mut World) {
-        (self.reset)(world);
-    }
-
-    pub fn component_id(&self, world: &mut World) -> ComponentId {
-        (self.id)(world)
-    }
-}
-
-type MemberAdd = fn(&mut World, Box<dyn Any + Send + Sync>, GateId, (&'static str, TypeId));
+type MemberAdd = fn(&mut World, Box<dyn Any + Send + Sync>, BrickId, (&'static str, TypeId));
 
 pub struct JoinEntry {
-    pub place: PlaceDecl,
+    pub name: &'static str,
     pub list: TypeId,
-    pub scope: Scope,
     pub(crate) member: Option<Box<dyn Any + Send + Sync>>,
     pub(crate) add: MemberAdd,
     pub(crate) init: fn(&mut World),
-    pub(crate) each: MemberEach,
-    pub(crate) left: fn(&mut World, GateId),
+    pub(crate) left: fn(&mut World, BrickId),
 }
 
 impl JoinEntry {
-    pub(crate) fn of<L: List>(scope: Scope, member: L::Member) -> Self {
+    pub(crate) fn of<L: List>(member: L::Member) -> Self {
         Self {
-            place: PlaceDecl::list::<L>(),
+            name: L::NAME,
             list: TypeId::of::<L>(),
-            scope,
             member: Some(Box::new(member)),
             add: add_member::<L>,
             init: init_members::<L>,
-            each: each_member::<L>,
             left: drop_members::<L>,
         }
     }
@@ -109,7 +82,6 @@ pub struct SettingsEntry {
     pub type_name: &'static str,
     pub at: &'static Location<'static>,
     init: fn(&mut World),
-    parse: fn(&Value, &str) -> Result<(), Error>,
     check: fn(&Value, &str) -> Result<(), Error>,
     set: fn(&mut World, &Value, &str) -> Result<(), Error>,
     reset: fn(&mut World),
@@ -139,7 +111,6 @@ impl SettingsEntry {
             type_name: std::any::type_name::<T>(),
             at: Location::caller(),
             init: init_of::<T>,
-            parse: parse_of::<T>,
             check,
             set,
             reset: reset_of::<T>,
@@ -165,10 +136,6 @@ impl SettingsEntry {
             init: self.init,
             kept: Kept::Survives(self.touch),
         }
-    }
-
-    pub fn parse(&self, value: &Value, path: &str) -> Result<(), Error> {
-        (self.parse)(value, path)
     }
 
     pub fn check(&self, value: &Value, path: &str) -> Result<(), Error> {
@@ -316,17 +283,6 @@ pub fn parse_section<T: DeserializeOwned>(
     Ok(section)
 }
 
-pub fn set_section<T: Resource + DeserializeOwned>(
-    world: &mut World,
-    value: &Value,
-    path: &str,
-    check: fn(&T) -> Result<(), Error>,
-) -> Result<(), Error> {
-    let section = parse_section::<T>(value, path, check)?;
-    world.insert_resource(section);
-    Ok(())
-}
-
 pub(crate) fn init_of<T: Resource + Default>(world: &mut World) {
     if !world.contains_resource::<T>() {
         world.insert_resource(T::default());
@@ -363,10 +319,6 @@ fn written_of<T: Resource + Default + Serialize>(world: &World) -> Result<Value,
             std::any::type_name::<T>()
         ))
     })
-}
-
-fn parse_of<T: DeserializeOwned>(value: &Value, path: &str) -> Result<(), Error> {
-    engine_settings::parse_value_at::<T>(value.clone(), path).map(drop)
 }
 
 fn default_of<T: Default + Serialize>() -> Value {

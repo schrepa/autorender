@@ -129,9 +129,6 @@ impl Display {
         match &self.surface {
             Some(surface) => surface.configure(device, &self.configuration),
             None => {
-                if let Some(offscreen) = &self.offscreen {
-                    crate::memory::release_any(offscreen);
-                }
                 self.offscreen = Some(crate::targets::texture_2d(
                     device,
                     "engine/offscreen",
@@ -294,15 +291,12 @@ impl FrameTimer {
                 ty: wgpu::QueryType::Timestamp,
                 count: 2,
             }),
-            resolved: crate::memory::buffer(
-                device,
-                &wgpu::BufferDescriptor {
-                    label: Some("engine/frame-timer-resolve"),
-                    size: FRAME_STAMP_BYTES,
-                    usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
-                    mapped_at_creation: false,
-                },
-            ),
+            resolved: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("engine/frame-timer-resolve"),
+                size: FRAME_STAMP_BYTES,
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            }),
             period: f64::from(period),
             sizes: Vec::new(),
             read: Cell::new(None),

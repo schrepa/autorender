@@ -124,7 +124,7 @@ fn run_points() -> Vec<engine_core::RunPoint> {
 fn closed(what: &str, schema: &Value, problems: &mut Vec<String>) {
     for at in engine_core::open_parts(schema) {
         problems.push(format!(
-            "{what} leaves {at} open: give it a typed struct, or build its schema from the world in Operation::request_schema or reply_schema"
+            "{what} leaves {at} open: give it a typed struct, or build its schema from the world in Operation::request_schema"
         ));
     }
 }
@@ -252,7 +252,7 @@ pub fn game(world: &World) -> Result<Vec<(&'static str, String)>, String> {
             .map(|operation| (operation.name, operation.lands.name()))
             .collect::<std::collections::BTreeMap<_, _>>(),
         "run_points": run_points(),
-        "errors": registry.error_codes(),
+        "errors": engine_settings::ErrorCode::NAMES,
     });
     let protocol = serde_json::to_string_pretty(&summary)
         .map_err(|error| format!("cannot write JSON: {error}"))?;

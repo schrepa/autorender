@@ -16,15 +16,13 @@ pub struct Row {
 
 #[cfg(feature = "enabled")]
 mod allocator;
-#[cfg(feature = "bricks")]
-mod bricks;
 #[cfg(target_arch = "wasm32")]
 mod heap;
 #[cfg(target_arch = "wasm32")]
 pub use heap::GrowingHeap;
 #[cfg(feature = "enabled")]
 mod collector;
-#[cfg(feature = "enabled")]
+#[cfg(feature = "rows")]
 mod rows;
 #[cfg(feature = "enabled")]
 mod threads;
@@ -33,16 +31,12 @@ pub use allocator::{
     ALWAYS_SAMPLED_BYTES, AllocationSnapshot, SAMPLE_EVERY, TrackingAllocator, allocation_snapshot,
     sample_allocations,
 };
-#[cfg(feature = "bricks")]
-pub use bricks::{
-    BrickHeap, BrickScope, CORE, MAX_BRICKS, allocation_cost_ms, brick_heap, current_brick, enter,
-    install_clock, scope_cost_ms, take_scopes, take_spent,
-};
 #[cfg(feature = "enabled")]
 pub use collector::*;
-#[cfg(feature = "enabled")]
+#[cfg(feature = "rows")]
 pub use rows::{
-    RowScope, mark_speed, now_ms, row, take_rows, take_speed, take_waits, tally, timed, waited,
+    RowScope, install_clock, mark_speed, now_ms, row, take_rows, take_speed, take_waits, tally,
+    timed, waited,
 };
 #[cfg(feature = "enabled")]
 pub use threads::{announce_thread, listen_to_threads};
@@ -74,37 +68,48 @@ mod disabled {
     pub fn current_frame() -> u64 {
         0
     }
+    #[cfg(not(feature = "rows"))]
     pub struct RowScope;
+    #[cfg(not(feature = "rows"))]
     impl Drop for RowScope {
         #[inline(always)]
         fn drop(&mut self) {}
     }
+    #[cfg(not(feature = "rows"))]
     #[inline(always)]
     pub fn row(_: &'static str) -> usize {
         0
     }
+    #[cfg(not(feature = "rows"))]
     #[inline(always)]
     pub fn timed(_: usize) -> RowScope {
         RowScope
     }
+    #[cfg(not(feature = "rows"))]
     #[inline(always)]
     pub fn tally(_: &'static str, _: u64) {}
+    #[cfg(not(feature = "rows"))]
     #[inline(always)]
     pub fn now_ms() -> f64 {
         0.0
     }
+    #[cfg(not(feature = "rows"))]
     #[inline(always)]
     pub fn waited(_: &str, _: f64) {}
+    #[cfg(not(feature = "rows"))]
     #[inline(always)]
     pub fn mark_speed() {}
     #[inline(always)]
     pub fn announce_thread(_: std::fmt::Arguments<'_>) {}
+    #[cfg(not(feature = "rows"))]
     pub fn take_rows() -> Vec<crate::Row> {
         Vec::new()
     }
+    #[cfg(not(feature = "rows"))]
     pub fn take_waits() -> Vec<crate::Row> {
         Vec::new()
     }
+    #[cfg(not(feature = "rows"))]
     pub fn take_speed() -> Option<(f64, f64)> {
         None
     }

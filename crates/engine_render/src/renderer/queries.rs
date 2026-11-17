@@ -1,5 +1,3 @@
-use bevy_ecs::world::World;
-
 use super::*;
 
 impl Renderer {
@@ -133,33 +131,6 @@ impl Renderer {
         self.run.as_ref().map_or((0, 0), |run| {
             (run.pipelines.up_front, run.pipelines.unlisted)
         })
-    }
-
-    pub fn disabled_features(&self, world: &World) -> engine_core::Names {
-        let states = world.get_resource::<engine_registry::BrickStates>();
-        let faulted = |gate: engine_registry::GateId| {
-            states
-                .and_then(|states| states.state(states.brick(gate)?))
-                .is_some_and(|state| matches!(state, engine_registry::BrickState::Faulted(_)))
-        };
-        let bits = self.run.as_ref().map_or(0, |run| {
-            run.installs
-                .gates
-                .iter()
-                .zip(&run.installs.turned)
-                .enumerate()
-                .filter(|(_, (gate, turned))| match gate {
-                    Some(gate) => faulted(*gate),
-                    None => turned.is_none(),
-                })
-                .fold(0_u128, |bits, (at, _)| {
-                    bits | 1_u128.checked_shl(at as u32).unwrap_or(0)
-                })
-        });
-        engine_core::Names {
-            bits,
-            names: self.part_names,
-        }
     }
 
     fn held_assets(&self) -> Option<&crate::encode::Assets> {

@@ -19,7 +19,7 @@ const INTERVAL: Duration = Duration::from_millis(1);
 const HEAP_SAMPLES: usize = 65_536;
 const HEAP_FRAMES: usize = 48;
 const HEAP_STACKS: usize = 24;
-const STACKS_PER_BRICK: usize = 30;
+const STACKS_SHOWN: usize = 30;
 const SPANS_PER_BRICK: usize = 15;
 const ALLOCATOR_FRAMES: &[&str] = &[
     "backtrace::",
@@ -35,14 +35,13 @@ const ALLOCATOR_FRAMES: &[&str] = &[
 ];
 
 struct HeapSample {
-    brick: u16,
     bytes: usize,
     stack: Vec<u64>,
 }
 
 static HEAP: Mutex<Vec<HeapSample>> = Mutex::new(Vec::new());
 
-fn sample_heap(brick: u16, bytes: usize) {
+fn sample_heap(bytes: usize) {
     let mut frames = [0_u64; HEAP_FRAMES];
     let mut depth = 0;
     backtrace::trace(|frame| {
@@ -55,7 +54,6 @@ fn sample_heap(brick: u16, bytes: usize) {
     };
     if samples.len() < HEAP_SAMPLES {
         samples.push(HeapSample {
-            brick,
             bytes,
             stack: frames[..depth].to_vec(),
         });
@@ -64,7 +62,6 @@ fn sample_heap(brick: u16, bytes: usize) {
 
 pub struct DeepCapture {
     sampler: Option<Sampler>,
-    bricks: Vec<&'static str>,
 }
 
 pub struct ProfileFiles {
@@ -81,13 +78,12 @@ impl DeepCapture {
         max_events: usize,
     ) -> Result<Self, Error> {
         host.profiling_start(max_events)?;
-        let bricks = host.profile_bricks();
         HEAP.lock().unwrap_or_else(PoisonError::into_inner).clear();
         engine::profiling::sample_allocations(Some(sample_heap));
         let sampler = (!threads.is_empty())
             .then(|| Sampler::start(threads, INTERVAL, engine::host::now_ms))
             .flatten();
-        Ok(Self { sampler, bricks })
+        Ok(Self { sampler })
     }
 
     pub fn finish<G: Game>(
@@ -106,7 +102,7 @@ impl DeepCapture {
         report["gpu"] = host.profiling_report();
         report["context"] = context;
         let symbols = Symbols::of(samples.as_ref(), &heap);
-        report["heap_samples_by_brick"] = heap_by_brick(&heap, &symbols, &self.bricks);
+        report["heap_samples"] = heap_samples(&heap, &symbols);
         let profile = firefox_profile(&report, samples.as_ref(), &symbols, host.adapter());
         let summary = summary(&report, samples.as_ref(), &symbols, host.adapter());
         std::fs::create_dir_all(folder).map_err(|_| unwritable(folder))?;
@@ -121,8 +117,7 @@ impl DeepCapture {
         write(&files.report, &report)?;
         write(&files.firefox, &profile)?;
         let mut summary = summary;
-        summary["bricks"] = report["bricks"].clone();
-        summary["heap_samples_by_brick"] = report["heap_samples_by_brick"].clone();
+        summary["heap_samples"] = report["heap_samples"].clone();
         summary["spans_by_brick"] = spans_by_brick(&report);
         summary["gpu_memory"] = host.gpu_allocations();
         summary["files"] = json!({
@@ -493,9 +488,9 @@ fn firefox_profile(
     profile
 }
 
-fn heap_by_brick(samples: &[HeapSample], symbols: &Symbols, profiled: &[&'static str]) -> Value {
-    type Stacks = HashMap<Vec<String>, (u64, u64)>;
-    let mut bricks: BTreeMap<&'static str, (u64, u64, Stacks)> = BTreeMap::new();
+fn heap_samples(samples: &[HeapSample], symbols: &Symbols) -> Value {
+    let mut stacks: HashMap<Vec<String>, (u64, u64)> = HashMap::default();
+    let mut bytes = 0;
     for sample in samples {
         let mut names = functions(&sample.stack, symbols);
         while names.last().is_some_and(|name| {
@@ -506,46 +501,26 @@ fn heap_by_brick(samples: &[HeapSample], symbols: &Symbols, profiled: &[&'static
             names.pop();
         }
         let callers = names.split_off(names.len().saturating_sub(HEAP_STACKS));
-        let brick = profiled
-            .get(usize::from(sample.brick))
-            .or(profiled.first())
-            .copied()
-            .unwrap_or_default();
-        let (count, bytes, stacks) = bricks.entry(brick).or_default();
-        *count += 1;
-        *bytes += sample.bytes as u64;
+        bytes += sample.bytes as u64;
         let (stack_count, stack_bytes) = stacks.entry(callers).or_default();
         *stack_count += 1;
         *stack_bytes += sample.bytes as u64;
     }
-    let mut rows: Vec<(&str, u64, u64, Stacks)> = bricks
-        .into_iter()
-        .map(|(brick, (count, bytes, stacks))| (brick, count, bytes, stacks))
-        .collect();
-    rows.sort_by(|a, b| b.2.cmp(&a.2).then_with(|| a.0.cmp(b.0)));
+    let mut stacks: Vec<(Vec<String>, (u64, u64))> = stacks.into_iter().collect();
+    stacks.sort_by(|a, b| b.1.1.cmp(&a.1.1).then_with(|| a.0.cmp(&b.0)));
     json!({
         "every": engine::profiling::SAMPLE_EVERY,
         "always_at_bytes": engine::profiling::ALWAYS_SAMPLED_BYTES,
-        "bricks": rows
+        "samples": samples.len(),
+        "sampled_bytes": bytes,
+        "stacks": stacks
             .into_iter()
-            .map(|(brick, count, bytes, stacks)| {
-                let mut stacks: Vec<(Vec<String>, (u64, u64))> = stacks.into_iter().collect();
-                stacks.sort_by(|a, b| b.1.1.cmp(&a.1.1).then_with(|| a.0.cmp(&b.0)));
-                json!({
-                    "brick": brick,
-                    "samples": count,
-                    "sampled_bytes": bytes,
-                    "stacks": stacks
-                        .into_iter()
-                        .take(STACKS_PER_BRICK)
-                        .map(|(frames, (samples, bytes))| json!({
-                            "samples": samples,
-                            "sampled_bytes": bytes,
-                            "frames": frames,
-                        }))
-                        .collect::<Vec<_>>(),
-                })
-            })
+            .take(STACKS_SHOWN)
+            .map(|(frames, (samples, bytes))| json!({
+                "samples": samples,
+                "sampled_bytes": bytes,
+                "frames": frames,
+            }))
             .collect::<Vec<_>>(),
     })
 }

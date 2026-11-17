@@ -129,7 +129,6 @@ fn authoring_commands() -> Vec<Command> {
             [
                 CommandOption::taking("NAME", "NAME").required(),
                 CommandOption::taking("--project", "DIR").required(),
-                CommandOption::taking("--place", "PLACE"),
             ],
         ),
         Command::new(

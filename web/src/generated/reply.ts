@@ -57,7 +57,6 @@ export type DescribeResult = { bricks: DescribedBrick[]; types: DescribedType[];
 
 export interface DescribedBrick {
   crate: string;
-  fills: string[];
   joins: string[];
   name: string;
   operations: DescribedEntry[];
@@ -235,28 +234,19 @@ export type Presented = { kind: "tick" } | { alpha: number; kind: "between" } | 
 
 export interface ProfileResult {
   artifact?: KeptArtifact | null;
-  bricks: ProfiledBrick[];
-  cpu_ms: number;
   frames: number;
-  gpu_ms?: number | null;
   interval_ms: number;
-  measuring_ms: number;
+  rows: ProfiledRow[];
   temporary: boolean;
   total: number;
 }
 
-export interface ProfiledBrick {
+export interface ProfiledRow {
   allocations_per_frame?: number | null;
-  brick: string;
   cpu_ms: number;
   cpu_ms_max: number;
-  created_after_warmup?: number | null;
-  duplicate_upload_bytes?: number | null;
-  gpu_bytes?: number | null;
-  gpu_ms?: number | null;
-  gpu_ms_max?: number | null;
-  heap_live_bytes?: number | null;
-  heap_peak_bytes?: number | null;
+  name: string;
+  runs_per_frame: number;
 }
 
 export interface Refusal {
@@ -292,7 +282,6 @@ export interface StatusResult {
   limits: StatusLimits;
   notices: Refusal[];
   presentation: PresentationState;
-  unmet: Refusal[];
   world_entities: number;
 }
 

@@ -5,7 +5,6 @@ use std::sync::Arc;
 use bevy_ecs::system::SystemState;
 use bevy_ecs::world::World;
 use engine_core::{DrawKind, Error, ErrorCode, KindDecl};
-use engine_registry::Scope;
 
 use crate::draws::RawDraw;
 use crate::encode::{EncodeCore, FrameCore};
@@ -19,12 +18,11 @@ pub(crate) struct PartRecord {
     pub(crate) part: TypeId,
     pub(crate) name: &'static str,
     pub(crate) memory: &'static [&'static str],
-    pub(crate) scope: Scope,
     pub(crate) install: InstallFn,
 }
 
 impl PartRecord {
-    pub(crate) fn of<P: GpuPart>(scope: Scope) -> Self {
+    pub(crate) fn of<P: GpuPart>() -> Self {
         Self {
             part: TypeId::of::<P>(),
             name: if P::NAME.is_empty() {
@@ -33,18 +31,12 @@ impl PartRecord {
                 P::NAME
             },
             memory: P::MEMORY,
-            scope,
             install: install::<P>,
         }
     }
 }
 
 pub(crate) struct Generated(pub(crate) &'static [&'static str]);
-
-pub(crate) struct PassScope {
-    pub(crate) name: &'static str,
-    pub(crate) scope: Scope,
-}
 
 pub(crate) type KindCall = Arc<dyn Fn(&dyn Any, &SceneDraw, &mut RawDraw<'_>) -> u32 + Send + Sync>;
 

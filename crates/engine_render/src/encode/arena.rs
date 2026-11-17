@@ -53,19 +53,13 @@ impl Run {
             return;
         }
         if self.arena.held.as_ref().is_none_or(|(_, bytes)| *bytes < end) {
-            if let Some((old, _)) = self.arena.held.take() {
-                crate::memory::release_buffer(&old);
-            }
             let bytes = end.next_power_of_two();
-            let made = crate::memory::buffer(
-                &self.device,
-                &wgpu::BufferDescriptor {
-                    label: Some("engine/indirect-args"),
-                    size: bytes,
-                    usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                },
-            );
+            let made = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("engine/indirect-args"),
+                size: bytes,
+                usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
             self.arena.held = Some((made, bytes));
         }
         let owed = (0..self.arena.slices.len() as u32)

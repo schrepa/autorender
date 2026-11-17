@@ -10,7 +10,6 @@ use crate::mesh_arena::GpuMeshes;
 use crate::platform::{RenderTarget, failed, failed_with};
 use crate::profiling::GpuProfiler;
 
-mod attribution;
 #[cfg(not(target_arch = "wasm32"))]
 mod cache;
 mod display;
@@ -25,11 +24,10 @@ mod queries;
 mod reload;
 mod startup;
 
-pub use attribution::GpuPassTimes;
 pub(crate) use display::Display;
 use display::DisplayFrame;
 pub use health::DeviceHealth;
-pub use install::{Ahead, Installation, InstalledPart, device_limits, install_noop};
+pub use install::{Ahead, Installation, device_limits, install_noop};
 pub use startup::StartingRenderer;
 
 pub(crate) fn new_assets(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Assets {
@@ -74,31 +72,13 @@ pub struct Renderer {
     plans: PlanCache,
     passes: &'static [&'static str],
     spans: Vec<&'static str>,
-    #[cfg(feature = "profiling")]
-    prelude_owners: Vec<(&'static str, &'static str)>,
     installing: Option<Validation>,
-    part_names: &'static [&'static str],
     recovering: Option<startup::Opening>,
-    lost_bricks: Vec<engine_registry::BrickId>,
     #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
     watched: reload::Watched,
 }
 
 impl Renderer {
-    pub fn pass_owner(&self, pass: &str) -> Option<&'static str> {
-        let machine = &self.run.as_ref()?.machine;
-        let declared = machine
-            .declared
-            .passes
-            .iter()
-            .find(|known| known.group.unwrap_or(known.name) == pass || known.name == pass)?;
-        machine
-            .declared
-            .parts
-            .get(declared.part as usize)
-            .map(|part| part.package)
-    }
-
     pub fn device_limits(&self) -> engine_core::DeviceLimits {
         self.core.limits
     }

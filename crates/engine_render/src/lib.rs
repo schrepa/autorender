@@ -39,7 +39,6 @@ mod surface;
 mod uploads;
 
 mod materials;
-mod memory;
 mod mesh_arena;
 mod mipmaps;
 mod platform;
@@ -58,8 +57,6 @@ pub use kinds::{
 pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
 pub use materials::gpu_format as texture_format;
 #[doc(hidden)]
-pub use memory::GpuMemory;
-#[doc(hidden)]
 pub use platform::{AdapterInfo, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
@@ -67,8 +64,7 @@ pub use platform::{GpuPreference, NativeWindow, keep_pipeline_cache_in};
 pub use render_bricks::RenderBricks;
 #[doc(hidden)]
 pub use renderer::{
-    Ahead, DeviceHealth, GpuPassTimes, Installation, InstalledPart, Renderer, StartingRenderer,
-    device_limits, install_noop,
+    Ahead, DeviceHealth, Installation, Renderer, StartingRenderer, device_limits, install_noop,
 };
 pub use shaders::FULLSCREEN;
 pub use surface::{

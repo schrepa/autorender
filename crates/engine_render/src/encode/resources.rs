@@ -71,7 +71,7 @@ impl Run {
         let Some((old, kept)) = previous else {
             return allocation;
         };
-        let copied = match self.buffer_held(buffer) {
+        match self.buffer_held(buffer) {
             Some((new, _)) => {
                 let mut encoder =
                     self.device
@@ -83,8 +83,6 @@ impl Run {
                 Allocation::Kept
             }
             None => Allocation::Fresh,
-        };
-        crate::memory::release_buffer(&old);
-        copied
+        }
     }
 }

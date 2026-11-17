@@ -191,9 +191,7 @@ pub(super) fn kind_passes(run: &mut Run, world: &World) -> Vec<KindPass> {
         };
         kinds.reported.push(named);
         kinds.problems.push(error.clone());
-        if let Some(part) = part_of(run, named.0) {
-            run.installs.faults.push((part, error));
-        }
+        run.installs.faults.push(error);
     }
     run.tallies.kinds.report = Some(draw_reports(run, &listed));
     listed

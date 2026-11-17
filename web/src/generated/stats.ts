@@ -1,8 +1,6 @@
 export interface FrameStats {
   bricks: Record<string, unknown>;
-  bricks_cost: BrickCosts | null;
   cut_seconds: number;
-  disabled_features: string[];
   draw_calls: number;
   dropped_draws: DroppedDraws[];
   dropped_seconds: number;
@@ -40,24 +38,6 @@ export interface FrameStats {
 export type Allowed = { kind: "range"; max: number; min: number } | { kind: "at_most"; max: number } | { kind: "at_least"; min: number } | { kind: "variants"; values: string[] };
 
 export type Awaits = "work" | "view" | "finished" | "frames";
-
-export interface BrickCost {
-  allocations: number;
-  brick: string;
-  cpu_ms: number;
-  created_after_warmup: number;
-  duplicate_upload_bytes: number;
-  gpu_bytes: number;
-  gpu_ms: number | null;
-  heap_live_bytes: number;
-  heap_peak_bytes: number;
-}
-
-export interface BrickCosts {
-  frame: number;
-  measuring_ms: number;
-  rows: BrickCost[];
-}
 
 export type DropReason = "unknown_pipeline" | "pass_mismatch" | "unfilled_holes" | "geometry_not_resident" | "geometry_not_held" | "geometry_waiting" | "geometry_failed" | "material_not_resident" | "material_not_held" | "material_waiting" | "material_failed" | "geometry_lacks_streams" | "no_render_pass" | "pipeline_compiling" | "pipeline_refused" | "missing_input" | "missing_bind_group" | "row_incomplete";
 
@@ -135,8 +115,6 @@ export interface ResolutionStats {
   display_width: number;
   dropped_pixels: number;
   gpu_ms: number | null;
-  render_height: number;
-  render_width: number;
 }
 
 export interface Unsettled {

@@ -14,7 +14,6 @@ pub struct ViewFacts {
     pub camera: Entity,
     pub target: Target,
     pub pixels: [u32; 4],
-    pub render: UVec2,
     pub layers: Layers,
     pub clear: Clear,
     pub clear_color: [f32; 4],
@@ -59,7 +58,6 @@ pub struct DrawnView {
 struct Key {
     target: Target,
     pixels: [u32; 4],
-    render: UVec2,
     camera: Entity,
     cut: Option<u64>,
 }
@@ -128,18 +126,6 @@ fn target_size(assets: Option<&AssetLibrary>, target: Target, surface: UVec2) ->
             .filter(|texture| texture.is_target() && texture.color_space() == ColorSpace::Srgb)
             .map(|texture| UVec2::new(texture.width(), texture.height()).max(UVec2::ONE)),
     }
-}
-
-fn rendered(pixels: [u32; 4], target: Target, facts: FrameFacts) -> UVec2 {
-    let size = UVec2::new(pixels[2], pixels[3]);
-    if !target.surface() || facts.render_size == facts.display_size {
-        return size;
-    }
-    let share = facts.render_size.as_vec2() / facts.display_size.max(UVec2::ONE).as_vec2();
-    (size.as_vec2() * share)
-        .round()
-        .as_uvec2()
-        .clamp(UVec2::ONE, size.max(UVec2::ONE))
 }
 
 fn eye_of(pose: Mat4) -> Option<(Vec3, Vec3, Vec3)> {
@@ -239,7 +225,6 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
             }
         };
         let pixels = view.viewport.pixels((size.x, size.y));
-        let render = rendered(pixels, view.target, facts);
         let aspect = pixels[2].max(1) as f32 / pixels[3].max(1) as f32;
         let view_projection = lens.clip(aspect) * Mat4::look_to_rh(eye, forward, up);
         if !view_projection.is_finite() {
@@ -252,7 +237,6 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
         let key = Key {
             target: view.target,
             pixels,
-            render,
             camera: view.camera,
             cut,
         };
@@ -272,7 +256,6 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
             camera: view.camera,
             target: view.target,
             pixels,
-            render,
             layers: view.layers,
             clear: view.clear,
             clear_color: view.clear_color,
@@ -303,7 +286,7 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
             local: index as u32,
             view_projection: facts.view_projection,
             position: facts.eye,
-            size: facts.render,
+            size: facts.size(),
             layers: facts.layers,
             target: ViewLayer {
                 layer: 0,

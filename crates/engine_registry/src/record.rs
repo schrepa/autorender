@@ -5,49 +5,22 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::schedule::{InternedScheduleLabel, IntoScheduleConfigs, ScheduleConfigs};
 use bevy_ecs::system::ScheduleSystem;
 use bevy_ecs::world::World;
-use engine_place::{Error, ErrorCode, List, PlaceDecl};
+use engine_place::{Error, ErrorCode, List};
 
-use crate::entries::{Filled, JoinEntry, OperationEntry, Owned, SettingsEntry, StatsEntry};
-use crate::hooks::{NamedField, Removal};
+use crate::entries::{JoinEntry, Kept, OperationEntry, Owned, SettingsEntry, StatsEntry};
 use crate::jobs::JobMember;
 use crate::scene::SpawnedBy;
-use crate::state::{GateFn, Scope};
-
-pub type SectionRule = fn(&World) -> Result<(), Error>;
+use crate::state::SwitchFn;
 
 pub trait RecordExt {
     fn record(&mut self) -> &mut BrickRecord;
 }
 
-#[diagnostic::on_unimplemented(
-    message = "`systems` takes plain systems and already runs them in the order given",
-    label = "pass the function or tuple itself, without `.chain()`, `.run_if()`, `.after()` or `.before()`",
-    note = "use `Bricks::within` for a condition; a later brick in the list runs after an earlier one"
-)]
-pub trait PlainSystems<M>: Send + Sync + 'static {}
-
-macro_rules! plain_markers {
-    ($last:ident) => {};
-    ($first:ident, $($rest:ident),+) => {
-        impl<T: Send + Sync + 'static, $first, $($rest),+> PlainSystems<($first, $($rest),+)> for T {}
-        plain_markers!($($rest),+);
-    };
-}
-
-plain_markers!(
-    M0, M1, M2, M3, M4, M5, M6, M7, M8, M9, M10, M11, M12, M13, M14, M15, M16, M17, M18, M19, M20
-);
-
-pub(crate) struct ScopeEntry {
-    pub(crate) parent: Option<Scope>,
-    pub(crate) condition: Option<GateFn>,
-    pub(crate) switch: Option<&'static str>,
-}
-
 type MakeSystems = Box<dyn FnOnce() -> ScheduleConfigs<ScheduleSystem> + Send + Sync>;
 
+type Turn = fn(&mut World);
+
 pub(crate) struct SystemsCall {
-    pub(crate) scope: Scope,
     pub(crate) schedule: InternedScheduleLabel,
     pub(crate) make: MakeSystems,
 }
@@ -58,27 +31,19 @@ pub struct BrickRecord {
     pub entries: Vec<Box<dyn Any + Send + Sync>>,
     pub render: Vec<Box<dyn Any + Send + Sync>>,
     brick: TypeId,
-    type_name: &'static str,
-    owner: Option<&'static str>,
+    crate_name: &'static str,
     source: [u8; 32],
     prefix: Option<&'static str>,
     corpora: Vec<&'static (dyn Any + Send + Sync)>,
-    pub(crate) scopes: Vec<ScopeEntry>,
-    current: Scope,
+    switch: Option<(&'static str, SwitchFn)>,
     pub(crate) spawned: fn(&mut World) -> ComponentId,
     pub(crate) systems: Vec<SystemsCall>,
-    pub(crate) fills: Vec<Filled>,
     pub(crate) joins: Vec<JoinEntry>,
-    required: Vec<TypeId>,
     owned: Vec<Owned>,
     settings: Vec<SettingsEntry>,
-    section_rules: Vec<SectionRule>,
     stats: Vec<StatsEntry>,
     operations: Vec<OperationEntry>,
-    pub(crate) removals: Vec<Removal>,
-    pub(crate) named: Vec<NamedField>,
     problems: Vec<Error>,
-    errors: Vec<&'static ErrorCode>,
 }
 
 impl BrickRecord {
@@ -94,31 +59,19 @@ impl BrickRecord {
             entries: Vec::new(),
             render: Vec::new(),
             brick: TypeId::of::<B>(),
-            type_name,
-            owner: owner_of(type_name, package),
+            crate_name: type_name.split("::").next().unwrap_or(type_name),
             source,
             prefix: None,
             corpora,
-            scopes: vec![ScopeEntry {
-                parent: None,
-                condition: None,
-                switch: None,
-            }],
-            current: Scope::BRICK,
+            switch: None,
             spawned: spawned_id::<B>,
             systems: Vec::new(),
-            fills: Vec::new(),
             joins: Vec::new(),
-            required: Vec::new(),
             owned: Vec::new(),
             settings: Vec::new(),
-            section_rules: Vec::new(),
             stats: Vec::new(),
             operations: Vec::new(),
-            removals: Vec::new(),
-            named: Vec::new(),
             problems: Vec::new(),
-            errors: Vec::new(),
         }
     }
 
@@ -134,14 +87,6 @@ impl BrickRecord {
         self.game
     }
 
-    pub fn type_name(&self) -> &'static str {
-        self.type_name
-    }
-
-    pub fn owner(&self) -> Option<&'static str> {
-        self.owner
-    }
-
     pub fn source(&self) -> [u8; 32] {
         self.source
     }
@@ -150,43 +95,22 @@ impl BrickRecord {
         self.prefix
     }
 
+    pub(crate) fn crate_name(&self) -> &'static str {
+        self.crate_name
+    }
+
     pub fn corpora<C: Any>(&self) -> impl Iterator<Item = &'static C> + '_ {
         self.corpora
             .iter()
             .filter_map(|&corpus| corpus.downcast_ref::<C>())
     }
 
-    pub fn error_codes(&self) -> &[&'static ErrorCode] {
-        &self.errors
+    pub fn switch_key(&self) -> Option<&'static str> {
+        self.switch.map(|(key, _)| key)
     }
 
-    pub fn add_error_codes(&mut self, codes: &'static [ErrorCode]) {
-        self.errors.extend(codes);
-    }
-
-    pub fn scope(&self) -> Scope {
-        self.current
-    }
-
-    pub fn scopes(&self) -> usize {
-        self.scopes.len()
-    }
-
-    pub fn parent(&self, scope: Scope) -> Option<Scope> {
-        self.scopes
-            .get(scope.index())
-            .and_then(|entry| entry.parent)
-    }
-
-    pub fn switched(&self, section: &str) -> Option<Scope> {
-        self.scopes
-            .iter()
-            .position(|entry| entry.switch == Some(section))
-            .map(|index| Scope(index as u32))
-    }
-
-    pub fn fills(&self) -> &[Filled] {
-        &self.fills
+    pub(crate) fn switch_fn(&self) -> Option<SwitchFn> {
+        self.switch.map(|(_, on)| on)
     }
 
     pub fn joins(&self) -> &[JoinEntry] {
@@ -208,20 +132,12 @@ impl BrickRecord {
         &self.settings
     }
 
-    pub fn section_rules(&self) -> &[SectionRule] {
-        &self.section_rules
-    }
-
     pub fn stats_entries(&self) -> &[StatsEntry] {
         &self.stats
     }
 
     pub fn operations(&self) -> &[OperationEntry] {
         &self.operations
-    }
-
-    pub fn problems(&self) -> &[Error] {
-        &self.problems
     }
 
     pub fn entries<T: Any>(&self) -> impl Iterator<Item = &T> + '_ {
@@ -236,59 +152,26 @@ impl BrickRecord {
             .filter_map(|entry| entry.downcast_ref::<T>())
     }
 
-    pub fn places(&self) -> impl Iterator<Item = &PlaceDecl> + '_ {
-        self.fills
-            .iter()
-            .map(|filled| &filled.place)
-            .chain(self.joins.iter().map(|joined| &joined.place))
-    }
-
-    pub fn requires(&self, slot: TypeId) -> bool {
-        self.required.contains(&slot)
-    }
-
-    pub fn fills_slot(&self, slot: TypeId) -> bool {
-        self.fills.iter().any(|filled| filled.slot == slot)
-    }
-
     pub fn owns(&self, type_id: TypeId) -> bool {
         self.owned.iter().any(|owned| owned.type_id == type_id)
     }
 
-    pub fn when(&mut self, condition: GateFn, switch: Option<&'static str>) {
-        if self.scopes[Scope::BRICK.index()].condition.is_some() {
-            let path = format!("$.bricks.{}.when", self.package);
+    pub fn switch(&mut self, key: &'static str, on: SwitchFn) {
+        if self.switch.is_some() {
+            let path = format!("$.bricks.{}.switch", self.package);
             self.problems
-                .push(Error::new(ErrorCode::NameTwice, path).got(self.package));
+                .push(Error::new(ErrorCode::NameTwice, path).got(key));
             return;
         }
-        let root = &mut self.scopes[Scope::BRICK.index()];
-        root.condition = Some(condition);
-        root.switch = switch;
-    }
-
-    pub fn enter(&mut self, condition: GateFn, switch: Option<&'static str>) -> Scope {
-        let scope = Scope(self.scopes.len() as u32);
-        self.scopes.push(ScopeEntry {
-            parent: Some(self.current),
-            condition: Some(condition),
-            switch,
-        });
-        self.current = scope;
-        scope
-    }
-
-    pub fn leave(&mut self) {
-        self.current = self.parent(self.current).unwrap_or(Scope::BRICK);
+        self.switch = Some((key, on));
     }
 
     pub fn systems<M: 'static>(
         &mut self,
         schedule: InternedScheduleLabel,
-        systems: impl IntoScheduleConfigs<ScheduleSystem, M> + PlainSystems<M>,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, M> + Send + Sync + 'static,
     ) {
         self.systems.push(SystemsCall {
-            scope: self.current,
             schedule,
             make: Box::new(move || systems.chain()),
         });
@@ -299,7 +182,7 @@ impl BrickRecord {
     }
 
     pub fn join<L: List>(&mut self, member: L::Member) {
-        self.joins.push(JoinEntry::of::<L>(self.current, member));
+        self.joins.push(JoinEntry::of::<L>(member));
     }
 
     pub fn resource<R: Resource + Default>(&mut self) {
@@ -313,10 +196,6 @@ impl BrickRecord {
         }
         self.own(entry.owned());
         self.settings.push(entry);
-    }
-
-    pub fn section_rule(&mut self, rule: SectionRule) {
-        self.section_rules.push(rule);
     }
 
     pub fn stats(&mut self, mut entry: StatsEntry) {
@@ -339,16 +218,28 @@ impl BrickRecord {
         self.operations.push(entry);
     }
 
-    pub fn on_remove(&mut self, removal: Removal) {
-        self.removals.push(removal);
-    }
-
-    pub fn named(&mut self, named: NamedField) {
-        self.named.push(named);
-    }
-
     pub(crate) fn take_problems(&mut self) -> Vec<Error> {
         std::mem::take(&mut self.problems)
+    }
+
+    pub(crate) fn dropped(&self) -> Vec<(Turn, Turn)> {
+        self.owned
+            .iter()
+            .filter_map(|owned| match owned.kept {
+                Kept::Dropped(remove) => Some((owned.init, remove)),
+                Kept::Survives(_) => None,
+            })
+            .collect()
+    }
+
+    pub(crate) fn kept(&self) -> Vec<Turn> {
+        self.owned
+            .iter()
+            .filter_map(|owned| match owned.kept {
+                Kept::Survives(touch) => Some(touch),
+                Kept::Dropped(_) => None,
+            })
+            .collect()
     }
 
     fn section_taken(&mut self, key: &'static str) -> bool {
@@ -371,27 +262,4 @@ impl BrickRecord {
 
 fn spawned_id<B: 'static>(world: &mut World) -> ComponentId {
     world.register_component::<SpawnedBy<B>>()
-}
-
-pub(crate) fn crate_segment(path: &str) -> &str {
-    path.split("::").next().unwrap_or(path)
-}
-
-pub(crate) fn owner_of(type_name: &'static str, package: &str) -> Option<&'static str> {
-    let segment = crate_segment(type_name);
-    if is_package(segment, package) {
-        return Some(segment);
-    }
-    let rest = type_name[segment.len()..].strip_prefix("::bricks::")?;
-    let module = rest.split("::").next()?;
-    let named = package.strip_suffix(module)?.strip_suffix('_')?;
-    (!module.is_empty() && is_package(segment, named)).then_some(segment)
-}
-
-pub(crate) fn is_package(segment: &str, package: &str) -> bool {
-    segment.len() == package.len()
-        && segment
-            .bytes()
-            .zip(package.bytes())
-            .all(|(segment, package)| segment == package || (segment == b'_' && package == b'-'))
 }

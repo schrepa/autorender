@@ -1,4 +1,4 @@
-use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
 use crate::Row;
 
@@ -7,6 +7,7 @@ const SPEED_ROUNDS: u32 = 4096;
 static ROWS: Mutex<Vec<Row>> = Mutex::new(Vec::new());
 static WAITS: Mutex<Vec<Row>> = Mutex::new(Vec::new());
 static SPEED: Mutex<Vec<f64>> = Mutex::new(Vec::new());
+static CLOCK: OnceLock<fn() -> f64> = OnceLock::new();
 
 fn held<T>(table: &'static Mutex<T>) -> MutexGuard<'static, T> {
     table.lock().unwrap_or_else(PoisonError::into_inner)
@@ -29,9 +30,13 @@ fn found(rows: &mut Vec<Row>, name: &'static str) -> usize {
     rows.len() - 1
 }
 
+pub fn install_clock(clock: fn() -> f64) {
+    CLOCK.get_or_init(|| clock);
+}
+
 #[cfg(target_arch = "wasm32")]
 pub fn now_ms() -> f64 {
-    0.0
+    CLOCK.get().map_or(0.0, |clock| clock())
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -58,14 +63,24 @@ pub fn timed(row: usize) -> RowScope {
     RowScope {
         row,
         start: now_ms(),
-        allocations: crate::allocation_snapshot().allocations,
+        allocations: allocations(),
     }
+}
+
+#[cfg(feature = "enabled")]
+fn allocations() -> u64 {
+    crate::allocation_snapshot().allocations
+}
+
+#[cfg(not(feature = "enabled"))]
+fn allocations() -> u64 {
+    0
 }
 
 impl Drop for RowScope {
     fn drop(&mut self) {
         let ms = now_ms() - self.start;
-        let allocations = crate::allocation_snapshot().allocations - self.allocations;
+        let allocations = allocations() - self.allocations;
         if let Some(row) = held(&ROWS).get_mut(self.row) {
             row.ms += ms;
             row.worst_ms = row.worst_ms.max(ms);

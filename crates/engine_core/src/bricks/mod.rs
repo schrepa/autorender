@@ -1,30 +1,26 @@
-use std::any::{Any, TypeId};
+use std::any::Any;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
 use bevy_ecs::bundle::Bundle;
-use bevy_ecs::component::{Component, ComponentId, Immutable, Mutable};
+use bevy_ecs::component::{Component, Immutable, Mutable};
 use bevy_ecs::entity::Entity;
 use bevy_ecs::query::{QueryFilter, ReadOnlyQueryData};
-use bevy_ecs::resource::{IsResource, Resource};
+use bevy_ecs::resource::Resource;
 use bevy_ecs::schedule::IntoScheduleConfigs;
-use bevy_ecs::system::{
-    Commands, In, IntoSystem, IsFunctionSystem, Query, ReadOnlySystemParam, Res, ScheduleSystem,
-    SystemParam, SystemParamFunction,
-};
+use bevy_ecs::system::{Commands, Query, ReadOnlySystemParam, Res, ScheduleSystem, SystemParam};
 use bevy_ecs::world::World;
 use engine_place::Call;
 use engine_registry::{
-    BrickRecord, BrickStates, GateFn, JobList, MembersOf, NamedField, OperationEntry, PlainSystems,
-    Registry, RegistryBuilder, Removal, SectionRule, SettingsEntry, SpawnedBy, StatsEntry,
+    BrickRecord, BrickStates, JobList, MembersOf, OperationEntry, Registry, SettingsEntry,
+    SpawnedBy, StatsEntry,
 };
 use serde_json::Value;
 
 use crate::moves::NodeKind;
 use crate::{
-    Board, Callable, Error, ErrorCode, JobKind, KindDecl, List, Mover, MoverId, Operation,
-    OperationScene, Pace, Parent, PlaceDecl, RecordKey, SceneContext, SceneEntity, Section, Slot,
-    Source, SubScene, Switch,
+    Callable, Error, JobKind, KindDecl, List, Mover, MoverId, Operation, Pace, Parent, RecordKey,
+    SceneContext, Section, Source, Switch,
 };
 
 pub trait Brick: 'static {
@@ -76,44 +72,10 @@ impl<'r> Bricks<'r> {
 }
 
 impl Bricks<'_> {
-    pub fn when<M, F>(&mut self, gate: F) -> &mut Self
-    where
-        F: SystemParamFunction<M, In = (), Out = bool>,
-        F::Param: Read,
-        M: 'static,
-    {
-        self.record.when(gate_of(gate), None);
-        self
-    }
-
     #[track_caller]
     pub fn switch<S: Switch + Resource<Mutability = Immutable>>(&mut self) -> &mut Self {
         self.record.settings(settings_entry::<S>());
-        self.record.when(gate_of(switch_on::<S>), Some(S::KEY));
-        self
-    }
-
-    #[track_caller]
-    pub fn within_switch<S: Switch + Resource<Mutability = Immutable>>(
-        &mut self,
-        items: impl FnOnce(&mut Self),
-    ) -> &mut Self {
-        self.record.settings(settings_entry::<S>());
-        self.record.enter(gate_of(switch_on::<S>), Some(S::KEY));
-        items(self);
-        self.record.leave();
-        self
-    }
-
-    pub fn within<M, F>(&mut self, gate: F, items: impl FnOnce(&mut Self)) -> &mut Self
-    where
-        F: SystemParamFunction<M, In = (), Out = bool>,
-        F::Param: Read,
-        M: 'static,
-    {
-        self.record.enter(gate_of(gate), None);
-        items(self);
-        self.record.leave();
+        self.record.switch(S::KEY, switch_on::<S>);
         self
     }
 
@@ -125,7 +87,7 @@ impl Bricks<'_> {
     pub fn systems<M>(
         &mut self,
         schedule: Schedule,
-        systems: impl IntoScheduleConfigs<ScheduleSystem, M> + PlainSystems<M>,
+        systems: impl IntoScheduleConfigs<ScheduleSystem, M> + Send + Sync + 'static,
     ) -> &mut Self
     where
         M: 'static,
@@ -142,16 +104,6 @@ impl Bricks<'_> {
     #[track_caller]
     pub fn settings<S: Section + Resource<Mutability = Immutable>>(&mut self) -> &mut Self {
         self.record.settings(settings_entry::<S>());
-        self
-    }
-
-    pub fn section_rule(&mut self, rule: SectionRule) -> &mut Self {
-        self.record.section_rule(rule);
-        self
-    }
-
-    pub fn errors(&mut self, codes: &'static [ErrorCode]) -> &mut Self {
-        self.record.add_error_codes(codes);
         self
     }
 
@@ -194,51 +146,10 @@ impl Bricks<'_> {
         }));
         self
     }
-
-    pub fn moving<C: Component>(&mut self) -> &mut Self {
-        self.record.entries.push(Box::new(NodeKind::Moving {
-            track: crate::moves::moving::<C>,
-        }));
-        self
-    }
-
-    pub fn on_remove<C: Component, M>(
-        &mut self,
-        system: impl IntoSystem<In<Entity>, (), M> + Send + Sync + 'static,
-    ) -> &mut Self {
-        self.record
-            .on_remove(Removal::of::<C>(Box::new(IntoSystem::into_system(system))));
-        self
-    }
-
-    pub fn named<S: Section, L: List>(
-        &mut self,
-        field: &'static str,
-        kept: &'static [&'static str],
-        name: fn(&L::Member) -> &'static str,
-    ) -> &mut Self {
-        self.record
-            .named(NamedField::of(S::KEY, field, kept, move |world: &World| {
-                world
-                    .get_resource::<MembersOf<L>>()
-                    .map_or_else(Vec::new, |members| members.all().iter().map(name).collect())
-            }));
-        self
-    }
 }
 
-fn switch_on<S: Switch>(section: Res<S>) -> bool {
-    section.on()
-}
-
-fn gate_of<M: 'static, F>(gate: F) -> GateFn
-where
-    F: SystemParamFunction<M, In = (), Out = bool>,
-    F::Param: Read,
-{
-    Box::new(IntoSystem::<(), bool, (IsFunctionSystem, M)>::into_system(
-        gate,
-    ))
+fn switch_on<S: Switch + Resource>(world: &World) -> bool {
+    world.get_resource::<S>().is_some_and(Switch::on)
 }
 
 #[track_caller]
@@ -252,9 +163,6 @@ fn check_of<S: Section>(value: &Value, path: &str) -> Result<(), Error> {
 
 fn set_of<S: Section>(world: &mut World, value: &Value, path: &str) -> Result<(), Error> {
     let section: S = engine_settings::parse_value_at(value.clone(), path)?;
-    if let Some(registry) = world.get_resource::<Registry>() {
-        registry.check_named(S::KEY, value, path)?;
-    }
     section.check().map_err(|error| error.within(path))?;
     if let Some(scene) = world.get_resource::<SceneContext>() {
         scene
@@ -280,8 +188,6 @@ fn scene_of<S: Section>(value: &Value, path: &str, scene: &dyn Any) -> Result<()
 pub trait Listing: Sized {
     #[must_use]
     fn with<B: Brick>(self) -> Self;
-    #[must_use]
-    fn places(self, places: &'static [PlaceDecl]) -> Self;
     #[must_use]
     fn settings<S: Section>(self, value: S) -> Self;
 }
@@ -342,26 +248,12 @@ fn record_of<B: Brick>() -> BrickRecord {
 #[derive(Clone, Default)]
 pub struct BrickList {
     bricks: Vec<Listed>,
-    places: Vec<&'static [PlaceDecl]>,
-    core: Vec<fn(&mut RegistryBuilder)>,
     defaults: Vec<ListDefault>,
 }
 
 impl BrickList {
     pub fn listed(&self) -> &[Listed] {
         &self.bricks
-    }
-
-    pub fn declared(&self) -> impl Iterator<Item = &'static PlaceDecl> + '_ {
-        self.places.iter().flat_map(|places| places.iter())
-    }
-
-    pub fn place_sets(&self) -> &[&'static [PlaceDecl]] {
-        &self.places
-    }
-
-    pub fn core_places(&self) -> &[fn(&mut RegistryBuilder)] {
-        &self.core
     }
 
     pub fn defaults(&self) -> &[ListDefault] {
@@ -388,22 +280,11 @@ impl BrickList {
         let kinds = self.jobs();
         crate::job_list_with(&kinds, members)
     }
-
-    #[must_use]
-    pub fn with_core(mut self, register: fn(&mut RegistryBuilder)) -> Self {
-        self.core.push(register);
-        self
-    }
 }
 
 impl Listing for BrickList {
     fn with<B: Brick>(mut self) -> Self {
         self.bricks.push(Listed::of::<B>());
-        self
-    }
-
-    fn places(mut self, places: &'static [PlaceDecl]) -> Self {
-        self.places.push(places);
         self
     }
 
@@ -432,8 +313,6 @@ impl<D: ReadOnlyQueryData + 'static, F: QueryFilter + 'static> sealed::Sealed
 impl<D: ReadOnlyQueryData + 'static, F: QueryFilter + 'static> Read for Query<'_, '_, D, F> {}
 impl<L: List> sealed::Sealed for Joined<'_, L> {}
 impl<L: List> Read for Joined<'_, L> {}
-impl<S: Slot> sealed::Sealed for Filled<'_, S> {}
-impl<S: Slot> Read for Filled<'_, S> {}
 
 macro_rules! read_tuples {
     ($($param:ident),*) => {
@@ -502,48 +381,6 @@ pub fn members_in<L: List>(world: &World) -> &[L::Member] {
 }
 
 #[derive(SystemParam)]
-pub struct Filled<'w, S: Slot> {
-    registry: Option<Res<'w, Registry>>,
-    states: Option<Res<'w, BrickStates>>,
-    slot: PhantomData<fn() -> S>,
-}
-
-impl<S: Slot> Filled<'_, S> {
-    pub fn on(&self) -> bool {
-        self.registry
-            .as_ref()
-            .zip(self.states.as_ref())
-            .is_some_and(|(registry, states)| registry.slot_on(states, TypeId::of::<S>()))
-    }
-
-    pub fn listed(&self) -> bool {
-        self.registry
-            .as_ref()
-            .is_some_and(|registry| registry.filler(TypeId::of::<S>()).is_some())
-    }
-}
-
-#[derive(SystemParam)]
-pub struct Switched<'w, S: Switch> {
-    registry: Option<Res<'w, Registry>>,
-    states: Option<Res<'w, BrickStates>>,
-    section: PhantomData<fn() -> S>,
-}
-
-impl<S: Switch> Switched<'_, S> {
-    pub fn on(&self) -> bool {
-        self.registry
-            .as_ref()
-            .zip(self.states.as_ref())
-            .is_some_and(|(registry, states)| {
-                registry
-                    .switch_gate(S::KEY)
-                    .is_some_and(|gate| states.on(gate))
-            })
-    }
-}
-
-#[derive(SystemParam)]
 pub struct Spawner<'w, 's, B: Brick> {
     commands: Commands<'w, 's>,
     brick: PhantomData<fn() -> B>,
@@ -563,34 +400,21 @@ impl<B: Brick> Spawner<'_, '_, B> {
     }
 
     pub fn remove<T: Bundle>(&mut self, entity: Entity) {
-        self.commands
-            .queue(move |world: &mut World| removed::<B, T>(world, entity));
+        self.commands.queue(move |world: &mut World| {
+            if let Ok(mut held) = world.get_entity_mut(entity) {
+                held.remove::<T>();
+            }
+        });
     }
 
     pub fn despawn(&mut self, entity: Entity) {
-        self.commands
-            .queue(move |world: &mut World| despawned::<B>(world, entity));
-    }
-
-    pub fn install(&mut self, scene: SubScene) -> Vec<Entity> {
-        let entities: Vec<Entity> = scene
-            .entities
-            .iter()
-            .map(|_| self.commands.spawn_empty().id())
-            .collect();
-        let reserved = entities.clone();
-        self.commands
-            .queue(move |world: &mut World| installed::<B>(world, &reserved, &scene));
-        entities
+        self.commands.queue(move |world: &mut World| {
+            world.despawn(entity);
+        });
     }
 
     pub fn set_parent(&mut self, child: Entity, parent: Option<Entity>) {
         self.set_parents(vec![(child, parent)]);
-    }
-
-    pub fn fault(&mut self, error: Error) {
-        self.commands
-            .queue(move |world: &mut World| engine_registry::fault_of::<B>(world, error));
     }
 
     pub fn set_parents(&mut self, changes: Vec<(Entity, Option<Entity>)>) {
@@ -600,11 +424,6 @@ impl<B: Brick> Spawner<'_, '_, B> {
 }
 
 fn spawned<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T) {
-    if carries_resource::<T>(world) {
-        world.despawn(entity);
-        foreign::<B>(world, entity);
-        return;
-    }
     let Ok(mut spawned) = world.get_entity_mut(entity) else {
         return;
     };
@@ -615,48 +434,7 @@ fn spawned<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T) {
     }
 }
 
-fn scene_kinds<B: Brick>(world: &mut World) -> Vec<ComponentId> {
-    let kinds: Vec<fn(&mut World) -> ComponentId> = world
-        .get_resource::<MembersOf<crate::SceneComponents>>()
-        .map(|members| {
-            members
-                .every()
-                .filter(|&(brick, _, _)| brick == TypeId::of::<B>())
-                .map(|(_, _, kind)| kind.registrar())
-                .collect()
-        })
-        .unwrap_or_default();
-    kinds.into_iter().map(|register| register(world)).collect()
-}
-
-fn private<B: Brick, T: Bundle>(world: &mut World) -> bool {
-    let ids = world
-        .register_bundle::<T>()
-        .contributed_components()
-        .to_vec();
-    let Some(registry) = world.get_resource::<Registry>() else {
-        return false;
-    };
-    let package = B::SOURCE.package();
-    !ids.is_empty()
-        && ids.iter().all(|&id| {
-            world.components().get_info(id).is_some_and(|info| {
-                info.type_id().is_some_and(|type_id| {
-                    registry.private_type(package, type_id, &info.name().to_string())
-                })
-            })
-        })
-}
-
-fn touches<B: Brick, T: Bundle>(world: &mut World, entity: Entity) -> bool {
-    !carries_resource::<T>(world) && (owned::<B>(world, entity) || private::<B, T>(world))
-}
-
 fn inserted<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T) {
-    if !touches::<B, T>(world, entity) {
-        foreign::<B>(world, entity);
-        return;
-    }
     let Ok(mut held) = world.get_entity_mut(entity) else {
         return;
     };
@@ -673,109 +451,7 @@ fn inserted<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T) {
     }
 }
 
-fn removed<B: Brick, T: Bundle>(world: &mut World, entity: Entity) {
-    if !touches::<B, T>(world, entity) {
-        foreign::<B>(world, entity);
-        return;
-    }
-    if let Ok(mut held) = world.get_entity_mut(entity) {
-        held.remove::<T>();
-    }
-}
-
-fn despawned<B: Brick>(world: &mut World, entity: Entity) {
-    if !owned::<B>(world, entity) {
-        foreign::<B>(world, entity);
-        return;
-    }
-    world.despawn(entity);
-}
-
-fn installed<B: Brick>(world: &mut World, entities: &[Entity], scene: &SubScene) {
-    let context = world.get_resource::<SceneContext>().cloned();
-    let landed = Board::owned_by(B::SOURCE.package(), || match &context {
-        Some(context) => context.scope(|| install::<B>(world, entities, scene)),
-        None => install::<B>(world, entities, scene),
-    });
-    if let Err(error) = landed {
-        for &entity in entities {
-            let _ = world.try_despawn(entity);
-        }
-        refused::<B>(world, "install", error);
-    }
-}
-
-fn install<B: Brick>(
-    world: &mut World,
-    entities: &[Entity],
-    scene: &SubScene,
-) -> Result<(), Error> {
-    let scene_id = world
-        .get_resource::<OperationScene>()
-        .map(|scene| scene.id.clone())
-        .or_else(|| {
-            world
-                .get_resource::<SceneContext>()
-                .map(|context| context.id.clone())
-        })
-        .unwrap_or_default();
-    let mut parents = Vec::new();
-    for (index, (&entity, item)) in entities.iter().zip(&scene.entities).enumerate() {
-        let at = format!("$.entities[{index}]");
-        let authored = item.authored.clone();
-        world
-            .get_entity_mut(entity)
-            .map_err(|_| Error::new(ErrorCode::UnknownEntity, &at).got(entity.to_string()))?
-            .insert((
-                item.transform,
-                SpawnedBy::<B>::new(),
-                SceneEntity {
-                    scene_id: scene_id.clone(),
-                    authored_id: authored.id,
-                    name: authored.name,
-                    tags: authored.tags,
-                    authored_parent: authored.parent,
-                    prefab_id: authored.prefab_id,
-                    prefab_instance: authored.prefab_instance,
-                    prefab_local_id: authored.prefab_local_id,
-                },
-            ));
-        if let Some(parent) = item.parent {
-            let parent = entities.get(parent).copied().ok_or_else(|| {
-                Error::new(ErrorCode::UnknownParent, format!("{at}.parent")).got(parent)
-            })?;
-            parents.push((entity, Some(parent)));
-        }
-    }
-    for (index, (&entity, item)) in entities.iter().zip(&scene.entities).enumerate() {
-        for (key, value) in &item.components {
-            let at = format!("$.entities[{index}].{key}");
-            let kind = crate::scene_component(world, key)
-                .ok_or_else(|| Error::new(ErrorCode::SectionUnlisted, &at).got(key))?;
-            kind.validate(value, &at)?;
-            kind.read(world, entity, value)
-                .map_err(|error| error.within(&at))?;
-        }
-    }
-    crate::set_parents(world, &parents).map_err(|error| error.within("$.entities"))?;
-    for (index, &entity) in entities.iter().enumerate() {
-        crate::admit(world, entity, None, &format!("$.entities[{index}]"))?;
-    }
-    Ok(())
-}
-
 fn parented<B: Brick>(world: &mut World, changes: &[(Entity, Option<Entity>)]) {
-    let kinds = scene_kinds::<B>(world);
-    let stranger = changes.iter().find(|&&(child, _)| {
-        !owned::<B>(world, child)
-            && !world
-                .get_entity(child)
-                .is_ok_and(|held| kinds.iter().any(|&kind| held.contains_id(kind)))
-    });
-    if let Some(&(child, _)) = stranger {
-        foreign::<B>(world, child);
-        return;
-    }
     let before: Vec<(Entity, Option<Entity>)> = changes
         .iter()
         .map(|&(child, _)| (child, world.get::<Parent>(child).map(Parent::parent)))
@@ -796,28 +472,6 @@ fn parented<B: Brick>(world: &mut World, changes: &[(Entity, Option<Entity>)]) {
 fn refused<B: Brick>(world: &mut World, call: &str, error: Error) {
     let path = format!("$.bricks.{}.spawner.{call}", B::SOURCE.package());
     report(world, error.within(&path));
-}
-
-fn owned<B: Brick>(world: &World, entity: Entity) -> bool {
-    world.get::<SpawnedBy<B>>(entity).is_some()
-}
-
-fn carries_resource<T: Bundle>(world: &mut World) -> bool {
-    let marker = world.register_component::<IsResource>();
-    world
-        .register_bundle::<T>()
-        .contributed_components()
-        .contains(&marker)
-}
-
-fn foreign<B: Brick>(world: &mut World, entity: Entity) {
-    let package = B::SOURCE.package();
-    let error = Error::new(
-        ErrorCode::ForeignEntity,
-        format!("$.bricks.{package}.spawner"),
-    )
-    .got(entity.to_string());
-    report(world, error);
 }
 
 fn report(world: &mut World, error: Error) {

@@ -272,19 +272,16 @@ pub(crate) struct Made {
 
 impl Allocated {
     fn new(device: &wgpu::Device, made: &Made, size: wgpu::Extent3d, mips: u32) -> Self {
-        let texture = crate::memory::texture(
-            device,
-            &wgpu::TextureDescriptor {
-                label: Some(made.label),
-                size,
-                mip_level_count: mips.max(1),
-                sample_count: 1,
-                dimension: made.dimension,
-                format: made.format,
-                usage: made.usage,
-                view_formats: &[],
-            },
-        );
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(made.label),
+            size,
+            mip_level_count: mips.max(1),
+            sample_count: 1,
+            dimension: made.dimension,
+            format: made.format,
+            usage: made.usage,
+            view_formats: &[],
+        });
         let layered =
             made.dimension == wgpu::TextureDimension::D2 && size.depth_or_array_layers > 1;
         let view = texture.create_view(&wgpu::TextureViewDescriptor {
@@ -586,15 +583,12 @@ fn target_format(target: Target) -> Option<wgpu::TextureFormat> {
 }
 
 fn uniform_buffer(device: &wgpu::Device, label: &'static str, size: u64) -> wgpu::Buffer {
-    crate::memory::buffer(
-        device,
-        &wgpu::BufferDescriptor {
-            label: Some(label),
-            size,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        },
-    )
+    device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some(label),
+        size,
+        usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    })
 }
 
 impl Run {
@@ -739,12 +733,7 @@ impl Run {
     }
 
     pub(crate) fn fault(&mut self, error: Error) {
-        let part = self.part;
-        if let Some(turned) = self.installs.turned.get_mut(part as usize)
-            && turned.take().is_some()
-        {
-            self.installs.faults.push((part, error));
-        }
+        self.installs.faults.push(error);
     }
 
     pub(crate) fn drawable(&self, part: u32) -> bool {
@@ -900,9 +889,7 @@ impl Run {
         };
         let fresh = Allocated::new(&self.device, &made, size, mips);
         let tables = self.texture_tables_mut(texture);
-        if let Some(held) = tables.textures[at].replace(fresh) {
-            crate::memory::release_any(&held.texture);
-        }
+        tables.textures[at] = Some(fresh);
         tables.sizes[at] = Some((size, mips));
         self.tallies.rebuilt.textures += 1;
         self.touch(Held::Texture(texture));
@@ -956,19 +943,15 @@ impl Run {
             self.queue.submit_now([encoder.finish()]);
             allocation = Allocation::Kept;
         }
-        if let Some(held) = &previous {
-            crate::memory::release_any(&held.texture);
-        }
         allocation
     }
 
     pub(crate) fn release(&mut self, texture: u32) {
         let at = texture as usize;
         let tables = self.texture_tables_mut(texture);
-        let Some(made) = tables.textures.get_mut(at).and_then(Option::take) else {
+        if tables.textures.get_mut(at).and_then(Option::take).is_none() {
             return;
-        };
-        crate::memory::release_any(&made.texture);
+        }
         tables.sizes[at] = None;
         self.touch(Held::Texture(texture));
     }
@@ -1011,8 +994,7 @@ impl Run {
         else {
             return;
         };
-        if let Some((made, _)) = held.take() {
-            crate::memory::release_buffer(&made);
+        if held.take().is_some() {
             self.touch(Held::Buffer(buffer));
         }
     }
@@ -1136,19 +1118,13 @@ impl Run {
         {
             return Allocation::Kept;
         }
-        if let Some((held, _)) = self.buffer_held(buffer) {
-            crate::memory::release_buffer(held);
-        }
         let usage = decl.usage | wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::COPY_SRC;
-        let made = crate::memory::buffer(
-            &self.device,
-            &wgpu::BufferDescriptor {
-                label: Some(decl.label),
-                size: bytes,
-                usage,
-                mapped_at_creation: false,
-            },
-        );
+        let made = self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(decl.label),
+            size: bytes,
+            usage,
+            mapped_at_creation: false,
+        });
         self.buffer_tables_mut(buffer).buffers[at] = Some((made, bytes));
         self.tallies.rebuilt.buffers += 1;
         self.touch(Held::Buffer(buffer));

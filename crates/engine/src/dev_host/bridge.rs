@@ -3,7 +3,6 @@ use engine_dev::results::{CaptureResult, FramesResult, GameResult, KeptArtifact,
 use engine_dev::{
     BrowserControl, CaptureRequest, Effect, HostContext, Outcome, ProfileRequest, Step, ToolCall,
 };
-use engine_registry::BrickCosts;
 use engine_scene::SceneFiles;
 use engine_settings::Expected;
 use serde_json::{Value, json};
@@ -50,7 +49,7 @@ impl Pending {
 pub(crate) struct ProfileRun {
     request: ProfileRequest,
     ran: u32,
-    frames: Vec<BrickCosts>,
+    frames: Vec<Vec<engine_profile::Row>>,
 }
 
 impl std::fmt::Debug for ProfileRun {
@@ -106,6 +105,7 @@ impl<G: Game> GameHost<G> {
             Handled::Loop(Looped::Capture(request)) => self.dev_capture(&request, context),
             Handled::Loop(Looped::Profile(request)) => {
                 self.suspend();
+                drop(engine_profile::take_rows());
                 let run = ProfileRun {
                     request,
                     ran: 0,
@@ -356,17 +356,7 @@ impl<G: Game> GameHost<G> {
                 failed,
             ));
         }
-        let Some(costs) = self
-            .engine()
-            .app
-            .world()
-            .get_resource::<BrickCosts>()
-            .cloned()
-        else {
-            return self
-                .dev_refused(Error::new(ErrorCode::ProfilingUnavailable, "$").got("BrickCosts"));
-        };
-        run.frames.push(costs);
+        run.frames.push(engine_profile::take_rows());
         run.ran += 1;
         if run.ran < run.request.frames {
             let timestamp = f64::from(run.ran) * run.request.interval_ms;

@@ -57,44 +57,6 @@ impl Queue {
     pub fn take_immediate(&self) -> u32 {
         self.0.immediate.take()
     }
-
-    pub fn write_buffer(&self, buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {
-        crate::memory::uploaded_buffer(buffer, offset, data);
-        write_buffer(&self.0.queue, buffer, offset, data);
-    }
-
-    pub fn write_texture(
-        &self,
-        texture: wgpu::TexelCopyTextureInfo<'_>,
-        data: &[u8],
-        layout: wgpu::TexelCopyBufferLayout,
-        size: wgpu::Extent3d,
-    ) {
-        crate::memory::uploaded_texture(&texture, data);
-        write_texture(&self.0.queue, texture, data, layout, size);
-    }
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the renderer's one buffer upload, which records repeated uploads"
-)]
-fn write_buffer(queue: &wgpu::Queue, buffer: &wgpu::Buffer, offset: u64, data: &[u8]) {
-    queue.write_buffer(buffer, offset, data);
-}
-
-#[expect(
-    clippy::disallowed_methods,
-    reason = "the renderer's one texture upload, which records repeated uploads"
-)]
-fn write_texture(
-    queue: &wgpu::Queue,
-    texture: wgpu::TexelCopyTextureInfo<'_>,
-    data: &[u8],
-    layout: wgpu::TexelCopyBufferLayout,
-    size: wgpu::Extent3d,
-) {
-    queue.write_texture(texture, data, layout, size);
 }
 
 #[expect(clippy::disallowed_methods, reason = "the renderer's one submission")]

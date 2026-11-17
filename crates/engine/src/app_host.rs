@@ -69,21 +69,6 @@ pub(crate) struct AppHost {
     gpu_ms: Option<f32>,
     #[cfg(feature = "profiling")]
     profile_frame: u64,
-    #[cfg(any(feature = "dev", feature = "profiling"))]
-    attribution: attribution::Attribution,
-}
-
-fn log_unmet(engine: &Engine) {
-    for error in engine.unmet() {
-        let record = serde_json::json!({"event": "unmet", "error": error});
-        #[cfg(target_arch = "wasm32")]
-        web_sys::console::warn_1(&wasm_bindgen::JsValue::from_str(&record.to_string()));
-        #[cfg(not(target_arch = "wasm32"))]
-        eprintln!("{record}");
-    }
-    for error in engine.notices() {
-        log_notice(error);
-    }
 }
 
 fn log_notice(error: &engine_core::Error) {
@@ -121,11 +106,15 @@ impl AppHost {
         let renderer = Box::new(starting.finish());
         let mut host = Self::with(engine, renderer);
         host.claim_passes(ahead)?;
-        log_unmet(&host.engine);
+        for error in host.engine.notices() {
+            log_notice(error);
+        }
         Ok(host)
     }
 
     fn with(mut engine: Engine, renderer: Box<Renderer>) -> Self {
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        engine_profile::install_clock(now_ms);
         wire(&mut engine, &renderer, (0, false));
         Self {
             engine,
@@ -140,8 +129,6 @@ impl AppHost {
             gpu_ms: None,
             #[cfg(feature = "profiling")]
             profile_frame: 0,
-            #[cfg(any(feature = "dev", feature = "profiling"))]
-            attribution: attribution::Attribution::default(),
         }
     }
 
@@ -217,7 +204,6 @@ impl AppHost {
 
     pub(crate) fn reloaded(&mut self) {
         self.pipeline_list.restart();
-        self.restart_attribution();
     }
 
     pub fn set_setting(&mut self, key: &str, value: serde_json::Value) -> Result<()> {
@@ -264,12 +250,9 @@ impl AppHost {
 
     fn resolution_stats(&self, (width, height): (u32, u32)) -> ResolutionStats {
         let (display_width, display_height) = self.renderer.view_size().unwrap_or((0, 0));
-        let (render_width, render_height) = self.renderer.view_size().unwrap_or((0, 0));
         ResolutionStats {
             display_width,
             display_height,
-            render_width,
-            render_height,
             dropped_pixels: (u64::from(width) * u64::from(height))
                 .saturating_sub(u64::from(display_width) * u64::from(display_height)),
             gpu_ms: self.gpu_ms,
@@ -374,23 +357,16 @@ impl AppHost {
                 .expected(crate::Expected::Finite)
                 .got(timestamp_ms));
         }
-        self.begin_attribution();
         #[cfg(feature = "profiling")]
         self.begin_profile_frame();
-        let profile = engine_profile::span("cpu", "host.frame");
-        let drawn = {
-            let _core = attribution::core_scope();
-            self.deliver();
-            let start = now_ms();
-            self.engine.frame(timestamp_ms * 0.001)?;
-            let simulation_ms = now_ms() - start;
-            let time = self.engine.frame_time();
-            let drawn = self.render_frame((width, height), (simulation_ms, time.ticks), picture)?;
-            self.engine.exchange();
-            drawn
-        };
-        drop(profile);
-        self.end_attribution();
+        let _profile = engine_profile::span("cpu", "host.frame");
+        self.deliver();
+        let start = now_ms();
+        self.engine.frame(timestamp_ms * 0.001)?;
+        let simulation_ms = now_ms() - start;
+        let time = self.engine.frame_time();
+        let drawn = self.render_frame((width, height), (simulation_ms, time.ticks), picture)?;
+        self.engine.exchange();
         Ok(drawn)
     }
 
@@ -398,31 +374,25 @@ impl AppHost {
     pub fn dev_step(&mut self, ticks: u32, width: u32, height: u32) -> Result<()> {
         engine_core::check_dev_ticks(ticks)?;
         self.follow_focus(InputSource::Agent);
-        self.begin_attribution();
         #[cfg(feature = "profiling")]
         self.begin_profile_frame();
-        let profile = engine_profile::span("cpu", "host.step");
-        {
-            let _core = attribution::core_scope();
-            self.deliver();
-            let start = now_ms();
+        let _profile = engine_profile::span("cpu", "host.step");
+        self.deliver();
+        let start = now_ms();
+        self.engine.step_fixed(1)?;
+        let mut fixed_steps = self.engine.frame_time().ticks;
+        for _ in 1..ticks {
+            self.engine.start_frame();
+            self.keep_held();
             self.engine.step_fixed(1)?;
-            let mut fixed_steps = self.engine.frame_time().ticks;
-            for _ in 1..ticks {
-                self.engine.start_frame();
-                self.keep_held();
-                self.engine.step_fixed(1)?;
-                fixed_steps += self.engine.frame_time().ticks;
-            }
-            let simulation_ms = now_ms() - start;
-            self.render_frame(
-                (width, height),
-                (simulation_ms, fixed_steps),
-                Picture::Shown,
-            )?;
+            fixed_steps += self.engine.frame_time().ticks;
         }
-        drop(profile);
-        self.end_attribution();
+        let simulation_ms = now_ms() - start;
+        self.render_frame(
+            (width, height),
+            (simulation_ms, fixed_steps),
+            Picture::Shown,
+        )?;
         Ok(())
     }
 
@@ -433,32 +403,22 @@ impl AppHost {
 
     #[cfg(feature = "dev")]
     pub fn dev_render(&mut self, width: u32, height: u32) -> Result<()> {
-        self.begin_attribution();
         #[cfg(feature = "profiling")]
         self.begin_profile_frame();
-        {
-            let _core = attribution::core_scope();
-            self.deliver();
-            self.engine.frame_without_ticks();
-            self.render_frame((width, height), (0.0, 0), Picture::Shown)?;
-        }
-        self.end_attribution();
+        self.deliver();
+        self.engine.frame_without_ticks();
+        self.render_frame((width, height), (0.0, 0), Picture::Shown)?;
         Ok(())
     }
 
     #[cfg(feature = "dev")]
     pub fn dev_present(&mut self, alpha: f32, width: u32, height: u32) -> Result<()> {
-        self.begin_attribution();
         #[cfg(feature = "profiling")]
         self.begin_profile_frame();
-        {
-            let _core = attribution::core_scope();
-            self.deliver();
-            self.engine
-                .present(engine_core::Presented::Between { alpha })?;
-            self.render_frame((width, height), (0.0, 0), Picture::Shown)?;
-        }
-        self.end_attribution();
+        self.deliver();
+        self.engine
+            .present(engine_core::Presented::Between { alpha })?;
+        self.render_frame((width, height), (0.0, 0), Picture::Shown)?;
         Ok(())
     }
 
@@ -514,9 +474,7 @@ impl AppHost {
             resolution: self.resolution_stats((width, height)),
             jobs: engine_core::JobStats::default(),
             refused_views: 0,
-            disabled_features: self.renderer.disabled_features(self.engine.app.world()),
             render: rendered,
-            bricks_cost: None,
             bricks: std::collections::BTreeMap::new(),
             pipelines_per_pass: std::collections::BTreeMap::new(),
         };
@@ -538,7 +496,6 @@ impl AppHost {
         let display_size = self.display_size((width, height));
         let facts = FrameFacts {
             display_size,
-            render_size: display_size,
             pixel_ratio: self.pixel_ratio as f32,
         };
         self.engine.set_frame(facts);

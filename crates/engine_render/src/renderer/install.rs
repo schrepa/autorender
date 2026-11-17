@@ -1,6 +1,6 @@
 use bevy_ecs::world::World;
-use engine_core::{Error, Section};
-use engine_registry::{BrickStates, GateId, Registry, RegistryBuilder, SettingsEntry};
+use engine_core::Error;
+use engine_registry::{BrickId, BrickStates, Registry};
 
 use super::*;
 use crate::install::{InstallCore, PartInfo, Reinstall, Scoped};
@@ -11,13 +11,13 @@ use crate::registration::{Generated, Installed, KindDraw, KindMember, PartRecord
 struct Listed {
     record: PartRecord,
     package: &'static str,
-    brick: Option<engine_registry::BrickId>,
+    brick: Option<BrickId>,
 }
 
 pub(crate) struct Built {
     pub(crate) run_parts: Vec<Option<Box<dyn Installed>>>,
-    pub(crate) gates: Vec<Option<GateId>>,
-    pub(crate) pass_gates: Vec<(u32, GateId)>,
+    pub(crate) gates: Vec<Option<BrickId>>,
+    pub(crate) pass_gates: Vec<(u32, BrickId)>,
     pub(crate) reinstalls: Vec<Reinstall>,
     pub(crate) draws: Vec<KindMember>,
     pub(crate) machine: Machine,
@@ -26,19 +26,10 @@ pub(crate) struct Built {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct InstalledPart {
-    pub brick: &'static str,
-    pub part: &'static str,
-    pub passes: Vec<&'static str>,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Installation {
-    pub parts: Vec<InstalledPart>,
     pub modules: Vec<String>,
     pub texts: Vec<String>,
     pub stages: Vec<(&'static str, Vec<&'static str>, String)>,
-    pub layouts: usize,
 }
 
 fn stage_texts(machine: &Machine) -> Vec<(&'static str, Vec<&'static str>, String)> {
@@ -75,42 +66,15 @@ fn listing(built: &mut Built) -> Installation {
             Err(error) => error.to_string(),
         })
         .collect();
-    let machine = &built.machine;
-    let parts = machine
-        .declared
-        .parts
-        .iter()
-        .enumerate()
-        .map(|(index, part)| InstalledPart {
-            brick: part.owner,
-            part: part.name,
-            passes: machine
-                .declared
-                .passes
-                .iter()
-                .filter(|pass| pass.part as usize == index)
-                .map(|pass| pass.name)
-                .collect(),
-        })
-        .collect();
-    let mut layouts: Vec<String> = machine
-        .pipelines
-        .iter()
-        .map(crate::machine::layout_key)
-        .collect();
-    layouts.sort_unstable();
-    layouts.dedup();
     Installation {
-        parts,
         modules,
         texts,
         stages: Vec::new(),
-        layouts: layouts.len(),
     }
 }
 
 fn core_part<P: crate::GpuPart>() -> PartRecord {
-    PartRecord::of::<P>(engine_registry::Scope::BRICK)
+    PartRecord::of::<P>()
 }
 
 fn material_layout(
@@ -231,14 +195,10 @@ fn hand_generated(registry: &Registry, linker: &mut Linker) {
     }
 }
 
-fn pass_gates(registry: &Registry, passes: &[crate::install::PassDecl]) -> Vec<(u32, GateId)> {
-    let scoped: Vec<(&'static str, GateId)> = registry
-        .iter()
-        .flat_map(|(brick, record)| {
-            record
-                .render_entries::<crate::registration::PassScope>()
-                .filter_map(move |entry| Some((entry.name, registry.gate(brick, entry.scope)?)))
-        })
+fn pass_gates(registry: &Registry, passes: &[crate::install::PassDecl]) -> Vec<(u32, BrickId)> {
+    let scoped: Vec<(&'static str, BrickId)> = registry
+        .render_entries::<engine_core::PassEntry>()
+        .map(|(brick, entry)| (entry.name, brick))
         .collect();
     passes
         .iter()
@@ -288,7 +248,7 @@ pub struct Ahead {
     roots: Vec<(String, String)>,
     composing: crate::machine::Composing,
     parts: Vec<Option<Box<dyn Installed>>>,
-    gates: Vec<Option<GateId>>,
+    gates: Vec<Option<BrickId>>,
     reinstalls: Vec<Reinstall>,
     draws: Vec<KindMember>,
     passes: Vec<&'static str>,
@@ -397,7 +357,6 @@ fn install_with(
                         part: part.part,
                         name: part.name,
                         memory: part.memory,
-                        scope: part.scope,
                         install: part.install,
                     },
                     package: record.package,
@@ -417,12 +376,6 @@ fn install_with(
             package: entry.package,
             name: entry.record.name,
             memory: entry.record.memory,
-            owner: entry
-                .brick
-                .map_or(engine_registry::CORE_ROW, |_| entry.package),
-            profile: entry
-                .brick
-                .map_or(0, engine_registry::BrickId::profile_index),
         });
     }
     for draw in &draws {
@@ -444,7 +397,6 @@ fn install_with(
         core.part = index as u32;
         core.package = entry.package;
         let from = core.declared.counts();
-        let _owner = core.declared.parts[index].owned();
         match (entry.record.install)(world, &mut core) {
             Ok(held) => parts.push(Some(held)),
             Err(error) => {
@@ -458,11 +410,7 @@ fn install_with(
             from,
             to: core.declared.counts(),
         });
-        gates.push(
-            entry
-                .brick
-                .and_then(|brick| registry.gate(brick, entry.record.scope)),
-        );
+        gates.push(entry.brick);
     }
     let InstallCore {
         declared,
@@ -537,29 +485,7 @@ fn built(device: &wgpu::Device, registry: &Registry, ahead: Ahead) -> Result<Bui
     }
 }
 
-fn check_core<S: Section>(value: &serde_json::Value, path: &str) -> Result<(), Error> {
-    engine_registry::parse_section::<S>(value, path, S::check).map(drop)
-}
-
-fn set_core<S: Section>(
-    world: &mut World,
-    value: &serde_json::Value,
-    path: &str,
-) -> Result<(), Error> {
-    engine_registry::set_section::<S>(world, value, path, S::check)
-}
-
-#[track_caller]
-fn core_entry<S: Section>() -> SettingsEntry {
-    SettingsEntry::of::<S>(S::KEY, check_core::<S>, set_core::<S>, S::schema)
-}
-
 impl Renderer {
-    #[doc(hidden)]
-    pub fn register_places(registry: &mut RegistryBuilder) {
-        registry.core_settings(core_entry::<crate::RenderSettings>());
-    }
-
     pub fn install(&mut self, world: &mut World) -> Result<(), Vec<Error>> {
         let installed = install(&self.core.device, world, (self.edited(), Lint::Launch))?;
         self.adopt_installed(installed, world);
@@ -643,14 +569,6 @@ impl Renderer {
             })
             .collect();
         self.passes = Box::leak(installed.passes.into_boxed_slice());
-        let names: Vec<&'static str> = run
-            .machine
-            .declared
-            .parts
-            .iter()
-            .map(|part| part.name)
-            .collect();
-        self.part_names = Box::leak(names.into_boxed_slice());
         self.plans.clear();
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -867,10 +785,7 @@ pub(crate) fn reinstall(
     core.package = again.package;
     core.declared = run.machine.declared.before(again.from);
     core.draws.clone_from(&run.installs.draw_entries);
-    let made = {
-        let _owner = core.declared.parts.get(part as usize).map(PartInfo::owned);
-        (again.install)(world, &mut core)
-    };
+    let made = (again.install)(world, &mut core);
     run.machine.linker = core.linker;
     let held = made?;
     if let Some(problem) = core.problems.into_iter().next() {

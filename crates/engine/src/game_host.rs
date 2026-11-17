@@ -626,10 +626,6 @@ impl<G: Game> GameHost<G> {
     pub fn profiling_report(&mut self) -> serde_json::Value {
         self.app.profiling_report()
     }
-
-    pub fn profile_bricks(&self) -> Vec<&'static str> {
-        self.app.profile_bricks()
-    }
 }
 
 #[cfg(feature = "dev")]

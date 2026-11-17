@@ -117,10 +117,6 @@ pub(crate) struct BuiltPipeline {
     pub(crate) program_key: u64,
 }
 
-pub(crate) fn layout_key(pipeline: &BuiltPipeline) -> String {
-    pipeline.layout_key.clone()
-}
-
 pub(crate) struct FrameVariant {
     pub(crate) layout: wgpu::BindGroupLayout,
     pub(crate) entries: Vec<(u32, ShaderStages)>,

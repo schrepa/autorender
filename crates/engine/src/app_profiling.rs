@@ -54,7 +54,6 @@ impl AppHost {
         }
         let id = engine_profile::start(max_events)
             .map_err(|_| Error::new(ErrorCode::CaptureFailed, "$"))?;
-        self.attribution.captured.clear();
         self.renderer.profile_begin(id);
         Ok(())
     }
@@ -66,10 +65,7 @@ impl AppHost {
         self.renderer.profile_poll();
         let cpu = engine_profile::finish();
         let memory = linear_memory_bytes().map(|bytes| json!({"wasm_linear_bytes": bytes}));
-        let captured = std::mem::take(&mut self.attribution.captured);
-        let bricks = engine_registry::BrickCosts::table(&captured);
         Ok(json!({
-            "bricks": bricks,
             "cpu": cpu,
             "gpu": self.renderer.profile_report(),
             "memory": memory,
@@ -82,14 +78,5 @@ impl AppHost {
 
     pub fn profiling_report(&mut self) -> Value {
         self.renderer.profile_report()
-    }
-
-    pub fn profile_bricks(&self) -> Vec<&'static str> {
-        let mut names = vec![engine_registry::CORE_ROW];
-        let world = self.engine.app.world();
-        if let Some(registry) = world.get_resource::<engine_registry::Registry>() {
-            names.extend(registry.names());
-        }
-        names
     }
 }

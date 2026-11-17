@@ -52,7 +52,6 @@ pub struct StatusResult {
     pub inspectors: usize,
     pub culling_enabled: bool,
     pub features: Option<Vec<&'static str>>,
-    pub unmet: Vec<Refusal>,
     pub notices: Vec<Refusal>,
     pub presentation: PresentationState,
     pub fixed_delta_seconds: Option<f32>,
@@ -242,7 +241,6 @@ pub struct DescribedBrick {
     pub name: &'static str,
     #[serde(rename = "crate")]
     pub crate_name: &'static str,
-    pub fills: Vec<&'static str>,
     pub joins: Vec<&'static str>,
     pub settings: Vec<DescribedEntry>,
     pub stats: Vec<DescribedEntry>,
@@ -353,10 +351,7 @@ pub struct CaptureResult {
 pub struct ProfileResult {
     pub frames: u32,
     pub interval_ms: f64,
-    pub cpu_ms: f64,
-    pub gpu_ms: Option<f64>,
-    pub measuring_ms: f64,
-    pub bricks: Vec<ProfiledBrick>,
+    pub rows: Vec<ProfiledRow>,
     pub total: usize,
     pub temporary: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -364,24 +359,13 @@ pub struct ProfileResult {
 }
 
 #[derive(Clone, Serialize, schemars::JsonSchema)]
-pub struct ProfiledBrick {
-    pub brick: &'static str,
+pub struct ProfiledRow {
+    pub name: &'static str,
     pub cpu_ms: f64,
     pub cpu_ms_max: f64,
-    pub gpu_ms: Option<f64>,
-    pub gpu_ms_max: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub heap_live_bytes: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub heap_peak_bytes: Option<u64>,
+    pub runs_per_frame: f64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub allocations_per_frame: Option<f64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub gpu_bytes: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub created_after_warmup: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub duplicate_upload_bytes: Option<u64>,
 }
 
 #[derive(Serialize, schemars::JsonSchema)]

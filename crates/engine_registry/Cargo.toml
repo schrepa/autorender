@@ -7,7 +7,7 @@ publish.workspace = true
 
 [features]
 default = []
-profiling = ["dep:engine_profile", "engine_profile/bricks"]
+profiling = ["dep:engine_profile"]
 
 [dependencies]
 engine_place.workspace = true

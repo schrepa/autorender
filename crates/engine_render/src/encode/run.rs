@@ -199,12 +199,12 @@ impl Bound {
 
 pub(crate) struct Installs {
     pub(crate) turned: Vec<Option<u64>>,
-    pub(crate) faults: Vec<(u32, Error)>,
+    pub(crate) faults: Vec<Error>,
     pub(crate) reinstalls: Vec<Reinstall>,
     pub(crate) draw_entries: Vec<KindMember>,
     pub(crate) installed: Vec<FrameId>,
-    pub(crate) gates: Vec<Option<engine_registry::GateId>>,
-    pub(crate) pass_gates: Vec<(u32, engine_registry::GateId)>,
+    pub(crate) gates: Vec<Option<engine_registry::BrickId>>,
+    pub(crate) pass_gates: Vec<(u32, engine_registry::BrickId)>,
     pub(crate) features: wgpu::Features,
 }
 

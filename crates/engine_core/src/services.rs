@@ -196,11 +196,6 @@ impl ComponentKind {
     }
 
     #[doc(hidden)]
-    pub fn registrar(&self) -> fn(&mut World) -> ComponentId {
-        self.register
-    }
-
-    #[doc(hidden)]
     pub fn scene(&self) -> engine_registry::SceneRead {
         self.scene
     }
@@ -567,19 +562,6 @@ pub struct Authored {
     pub prefab_id: Option<String>,
     pub prefab_instance: Option<String>,
     pub prefab_local_id: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct SubSceneEntity {
-    pub transform: crate::Transform,
-    pub authored: Authored,
-    pub parent: Option<usize>,
-    pub components: Vec<(String, Value)>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct SubScene {
-    pub entities: Vec<SubSceneEntity>,
 }
 
 #[derive(Resource, Clone)]

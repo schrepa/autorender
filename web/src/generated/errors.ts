@@ -104,14 +104,10 @@ export type ErrorCode =
   | "unsupported_feature"
   | "job_unsupported"
   | "section_unlisted"
-  | "slot_filled_twice"
   | "place_not_filled"
   | "foreign_access"
-  | "foreign_entity"
-  | "written_twice"
   | "name_twice"
   | "place_cycle"
-  | "unowned_system"
   | "ambiguous_passes"
   | "read_before_write"
   | "view_writer_unplaced"
@@ -135,8 +131,7 @@ export type ErrorCode =
   | "not_inherited"
   | "exception_unused"
   | "file_too_long"
-  | "struct_too_wide"
-  | "schedule_ambiguity";
+  | "struct_too_wide";
 
 export type EngineError = Error & Failure;
 

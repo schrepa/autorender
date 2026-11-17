@@ -11,6 +11,7 @@ use engine_core::{
     AssetLibrary, AssetResidency, ColorSpace, Compare, Error, Filter, Material, MaterialHandle,
     Sampler, Texture, TextureFormat, TextureHandle, Wrap,
 };
+use wgpu::util::DeviceExt as _;
 
 use crate::encode::Compiler;
 use crate::gpu_data::{level_copy, mip_chain_bytes, mip_levels};
@@ -477,14 +478,11 @@ pub(crate) fn gpu_sampler(
 }
 
 fn uniform_buffer(device: &wgpu::Device, words: &[u32]) -> wgpu::Buffer {
-    crate::memory::buffer_init(
-        device,
-        &wgpu::util::BufferInitDescriptor {
-            label: Some("engine/material-record"),
-            contents: bytemuck::cast_slice(words),
-            usage: wgpu::BufferUsages::UNIFORM,
-        },
-    )
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("engine/material-record"),
+        contents: bytemuck::cast_slice(words),
+        usage: wgpu::BufferUsages::UNIFORM,
+    })
 }
 
 fn bind_group(
@@ -595,26 +593,23 @@ pub fn write_level(
 
 fn create_target(device: &wgpu::Device, source: &Texture, revision: u64) -> GpuTexture {
     let (format, _) = gpu_format(source.format(), source.color_space());
-    let texture = crate::memory::texture(
-        device,
-        &wgpu::TextureDescriptor {
-            label: Some("engine/target-texture"),
-            size: wgpu::Extent3d {
-                width: source.width(),
-                height: source.height(),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::COPY_SRC
-                | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[format.remove_srgb_suffix()],
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("engine/target-texture"),
+        size: wgpu::Extent3d {
+            width: source.width(),
+            height: source.height(),
+            depth_or_array_layers: 1,
         },
-    );
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING
+            | wgpu::TextureUsages::RENDER_ATTACHMENT
+            | wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[format.remove_srgb_suffix()],
+    });
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
     GpuTexture {
         byte_len: TextureFormat::Rgba8.level_bytes(source.width(), source.height()) as u64,

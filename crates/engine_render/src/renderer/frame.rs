@@ -117,7 +117,6 @@ impl Renderer {
     }
 
     pub fn deliver(&mut self, world: &mut World) {
-        self.fault_bricks(world);
         self.recover(world);
         self.collect();
         let Some(run) = self.run.as_mut() else {
@@ -145,27 +144,10 @@ impl Renderer {
         if world.get_resource::<engine_core::PartDraws>() != Some(&draws) {
             world.insert_resource(draws);
         }
-        for (part, error) in std::mem::take(&mut run.installs.faults) {
-            let brick = run
-                .installs
-                .gates
-                .get(part as usize)
-                .copied()
-                .flatten()
-                .and_then(|gate| {
-                    world
-                        .get_resource::<engine_registry::BrickStates>()
-                        .and_then(|states| states.brick(gate))
-                });
-            match brick {
-                Some(brick) => engine_registry::fault(world, brick, error),
-                None => {
-                    if let Some(mut registry) =
-                        world.get_resource_mut::<engine_registry::Registry>()
-                    {
-                        registry.report(error);
-                    }
-                }
+        let faults = std::mem::take(&mut run.installs.faults);
+        if let Some(mut registry) = world.get_resource_mut::<engine_registry::Registry>() {
+            for error in faults {
+                registry.report(error);
             }
         }
         self.follow_states(world);
@@ -185,10 +167,7 @@ impl Renderer {
                 continue;
             };
             let states = world.get_resource::<engine_registry::BrickStates>();
-            let (Some(count), Some(brick)) = (
-                states.and_then(|states| states.installed(gate)),
-                states.and_then(|states| states.brick(gate)),
-            ) else {
+            let Some(count) = states.and_then(|states| states.installed(gate)) else {
                 continue;
             };
             if run.installs.turned.get(part).copied().flatten().is_some() {
@@ -199,7 +178,13 @@ impl Renderer {
                     run.parts[part] = Some(held);
                     run.installs.turned[part] = Some(count);
                 }
-                Err(error) => engine_registry::fault(world, brick, error),
+                Err(error) => {
+                    if let Some(mut registry) =
+                        world.get_resource_mut::<engine_registry::Registry>()
+                    {
+                        registry.report(error);
+                    }
+                }
             }
         }
     }
@@ -354,12 +339,6 @@ impl Renderer {
                 continue;
             };
             run.part = index as u32;
-            let _owner = run
-                .machine
-                .declared
-                .parts
-                .get(index)
-                .map(crate::install::PartInfo::owned);
             if let Err(error) = held.prepare(world, run) {
                 run.fault(error);
             }
@@ -636,12 +615,6 @@ impl Renderer {
                 if collected {
                     run.collect();
                 }
-                let _owner = run
-                    .machine
-                    .declared
-                    .parts
-                    .get(part as usize)
-                    .map(crate::install::PartInfo::owned);
                 match work {
                     Work::Copy { .. } => {
                         if !collected && run.copy(index as u32) {

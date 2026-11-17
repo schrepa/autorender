@@ -1,62 +1,21 @@
-use bevy_ecs::entity::Entity;
 use bevy_ecs::resource::Resource;
-use serde::Serialize;
-
-use crate::Slot;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum ApplyAt {
-    TickEnd,
-    StepStart,
-    TickStart,
-    FrameStart,
-}
-
-pub trait Ask: Send + Sync + 'static {
-    const NAME: &'static str;
-    const AT: ApplyAt;
-
-    fn node(&self) -> Option<Entity> {
-        None
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, schemars::JsonSchema)]
-pub struct Moment {
-    pub tick: u64,
-    pub frame: u64,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Applied {
-    pub node: Option<Entity>,
-    pub asked: Moment,
-    pub applied: Moment,
-}
 
 #[derive(Resource)]
-pub struct Asked<A: Ask> {
-    pending: Vec<(A, Moment)>,
-    applied: Vec<Applied>,
+pub struct Asked<A: Send + Sync + 'static> {
+    pending: Vec<A>,
 }
 
-impl<A: Ask> Default for Asked<A> {
+impl<A: Send + Sync + 'static> Default for Asked<A> {
     fn default() -> Self {
         Self {
             pending: Vec::new(),
-            applied: Vec::new(),
         }
     }
 }
 
-impl<A: Ask> Slot for Asked<A> {
-    const NAME: &'static str = A::NAME;
-}
-
-impl<A: Ask> Asked<A> {
-    pub fn ask(&mut self, ask: A, at: Moment) {
-        self.pending.push((ask, at));
+impl<A: Send + Sync + 'static> Asked<A> {
+    pub fn ask(&mut self, ask: A) {
+        self.pending.push(ask);
     }
 
     pub fn is_empty(&self) -> bool {
@@ -64,36 +23,18 @@ impl<A: Ask> Asked<A> {
     }
 
     pub fn pending(&self) -> impl ExactSizeIterator<Item = &A> + '_ {
-        self.pending.iter().map(|(ask, _)| ask)
+        self.pending.iter()
     }
 
-    pub fn applied(&self) -> &[Applied] {
-        &self.applied
+    pub fn take(&mut self) -> Vec<A> {
+        std::mem::take(&mut self.pending)
     }
 
-    pub fn take(&mut self, now: Moment) -> Vec<A> {
-        self.take_where(now, |_| true)
-    }
-
-    pub fn take_where(&mut self, now: Moment, taken: impl Fn(&A) -> bool) -> Vec<A> {
-        if !self.pending.iter().any(|(ask, _)| taken(ask)) {
-            return Vec::new();
-        }
-        self.applied.clear();
+    pub fn take_where(&mut self, taken: impl Fn(&A) -> bool) -> Vec<A> {
         let (chosen, kept): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pending)
             .into_iter()
-            .partition(|(ask, _)| taken(ask));
+            .partition(|ask| taken(ask));
         self.pending = kept;
         chosen
-            .into_iter()
-            .map(|(ask, asked)| {
-                self.applied.push(Applied {
-                    node: ask.node(),
-                    asked,
-                    applied: now,
-                });
-                ask
-            })
-            .collect()
     }
 }

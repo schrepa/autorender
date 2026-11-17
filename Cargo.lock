@@ -1716,9 +1716,7 @@ dependencies = [
 name = "kinds"
 version = "0.1.0"
 dependencies = [
- "engine_registry",
  "serde_json",
- "toml_edit",
 ]
 
 [[package]]
@@ -4100,7 +4098,6 @@ dependencies = [
  "engine_dev",
  "engine_lodbuild",
  "engine_native",
- "engine_place",
  "engine_registry",
  "engine_scene",
  "engine_sources",
