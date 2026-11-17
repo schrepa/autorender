@@ -9,7 +9,9 @@ gpu_struct! {
         pub levels: u32,
         pub image_spacing: f32,
         pub offset: [f32; 2],
-        pub held: [u32; 2],
+        pub blend: f32,
+        pub faded: u32,
+        pub fade: [f32; 4],
     }
 }
 
@@ -53,18 +55,29 @@ impl SurfacePrograms {
                 }
                 continue;
             };
-            let base = programs.words as u32;
-            programs.words += data.words.len();
-            programs.pieces.push((Arc::clone(data), base));
+            let shared = (programs.pieces.iter())
+                .find(|(held, _)| Arc::ptr_eq(held, data) || held.words == data.words);
+            let base = match shared {
+                Some(&(_, base)) => base,
+                None => {
+                    let base = programs.words as u32;
+                    programs.words += data.words.len();
+                    programs.pieces.push((Arc::clone(data), base));
+                    base
+                }
+            };
             if drawn {
                 let (image_spacing, levels) = data.hydrology().unwrap_or((0.0, 0));
+                let (fade, blend) = data.fade().unwrap_or_default();
                 programs.entries.push(SurfaceEntry {
                     base,
                     gpu: 1,
                     levels: levels as u32,
                     image_spacing,
                     offset: data.offset(),
-                    held: [0; 2],
+                    blend,
+                    faded: u32::from(data.fade().is_some()),
+                    fade,
                 });
             }
         }

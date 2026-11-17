@@ -3,7 +3,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::{Component, Entity, Resource};
 use engine_heightfield::tile::{
-    BIOME_WORDS, H_BIOMES, H_DEBRIS, H_EROSION, H_FADE, H_HYDROLOGY, H_MAPS, H_MATERIALS, H_PATHS,
+    BIOME_WORDS, H_BIOMES, H_DEBRIS, H_EROSION, H_HYDROLOGY, H_MAPS, H_MATERIALS, H_PATHS,
     H_PROGRAM, H_READS, H_SITE, H_STACK, H_WET_BIOMES, LAYER_COVERS, MAX_MAPS, MAX_MATERIALS,
     MAX_STACK, OP_ADD,
     OP_CONSTANT, OP_CURVATURE, OP_DEPOSIT, OP_END, OP_FACING, OP_FLOOD, OP_FLOW, OP_GRADIENT,
@@ -222,7 +222,6 @@ impl Slot for GroundSurface {
         H_READS,
         H_HYDROLOGY,
         H_PATHS,
-        H_FADE,
         H_WET_BIOMES,
         H_EROSION,
         H_MAPS,
