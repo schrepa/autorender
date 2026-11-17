@@ -124,11 +124,6 @@ impl DeepCapture {
         report["heap_samples_by_brick"] = heap_by_brick(&heap, &symbols, &self.bricks);
         let profile = firefox_profile(&report, samples.as_ref(), &symbols, host.adapter());
         let summary = summary(&report, samples.as_ref(), &symbols, host.adapter());
-        let unwritable = |path: &Path| {
-            Error::new(ErrorCode::SourceIo, "$.folder")
-                .expected(Expected::Writable)
-                .got(path.display().to_string())
-        };
         std::fs::create_dir_all(folder).map_err(|_| unwritable(folder))?;
         let files = ProfileFiles {
             report: folder.join(format!("{stem}.json")),
@@ -137,12 +132,6 @@ impl DeepCapture {
             complete: report["gpu"]["complete"] == true
                 && report["cpu"]["complete"] == true
                 && samples.is_some(),
-        };
-        let write = |path: &Path, value: &dyn erased::Write| -> Result<(), Error> {
-            let file = std::fs::File::create(path).map_err(|_| unwritable(path))?;
-            value
-                .write(&mut std::io::BufWriter::new(file))
-                .map_err(|_| unwritable(path))
         };
         write(&files.report, &report)?;
         write(&files.firefox, &profile)?;
@@ -158,6 +147,118 @@ impl DeepCapture {
             "report": files.report.display().to_string(),
             "firefox": files.firefox.display().to_string(),
         });
+        write(&files.summary, &summary)?;
+        Ok(files)
+    }
+}
+
+fn unwritable(path: &Path) -> Error {
+    Error::new(ErrorCode::SourceIo, "$.folder")
+        .expected(Expected::Writable)
+        .got(path.display().to_string())
+}
+
+fn write(path: &Path, value: &dyn erased::Write) -> Result<(), Error> {
+    let file = std::fs::File::create(path).map_err(|_| unwritable(path))?;
+    value
+        .write(&mut std::io::BufWriter::new(file))
+        .map_err(|_| unwritable(path))
+}
+
+pub struct LaunchCapture {
+    sampler: Option<Sampler>,
+    start_ms: f64,
+    phase: Option<(&'static str, f64)>,
+    spans: Vec<Value>,
+}
+
+pub struct LaunchProfile {
+    samples: Option<Samples>,
+    report: Value,
+}
+
+impl LaunchCapture {
+    pub fn start() -> Self {
+        let start_ms = engine::host::now_ms();
+        let sampler = SampledThread::current("Main thread")
+            .and_then(|main| Sampler::start(vec![main], INTERVAL, engine::host::now_ms));
+        Self {
+            sampler,
+            start_ms,
+            phase: None,
+            spans: Vec::new(),
+        }
+    }
+
+    pub fn phase(&mut self, name: &'static str) {
+        let now = engine::host::now_ms();
+        if let Some((ended, began)) = self.phase.replace((name, now)) {
+            self.spans.push(json!({
+                "kind": "span",
+                "name": ended,
+                "start_ms": began,
+                "duration_ms": now - began,
+            }));
+        }
+    }
+
+    pub fn stop(mut self) -> LaunchProfile {
+        let end_ms = engine::host::now_ms();
+        if let Some((ended, began)) = self.phase.take() {
+            self.spans.push(json!({
+                "kind": "span",
+                "name": ended,
+                "start_ms": began,
+                "duration_ms": end_ms - began,
+            }));
+        }
+        let samples = self.sampler.take().map(Sampler::finish);
+        let report = json!({
+            "cpu": {
+                "start_ms": self.start_ms,
+                "end_ms": end_ms,
+                "events": std::mem::take(&mut self.spans),
+                "complete": true,
+            },
+        });
+        LaunchProfile { samples, report }
+    }
+}
+
+impl Drop for LaunchCapture {
+    fn drop(&mut self) {
+        if let Some(sampler) = self.sampler.take() {
+            drop(sampler.finish());
+        }
+    }
+}
+
+impl LaunchProfile {
+    pub fn write(
+        mut self,
+        folder: &Path,
+        stem: &str,
+        context: Value,
+        adapter: &engine::AdapterInfo,
+    ) -> Result<ProfileFiles, Error> {
+        self.report["context"] = context;
+        let symbols = Symbols::of(self.samples.as_ref(), &[]);
+        let profile = firefox_profile(&self.report, self.samples.as_ref(), &symbols, adapter);
+        let mut summary = summary(&self.report, self.samples.as_ref(), &symbols, adapter);
+        summary["spans"] = self.report["cpu"]["events"].clone();
+        std::fs::create_dir_all(folder).map_err(|_| unwritable(folder))?;
+        let files = ProfileFiles {
+            report: folder.join(format!("{stem}.json")),
+            firefox: folder.join(format!("{stem}.firefox.json")),
+            summary: folder.join(format!("{stem}.summary.json")),
+            complete: self.samples.is_some(),
+        };
+        summary["files"] = json!({
+            "report": files.report.display().to_string(),
+            "firefox": files.firefox.display().to_string(),
+        });
+        write(&files.report, &self.report)?;
+        write(&files.firefox, &profile)?;
         write(&files.summary, &summary)?;
         Ok(files)
     }

@@ -43,6 +43,8 @@ pub mod stack;
 pub mod vendor;
 
 #[cfg(feature = "profiling")]
-pub use deep::{DeepCapture, ProfileFiles, sample_heap_from_launch};
+pub use deep::{
+    DeepCapture, LaunchCapture, LaunchProfile, ProfileFiles, sample_heap_from_launch,
+};
 pub use pix::Pix;
 pub use renderdoc::RenderDoc;
