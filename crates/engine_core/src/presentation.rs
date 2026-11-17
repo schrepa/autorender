@@ -1,18 +1,13 @@
-use std::sync::{Mutex, MutexGuard, PoisonError};
-
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParam;
+use engine_place::Changes;
 use glam::{Mat4, Vec3, Vec4};
 use serde::Serialize;
 
-use crate::collections::HashMap;
 use crate::hierarchy::same_pose_bits;
 use crate::math::{max, sin};
 use crate::presentation_bounds as bounds;
-use crate::{
-    Cursor, Feed, FeedSettings, FixedTime, FrameTime, GlobalTransforms, GpuBits,
-    MAX_HIERARCHY_DEPTH, Revision, Since,
-};
+use crate::{FixedTime, FrameTime, GlobalTransforms, GpuBits, MAX_HIERARCHY_DEPTH, Revision};
 
 pub type PoseRows = [[f32; 4]; 3];
 pub type NodePose = [f32; 10];
@@ -271,65 +266,6 @@ struct Drawn {
     composed: bool,
 }
 
-#[derive(Default)]
-struct Memo {
-    call: u32,
-    stamps: Vec<(u32, u32)>,
-    drawn: Vec<Option<Drawn>>,
-}
-
-impl Memo {
-    fn begin(&mut self, nodes: usize) {
-        self.drawn.clear();
-        self.call = self.call.wrapping_add(1);
-        if self.call == 0 {
-            self.stamps.fill((0, 0));
-            self.call = 1;
-        }
-        if self.stamps.len() < nodes {
-            self.stamps.resize(nodes, (0, 0));
-        }
-    }
-
-    fn get(&self, index: usize) -> Option<Option<Drawn>> {
-        match self.stamps.get(index) {
-            Some(&(call, at)) if call == self.call => Some(self.drawn[at as usize]),
-            Some(_) | None => None,
-        }
-    }
-
-    fn insert(&mut self, index: usize, drawn: Option<Drawn>) {
-        if let Some(stamp) = self.stamps.get_mut(index) {
-            *stamp = (self.call, self.drawn.len() as u32);
-            self.drawn.push(drawn);
-        }
-    }
-}
-
-#[derive(Default)]
-struct Reads {
-    frame: u64,
-    now: HashMap<Entity, Mat4>,
-    last: HashMap<Entity, Mat4>,
-    memo: Memo,
-}
-
-impl Reads {
-    fn roll(&mut self, frame: u64) {
-        if self.frame != frame {
-            self.frame = frame;
-            std::mem::swap(&mut self.last, &mut self.now);
-            self.now.clear();
-        }
-    }
-}
-
-#[derive(Default)]
-struct Seen {
-    tick: Cursor,
-    frame: Cursor,
-}
-
 #[derive(Resource)]
 pub struct DrawnPoses {
     topology: Option<Revision>,
@@ -355,22 +291,16 @@ pub struct DrawnPoses {
     mark: u32,
     buckets: Vec<Vec<u32>>,
     whole: bool,
-    seen: Seen,
     last_revision: u64,
-    changes: Feed<u32>,
+    node_changes: Changes,
     alpha: f32,
     presented: Presented,
     blended: (usize, f32),
     frame: u64,
-    reads: Mutex<Reads>,
 }
 
-impl FromWorld for DrawnPoses {
-    fn from_world(world: &mut World) -> Self {
-        let size = world
-            .get_resource::<FeedSettings>()
-            .map_or(FeedSettings::default().transforms, |feeds| feeds.transforms)
-            as usize;
+impl Default for DrawnPoses {
+    fn default() -> Self {
         Self {
             topology: None,
             entities: Vec::new(),
@@ -395,14 +325,12 @@ impl FromWorld for DrawnPoses {
             mark: 0,
             buckets: Vec::new(),
             whole: true,
-            seen: Seen::default(),
             last_revision: 0,
-            changes: Feed::new(size),
+            node_changes: Changes::new(1),
             alpha: 1.0,
             presented: Presented::Tick,
             blended: (0, 0.0),
             frame: 0,
-            reads: Mutex::new(Reads::default()),
         }
     }
 }
@@ -452,109 +380,10 @@ impl DrawnPoses {
     }
 
     pub fn drawn_pose(&self, globals: &GlobalTransforms, node: Entity) -> Option<Mat4> {
-        let mut held = self.reading(globals);
-        self.read(globals, node, self.index_of(globals, node), &mut held)
-    }
-
-    pub fn drawn_poses(
-        &self,
-        globals: &GlobalTransforms,
-        nodes: &[Entity],
-        out: &mut Vec<Option<Mat4>>,
-    ) {
-        out.clear();
-        out.reserve(nodes.len());
-        let mut held = self.reading(globals);
-        for &node in nodes {
-            out.push(self.read(globals, node, self.index_of(globals, node), &mut held));
-        }
-    }
-
-    pub fn drawn_and_previous_poses(
-        &self,
-        globals: &GlobalTransforms,
-        nodes: &[Entity],
-        (now, was): (&mut Vec<Option<Mat4>>, &mut Vec<Option<Mat4>>),
-    ) {
-        now.clear();
-        now.reserve(nodes.len());
-        was.clear();
-        was.reserve(nodes.len());
-        let mut held = self.reading(globals);
-        for &node in nodes {
-            let index = self.index_of(globals, node);
-            let drawn = self.read(globals, node, index, &mut held);
-            now.push(drawn);
-            was.push(self.last_read(&held, node, index).or(drawn));
-        }
-    }
-
-    pub fn previous_drawn_pose(&self, globals: &GlobalTransforms, node: Entity) -> Option<Mat4> {
-        let mut held = self.reading(globals);
-        self.previous_of(globals, node, &mut held)
-    }
-
-    pub fn previous_drawn_poses(
-        &self,
-        globals: &GlobalTransforms,
-        nodes: &[Entity],
-        out: &mut Vec<Option<Mat4>>,
-    ) {
-        out.clear();
-        out.reserve(nodes.len());
-        let mut held = self.reading(globals);
-        for &node in nodes {
-            out.push(self.previous_of(globals, node, &mut held));
-        }
-    }
-
-    fn previous_of(
-        &self,
-        globals: &GlobalTransforms,
-        node: Entity,
-        reads: &mut Reads,
-    ) -> Option<Mat4> {
-        let index = self.index_of(globals, node);
-        match self.last_read(reads, node, index) {
-            Some(matrix) => Some(matrix),
-            None => self.read(globals, node, index, reads),
-        }
-    }
-
-    fn last_read(&self, reads: &Reads, node: Entity, index: Option<usize>) -> Option<Mat4> {
-        if index.is_some_and(|index| self.spans[index] == Span::Fresh) {
-            return None;
-        }
-        reads.last.get(&node).copied()
-    }
-
-    fn read(
-        &self,
-        globals: &GlobalTransforms,
-        node: Entity,
-        index: Option<usize>,
-        reads: &mut Reads,
-    ) -> Option<Mat4> {
-        let drawn = match index {
-            Some(index) => self
-                .drawn(globals, index, 0, &mut reads.memo)
-                .map(|drawn| drawn.display),
+        match self.index_of(globals, node) {
+            Some(index) => self.drawn(globals, index, 0).map(|drawn| drawn.display),
             None => globals.get(node)?.matrix(),
-        };
-        if let Some(matrix) = drawn {
-            reads.now.insert(node, matrix);
         }
-        drawn
-    }
-
-    fn reads(&self) -> MutexGuard<'_, Reads> {
-        self.reads.lock().unwrap_or_else(PoisonError::into_inner)
-    }
-
-    fn reading(&self, globals: &GlobalTransforms) -> MutexGuard<'_, Reads> {
-        let mut held = self.reads();
-        held.memo.begin(globals.links().len());
-        held
     }
 
     pub fn streams<'a>(&'a self, globals: &'a GlobalTransforms) -> NodeStreams<'a> {
@@ -572,12 +401,8 @@ impl DrawnPoses {
         }
     }
 
-    pub fn changes_since(&self, cursor: &mut Cursor) -> Since<'_, u32> {
-        self.changes.since(cursor)
-    }
-
-    pub(crate) fn resize_changes(&mut self, size: usize) {
-        self.changes.resize(size);
+    pub fn node_changes(&self) -> &Changes {
+        &self.node_changes
     }
 
     pub fn capacity_bytes(&self) -> usize {
@@ -599,43 +424,19 @@ impl DrawnPoses {
     }
 
     fn index_of(&self, globals: &GlobalTransforms, node: Entity) -> Option<usize> {
-        if self.topology != Some(globals.topology_revision()) {
-            return None;
-        }
         globals
             .node_index(node)
-            .filter(|&index| index < self.spans.len())
+            .filter(|&index| self.entities.get(index) == Some(&node))
     }
 
-    fn drawn(
-        &self,
-        globals: &GlobalTransforms,
-        index: usize,
-        depth: usize,
-        memo: &mut Memo,
-    ) -> Option<Drawn> {
-        if let Some(known) = memo.get(index) {
-            return known;
-        }
-        let drawn = self.drawn_once(globals, index, depth, memo);
-        memo.insert(index, drawn);
-        drawn
-    }
-
-    fn drawn_once(
-        &self,
-        globals: &GlobalTransforms,
-        index: usize,
-        depth: usize,
-        memo: &mut Memo,
-    ) -> Option<Drawn> {
+    fn drawn(&self, globals: &GlobalTransforms, index: usize, depth: usize) -> Option<Drawn> {
         let link = globals.links().get(index)?;
         if !link.topology_valid() || !link.has_global() || depth > MAX_HIERARCHY_DEPTH {
             return None;
         }
         let global = rows_matrix(&globals.global_rows()[index]);
         let above = match link.parent() {
-            Some(parent) => Some(self.drawn(globals, parent, depth + 1, memo)?),
+            Some(parent) => Some(self.drawn(globals, parent, depth + 1)?),
             None => None,
         };
         let blend = matches!(self.spans[index], Span::Moving { .. });
@@ -687,68 +488,70 @@ impl DrawnPoses {
 
     fn index(&mut self, globals: &GlobalTransforms) {
         let nodes = globals.links().len();
-        let topology = globals.topology_revision();
-        if self.topology == Some(topology) && self.spans.len() == nodes {
+        let placed = globals.placed().read();
+        let known = self.spans.len();
+        if nodes < known {
+            self.shrink(nodes);
+        }
+        for local in &globals.locals()[known.min(nodes)..nodes] {
+            self.entities.push(Entity::PLACEHOLDER);
+            self.spans.push(Span::Fresh);
+            self.fresh_at.push(self.frame);
+            self.ticked.push(*local);
+            self.previous.push(*local);
+            self.words.push(PoseWord::default());
+            self.info.push([NO_PARENT, 0]);
+            self.marks.push(0);
+        }
+        if placed.all {
+            self.whole = true;
+            self.node_changes.mark_all();
+            for index in 0..nodes {
+                self.assign(globals, index);
+            }
+        } else {
+            for &index in placed.listed {
+                if (index as usize) < nodes {
+                    self.assign(globals, index as usize);
+                }
+            }
+        }
+        globals.placed().take(1, placed.upto);
+        self.topology = Some(globals.topology_revision());
+    }
+
+    fn assign(&mut self, globals: &GlobalTransforms, index: usize) {
+        let entity = globals
+            .entity_at(index as u32)
+            .unwrap_or(Entity::PLACEHOLDER);
+        if self.entities[index] == entity {
             return;
         }
-        let _profile = engine_profile::span("presentation", "index");
-        let known: HashMap<Entity, usize> = self
-            .entities
-            .iter()
-            .enumerate()
-            .map(|(index, &entity)| (entity, index))
-            .collect();
-        let locals = globals.locals();
-        let mut entities = Vec::with_capacity(nodes);
-        let mut spans = Vec::with_capacity(nodes);
-        let mut fresh_at = Vec::with_capacity(nodes);
-        let mut ticked = Vec::with_capacity(nodes);
-        let mut previous = Vec::with_capacity(nodes);
-        for (index, local) in locals.iter().enumerate().take(nodes) {
-            let entity = globals
-                .entity_at(index as u32)
-                .unwrap_or(Entity::PLACEHOLDER);
-            entities.push(entity);
-            match known.get(&entity) {
-                Some(&was) => {
-                    spans.push(self.spans[was]);
-                    fresh_at.push(self.fresh_at[was]);
-                    ticked.push(self.ticked[was]);
-                    previous.push(self.previous[was]);
-                }
-                None => {
-                    spans.push(Span::Fresh);
-                    fresh_at.push(self.frame);
-                    ticked.push(*local);
-                    previous.push(*local);
-                }
-            }
-        }
-        self.entities = entities;
-        self.spans = spans;
-        self.fresh_at = fresh_at;
-        self.ticked = ticked;
-        self.previous = previous;
-        self.words.clear();
-        self.words.resize(nodes, PoseWord::default());
-        self.info.clear();
-        self.info.resize(nodes, [NO_PARENT, 0]);
-        self.marks.clear();
-        self.marks.resize(nodes, 0);
-        self.moving.clear();
-        self.fresh.clear();
-        for (index, span) in self.spans.iter().enumerate() {
-            match span {
-                Span::Moving { .. } => self.moving.push(index as u32),
-                Span::Fresh => self.fresh.push(index as u32),
-                Span::Still => {}
-            }
-        }
-        self.composed.clear();
-        self.touched.clear();
-        self.whole = true;
-        self.changes.replace();
-        self.topology = Some(topology);
+        let local = globals.locals()[index];
+        self.entities[index] = entity;
+        self.spans[index] = Span::Fresh;
+        self.fresh_at[index] = self.frame;
+        self.ticked[index] = local;
+        self.previous[index] = local;
+        self.fresh.push(index as u32);
+        self.touched.push(index as u32);
+        self.node_changes.mark(index as u32);
+    }
+
+    fn shrink(&mut self, nodes: usize) {
+        self.entities.truncate(nodes);
+        self.spans.truncate(nodes);
+        self.fresh_at.truncate(nodes);
+        self.ticked.truncate(nodes);
+        self.previous.truncate(nodes);
+        self.words.truncate(nodes);
+        self.info.truncate(nodes);
+        self.marks.truncate(nodes);
+        let kept = |index: &u32| (*index as usize) < nodes;
+        self.moving.retain(kept);
+        self.fresh.retain(kept);
+        self.composed.retain(kept);
+        self.touched.retain(kept);
     }
 
     fn apply_fresh(&mut self, globals: &GlobalTransforms) {
@@ -772,7 +575,7 @@ impl DrawnPoses {
             self.previous[index] = now;
             self.fresh.push(index as u32);
             self.touched.push(index as u32);
-            self.changes.push(index as u32);
+            self.node_changes.mark(index as u32);
             stack.extend(globals.children(index));
         }
         self.stack = stack;
@@ -791,10 +594,7 @@ impl DrawnPoses {
             self.fresh.push(index as u32);
         }
         self.whole = true;
-        self.changes.replace();
-        let mut reads = self.reads();
-        reads.now.clear();
-        reads.last.clear();
+        self.node_changes.mark_all();
     }
 
     fn age_fresh(&mut self, world: &World) {
@@ -833,7 +633,7 @@ impl DrawnPoses {
             };
             self.moving.push(index as u32);
             self.touched.push(index as u32);
-            self.changes.push(index as u32);
+            self.node_changes.mark(index as u32);
         } else if self.spans[index] != Span::Still {
             self.spans[index] = Span::Still;
             self.touched.push(index as u32);
@@ -857,19 +657,17 @@ impl DrawnPoses {
         self.next_mark();
         let mut moved = std::mem::take(&mut self.moved);
         std::mem::swap(&mut moved, &mut self.moving);
-        match globals.changes_since(&mut self.seen.tick) {
-            Since::Same => {}
-            Since::Listed(listed) => {
-                for &index in listed {
-                    self.observe(world, globals, index as usize, tick);
-                }
+        let changed = globals.moved().read();
+        if changed.all {
+            for index in 0..self.spans.len() {
+                self.observe(world, globals, index, tick);
             }
-            Since::All => {
-                for index in 0..self.spans.len() {
-                    self.observe(world, globals, index, tick);
-                }
+        } else {
+            for &index in changed.listed {
+                self.observe(world, globals, index as usize, tick);
             }
         }
+        globals.moved().take(0, changed.upto);
         for &index in &moved {
             let index = index as usize;
             if let Some(Span::Moving { from }) = self.spans.get(index).copied()
@@ -905,7 +703,7 @@ impl DrawnPoses {
         ];
         if self.info[index] != info {
             self.info[index] = info;
-            self.changes.push(index as u32);
+            self.node_changes.mark(index as u32);
         }
         let before = std::mem::replace(&mut self.words[index], word);
         before.composed != word.composed || before.valid != word.valid
@@ -962,17 +760,17 @@ impl DrawnPoses {
     }
 
     fn gather(&mut self, globals: &GlobalTransforms) {
+        self.node_changes.settle();
         self.index(globals);
         self.apply_fresh(globals);
         self.next_mark();
-        let listed = match globals.changes_since(&mut self.seen.frame) {
-            Since::Same => &[][..],
-            Since::Listed(listed) => listed,
-            Since::All => {
-                self.whole = true;
-                self.changes.replace();
-                &[][..]
-            }
+        let changed = globals.moved().read();
+        let listed = if changed.all {
+            self.whole = true;
+            self.node_changes.mark_all();
+            &[][..]
+        } else {
+            changed.listed
         };
         let seeds = listed.len() + self.composed.len() + self.touched.len();
         if self.whole || seeds > self.words.len() / SPARSE_SHARE {
@@ -981,8 +779,9 @@ impl DrawnPoses {
             self.walk_seeds(globals, listed);
         }
         for &index in listed {
-            self.changes.push(index);
+            self.node_changes.mark(index);
         }
+        globals.moved().take(1, changed.upto);
         self.whole = false;
         self.touched.clear();
         self.order_parents(globals);
@@ -1049,18 +848,6 @@ impl Poses<'_> {
         self.poses.drawn_pose(&self.globals, node)
     }
 
-    pub fn drawn_poses(&self, nodes: &[Entity], out: &mut Vec<Option<Mat4>>) {
-        self.poses.drawn_poses(&self.globals, nodes, out);
-    }
-
-    pub fn previous_drawn_pose(&self, node: Entity) -> Option<Mat4> {
-        self.poses.previous_drawn_pose(&self.globals, node)
-    }
-
-    pub fn previous_drawn_poses(&self, nodes: &[Entity], out: &mut Vec<Option<Mat4>>) {
-        self.poses.previous_drawn_poses(&self.globals, nodes, out);
-    }
-
     pub fn span(&self, node: Entity) -> Option<Span> {
         self.poses.span(&self.globals, node)
     }
@@ -1102,7 +889,6 @@ pub(crate) fn present(world: &mut World, presented: Presented) {
         poses.alpha = presented.alpha();
         if let Some(frame) = frame {
             poses.frame = frame;
-            poses.reads().roll(frame);
         }
         {
             let world: &World = &*world;

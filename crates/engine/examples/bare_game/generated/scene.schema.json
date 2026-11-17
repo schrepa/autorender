@@ -146,12 +146,6 @@
     },
     "DrawnSettings": {
       "properties": {
-        "changes": {
-          "default": 16384,
-          "format": "uint32",
-          "minimum": 1,
-          "type": "integer"
-        },
         "instance_floats": {
           "default": 16,
           "format": "uint32",
@@ -166,12 +160,6 @@
       "properties": {
         "mesh_residency": {
           "default": 4096,
-          "format": "uint32",
-          "minimum": 1,
-          "type": "integer"
-        },
-        "transforms": {
-          "default": 16384,
           "format": "uint32",
           "minimum": 1,
           "type": "integer"
@@ -546,29 +534,6 @@
       ],
       "type": "string"
     },
-    "SceneCulling": {
-      "additionalProperties": false,
-      "properties": {
-        "frustum": {
-          "default": true,
-          "type": "boolean"
-        },
-        "instances": {
-          "default": null,
-          "format": "uint32",
-          "minimum": 1,
-          "type": [
-            "integer",
-            "null"
-          ]
-        },
-        "subpixel": {
-          "default": true,
-          "type": "boolean"
-        }
-      },
-      "type": "object"
-    },
     "SceneDepthBias": {
       "additionalProperties": false,
       "properties": {
@@ -590,16 +555,6 @@
     "SceneEnvironment": {
       "additionalProperties": false,
       "properties": {
-        "culling": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/SceneCulling"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "detail": {
           "anyOf": [
             {

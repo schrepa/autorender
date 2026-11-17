@@ -1,7 +1,7 @@
 use std::any::TypeId;
 use std::ops::Range;
 
-use engine_core::{AttachPoint, Entry, Error, ErrorCode, PassBit, PassViews, TargetName, Var};
+use engine_core::{Entry, Error, ErrorCode, PassBit, PassViews, TargetName, Var};
 
 use crate::graph::Clear;
 use crate::linker::Linker;
@@ -22,30 +22,15 @@ pub(crate) enum Bound {
         size: u64,
     },
     Sampler(u32),
-    Target(ViewTarget),
+    Target(TargetName),
     Asset,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub(crate) enum ViewTarget {
-    Scene,
-    Depth,
-}
-
-impl ViewTarget {
-    pub(crate) fn of(name: TargetName) -> Option<Self> {
-        if name == TargetName::COLOR {
-            return Some(Self::Scene);
-        }
-        (name == TargetName::DEPTH).then_some(Self::Depth)
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Copied {
     Buffer(u32),
     Texture(u32),
-    Target(ViewTarget),
+    Target(TargetName),
     Canvas,
 }
 
@@ -68,7 +53,6 @@ pub(crate) struct SceneOf {
     pub(crate) name: &'static str,
     pub(crate) pass: engine_core::Pass,
     pub(crate) bit: Option<PassBit>,
-    pub(crate) raster: engine_core::PassRaster,
     pub(crate) core: bool,
 }
 
@@ -100,11 +84,10 @@ pub(crate) struct PassDecl {
     pub(crate) group: Option<&'static str>,
     pub(crate) part: u32,
     pub(crate) work: Work,
-    pub(crate) layer: Option<AttachPoint>,
     pub(crate) views: PassViews,
     pub(crate) after: Vec<u32>,
     pub(crate) colors: Vec<(u32, Access)>,
-    pub(crate) targets: Vec<ViewTarget>,
+    pub(crate) targets: Vec<(TargetName, Access)>,
     pub(crate) depths: Vec<(u32, Access)>,
     pub(crate) clears: Vec<(u32, Clear)>,
     pub(crate) scene: Option<SceneOf>,
@@ -131,9 +114,8 @@ pub(crate) struct RenderDecl {
     pub(crate) vertices: Vec<VertexLayout>,
     pub(crate) primitive: wgpu::PrimitiveState,
     pub(crate) depth: DepthUse,
-    pub(crate) blend: Option<wgpu::BlendState>,
-    pub(crate) writes: wgpu::ColorWrites,
-    pub(crate) targets: Option<Vec<(Option<wgpu::BlendState>, wgpu::ColorWrites)>>,
+    pub(crate) stencil: wgpu::StencilState,
+    pub(crate) targets: Vec<(Option<wgpu::BlendState>, wgpu::ColorWrites)>,
     pub(crate) samples: u32,
     pub(crate) faces: Faces,
 }
@@ -150,6 +132,7 @@ pub(crate) struct PipelineDecl {
     pub(crate) scope: Scoped,
     pub(crate) program: Program,
     pub(crate) bound: Vec<(Var, Bound)>,
+    pub(crate) constants: Vec<(&'static str, f64)>,
     pub(crate) speedup_only: bool,
 }
 
@@ -161,15 +144,8 @@ impl PassDecl {
             .map(|(_, clear)| *clear)
     }
 
-    pub(crate) fn view_depth(&self, texture: u32, access: Access) -> bool {
-        access == Access::Clear
-            && self
-                .clear_of(texture)
-                .is_none_or(|clear| clear == Clear::Depth(crate::graph::FAR))
-    }
-
     pub(crate) fn per_view(&self) -> bool {
-        self.layer.is_some() || crate::shared::composites(self)
+        self.scene.is_some_and(|scene| scene.core) || !self.targets.is_empty()
     }
 }
 
@@ -224,6 +200,7 @@ pub(crate) struct Declared {
     pub(crate) textures: Vec<TextureDecl>,
     pub(crate) buffers: Vec<BufferDecl>,
     pub(crate) samplers: Vec<engine_core::Sampler>,
+    pub(crate) targets: Vec<crate::SharedTarget>,
     pub(crate) passes: Vec<PassDecl>,
     pub(crate) pipelines: Vec<PipelineDecl>,
     pub(crate) inputs: Vec<DrawInputDecl>,
@@ -232,6 +209,7 @@ pub(crate) struct Declared {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(crate) struct Counts {
+    targets: usize,
     textures: usize,
     buffers: usize,
     passes: usize,
@@ -243,6 +221,7 @@ pub(crate) struct Counts {
 impl Declared {
     pub(crate) fn counts(&self) -> Counts {
         Counts {
+            targets: self.targets.len(),
             textures: self.textures.len(),
             buffers: self.buffers.len(),
             passes: self.passes.len(),
@@ -261,6 +240,7 @@ impl Declared {
             textures: kept(&self.textures, counts.textures),
             buffers: kept(&self.buffers, counts.buffers),
             samplers: self.samplers.clone(),
+            targets: kept(&self.targets, counts.targets),
             passes: kept(&self.passes, counts.passes),
             pipelines: kept(&self.pipelines, counts.pipelines),
             inputs: kept(&self.inputs, counts.inputs),
@@ -403,7 +383,6 @@ impl InstallCore {
             group: None,
             part: self.part,
             work,
-            layer: None,
             views: PassViews::Every,
             after: Vec::new(),
             colors: Vec::new(),
@@ -490,6 +469,7 @@ impl InstallCore {
             scope,
             program,
             bound,
+            constants: Vec::new(),
             speedup_only: false,
         };
         for entry in decl.entries() {
@@ -542,29 +522,21 @@ impl InstallCore {
 
     pub(crate) fn draws_scene(&mut self, pass: u32, name: &'static str, listed: engine_core::Pass) {
         let bit = self.passes.bit(name);
-        let raster = self
-            .passes
-            .get(name)
-            .map_or(engine_core::PassRaster::PLAIN, |listed| listed.raster);
         let mut members: Vec<u32> = self
             .draws
             .iter()
-            .filter(|member| member.kind.joins(name, &listed))
+            .filter(|member| member.kind.joins(name))
             .map(|member| member.part)
             .collect();
         members.sort_unstable();
         members.dedup();
         let core = self.package == crate::linker::CORE_PACKAGE;
         if let Some(declared) = self.pass_mut(pass) {
-            if core {
-                declared.layer = Some(listed.at);
-            }
             declared.views = listed.views;
             declared.scene = Some(SceneOf {
                 name,
                 pass: listed,
                 bit,
-                raster,
                 core,
             });
             declared.members = members;

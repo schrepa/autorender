@@ -10,7 +10,7 @@ pub(super) enum Asked {
 
 pub(super) struct WarmShape {
     pub(super) formats: Vec<Option<wgpu::TextureFormat>>,
-    pub(super) depth: Option<(wgpu::TextureFormat, bool)>,
+    pub(super) depth: Option<wgpu::TextureFormat>,
     pub(super) shown: (bool, bool),
     pub(super) variant: Option<crate::surface::MaterialVariant>,
 }
@@ -224,7 +224,7 @@ impl Run {
                     .iter()
                     .any(|stage| !stage.composed.constants(&[offered]).is_empty())
             });
-        let styled = !plain && !desc.writes.is_empty();
+        let styled = !plain && desc.targets.iter().any(|(_, writes)| !writes.is_empty());
         let faced = desc.faces != Faces::Declared;
         !built.geometry.is_empty() && (used || styled || faced)
     }

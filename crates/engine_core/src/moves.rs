@@ -101,10 +101,10 @@ pub fn take_asks<A: Send + Sync + 'static>(world: &mut World) -> Vec<A> {
     world.resource_mut::<Asked<A>>().take()
 }
 
-pub(crate) fn end_tick(world: &mut World) -> bool {
+pub(crate) fn end_tick(world: &mut World) {
     let teleports = take_asks::<Teleport>(world);
     if teleports.is_empty() {
-        return false;
+        return;
     }
     let fresh: Vec<Entity> = teleports
         .into_iter()
@@ -117,7 +117,6 @@ pub(crate) fn end_tick(world: &mut World) -> bool {
     if !fresh.is_empty() {
         crate::presentation::make_fresh(world, &fresh);
     }
-    true
 }
 
 fn tick_paced(mover: Option<&Mover>) -> bool {

@@ -11,7 +11,7 @@ pub(super) struct Declared {
 }
 
 impl Declared {
-    fn read(world: &World, entity: Entity) -> Self {
+    pub(super) fn read(world: &World, entity: Entity) -> Self {
         let Ok(held) = world.get_entity(entity) else {
             return Self::default();
         };
@@ -31,7 +31,7 @@ impl Declared {
 }
 
 impl GlobalTransforms {
-    pub(super) fn declare(&mut self, world: &mut World, rebuilt: bool) -> bool {
+    pub(super) fn declare(&mut self, world: &mut World) {
         if !world
             .resource::<tracking::Invalidation>()
             .touched
@@ -41,8 +41,7 @@ impl GlobalTransforms {
             std::mem::swap(&mut self.touched, &mut invalidation.touched);
         }
         let world: &World = world;
-        let mut changed = rebuilt;
-        if rebuilt {
+        if self.words_stale {
             for (declared, &entity) in self.declared.iter_mut().zip(&self.entities) {
                 *declared = Declared::read(world, entity);
             }
@@ -54,41 +53,30 @@ impl GlobalTransforms {
                 let next = Declared::read(world, entity);
                 if self.declared[index] != next {
                     self.declared[index] = next;
-                    changed = true;
+                    self.worded.push(index);
                 }
             }
         }
         self.touched.clear();
-        changed
     }
 
-    pub(super) fn settle_words(&mut self, rebuilt: bool) -> bool {
+    fn word_from_parent(&self, index: usize) -> NodeWord {
+        let link = self.links[index];
+        let parent = link
+            .parent()
+            .filter(|_| link.topology_valid())
+            .map(|parent| self.words[parent]);
+        self.declared[index].word(parent)
+    }
+
+    pub(super) fn settle_words(&mut self) -> bool {
         let _profile = engine_profile::span("hierarchy", "settle_words");
-        let threshold = self.dense_threshold();
-        let mut changed = rebuilt;
-        for position in 0..self.order.len() {
-            let index = self.order[position];
-            let link = self.links[index];
-            let parent = link
-                .parent()
-                .filter(|_| link.topology_valid())
-                .map(|parent| self.words[parent]);
-            let next = self.declared[index].word(parent);
-            let before = self.words[index];
-            if next == before {
-                continue;
+        if std::mem::take(&mut self.words_stale) {
+            self.worded.clear();
+            for position in 0..self.slots.order.len() {
+                let index = self.slots.order[position];
+                self.words[index] = self.word_from_parent(index);
             }
-            self.words[index] = next;
-            if rebuilt {
-                continue;
-            }
-            changed = true;
-            if !before.active && next.active {
-                self.dirty.mark(index, threshold);
-                self.woken.push(self.entities[index]);
-            }
-        }
-        if rebuilt {
             for entity in self.asleep.drain(..) {
                 if let Some(&index) = self.indices.get(&entity)
                     && self.words[index].active
@@ -96,10 +84,30 @@ impl GlobalTransforms {
                     self.woken.push(entity);
                 }
             }
+            return true;
         }
-        if changed {
-            self.words_revision = self.words_revision.wrapping_add(1);
+        let threshold = self.dense_threshold();
+        let mut changed = false;
+        let mut worded = std::mem::take(&mut self.worded);
+        while let Some(index) = worded.pop() {
+            if !self.live(index) {
+                continue;
+            }
+            let next = self.word_from_parent(index);
+            let before = self.words[index];
+            if next == before {
+                continue;
+            }
+            self.words[index] = next;
+            self.placed.mark(index as u32);
+            changed = true;
+            if !before.active && next.active {
+                self.dirty.mark(index, threshold);
+                self.woken.push(self.entities[index]);
+            }
+            worded.extend(self.children(index));
         }
+        self.worded = worded;
         changed
     }
 
@@ -118,10 +126,6 @@ impl GlobalTransforms {
 
     pub fn word_at(&self, index: usize) -> Option<NodeWord> {
         self.words.get(index).copied()
-    }
-
-    pub fn words_revision(&self) -> u64 {
-        self.words_revision
     }
 
     pub fn active(&self, entity: Entity) -> bool {

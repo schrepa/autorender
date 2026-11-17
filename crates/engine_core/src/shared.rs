@@ -1,25 +1,12 @@
 use bevy_ecs::world::World;
 use engine_registry::CORE_ROW;
 
-use crate::{Board, GlobalTransforms, Readiness, Views, settings};
+use crate::{Board, Readiness, Views, settings};
 
 settings! {
     #[section("feeds")]
     pub struct FeedSettings {
-        pub transforms: u32 = 16384 => at_least(1),
         pub mesh_residency: u32 = 4096 => at_least(1),
-    }
-}
-
-pub(crate) fn start_frame(world: &mut World) {
-    let transforms = world
-        .get_resource::<FeedSettings>()
-        .map_or(FeedSettings::default().transforms, |feeds| feeds.transforms);
-    if let Some(mut globals) = world.get_resource_mut::<GlobalTransforms>() {
-        globals.resize_changes(transforms as usize);
-    }
-    if let Some(mut poses) = world.get_resource_mut::<crate::DrawnPoses>() {
-        poses.resize_changes(transforms as usize);
     }
 }
 

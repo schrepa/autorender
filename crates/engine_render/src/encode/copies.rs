@@ -182,29 +182,6 @@ impl Run {
         }
     }
 
-    pub(crate) fn copy_view(&mut self, layer: engine_core::AttachPoint, view: ViewTarget) {
-        self.end_render();
-        let from = final_target(view);
-        let targets = &self.set().targets;
-        let source = targets
-            .iter()
-            .find(|(known, _)| *known == from)
-            .map(|(_, made)| made.texture.clone());
-        let target = targets
-            .iter()
-            .find(|(known, _)| *known == Target::Copy(layer, view))
-            .map(|(_, made)| made.texture.clone());
-        if let (Some(source), Some(target), Some(encoder)) =
-            (source, target, self.recording.encoder())
-        {
-            encoder.copy_texture_to_texture(
-                source.as_image_copy(),
-                target.as_image_copy(),
-                source.size(),
-            );
-        }
-    }
-
     pub(crate) fn record_readbacks(&mut self) {
         self.leave();
         let asked = std::mem::take(&mut self.queued.asked);

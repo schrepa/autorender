@@ -305,11 +305,6 @@ fn install_with(
     }
     let material = material_layout(registry, &mut linker, &mut roots, &mut problems);
     linker.add_generated(
-        crate::shared::COMPOSITE_MODULE.to_owned(),
-        CORE_PACKAGE,
-        crate::shared::composite_source(),
-    );
-    linker.add_generated(
         crate::shared::PASSES_MODULE.to_owned(),
         CORE_PACKAGE,
         scene_passes(world).wgsl(),
@@ -330,7 +325,7 @@ fn install_with(
             brick: None,
         },
         Listed {
-            record: core_part::<crate::shared::Composite>(),
+            record: core_part::<crate::render_bricks::Composite>(),
             package: CORE_PACKAGE,
             brick: None,
         },
@@ -383,11 +378,11 @@ fn install_with(
             .iter()
             .position(|entry| entry.record.part == draw.part);
         if let (Some(index), Some(kind)) = (index, core.passes.kind(draw.kind).copied()) {
-            core.draws.push(KindMember {
-                part: index as u32,
+            core.draws.push(KindMember::new(
+                index as u32,
                 kind,
-                call: std::sync::Arc::clone(&draw.call),
-            });
+                std::sync::Arc::clone(&draw.call),
+            ));
         }
     }
     let mut parts: Vec<Option<Box<dyn Installed>>> = Vec::with_capacity(listed.len());

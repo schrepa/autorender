@@ -7,6 +7,7 @@ use engine_place::{Mover, Node};
 pub(crate) struct Invalidation {
     pub(crate) full_scan: bool,
     pub(crate) touched: Vec<Entity>,
+    pub(crate) placed: Vec<Entity>,
 }
 
 impl Default for Invalidation {
@@ -14,6 +15,7 @@ impl Default for Invalidation {
         Self {
             full_scan: true,
             touched: Vec::new(),
+            placed: Vec::new(),
         }
     }
 }
@@ -42,9 +44,9 @@ pub(crate) fn track_nodes(world: &mut World) {
         .on_remove(node_touched);
 }
 
-pub(crate) fn topology_changed(mut world: DeferredWorld, _: HookContext) {
+pub(crate) fn topology_changed(mut world: DeferredWorld, context: HookContext) {
     if let Some(mut invalidation) = world.get_resource_mut::<Invalidation>() {
-        invalidation.full_scan = true;
+        invalidation.placed.push(context.entity);
     }
 }
 

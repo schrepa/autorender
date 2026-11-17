@@ -2,40 +2,135 @@ use std::collections::BTreeMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
-use engine_core::{AttachPoint, Entry, Error, ErrorCode, PassViews};
+use engine_core::{Entry, Error, ErrorCode, PassViews, TargetName};
 use wgpu::ShaderStages;
 
 use crate::graph::{
     Access as GraphAccess, BLACK, Clear, Declared as GraphPass, FAR, Life, PassEntry, PassId,
     ResourceEntry, ResourceId, StaticGraph, TRANSPARENT,
 };
-use crate::install::{
-    Bound, Copied, Declared, PassDecl, PipelineDecl, Program, Scoped, ViewTarget, Work,
-};
+use crate::install::{Bound, Copied, Declared, PassDecl, PipelineDecl, Program, Scoped, Work};
 use crate::linker::{Composed, Linker, Ty};
-use crate::{Access, DepthUse, Lifetime, VertexLayout};
+use crate::{Access, DepthUse, Lifetime, SharedTarget, VertexLayout};
 
 mod composing;
 
 pub(crate) use composing::{Composing, compose};
 
-pub const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub(crate) const CAMERA_STRIDE: u64 = 512;
+const TARGET_KEY: u64 = 1 << 62;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Target {
-    Scene,
-    Depth,
+    Shared(TargetName),
     Canvas,
-    Copy(AttachPoint, ViewTarget),
 }
 
-pub(crate) fn final_target(view: ViewTarget) -> Target {
-    match view {
-        ViewTarget::Scene => Target::Scene,
-        ViewTarget::Depth => Target::Depth,
+pub(crate) fn final_target(name: TargetName) -> Target {
+    if name == TargetName::CANVAS {
+        Target::Canvas
+    } else {
+        Target::Shared(name)
     }
+}
+
+impl Declared {
+    pub(crate) fn shared_target(&self, name: TargetName) -> Option<&SharedTarget> {
+        self.targets.iter().find(|target| target.name == name)
+    }
+
+    pub(crate) fn target_format(&self, target: Target) -> Option<wgpu::TextureFormat> {
+        match target {
+            Target::Shared(name) => self.shared_target(name).map(|target| target.format),
+            Target::Canvas => None,
+        }
+    }
+
+    pub(crate) fn depth_target(&self) -> Option<Target> {
+        self.targets
+            .iter()
+            .find(|target| target.format.is_depth_stencil_format())
+            .map(|target| Target::Shared(target.name))
+    }
+
+    pub(crate) fn target_key(&self, target: Target) -> u64 {
+        let (kind, index) = match target {
+            Target::Shared(name) => (
+                0,
+                self.targets
+                    .iter()
+                    .position(|target| target.name == name)
+                    .map_or(u64::from(u32::MAX), |at| at as u64),
+            ),
+            Target::Canvas => (2, 0),
+        };
+        TARGET_KEY | kind << 32 | index
+    }
+
+    pub(crate) fn pass_set(&self, pass: &PassDecl) -> Vec<SetFormat> {
+        let Some(scene) = pass.scene.as_ref().filter(|scene| scene.core) else {
+            return Vec::new();
+        };
+        scene
+            .pass
+            .writes
+            .targets()
+            .iter()
+            .filter_map(|name| self.shared_target(*name))
+            .filter(|target| !target.format.is_depth_stencil_format())
+            .map(|target| {
+                (
+                    Target::Shared(target.name),
+                    target.format,
+                    Clear::Color(BLACK),
+                )
+            })
+            .collect()
+    }
+}
+
+fn unknown_targets(declared: &Declared) -> Vec<Error> {
+    let mut problems = Vec::new();
+    let named =
+        |name: TargetName| name == TargetName::CANVAS || declared.shared_target(name).is_some();
+    let pipelines = declared
+        .pipelines
+        .iter()
+        .flat_map(|decl| decl.bound.iter().map(|(_, bound)| bound));
+    let bound = declared.frame.iter().map(|frame| &frame.bound).chain(pipelines);
+    for bound in bound {
+        if let Bound::Target(name) = bound
+            && declared.shared_target(*name).is_none()
+        {
+            let path = format!("$.targets.{}", name.name());
+            problems.push(Error::new(ErrorCode::UnknownVariable, path).got(name.name()));
+        }
+    }
+    for pass in &declared.passes {
+        if let Work::Copy { from, to } = pass.work {
+            for copied in [from, to] {
+                if let Copied::Target(name) = copied
+                    && !named(name)
+                {
+                    let path = format!("$.targets.{}", name.name());
+                    problems.push(Error::new(ErrorCode::UnknownVariable, path).got(name.name()));
+                }
+            }
+        }
+        for name in pass.scene.iter().flat_map(|scene| scene.pass.writes.targets()) {
+            if declared.shared_target(*name).is_none() {
+                let path = format!("$.passes.{}.writes.{}", pass.name, name.name());
+                problems.push(Error::new(ErrorCode::UnknownVariable, path).got(name.name()));
+            }
+        }
+        for &(name, _) in &pass.targets {
+            if !named(name) || declared.depth_target() == Some(Target::Shared(name)) {
+                let path = format!("$.passes.{}.targets.{}", pass.name, name.name());
+                problems.push(Error::new(ErrorCode::PassMismatch, path).got(name.name()));
+            }
+        }
+    }
+    problems
 }
 
 pub(crate) struct Ids {
@@ -104,7 +199,6 @@ pub(crate) struct BuiltPipeline {
     pub(crate) variant: u32,
     pub(crate) reads: Vec<Bound>,
     pub(crate) writes: Vec<Bound>,
-    pub(crate) view_reads: Vec<Target>,
     pub(crate) made: Vec<(u64, wgpu::RenderPipeline)>,
     pub(crate) computed: Vec<(u64, wgpu::ComputePipeline)>,
     pub(crate) ready: Vec<Ready>,
@@ -123,14 +217,9 @@ pub(crate) struct FrameVariant {
     pub(crate) camera: bool,
 }
 
-pub(crate) enum CoreFrame {
-    Post,
-    Target(Target),
-}
-
 pub(crate) struct FrameSlot {
     pub(crate) ty: Ty,
-    pub(crate) core: Option<CoreFrame>,
+    pub(crate) post: bool,
 }
 
 pub(crate) type SetFormat = (Target, wgpu::TextureFormat, Clear);
@@ -144,8 +233,6 @@ pub(crate) struct Machine {
     pub(crate) frame_slots: BTreeMap<u32, FrameSlot>,
     pub(crate) frame_bound: BTreeMap<u32, Bound>,
     pub(crate) variants: Vec<FrameVariant>,
-    pub(crate) view_copies: Vec<(AttachPoint, ViewTarget)>,
-    pub(crate) direct_depth: Vec<bool>,
     pub(crate) binding_bytes: BTreeMap<(Option<usize>, u32, u32), u64>,
     pub(crate) linker: Linker,
 }
@@ -182,31 +269,13 @@ fn stage_of(entry: Entry, linker: &Linker) -> ShaderStages {
 
 pub(crate) fn writes_depth(depth: DepthUse) -> bool {
     match depth {
-        DepthUse::None | DepthUse::Test => false,
-        DepthUse::Write { .. } | DepthUse::Overwrite => true,
+        DepthUse::None => false,
         DepthUse::Compare { write, .. } => write,
     }
 }
 
-pub(crate) fn pass_layer(pass: &PassDecl) -> Option<AttachPoint> {
-    pass.layer.filter(|point| point.scene())
-}
-
 pub(crate) fn shared(pass: &PassDecl) -> bool {
     pass.scene.is_some_and(|scene| scene.core)
-}
-
-pub(crate) fn pass_set(pass: &PassDecl) -> Vec<SetFormat> {
-    if pass_layer(pass).is_none() {
-        return Vec::new();
-    }
-    let scene = vec![(Target::Scene, SCENE_FORMAT, Clear::Color(BLACK))];
-    match pass.scene.as_ref().filter(|scene| scene.core) {
-        Some(scene) if !scene.pass.writes.contains(engine_core::TargetName::COLOR) => Vec::new(),
-        Some(_) => scene,
-        None if !pass.colors.is_empty() => Vec::new(),
-        None => scene,
-    }
 }
 
 fn written_module(declared: &Declared, decl: &PipelineDecl) -> Option<(String, String)> {
@@ -214,12 +283,12 @@ fn written_module(declared: &Declared, decl: &PipelineDecl) -> Option<(String, S
         .passes
         .iter()
         .enumerate()
-        .any(|(index, pass)| decl_in_pass(decl, index as u32, pass) && lit_set(&pass_set(pass)))
+        .any(|(index, pass)| decl_in_pass(decl, index as u32, pass) && lit_set(&declared.pass_set(pass)))
         .then(crate::shared::pass_module)
 }
 
 pub(crate) fn lit_set(set: &[SetFormat]) -> bool {
-    set.iter().any(|(target, ..)| *target == Target::Scene)
+    !set.is_empty()
 }
 
 pub(crate) fn decl_in_pass(decl: &PipelineDecl, index: u32, pass: &PassDecl) -> bool {
@@ -277,33 +346,19 @@ fn depth_direct_of(declared: &Declared, depth_writes: &[bool]) -> Vec<bool> {
         .iter()
         .enumerate()
         .map(|(index, pass)| {
-            let Some(layer) = pass_layer(pass) else {
-                return false;
-            };
-            if writes(index) {
-                return false;
-            }
-            if !shared(pass) {
-                return true;
-            }
-            let mut writers = passes
-                .iter()
-                .enumerate()
-                .filter(|&(other, _)| other != index && writes(other))
-                .map(|(_, other)| other);
-            writers
-                .clone()
-                .all(|other| pass_layer(other) != Some(layer))
-                && writers.any(|other| {
-                    shared(other)
-                        && pass_layer(other).is_some_and(|at| at < layer)
-                        && (other.views == PassViews::Every || other.views == pass.views)
+            shared(pass)
+                && !writes(index)
+                && passes.iter().enumerate().any(|(other, writer)| {
+                    other != index
+                        && writes(other)
+                        && shared(writer)
+                        && (writer.views == PassViews::Every || writer.views == pass.views)
                 })
         })
         .collect()
 }
 
-pub(crate) fn reads_depth_direct(direct: &[bool], pass: usize) -> bool {
+fn reads_depth_direct(direct: &[bool], pass: usize) -> bool {
     direct.get(pass).copied().unwrap_or(false)
 }
 
@@ -368,16 +423,8 @@ fn handle_of(bound: &Bound) -> Option<Handle> {
             layers: [layers.start, layers.end],
         }),
         Bound::Buffer(buffer) | Bound::Window { buffer, .. } => Some(Handle::Buffer(*buffer)),
-        Bound::Target(view) => Some(Handle::Target(final_target(*view))),
+        Bound::Target(name) => Some(Handle::Target(final_target(*name))),
         Bound::Sampler(_) | Bound::Asset => None,
-    }
-}
-
-pub(crate) fn core_target(name: &str) -> Option<Target> {
-    match name {
-        crate::shared::SCENE => Some(Target::Scene),
-        crate::shared::DEPTH => Some(Target::Depth),
-        _ => None,
     }
 }
 
@@ -400,24 +447,19 @@ fn own_writes(decl: &PipelineDecl, reached: &Reached, linker: &Linker) -> Vec<Ha
         .collect()
 }
 
-fn attachments(pass: &PassDecl, depth_writes: bool) -> Vec<Handle> {
+fn attachments(declared: &Declared, pass: &PassDecl) -> Vec<Handle> {
     let mut found = Vec::new();
     for &(texture, _) in pass.colors.iter().chain(&pass.depths) {
         found.push(Handle::whole(texture));
     }
-    if pass_layer(pass).is_some() {
-        for (target, ..) in pass_set(pass) {
+    if shared(pass) {
+        for (target, ..) in declared.pass_set(pass) {
             found.push(Handle::Target(target));
         }
-        if shared(pass) || depth_writes {
-            found.push(Handle::Target(Target::Depth));
-        }
+        found.extend(declared.depth_target().map(Handle::Target));
     }
-    for &view in &pass.targets {
-        found.push(Handle::Target(final_target(view)));
-    }
-    if crate::shared::draws_canvas(pass) {
-        found.push(Handle::Target(Target::Canvas));
+    for &(name, _) in &pass.targets {
+        found.push(Handle::Target(final_target(name)));
     }
     found
 }
@@ -447,6 +489,11 @@ impl Machine {
             reaches,
             staged,
         } = composing;
+        let mut unknown = unknown_targets(&declared);
+        if !unknown.is_empty() {
+            problems.append(&mut unknown);
+            return None;
+        }
         let material_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("engine/material-group"),
             entries: &material_entries,
@@ -471,9 +518,8 @@ impl Machine {
                     if !decl_in_pass(decl, index as u32, pass) {
                         continue;
                     }
-                    let depth = depth_writes.get(index).copied().unwrap_or(true);
                     written.extend(
-                        attachments(pass, depth)
+                        attachments(&declared, pass)
                             .into_iter()
                             .map(|handle| (handle, Usage::Attached)),
                     );
@@ -489,13 +535,12 @@ impl Machine {
             .collect();
         let held: Vec<Option<(Handle, Ty)>> = (0..core_frame.len())
             .map(|at| {
-                let (path, name, ty) = &core_frame[at];
-                let handle = match numbers.get(at).and_then(|number| frame_bound.get(number)) {
-                    Some(bound) => handle_of(bound),
-                    None if linker.is_core(path) => core_target(name).map(Handle::Target),
-                    None => None,
-                };
-                handle.map(|handle| (handle, *ty))
+                let ty = core_frame[at].2;
+                numbers
+                    .get(at)
+                    .and_then(|number| frame_bound.get(number))
+                    .and_then(handle_of)
+                    .map(|handle| (handle, ty))
             })
             .collect();
         let conflict = |pipeline: u32, variable: u32| {
@@ -601,12 +646,8 @@ impl Machine {
             let mut groups: Vec<OwnGroup> = Vec::new();
             let mut reads = Vec::new();
             let mut writes = Vec::new();
-            let mut view_reads = Vec::new();
             for (module, found, _) in &reached {
                 if found.group == 0 {
-                    if linker.is_core(module) {
-                        view_reads.extend(core_target(&found.name));
-                    }
                     if let Some(bound) = linker
                         .binding_of(module, &found.name)
                         .and_then(|number| frame_bound.get(&number))
@@ -705,7 +746,7 @@ impl Machine {
                 immediate_size: 0,
             });
             let mut hasher = DefaultHasher::new();
-            format!("{:?}", decl.program).hash(&mut hasher);
+            format!("{:?} {:?}", decl.program, decl.constants).hash(&mut hasher);
             for stage in &stages {
                 stage.entry.name().hash(&mut hasher);
                 stage.composed.text.hash(&mut hasher);
@@ -739,7 +780,6 @@ impl Machine {
                 variant,
                 reads,
                 writes,
-                view_reads,
                 made: Vec::new(),
                 computed: Vec::new(),
                 ready: Vec::new(),
@@ -753,7 +793,6 @@ impl Machine {
             });
         }
         let direct_depth = depth_direct_of(&declared, &depth_writes);
-        let view_copies = copies(&declared, &pipelines, &direct_depth);
         let (graph, ids) = match graph_of(&declared, &pipelines, &direct_depth) {
             Ok(built) => built,
             Err(error) => {
@@ -765,14 +804,8 @@ impl Machine {
             .iter()
             .filter_map(|(path, name, ty)| {
                 let number = linker.binding_of(path, name)?;
-                let core = if !linker.is_core(path) {
-                    None
-                } else if name == crate::shared::POST {
-                    Some(CoreFrame::Post)
-                } else {
-                    core_target(name).map(CoreFrame::Target)
-                };
-                Some((number, FrameSlot { ty: *ty, core }))
+                let post = linker.is_core(path) && name == crate::shared::POST;
+                Some((number, FrameSlot { ty: *ty, post }))
             })
             .collect();
         let binding_bytes = binding_bytes_of(&pipelines);
@@ -785,8 +818,6 @@ impl Machine {
             frame_slots,
             frame_bound,
             variants,
-            view_copies,
-            direct_depth,
             binding_bytes,
             linker,
         })
@@ -828,7 +859,7 @@ fn filterable_bound(bound: Option<&Bound>, declared: &Declared) -> bool {
             .textures
             .get(*texture as usize)
             .map(|texture| texture.format),
-        Some(Bound::Target(ViewTarget::Depth)) => Some(DEPTH_FORMAT),
+        Some(Bound::Target(name)) => declared.target_format(final_target(*name)),
         Some(_) | None => None,
     };
     format.is_none_or(|format| {
@@ -846,18 +877,6 @@ fn graph_access(access: Access, clear: Clear) -> GraphAccess {
     match access {
         Access::Load => GraphAccess::Load,
         Access::Clear => GraphAccess::Clear(clear),
-    }
-}
-
-pub(crate) fn target_read(
-    view: ViewTarget,
-    layer: Option<AttachPoint>,
-    direct_depth: bool,
-) -> Target {
-    match (layer, view) {
-        (Some(_), ViewTarget::Depth) if direct_depth => Target::Depth,
-        (Some(layer), view) => Target::Copy(layer, view),
-        (None, view) => final_target(view),
     }
 }
 
@@ -897,36 +916,29 @@ fn graph_of(
             ids.targets.push((target, ResourceId::new(resources.len())));
             resources.push(ResourceEntry { label, life, view });
         };
-    target(Target::Scene, "scene", true, Life::Output, &mut ids);
-    target(Target::Depth, "depth", true, Life::Output, &mut ids);
-    target(Target::Canvas, "canvas", false, Life::Output, &mut ids);
-    let copied = copies(declared, pipelines, direct);
-    for &(layer, view) in &copied {
-        target(
-            Target::Copy(layer, view),
-            "view_copy",
-            false,
-            Life::Frame,
-            &mut ids,
-        );
+    for shared in &declared.targets {
+        let name = shared.name;
+        target(Target::Shared(name), name.name(), true, Life::Output, &mut ids);
     }
-    let mut passes = Vec::with_capacity(declared.passes.len() + copied.len());
+    target(Target::Canvas, "canvas", true, Life::Output, &mut ids);
+    let depth_target = declared.depth_target();
+    let mut passes = Vec::with_capacity(declared.passes.len());
     for (index, pass) in declared.passes.iter().enumerate() {
         let part = declared.parts.get(pass.part as usize);
         let entry = PassEntry {
             label: pass.name,
             brick: part.map_or("", |part| part.package),
             registered: index as u32,
-            layer: pass.layer,
             shared: shared(pass),
             group: pass.group,
-            blends: pipelines
-                .iter()
-                .filter(|pipeline| in_pass(pipeline, index as u32, pass))
-                .any(|pipeline| composes(&pipeline.decl.program)),
         };
-        let scene = pass_layer(pass);
         let direct_depth = reads_depth_direct(direct, index);
+        let set = declared.pass_set(pass);
+        let attached = |target: Target| {
+            entry.shared
+                && (set.iter().any(|(known, ..)| *known == target)
+                    || (Some(target) == depth_target && !direct_depth))
+        };
         let mut reads = Vec::new();
         let mut writes = Vec::new();
         let mut colors = Vec::new();
@@ -939,7 +951,7 @@ fn graph_of(
                 Bound::Buffer(buffer) | Bound::Window { buffer, .. } => {
                     ids.buffers.get(*buffer as usize).copied()
                 }
-                Bound::Target(view) => ids.target(target_read(*view, scene, direct_depth)),
+                Bound::Target(name) => ids.target(final_target(*name)),
                 Bound::Sampler(_) | Bound::Asset => None,
             }
         };
@@ -948,15 +960,15 @@ fn graph_of(
             .iter()
             .filter(|pipeline| in_pass(pipeline, index as u32, pass))
         {
-            reads.extend(pipeline.reads.iter().filter_map(&bound_id));
-            if scene.is_none() {
-                reads.extend(
-                    pipeline
-                        .view_reads
-                        .iter()
-                        .filter_map(|target| ids.target(*target)),
-                );
+            for bound in &pipeline.reads {
+                if let Bound::Target(name) = bound
+                    && attached(final_target(*name))
+                {
+                    let path = format!("$.passes.{}.reads.{}", pass.name, name.name());
+                    return Err(Error::new(ErrorCode::PassMismatch, path).got(name.name()));
+                }
             }
+            reads.extend(pipeline.reads.iter().filter_map(&bound_id));
             writes.extend(pipeline.writes.iter().filter_map(&bound_id));
             if claimed_member(&pipeline.decl, pass) {
                 current.extend(
@@ -994,7 +1006,7 @@ fn graph_of(
                 let id = |copied: Copied| match copied {
                     Copied::Buffer(buffer) => ids.buffers.get(buffer as usize).copied(),
                     Copied::Texture(texture) => ids.textures.get(texture as usize).copied(),
-                    Copied::Target(view) => ids.target(final_target(view)),
+                    Copied::Target(name) => ids.target(final_target(name)),
                     Copied::Canvas => ids.target(Target::Canvas),
                 };
                 reads.extend(id(from));
@@ -1003,31 +1015,22 @@ fn graph_of(
             Work::Clear(buffer) => writes.extend(ids.buffers.get(buffer as usize).copied()),
             Work::Render => {}
         }
-        if scene.is_some() {
-            for (target, _, clear) in pass_set(pass) {
-                if let Some(id) = ids.target(target) {
-                    let access = if entry.shared {
-                        GraphAccess::Draw(clear)
-                    } else {
-                        GraphAccess::Load
-                    };
-                    colors.push((id, access));
-                }
+        if entry.shared {
+            for (target, _, clear) in set {
+                colors.extend(ids.target(target).map(|id| (id, GraphAccess::Draw(clear))));
             }
-            if let Some(id) = ids.target(Target::Depth) {
+            if let Some(id) = depth_target.and_then(|target| ids.target(target)) {
                 let access = if direct_depth {
                     GraphAccess::ReadOnly
-                } else if entry.shared {
-                    GraphAccess::Draw(Clear::Depth(FAR))
                 } else {
-                    GraphAccess::Load
+                    GraphAccess::Draw(Clear::Depth(FAR))
                 };
                 depth = Some((id, access));
             }
         }
-        for &view in &pass.targets {
-            if let Some(id) = ids.target(final_target(view)) {
-                colors.push((id, GraphAccess::Load));
+        for &(name, access) in &pass.targets {
+            if let Some(id) = ids.target(final_target(name)) {
+                colors.push((id, graph_access(access, Clear::Color(BLACK))));
             }
         }
         for &(texture, access) in &pass.colors {
@@ -1059,111 +1062,6 @@ fn graph_of(
             current,
         });
     }
-    let canvas = ids.target(Target::Canvas);
-    if let (Some(at), Some(canvas)) = (
-        declared
-            .passes
-            .iter()
-            .position(|pass| pass.name == crate::shared::COMPOSITE),
-        canvas,
-    ) {
-        passes[at].colors.insert(
-            0,
-            (
-                canvas,
-                GraphAccess::Clear(Clear::Color(crate::graph::BLACK)),
-            ),
-        );
-        for target in [Target::Scene, Target::Depth] {
-            passes[at].reads.extend(ids.target(target));
-        }
-    }
-    let screens: Vec<PassId> = declared
-        .passes
-        .iter()
-        .enumerate()
-        .filter(|(_, pass)| crate::shared::composites(pass))
-        .map(|(index, _)| PassId::new(index))
-        .collect();
-    for (at, pass) in declared.passes.iter().enumerate() {
-        let Some(canvas) = canvas.filter(|_| pass.layer == Some(AttachPoint::Overlay)) else {
-            continue;
-        };
-        passes[at].colors.insert(
-            0,
-            (canvas, GraphAccess::Draw(Clear::Color(crate::graph::BLACK))),
-        );
-        passes[at].after.extend(screens.iter().copied());
-    }
-    for &(layer, view) in &copied {
-        let (Some(copy), Some(from)) = (
-            ids.target(Target::Copy(layer, view)),
-            ids.target(final_target(view)),
-        ) else {
-            continue;
-        };
-        passes.push(GraphPass {
-            entry: PassEntry {
-                label: "view_copy",
-                brick: "",
-                registered: 0,
-                layer: Some(layer),
-                shared: true,
-                group: None,
-                blends: false,
-            },
-            reads: vec![from],
-            writes: vec![copy],
-            colors: Vec::new(),
-            depth: None,
-            after: Vec::new(),
-            current: Vec::new(),
-        });
-    }
     let graph = StaticGraph::build(resources, passes)?;
     Ok((graph, ids))
-}
-
-fn composes(program: &Program) -> bool {
-    match program {
-        Program::Render(render) => {
-            render.blend.is_some()
-                || render
-                    .targets
-                    .as_ref()
-                    .is_some_and(|targets| targets.iter().any(|(blend, _)| blend.is_some()))
-                || matches!(render.depth, DepthUse::None | DepthUse::Overwrite)
-        }
-        Program::Compute(_) => false,
-    }
-}
-
-fn copies(
-    declared: &Declared,
-    pipelines: &[BuiltPipeline],
-    direct: &[bool],
-) -> Vec<(AttachPoint, ViewTarget)> {
-    let mut found: Vec<(AttachPoint, ViewTarget)> = Vec::new();
-    for (index, pass) in declared.passes.iter().enumerate() {
-        let Some(layer) = pass_layer(pass) else {
-            continue;
-        };
-        let direct_depth = reads_depth_direct(direct, index);
-        for pipeline in pipelines
-            .iter()
-            .filter(|pipeline| in_pass(pipeline, index as u32, pass))
-        {
-            for bound in &pipeline.reads {
-                let Bound::Target(view) = bound else {
-                    continue;
-                };
-                if target_read(*view, Some(layer), direct_depth) == Target::Copy(layer, *view)
-                    && !found.contains(&(layer, *view))
-                {
-                    found.push((layer, *view));
-                }
-            }
-        }
-    }
-    found
 }

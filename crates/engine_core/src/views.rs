@@ -4,8 +4,7 @@ use glam::{Mat4, UVec2, Vec3};
 
 use crate::{
     AssetLibrary, Camera, Clear, ColorSpace, DrawnPoses, Error, ErrorCode, FrameFacts, FrameId,
-    FrameTime, GlobalTransforms, Layers, PassMask, ScenePasses, Target, View, ViewCut, ViewHistory,
-    ViewLayer, take_asks,
+    FrameTime, GlobalTransforms, Layers, Target, View, ViewCut, ViewHistory, take_asks,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -42,18 +41,6 @@ impl ViewFacts {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct DrawnView {
-    pub local: u32,
-    pub view_projection: Mat4,
-    pub position: Vec3,
-    pub size: UVec2,
-    pub layers: Layers,
-    pub target: ViewLayer,
-    pub clear: Clear,
-    pub passes: PassMask,
-}
-
 #[derive(Clone, Copy, PartialEq)]
 struct Key {
     target: Target,
@@ -76,17 +63,12 @@ pub struct Views {
     listed: Vec<ViewFacts>,
     refused: Vec<(Entity, Error)>,
     held: Vec<Held>,
-    drawn: Vec<DrawnView>,
     frame: FrameFacts,
 }
 
 impl Views {
     pub fn listed(&self) -> &[ViewFacts] {
         &self.listed
-    }
-
-    pub fn drawn(&self) -> &[DrawnView] {
-        &self.drawn
     }
 
     pub fn frame(&self) -> FrameFacts {
@@ -270,37 +252,10 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
             frame,
         });
     }
-    let passes = world
-        .get_resource::<ScenePasses>()
-        .map_or(PassMask::NONE, |passes| {
-            passes
-                .listed()
-                .iter()
-                .filter_map(|listed| listed.bit)
-                .fold(PassMask::NONE, |mask, bit| mask.set(bit, true))
-        });
-    let drawn = listed
-        .iter()
-        .enumerate()
-        .map(|(index, facts)| DrawnView {
-            local: index as u32,
-            view_projection: facts.view_projection,
-            position: facts.eye,
-            size: facts.size(),
-            layers: facts.layers,
-            target: ViewLayer {
-                layer: 0,
-                rect: facts.pixels,
-            },
-            clear: facts.clear,
-            passes,
-        })
-        .collect();
     world.insert_resource(Views {
         listed,
         refused,
         held: kept,
-        drawn,
         frame: facts,
     });
 }

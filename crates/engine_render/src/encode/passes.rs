@@ -37,13 +37,7 @@ impl Run {
     }
 
     pub(crate) fn start_runs(&mut self) {
-        let graph = &self.machine.graph;
-        self.planning.runs = Bits::of(graph.passes());
-        for at in self.machine.declared.passes.len()..graph.passes() {
-            if !graph.starved(at) {
-                self.planning.runs.insert(at);
-            }
-        }
+        self.planning.runs = Bits::of(self.machine.graph.passes());
         self.planning.idle.clear();
     }
 
@@ -76,7 +70,7 @@ impl Run {
                 .iter()
                 .filter(|member| {
                     pass.members.contains(&member.part)
-                        && member.kind.joins(scene.name, &scene.pass)
+                        && member.kind.joins(scene.name)
                 })
                 .map(|member| {
                     self.planning
@@ -222,17 +216,10 @@ impl Run {
         let Some(planned) = plan.passes.get(self.planning.planned_at) else {
             return false;
         };
-        let layer = self.pass_layer();
         let is_shared = shared(&pass);
         let mut colors = std::mem::take(&mut self.spare.colors);
         colors.clear();
-        let mut depth: Option<(
-            u64,
-            wgpu::TextureView,
-            wgpu::TextureFormat,
-            Option<Ops>,
-            bool,
-        )> = None;
+        let mut depth: Option<(u64, wgpu::TextureView, wgpu::TextureFormat, Option<Ops>)> = None;
         let mut main = false;
         let mut plain = false;
         let ops_of = |id: Option<crate::graph::ResourceId>| {
@@ -258,30 +245,30 @@ impl Run {
                     store: true,
                 },
             };
-        let key = target_key;
         let kept = self.canvas.carried;
         let clear = self.canvas.clear;
-        let carried = move |target: Target, ops: Ops| {
-            if kept && matches!(target, Target::Scene | Target::Depth) {
-                Ops {
-                    load: Load::Load,
-                    ..ops
-                }
-            } else if target == Target::Scene && matches!(ops.load, Load::Clear(Clear::Color(_))) {
-                Ops {
-                    load: Load::Clear(Clear::Color(clear)),
-                    ..ops
-                }
-            } else {
-                ops
-            }
+        let loaded = self.canvas.load;
+        let carried = move |target: Target, ops: Ops| match target {
+            Target::Shared(_) if kept => Ops {
+                load: Load::Load,
+                ..ops
+            },
+            Target::Shared(_) if matches!(ops.load, Load::Clear(Clear::Color(_))) => Ops {
+                load: Load::Clear(Clear::Color(clear)),
+                ..ops
+            },
+            Target::Canvas if loaded => Ops {
+                load: Load::Load,
+                ..ops
+            },
+            Target::Shared(_) | Target::Canvas => ops,
         };
-        let composites = crate::shared::composites(&pass);
-        let lone = crate::shared::draws_canvas(&pass) && !composites && self.canvas.rect.is_some();
         match attach {
             AttachRaw::Declared => {
                 let at = 0;
-                if layer.is_some() && !lone {
+                let declared = &self.machine.declared;
+                let key = |target: Target| declared.target_key(target);
+                if is_shared {
                     let set = self.pass_set(self.pass);
                     main = lit_set(&set);
                     plain = !set.is_empty() && !main;
@@ -305,55 +292,42 @@ impl Run {
                             )),
                         }
                     }
-                    if let (Some(id), Some(made)) = (
-                        self.machine.ids.target(Target::Depth),
-                        self.view_of(Target::Depth),
-                    ) {
+                    if let Some(target) = declared.depth_target()
+                        && let (Some(id), Some(made), Some(format)) = (
+                            self.machine.ids.target(target),
+                            self.view_of(target),
+                            declared.target_format(target),
+                        )
+                    {
                         let ops = depth_of(Some(id))
                             .unwrap_or(Some(Ops {
                                 load: Load::Load,
                                 store: true,
                             }))
-                            .map(|ops| carried(Target::Depth, ops));
-                        let attached = key(Target::Depth) | u64::from(ops.is_none());
-                        depth = Some((attached, made.clone(), DEPTH_FORMAT, ops, true));
+                            .map(|ops| carried(target, ops));
+                        let attached = key(target) | u64::from(ops.is_none());
+                        depth = Some((attached, made.clone(), format, ops));
                     }
                 }
-                if crate::shared::draws_canvas(&pass) {
-                    let id = self.machine.ids.target(Target::Canvas);
-                    let canvas = if composites {
-                        self.view_canvas()
-                    } else {
-                        self.canvas.view.clone()
-                    };
-                    if let Some(ops) = ops_of(id)
-                        && (canvas.is_some() || self.recording.collecting())
-                    {
-                        let format = self.canvas_format();
-                        let ops = if self.canvas.load {
-                            Ops {
-                                load: Load::Load,
-                                ..ops
-                            }
-                        } else {
-                            ops
-                        };
-                        colors.insert(0, (key(Target::Canvas), canvas, format, ops));
-                    }
-                }
-                for &view in &pass.targets {
-                    let target = final_target(view);
-                    let id = self.machine.ids.target(target);
-                    let ops = ops_of(id).unwrap_or(Ops {
+                for &(name, _) in &pass.targets {
+                    let target = final_target(name);
+                    let ops = ops_of(self.machine.ids.target(target)).unwrap_or(Ops {
                         load: Load::Load,
                         store: true,
                     });
-                    colors.push((
-                        key(target),
-                        self.view_of(target).cloned(),
-                        target_format(target).unwrap_or(crate::machine::SCENE_FORMAT),
-                        ops,
-                    ));
+                    let (view, format) = match target {
+                        Target::Canvas => (self.view_canvas(), Some(self.canvas_format())),
+                        Target::Shared(_) => (
+                            self.view_of(target).cloned(),
+                            declared.target_format(target),
+                        ),
+                    };
+                    let Some(format) = format else {
+                        return self.mismatch(pass.name);
+                    };
+                    if view.is_some() || self.recording.collecting() {
+                        colors.push((key(target), view, format, carried(target, ops)));
+                    }
                 }
                 for &(texture, access) in &pass.colors {
                     let id = self.machine.ids.textures.get(texture as usize).copied();
@@ -382,9 +356,8 @@ impl Run {
                     });
                     let format = self.machine.declared.textures[texture as usize].format;
                     if let Some(view) = self.attachment_view(texture, 0, at) {
-                        let tested = pass.view_depth(texture, access);
                         let attached = (u64::from(texture) * 4_096 + u64::from(at)) * 64 + 2_000;
-                        depth = Some((attached, view, format, ops, tested));
+                        depth = Some((attached, view, format, ops));
                     }
                 }
             }
@@ -514,11 +487,9 @@ impl Run {
         let collecting = self.recording.collecting();
         let layout = pass_layout(
             &colors,
-            depth
-                .as_ref()
-                .map(|(_, _, format, _, view)| (*format, *view)),
+            depth.as_ref().map(|(_, _, format, _)| *format),
             (plain, main),
-            collecting.then(|| key(Target::Canvas)),
+            collecting.then(|| self.machine.declared.target_key(Target::Canvas)),
         );
         if collecting {
             self.recording.collected(super::recording::Opened {
@@ -545,13 +516,13 @@ impl Run {
                 })
             });
         let depth_attachment =
-            depth.as_ref().map(
-                |(_, view, _, ops, _)| wgpu::RenderPassDepthStencilAttachment {
+            depth
+                .as_ref()
+                .map(|(_, view, format, ops)| wgpu::RenderPassDepthStencilAttachment {
                     view,
                     depth_ops: ops.map(depth_ops),
-                    stencil_ops: None,
-                },
-            );
+                    stencil_ops: format.has_stencil_aspect().then(|| stencil_ops(*ops)),
+                });
         let render = encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(label),
@@ -569,7 +540,7 @@ impl Run {
             layout,
             offset,
             shared: is_shared,
-            layered: layer.is_some(),
+            layered: is_shared,
             label: None,
         })));
         colors.clear();
@@ -591,13 +562,7 @@ impl Run {
         pass: &crate::install::PassDecl,
         texture: u32,
         layer: u32,
-        depth: &mut Option<(
-            u64,
-            wgpu::TextureView,
-            wgpu::TextureFormat,
-            Option<Ops>,
-            bool,
-        )>,
+        depth: &mut Option<(u64, wgpu::TextureView, wgpu::TextureFormat, Option<Ops>)>,
     ) -> bool {
         let Some(&(_, access)) = pass.depths.iter().find(|(known, _)| *known == texture) else {
             return false;
@@ -629,7 +594,6 @@ impl Run {
                 view,
                 format,
                 ops,
-                pass.view_depth(texture, access),
             ));
         }
         true
@@ -723,7 +687,7 @@ impl Run {
 
 fn pass_layout(
     colors: &[(u64, Option<wgpu::TextureView>, wgpu::TextureFormat, Ops)],
-    depth: Option<(wgpu::TextureFormat, bool)>,
+    depth: Option<wgpu::TextureFormat>,
     (plain, main): (bool, bool),
     canvas: Option<u64>,
 ) -> PassLayout {
@@ -753,6 +717,16 @@ fn color_ops(ops: Ops) -> wgpu::Operations<wgpu::Color> {
         } else {
             wgpu::StoreOp::Discard
         },
+    }
+}
+
+fn stencil_ops(ops: Option<Ops>) -> wgpu::Operations<u32> {
+    wgpu::Operations {
+        load: match ops.map(|ops| ops.load) {
+            Some(Load::Clear(_)) => wgpu::LoadOp::Clear(0),
+            Some(Load::Load) | None => wgpu::LoadOp::Load,
+        },
+        store: wgpu::StoreOp::Store,
     }
 }
 

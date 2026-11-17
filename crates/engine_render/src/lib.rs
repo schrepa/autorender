@@ -10,13 +10,13 @@ use std::ops::Range;
 
 use bevy_ecs::system::SystemParamItem;
 use engine_core::{
-    Entry, Error, GeometryHandle, MaterialHandle, PassBit, PassName, PassRole, Read, Readable,
-    Readback, TextureHandle, Var, gpu_struct,
+    Entry, Error, GeometryHandle, MaterialHandle, PassBit, PassName, Read, Readable, Readback,
+    TextureHandle, Var, gpu_struct,
 };
 
 use crate::draws::RawDraw;
 
-pub use engine_core::{AttachPoint, TargetName};
+pub use engine_core::TargetName;
 pub use wgpu;
 
 mod drawn;
@@ -54,7 +54,6 @@ pub use kinds::{
     Form, FormPass, FormSide, KindForm, KindSurface, OwnFragments, PassFragment, PerPass,
     RoleFragments, Varyings,
 };
-pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
 pub use materials::gpu_format as texture_format;
 #[doc(hidden)]
 pub use platform::{AdapterInfo, RenderTarget};
@@ -71,6 +70,7 @@ pub use surface::{
     DrawState, FaceCull, LightingModule, MaterialValue, MaterialVariant, ModelForm, OpenSlot,
     SlotModule, SlotPrepare, SurfaceKind, SurfaceTerms, material_state,
 };
+pub use targets::SharedTarget;
 pub use uploads::{UploadRange, listed_ranges};
 
 pub const DEV: bool = cfg!(feature = "dev");
@@ -151,11 +151,9 @@ impl Scene {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct SceneDraw {
-    pub pass: Scene,
-    pub bit: Option<PassBit>,
-    pub role: PassRole,
-    pub index: Option<u32>,
+pub(crate) struct SceneDraw {
+    pub(crate) pass: Scene,
+    pub(crate) bit: Option<PassBit>,
 }
 
 pub trait Scope<P> {
@@ -325,11 +323,6 @@ pub enum Shape<'a, P, S> {
 #[derive(Clone, Copy, Debug)]
 pub enum DepthUse {
     None,
-    Test,
-    Write {
-        bias: wgpu::DepthBiasState,
-    },
-    Overwrite,
     Compare {
         compare: wgpu::CompareFunction,
         write: bool,
@@ -349,22 +342,14 @@ pub struct RenderPipeline<'a> {
     pub vertices: &'a [VertexLayout],
     pub primitive: wgpu::PrimitiveState,
     pub depth: DepthUse,
-    pub blend: Option<wgpu::BlendState>,
-    pub writes: wgpu::ColorWrites,
+    pub stencil: wgpu::StencilState,
+    pub samples: u32,
+    pub targets: &'a [(Option<wgpu::BlendState>, wgpu::ColorWrites)],
+    pub constants: &'a [(&'static str, f64)],
 }
 
-fn target_of(name: TargetName) -> Result<install::ViewTarget, Error> {
-    install::ViewTarget::of(name).ok_or_else(|| {
-        Error::new(
-            engine_core::ErrorCode::UnknownVariable,
-            format!("$.targets.{}", name.name()),
-        )
-        .got(name.name())
-    })
-}
-
-fn bound_of<P>(bound: &Bind<P>) -> Result<install::Bound, Error> {
-    Ok(match bound {
+fn bound_of<P>(bound: &Bind<P>) -> install::Bound {
+    match bound {
         Bind::Texture(texture) => install::Bound::Texture(texture.0),
         Bind::Slice {
             texture,
@@ -377,15 +362,15 @@ fn bound_of<P>(bound: &Bind<P>) -> Result<install::Bound, Error> {
         },
         Bind::Buffer(buffer) => install::Bound::Buffer(buffer.0),
         Bind::Sampler(sampler) => install::Bound::Sampler(sampler.0),
-        Bind::Target(name) => install::Bound::Target(target_of(*name)?),
+        Bind::Target(name) => install::Bound::Target(*name),
         Bind::Asset => install::Bound::Asset,
-    })
+    }
 }
 
-fn bound_list<P>(bound: &[(Var, Bind<P>)]) -> Result<Vec<(Var, install::Bound)>, Error> {
+fn bound_list<P>(bound: &[(Var, Bind<P>)]) -> Vec<(Var, install::Bound)> {
     bound
         .iter()
-        .map(|(var, bound)| Ok((*var, bound_of(bound)?)))
+        .map(|(var, bound)| (*var, bound_of(bound)))
         .collect()
 }
 
@@ -396,13 +381,13 @@ fn scoped<P, S: Scope<P>>(scope: &S) -> install::Scoped {
     }
 }
 
-fn copied<P>(copied: Copied<P>) -> Result<install::Copied, Error> {
-    Ok(match copied {
+fn copied<P>(copied: Copied<P>) -> install::Copied {
+    match copied {
         Copied::Buffer(buffer) => install::Copied::Buffer(buffer.0),
         Copied::Texture(texture) => install::Copied::Texture(texture.0),
-        Copied::Target(name) => install::Copied::Target(target_of(name)?),
+        Copied::Target(name) => install::Copied::Target(name),
         Copied::Canvas => install::Copied::Canvas,
-    })
+    }
 }
 
 pub struct Install<'i, P> {
@@ -452,8 +437,19 @@ impl<P: GpuPart> Install<'_, P> {
     }
 
     pub fn frame(&mut self, variable: Var, bound: Bind<P>) -> Result<(), Error> {
-        let bound = bound_of(&bound)?;
-        self.core.frame(variable, bound)
+        self.core.frame(variable, bound_of(&bound))
+    }
+
+    pub fn shared_target(&mut self, target: SharedTarget) {
+        let name = target.name.name();
+        if self.core.declared.targets.iter().any(|known| known.name == target.name) {
+            let path = format!("$.targets.{name}");
+            self.core
+                .problems
+                .push(Error::new(engine_core::ErrorCode::NameTwice, path).got(name));
+        } else {
+            self.core.declared.targets.push(target);
+        }
     }
 
     pub fn pass(&mut self, name: &'static str) -> PassBuilder<'_, P> {
@@ -466,12 +462,9 @@ impl<P: GpuPart> Install<'_, P> {
     }
 
     pub fn copy(&mut self, name: &'static str, from: Copied<P>, to: Copied<P>) -> Pass<P> {
-        let work = match (copied(from), copied(to)) {
-            (Ok(from), Ok(to)) => install::Work::Copy { from, to },
-            (Err(error), _) | (_, Err(error)) => {
-                self.core.problems.push(error);
-                install::Work::Render
-            }
+        let work = install::Work::Copy {
+            from: copied(from),
+            to: copied(to),
         };
         Pass(self.core.pass(name, work), PhantomData)
     }
@@ -505,40 +498,21 @@ impl<P: GpuPart> Install<'_, P> {
         desc: &RenderPipeline<'_>,
         bound: &[(Var, Bind<P>)],
     ) -> Result<Pipeline<P, S::Tag>, Error> {
-        self.render_program(&scope, desc, None, bound)
-    }
-
-    pub fn render_pipeline_targets<S: Scope<P>>(
-        &mut self,
-        scope: S,
-        desc: &RenderPipeline<'_>,
-        targets: &[(Option<wgpu::BlendState>, wgpu::ColorWrites)],
-        bound: &[(Var, Bind<P>)],
-    ) -> Result<Pipeline<P, S::Tag>, Error> {
-        self.render_program(&scope, desc, Some(targets.to_vec()), bound)
-    }
-
-    fn render_program<S: Scope<P>>(
-        &mut self,
-        scope: &S,
-        desc: &RenderPipeline<'_>,
-        targets: Option<Vec<(Option<wgpu::BlendState>, wgpu::ColorWrites)>>,
-        bound: &[(Var, Bind<P>)],
-    ) -> Result<Pipeline<P, S::Tag>, Error> {
         let program = install::Program::Render(install::RenderDecl {
             vertex: desc.vertex,
             fragment: desc.fragment,
             vertices: desc.vertices.to_vec(),
             primitive: desc.primitive,
             depth: desc.depth,
-            blend: desc.blend,
-            writes: desc.writes,
-            targets,
-            samples: 1,
+            stencil: desc.stencil.clone(),
+            targets: desc.targets.to_vec(),
+            samples: desc.samples,
             faces: install::Faces::Declared,
         });
-        let bound = bound_list(bound)?;
-        let pipeline = self.core.pipeline(scoped(scope), program, bound)?;
+        let pipeline = self
+            .core
+            .pipeline(scoped(&scope), program, bound_list(bound))?;
+        self.constants(pipeline, desc.constants);
         Ok(Pipeline(pipeline, PhantomData))
     }
 
@@ -546,15 +520,22 @@ impl<P: GpuPart> Install<'_, P> {
         &mut self,
         pass: Pass<P>,
         entry: Entry,
+        constants: &[(&'static str, f64)],
         bound: &[(Var, Bind<P>)],
     ) -> Result<ComputePipeline<P>, Error> {
-        let bound = bound_list(bound)?;
         let pipeline = self.core.pipeline(
             install::Scoped::Pass(pass.0),
             install::Program::Compute(entry),
-            bound,
+            bound_list(bound),
         )?;
+        self.constants(pipeline, constants);
         Ok(ComputePipeline(pipeline, PhantomData))
+    }
+
+    fn constants(&mut self, pipeline: u32, constants: &[(&'static str, f64)]) {
+        if let Some(decl) = self.core.declared.pipelines.get_mut(pipeline as usize) {
+            decl.constants = constants.to_vec();
+        }
     }
 
     pub fn draw_input<S: Scope<P>>(&mut self, scope: S, buffer: Buffer<P>) -> DrawInput<P, S::Tag> {
@@ -584,7 +565,6 @@ impl<P: GpuPart> Install<'_, P> {
         }
         let pass = self.core.pass(N::NAME, install::Work::Render);
         if let Some(declared) = self.core.pass_mut(pass) {
-            declared.layer = Some(N::PASS.at);
             declared.views = N::PASS.views;
         }
         PassBuilder {
@@ -606,14 +586,6 @@ pub struct PassBuilder<'b, P> {
 }
 
 impl<P: GpuPart> PassBuilder<'_, P> {
-    #[must_use]
-    pub fn at(self, point: AttachPoint) -> Self {
-        if let Some(pass) = self.core.pass_mut(self.pass) {
-            pass.layer = Some(point);
-        }
-        self
-    }
-
     #[must_use]
     pub fn views(self, views: engine_core::PassViews) -> Self {
         if let Some(pass) = self.core.pass_mut(self.pass) {
@@ -663,20 +635,9 @@ impl<P: GpuPart> PassBuilder<'_, P> {
     }
 
     #[must_use]
-    pub fn target(self, name: TargetName) -> Self {
-        match install::ViewTarget::of(name).filter(|view| *view == install::ViewTarget::Scene) {
-            Some(view) => {
-                if let Some(pass) = self.core.pass_mut(self.pass) {
-                    pass.targets.push(view);
-                }
-            }
-            None => {
-                let pass = self.core.pass_mut(self.pass).map_or("", |pass| pass.name);
-                let path = format!("$.passes.{pass}.targets.{}", name.name());
-                self.core
-                    .problems
-                    .push(Error::new(engine_core::ErrorCode::PassMismatch, path));
-            }
+    pub fn target(self, name: TargetName, access: Access) -> Self {
+        if let Some(pass) = self.core.pass_mut(self.pass) {
+            pass.targets.push((name, access));
         }
         self
     }
@@ -869,10 +830,26 @@ impl<P: GpuPart> Prepare<'_, P> {
     }
 
     pub fn copy_at_end(&mut self, from: Copied<P>, to: Copied<P>, regions: &[CopyRegion]) {
-        let regions = regions.to_vec();
-        match (copied(from), copied(to)) {
-            (Ok(from), Ok(to)) => self.core.queued.ending.push((from, to, regions)),
-            (Err(error), _) | (_, Err(error)) => self.core.refuse(error),
+        let (from, to) = (copied(from), copied(to));
+        let unknown = [from, to].into_iter().find_map(|copied| match copied {
+            install::Copied::Target(name) => (name != TargetName::CANVAS
+                && self.core.machine.declared.shared_target(name).is_none())
+            .then_some(name.name()),
+            install::Copied::Buffer(_) | install::Copied::Texture(_) | install::Copied::Canvas => {
+                None
+            }
+        });
+        match unknown {
+            Some(name) => {
+                let path = format!("$.targets.{name}");
+                let error = Error::new(engine_core::ErrorCode::UnknownVariable, path).got(name);
+                self.core.refuse(error);
+            }
+            None => self
+                .core
+                .queued
+                .ending
+                .push((from, to, regions.to_vec())),
         }
     }
 
@@ -1185,33 +1162,45 @@ impl<P: GpuPart> Draw<'_, P, Own> {
         let encoding = self.raw.part();
         let mut drawn = 0;
         for member in members.iter() {
-            let kind = member.kind.kind;
-            if member.part == encoding {
-                let run = self.raw.run();
-                run.point = Some(scene.pass.0);
-                run.tallies.kinds.begin(kind, scene.pass.0);
-                let count = (member.call)(own, &scene, &mut self.raw.member(member.part));
-                let run = self.raw.run();
+            let batches = (&member.batches, scene.bit);
+            let run = self.raw.run();
+            if member.batches.drawn(scene.bit).next().is_none() {
+                run.tallies.kinds.begin(member.kind.kind, scene.pass.0);
+                run.tallies.kinds.skip("no object of this kind is drawn here");
                 run.tallies.kinds.end();
-                run.point = None;
-                drawn += count;
                 continue;
             }
-            let run = self.raw.run();
-            let Some(held) = run.take_member(member.part) else {
-                continue;
+            let held = if member.part == encoding {
+                None
+            } else {
+                let Some(held) = run.take_member(member.part) else {
+                    continue;
+                };
+                Some(held)
             };
             run.point = Some(scene.pass.0);
-            run.tallies.kinds.begin(kind, scene.pass.0);
-            let count = (member.call)(held.part(), &scene, &mut self.raw.member(member.part));
+            run.tallies.kinds.begin(member.kind.kind, scene.pass.0);
+            let before = reached(run);
+            let part = held.as_ref().map_or(own as &dyn std::any::Any, |held| held.part());
+            (member.call)(part, &mut self.raw.member(member.part, batches));
             let run = self.raw.run();
+            drawn += reached(run) - before;
             run.tallies.kinds.end();
             run.point = None;
-            run.give_member(member.part, held);
-            drawn += count;
+            if let Some(held) = held {
+                run.give_member(member.part, held);
+            }
         }
         drawn
     }
+}
+
+fn reached(run: &encode::EncodeCore) -> u32 {
+    let kinds = &run.tallies.kinds;
+    kinds
+        .drawing
+        .and_then(|at| kinds.listed.get(at))
+        .map_or(0, |tally| tally.reached)
 }
 
 gpu_struct! {

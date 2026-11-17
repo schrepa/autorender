@@ -1,11 +1,11 @@
 use bevy_ecs::world::World;
 use engine_core::{
     Asset, AssetResidency, DrawKind, DrawReports, DropReason, DroppedDraws, Error, ErrorCode,
-    KindPass, KindPassState, KindRefusal, Request,
+    KindPass, KindPassState, Request,
 };
 use engine_registry::CORE_ROW;
 
-use crate::encode::{KindAnswer, Run};
+use crate::encode::Run;
 
 fn brick_of(run: &Run, part: u32) -> &'static str {
     run.machine
@@ -45,17 +45,7 @@ fn dropped_state(run: &Run, kind: DrawKind, pass: &'static str) -> Option<KindPa
     most.map(|(reason, _)| KindPassState::Dropped { reason, draws })
 }
 
-fn state_of(
-    run: &Run,
-    decl: &engine_core::KindDecl,
-    scene: &engine_core::ScenePass,
-) -> Option<KindPassState> {
-    let pass = scene.name;
-    if let Some(skip) = decl.skip(pass, &scene.pass) {
-        return Some(KindPassState::Skipped {
-            reason: skip.reason,
-        });
-    }
+fn state_of(run: &Run, decl: &engine_core::KindDecl, pass: &'static str) -> Option<KindPassState> {
     let tallied = run
         .tallies
         .kinds
@@ -63,10 +53,8 @@ fn state_of(
         .iter()
         .find(|tally| tally.kind == decl.kind && tally.pass == pass);
     match tallied {
-        Some(tally) => Some(match (tally.answer, tally.reached) {
-            (Some(KindAnswer::Refused(on)), _) => KindPassState::Refused { on },
-            (Some(KindAnswer::Waiting(on)), _) => KindPassState::Waiting { on },
-            (Some(KindAnswer::Skipped(reason)), _) => KindPassState::Skipped { reason },
+        Some(tally) => Some(match (tally.skipped, tally.reached) {
+            (Some(reason), _) => KindPassState::Skipped { reason },
             (None, 0) => dropped_state(run, decl.kind, pass).unwrap_or(KindPassState::Silent),
             (None, draws) => KindPassState::Drew { draws },
         }),
@@ -166,10 +154,10 @@ pub(super) fn kind_passes(run: &mut Run, world: &World) -> Vec<KindPass> {
             continue;
         }
         for decl in passes.kinds() {
-            if !(scene.pass.takes)(decl) {
+            if !decl.joins(scene.name) {
                 continue;
             }
-            let Some(state) = state_of(run, decl, scene) else {
+            let Some(state) = state_of(run, decl, scene.name) else {
                 continue;
             };
             listed.push(KindPass {
@@ -209,19 +197,9 @@ fn draw_reports(run: &Run, listed: &[KindPass]) -> DrawReports {
         })
         .copied()
         .collect();
-    let refused = run
-        .tallies
-        .kinds
-        .refused
-        .iter()
-        .map(|refused| KindRefusal {
-            brick: kind_brick(run, refused.kind),
-            error: refused.error.clone(),
-        })
-        .collect();
     DrawReports {
         kinds,
-        refused,
+        refused: Vec::new(),
         dropped: dropped_draws(run),
     }
 }

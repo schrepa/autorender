@@ -1,11 +1,8 @@
-import package::engine::drawn::drawn_shown;
-import package::engine::view::{camera, stable_normalize, view_clip};
-import package::generated::plates::PlateInstance;
-@group(2) @binding(0) var<storage, read> plates: array<PlateInstance>;
+import package::engine::drawn::{drawn_model, drawn_slot};
+import package::engine::view::{stable_normalize, view_clip};
 
 const PLATE_WHITE: u32 = 0xffffffffu;
 const PLATE_ROUGH: u32 = 0xffu;
-const PLATE_HIDDEN: vec4<f32> = vec4<f32>(2.0, 2.0, 2.0, 1.0);
 
 struct PlateCorner {
     @invariant @builtin(position) clip_position: vec4<f32>,
@@ -20,17 +17,13 @@ fn corner_unit(corner: u32) -> vec2<f32> {
 
 @vertex fn vs_plate(@builtin(vertex_index) corner: u32, @builtin(instance_index) index: u32)
         -> PlateCorner {
-    let plate = plates[index];
-    var out: PlateCorner;
-    if !drawn_shown(plate.drawn.x) {
-        out.clip_position = PLATE_HIDDEN;
-        return out;
-    }
+    let pose = drawn_model(drawn_slot(index));
     let uv = corner_unit(corner);
-    let offset = plate.across.xyz * (uv.x - 0.5) + plate.along.xyz * (uv.y - 0.5);
-    let world = plate.center.xyz + offset;
+    let offset = pose[0].xyz * (uv.x - 0.5) + pose[2].xyz * (uv.y - 0.5);
+    let world = pose[3].xyz + offset;
+    var out: PlateCorner;
     out.clip_position = view_clip(world);
-    out.normal_u = vec4<f32>(stable_normalize(cross(plate.along.xyz, plate.across.xyz)), uv.x);
+    out.normal_u = vec4<f32>(stable_normalize(cross(pose[2].xyz, pose[0].xyz)), uv.x);
     out.world_v = vec4<f32>(world, uv.y);
     out.material = vec4<u32>(PLATE_WHITE, PLATE_WHITE, PLATE_ROUGH, 0u);
     return out;

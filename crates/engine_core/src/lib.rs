@@ -12,7 +12,6 @@ mod background;
 mod bricks;
 mod clock;
 mod cook;
-mod cull;
 mod cursor;
 mod drawn;
 mod entity_indices;
@@ -53,11 +52,9 @@ pub use bevy_app::App;
 pub use bricks::*;
 pub use clock::*;
 pub use cook::{Cook, CookAsks, CookList, cook};
-pub use cull::{CullPlan, Culling, frustum_bounded, frustum_planes, frustum_sees};
 pub use cursor::*;
 pub use drawn::{
-    DRAWN_PART, DrawnBatch, DrawnFlags, DrawnRecord, DrawnSettings, DrawnState, DrawnTable,
-    PlanState, drawn_wgsl,
+    DRAWN_PART, DrawnBatch, DrawnRecord, DrawnSettings, DrawnState, DrawnTable, drawn_wgsl,
 };
 pub use engine_assets::{
     Aabb, AlphaMode, Asset, AssetBudget, AssetLibrary, Attribute, AttributeFormat, Attributes,
@@ -73,13 +70,13 @@ pub use engine_place::{
     authored_component, entity_removed, open_parts, open_schema, scene_references, schema_of,
 };
 pub use engine_place::{
-    Asked, AttachPoint, Awaits, BlendedPass, Board, Census, Clock, ColorPass, Cursor, DrawKind,
-    Drawn, DrawnBounds, DrawnProjection, Error, ErrorCode, Events, Feed, FeedView, GeometryHandle,
-    GpuStruct, InstanceValues, Interest, JobRef, KindCell, KindDecl, KindJoin, KindSkip, Layers,
-    List, MaterialHandle, Mobility, Mover, MoverId, Node, NodeId, NodeWord, Pace, Pass, PassBit,
-    PassCull, PassEntry, PassMask, PassName, PassRaster, PassRole, PassViews, PositionReach,
-    Progress, Readiness, Request, Requests, Ring, ScenePass, ScenePasses, Settling, Since, SlotSet,
-    Stamp, StoreId, TargetName, TextureHandle, Ticket, Unsettled, Writes, every, gpu_consts, never,
+    Asked, Awaits, BlendedPass, Board, Census, Changed, Changes, Clock, ColorPass, Cursor,
+    DrawKind, Drawn, DrawnBounds, DrawnProjection, Error, ErrorCode, Events, Feed, FeedView,
+    GeometryHandle, GpuStruct, InstanceValues, Interest, JobRef, KindCell, KindDecl, KindJoin,
+    Layers, List, MaterialHandle, Mobility, Mover, MoverId, Node, NodeId, NodeWord, Pace, Pass,
+    PassBit, PassEntry, PassMask, PassName, PassRole, PassViews, PositionReach, Progress,
+    Readiness, Request, Requests, Ring, ScenePass, ScenePasses, Settling, Since, SlotSet, Stamp,
+    StoreId, TargetName, TextureHandle, Ticket, Unsettled, Writes, gpu_consts,
 };
 pub use engine_place::{
     BitField, BitValue, FrameId, GpuBits, Readable, Readback, decode_bits, gpu_bits,
@@ -118,7 +115,7 @@ pub use source::{Entry, Module, ShaderText, Source, Var};
 pub use statistics::{Distribution, median};
 pub use ticks::ScanClock;
 pub(crate) use transform_edits::edit_transform;
-pub use views::{DrawnView, ViewFacts, Views, main_camera};
+pub use views::{ViewFacts, Views, main_camera};
 
 #[doc(hidden)]
 pub mod textures {
@@ -213,7 +210,6 @@ fn core_entries(registry: &mut RegistryBuilder) {
     registry.core_settings(bricks::settings_entry::<Detail>());
     registry.core_settings(bricks::settings_entry::<FeedSettings>());
     registry.core_settings(bricks::settings_entry::<DrawnSettings>());
-    registry.core_settings(bricks::settings_entry::<Culling>());
     registry.core_settings(bricks::settings_entry::<FrameLimits>());
     registry.despawn_rule(hierarchy::despawn_owned);
 }
@@ -295,8 +291,6 @@ impl Engine {
             .init_resource::<Detail>()
             .init_resource::<FeedSettings>()
             .init_resource::<DrawnSettings>()
-            .init_resource::<Culling>()
-            .init_resource::<CullPlan>()
             .insert_resource(exchange)
             .insert_resource(listed)
             .init_resource::<engine_registry::JobQueue>()
@@ -476,6 +470,7 @@ impl Engine {
         presentation::check_alpha(presented.alpha())?;
         self.scoped(|engine| {
             engine.finalize();
+            engine.run_gates();
             if moves::start_frame(engine.app.world_mut()) {
                 engine.refresh_transforms();
             }
@@ -595,6 +590,8 @@ impl Engine {
     ) {
         let _profile = engine_profile::span("cpu", "simulation_frame");
         self.run_gates();
+        hierarchy::settle_changes(self.app.world_mut());
+        moves::start_frame(self.app.world_mut());
         self.refresh_transforms();
         let step = self.clock.step_seconds();
         let world = self.app.world_mut();
@@ -612,21 +609,15 @@ impl Engine {
             time.dropped_seconds += advanced.dropped_seconds;
             time.cut_seconds += cut_seconds;
         });
-        if moves::start_frame(world) {
-            self.refresh_transforms();
-        }
         for _ in 0..advanced.ticks {
             self.run_fixed_tick();
         }
-        records::exchange(self.app.world_mut());
-        files::read_files(self.app.world_mut());
-        jobs::exchange_orders(self.app.world_mut());
+        self.exchange_now();
         presentation::present(self.app.world_mut(), presented);
         {
             let _profile = engine_profile::span("ecs", "Presentation");
             self.app.world_mut().run_schedule(Presentation);
         }
-        self.refresh_transforms();
         self.app.world_mut().clear_trackers();
     }
 
@@ -641,10 +632,8 @@ impl Engine {
             let _profile = engine_profile::span("ecs", "FixedSimulation");
             self.app.world_mut().run_schedule(FixedSimulation);
         }
+        moves::end_tick(self.app.world_mut());
         self.refresh_transforms();
-        if moves::end_tick(self.app.world_mut()) {
-            self.refresh_transforms();
-        }
         presentation::capture(self.app.world_mut());
     }
 
@@ -672,8 +661,7 @@ impl Engine {
         let _profile = engine_profile::span("cpu", "extraction");
         self.scoped(|engine| {
             engine.finalize();
-            engine.run_gates();
-            engine.sync_world();
+            mesh_lods::settle(engine.app.world_mut());
             engine.refresh_transforms();
             presentation::gather(engine.app.world_mut());
             engine.sync_view();
@@ -684,23 +672,16 @@ impl Engine {
         })
     }
 
-    fn sync_world(&mut self) {
-        let _profile = engine_profile::span("ecs", "WorldSync");
-        shared::start_frame(self.app.world_mut());
-        records::exchange(self.app.world_mut());
-        files::read_files(self.app.world_mut());
-        jobs::exchange_orders(self.app.world_mut());
-        mesh_lods::settle(self.app.world_mut());
-    }
-
     #[doc(hidden)]
     pub fn exchange(&mut self) {
-        self.scoped(|engine| {
-            let world = engine.app.world_mut();
-            records::exchange(world);
-            files::read_files(world);
-            jobs::exchange_orders(world);
-        });
+        self.scoped(Self::exchange_now);
+    }
+
+    fn exchange_now(&mut self) {
+        let world = self.app.world_mut();
+        records::exchange(world);
+        files::read_files(world);
+        jobs::exchange_orders(world);
     }
 
     fn sync_view(&mut self) {
@@ -708,10 +689,8 @@ impl Engine {
         let facts = self.facts.unwrap_or_default();
         let world = self.app.world_mut();
         views::settle(world, facts);
+        drawn::ask(world);
         assets::settle_assets(world);
-        cull::settle(world);
-        assets::settle_assets(world);
-        cull::settle(world);
     }
 
     fn finalize(&mut self) {

@@ -6,42 +6,13 @@ use serde_json::Value;
 
 use crate::{DrawKind, Error, ErrorCode, KindDecl, gpu_bits};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
-#[serde(rename_all = "snake_case")]
-pub enum AttachPoint {
-    Inputs,
-    Opaque,
-    Transparent,
-    Overlay,
-}
-
-impl AttachPoint {
-    pub const ALL: [Self; 4] = [Self::Inputs, Self::Opaque, Self::Transparent, Self::Overlay];
-
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Inputs => "inputs",
-            Self::Opaque => "opaque",
-            Self::Transparent => "transparent",
-            Self::Overlay => "overlay",
-        }
-    }
-
-    pub const fn scene(self) -> bool {
-        match self {
-            Self::Opaque | Self::Transparent => true,
-            Self::Inputs | Self::Overlay => false,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize)]
 pub struct TargetName(pub &'static str);
 
 impl TargetName {
     pub const COLOR: Self = Self("color");
     pub const DEPTH: Self = Self("depth");
+    pub const CANVAS: Self = Self("canvas");
     pub const CORE: [Self; 2] = [Self::COLOR, Self::DEPTH];
 
     pub const fn name(self) -> &'static str {
@@ -137,8 +108,6 @@ pub struct Pass {
     pub writes: Writes,
     pub reads: SlotSet,
     pub views: PassViews,
-    pub at: AttachPoint,
-    pub takes: fn(&KindDecl) -> bool,
 }
 
 impl Pass {
@@ -146,8 +115,8 @@ impl Pass {
         self.reads.position
     }
 
-    pub const fn role(&self) -> PassRole {
-        if matches!(self.at, AttachPoint::Transparent) {
+    pub fn role(&self) -> PassRole {
+        if !self.writes.contains(TargetName::DEPTH) && self.writes.contains(TargetName::COLOR) {
             PassRole::Blended
         } else if self.reads.lighting {
             PassRole::Lit
@@ -157,42 +126,9 @@ impl Pass {
     }
 }
 
-pub fn every(_: &KindDecl) -> bool {
-    true
-}
-
-pub fn never(_: &KindDecl) -> bool {
-    false
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum PassCull {
-    Material,
-    None,
-    Front,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PassRaster {
-    pub bias: i32,
-    pub slope: f32,
-    pub clamp_near: bool,
-    pub cull: PassCull,
-}
-
-impl PassRaster {
-    pub const PLAIN: Self = Self {
-        bias: 0,
-        slope: 0.0,
-        clamp_near: false,
-        cull: PassCull::Material,
-    };
-}
-
 pub trait PassName: 'static {
     const NAME: &'static str;
     const PASS: Pass;
-    const RASTER: PassRaster = PassRaster::PLAIN;
 }
 
 pub struct ColorPass;
@@ -203,8 +139,6 @@ impl PassName for ColorPass {
         writes: Writes::LIT,
         reads: SlotSet::ALL,
         views: PassViews::Every,
-        at: AttachPoint::Opaque,
-        takes: every,
     };
 }
 
@@ -216,8 +150,6 @@ impl PassName for BlendedPass {
         writes: Writes(&[TargetName::COLOR]),
         reads: SlotSet::ALL,
         views: PassViews::Every,
-        at: AttachPoint::Transparent,
-        takes: every,
     };
 }
 
@@ -225,7 +157,6 @@ impl PassName for BlendedPass {
 pub struct PassEntry {
     pub name: &'static str,
     pub pass: Pass,
-    pub raster: PassRaster,
 }
 
 impl PassEntry {
@@ -233,7 +164,6 @@ impl PassEntry {
         Self {
             name: N::NAME,
             pass: N::PASS,
-            raster: N::RASTER,
         }
     }
 }
@@ -283,7 +213,6 @@ pub struct ScenePass {
     pub name: &'static str,
     pub brick: &'static str,
     pub pass: Pass,
-    pub raster: PassRaster,
     pub bit: Option<PassBit>,
 }
 
@@ -291,8 +220,7 @@ pub struct ScenePass {
 #[serde(tag = "join", rename_all = "snake_case")]
 pub enum KindJoin {
     Joins,
-    Skips { reason: &'static str },
-    NotTaken,
+    NotAsked,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
@@ -357,9 +285,23 @@ impl ScenePasses {
                 name: entry.name,
                 brick,
                 pass: entry.pass,
-                raster: entry.raster,
                 bit,
             });
+        }
+        let scene: Vec<&'static str> = listed
+            .iter()
+            .filter(|listed| listed.bit.is_some())
+            .map(|listed| listed.name)
+            .collect();
+        for decl in &kinds {
+            for &asked in decl.passes.iter().filter(|asked| !scene.contains(asked)) {
+                let path = format!("$.draw_kinds.{}.passes", decl.kind.name());
+                problems.push(
+                    Error::new(ErrorCode::UnknownField, path)
+                        .got(asked)
+                        .variants(scene.iter().copied()),
+                );
+            }
         }
         (Self { listed, kinds }, problems)
     }
@@ -380,15 +322,10 @@ impl ScenePasses {
         let mut cells = Vec::new();
         for decl in &self.kinds {
             for listed in self.listed.iter().filter(|listed| listed.bit.is_some()) {
-                let join = if (listed.pass.takes)(decl) {
-                    match decl.skip(listed.name, &listed.pass) {
-                        Some(skip) => KindJoin::Skips {
-                            reason: skip.reason,
-                        },
-                        None => KindJoin::Joins,
-                    }
+                let join = if decl.joins(listed.name) {
+                    KindJoin::Joins
                 } else {
-                    KindJoin::NotTaken
+                    KindJoin::NotAsked
                 };
                 cells.push(KindCell {
                     kind: decl.kind.name(),
@@ -402,8 +339,7 @@ impl ScenePasses {
     }
 
     pub fn takes(&self, listed: &ScenePass, kind: DrawKind) -> bool {
-        self.kind(kind)
-            .is_some_and(|decl| decl.joins(listed.name, &listed.pass))
+        self.kind(kind).is_some_and(|decl| decl.joins(listed.name))
     }
 
     pub fn get(&self, name: &str) -> Option<&ScenePass> {
@@ -416,12 +352,6 @@ impl ScenePasses {
 
     pub fn bit_of<N: PassName>(&self) -> Option<PassBit> {
         self.bit(N::NAME)
-    }
-
-    pub fn at(&self, point: AttachPoint) -> impl Iterator<Item = &ScenePass> + '_ {
-        self.listed
-            .iter()
-            .filter(move |listed| listed.pass.at == point)
     }
 
     pub fn defaults(&self, kind: DrawKind) -> PassMask {

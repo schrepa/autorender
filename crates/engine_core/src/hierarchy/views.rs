@@ -1,7 +1,7 @@
 use bevy_ecs::entity::Entity;
 
 use super::{GlobalTransforms, Link, Revision};
-use crate::{NodePose, PoseRows};
+use crate::{Changes, NodePose, PoseRows};
 
 impl GlobalTransforms {
     #[inline]
@@ -26,7 +26,7 @@ impl GlobalTransforms {
 
     #[inline]
     pub(crate) fn order(&self) -> &[usize] {
-        &self.order
+        &self.slots.order
     }
 
     #[inline]
@@ -42,5 +42,15 @@ impl GlobalTransforms {
     #[inline]
     pub(crate) fn revision(&self) -> u64 {
         self.revision
+    }
+
+    #[inline]
+    pub fn placed(&self) -> &Changes {
+        &self.placed
+    }
+
+    #[inline]
+    pub fn moved(&self) -> &Changes {
+        &self.moved
     }
 }

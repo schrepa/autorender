@@ -1,36 +1,30 @@
 engine::brick!(glimmer);
 
 use std::collections::BTreeMap;
-use std::ops::Range;
 
 use bevy_ecs::prelude::*;
 use engine_core::glam::Vec3;
 use engine_core::{
-    AssetResidency, AttachPoint, Attributes, BlendedPass, Brick, Bricks, Camera, Clear, Cursor,
-    DrawKind, Drawn, DrawnPoses, DrawnTable, EMISSIVE_MAP, Error, ErrorCode, Events, Expected,
-    Feed, FrameTime, GlobalTransforms, GpuStruct, Interest, KindDecl, KindSkip, MaterialHandle,
-    Node, Pass, PassName, PassViews, Rect, Refusals, Requests, Schedule, SlotSet, Source, Spawner,
-    SurfaceSlot, Ticket, Transform, View, Writes, gpu_struct, settings, stats,
+    Attributes, Brick, Bricks, Camera, Clear, ColorPass, Cursor, DrawKind, Drawn, DrawnTable,
+    EMISSIVE_MAP, Error, ErrorCode, Events, Expected, Feed, FrameTime, GpuStruct, Interest,
+    KindDecl, Node, Pass, PassName, PassViews, Rect, Refusals, Requests, Schedule, SlotSet, Source,
+    Spawner, SurfaceSlot, Ticket, Transform, View, Writes, gpu_struct, settings, stats,
 };
 use engine_render::{
-    Allocation, Bind, Buffer, Draw, FaceCull, Form, FormSide, FragmentUse, GpuPart, Install,
-    KindForm, Lifetime, LightingModule, ModelForm, PassFragment, PointInput, Prepare, RenderBricks,
-    Scene, SceneDraw, Shape, SlotModule, Varyings,
+    Allocation, Bind, Buffer, DepthUse, Draw, FaceCull, Form, FormSide, FragmentUse, GpuPart,
+    Install, KindForm, Lifetime, LightingModule, ModelForm, PassFragment, PointInput, Prepare,
+    RenderBricks, Scene, SlotModule, Varyings, wgpu,
 };
 
 pub const GLIMMER: DrawKind = DrawKind("glimmer");
 
-const GENERATED: &[&str] = &[<GlimmerInstance as GpuStruct>::WGSL];
+const GENERATED: &[&str] = &[<GlimmerLook as GpuStruct>::WGSL];
 
 pub const LOOK: &str = "glimmer";
 
 const ADDED_LIGHT: PointInput = PointInput::new("added_light", "vec3<f32>", "vec3<f32>(0.0)");
 
 pub const GLIMMER_PART: &str = "glimmer";
-
-const GLIMMER_MATERIALS: &str = "the glimmer materials";
-
-const ROW_MATERIAL: &str = "$.drawn.material";
 
 const FORM: KindForm = KindForm {
     kind: GLIMMER,
@@ -43,6 +37,16 @@ const RING: PassFragment = PassFragment {
     side: Some(FormSide::pulled(shaders::glimmer::draw::VS_RING)),
     entry: shaders::glimmer::draw::FS_RING,
     cull: FaceCull::None,
+    blend: None,
+    depth: DepthUse::Compare {
+        compare: wgpu::CompareFunction::GreaterEqual,
+        write: false,
+        bias: wgpu::DepthBiasState {
+            constant: 0,
+            slope_scale: 0.0,
+            clamp: 0.0,
+        },
+    },
 };
 
 settings! {
@@ -65,11 +69,12 @@ stats! {
 }
 
 gpu_struct! {
-    pub struct GlimmerInstance {
-        pub place: [f32; 4],
-        pub color: [f32; 4],
+    pub struct GlimmerLook {
         pub ring: [f32; 4],
-        pub drawn: [u32; 4],
+        pub size: f32,
+        pub pad_0: u32,
+        pub pad_1: u32,
+        pub pad_2: u32,
     }
 }
 
@@ -81,13 +86,7 @@ impl PassName for GlimmerPass {
         writes: Writes::LIT,
         reads: SlotSet::POSITION,
         views: PassViews::Main,
-        at: AttachPoint::Opaque,
-        takes: ringed,
     };
-}
-
-fn ringed(kind: &KindDecl) -> bool {
-    kind.kind == GLIMMER
 }
 
 #[derive(Component)]
@@ -112,10 +111,6 @@ impl Default for GlimmerBook {
     }
 }
 
-const SKIPS: &[KindSkip] = &[KindSkip::pass::<BlendedPass>(
-    "glimmers are masked, never blended",
-)];
-
 pub struct GlimmerBrick;
 
 impl Brick for GlimmerBrick {
@@ -130,7 +125,7 @@ impl Brick for GlimmerBrick {
                 kind: GLIMMER,
                 needs: Attributes::NONE,
                 streams: &[],
-                skips: SKIPS,
+                passes: &[ColorPass::NAME, GlimmerPass::NAME],
             })
             .pass::<GlimmerPass>()
             .material_slot(SlotModule {
@@ -167,7 +162,7 @@ fn open_view(
     opened: Query<(), With<GlimmerView>>,
     mut spawner: Spawner<GlimmerBrick>,
 ) {
-    if !opened.is_empty() || table.rows(GLIMMER).next().is_none() {
+    if !opened.is_empty() || table.batches(GLIMMER).next().is_none() {
         return;
     }
     let camera = spawner.spawn((
@@ -255,107 +250,46 @@ fn answer(
 }
 
 struct GlimmerGpu {
-    instances: Buffer<Self>,
+    look: Buffer<Self>,
+    sent: Option<GlimmerLook>,
     form: Form<Self>,
-    runs: Vec<(MaterialHandle, Range<u32>)>,
-    staged: Vec<GlimmerInstance>,
-    waiting: bool,
-    refused: Option<Error>,
 }
 
 impl GpuPart for GlimmerGpu {
-    type Reads = (
-        Res<'static, DrawnTable>,
-        (Res<'static, GlobalTransforms>, Res<'static, DrawnPoses>),
-        Res<'static, Glimmer>,
-        Res<'static, AssetResidency>,
-    );
+    type Reads = Res<'static, Glimmer>;
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        let instances = cx.buffer("glimmers", Lifetime::Kept);
-        let bound = [(shaders::glimmer::draw::GLIMMERS, Bind::Buffer(instances))];
+        let look = cx.buffer("glimmer_look", Lifetime::Kept);
+        let bound = [(shaders::glimmer::draw::GLIMMER_LOOK, Bind::Buffer(look))];
         Ok(Self {
-            instances,
+            look,
+            sent: None,
             form: cx.form_owning(&FORM, &[RING], &bound)?,
-            runs: Vec::new(),
-            staged: Vec::new(),
-            waiting: false,
-            refused: None,
         })
     }
 
     fn prepare(
         &mut self,
-        (table, (globals, poses), settings, residency): SystemParamItem<'_, '_, Self::Reads>,
+        settings: SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        let mut placed: Vec<(MaterialHandle, GlimmerInstance)> = Vec::new();
-        self.waiting = false;
-        self.refused = None;
-        for (slot, entity, thing) in table.rows(GLIMMER) {
-            let held = thing
-                .material
-                .filter(|made| residency.material_resident(*made));
-            if let (Some(made), None) = (thing.material, held) {
-                match residency.refusal(made, ROW_MATERIAL) {
-                    Some(error) => self.refused = self.refused.take().or(Some(error)),
-                    None => self.waiting = true,
-                }
-            }
-            let (Some(pose), Some(material)) = (poses.drawn_pose(&globals, entity), held) else {
-                continue;
-            };
-            let size = *thing.values.floats.first().unwrap_or(&settings.size);
-            let [red, green, blue, alpha] = thing.values.tint;
-            let [glow_red, glow_green, glow_blue] = thing.values.emission;
-            let instance = GlimmerInstance {
-                place: pose.w_axis.truncate().extend(size).to_array(),
-                color: [red + glow_red, green + glow_green, blue + glow_blue, alpha],
-                ring: settings.ring,
-                drawn: [slot, 0, 0, 0],
-            };
-            placed.push((material, instance));
+        let look = GlimmerLook {
+            ring: settings.ring,
+            size: settings.size,
+            ..GlimmerLook::default()
+        };
+        let bytes = size_of::<GlimmerLook>() as u64;
+        if cx.allocate_buffer(self.look, bytes) == Allocation::Fresh || self.sent != Some(look) {
+            cx.write(self.look, 0, &[look]);
+            self.sent = Some(look);
         }
-        placed.sort_by_key(|(material, _)| *material);
-        self.staged.clear();
-        self.runs.clear();
-        for (material, instance) in placed {
-            let at = self.staged.len() as u32;
-            self.staged.push(instance);
-            match self.runs.last_mut() {
-                Some((known, run)) if *known == material => run.end = at + 1,
-                Some(_) | None => self.runs.push((material, at..at + 1)),
-            }
-        }
-        let bytes = self.staged.len().max(1) * std::mem::size_of::<GlimmerInstance>();
-        let (Allocation::Fresh | Allocation::Kept) =
-            cx.allocate_buffer(self.instances, bytes as u64);
-        cx.write(self.instances, 0, &self.staged);
     }
 }
 
 impl GlimmerGpu {
-    fn draw(&self, _: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
-        if self.runs.is_empty() {
-            return match (&self.refused, self.waiting) {
-                (Some(error), _) => draw.refuse(GLIMMER_MATERIALS, error),
-                (None, true) => draw.wait(GLIMMER_MATERIALS),
-                (None, false) => draw.skip("no glimmer has a pose yet"),
-            };
+    fn draw(&self, draw: &mut Draw<'_, Self, Scene>) {
+        if let Some(pipeline) = draw.form(&self.form) {
+            draw.batches(&pipeline, 0..6);
         }
-        let Some(pipeline) = draw.form(&self.form) else {
-            return draw.skip("pass has no glimmer form");
-        };
-        for (material, instances) in &self.runs {
-            draw.draw(
-                &pipeline,
-                Shape::Pulled {
-                    vertices: 0..6,
-                    instances: instances.clone(),
-                    material: Some(*material),
-                },
-            );
-        }
-        self.staged.len() as u32
     }
 }

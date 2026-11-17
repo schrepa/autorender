@@ -32,7 +32,7 @@ mod games {
         Bricks, Camera, Clear, Clock, ColorSpace, Compare, ComponentKind, Cull, CursorMode,
         DepthBias, Devices, DrawKind, Drawn, DrawnProjection, DrawnState, DrawnTable, Engine,
         EngineConfig, Filter, FixedTime, FrameLimits, FrameTime, GeometryHandle, GlobalTransform,
-        GlobalTransforms, InstanceValues, KindDecl, KindSkip, Layers, LightingModel, Listing,
+        GlobalTransforms, InstanceValues, KindDecl, Layers, LightingModel, Listing,
         MakeTextures, Material, MaterialHandle, Mesh, MeshVertex, Mobility, MouseButton, Mover,
         MoverId, Moves, Node, NodeWord, Operation, Pace, PadButton, Parent, Pause, PauseReason,
         Poses, Projection, ProvidedAssets, Rect, RenderState, Sampler, SceneComponents, Schedule,
@@ -160,12 +160,12 @@ pub mod prelude {
         world::{EntityMut, EntityRef, EntityWorldMut, FromWorld, World},
     };
     pub use engine_core::{
-        AttachPoint, GpuStruct, Pass, PassName, PassViews, ScenePass, SlotSet, TargetName, Writes,
-        gpu_struct, settings, stats,
+        GpuStruct, Pass, PassName, PassViews, ScenePass, SlotSet, TargetName, Writes, gpu_struct,
+        settings, stats,
     };
     pub use engine_render::{
         Allocation, Bind, Buffer, DepthUse, Draw, GpuPart, Install, Lifetime, Pipeline, Prepare,
-        RenderBricks, RenderPipeline, SceneDraw, Shape, wgpu,
+        RenderBricks, RenderPipeline, Shape, wgpu,
     };
     pub use engine_scene::{SceneDocument, SceneEntity, SceneInstance};
     pub use glam::{Mat4, Quat, Vec2, Vec3, Vec4};

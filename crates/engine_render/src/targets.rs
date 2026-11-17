@@ -56,6 +56,13 @@ pub fn texel(
     texture
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SharedTarget {
+    pub name: engine_core::TargetName,
+    pub format: wgpu::TextureFormat,
+    pub samples: u32,
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct FrameSize {
     pub width: u32,

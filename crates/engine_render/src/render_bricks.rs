@@ -3,8 +3,8 @@ use engine_registry::RecordExt;
 
 use crate::registration;
 use crate::{
-    Draw, GpuPart, LightingModule, OpenSlot, PointInput, PointSet, Scene, SceneDraw, SlotModule,
-    SlotPrepare, SurfaceKind, SurfaceTerms,
+    Draw, GpuPart, LightingModule, OpenSlot, PointInput, PointSet, Scene, SlotModule, SlotPrepare,
+    SurfaceKind, SurfaceTerms,
 };
 
 pub trait RenderBricks {
@@ -13,7 +13,7 @@ pub trait RenderBricks {
     fn draws<P: GpuPart>(
         &mut self,
         kind: DrawKind,
-        draw: fn(&P, &SceneDraw, &mut Draw<'_, P, Scene>) -> u32,
+        draw: fn(&P, &mut Draw<'_, P, Scene>),
     ) -> &mut Self;
     fn generated(&mut self, wgsl: &'static [&'static str]) -> &mut Self;
     fn material_slot(&mut self, module: SlotModule) -> &mut Self;
@@ -48,7 +48,7 @@ impl RenderBricks for Bricks<'_> {
     fn draws<P: GpuPart>(
         &mut self,
         kind: DrawKind,
-        draw: fn(&P, &SceneDraw, &mut Draw<'_, P, Scene>) -> u32,
+        draw: fn(&P, &mut Draw<'_, P, Scene>),
     ) -> &mut Self {
         let record = self.record();
         record
@@ -113,5 +113,67 @@ impl RenderBricks for Bricks<'_> {
     fn surface_kind(&mut self, kind: SurfaceKind) -> &mut Self {
         self.record().render.push(Box::new(kind));
         self
+    }
+}
+
+pub(crate) struct Composite {
+    pass: crate::Pass<Self>,
+    pipeline: crate::Pipeline<Self, crate::Own>,
+}
+
+impl GpuPart for Composite {
+    type Reads = ();
+    const NAME: &'static str = "composite";
+
+    fn install(cx: &mut crate::Install<'_, Self>) -> Result<Self, engine_core::Error> {
+        let frame = crate::shaders::core_module("engine::post::frame");
+        cx.frame(
+            engine_core::Var::generated(frame, "scene"),
+            crate::Bind::Target(engine_core::TargetName::COLOR),
+        )?;
+        cx.frame(
+            engine_core::Var::generated(frame, "depth_texture"),
+            crate::Bind::Target(engine_core::TargetName::DEPTH),
+        )?;
+        let pass = cx
+            .pass("composite")
+            .label("engine/post-composite")
+            .span("post_composite")
+            .target(engine_core::TargetName::CANVAS, crate::Access::Clear)
+            .id();
+        let pipeline = cx.render_pipeline(
+            pass,
+            &crate::RenderPipeline {
+                vertex: crate::shaders::FULLSCREEN,
+                fragment: Some(crate::shaders::FS_COMPOSITE),
+                vertices: &[],
+                primitive: wgpu::PrimitiveState::default(),
+                depth: crate::DepthUse::None,
+                stencil: wgpu::StencilState::default(),
+                samples: 1,
+                targets: &[(None, wgpu::ColorWrites::ALL)],
+                constants: &[],
+            },
+            &[],
+        )?;
+        Ok(Self { pass, pipeline })
+    }
+
+    fn prepare(&mut self, (): (), _cx: &mut crate::Prepare<'_, Self>) {}
+
+    fn view(&mut self, _view: &engine_core::ViewFacts, cx: &mut crate::Prepare<'_, Self>) {
+        cx.run(self.pass);
+    }
+
+    fn encode(&mut self, _pass: crate::Pass<Self>, cx: &mut crate::Encode<'_, Self>) -> u32 {
+        cx.render(crate::Attach::Declared).draw(
+            &self.pipeline,
+            crate::Shape::Pulled {
+                vertices: 0..3,
+                instances: 0..1,
+                material: None,
+            },
+        );
+        0
     }
 }

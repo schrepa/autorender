@@ -1,10 +1,11 @@
-import package::engine::drawn::drawn_shown;
+import package::engine::drawn::{drawn_emission, drawn_float_count, drawn_floats, drawn_model,
+    drawn_slot, drawn_tint};
 import package::engine::shading::flat;
 import package::engine::slots::flat_point;
 import package::engine::view::{camera, stable_normalize, view_clip};
-import package::generated::glimmer::GlimmerInstance;
+import package::generated::glimmer::GlimmerLook;
 import package::generated::writes::{Outputs, outputs};
-@group(2) @binding(0) var<storage, read> glimmers: array<GlimmerInstance>;
+@group(2) @binding(0) var<uniform> glimmer_look: GlimmerLook;
 
 const GLIMMER_UP: vec3<f32> = vec3<f32>(0.0, 1.0, 0.0);
 const GLIMMER_SIDE: vec3<f32> = vec3<f32>(1.0, 0.0, 0.0);
@@ -12,7 +13,11 @@ const GLIMMER_RING: f32 = 1.75;
 const GLIMMER_RING_INNER: f32 = 0.8;
 const GLIMMER_WHITE: u32 = 0xffffffffu;
 const GLIMMER_ROUGH: u32 = 0xffu;
-const GLIMMER_HIDDEN: vec4<f32> = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+
+struct Glimmer {
+    place: vec4<f32>,
+    color: vec4<f32>,
+}
 
 struct GlimmerCorner {
     @invariant @builtin(position) clip_position: vec4<f32>,
@@ -25,11 +30,19 @@ struct GlimmerCorner {
 
 struct RingCorner { @invariant @builtin(position) clip: vec4<f32>, @location(0) unit: vec2<f32>, @location(1) color: vec4<f32> }
 
+fn glimmer_of(index: u32) -> Glimmer {
+    let slot = drawn_slot(index);
+    let size = select(glimmer_look.size, drawn_floats(slot, 0u).x, drawn_float_count(slot) > 0u);
+    let tint = drawn_tint(slot);
+    return Glimmer(vec4<f32>(drawn_model(slot)[3].xyz, size),
+        vec4<f32>(tint.rgb + drawn_emission(slot), tint.a));
+}
+
 fn corner_unit(corner: u32) -> vec2<f32> {
     return vec2<f32>(f32((50u >> corner) & 1u), f32((44u >> corner) & 1u)) * 2.0 - 1.0;
 }
 
-fn facing_offset(glimmer: GlimmerInstance, unit: vec2<f32>, grow: f32) -> vec3<f32> {
+fn facing_offset(glimmer: Glimmer, unit: vec2<f32>, grow: f32) -> vec3<f32> {
     let toward = normalize(camera.position.xyz - glimmer.place.xyz);
     let across = cross(GLIMMER_UP, toward);
     let right = select(GLIMMER_SIDE, normalize(across), dot(across, across) > 1.0e-6);
@@ -37,7 +50,9 @@ fn facing_offset(glimmer: GlimmerInstance, unit: vec2<f32>, grow: f32) -> vec3<f
     return (right * unit.x + up * unit.y) * glimmer.place.w * grow;
 }
 
-fn glimmer_corner(corner: u32, glimmer: GlimmerInstance) -> GlimmerCorner {
+@vertex fn vs_glimmer(@builtin(vertex_index) corner: u32, @builtin(instance_index) index: u32)
+        -> GlimmerCorner {
+    let glimmer = glimmer_of(index);
     let unit = corner_unit(corner);
     let offset = facing_offset(glimmer, unit, 1.0);
     let world = glimmer.place.xyz + offset;
@@ -52,29 +67,14 @@ fn glimmer_corner(corner: u32, glimmer: GlimmerInstance) -> GlimmerCorner {
     return out;
 }
 
-@vertex fn vs_glimmer(@builtin(vertex_index) corner: u32, @builtin(instance_index) index: u32)
-        -> GlimmerCorner {
-    let glimmer = glimmers[index];
-    if !drawn_shown(glimmer.drawn.x) {
-        var out: GlimmerCorner;
-        out.clip_position = GLIMMER_HIDDEN;
-        return out;
-    }
-    return glimmer_corner(corner, glimmer);
-}
-
 @vertex fn vs_ring(@builtin(vertex_index) corner: u32, @builtin(instance_index) index: u32) -> RingCorner {
-    let glimmer = glimmers[index];
-    var out: RingCorner;
-    if !drawn_shown(glimmer.drawn.x) {
-        out.clip = GLIMMER_HIDDEN;
-        return out;
-    }
+    let glimmer = glimmer_of(index);
     let unit = corner_unit(corner);
     let offset = facing_offset(glimmer, unit, GLIMMER_RING);
+    var out: RingCorner;
     out.clip = camera.view_projection * vec4<f32>(glimmer.place.xyz + offset, 1.0);
     out.unit = unit;
-    out.color = glimmer.ring;
+    out.color = glimmer_look.ring;
     return out;
 }
 

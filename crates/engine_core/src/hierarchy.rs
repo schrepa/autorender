@@ -1,21 +1,18 @@
-use crate::collections::HashMap;
+use crate::collections::{HashMap, HashSet};
 use crate::presentation::pose_rows;
 use crate::ticks::{ChangeWindow, STAMP_BLOCK, ScanClock, consume_through};
-use crate::{
-    Cursor, Feed, FeedSettings, NodePose, NodeWord, PoseRows, Since, Transform,
-    entity_indices::EntityIndices,
-};
+use crate::{Changes, NodePose, NodeWord, PoseRows, Transform, entity_indices::EntityIndices};
 use bevy_ecs::change_detection::ContiguousRef;
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemState;
 use engine_settings::{Error, ErrorCode, Expected};
 use glam::{Mat4, Vec4};
-use std::collections::BTreeSet;
 use std::convert::Infallible;
 
 mod global;
 #[cfg(debug_assertions)]
 mod invariants;
+mod structure;
 pub(crate) mod tracking;
 mod validation;
 mod views;
@@ -107,24 +104,15 @@ pub fn set_parent(world: &mut World, child: Entity, parent: Option<Entity>) -> R
 }
 
 pub fn subtree(world: &mut World, root: Entity) -> Vec<Entity> {
-    let mut children: HashMap<Entity, Vec<Entity>> = HashMap::default();
-    for (child, parent) in world.query::<(Entity, &Parent)>().iter(world) {
-        children.entry(parent.parent()).or_default().push(child);
-    }
+    hierarchy_now(world);
+    let globals = world.resource::<GlobalTransforms>();
     let mut found = vec![root];
     let mut next = 0;
     while let Some(&parent) = found.get(next) {
-        found.extend(children.get(&parent).into_iter().flatten().copied());
+        found.extend(globals.children_of(parent));
         next += 1;
     }
     found
-}
-
-struct RelationshipNode {
-    entity: Entity,
-    parent: Option<Entity>,
-    depth: Result<usize, Broken>,
-    affected: bool,
 }
 
 pub fn set_parents(world: &mut World, changes: &[(Entity, Option<Entity>)]) -> Result<(), Error> {
@@ -137,8 +125,7 @@ pub fn set_parents(world: &mut World, changes: &[(Entity, Option<Entity>)]) -> R
     if changes.len() > limit {
         return Err(over(changes.len()));
     }
-    let mut query = world.query::<(Entity, &Transform, Option<&Parent>)>();
-    let count = query.iter(world).len();
+    let count = hierarchy_now(world);
     if count > limit {
         return Err(over(count));
     }
@@ -157,65 +144,10 @@ pub fn set_parents(world: &mut World, changes: &[(Entity, Option<Entity>)]) -> R
                 .got(child.to_bits()));
         }
     }
-    let mut nodes = Vec::with_capacity(count);
-    let mut indices = HashMap::with_capacity_and_hasher(count, Default::default());
-    for (entity, _, parent) in query.iter(world) {
-        indices.insert(entity, nodes.len());
-        nodes.push(RelationshipNode {
-            entity,
-            parent: replacements
-                .get(&entity)
-                .copied()
-                .unwrap_or_else(|| parent.map(Parent::parent)),
-            depth: Ok(0),
-            affected: replacements.contains_key(&entity),
-        });
-    }
-    complete_parents_first(
-        &mut nodes,
-        &mut Vec::new(),
-        &mut Vec::new(),
-        |node| node.parent.and_then(|parent| indices.get(&parent).copied()),
-        |nodes, states, index| {
-            let (depth, inherited) = match nodes[index].parent {
-                None => (Ok(0), false),
-                Some(parent) => match indices.get(&parent) {
-                    None => (
-                        Err(if world.entities().contains(parent) {
-                            Broken::MissingTransform(parent)
-                        } else {
-                            Broken::MissingEntity(parent)
-                        }),
-                        false,
-                    ),
-                    Some(&parent) => {
-                        let complete = states[parent] == State::Complete;
-                        let parent = &nodes[parent];
-                        let depth = if complete {
-                            parent.depth.and_then(|depth| {
-                                if depth < MAX_HIERARCHY_DEPTH {
-                                    Ok(depth + 1)
-                                } else {
-                                    Err(Broken::DepthExceeded)
-                                }
-                            })
-                        } else {
-                            Err(Broken::Cycle(parent.entity))
-                        };
-                        (depth, parent.affected)
-                    }
-                },
-            };
-            let node = &mut nodes[index];
-            node.depth = depth;
-            node.affected |= inherited;
-            if node.affected {
-                depth?;
-            }
-            Ok(())
-        },
-    )
-    .map_err(Broken::error)?;
+    world
+        .resource::<GlobalTransforms>()
+        .check_parents(world, &replacements)
+        .map_err(Broken::error)?;
     for &(child, parent) in changes {
         let mut entity = world.entity_mut(child);
         if let Some(parent) = parent {
@@ -232,13 +164,122 @@ pub fn set_parents(world: &mut World, changes: &[(Entity, Option<Entity>)]) -> R
     Ok(())
 }
 
+fn missing(world: &World, entity: Entity) -> Broken {
+    if world.entities().contains(entity) {
+        Broken::MissingTransform(entity)
+    } else {
+        Broken::MissingEntity(entity)
+    }
+}
+
+fn below(depth: Result<Option<usize>, Broken>) -> Result<usize, Broken> {
+    match depth? {
+        None => Ok(0),
+        Some(depth) if depth < MAX_HIERARCHY_DEPTH => Ok(depth + 1),
+        Some(_) => Err(Broken::DepthExceeded),
+    }
+}
+
+type Depths = HashMap<Entity, Result<usize, Broken>>;
+
+impl GlobalTransforms {
+    fn children_of(&self, parent: Entity) -> impl Iterator<Item = Entity> + '_ {
+        let linked = self
+            .node_index(parent)
+            .into_iter()
+            .flat_map(|index| self.children(index));
+        let waiting = self
+            .orphans
+            .iter()
+            .copied()
+            .filter(move |&orphan| self.sources[orphan].parent == Some(parent));
+        linked.chain(waiting).map(|index| self.entities[index])
+    }
+
+    fn chain_depth(
+        &self,
+        world: &World,
+        entity: Entity,
+        parent_of: &impl Fn(Entity) -> Option<Entity>,
+        depths: &mut Depths,
+    ) -> Result<usize, Broken> {
+        let mut path = Vec::new();
+        let mut cursor = entity;
+        let mut above = loop {
+            if let Some(&known) = depths.get(&cursor) {
+                if path.is_empty() {
+                    return known;
+                }
+                break known.map(Some);
+            }
+            if path.contains(&cursor) {
+                break Err(Broken::Cycle(cursor));
+            }
+            path.push(cursor);
+            match parent_of(cursor) {
+                None => break Ok(None),
+                Some(parent) if self.node_index(parent).is_none() => {
+                    break Err(missing(world, parent));
+                }
+                Some(parent) => cursor = parent,
+            }
+        };
+        let mut depth = Err(Broken::DepthExceeded);
+        for &node in path.iter().rev() {
+            depth = below(above);
+            depths.insert(node, depth);
+            above = depth.map(Some);
+        }
+        depth
+    }
+
+    fn check_parents(
+        &self,
+        world: &World,
+        replacements: &HashMap<Entity, Option<Entity>>,
+    ) -> Result<(), Broken> {
+        let parent_of = |entity: Entity| match replacements.get(&entity) {
+            Some(&parent) => parent,
+            None => self
+                .node_index(entity)
+                .and_then(|index| self.sources[index].parent),
+        };
+        let mut depths = Depths::default();
+        let mut stack = Vec::with_capacity(replacements.len());
+        for &child in replacements.keys() {
+            stack.push((child, self.chain_depth(world, child, &parent_of, &mut depths)?));
+        }
+        let mut seen: HashSet<Entity> = replacements.keys().copied().collect();
+        while let Some((entity, depth)) = stack.pop() {
+            for child in self.children_of(entity) {
+                if replacements.contains_key(&child) || !seen.insert(child) {
+                    continue;
+                }
+                stack.push((child, below(Ok(Some(depth)))?));
+            }
+        }
+        Ok(())
+    }
+}
+
+fn hierarchy_now(world: &mut World) -> usize {
+    tracking::init(world);
+    world.init_resource::<HierarchyScratch>();
+    world.resource_scope(|world, mut globals: Mut<HierarchyScratch>| {
+        globals.settle_structure(world, &mut PropagationWork::default());
+        globals.report.transforms
+    })
+}
+
 pub(crate) fn despawn_owned(world: &mut World, owned: &[Entity]) {
-    let gone: BTreeSet<Entity> = owned.iter().copied().collect();
-    let mut parented = world.query::<(Entity, &Parent)>();
-    let guests: Vec<Entity> = parented
-        .iter(world)
-        .filter(|(child, parent)| gone.contains(&parent.parent()) && !gone.contains(child))
-        .map(|(child, _)| child)
+    hierarchy_now(world);
+    let gone: HashSet<Entity> = owned.iter().copied().collect();
+    let mut seen = HashSet::default();
+    let globals = world.resource::<GlobalTransforms>();
+    let guests: Vec<Entity> = owned
+        .iter()
+        .flat_map(|&entity| globals.children_of(entity))
+        .filter(|child| !gone.contains(child) && seen.insert(*child))
         .collect();
     for &guest in &guests {
         let pose = world
@@ -324,11 +365,20 @@ pub(crate) struct Source {
     pub(crate) transform_added: u32,
 }
 
+impl Source {
+    const EMPTY: Self = Self {
+        entity: Entity::PLACEHOLDER,
+        parent: None,
+        transform_added: 0,
+    };
+}
+
 #[derive(Clone, Copy)]
 pub(crate) struct Link {
     parent: u32,
     first_child: u32,
     next_sibling: u32,
+    prev_sibling: u32,
     depth: u8,
     topology_valid: bool,
     valid: bool,
@@ -339,6 +389,7 @@ impl Link {
         parent: NO_NODE,
         first_child: NO_NODE,
         next_sibling: NO_NODE,
+        prev_sibling: NO_NODE,
         depth: 0,
         topology_valid: false,
         valid: false,
@@ -382,6 +433,15 @@ impl Link {
     #[inline]
     pub(crate) fn has_children(&self) -> bool {
         self.first_child != NO_NODE
+    }
+
+    #[inline]
+    fn segment(&self) -> usize {
+        if self.topology_valid {
+            usize::from(self.depth)
+        } else {
+            0
+        }
     }
 }
 
@@ -436,15 +496,18 @@ pub struct GlobalTransforms {
     globals: Vec<PoseRows>,
     revisions: Vec<Option<Revision>>,
     indices: EntityIndices,
-    order: Vec<usize>,
-    path: Vec<usize>,
-    states: Vec<State>,
+    slots: Slots,
+    orphans: Vec<usize>,
+    walk: Walk,
     dirty: Dirty,
-    changes: Feed<u32>,
+    moved: Changes,
+    placed: Changes,
     touched: Vec<Entity>,
     declared: Vec<words::Declared>,
     words: Vec<NodeWord>,
-    words_revision: u64,
+    worded: Vec<usize>,
+    words_stale: bool,
+    restructured: bool,
     woken: Vec<Entity>,
     asleep: Vec<Entity>,
     scans: ScanClock,
@@ -455,14 +518,27 @@ pub struct GlobalTransforms {
     revision: u64,
 }
 
+struct Slots {
+    order: Vec<usize>,
+    starts: [usize; SEGMENTS + 1],
+    positions: Vec<usize>,
+    free: Vec<usize>,
+}
+
+struct Walk {
+    visits: Vec<structure::Visit>,
+    pending: Vec<usize>,
+    path: Vec<usize>,
+    states: Vec<State>,
+}
+
 pub(crate) type HierarchyScratch = GlobalTransforms;
+
+const SEGMENTS: usize = MAX_HIERARCHY_DEPTH + 1;
+const UNPLACED: usize = usize::MAX;
 
 impl FromWorld for GlobalTransforms {
     fn from_world(world: &mut World) -> Self {
-        let feed = world
-            .get_resource::<FeedSettings>()
-            .map_or(FeedSettings::default().transforms, |feeds| feeds.transforms)
-            as usize;
         Self {
             query: world.query(),
             changed_query: Some(SystemState::new(world)),
@@ -474,15 +550,28 @@ impl FromWorld for GlobalTransforms {
             globals: Vec::new(),
             revisions: Vec::new(),
             indices: EntityIndices::default(),
-            order: Vec::new(),
-            path: Vec::new(),
-            states: Vec::new(),
+            slots: Slots {
+                order: Vec::new(),
+                starts: [0; SEGMENTS + 1],
+                positions: Vec::new(),
+                free: Vec::new(),
+            },
+            orphans: Vec::new(),
+            walk: Walk {
+                visits: Vec::new(),
+                pending: Vec::new(),
+                path: Vec::new(),
+                states: Vec::new(),
+            },
             dirty: Dirty::default(),
-            changes: Feed::new(feed),
+            moved: Changes::new(2),
+            placed: Changes::new(2),
             touched: Vec::new(),
             declared: Vec::new(),
             words: Vec::new(),
-            words_revision: 0,
+            worded: Vec::new(),
+            words_stale: false,
+            restructured: false,
             woken: Vec::new(),
             asleep: Vec::new(),
             scans: ScanClock::default(),
@@ -517,6 +606,9 @@ impl Dirty {
 
     #[inline]
     fn mark(&mut self, index: usize, threshold: usize) {
+        if self.flags[index] {
+            return;
+        }
         self.flags[index] = true;
         if self.count < threshold {
             self.seeds.push(index);
@@ -529,7 +621,6 @@ impl Dirty {
 enum ScanPlan {
     Changed,
     Full,
-    Rebuild,
 }
 
 struct Scan {
@@ -545,7 +636,8 @@ struct Nodes<'a> {
     flags: &'a mut [bool],
     words: &'a [NodeWord],
     invalid_transforms: &'a mut usize,
-    changes: &'a mut Feed<u32>,
+    moved: &'a mut Changes,
+    placed: &'a mut Changes,
 }
 
 #[cold]
@@ -587,7 +679,8 @@ impl Nodes<'_> {
             flags,
             words,
             invalid_transforms,
-            changes,
+            moved,
+            placed,
         } = self;
         Self {
             locals: &mut locals[..len],
@@ -597,7 +690,8 @@ impl Nodes<'_> {
             flags: &mut flags[..len],
             words: &words[..len],
             invalid_transforms,
-            changes,
+            moved,
+            placed,
         }
     }
 
@@ -657,6 +751,7 @@ impl Nodes<'_> {
                 *self.invalid_transforms += 1;
             }
             link.valid = valid;
+            self.placed.mark(index as u32);
         }
         let publish = changed || revision.is_none();
         if let Some(rows) = rows
@@ -669,7 +764,7 @@ impl Nodes<'_> {
         if publish {
             *revision = Some(work.value_ids.next());
             work.written += 1;
-            self.changes.push(index as u32);
+            self.moved.mark(index as u32);
         }
         changed
     }
@@ -686,30 +781,28 @@ impl GlobalTransforms {
         self.global(index).map(glam::Affine3A::from_mat4)
     }
 
-    pub fn changes_since(&self, cursor: &mut Cursor) -> Since<'_, u32> {
-        self.changes.since(cursor)
-    }
-
     pub fn entity_at(&self, index: u32) -> Option<Entity> {
-        self.entities.get(index as usize).copied()
+        let index = index as usize;
+        self.live(index).then(|| self.entities[index])
     }
 
-    pub(crate) fn resize_changes(&mut self, size: usize) {
-        self.changes.resize(size);
+    #[inline]
+    fn live(&self, index: usize) -> bool {
+        self.slots.positions.get(index).is_some_and(|&at| at != UNPLACED)
     }
 
     pub fn len(&self) -> usize {
-        self.sources.len()
+        self.links.len() - self.slots.free.len()
     }
+
     pub fn is_empty(&self) -> bool {
-        self.sources.is_empty()
+        self.len() == 0
     }
 
     pub fn iter(&self) -> impl ExactSizeIterator<Item = (Entity, GlobalTransform)> + '_ {
-        self.sources
+        self.slots.order
             .iter()
-            .enumerate()
-            .map(|(index, source)| (source.entity, self.value_at(index)))
+            .map(|&index| (self.entities[index], self.value_at(index)))
     }
 
     fn value_at(&self, index: usize) -> GlobalTransform {
@@ -737,11 +830,7 @@ impl GlobalTransforms {
         let _profile = engine_profile::span("hierarchy", "change_tick_scan");
         engine_profile::counter("hierarchy.full_scan", 0.0);
         engine_profile::counter("hierarchy.scanned_nodes", 0.0);
-        engine_profile::counter(
-            "hierarchy.metadata_nodes",
-            self.query.iter(world).len() as f64,
-        );
-        self.dirty.clear();
+        engine_profile::counter("hierarchy.metadata_nodes", self.report.transforms as f64);
         let mut changed_query = self.changed_query.take().expect("scan_state_present");
         let scan = self.scan_changed_rows(&mut changed_query, world, work);
         self.changed_query = Some(changed_query);
@@ -771,7 +860,8 @@ impl GlobalTransforms {
             revisions,
             dirty,
             report,
-            changes,
+            moved,
+            placed,
             words,
             ..
         } = self;
@@ -794,7 +884,8 @@ impl GlobalTransforms {
             flags,
             words,
             invalid_transforms: &mut report.invalid_transforms,
-            changes,
+            moved,
+            placed,
         }
         .trimmed(len);
         let query = changed_query.get(world).expect("transform_query_read_only");
@@ -845,7 +936,7 @@ impl GlobalTransforms {
                         continue;
                     }
                     local_revisions[index] = next_revision;
-                    nodes.changes.push(index as u32);
+                    nodes.moved.mark(index as u32);
                     if nodes.asleep(index) {
                         continue;
                     }
@@ -877,67 +968,64 @@ impl GlobalTransforms {
     fn scan_full(&mut self, world: &World) -> Scan {
         let _profile = engine_profile::span("hierarchy", "change_tick_scan");
         engine_profile::counter("hierarchy.full_scan", 1.0);
-        self.dirty.clear();
-        self.changes.replace();
+        self.moved.mark_all();
         let threshold = self.dense_threshold();
         let mut count = 0;
-        let mut metadata = 0;
         let mut checked = 0;
         let mut observed = 0;
         for (entity, transform, parent) in self.query.iter(world) {
-            metadata += 1;
-            if count < self.limit {
-                let Some(source) = self.sources.get_mut(count) else {
-                    return Scan {
-                        topology_changed: true,
-                        observed: 0,
-                    };
+            count += 1;
+            let Some(&index) = self.indices.get(&entity) else {
+                if self.report.overflow_transforms != 0 {
+                    continue;
+                }
+                return Scan {
+                    topology_changed: true,
+                    observed: 0,
                 };
-                if source.entity != entity || source.parent != parent.map(Parent::parent) {
-                    return Scan {
-                        topology_changed: true,
-                        observed: 0,
-                    };
-                }
-                let local = &mut self.locals[count];
-                let pose = transform.to_pose();
-                let local_changed = !same_pose_bits(local, &pose);
-                let transform_added = transform.added().get();
-                let identity_changed = source.transform_added != transform_added;
-                if local_changed || identity_changed {
-                    observed += 1;
-                    source.transform_added = transform_added;
-                    *local = pose;
-                    if local_changed {
-                        self.local_revisions[count] = self.revision.wrapping_add(1);
-                    }
-                }
-                checked += 1;
+            };
+            let source = &mut self.sources[index];
+            if source.parent != parent.map(Parent::parent) {
+                return Scan {
+                    topology_changed: true,
+                    observed: 0,
+                };
+            }
+            let local = &mut self.locals[index];
+            let pose = transform.to_pose();
+            let local_changed = !same_pose_bits(local, &pose);
+            let transform_added = transform.added().get();
+            let identity_changed = source.transform_added != transform_added;
+            if local_changed || identity_changed {
+                observed += 1;
+                source.transform_added = transform_added;
+                *local = pose;
                 if local_changed {
-                    self.dirty.mark(count, threshold);
+                    self.local_revisions[index] = self.revision.wrapping_add(1);
                 }
             }
-            count += 1;
+            checked += 1;
+            if local_changed {
+                self.dirty.mark(index, threshold);
+            }
         }
-        engine_profile::counter("hierarchy.metadata_nodes", metadata as f64);
+        engine_profile::counter("hierarchy.metadata_nodes", count as f64);
         engine_profile::counter("hierarchy.validated_nodes", checked as f64);
         engine_profile::counter("hierarchy.scanned_nodes", count as f64);
         Scan {
-            topology_changed: count != self.report.transforms
-                || self.sources.len() != count.min(self.limit),
+            topology_changed: count != self.report.transforms,
             observed,
         }
     }
 
-    fn rebuild_topology(&mut self, world: &mut World, work: &mut PropagationWork) {
+    fn rebuild_topology(&mut self, world: &World, work: &mut PropagationWork) {
         let _profile = engine_profile::span("hierarchy", "topology_rebuild");
         self.asleep.clear();
         self.asleep.extend(
-            self.entities
+            self.slots.order
                 .iter()
-                .zip(&self.words)
-                .filter(|(_, word)| !word.active)
-                .map(|(&entity, _)| entity),
+                .filter(|&&index| !self.words[index].active)
+                .map(|&index| self.entities[index]),
         );
         let admitted = self.query.iter(world).len().min(self.limit);
         self.empty_tables(admitted);
@@ -962,6 +1050,7 @@ impl GlobalTransforms {
             self.revisions.push(None);
             self.declared.push(words::Declared::default());
             self.words.push(NodeWord::ROOT);
+            self.walk.visits.push(structure::Visit::Idle);
         }
         self.indices.clear();
         self.indices.reserve(admitted);
@@ -974,11 +1063,11 @@ impl GlobalTransforms {
                 .and_then(|parent| self.indices.get(&parent))
                 .map_or(NO_NODE, |&index| index as u32);
         }
-        let (sources, order) = (&self.sources, &mut self.order);
+        let sources = &self.sources;
         let Ok(()) = complete_parents_first(
             &mut self.links,
-            &mut self.states,
-            &mut self.path,
+            &mut self.walk.states,
+            &mut self.walk.path,
             Link::parent,
             |links, states, index| -> Result<(), Infallible> {
                 let depth = match sources[index].parent {
@@ -995,24 +1084,28 @@ impl GlobalTransforms {
                 let link = &mut links[index];
                 link.topology_valid = depth.is_some();
                 link.depth = depth.unwrap_or(0);
-                order.push(index);
                 Ok(())
             },
         );
         for index in 0..self.links.len() {
-            if self.links[index].topology_valid
-                && let Some(parent) = self.links[index].parent()
-            {
-                self.links[index].next_sibling = self.links[parent].first_child;
-                self.links[parent].first_child = index as u32;
+            let link = self.links[index];
+            match link.parent() {
+                Some(parent) if link.topology_valid => self.link_child(parent, index),
+                Some(_) | None if self.sources[index].parent.is_some() => {
+                    self.orphans.push(index);
+                }
+                Some(_) | None => {}
             }
         }
+        self.lay_order();
         self.dirty.flags.resize(self.links.len(), true);
         self.dirty.count = self.links.len();
-        self.changes.replace();
+        self.moved.mark_all();
+        self.placed.mark_all();
         report.invalid_transforms = report.transforms;
         self.report = report;
         self.topology_revision = work.value_ids.next();
+        self.words_stale = true;
     }
 
     fn empty_tables(&mut self, admitted: usize) {
@@ -1026,8 +1119,14 @@ impl GlobalTransforms {
         self.globals.clear();
         self.revisions.clear();
         self.indices.clear();
-        self.order.clear();
-        self.path.clear();
+        self.slots.order.clear();
+        self.slots.positions.clear();
+        self.slots.free.clear();
+        self.orphans.clear();
+        self.walk.visits.clear();
+        self.walk.pending.clear();
+        self.worded.clear();
+        self.walk.path.clear();
         self.dirty.clear();
         self.entities.reserve_exact(admitted);
         self.sources.reserve_exact(admitted);
@@ -1038,8 +1137,8 @@ impl GlobalTransforms {
         self.revisions.reserve_exact(admitted);
         self.declared.reserve_exact(admitted);
         self.words.reserve_exact(admitted);
-        self.order.reserve_exact(admitted);
-        self.path.reserve_exact(admitted);
+        self.walk.visits.reserve_exact(admitted);
+        self.walk.path.reserve_exact(admitted);
         self.dirty.flags.clear();
         self.dirty.flags.reserve_exact(admitted);
         self.dirty.seeds.reserve_exact(admitted.div_ceil(2));
@@ -1053,11 +1152,12 @@ impl GlobalTransforms {
             links,
             globals,
             revisions,
-            order,
-            path,
+            slots: Slots { order, .. },
+            walk: Walk { path, .. },
             dirty,
             report,
-            changes,
+            moved,
+            placed,
             words,
             ..
         } = self;
@@ -1070,7 +1170,8 @@ impl GlobalTransforms {
             flags: &mut dirty.flags,
             words,
             invalid_transforms: &mut report.invalid_transforms,
-            changes,
+            moved,
+            placed,
         }
         .trimmed(len);
         if dense {
@@ -1112,19 +1213,37 @@ impl GlobalTransforms {
         }
     }
 
-    fn plan(&mut self, world: &mut World) -> ScanPlan {
+    fn settle_structure(&mut self, world: &mut World, work: &mut PropagationWork) -> bool {
         let limit = node_limit(world);
         if limit != self.limit {
             self.limit = limit;
             self.incomplete = true;
         }
         let interrupted = std::mem::replace(&mut self.incomplete, true);
-        let aged = self.scans.aged(world.read_change_tick());
-        let structural =
-            std::mem::take(&mut world.resource_mut::<tracking::Invalidation>().full_scan);
-        if interrupted || structural {
-            ScanPlan::Rebuild
-        } else if aged || self.report.transforms >= self.limit {
+        let mut invalidation = world.resource_mut::<tracking::Invalidation>();
+        let whole = std::mem::take(&mut invalidation.full_scan);
+        let mut placed = std::mem::take(&mut invalidation.placed);
+        let rebuilt = interrupted
+            || whole
+            || (self.report.overflow_transforms != 0 && !placed.is_empty())
+            || !self.restructure(world, &mut placed);
+        if rebuilt {
+            self.rebuild_topology(world, work);
+        }
+        placed.clear();
+        let mut invalidation = world.resource_mut::<tracking::Invalidation>();
+        if invalidation.placed.is_empty() {
+            invalidation.placed = placed;
+        }
+        self.declare(world);
+        let worded = self.settle_words();
+        self.restructured |= rebuilt || worded;
+        self.incomplete = false;
+        rebuilt
+    }
+
+    fn scan_plan(&self, world: &World) -> ScanPlan {
+        if self.scans.aged(world.read_change_tick()) || self.report.transforms >= self.limit {
             ScanPlan::Full
         } else {
             ScanPlan::Changed
@@ -1132,25 +1251,28 @@ impl GlobalTransforms {
     }
 
     fn propagate(&mut self, world: &mut World) -> HierarchyReport {
-        let plan = self.plan(world);
         let mut work = PropagationWork::default();
-        let scan = match plan {
+        let mut rebuilt = self.settle_structure(world, &mut work);
+        self.incomplete = true;
+        let scan = match self.scan_plan(world) {
             ScanPlan::Changed => self.scan_changed(world, &mut work),
             ScanPlan::Full => self.scan_full(world),
-            ScanPlan::Rebuild => Scan {
-                topology_changed: true,
-                observed: 0,
-            },
         };
-        let rebuilt = scan.topology_changed;
-        if rebuilt {
+        if scan.topology_changed {
             self.rebuild_topology(world, &mut work);
+            self.declare(world);
+            self.settle_words();
+            rebuilt = true;
         }
-        let worded = self.declare(world, rebuilt) && self.settle_words(rebuilt);
         if self.dirty.count != 0 {
             self.evaluate_dirty(&mut work);
         }
-        if rebuilt || worded || scan.observed != 0 || work.evaluated != 0 {
+        self.dirty.clear();
+        if std::mem::take(&mut self.restructured)
+            || rebuilt
+            || scan.observed != 0
+            || work.evaluated != 0
+        {
             self.revision = self.revision.wrapping_add(1);
         }
         engine_profile::counter("hierarchy.topology_rebuilt", f64::from(rebuilt));
@@ -1188,4 +1310,12 @@ pub fn propagate_transforms(world: &mut World) -> HierarchyReport {
         crate::presentation::make_fresh(world, &woken);
     }
     report
+}
+
+pub(crate) fn settle_changes(world: &mut World) {
+    if let Some(mut globals) = world.get_resource_mut::<GlobalTransforms>() {
+        let globals = globals.bypass_change_detection();
+        globals.placed.settle();
+        globals.moved.settle();
+    }
 }

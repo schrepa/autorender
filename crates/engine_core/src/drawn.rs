@@ -1,25 +1,22 @@
-use std::collections::BTreeMap;
-use std::collections::btree_map::Entry;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::ops::Range;
 
-use bevy_ecs::change_detection::{DetectChanges, MAX_CHANGE_AGE, Mut, Ref, Tick};
+use bevy_ecs::change_detection::Mut;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::lifecycle::{Insert, Remove};
 use bevy_ecs::observer::On;
-use bevy_ecs::query::QueryState;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::ResMut;
 use bevy_ecs::world::World;
-use engine_assets::{Asset, AssetLibrary, Material, MaterialBinding, SurfaceSlot, attributes_wgsl};
+use engine_assets::{Asset, AssetLibrary, attributes_wgsl};
+use engine_place::Changes;
 use engine_registry::Registry;
 
-use crate::math::sin_cos;
 use crate::{
-    AssetResidency, Cursor, DeviceLimits, DrawKind, Drawn, DrawnBounds, Error, ErrorCode, Expected,
-    Feed, GeometryHandle, GlobalTransforms, GpuBits, GpuStruct, InstanceValues, Interest, KindDecl,
-    MaterialHandle, PassMask, PositionReach, Refusals, Request, Revision, ScenePasses, Since,
-    Transform, gpu_struct, settings,
+    AssetResidency, DeviceLimits, DrawKind, Drawn, Error, ErrorCode, Expected,
+    GeometryHandle, GlobalTransforms, GpuStruct, Interest, KindDecl, Layers, MaterialHandle,
+    PassMask, Refusals, Request, Transform, gpu_struct, settings,
 };
 
 pub const DRAWN_PART: &str = "drawn";
@@ -28,67 +25,47 @@ settings! {
     #[section("drawn")]
     pub struct DrawnSettings {
         pub instance_floats: u32 = 16 => range(0, 1024),
-        pub changes: u32 = 16384 => at_least(1),
     }
 }
 
-#[crate::gpu_bits(crate = crate)]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct DrawnFlags {
-    pub own_projection: bool,
-    pub unbounded: bool,
+const SLOTS: &str = "fn drawn_slot(instance: u32) -> u32 {
+    return drawn_order[instance];
 }
-
-impl DrawnFlags {
-    pub fn of(record: &DrawnRecord) -> Self {
-        Self::unpack(record.flags).unwrap_or_default()
-    }
+fn drawn_tint(slot: u32) -> vec4<f32> {
+    return drawn_values[drawn_records[slot].values];
 }
-
-const CLIP: &str = "fn drawn_value_vec4(record: DrawnRecord, index: u32) -> u32 {
-    return record.values + index / 4u;
+fn drawn_emission(slot: u32) -> vec3<f32> {
+    return drawn_values[drawn_records[slot].values + 1u].xyz;
 }
-fn drawn_clip(record: DrawnRecord, clip: vec4<f32>, view_focal: f32, center: vec2<f32>) -> vec4<f32> {
-    if !drawn_flags_own_projection(record.flags) {
-        return clip;
-    }
-    let across = (clip.xy - center) * (record.projection.x / view_focal) + center;
-    return vec4<f32>(across, mix(clip.w, clip.z, record.projection.y), clip.w);
+fn drawn_floats(slot: u32, quad: u32) -> vec4<f32> {
+    return drawn_values[drawn_records[slot].values + 2u + quad];
+}
+fn drawn_float_count(slot: u32) -> u32 {
+    return drawn_records[slot].floats;
 }
 ";
 
 gpu_struct! {
     pub struct DrawnRecord {
-        pub tint: [f32; 4],
-        pub emission: [f32; 4],
-        pub projection: [f32; 4],
-        pub bounds_min: [f32; 4],
-        pub bounds_max: [f32; 4],
         pub node: u32,
-        pub geometry: u32,
-        pub material: u32,
-        pub passes: u32,
-        pub layers: u32,
-        pub flags: u32,
-        pub generation: u32,
-        pub order: i32,
         pub values: u32,
         pub floats: u32,
-        pub kind: u32,
-        pub mobility: u32,
     }
 }
 
 pub fn drawn_wgsl() -> String {
     let mut text = String::from(DrawnRecord::WGSL);
-    text.push_str(<DrawnFlags as GpuBits>::WGSL);
     text.push_str(&attributes_wgsl());
-    text.push_str(CLIP);
+    text.push_str(SLOTS);
     text
 }
 
-fn vec4s(floats: u32) -> usize {
-    floats.div_ceil(4) as usize
+const NO_BATCH: u32 = u32::MAX;
+const NO_SLOT: u32 = u32::MAX;
+const VALUE_HEAD: usize = 2;
+
+fn stride_of(floats: u32) -> usize {
+    VALUE_HEAD + floats.div_ceil(4) as usize
 }
 
 #[derive(Clone, Debug)]
@@ -100,28 +77,25 @@ pub enum DrawnState {
     Refused(Error),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PlanState {
-    Stale,
-    Built { generation: u64 },
-}
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct DrawnBatch {
     pub kind: DrawKind,
+    pub order: i16,
     pub geometry: Option<GeometryHandle>,
     pub material: Option<MaterialHandle>,
-    pub order: i16,
+    pub passes: Option<PassMask>,
+    pub layers: Layers,
     pub instances: Range<u32>,
 }
 
-type BatchKey = (i16, DrawKind, Option<usize>, Option<usize>);
-
-type Shape = (i16, DrawKind, Option<GeometryHandle>, Option<MaterialHandle>);
-
-type Keyed = Option<(BatchKey, Option<MaterialHandle>)>;
-
-type Edits = QueryState<(Entity, Ref<'static, Drawn>, Option<Ref<'static, DrawnBounds>>)>;
+type BatchKey = (
+    usize,
+    i16,
+    Option<GeometryHandle>,
+    Option<MaterialHandle>,
+    Option<u32>,
+    u32,
+);
 
 struct Held {
     state: DrawnState,
@@ -129,12 +103,16 @@ struct Held {
     uses: Vec<Interest<Asset>>,
 }
 
+#[derive(Clone, Copy)]
+struct Home {
+    batch: u32,
+    at: u32,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 struct Seen {
     residency: u64,
     library: (u64, u64),
-    topology: Revision,
-    words: u64,
     stride: usize,
     room: u64,
 }
@@ -143,7 +121,6 @@ struct Context<'a> {
     globals: &'a GlobalTransforms,
     residency: &'a AssetResidency,
     library: &'a AssetLibrary,
-    defaults: &'a [PassMask],
     floats: usize,
     room: u64,
 }
@@ -151,69 +128,52 @@ struct Context<'a> {
 #[derive(Resource)]
 pub struct DrawnTable {
     kinds: Vec<KindDecl>,
-    reaches: Vec<PositionReach>,
     held: BTreeMap<Entity, Held>,
-    owners: Vec<Option<Entity>>,
-    generations: Vec<u32>,
+    pending: BTreeSet<Entity>,
+    homes: Vec<Home>,
     records: Vec<DrawnRecord>,
     values: Vec<[f32; 4]>,
     free: Vec<u32>,
+    order: Vec<u32>,
+    batches: Vec<DrawnBatch>,
+    keys: Vec<BatchKey>,
+    rooms: Vec<u32>,
+    keyed: BTreeMap<BatchKey, u32>,
+    sorted: Vec<Vec<u32>>,
+    spare_batches: Vec<u32>,
+    spare_regions: Vec<Vec<u32>>,
+    slot_changes: Changes,
+    order_changes: Changes,
     touched: Vec<Entity>,
     verdicts: Vec<(Entity, Result<(), Error>)>,
-    changes: Feed<u32>,
-    plan: PlanState,
-    generation: u64,
-    ordered: Vec<u32>,
-    batches: Vec<DrawnBatch>,
     seen: Option<Seen>,
     stride: usize,
-    shapes: Vec<Option<Shape>>,
-    keys: Vec<Keyed>,
-    canonical: crate::collections::HashMap<MaterialBinding, MaterialHandle>,
-    resolved: Vec<Option<(MaterialHandle, Option<MaterialHandle>)>>,
-    drifted: bool,
-    defaults: Vec<PassMask>,
-    floats: usize,
-    loose: bool,
-    ticked: Tick,
-    clock: Tick,
-    age: u64,
-    edits: Option<Edits>,
 }
 
 impl Default for DrawnTable {
     fn default() -> Self {
-        let settings = DrawnSettings::default();
         Self {
             kinds: Vec::new(),
-            reaches: Vec::new(),
             held: BTreeMap::new(),
-            owners: Vec::new(),
-            generations: Vec::new(),
+            pending: BTreeSet::new(),
+            homes: Vec::new(),
             records: Vec::new(),
             values: Vec::new(),
             free: Vec::new(),
+            order: Vec::new(),
+            batches: Vec::new(),
+            keys: Vec::new(),
+            rooms: Vec::new(),
+            keyed: BTreeMap::new(),
+            sorted: Vec::new(),
+            spare_batches: Vec::new(),
+            spare_regions: Vec::new(),
+            slot_changes: Changes::new(1),
+            order_changes: Changes::new(1),
             touched: Vec::new(),
             verdicts: Vec::new(),
-            changes: Feed::new(settings.changes as usize),
-            plan: PlanState::Stale,
-            generation: 0,
-            ordered: Vec::new(),
-            batches: Vec::new(),
             seen: None,
-            stride: vec4s(settings.instance_floats),
-            shapes: Vec::new(),
-            keys: Vec::new(),
-            canonical: crate::collections::HashMap::default(),
-            resolved: Vec::new(),
-            drifted: false,
-            defaults: Vec::new(),
-            floats: settings.instance_floats as usize,
-            loose: true,
-            ticked: Tick::default(),
-            clock: Tick::default(),
-            age: 0,
-            edits: None,
+            stride: stride_of(DrawnSettings::default().instance_floats),
         }
     }
 }
@@ -223,75 +183,25 @@ impl DrawnTable {
         &self.kinds
     }
 
-    pub fn kind(&self, kind: DrawKind) -> Option<&KindDecl> {
-        self.kinds.iter().find(|decl| decl.kind == kind)
-    }
-
-    pub fn kind_id(&self, kind: DrawKind) -> Option<u32> {
-        self.kinds
-            .iter()
-            .position(|decl| decl.kind == kind)
-            .map(|at| at as u32 + 1)
-    }
-
-    pub fn kind_of(&self, id: u32) -> Option<DrawKind> {
-        let at = (id as usize).checked_sub(1)?;
-        self.kinds.get(at).map(|decl| decl.kind)
+    fn kind_at(&self, kind: DrawKind) -> Option<usize> {
+        self.kinds.iter().position(|decl| decl.kind == kind)
     }
 
     pub fn wgsl(&self) -> String {
         let mut text = String::new();
-        for decl in &self.kinds {
+        for (at, decl) in self.kinds.iter().enumerate() {
             let name = engine_place::wgsl_name(decl.kind.name());
-            if let Some(id) = self.kind_id(decl.kind) {
-                let _ = writeln!(text, "const KIND_{name}: u32 = {id}u;");
-            }
+            let _ = writeln!(text, "const KIND_{name}: u32 = {}u;", at + 1);
         }
         text
-    }
-
-    pub fn reach(&self, material: &Material) -> f32 {
-        material
-            .slots()
-            .iter()
-            .find(|(slot, _)| *slot == SurfaceSlot::Position.name())
-            .and_then(|(_, module)| {
-                self.reaches
-                    .iter()
-                    .find(|reach| reach.module == module.as_str())
-            })
-            .map_or(0.0, |reach| reach.reach)
     }
 
     pub fn state(&self, entity: Entity) -> Option<&DrawnState> {
         self.held.get(&entity).map(|held| &held.state)
     }
 
-    pub(crate) fn drawn_count(&self) -> usize {
-        self.owners.len() - self.free.len()
-    }
-
-    pub fn slot(&self, entity: Entity) -> Option<u32> {
-        match self.state(entity) {
-            Some(DrawnState::Drawn { slot }) => Some(*slot),
-            Some(
-                DrawnState::Hidden
-                | DrawnState::Unplaced
-                | DrawnState::Waiting
-                | DrawnState::Refused(_),
-            )
-            | None => None,
-        }
-    }
-
-    pub fn owner(&self, slot: u32) -> Option<Entity> {
-        self.owners.get(slot as usize).copied().flatten()
-    }
-
-    pub fn drawn(&self, slot: u32) -> Option<&Drawn> {
-        self.owner(slot)
-            .and_then(|entity| self.held.get(&entity))
-            .map(|held| &held.drawn)
+    pub fn slots(&self) -> usize {
+        self.records.len()
     }
 
     pub fn records(&self) -> &[DrawnRecord] {
@@ -306,33 +216,24 @@ impl DrawnTable {
         self.stride
     }
 
-    pub fn changes_since(&self, cursor: &mut Cursor) -> Since<'_, u32> {
-        self.changes.since(cursor)
+    pub fn order(&self) -> &[u32] {
+        &self.order
     }
 
-    pub fn plan(&self) -> PlanState {
-        self.plan
+    pub fn slot_changes(&self) -> &Changes {
+        &self.slot_changes
     }
 
-    pub fn ordered(&self) -> &[u32] {
-        &self.ordered
+    pub fn order_changes(&self) -> &Changes {
+        &self.order_changes
     }
 
-    pub fn batches(&self) -> &[DrawnBatch] {
-        &self.batches
-    }
-
-    pub fn rows(&self, kind: DrawKind) -> impl Iterator<Item = (u32, Entity, &Drawn)> + '_ {
-        self.batches
-            .iter()
-            .filter(move |batch| batch.kind == kind)
-            .flat_map(move |batch| {
-                &self.ordered[batch.instances.start as usize..batch.instances.end as usize]
-            })
-            .filter_map(move |&slot| {
-                let entity = self.owner(slot)?;
-                Some((slot, entity, &self.held.get(&entity)?.drawn))
-            })
+    pub fn batches(&self, kind: DrawKind) -> impl Iterator<Item = &DrawnBatch> + '_ {
+        self.kind_at(kind)
+            .and_then(|at| self.sorted.get(at))
+            .into_iter()
+            .flatten()
+            .map(|&batch| &self.batches[batch as usize])
     }
 
     fn settle(&mut self, world: &World, settings: &DrawnSettings) {
@@ -343,191 +244,94 @@ impl DrawnTable {
         ) else {
             return;
         };
-        let now = world.read_change_tick();
-        self.age = self
-            .age
-            .saturating_add(u64::from(now.get().wrapping_sub(self.clock.get())));
-        self.clock = now;
-        self.changes.resize(settings.changes as usize);
-        let stride = vec4s(settings.instance_floats);
-        if stride != self.stride {
-            self.stride = stride;
-            self.values = vec![[0.0; 4]; self.owners.len() * stride];
-        }
+        self.slot_changes.settle();
+        self.order_changes.settle();
+        let stride = stride_of(settings.instance_floats);
         let room = world
             .get_resource::<DeviceLimits>()
             .map_or(0, |limits| limits.storage_room);
         let seen = Seen {
             residency: residency.revision(),
             library: library.revision(),
-            topology: globals.topology_revision(),
-            words: globals.words_revision(),
             stride,
             room,
         };
-        let floats = settings.instance_floats as usize;
-        let passes = world.get_resource::<ScenePasses>();
-        let mut defaults = std::mem::take(&mut self.defaults);
-        self.loose |= floats != self.floats || defaults.len() != self.kinds.len();
-        defaults.resize(self.kinds.len(), PassMask::NONE);
-        for (held, decl) in defaults.iter_mut().zip(&self.kinds) {
-            let next = passes.map_or(PassMask::NONE, |passes| passes.defaults(decl.kind));
-            self.loose |= *held != next;
-            *held = next;
-        }
-        self.floats = floats;
-        let known = self.seen;
         let mut touched = std::mem::take(&mut self.touched);
-        let mut held = std::mem::take(&mut self.held);
-        if known != Some(seen) {
-            self.seen = Some(seen);
-            let narrow = known.filter(|known| {
-                !self.loose
-                    && known.library.0 == seen.library.0
-                    && seen.library.1 != u64::MAX
-                    && (known.stride, known.room) == (stride, room)
-                    && self.age < u64::from(MAX_CHANGE_AGE)
-            });
-            if let (Some(known), Some(edits)) = (narrow, self.edits.as_mut()) {
-                let since = self.ticked;
-                let edited = |tick: Tick| tick == since || tick.is_newer_than(since, now);
-                edits.update_archetypes(world);
-                for (entity, drawn, bounds) in edits.iter_manual(world) {
-                    if (edited(drawn.last_changed())
-                        || bounds.is_some_and(|bounds| edited(bounds.last_changed())))
-                        && held.contains_key(&entity)
-                    {
-                        touched.push(entity);
-                    }
-                }
-                let before = (known.library != seen.library).then_some(known.library.1);
-                touched.extend(
-                    held.iter()
-                        .filter(|&(&entity, kept)| {
-                            self.moved(entity, kept, (globals, library), before)
-                        })
-                        .map(|(&entity, _)| entity),
-                );
-            } else {
-                touched.extend(held.keys().copied());
-            }
-            self.loose = false;
-            self.ticked = now;
-            self.age = 0;
+        if stride != self.stride {
+            self.stride = stride;
+            self.values = vec![[0.0; 4]; self.records.len() * stride];
         }
+        match self.seen.replace(seen) {
+            Some(known) if known == seen => {}
+            Some(known)
+                if (known.stride, known.room, known.library.0)
+                    == (stride, room, seen.library.0) =>
+            {
+                touched.extend(self.pending.iter().copied());
+                if known.library != seen.library {
+                    let before = known.library.1;
+                    touched.extend(
+                        self.held
+                            .iter()
+                            .filter(|(_, kept)| stale(&kept.drawn, library, before))
+                            .map(|(&entity, _)| entity),
+                    );
+                }
+            }
+            Some(_) | None => touched.extend(self.held.keys().copied()),
+        }
+        let placed = globals.placed().read();
+        if placed.all {
+            touched.extend(self.held.keys().copied());
+        } else {
+            touched.extend(
+                placed
+                    .listed
+                    .iter()
+                    .filter_map(|&node| globals.entity_at(node))
+                    .filter(|entity| self.held.contains_key(entity)),
+            );
+        }
+        globals.placed().take(0, placed.upto);
         touched.sort_unstable();
         touched.dedup();
         let cx = Context {
             globals,
             residency,
             library,
-            defaults: &defaults,
-            floats,
+            floats: settings.instance_floats as usize,
             room,
         };
         for &entity in &touched {
             match world.get::<Drawn>(entity) {
-                Some(drawn) => {
-                    let bounds = world.get::<DrawnBounds>(entity);
-                    self.refresh(&mut held, entity, (drawn, bounds), &cx);
-                }
-                None => self.forget(&mut held, entity),
+                Some(drawn) => self.refresh(entity, drawn, &cx),
+                None => self.forget(entity),
             }
         }
         touched.clear();
         self.touched = touched;
-        self.held = held;
-        self.defaults = defaults;
-        self.replan(library, known, seen);
     }
 
-    fn replan(&mut self, library: &AssetLibrary, known: Option<Seen>, seen: Seen) {
-        if known.is_none_or(|known| known.library != seen.library)
-            && self.plan != PlanState::Stale
-        {
-            let agrees = match known {
-                Some(known) if known.library.0 == seen.library.0 && !self.drifted => {
-                    self.agrees(library, known.library.1)
+    fn take_held(&mut self, entity: Entity, drawn: &Drawn, residency: &AssetResidency) -> Held {
+        match self.held.remove(&entity) {
+            Some(mut kept) => {
+                if (kept.drawn.geometry, kept.drawn.material) != (drawn.geometry, drawn.material) {
+                    kept.uses = hold(residency, drawn);
+                    kept.drawn.geometry = drawn.geometry;
+                    kept.drawn.material = drawn.material;
                 }
-                Some(_) | None => false,
-            };
-            if agrees {
-                self.generation += 1;
-                self.plan = PlanState::Built {
-                    generation: self.generation,
-                };
-            } else {
-                self.plan = PlanState::Stale;
+                kept
             }
-        }
-        if self.plan == PlanState::Stale {
-            self.rebuild(library);
-        }
-    }
-
-    fn moved(
-        &self,
-        entity: Entity,
-        kept: &Held,
-        (globals, library): (&GlobalTransforms, &AssetLibrary),
-        before: Option<u64>,
-    ) -> bool {
-        let slot = match kept.state {
-            DrawnState::Drawn { slot } => slot,
-            DrawnState::Hidden => return globals.drawn(entity),
-            DrawnState::Unplaced => {
-                return !globals.drawn(entity)
-                    || globals
-                        .get(entity)
-                        .and_then(|global| global.matrix())
-                        .is_some();
-            }
-            DrawnState::Waiting | DrawnState::Refused(_) => return true,
-        };
-        let record = &self.records[slot as usize];
-        let node = record.node as usize;
-        let placed = globals.entity_at(record.node) == Some(entity)
-            && globals.word_at(node).is_some_and(|word| {
-                word.drawn() && word.mobility as u32 + 1 == record.mobility
-            })
-            && globals
-                .links()
-                .get(node)
-                .is_some_and(|link| link.has_global());
-        let stale = |revision: Option<u64>| {
-            before.is_some_and(|before| revision.is_none_or(|revision| revision > before))
-        };
-        !placed
-            || PartialEq::ne(record, record)
-            || kept
-                .drawn
-                .geometry
-                .is_some_and(|geometry| stale(library.revision_of(geometry)))
-            || kept.drawn.material.is_some_and(|handle| {
-                stale(library.revision_of(handle))
-                    || library.material(handle).is_some_and(|material| {
-                        material
-                            .textures()
-                            .any(|texture| stale(library.revision_of(texture)))
-                    })
-            })
-    }
-
-    fn refresh(
-        &mut self,
-        held: &mut BTreeMap<Entity, Held>,
-        entity: Entity,
-        (drawn, bounds): (&Drawn, Option<&DrawnBounds>),
-        cx: &Context<'_>,
-    ) {
-        let kept = match held.entry(entity) {
-            Entry::Occupied(kept) => kept.into_mut(),
-            Entry::Vacant(free) => free.insert(Held {
+            None => Held {
                 state: DrawnState::Waiting,
                 drawn: drawn.clone(),
-                uses: hold(cx.residency, drawn),
-            }),
-        };
+                uses: hold(residency, drawn),
+            },
+        }
+    }
+
+    fn refresh(&mut self, entity: Entity, drawn: &Drawn, cx: &Context<'_>) {
+        let mut kept = self.take_held(entity, drawn, cx.residency);
         let slot = match kept.state {
             DrawnState::Drawn { slot } => Some(slot),
             DrawnState::Hidden
@@ -535,25 +339,10 @@ impl DrawnTable {
             | DrawnState::Waiting
             | DrawnState::Refused(_) => None,
         };
-        let (was, shaped) = (shape(&kept.drawn), shape(drawn));
-        if slot.is_some() && was != shaped {
-            if batch_key(was) == batch_key(shaped) {
-                self.drifted = true;
-            } else {
-                self.plan = PlanState::Stale;
-            }
-        }
-        if (kept.drawn.geometry, kept.drawn.material) != (drawn.geometry, drawn.material) {
-            let uses = hold(cx.residency, drawn);
-            drop(std::mem::replace(&mut kept.uses, uses));
-        }
         let state = match (self.refusal(entity, drawn, cx), slot) {
-            (None, Some(slot)) => {
-                self.write(slot, entity, (drawn, bounds), cx);
-                DrawnState::Drawn { slot }
-            }
+            (None, Some(slot)) => self.place(slot, entity, drawn, cx),
             (None, None) => {
-                let slot = self.take(entity);
+                let slot = self.take();
                 if self.beyond(slot, cx.room) {
                     self.release(slot);
                     DrawnState::Refused(
@@ -562,8 +351,7 @@ impl DrawnTable {
                             .got((u64::from(slot) + 1) * self.slot_bytes()),
                     )
                 } else {
-                    self.write(slot, entity, (drawn, bounds), cx);
-                    DrawnState::Drawn { slot }
+                    self.place(slot, entity, drawn, cx)
                 }
             }
             (Some(state), Some(slot)) => {
@@ -577,11 +365,31 @@ impl DrawnTable {
             self.verdicts
                 .push((entity, now.cloned().map_or(Ok(()), Err)));
         }
-        if let DrawnState::Drawn { slot } = state {
-            self.shapes[slot as usize] = Some(shaped);
-        }
+        match state {
+            DrawnState::Waiting | DrawnState::Refused(_) => self.pending.insert(entity),
+            DrawnState::Drawn { .. } | DrawnState::Hidden | DrawnState::Unplaced => {
+                self.pending.remove(&entity)
+            }
+        };
         kept.state = state;
-        keep(&mut kept.drawn, drawn);
+        kept.drawn.clone_from(drawn);
+        self.held.insert(entity, kept);
+    }
+
+    fn place(&mut self, slot: u32, entity: Entity, drawn: &Drawn, cx: &Context<'_>) -> DrawnState {
+        self.write(slot, entity, drawn, cx);
+        if let Some(kind) = self.kind_at(drawn.kind) {
+            let key = (
+                kind,
+                drawn.order,
+                drawn.geometry,
+                drawn.material,
+                drawn.passes.map(PassMask::word),
+                drawn.layers.0,
+            );
+            self.file(slot, key);
+        }
+        DrawnState::Drawn { slot }
     }
 
     fn slot_bytes(&self) -> u64 {
@@ -593,7 +401,7 @@ impl DrawnTable {
     }
 
     fn refusal(&self, entity: Entity, drawn: &Drawn, cx: &Context<'_>) -> Option<DrawnState> {
-        let Some(decl) = self.kind(drawn.kind) else {
+        let Some(decl) = self.kind_at(drawn.kind).map(|at| &self.kinds[at]) else {
             return Some(DrawnState::Refused(
                 Error::new(ErrorCode::InvalidRenderable, "$.drawn.kind")
                     .got(drawn.kind.name())
@@ -687,36 +495,31 @@ impl DrawnTable {
             })
     }
 
-    fn take(&mut self, entity: Entity) -> u32 {
-        self.plan = PlanState::Stale;
+    fn take(&mut self) -> u32 {
         if let Some(slot) = self.free.pop() {
-            self.owners[slot as usize] = Some(entity);
             return slot;
         }
-        self.owners.push(Some(entity));
-        self.generations.push(0);
+        self.homes.push(Home {
+            batch: NO_BATCH,
+            at: 0,
+        });
         self.records.push(DrawnRecord::default());
         self.values
             .extend(std::iter::repeat_n([0.0; 4], self.stride));
-        self.shapes.push(None);
-        (self.owners.len() - 1) as u32
+        (self.records.len() - 1) as u32
     }
 
     fn release(&mut self, slot: u32) {
-        let at = slot as usize;
-        self.owners[at] = None;
-        self.generations[at] = self.generations[at].wrapping_add(1);
-        self.records[at] = DrawnRecord::default();
-        self.shapes[at] = None;
+        self.unfile(slot);
+        self.records[slot as usize] = DrawnRecord::default();
         self.free.push(slot);
-        self.changes.push(slot);
-        self.plan = PlanState::Stale;
     }
 
-    fn forget(&mut self, held: &mut BTreeMap<Entity, Held>, entity: Entity) {
-        let Some(gone) = held.remove(&entity) else {
+    fn forget(&mut self, entity: Entity) {
+        let Some(gone) = self.held.remove(&entity) else {
             return;
         };
+        self.pending.remove(&entity);
         if refused_of(&gone.state).is_some() {
             self.verdicts.push((entity, Ok(())));
         }
@@ -725,81 +528,30 @@ impl DrawnTable {
         }
     }
 
-    fn write(
-        &mut self,
-        slot: u32,
-        entity: Entity,
-        (drawn, supplied): (&Drawn, Option<&DrawnBounds>),
-        cx: &Context<'_>,
-    ) {
+    fn write(&mut self, slot: u32, entity: Entity, drawn: &Drawn, cx: &Context<'_>) {
         let at = slot as usize;
-        let bounds = supplied.map(|bounds| (bounds.min, bounds.max)).or_else(|| {
-            drawn
-                .geometry
-                .and_then(|geometry| cx.library.mesh(geometry))
-                .map(|mesh| {
-                    let bounds = mesh.bounds();
-                    (bounds.min().to_array(), bounds.max().to_array())
-                })
-        });
-        let reach = drawn
-            .material
-            .and_then(|material| cx.library.material(material))
-            .map_or(0.0, |material| self.reach(material));
-        let ([low_x, low_y, low_z], [high_x, high_y, high_z]) =
-            bounds.map_or(([0.0; 3], [0.0; 3]), |(low, high)| {
-                (
-                    low.map(|value| value - reach),
-                    high.map(|value| value + reach),
-                )
-            });
-        let kind = self.kinds.iter().position(|decl| decl.kind == drawn.kind);
-        let passes = drawn
-            .passes
-            .unwrap_or_else(|| kind.map_or(PassMask::NONE, |at| cx.defaults[at]));
-        let projection = drawn.projection.map_or([1.0, 1.0, 0.0, 0.0], |own| {
-            let (sine, cosine) = sin_cos(own.vertical_fov * 0.5);
-            [cosine / sine, own.depth_scale, 0.0, 0.0]
-        });
-        let flags = DrawnFlags {
-            own_projection: drawn.projection.is_some(),
-            unbounded: bounds.is_none(),
-        };
-        let [red, green, blue] = drawn.values.emission;
         let record = DrawnRecord {
-            tint: drawn.values.tint,
-            emission: [red, green, blue, 0.0],
-            projection,
-            bounds_min: [low_x, low_y, low_z, 0.0],
-            bounds_max: [high_x, high_y, high_z, 0.0],
             node: cx
                 .globals
                 .node_index(entity)
                 .map_or(u32::MAX, |index| index as u32),
-            geometry: drawn
-                .geometry
-                .map_or(u32::MAX, |geometry| geometry.slot() as u32),
-            material: drawn
-                .material
-                .map_or(u32::MAX, |material| material.slot() as u32),
-            passes: passes.word(),
-            layers: drawn.layers.0,
-            flags: flags.pack(),
-            generation: self.generations[at],
-            order: i32::from(drawn.order),
             values: (at * self.stride) as u32,
             floats: drawn.values.floats.len() as u32,
-            kind: kind.map_or(0, |at| at as u32 + 1),
-            mobility: cx
-                .globals
-                .mobility(entity)
-                .map_or(0, |mobility| mobility as u32 + 1),
         };
         let mut changed = self.records[at] != record;
+        let [red, green, blue] = drawn.values.emission;
         let floats = &drawn.values.floats;
         for index in 0..self.stride {
-            let quad: [f32; 4] =
-                std::array::from_fn(|lane| floats.get(index * 4 + lane).copied().unwrap_or(0.0));
+            let quad = match index {
+                0 => drawn.values.tint,
+                1 => [red, green, blue, 0.0],
+                _ => std::array::from_fn(|lane| {
+                    floats
+                        .get((index - VALUE_HEAD) * 4 + lane)
+                        .copied()
+                        .unwrap_or(0.0)
+                }),
+            };
             let held = &mut self.values[at * self.stride + index];
             if held.map(f32::to_bits) != quad.map(f32::to_bits) {
                 *held = quad;
@@ -808,138 +560,155 @@ impl DrawnTable {
         }
         if changed {
             self.records[at] = record;
-            self.changes.push(slot);
+            self.slot_changes.mark(slot);
         }
     }
 
-    fn agrees(&mut self, library: &AssetLibrary, before: u64) -> bool {
-        let Self {
-            shapes,
-            keys,
-            canonical,
-            resolved,
-            ..
-        } = self;
-        if shapes.len() != keys.len() {
-            return false;
+    fn file(&mut self, slot: u32, key: BatchKey) {
+        let home = self.homes[slot as usize];
+        if home.batch != NO_BATCH {
+            if self.keys[home.batch as usize] == key {
+                return;
+            }
+            self.unfile(slot);
         }
-        resolved.clear();
-        for (shape, key) in shapes.iter().zip(keys.iter()) {
-            let (shape, kept) = match (shape, key) {
-                (Some(shape), Some((_, kept))) => (shape, *kept),
-                (None, None) => continue,
-                (Some(_), None) | (None, Some(_)) => return false,
-            };
-            let Some(handle) = shape.3 else {
-                continue;
-            };
-            if library
-                .revision_of(handle)
-                .is_some_and(|revision| revision <= before)
-            {
-                continue;
-            }
-            let at = handle.slot();
-            if resolved.len() <= at {
-                resolved.resize(at + 1, None);
-            }
-            if let Some((known, checked)) = resolved[at]
-                && known == handle
-            {
-                if checked != kept {
-                    return false;
-                }
-                continue;
-            }
-            let binding = library.material(handle).and_then(Material::binding);
-            let same = match (kept, binding) {
-                (None, None) => true,
-                (Some(kept), Some(binding)) => canonical.get(&binding) == Some(&kept),
-                (Some(_), None) | (None, Some(_)) => false,
-            };
-            if !same {
-                return false;
-            }
-            resolved[at] = Some((handle, kept));
-        }
-        true
-    }
-
-    fn rebuild(&mut self, library: &AssetLibrary) {
-        let Self {
-            owners,
-            ordered,
-            batches,
-            shapes,
-            keys,
-            canonical,
-            resolved,
-            ..
-        } = self;
-        canonical.clear();
-        resolved.clear();
-        keys.clear();
-        keys.extend(shapes.iter().map(|shape| {
-            let (order, kind, geometry, material) = (*shape)?;
-            let material = material.and_then(|handle| {
-                let at = handle.slot();
-                if resolved.len() <= at {
-                    resolved.resize(at + 1, None);
-                }
-                if let Some((known, found)) = resolved[at]
-                    && known == handle
-                {
-                    return found;
-                }
-                let found = library
-                    .material(handle)
-                    .and_then(Material::binding)
-                    .map(|binding| *canonical.entry(binding).or_insert(handle));
-                resolved[at] = Some((handle, found));
-                found
-            });
-            Some((batch_key((order, kind, geometry, material)), material))
-        }));
-        ordered.clear();
-        ordered.extend(
-            owners
-                .iter()
-                .enumerate()
-                .filter(|(_, owner)| owner.is_some())
-                .map(|(slot, _)| slot as u32),
-        );
-        ordered.sort_unstable_by_key(|&slot| {
-            (keys[slot as usize].as_ref().map(|(key, _)| *key), slot)
-        });
-        batches.clear();
-        let mut start = 0;
-        for at in 1..=ordered.len() {
-            let first = ordered[start] as usize;
-            let same = at < ordered.len()
-                && keys[ordered[at] as usize].as_ref().map(|(key, _)| key)
-                    == keys[first].as_ref().map(|(key, _)| key);
-            if same {
-                continue;
-            }
-            if let (Some((order, kind, geometry, _)), Some((_, material))) =
-                (shapes[first], &keys[first])
-            {
-                batches.push(DrawnBatch {
-                    kind,
-                    geometry,
-                    material: *material,
-                    order,
-                    instances: start as u32..at as u32,
-                });
-            }
-            start = at;
-        }
-        self.drifted = false;
-        self.generation += 1;
-        self.plan = PlanState::Built {
-            generation: self.generation,
+        let batch = match self.keyed.get(&key) {
+            Some(&batch) => batch,
+            None => self.open(key),
         };
+        let at = batch as usize;
+        if self.batches[at].instances.len() as u32 == self.rooms[at] {
+            self.grow(batch);
+        }
+        let end = self.batches[at].instances.end;
+        self.order[end as usize] = slot;
+        self.order_changes.mark(end);
+        self.homes[slot as usize] = Home {
+            batch,
+            at: end - self.batches[at].instances.start,
+        };
+        self.batches[at].instances.end += 1;
     }
+
+    fn unfile(&mut self, slot: u32) {
+        let Home { batch, at } = std::mem::replace(
+            &mut self.homes[slot as usize],
+            Home {
+                batch: NO_BATCH,
+                at: 0,
+            },
+        );
+        if batch == NO_BATCH {
+            return;
+        }
+        let instances = self.batches[batch as usize].instances.clone();
+        let (hole, last) = (instances.start + at, instances.end - 1);
+        if hole != last {
+            let moved = self.order[last as usize];
+            self.order[hole as usize] = moved;
+            self.homes[moved as usize].at = at;
+            self.order_changes.mark(hole);
+        }
+        self.order[last as usize] = NO_SLOT;
+        self.order_changes.mark(last);
+        self.batches[batch as usize].instances.end = last;
+        if last == instances.start {
+            self.close(batch);
+        }
+    }
+
+    fn open(&mut self, key: BatchKey) -> u32 {
+        let start = self.region(1);
+        let (kind, order, geometry, material, passes, layers) = key;
+        let made = DrawnBatch {
+            kind: self.kinds[kind].kind,
+            order,
+            geometry,
+            material,
+            passes: passes.map(PassMask),
+            layers: Layers(layers),
+            instances: start..start,
+        };
+        let batch = match self.spare_batches.pop() {
+            Some(batch) => {
+                let at = batch as usize;
+                self.batches[at] = made;
+                self.keys[at] = key;
+                self.rooms[at] = 1;
+                batch
+            }
+            None => {
+                self.batches.push(made);
+                self.keys.push(key);
+                self.rooms.push(1);
+                (self.batches.len() - 1) as u32
+            }
+        };
+        self.keyed.insert(key, batch);
+        let keys = &self.keys;
+        let sorted = &mut self.sorted[kind];
+        let at = sorted.partition_point(|&known| keys[known as usize] < key);
+        sorted.insert(at, batch);
+        batch
+    }
+
+    fn close(&mut self, batch: u32) {
+        let at = batch as usize;
+        let key = self.keys[at];
+        self.keyed.remove(&key);
+        let keys = &self.keys;
+        let sorted = &mut self.sorted[key.0];
+        let found = sorted.partition_point(|&known| keys[known as usize] < key);
+        sorted.remove(found);
+        let start = self.batches[at].instances.start;
+        self.spare_regions[self.rooms[at].trailing_zeros() as usize].push(start);
+        self.spare_batches.push(batch);
+    }
+
+    fn grow(&mut self, batch: u32) {
+        let at = batch as usize;
+        let room = self.rooms[at] * 2;
+        let start = self.region(room);
+        let instances = self.batches[at].instances.clone();
+        let (from, len) = (instances.start as usize, instances.len());
+        self.order
+            .copy_within(from..from + len, start as usize);
+        self.order[from..from + len].fill(NO_SLOT);
+        for index in start..start + len as u32 {
+            self.order_changes.mark(index);
+        }
+        self.spare_regions[self.rooms[at].trailing_zeros() as usize].push(instances.start);
+        self.rooms[at] = room;
+        self.batches[at].instances = start..start + len as u32;
+    }
+
+    fn region(&mut self, room: u32) -> u32 {
+        let class = room.trailing_zeros() as usize;
+        if self.spare_regions.len() <= class {
+            self.spare_regions.resize_with(class + 1, Vec::new);
+        }
+        if let Some(start) = self.spare_regions[class].pop() {
+            return start;
+        }
+        let start = self.order.len();
+        self.order.resize(start + room as usize, NO_SLOT);
+        start as u32
+    }
+}
+
+fn stale(drawn: &Drawn, library: &AssetLibrary, before: u64) -> bool {
+    let moved = |revision: Option<u64>| revision.is_none_or(|revision| revision > before);
+    drawn
+        .geometry
+        .is_some_and(|geometry| moved(library.revision_of(geometry)))
+        || drawn.material.is_some_and(|handle| {
+            moved(library.revision_of(handle))
+                || library.material(handle).is_some_and(|material| {
+                    material
+                        .textures()
+                        .any(|texture| moved(library.revision_of(texture)))
+                })
+        })
 }
 
 fn refused_of(state: &DrawnState) -> Option<&Error> {
@@ -950,47 +719,6 @@ fn refused_of(state: &DrawnState) -> Option<&Error> {
         | DrawnState::Unplaced
         | DrawnState::Waiting => None,
     }
-}
-
-fn shape(drawn: &Drawn) -> Shape {
-    (drawn.order, drawn.kind, drawn.geometry, drawn.material)
-}
-
-fn batch_key((order, kind, geometry, material): Shape) -> BatchKey {
-    (
-        order,
-        kind,
-        geometry.map(GeometryHandle::slot),
-        material.map(MaterialHandle::slot),
-    )
-}
-
-fn keep(held: &mut Drawn, drawn: &Drawn) {
-    let Drawn {
-        kind,
-        geometry,
-        material,
-        passes,
-        layers,
-        order,
-        projection,
-        values:
-            InstanceValues {
-                tint,
-                emission,
-                floats,
-            },
-    } = drawn;
-    held.kind = *kind;
-    held.geometry = *geometry;
-    held.material = *material;
-    held.passes = *passes;
-    held.layers = *layers;
-    held.order = *order;
-    held.projection = *projection;
-    held.values.tint = *tint;
-    held.values.emission = *emission;
-    held.values.floats.clone_from(floats);
 }
 
 fn hold(residency: &AssetResidency, drawn: &Drawn) -> Vec<Interest<Asset>> {
@@ -1010,23 +738,11 @@ fn dropped(remove: On<Remove, Drawn>, mut table: ResMut<DrawnTable>) {
     table.touched.push(remove.entity);
 }
 
-fn bounded(insert: On<Insert, DrawnBounds>, mut table: ResMut<DrawnTable>) {
-    table.touched.push(insert.entity);
-}
-
-fn unbounded(remove: On<Remove, DrawnBounds>, mut table: ResMut<DrawnTable>) {
-    table.touched.push(remove.entity);
-}
-
 pub(crate) fn install(world: &mut World) {
     world.register_required_components::<Drawn, Transform>();
     world.init_resource::<DrawnTable>();
     world.add_observer(touched);
     world.add_observer(dropped);
-    world.add_observer(bounded);
-    world.add_observer(unbounded);
-    let edits = Edits::new(world);
-    world.resource_mut::<DrawnTable>().edits = Some(edits);
 }
 
 pub(crate) fn install_kinds(world: &mut World) {
@@ -1055,21 +771,34 @@ pub(crate) fn install_kinds(world: &mut World) {
         }
         listed.push(decl);
     }
-    let reaches: Vec<PositionReach> = world
-        .get_resource::<Registry>()
-        .into_iter()
-        .flat_map(|registry| registry.iter())
-        .flat_map(|(_, record)| record.render_entries::<PositionReach>().copied())
-        .collect();
     let mut table = world.resource_mut::<DrawnTable>();
+    table.sorted.resize_with(listed.len(), Vec::new);
     table.kinds = listed;
-    table.reaches = reaches;
     table.seen = None;
     if let Some(mut registry) = world.get_resource_mut::<Registry>() {
         for problem in problems {
             registry.report(problem);
         }
     }
+}
+
+pub(crate) fn ask(world: &mut World) {
+    if !world.contains_resource::<DrawnTable>() {
+        return;
+    }
+    world.resource_scope(|world, mut table: Mut<DrawnTable>| {
+        let Some(residency) = world.get_resource::<AssetResidency>() else {
+            return;
+        };
+        let touched = std::mem::take(&mut table.touched);
+        for &entity in &touched {
+            if let Some(drawn) = world.get::<Drawn>(entity) {
+                let kept = table.take_held(entity, drawn, residency);
+                table.held.insert(entity, kept);
+            }
+        }
+        table.touched = touched;
+    });
 }
 
 pub(crate) fn resolve(world: &mut World) {

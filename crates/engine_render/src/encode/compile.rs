@@ -85,35 +85,12 @@ fn vertex_layouts(vertices: &[VertexLayout]) -> Vec<HeldLayout> {
 
 fn depth_stencil_state(
     format: wgpu::TextureFormat,
-    view_depth: bool,
     depth: DepthUse,
+    stencil: &wgpu::StencilState,
 ) -> wgpu::DepthStencilState {
     let (write, compare, bias) = match depth {
         DepthUse::None => (
             false,
-            wgpu::CompareFunction::Always,
-            wgpu::DepthBiasState::default(),
-        ),
-        DepthUse::Test => (
-            false,
-            if view_depth {
-                wgpu::CompareFunction::GreaterEqual
-            } else {
-                wgpu::CompareFunction::LessEqual
-            },
-            wgpu::DepthBiasState::default(),
-        ),
-        DepthUse::Write { bias } => (
-            true,
-            if view_depth {
-                wgpu::CompareFunction::GreaterEqual
-            } else {
-                wgpu::CompareFunction::LessEqual
-            },
-            bias,
-        ),
-        DepthUse::Overwrite => (
-            true,
             wgpu::CompareFunction::Always,
             wgpu::DepthBiasState::default(),
         ),
@@ -127,7 +104,7 @@ fn depth_stencil_state(
         format,
         depth_write_enabled: Some(write),
         depth_compare: Some(compare),
-        stencil: wgpu::StencilState::default(),
+        stencil: stencil.clone(),
         bias,
     }
 }
@@ -136,23 +113,17 @@ fn color_targets(
     desc: &RenderDecl,
     formats: &[Option<wgpu::TextureFormat>],
     written: Option<&[u32]>,
-    main: bool,
 ) -> Vec<Option<wgpu::ColorTargetState>> {
     formats
         .iter()
         .enumerate()
         .map(|(location, format)| {
             let format = (*format)?;
-            let (blend, mask) = match &desc.targets {
-                Some(targets) => targets
-                    .get(location)
-                    .copied()
-                    .unwrap_or((None, wgpu::ColorWrites::empty())),
-                None => (
-                    (!main || location == 0).then_some(desc.blend).flatten(),
-                    desc.writes,
-                ),
-            };
+            let (blend, mask) = desc
+                .targets
+                .get(location)
+                .copied()
+                .unwrap_or((None, wgpu::ColorWrites::empty()));
             let outputs = written.is_none_or(|written| written.contains(&(location as u32)));
             Some(wgpu::ColorTargetState {
                 format,
@@ -244,11 +215,9 @@ pub(crate) struct Compiler<'r> {
 
 struct Shape<'f> {
     formats: &'f [Option<wgpu::TextureFormat>],
-    depth: Option<(wgpu::TextureFormat, bool)>,
-    main: bool,
+    depth: Option<wgpu::TextureFormat>,
     material: Vec<(&'static str, f64)>,
     styling: Option<crate::surface::MaterialVariant>,
-    raster: engine_core::PassRaster,
     fragment: Option<engine_core::Entry>,
     faces: Option<crate::surface::FaceCull>,
 }
@@ -425,7 +394,6 @@ struct Keyed {
     styled: bool,
     fragment: Option<engine_core::Entry>,
     faces: Option<crate::surface::FaceCull>,
-    raster: engine_core::PassRaster,
 }
 
 impl Run {
@@ -497,7 +465,7 @@ impl Run {
         pipeline: u32,
         targets: (
             &[Option<wgpu::TextureFormat>],
-            Option<(wgpu::TextureFormat, bool)>,
+            Option<wgpu::TextureFormat>,
         ),
         shown: (bool, bool),
         variant: Option<crate::surface::MaterialVariant>,
@@ -598,7 +566,12 @@ impl Run {
             && !self.pipelines.making.refused(made)
             && !self.pipelines.making.waits(made)
         {
-            let constants: Vec<(String, f64)> = Vec::new();
+            let constants: Vec<(String, f64)> = stage
+                .composed
+                .constants(&built.decl.constants)
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value))
+                .collect();
             let stages = vec![stage_key(
                 stage,
                 (stage.entry.name(), &constants),
@@ -738,7 +711,7 @@ impl Compiler<'_> {
         pipeline: u32,
         targets: (
             &[Option<wgpu::TextureFormat>],
-            Option<(wgpu::TextureFormat, bool)>,
+            Option<wgpu::TextureFormat>,
         ),
         shown: (bool, bool),
         variant: Option<crate::surface::MaterialVariant>,
@@ -752,7 +725,7 @@ impl Compiler<'_> {
         pipeline: u32,
         targets: (
             &[Option<wgpu::TextureFormat>],
-            Option<(wgpu::TextureFormat, bool)>,
+            Option<wgpu::TextureFormat>,
         ),
         shown: (bool, bool),
         variant: Option<crate::surface::MaterialVariant>,
@@ -765,7 +738,7 @@ impl Compiler<'_> {
         pipeline: u32,
         targets: (
             &[Option<wgpu::TextureFormat>],
-            Option<(wgpu::TextureFormat, bool)>,
+            Option<wgpu::TextureFormat>,
         ),
         shown: (bool, bool),
         variant: Option<crate::surface::MaterialVariant>,
@@ -804,7 +777,7 @@ impl Compiler<'_> {
         pipeline: u32,
         targets: (
             &[Option<wgpu::TextureFormat>],
-            Option<(wgpu::TextureFormat, bool)>,
+            Option<wgpu::TextureFormat>,
         ),
         shown: (bool, bool),
         (specialized, dynamic): (
@@ -859,7 +832,7 @@ impl Compiler<'_> {
         pipeline: u32,
         (formats, depth): (
             &[Option<wgpu::TextureFormat>],
-            Option<(wgpu::TextureFormat, bool)>,
+            Option<wgpu::TextureFormat>,
         ),
         (plain, main): (bool, bool),
         variant: Option<crate::surface::MaterialVariant>,
@@ -877,7 +850,7 @@ impl Compiler<'_> {
             })
         });
         let specialized = used.contains(&true);
-        let styled = !plain && !desc.writes.is_empty();
+        let styled = !plain && desc.targets.iter().any(|(_, writes)| !writes.is_empty());
         let faced = desc.faces != Faces::Declared;
         let bits = variant.and_then(|variant| variant.keyed(used, styled, faced));
         let fragment = match desc.faces {
@@ -890,17 +863,9 @@ impl Compiler<'_> {
             return None;
         }
         let faces = faced.then(|| bits.map_or(crate::surface::FaceCull::Back, |bits| bits.cull));
-        let raster = raster_of(self.machine, pipeline);
         let mut hasher = DefaultHasher::new();
         (formats, depth, plain, main, bits).hash(&mut hasher);
         (fragment.is_some(), faces).hash(&mut hasher);
-        (
-            raster.bias,
-            raster.slope.to_bits(),
-            raster.clamp_near,
-            raster.cull,
-        )
-            .hash(&mut hasher);
         Some(Keyed {
             program: built.program_key,
             key: hasher.finish(),
@@ -909,7 +874,6 @@ impl Compiler<'_> {
             styled,
             fragment,
             faces,
-            raster,
         })
     }
 
@@ -918,7 +882,7 @@ impl Compiler<'_> {
         pipeline: u32,
         (formats, depth): (
             &[Option<wgpu::TextureFormat>],
-            Option<(wgpu::TextureFormat, bool)>,
+            Option<wgpu::TextureFormat>,
         ),
         (plain, main): (bool, bool),
         variant: Option<crate::surface::MaterialVariant>,
@@ -942,13 +906,10 @@ impl Compiler<'_> {
             let shape = Shape {
                 formats,
                 depth,
-                main,
-                material: material_constants(
-                    bits.filter(|_| keyed.specialized),
-                    keyed.raster.clamp_near,
-                ),
+                material: bits
+                    .filter(|_| keyed.specialized)
+                    .map_or_else(Vec::new, |bits| bits.constants().to_vec()),
                 styling: bits.filter(|_| keyed.styled),
-                raster: keyed.raster,
                 fragment: keyed.fragment,
                 faces: keyed.faces,
             };
@@ -1001,7 +962,13 @@ impl Compiler<'_> {
         let Program::Render(desc) = &built.decl.program else {
             return None;
         };
-        let mut constants = stage_constants(&built.stages, &shape.material).into_iter();
+        let offered: Vec<(&str, f64)> = shape
+            .material
+            .iter()
+            .chain(&built.decl.constants)
+            .copied()
+            .collect();
+        let mut constants = stage_constants(&built.stages, &offered).into_iter();
         let fragment_stage = shape.fragment.and_then(|_| built.stages.get(1));
         let written = fragment_stage
             .zip(shape.fragment)
@@ -1015,7 +982,7 @@ impl Compiler<'_> {
                     crate::surface::Alpha::Blend | crate::surface::Alpha::Additive
                 )
             });
-        let mut targets = color_targets(desc, shape.formats, written.as_deref(), shape.main);
+        let mut targets = color_targets(desc, shape.formats, written.as_deref());
         if let Some(alpha) = alpha {
             blend_targets(&mut targets, alpha);
         }
@@ -1060,8 +1027,14 @@ impl Compiler<'_> {
             layout: built.layout.clone(),
             vertex: (vertex, desc.vertex.name(), vertex_constants),
             buffers: vertex_layouts(&desc.vertices),
-            primitive: culled(faced(desc.primitive, shape.faces), shape.raster.cull),
-            depth_stencil: depth_state(shape.depth, desc.depth, shape.styling, shape.raster),
+            primitive: faced(desc.primitive, shape.faces),
+            depth_stencil: shape.depth.map(|format| {
+                let mut state = depth_stencil_state(format, desc.depth, &desc.stencil);
+                if let Some(styling) = shape.styling {
+                    styling.restyle(&mut state);
+                }
+                state
+            }),
             samples: desc.samples,
             fragment: fragment.map(|(module, entry)| (module, entry, fragment_constants)),
             targets,
@@ -1073,7 +1046,7 @@ impl Compiler<'_> {
 
 type PassFormats = (
     Vec<Option<wgpu::TextureFormat>>,
-    Option<(wgpu::TextureFormat, bool)>,
+    Option<wgpu::TextureFormat>,
     (bool, bool),
 );
 
@@ -1085,20 +1058,23 @@ impl Run {
         let mut formats: Vec<Option<wgpu::TextureFormat>> = Vec::new();
         let mut depth = None;
         let mut shown = (false, false);
-        if pass_layer(pass).is_some() {
-            let set = pass_set(pass);
+        let declared = &self.machine.declared;
+        if shared(pass) {
+            let set = declared.pass_set(pass);
             let main = lit_set(&set);
             shown = (!set.is_empty() && !main, main);
             for (_, format, _) in set {
                 formats.push(Some(format));
             }
-            depth = Some((DEPTH_FORMAT, true));
+            depth = declared
+                .depth_target()
+                .and_then(|target| declared.target_format(target));
         }
-        if crate::shared::draws_canvas(pass) {
-            formats.insert(0, Some(self.canvas.surface));
-        }
-        for &view in &pass.targets {
-            formats.push(target_format(final_target(view)));
+        for &(name, _) in &pass.targets {
+            formats.push(match final_target(name) {
+                Target::Canvas => Some(self.canvas.surface),
+                target @ Target::Shared(_) => declared.target_format(target),
+            });
         }
         for &(texture, _) in &pass.colors {
             formats.push(
@@ -1110,15 +1086,14 @@ impl Run {
             );
         }
         if depth.is_none()
-            && let Some(&(texture, access)) = pass.depths.first()
+            && let Some(&(texture, _)) = pass.depths.first()
         {
-            let view = pass.view_depth(texture, access);
             depth = self
                 .machine
                 .declared
                 .textures
                 .get(texture as usize)
-                .map(|texture| (texture.format, view));
+                .map(|texture| texture.format);
         }
         (formats, depth, shown)
     }
@@ -1185,7 +1160,7 @@ impl Run {
         let Program::Render(desc) = &built.decl.program else {
             return Vec::new();
         };
-        if pass_layer(decl).is_some() {
+        if shared(decl) {
             return Vec::new();
         }
         let written = built
@@ -1296,56 +1271,6 @@ fn locations(text: &str) -> Vec<u32> {
         .collect()
 }
 
-const CLAMP_NEAR: &str = "PASS_CLAMP_NEAR";
-
-fn material_constants(
-    keyed: Option<crate::surface::MaterialVariant>,
-    clamp_near: bool,
-) -> Vec<(&'static str, f64)> {
-    let mut material = keyed.map_or_else(Vec::new, |keyed| keyed.constants().to_vec());
-    if clamp_near {
-        material.push((CLAMP_NEAR, 1.0));
-    }
-    material
-}
-
-fn depth_state(
-    depth: Option<(wgpu::TextureFormat, bool)>,
-    used: DepthUse,
-    styling: Option<crate::surface::MaterialVariant>,
-    raster: engine_core::PassRaster,
-) -> Option<wgpu::DepthStencilState> {
-    depth.map(|(format, view)| {
-        let mut state = depth_stencil_state(format, view, used);
-        if let Some(styling) = styling {
-            styling.restyle(&mut state);
-        }
-        state.bias.constant += raster.bias;
-        state.bias.slope_scale += raster.slope;
-        state
-    })
-}
-
-fn raster_of(machine: &Machine, pipeline: u32) -> engine_core::PassRaster {
-    let scene = machine
-        .pipelines
-        .get(pipeline as usize)
-        .and_then(|built| match built.decl.scope {
-            Scoped::Scene(name) => Some(name),
-            Scoped::Pass(_) | Scoped::Outside(_) => None,
-        });
-    scene
-        .and_then(|name| {
-            machine
-                .declared
-                .passes
-                .iter()
-                .filter_map(|pass| pass.scene)
-                .find(|scene| scene.name == name)
-        })
-        .map_or(engine_core::PassRaster::PLAIN, |scene| scene.raster)
-}
-
 fn faced(
     primitive: wgpu::PrimitiveState,
     faces: Option<crate::surface::FaceCull>,
@@ -1356,19 +1281,5 @@ fn faced(
             ..primitive
         },
         None => primitive,
-    }
-}
-
-fn culled(primitive: wgpu::PrimitiveState, cull: engine_core::PassCull) -> wgpu::PrimitiveState {
-    match cull {
-        engine_core::PassCull::Material => primitive,
-        engine_core::PassCull::None => wgpu::PrimitiveState {
-            cull_mode: None,
-            ..primitive
-        },
-        engine_core::PassCull::Front => wgpu::PrimitiveState {
-            cull_mode: Some(wgpu::Face::Front),
-            ..primitive
-        },
     }
 }

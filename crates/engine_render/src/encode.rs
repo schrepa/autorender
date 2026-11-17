@@ -8,11 +8,10 @@ use engine_core::{
 };
 
 use crate::graph::{Bits, Clear, FAR, Load, Ops, Plan, Planned};
-use crate::install::{Bound, Copied, PassDecl, Program, Reinstall, Scoped, ViewTarget, Work};
+use crate::install::{Bound, Copied, PassDecl, Program, Reinstall, Scoped, Work};
 use crate::linker::Ty;
 use crate::machine::{
-    CAMERA_STRIDE, CoreFrame, DEPTH_FORMAT, Machine, Ready, SetFormat, Target, final_target,
-    lit_set, pass_layer, pass_set, reads_depth_direct, shared, target_read,
+    CAMERA_STRIDE, Machine, Ready, SetFormat, Target, final_target, lit_set, shared,
 };
 use crate::profiling::GpuProfiler;
 use crate::readback::{Deliver, Keep, Readbacks, Reader};
@@ -34,7 +33,7 @@ mod warming;
 pub(crate) use arena::Arena;
 pub(crate) use compile::Compiler;
 pub(crate) use recording::{Ended, Recording, Step};
-pub(crate) use run::{Bindings, DroppedTally, KindAnswer, Pipelines, Run};
+pub(crate) use run::{Bindings, DroppedTally, Pipelines, Run};
 pub(crate) use views::Tables;
 
 pub(crate) type FrameCore = Run;
@@ -103,15 +102,11 @@ impl Holders {
                 match (binding, machine.frame_bound.get(&binding)) {
                     (0, _) => holders.cameras.push(holder),
                     (_, Some(bound)) => holders.hold(bound, holder),
-                    (_, None) => match machine
-                        .frame_slots
-                        .get(&binding)
-                        .and_then(|slot| slot.core.as_ref())
-                    {
-                        Some(CoreFrame::Target(_)) => holders.targets.push(holder),
-                        Some(CoreFrame::Post) => holders.post.push(holder),
-                        None => {}
-                    },
+                    (_, None) => {
+                        if machine.frame_slots.get(&binding).is_some_and(|slot| slot.post) {
+                            holders.post.push(holder);
+                        }
+                    }
                 }
             }
         }
@@ -186,7 +181,7 @@ impl Groups {
 pub(crate) struct PassLayout {
     formats: [Option<wgpu::TextureFormat>; MOST_COLORS],
     count: usize,
-    depth: Option<(wgpu::TextureFormat, bool)>,
+    depth: Option<wgpu::TextureFormat>,
     plain: bool,
     main: bool,
 }
@@ -201,7 +196,7 @@ impl PassLayout {
 pub(crate) struct Compiled {
     program: u64,
     formats: Vec<Option<wgpu::TextureFormat>>,
-    depth: Option<(wgpu::TextureFormat, bool)>,
+    depth: Option<wgpu::TextureFormat>,
     plain: bool,
     main: bool,
     variant: Option<crate::surface::MaterialVariant>,
@@ -268,6 +263,7 @@ pub(crate) struct Made {
     pub(crate) format: wgpu::TextureFormat,
     pub(crate) usage: wgpu::TextureUsages,
     pub(crate) dimension: wgpu::TextureDimension,
+    pub(crate) samples: u32,
 }
 
 impl Allocated {
@@ -276,7 +272,7 @@ impl Allocated {
             label: Some(made.label),
             size,
             mip_level_count: mips.max(1),
-            sample_count: 1,
+            sample_count: made.samples,
             dimension: made.dimension,
             format: made.format,
             usage: made.usage,
@@ -481,24 +477,6 @@ pub(crate) struct Spare {
     cameras: Vec<u8>,
 }
 
-const TARGET_KEY: u64 = 1 << 62;
-
-fn target_key(target: Target) -> u64 {
-    let (kind, index) = match target {
-        Target::Scene => (0, 0),
-        Target::Depth => (1, 0),
-        Target::Canvas => (2, 0),
-        Target::Copy(layer, view) => {
-            let view = match view {
-                ViewTarget::Scene => 0,
-                ViewTarget::Depth => 1,
-            };
-            (5, view << 8 | layer as u64)
-        }
-    };
-    TARGET_KEY | kind << 32 | index
-}
-
 fn fault(path: String, code: ErrorCode) -> Error {
     Error::new(code, path)
 }
@@ -571,14 +549,6 @@ fn texture_dimension(machine: &Machine, texture: u32) -> wgpu::TextureDimension 
         wgpu::TextureDimension::D3
     } else {
         wgpu::TextureDimension::D2
-    }
-}
-
-fn target_format(target: Target) -> Option<wgpu::TextureFormat> {
-    match target {
-        Target::Scene | Target::Copy(_, ViewTarget::Scene) => Some(crate::machine::SCENE_FORMAT),
-        Target::Depth | Target::Copy(_, ViewTarget::Depth) => Some(DEPTH_FORMAT),
-        Target::Canvas => None,
     }
 }
 
@@ -799,8 +769,6 @@ impl Run {
         Some(SceneDraw {
             pass: crate::Scene::named(scene.name),
             bit: scene.bit,
-            role: scene.pass.role(),
-            index: Some(self.uniforms.camera_slot),
         })
     }
 
@@ -815,7 +783,7 @@ impl Run {
             .draw_entries
             .iter()
             .filter(|member| {
-                pass.members.contains(&member.part) && member.kind.joins(scene.name, &scene.pass)
+                pass.members.contains(&member.part) && member.kind.joins(scene.name)
             })
             .cloned()
             .collect()
@@ -886,6 +854,7 @@ impl Run {
             format: wanted,
             usage,
             dimension,
+            samples: 1,
         };
         let fresh = Allocated::new(&self.device, &made, size, mips);
         let tables = self.texture_tables_mut(texture);

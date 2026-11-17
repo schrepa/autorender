@@ -26,20 +26,19 @@ pub use calls::{
     open_schema, scene_references, schema_of,
 };
 pub use drawn::{
-    DrawKind, Drawn, DrawnBounds, DrawnProjection, InstanceValues, KindDecl, KindSkip, Layers,
-    NodeId, PositionReach,
+    DrawKind, Drawn, DrawnBounds, DrawnProjection, InstanceValues, KindDecl, Layers, NodeId,
+    PositionReach,
 };
 pub use engine_assets::{
     AttributeFormat, GeometryHandle, MaterialHandle, StreamShape, TextureHandle,
 };
 pub use engine_settings::{Error, ErrorCode};
-pub use feeds::{Cursor, Events, Feed, FeedView, Ring, Since, StoreId};
+pub use feeds::{Changed, Changes, Cursor, Events, Feed, FeedView, Ring, Since, StoreId};
 pub use names::{AuthoredId, Named, OperationScene, SceneEntity, entity_removed};
 pub use nodes::{Clock, Mobility, Mover, MoverId, Node, NodeWord, Pace};
 pub use passes::{
-    AttachPoint, BlendedPass, CORE_BRICK, ColorPass, KindCell, KindJoin, Pass, PassBit, PassCull,
-    PassEntry, PassMask, PassName, PassRaster, PassRole, PassViews, ScenePass, ScenePasses, SlotSet,
-    TargetName, Writes, every, never, wgsl_name,
+    BlendedPass, CORE_BRICK, ColorPass, KindCell, KindJoin, Pass, PassBit, PassEntry, PassMask,
+    PassName, PassRole, PassViews, ScenePass, ScenePasses, SlotSet, TargetName, Writes, wgsl_name,
 };
 pub use point::{PointInput, PointSet};
 pub use readback::{FrameId, Readable, Readback};

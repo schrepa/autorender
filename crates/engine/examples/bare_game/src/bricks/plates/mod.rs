@@ -1,49 +1,23 @@
 engine::brick!(plates);
 
-use bevy_ecs::prelude::*;
 use engine_core::{
-    AssetResidency, AttachPoint, Attributes, BlendedPass, Brick, Bricks, ColorPass, DrawKind,
-    DrawnPoses, DrawnTable, Error, GlobalTransforms, GpuStruct, KindDecl, KindSkip, MaterialHandle,
-    Pass, PassName, PassViews, SlotSet, Source, SurfaceSlot, Writes, gpu_struct,
+    Attributes, Brick, Bricks, DrawKind, Error, KindDecl, Pass, PassName, PassViews, SlotSet,
+    Source, SurfaceSlot, Writes,
 };
 use engine_render::{
-    Allocation, Bind, Buffer, Draw, Form, FormSide, FragmentUse, GpuPart, Install, KindForm,
-    Lifetime, Prepare, RenderBricks, Scene, SceneDraw, Shape, SlotModule, Varyings,
+    Draw, Form, FormSide, FragmentUse, GpuPart, Install, KindForm, Prepare, RenderBricks, Scene,
+    SlotModule, Varyings,
 };
 
 pub const PLATE: DrawKind = DrawKind("plate");
 
 pub const PLATE_MODULE: &str = "plate";
 
-const PLATE_MATERIAL: &str = "the plate material";
-
-const ROW_MATERIAL: &str = "$.drawn.material";
-
-const GENERATED: &[&str] = &[<PlateInstance as GpuStruct>::WGSL];
-
-const SKIPS: &[KindSkip] = &[
-    KindSkip::pass::<ColorPass>("plates draw in their own pass"),
-    KindSkip::pass::<BlendedPass>("plates are opaque"),
-];
-
 const FORM: KindForm = KindForm {
     kind: PLATE,
-    placed: FormSide {
-        vertex: shaders::plates::draw::VS_PLATE,
-        streams: &[],
-        depth_bias: FormSide::UNBIASED,
-    },
+    placed: FormSide::pulled(shaders::plates::draw::VS_PLATE),
     varyings: Varyings::Surface(FragmentUse::Masked),
 };
-
-gpu_struct! {
-    pub struct PlateInstance {
-        pub center: [f32; 4],
-        pub across: [f32; 4],
-        pub along: [f32; 4],
-        pub drawn: [u32; 4],
-    }
-}
 
 pub struct PlatesPass;
 
@@ -53,13 +27,7 @@ impl PassName for PlatesPass {
         writes: Writes::LIT,
         reads: SlotSet::ALL,
         views: PassViews::Main,
-        at: AttachPoint::Opaque,
-        takes: plated,
     };
-}
-
-fn plated(kind: &KindDecl) -> bool {
-    kind.kind == PLATE
 }
 
 pub struct PlatesBrick;
@@ -73,7 +41,7 @@ impl Brick for PlatesBrick {
                 kind: PLATE,
                 needs: Attributes::NONE,
                 streams: &[],
-                skips: SKIPS,
+                passes: &[PlatesPass::NAME],
             })
             .pass::<PlatesPass>()
             .material_slot(SlotModule {
@@ -84,103 +52,30 @@ impl Brick for PlatesBrick {
                 values: &[],
                 reach: 0.0,
             })
-            .generated(GENERATED)
             .draws::<PlatesGpu>(PLATE, PlatesGpu::draw);
     }
 }
 
 struct PlatesGpu {
-    instances: Buffer<Self>,
     form: Form<Self>,
-    material: Option<MaterialHandle>,
-    waiting: bool,
-    refused: Option<Error>,
-    staged: Vec<PlateInstance>,
 }
 
 impl GpuPart for PlatesGpu {
-    type Reads = (
-        Res<'static, DrawnTable>,
-        (Res<'static, GlobalTransforms>, Res<'static, DrawnPoses>),
-        Res<'static, AssetResidency>,
-    );
+    type Reads = ();
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        use shaders::plates::draw;
-        let instances = cx.buffer("plates", Lifetime::Kept);
-        let form = cx.form(&FORM, &[(draw::PLATES, Bind::Buffer(instances))])?;
         Ok(Self {
-            instances,
-            form,
-            material: None,
-            waiting: false,
-            refused: None,
-            staged: Vec::new(),
+            form: cx.form(&FORM, &[])?,
         })
     }
 
-    fn prepare(
-        &mut self,
-        (table, (globals, poses), residency): SystemParamItem<'_, '_, Self::Reads>,
-        cx: &mut Prepare<'_, Self>,
-    ) {
-        self.material = None;
-        self.waiting = false;
-        self.refused = None;
-        self.staged.clear();
-        for (slot, entity, drawn) in table.rows(PLATE) {
-            let Some(pose) = poses.drawn_pose(&globals, entity) else {
-                continue;
-            };
-            if self.material.is_none() {
-                self.material = drawn
-                    .material
-                    .filter(|material| residency.material_resident(*material));
-                if let (Some(material), None) = (drawn.material, self.material) {
-                    match residency.refusal(material, ROW_MATERIAL) {
-                        Some(error) => self.refused = self.refused.take().or(Some(error)),
-                        None => self.waiting = true,
-                    }
-                }
-            }
-            self.staged.push(PlateInstance {
-                center: pose.w_axis.to_array(),
-                across: pose.x_axis.to_array(),
-                along: pose.z_axis.to_array(),
-                drawn: [slot, 0, 0, 0],
-            });
-        }
-        let bytes = self.staged.len().max(1) * std::mem::size_of::<PlateInstance>();
-        let (Allocation::Fresh | Allocation::Kept) =
-            cx.allocate_buffer(self.instances, bytes as u64);
-        cx.write(self.instances, 0, &self.staged);
-    }
+    fn prepare(&mut self, (): (), _: &mut Prepare<'_, Self>) {}
 }
 
 impl PlatesGpu {
-    fn draw(&self, _: &SceneDraw, draw: &mut Draw<'_, Self, Scene>) -> u32 {
-        let count = self.staged.len() as u32;
-        if count == 0 {
-            return draw.skip("no plate has a pose yet");
+    fn draw(&self, draw: &mut Draw<'_, Self, Scene>) {
+        if let Some(pipeline) = draw.form(&self.form) {
+            draw.batches(&pipeline, 0..6);
         }
-        let Some(material) = self.material else {
-            return match (&self.refused, self.waiting) {
-                (Some(error), _) => draw.refuse(PLATE_MATERIAL, error),
-                (None, true) => draw.wait(PLATE_MATERIAL),
-                (None, false) => draw.skip("no plate names a material"),
-            };
-        };
-        let Some(pipeline) = draw.form(&self.form) else {
-            return draw.skip("pass has no plate form");
-        };
-        draw.draw(
-            &pipeline,
-            Shape::Pulled {
-                vertices: 0..6,
-                instances: 0..count,
-                material: Some(material),
-            },
-        );
-        count
     }
 }

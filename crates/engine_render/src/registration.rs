@@ -7,10 +7,11 @@ use bevy_ecs::world::World;
 use engine_core::{DrawKind, Error, ErrorCode, KindDecl};
 
 use crate::draws::RawDraw;
+use crate::drawn::Batches;
 use crate::encode::{EncodeCore, FrameCore};
 use crate::install::InstallCore;
 use crate::profiling::GpuProfiler;
-use crate::{Draw, Encode, GpuPart, Install, Pass, Prepare, Scene, SceneDraw};
+use crate::{Draw, Encode, GpuPart, Install, Pass, Prepare, Scene};
 
 pub(crate) type InstallFn = fn(&mut World, &mut InstallCore) -> Result<Box<dyn Installed>, Error>;
 
@@ -38,7 +39,7 @@ impl PartRecord {
 
 pub(crate) struct Generated(pub(crate) &'static [&'static str]);
 
-pub(crate) type KindCall = Arc<dyn Fn(&dyn Any, &SceneDraw, &mut RawDraw<'_>) -> u32 + Send + Sync>;
+pub(crate) type KindCall = Arc<dyn Fn(&dyn Any, &mut RawDraw<'_>) + Send + Sync>;
 
 pub(crate) struct KindDraw {
     pub(crate) part: TypeId,
@@ -49,19 +50,16 @@ pub(crate) struct KindDraw {
 impl KindDraw {
     pub(crate) fn of<P: GpuPart>(
         kind: DrawKind,
-        draw: fn(&P, &SceneDraw, &mut Draw<'_, P, Scene>) -> u32,
+        draw: fn(&P, &mut Draw<'_, P, Scene>),
     ) -> Self {
         Self {
             part: TypeId::of::<P>(),
             kind,
-            call: Arc::new(
-                move |part: &dyn Any, scene: &SceneDraw, raw: &mut RawDraw<'_>| match part
-                    .downcast_ref::<P>()
-                {
-                    Some(part) => draw(part, scene, &mut Draw::retyped(raw)),
-                    None => 0,
-                },
-            ),
+            call: Arc::new(move |part: &dyn Any, raw: &mut RawDraw<'_>| {
+                if let Some(part) = part.downcast_ref::<P>() {
+                    draw(part, &mut Draw::retyped(raw));
+                }
+            }),
         }
     }
 }
@@ -71,6 +69,18 @@ pub(crate) struct KindMember {
     pub(crate) part: u32,
     pub(crate) kind: KindDecl,
     pub(crate) call: KindCall,
+    pub(crate) batches: Batches,
+}
+
+impl KindMember {
+    pub(crate) fn new(part: u32, kind: KindDecl, call: KindCall) -> Self {
+        Self {
+            part,
+            kind,
+            call,
+            batches: Batches::default(),
+        }
+    }
 }
 
 impl<P: GpuPart, S: 'static> Draw<'_, P, S> {

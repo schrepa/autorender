@@ -13,7 +13,6 @@ use crate::readback::{Arrival, Reader};
 
 const BATCHES: [&str; 3] = ["batch_0", "batch_1", "batch_2"];
 const OPAQUE_SCENE: &str = "opaque_scene";
-const VIEW_COPY: &str = "stage_view_copy";
 
 #[derive(Default)]
 pub(super) struct Hidden {
@@ -72,9 +71,7 @@ fn opaque_span(
 ) -> Option<(usize, usize)> {
     let opaque = |planned: &crate::graph::Planned| {
         passes.get(planned.pass.index()).is_some_and(|pass| {
-            crate::machine::shared(pass)
-                && crate::machine::pass_layer(pass)
-                    .is_some_and(|layer| layer < engine_core::AttachPoint::Transparent)
+            crate::machine::shared(pass) && planned.batch == 1
         })
     };
     Some((
@@ -402,9 +399,6 @@ impl Renderer {
         }
         let base = run.planning.runs.clone();
         let order = drawn_order(&listed);
-        let last_surface = order
-            .iter()
-            .rposition(|&index| listed[index].target.surface());
         let profile_encoding = engine_profile::span("render", "command_encoding");
         let row_encoding = engine_profile::timed(engine_profile::row("render.encoding"));
         let mut encoder = self.frame_encoder(&device, 0);
@@ -419,11 +413,10 @@ impl Renderer {
         let mut timed: Option<&'static str> = None;
         let mut parted: Option<(&'static str, u32)> = None;
         let mut ran: Vec<&'static str> = Vec::new();
-        let declared = run.machine.declared.passes.len();
         let mut ready = Bits::of(run.machine.graph.resources());
         let mut drawn_on: Vec<(engine_core::Target, usize)> = Vec::new();
         let mut first = true;
-        for (step, &index) in order.iter().enumerate() {
+        for &index in &order {
             let facts = listed[index];
             let Some(run) = self.run.as_mut() else { break };
             let Some((drawing, texture, format, extent)) =
@@ -462,7 +455,7 @@ impl Renderer {
             }
             run.forget_viewed();
             run.lay_arena();
-            keep_eligible(run, &facts, (first, index == 0), Some(step) == last_surface);
+            keep_eligible(run, &facts, (first, index == 0));
             let mut outputs = asked.clone();
             if order.len() > 1 {
                 for pass in run
@@ -545,21 +538,6 @@ impl Renderer {
                 let Some(run) = self.run.as_mut() else { break };
                 let collected = collecting
                     && (run.sets.passes.contains(index) || run.sets.main.contains(index));
-                if index >= declared {
-                    if !collected
-                        && let Some(&(layer, view)) = run.machine.view_copies.get(index - declared)
-                    {
-                        let mut encoder = run.take_encoder();
-                        if timed != Some(VIEW_COPY) {
-                            self.mark(encoder.as_mut(), timed, Some(VIEW_COPY));
-                            timed = Some(VIEW_COPY);
-                        }
-                        let Some(run) = self.run.as_mut() else { break };
-                        run.recording = Recording::of(encoder);
-                        run.copy_view(layer, view);
-                    }
-                    continue;
-                }
                 let pass = &run.machine.declared.passes[index];
                 let (part, work) = (pass.part, pass.work);
                 let elsewhere = pass.scene.is_some_and(|scene| !scene.core);
@@ -972,9 +950,7 @@ fn keep_eligible(
     run: &mut Run,
     facts: &engine_core::ViewFacts,
     (first, main): (bool, bool),
-    overlay: bool,
 ) {
-    let declared = run.machine.declared.passes.len();
     let listed: Vec<usize> = run.planning.runs.iter().collect();
     for index in listed {
         let viewed = run.sets.passes.contains(index);
@@ -983,15 +959,11 @@ fn keep_eligible(
             run.planning.runs.remove(index);
             continue;
         }
-        let shown = index >= declared || {
-            let pass = &run.machine.declared.passes[index];
-            let views = match pass.views {
-                engine_core::PassViews::Every => true,
-                engine_core::PassViews::Main => facts.target.surface(),
-            };
-            (!viewed || views) && (pass.layer != Some(engine_core::AttachPoint::Overlay) || overlay)
+        let views = match run.machine.declared.passes[index].views {
+            engine_core::PassViews::Every => true,
+            engine_core::PassViews::Main => facts.target.surface(),
         };
-        if !shown {
+        if viewed && !views {
             run.planning.runs.remove(index);
         }
     }

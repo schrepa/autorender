@@ -81,14 +81,10 @@ impl Run {
         self.filled.retain(|filled| filled.used + 1 >= frame);
     }
 
-    pub(super) fn reads_direct(&self) -> bool {
-        reads_depth_direct(&self.machine.direct_depth, self.pass as usize)
-    }
-
     pub(super) fn view_of(&self, target: Target) -> Option<&wgpu::TextureView> {
         match target {
             Target::Canvas => self.canvas.view.as_ref(),
-            Target::Scene | Target::Depth | Target::Copy(..) => self.set().target(target),
+            Target::Shared(_) => self.set().target(target),
         }
     }
 
@@ -115,16 +111,9 @@ impl Run {
                 };
                 made.slice(&mips, &layers, dimension).cloned()
             }
-            Bound::Target(view) => {
-                let wanted = target_read(*view, self.pass_layer(), self.reads_direct());
-                self.view_of(wanted).cloned()
-            }
+            Bound::Target(name) => self.view_of(final_target(*name)).cloned(),
             Bound::Buffer(_) | Bound::Window { .. } | Bound::Sampler(_) | Bound::Asset => None,
         }
-    }
-
-    pub(crate) fn pass_layer(&self) -> Option<engine_core::AttachPoint> {
-        pass_layer(self.machine.declared.passes.get(self.pass as usize)?)
     }
 
     pub(super) fn placeholder(&mut self, key: (Ty, u64)) {
@@ -345,18 +334,15 @@ impl Run {
     }
 
     pub(super) fn core_frame(&mut self, binding: u32, ty: Ty) -> Resolved {
-        let core = self
+        let post = self
             .machine
             .frame_slots
             .get(&binding)
-            .and_then(|slot| slot.core.as_ref());
-        match core {
-            Some(CoreFrame::Post) => Resolved::Buffer(self.set().post_buffer.clone()),
-            Some(CoreFrame::Target(target)) => match self.view_of(*target) {
-                Some(view) => Resolved::View(view.clone()),
-                None => Resolved::Placeholder(ty),
-            },
-            None => Resolved::Placeholder(ty),
+            .is_some_and(|slot| slot.post);
+        if post {
+            Resolved::Buffer(self.set().post_buffer.clone())
+        } else {
+            Resolved::Placeholder(ty)
         }
     }
 
@@ -385,33 +371,30 @@ impl Run {
             | wgpu::TextureUsages::COPY_SRC
             | wgpu::TextureUsages::COPY_DST;
         let device = self.device.clone();
-        let made = |label: &'static str, format| {
+        let made = |label: &'static str, format, samples| {
             let made = Made {
                 label,
                 format,
                 usage,
                 dimension: wgpu::TextureDimension::D2,
+                samples,
             };
             Allocated::new(&device, &made, extent, 1)
         };
-        let mut targets = vec![
-            (
-                Target::Scene,
-                made("engine/scene", crate::machine::SCENE_FORMAT),
-            ),
-            (Target::Depth, made("engine/depth", DEPTH_FORMAT)),
-        ];
-        for (target, _) in &self.machine.ids.targets {
-            if matches!(target, Target::Copy(..))
-                && let Some(format) = target_format(*target)
-            {
-                targets.push((*target, made("engine/view-copy", format)));
-            }
-        }
+        let mut targets: Vec<(Target, Allocated)> = self
+            .machine
+            .declared
+            .targets
+            .iter()
+            .map(|shared| {
+                let made = made(shared.name.name(), shared.format, shared.samples);
+                (Target::Shared(shared.name), made)
+            })
+            .collect();
         if split {
             targets.push((
                 Target::Canvas,
-                made("engine/view-canvas", self.canvas.format),
+                made("engine/view-canvas", self.canvas.format, 1),
             ));
         }
         let set = self.set_mut();
@@ -479,17 +462,18 @@ impl Run {
         if from == at {
             return false;
         }
-        let pairs: Vec<(wgpu::Texture, wgpu::Texture, wgpu::Extent3d)> =
-            [Target::Scene, Target::Depth]
-                .iter()
-                .filter_map(|target| {
-                    let from = source.targets.iter().find(|(known, _)| known == target)?;
-                    let to = current.targets.iter().find(|(known, _)| known == target)?;
-                    (from.1.size == to.1.size)
-                        .then(|| (from.1.texture.clone(), to.1.texture.clone(), to.1.size))
-                })
-                .collect();
-        if pairs.len() != 2 {
+        let shared = &self.machine.declared.targets;
+        let pairs: Vec<(wgpu::Texture, wgpu::Texture, wgpu::Extent3d)> = shared
+            .iter()
+            .filter_map(|shared| {
+                let target = Target::Shared(shared.name);
+                let from = source.targets.iter().find(|(known, _)| *known == target)?;
+                let to = current.targets.iter().find(|(known, _)| *known == target)?;
+                (from.1.size == to.1.size)
+                    .then(|| (from.1.texture.clone(), to.1.texture.clone(), to.1.size))
+            })
+            .collect();
+        if pairs.len() != shared.len() {
             return false;
         }
         let Some(encoder) = self.recording.encoder() else {
@@ -651,9 +635,6 @@ pub(super) fn view_passes(machine: &Machine) -> (Bits, Bits) {
             passes.insert(index);
         }
     }
-    for index in declared.len()..graph.passes() {
-        passes.insert(index);
-    }
     let mut varying = graph.view_resources();
     let (textures, buffers) = view_resources(machine);
     for texture in textures {
@@ -703,7 +684,7 @@ fn placeholder(device: &wgpu::Device, (ty, bytes): (Ty, u64)) -> Placeholder {
         Ty::Texture { sample, view } => {
             let format = match sample {
                 Sample::Float => wgpu::TextureFormat::Rgba8Unorm,
-                Sample::Depth => DEPTH_FORMAT,
+                Sample::Depth => wgpu::TextureFormat::Depth32Float,
                 Sample::Uint => wgpu::TextureFormat::R32Uint,
                 Sample::Sint => wgpu::TextureFormat::R32Sint,
             };

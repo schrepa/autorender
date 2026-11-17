@@ -11,10 +11,9 @@ macro_rules! shader_modules {
                 concat!(env!("CARGO_MANIFEST_DIR"), "/src/", $file),
             ),)*
             crate::shared::generated(crate::drawn::DRAWN_MODULE),
-            crate::shared::generated(crate::drawn::DRAWN_CULL_MODULE),
+            crate::shared::generated(crate::drawn::DRAWN_POSE_MODULE),
             crate::shared::generated(crate::kinds::SURFACED_MODULE),
             crate::shared::generated(crate::shared::WRITES_MODULE),
-            crate::shared::generated(crate::shared::COMPOSITE_MODULE),
         ];
     };
 }
@@ -37,10 +36,8 @@ pub static CORE: Source = Source::generated(crate::linker::CORE_PACKAGE, false, 
 
 pub const FULLSCREEN: engine_core::Entry =
     engine_core::Entry::generated(Module::generated(&CORE, 0), "vs_fullscreen");
-pub const FS_COMPOSITE: engine_core::Entry = engine_core::Entry::generated(
-    Module::generated(&CORE, (TEXTS.len() - 1) as u32),
-    "fs_composite",
-);
+pub const FS_COMPOSITE: engine_core::Entry =
+    engine_core::Entry::generated(Module::generated(&CORE, 10), "fs_composite");
 
 pub(crate) fn core_module(path: &str) -> Module {
     let index = TEXTS.iter().position(|text| text.path() == path);
@@ -112,7 +109,7 @@ pub fn generated_core() -> [(&'static str, String); 9] {
         (crate::surface::SURFACES_MODULE, standard.surfaces_source()),
         (VIEW_MODULE, view_source()),
         (crate::drawn::DRAWN_MODULE, crate::drawn::source()),
-        (crate::drawn::DRAWN_CULL_MODULE, crate::drawn::cull_source()),
+        (crate::drawn::DRAWN_POSE_MODULE, crate::drawn::pose_source()),
         (crate::shared::WRITES_MODULE, crate::shared::pass_module().1),
     ]
 }

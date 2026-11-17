@@ -1,5 +1,6 @@
 use std::fmt::Write as _;
 use std::marker::PhantomData;
+use std::ops::Range;
 
 use engine_core::{
     DepthBias, DrawKind, DropReason, Entry, Error, ErrorCode, Module, PassRole, Var,
@@ -7,7 +8,8 @@ use engine_core::{
 
 use crate::install::{Faces, FragmentUse, InstallCore, Program, RenderDecl, Scoped};
 use crate::{
-    Bind, DepthUse, Draw, FaceCull, GpuPart, Install, Pipeline, Scene, VertexLayout, bound_list,
+    Bind, DepthUse, Draw, FaceCull, GpuPart, Install, Pipeline, Scene, Shape, VertexLayout,
+    bound_list,
 };
 
 pub(crate) const KINDS_MODULE: &str = "engine::kinds";
@@ -112,6 +114,8 @@ pub struct PassFragment {
     pub side: Option<FormSide>,
     pub entry: Entry,
     pub cull: FaceCull,
+    pub blend: Option<wgpu::BlendState>,
+    pub depth: DepthUse,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -282,9 +286,11 @@ fn depth_bias(bias: DepthBias) -> wgpu::DepthBiasState {
     }
 }
 
-fn written(bias: DepthBias) -> DepthUse {
-    DepthUse::Write {
-        bias: depth_bias(bias),
+fn tested(write: bool, bias: wgpu::DepthBiasState) -> DepthUse {
+    DepthUse::Compare {
+        compare: wgpu::CompareFunction::GreaterEqual,
+        write,
+        bias,
     }
 }
 
@@ -300,12 +306,11 @@ fn kind_program(
         vertices: side.streams.to_vec(),
         primitive: primitive(fragment.cull),
         depth: match role {
-            PassRole::Blended => DepthUse::Test,
-            PassRole::Lit | PassRole::Depth => written(side.depth_bias),
+            PassRole::Blended => tested(false, wgpu::DepthBiasState::default()),
+            PassRole::Lit | PassRole::Depth => tested(true, depth_bias(side.depth_bias)),
         },
-        blend: None,
-        writes: wgpu::ColorWrites::ALL,
-        targets: None,
+        stencil: wgpu::StencilState::default(),
+        targets: vec![(None, wgpu::ColorWrites::ALL)],
         samples: 1,
         faces: fragment.faces,
     }))
@@ -318,10 +323,9 @@ fn pass_program(form: &KindForm, own: &PassFragment) -> Program {
         fragment: Some(own.entry),
         vertices: side.streams.to_vec(),
         primitive: primitive(own.cull.face()),
-        depth: DepthUse::Test,
-        blend: None,
-        writes: wgpu::ColorWrites::ALL,
-        targets: None,
+        depth: own.depth,
+        stencil: wgpu::StencilState::default(),
+        targets: vec![(own.blend, wgpu::ColorWrites::ALL)],
         samples: 1,
         faces: Faces::Declared,
     })
@@ -360,7 +364,7 @@ impl<P: GpuPart> Install<'_, P> {
         owns: &[PassFragment],
         bound: &[(Var, Bind<P>)],
     ) -> Result<Form<P>, Error> {
-        let bound = bound_list(bound)?;
+        let bound = bound_list(bound);
         let surfaced = self.surfaced(form)?;
         let listed: Vec<engine_core::ScenePass> = self
             .core
@@ -527,19 +531,17 @@ impl<P: GpuPart> Draw<'_, P, Scene> {
         table.named(point)
     }
 
-    pub fn skip(&mut self, reason: &'static str) -> u32 {
-        self.raw.run().tallies.kinds.skip(reason);
-        0
-    }
-
-    pub fn wait(&mut self, on: &'static str) -> u32 {
-        self.raw.run().tallies.kinds.wait(on);
-        0
-    }
-
-    pub fn refuse(&mut self, on: &'static str, error: &Error) -> u32 {
-        self.raw.run().tallies.kinds.refuse(on, error);
-        0
+    pub fn batches(&mut self, pipeline: &Pipeline<P, Scene>, vertices: Range<u32>) {
+        for batch in self.raw.batches() {
+            self.draw(
+                pipeline,
+                Shape::Pulled {
+                    vertices: vertices.clone(),
+                    instances: batch.instances.clone(),
+                    material: batch.material,
+                },
+            );
+        }
     }
 
     pub fn drop_rows(&mut self, reason: DropReason, rows: u32) {

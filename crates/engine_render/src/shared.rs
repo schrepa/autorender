@@ -1,24 +1,12 @@
-use engine_core::{AttachPoint, Error, ShaderText, Source};
+use engine_core::{Error, ShaderText, Source, TargetName};
 
-use crate::install::{PassDecl, Work};
-use crate::{GpuPart, Install, Pass, Prepare};
+use crate::install::Work;
+use crate::{GpuPart, Install, Pass, Prepare, SharedTarget};
 
-pub(crate) const COMPOSITE: &str = "composite";
 pub(crate) const POST: &str = "post";
-pub(crate) const SCENE: &str = "scene";
-pub(crate) const DEPTH: &str = "depth_texture";
 pub(crate) const WRITES_MODULE: &str = "generated::writes";
-pub(crate) const COMPOSITE_MODULE: &str = "generated::composite";
 pub(crate) const PASSES_MODULE: &str = "generated::passes";
 pub(crate) const KINDS_MODULE: &str = "generated::kinds";
-
-pub(crate) fn composites(pass: &PassDecl) -> bool {
-    pass.name == COMPOSITE
-}
-
-pub(crate) fn draws_canvas(pass: &PassDecl) -> bool {
-    composites(pass) || pass.layer == Some(AttachPoint::Overlay)
-}
 
 pub(crate) struct ScenePart {
     passes: Vec<Pass<Self>>,
@@ -29,6 +17,16 @@ impl GpuPart for ScenePart {
     const NAME: &'static str = "scene";
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
+        cx.shared_target(SharedTarget {
+            name: TargetName::COLOR,
+            format: wgpu::TextureFormat::Rgba16Float,
+            samples: 1,
+        });
+        cx.shared_target(SharedTarget {
+            name: TargetName::DEPTH,
+            format: wgpu::TextureFormat::Depth32Float,
+            samples: 1,
+        });
         let listed: Vec<engine_core::ScenePass> = cx
             .core
             .passes
@@ -39,7 +37,7 @@ impl GpuPart for ScenePart {
                 cx.core
                     .draws
                     .iter()
-                    .any(|member| member.kind.joins(listed.name, &listed.pass))
+                    .any(|member| member.kind.joins(listed.name))
             })
             .copied()
             .collect();
@@ -60,57 +58,6 @@ impl GpuPart for ScenePart {
 
     fn encode(&mut self, _pass: Pass<Self>, cx: &mut crate::Encode<'_, Self>) -> u32 {
         cx.render(crate::Attach::Declared).scene(self)
-    }
-}
-
-pub(crate) struct Composite {
-    pass: Pass<Self>,
-    pipeline: crate::Pipeline<Self, crate::Own>,
-}
-
-impl GpuPart for Composite {
-    type Reads = ();
-    const NAME: &'static str = "post";
-
-    fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
-        let pass = cx
-            .pass(COMPOSITE)
-            .label("engine/post-composite")
-            .span("post_composite")
-            .id();
-        let pipeline = cx.render_pipeline(
-            pass,
-            &crate::RenderPipeline {
-                vertex: crate::shaders::FULLSCREEN,
-                fragment: Some(crate::shaders::FS_COMPOSITE),
-                vertices: &[],
-                primitive: wgpu::PrimitiveState::default(),
-                depth: crate::DepthUse::None,
-                blend: None,
-                writes: wgpu::ColorWrites::ALL,
-            },
-            &[],
-        )?;
-        Ok(Self { pass, pipeline })
-    }
-
-    fn prepare(&mut self, (): (), _cx: &mut Prepare<'_, Self>) {}
-
-    fn view(&mut self, _view: &engine_core::ViewFacts, cx: &mut Prepare<'_, Self>) {
-        cx.run(self.pass);
-    }
-
-    fn encode(&mut self, _pass: Pass<Self>, cx: &mut crate::Encode<'_, Self>) -> u32 {
-        let mut draw = cx.render(crate::Attach::Declared);
-        draw.draw(
-            &self.pipeline,
-            crate::Shape::Pulled {
-                vertices: 0..3,
-                instances: 0..1,
-                material: None,
-            },
-        );
-        0
     }
 }
 
@@ -144,26 +91,6 @@ pub(crate) fn pass_module() -> (String, String) {
         "import package::engine::shading::{{Shaded, SurfaceInput, SurfacePoint}};\nimport package::engine::slots::{{shade, slot_output}};\n\nstruct Outputs {{\n    @location(0) color: vec4<f32>,\n}}\n\nfn outputs(point: SurfacePoint, shaded: Shaded) -> Outputs {{\n    var written: Outputs;\n    written.color = vec4<f32>(shaded.linear, 1.0);\n    return written;\n}}\n\nfn blended_outputs(point: SurfacePoint, shaded: Shaded) -> Outputs {{\n    var written = outputs(point, shaded);\n    written.color = vec4<f32>(shaded.linear * shaded.opacity, shaded.opacity);\n    return written;\n}}\n{SHADED}"
     );
     (engine_core::TargetName::COLOR.name().to_owned(), text)
-}
-
-pub(crate) fn composite_source() -> String {
-    "import package::engine::post::frame::{depth_texture, post, scene};
-import package::engine::color::encode_srgb;
-
-fn uncovered(pixel: vec2<i32>) -> bool {
-    return post.kept.x != 0u && textureLoad(depth_texture, pixel, 0) <= 0.0;
-}
-
-@fragment
-fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
-    let pixel = min(vec2<i32>(position.xy), vec2<i32>(post.size.xy) - 1);
-    if uncovered(pixel) {
-        discard;
-    }
-    return vec4<f32>(encode_srgb(textureLoad(scene, pixel, 0).rgb), 1.0);
-}
-"
-    .to_owned()
 }
 
 pub(crate) fn core_source() -> &'static Source {
