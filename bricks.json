@@ -1683,7 +1683,7 @@
       "smokes": [],
       "stats": [],
       "type": "engine_reflections::ReflectionsBrick",
-      "version": "07e2c71b6da3b90f8a0b5b933ca946f9cc7d2cbc903933809fe143af3998a4a9"
+      "version": "56b869ffe1a0755d32d8d6bb12f686d51d0f2670ccaf00e4e4f57c39dfeba437"
     },
     {
       "dependencies": [
@@ -2622,7 +2622,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "46cbc608702bda09c0aca4f03e90c5a834cd7ee3187de8ea2fdb079c0785bbe9"
+      "version": "954bc5c9f7d57318d738270ac26c83bd7eae5f4d5809575033588d731f92ee1c"
     },
     {
       "dependencies": [
@@ -2719,14 +2719,6 @@
         },
         {
           "kind": "face",
-          "place": "lit",
-          "providers": [
-            "engine_lighting"
-          ],
-          "required": false
-        },
-        {
-          "kind": "face",
           "place": "view_wind",
           "providers": [
             "engine_wind"
@@ -2756,7 +2748,7 @@
         }
       ],
       "type": "engine_ground_cover::GroundCoverBrick",
-      "version": "1eef57ae3447e2eca3d308395f56658b683a89bc87c7d0e040e0c6a84ced81b6"
+      "version": "c2a9d4df1ab67061aee91a2a8e8e668144580eb7481cbd794f213a0382f7a2d7"
     },
     {
       "dependencies": [
@@ -4759,7 +4751,6 @@
     {
       "contract": true,
       "face_readers": [
-        "engine_ground_cover",
         "engine_render"
       ],
       "filler": "engine_lighting",
@@ -4767,7 +4758,6 @@
       "members": [],
       "name": "lit",
       "readers": [
-        "engine_ground_cover",
         "engine_render"
       ],
       "smokes": [],
