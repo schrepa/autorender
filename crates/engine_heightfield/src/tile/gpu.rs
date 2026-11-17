@@ -38,7 +38,6 @@ pub const H_MATERIALS: u32 = 3;
 pub const H_READS: u32 = 4;
 pub const H_HYDROLOGY: u32 = 5;
 pub const H_PATHS: u32 = 6;
-pub const H_FADE: u32 = 7;
 pub const H_WET_BIOMES: u32 = 8;
 pub const H_EROSION: u32 = 9;
 pub const H_MAPS: u32 = 10;
@@ -70,7 +69,6 @@ pub mod header {
     pub const READS: usize = super::H_READS as usize;
     pub const HYDROLOGY: usize = super::H_HYDROLOGY as usize;
     pub const PATHS: usize = super::H_PATHS as usize;
-    pub const FADE: usize = super::H_FADE as usize;
     pub const WET_BIOMES: usize = super::H_WET_BIOMES as usize;
     pub const EROSION: usize = super::H_EROSION as usize;
     pub const MAPS: usize = super::H_MAPS as usize;
@@ -83,6 +81,7 @@ pub mod header {
 pub struct SurfaceData {
     pub words: Vec<u32>,
     offset: [f32; 2],
+    fade: Option<([f32; 4], f32)>,
     hydrology: Option<(f32, usize)>,
 }
 
@@ -137,16 +136,11 @@ impl SurfaceData {
             let names = [site.sun, site.soil, site.exposure];
             write_maps(names.into_iter(), layers, &mut words);
         }
-        if let Some(fade) = layers.fade {
-            words[header::FADE] = words.len() as u32;
-            push_f32(
-                &mut words,
-                [fade.low.x, fade.low.y, fade.high.x, fade.high.y, fade.blend],
-            );
-        }
         Some(Self {
             words,
             offset: layers.offset.to_array(),
+            fade: (layers.fade)
+                .map(|fade| ([fade.low.x, fade.low.y, fade.high.x, fade.high.y], fade.blend)),
             hydrology: layers
                 .hydrology()
                 .map(|hydrology| (hydrology.spacing, hydrology.flow.levels())),
@@ -155,6 +149,10 @@ impl SurfaceData {
 
     pub fn offset(&self) -> [f32; 2] {
         self.offset
+    }
+
+    pub fn fade(&self) -> Option<([f32; 4], f32)> {
+        self.fade
     }
 
     pub fn hydrology(&self) -> Option<(f32, usize)> {
@@ -369,7 +367,9 @@ fn write_images(images: &[&HeightImage], words: &mut Vec<u32>) {
             entry += 3;
         };
         level(words, image.width, image.height);
-        push_f32(words, image.samples.iter().map(|&sample| f32::from(sample)));
+        words.extend(image.samples.chunks(2).map(|pair| {
+            u32::from(pair[0]) | u32::from(pair.get(1).copied().unwrap_or(0)) << 16
+        }));
         for coarse in &image.levels {
             level(words, coarse.width, coarse.height);
             push_f32(words, coarse.samples.iter().copied());

@@ -5,8 +5,8 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::world::World;
 use engine_core::collections::{HashMap, HashSet};
 use engine_core::{
-    Background, CookAsks, FrameBudget, FrameTime, IDLE_JOBS, JobFailures, Jobs, Landed, RecordKey,
-    Records, VIEW_JOBS, Views, job_priority, record_missing,
+    Background, CookAsks, FrameBudget, FrameTime, IDLE_JOBS, JobFailures, Jobs, Landed, Pause,
+    PauseReason, RecordKey, Records, VIEW_JOBS, Views, job_priority, record_missing,
 };
 use engine_heightfield::Stamp;
 use engine_heightfield::tile::shaded_elsewhere;
@@ -358,7 +358,7 @@ impl Shadings {
         }
     }
 
-    fn attach(&mut self, entry: &TerrainEntry, budget: &mut FrameBudget) {
+    fn attach(&mut self, entry: &TerrainEntry, mut budget: Option<&mut FrameBudget>) {
         self.waiting = 0;
         self.shaded = 0;
         let mut gave = false;
@@ -376,7 +376,9 @@ impl Shadings {
             if !face.current {
                 continue;
             }
-            if (gave && budget.expired()) || !budget.spend(BUDGET, 2 * TILE_ARRAY_BYTES) {
+            if budget.as_deref_mut().is_some_and(|budget| {
+                (gave && budget.expired()) || !budget.spend(BUDGET, 2 * TILE_ARRAY_BYTES)
+            }) {
                 self.waiting += 1;
                 continue;
             }
@@ -425,7 +427,7 @@ struct Follow<'a, 'w, 's> {
     failures: &'a mut JobFailures,
     shared: &'a mut BTreeSet<RecordKey>,
     released: &'a mut Vec<RecordKey>,
-    budget: &'a mut FrameBudget,
+    budget: Option<&'a mut FrameBudget>,
 }
 
 pub(crate) fn shade(
@@ -433,7 +435,7 @@ pub(crate) fn shade(
     records: Res<Records>,
     views: Res<Views>,
     time: Res<FrameTime>,
-    mut budget: ResMut<FrameBudget>,
+    (mut budget, pause): (ResMut<FrameBudget>, Res<Pause>),
     mut jobs: Jobs,
     mut bakes: ResMut<Bakes>,
 ) {
@@ -459,7 +461,7 @@ pub(crate) fn shade(
             failures: &mut bakes.failures,
             shared: &mut shared,
             released: &mut released,
-            budget: &mut budget,
+            budget: (!pause.holds(PauseReason::Preparing)).then_some(&mut *budget),
         };
         let local = Vec2::new(eye.x - entry.origin.x, eye.z - entry.origin.z);
         follow(held, entry, &mut cx, (local, frame, moved));
@@ -501,6 +503,6 @@ fn follow(
         flow.release_shares(cx.released);
     }
     if dirty || flow.waiting > 0 {
-        flow.attach(entry, cx.budget);
+        flow.attach(entry, cx.budget.as_deref_mut());
     }
 }

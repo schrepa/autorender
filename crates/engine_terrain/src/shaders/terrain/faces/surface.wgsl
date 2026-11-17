@@ -1,5 +1,5 @@
 import package::place::ground_surface::{
-    BIOME_WORDS, H_BIOMES, H_DEBRIS, H_EROSION, H_FADE, H_HYDROLOGY, H_MAPS, H_PATHS, H_PROGRAM,
+    BIOME_WORDS, H_BIOMES, H_DEBRIS, H_EROSION, H_HYDROLOGY, H_MAPS, H_PATHS, H_PROGRAM,
     H_READS,
     H_SITE, H_WET_BIOMES, LAYER_COVERS, MAX_MAPS, MAX_MATERIALS, MAX_STACK, OP_ADD, OP_CONSTANT,
     OP_CURVATURE, OP_DEPOSIT, OP_END, OP_FACING, OP_FLOOD, OP_FLOW, OP_GRADIENT, OP_GRAIN,
@@ -16,6 +16,7 @@ import package::generated::terrain::{
 @group(0) @binding(0) var<storage, read> surface_materials: array<SurfaceEntry>;
 
 var<private> surface_base: u32;
+var<private> surface_terrain: u32;
 var<private> surface_maps: array<f32, MAX_MAPS>;
 
 fn word(at: u32) -> u32 {
@@ -129,12 +130,17 @@ fn image_weights(t: f32) -> vec4<f32> {
         t3 * (1.0 / 6.0));
 }
 
-fn image_texel(level: u32, x: i32, z: i32) -> f32 {
+fn image_texel(level: u32, x: i32, z: i32, packed: bool) -> f32 {
     let width = i32(word(level));
     let height = i32(word(level + 1u));
     let cx = clamp(x, 0, width - 1);
     let cz = clamp(z, 0, height - 1);
-    return real(word(level + 2u) + u32(cz * width + cx));
+    let index = u32(cz * width + cx);
+    if packed {
+        let pair = word(word(level + 2u) + (index >> 1u));
+        return f32((pair >> ((index & 1u) * 16u)) & 0xffffu);
+    }
+    return real(word(level + 2u) + index);
 }
 
 fn image_sample(table: u32, u: f32, v: f32, level: u32) -> f32 {
@@ -154,11 +160,14 @@ fn image_sample(table: u32, u: f32, v: f32, level: u32) -> f32 {
     let z = i32(v0);
     let wx = image_weights(su - u0);
     let wz = image_weights(sv - v0);
+    let packed = entry == table + 1u;
     var columns: array<f32, 4>;
     for (var column = 0; column < 4; column++) {
         let xi = x - 1 + column;
-        columns[column] = wz.x * image_texel(entry, xi, z - 1) + wz.y * image_texel(entry, xi, z)
-            + wz.z * image_texel(entry, xi, z + 1) + wz.w * image_texel(entry, xi, z + 2);
+        columns[column] = wz.x * image_texel(entry, xi, z - 1, packed)
+            + wz.y * image_texel(entry, xi, z, packed)
+            + wz.z * image_texel(entry, xi, z + 1, packed)
+            + wz.w * image_texel(entry, xi, z + 2, packed);
     }
     return wx.x * columns[0] + wx.y * columns[1] + wx.z * columns[2] + wx.w * columns[3];
 }
@@ -250,6 +259,7 @@ fn site_byte(value: f32, low: f32, high: f32) -> u32 {
 
 fn surface_site_range(terrain: u32, part: u32) -> vec2<f32> {
     surface_base = surface_materials[terrain].base;
+    surface_terrain = terrain;
     let section = word(H_SITE);
     if section == NONE {
         return vec2<f32>(0.0, 1.0);
@@ -260,6 +270,7 @@ fn surface_site_range(terrain: u32, part: u32) -> vec2<f32> {
 
 fn surface_site(terrain: u32, inputs: SurfaceInputs) -> u32 {
     surface_base = surface_materials[terrain].base;
+    surface_terrain = terrain;
     let section = word(H_SITE);
     if section == NONE {
         return 0u;
@@ -347,13 +358,13 @@ fn path_at(point: vec2<f32>) -> vec2<f32> {
 }
 
 fn shown(point: vec2<f32>) -> f32 {
-    let section = word(H_FADE);
-    if section == NONE {
+    let entry = surface_materials[surface_terrain];
+    if entry.faded == 0u {
         return 1.0;
     }
-    let low = vec2<f32>(real(section), real(section + 1u));
-    let high = vec2<f32>(real(section + 2u), real(section + 3u));
-    let blend = real(section + 4u);
+    let low = entry.fade.xy;
+    let high = entry.fade.zw;
+    let blend = entry.blend;
     let beyond = max(max(low - point, point - high), vec2<f32>(0.0));
     let outside = sqrt(beyond.x * beyond.x + beyond.y * beyond.y);
     if outside <= 0.0 {
@@ -389,6 +400,7 @@ fn surface_river(held: vec4<u32>, present: bool) -> vec4<f32> {
 
 fn surface_inputs(terrain: u32, ground: SurfaceGround, level: u32, river: vec4<f32>) -> SurfaceInputs {
     surface_base = surface_materials[terrain].base;
+    surface_terrain = terrain;
     let spacing = ground.spacing;
     var inputs: SurfaceInputs;
     inputs.x = ground.x;
@@ -576,6 +588,7 @@ fn evaluate(start: u32, inputs: SurfaceInputs) -> f32 {
 
 fn surface_control(terrain: u32, inputs: SurfaceInputs) -> u32 {
     surface_base = surface_materials[terrain].base;
+    surface_terrain = terrain;
     read_maps(inputs);
     let program = word(H_PROGRAM);
     let biomes = word(H_BIOMES);
