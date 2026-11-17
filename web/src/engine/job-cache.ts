@@ -18,6 +18,7 @@ interface JobCacheIndex {
   counters(): Float64Array;
   lists(name: string): boolean;
   holds(key: string): boolean;
+  bytes(key: string): number | undefined;
   hit(key: string, bytes?: number): boolean;
   miss(): void;
   store(key: string, bytes: number): boolean;
@@ -69,6 +70,10 @@ class Shelf {
     const shelf = new Shelf(directory, index(saved));
     shelf.changed();
     return shelf;
+  }
+
+  size(key: string): number {
+    return this.index.bytes(key) ?? 0;
   }
 
   holds(key: string): boolean {
@@ -183,7 +188,10 @@ export class JobStore {
   lookup(keys: string[]): Promise<Uint8Array | undefined>[] {
     const remote = keys.filter(key => !this.records.holds(key) && !this.outputs.holds(key));
     const fetched = this.fetch(remote);
-    return keys.map(key => fetched.get(key) ?? this.local(key));
+    const held = [...new Set(keys.filter(key => !fetched.has(key)))];
+    held.sort((a, b) => this.size(b) - this.size(a));
+    const local = new Map(held.map(key => [key, this.local(key)]));
+    return keys.map(key => fetched.get(key) ?? local.get(key) ?? this.local(key));
   }
 
   keep(key: string, output: Uint8Array) {
@@ -200,6 +208,10 @@ export class JobStore {
   async sweep() {
     await this.records.sweep();
     await this.outputs.sweep();
+  }
+
+  private size(key: string): number {
+    return Math.max(this.records.size(key), this.outputs.size(key));
   }
 
   private async local(key: string): Promise<Uint8Array | undefined> {
