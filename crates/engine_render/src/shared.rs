@@ -510,9 +510,13 @@ pub(crate) fn reads_shaded(text: &str, name: &str) -> bool {
     })
 }
 
+pub(crate) fn asks(text: &str) -> bool {
+    text.contains("fn asked(")
+}
+
 pub(crate) fn pass_module(
     colored: bool,
-    written: &[&OutputDecl],
+    written: &[(&OutputDecl, bool)],
     shades: bool,
 ) -> (String, String) {
     let mut key = String::new();
@@ -536,7 +540,8 @@ pub(crate) fn pass_module(
         covered.push_str("    written.color = vec4<f32>(0.0);\n");
         added.push_str("    written.color = vec4<f32>(shaded.linear * shaded.opacity, 0.0);\n");
     }
-    for (location, output) in (u32::from(colored)..).zip(written) {
+    let mut asked: Vec<(&str, u32)> = Vec::new();
+    for (location, &(output, asking)) in (u32::from(colored)..).zip(written) {
         let name = output.name;
         key.push('+');
         key.push_str(name);
@@ -551,9 +556,27 @@ pub(crate) fn pass_module(
                 imports,
                 "import package::{module}::{name} as written_{location};"
             );
+            let answer = if asking {
+                let first = match asked.iter().find(|(known, _)| *known == module.as_str()) {
+                    Some(&(_, first)) => first,
+                    None => {
+                        asked.push((module, location));
+                        let _ = writeln!(
+                            imports,
+                            "import package::{module}::asked as ask_{location};"
+                        );
+                        let _ =
+                            writeln!(filled, "    let asked_{location} = ask_{location}(point);");
+                        location
+                    }
+                };
+                format!(", asked_{first}")
+            } else {
+                String::new()
+            };
             let _ = writeln!(
                 filled,
-                "    written.{name} = written_{location}(point, shaded, at);"
+                "    written.{name} = written_{location}(point, shaded, at{answer});"
             );
         }
     }
