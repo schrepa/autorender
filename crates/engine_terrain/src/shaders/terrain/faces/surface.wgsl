@@ -130,12 +130,17 @@ fn image_weights(t: f32) -> vec4<f32> {
         t3 * (1.0 / 6.0));
 }
 
-fn image_texel(level: u32, x: i32, z: i32) -> f32 {
+fn image_texel(level: u32, x: i32, z: i32, packed: bool) -> f32 {
     let width = i32(word(level));
     let height = i32(word(level + 1u));
     let cx = clamp(x, 0, width - 1);
     let cz = clamp(z, 0, height - 1);
-    return real(word(level + 2u) + u32(cz * width + cx));
+    let index = u32(cz * width + cx);
+    if packed {
+        let pair = word(word(level + 2u) + (index >> 1u));
+        return f32((pair >> ((index & 1u) * 16u)) & 0xffffu);
+    }
+    return real(word(level + 2u) + index);
 }
 
 fn image_sample(table: u32, u: f32, v: f32, level: u32) -> f32 {
@@ -155,11 +160,14 @@ fn image_sample(table: u32, u: f32, v: f32, level: u32) -> f32 {
     let z = i32(v0);
     let wx = image_weights(su - u0);
     let wz = image_weights(sv - v0);
+    let packed = entry == table + 1u;
     var columns: array<f32, 4>;
     for (var column = 0; column < 4; column++) {
         let xi = x - 1 + column;
-        columns[column] = wz.x * image_texel(entry, xi, z - 1) + wz.y * image_texel(entry, xi, z)
-            + wz.z * image_texel(entry, xi, z + 1) + wz.w * image_texel(entry, xi, z + 2);
+        columns[column] = wz.x * image_texel(entry, xi, z - 1, packed)
+            + wz.y * image_texel(entry, xi, z, packed)
+            + wz.z * image_texel(entry, xi, z + 1, packed)
+            + wz.w * image_texel(entry, xi, z + 2, packed);
     }
     return wx.x * columns[0] + wx.y * columns[1] + wx.z * columns[2] + wx.w * columns[3];
 }

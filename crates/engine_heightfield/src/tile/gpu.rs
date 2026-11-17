@@ -367,7 +367,9 @@ fn write_images(images: &[&HeightImage], words: &mut Vec<u32>) {
             entry += 3;
         };
         level(words, image.width, image.height);
-        push_f32(words, image.samples.iter().map(|&sample| f32::from(sample)));
+        words.extend(image.samples.chunks(2).map(|pair| {
+            u32::from(pair[0]) | u32::from(pair.get(1).copied().unwrap_or(0)) << 16
+        }));
         for coarse in &image.levels {
             level(words, coarse.width, coarse.height);
             push_f32(words, coarse.samples.iter().copied());
