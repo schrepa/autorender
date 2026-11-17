@@ -193,6 +193,9 @@ impl FrameLoop {
             if busy {
                 return Ok((preparing(Picture::Hidden, None), waiting));
             }
+            if !after.readiness.worked() {
+                return Ok((preparing(Picture::Hidden, Some(Sample::of(&after))), waiting));
+            }
             if !after.readiness.settled() {
                 return Ok((preparing(Picture::Shown, None), waiting));
             }
