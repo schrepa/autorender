@@ -38,9 +38,12 @@ fn validated(text: &str) -> Result<(naga::Module, ModuleInfo), String> {
     Ok((module, info))
 }
 
-fn modules() -> Result<Vec<Checked>, String> {
+type Stages = Vec<(&'static str, Vec<&'static str>, String)>;
+
+fn modules() -> Result<(Vec<Checked>, Stages), String> {
     let mut engine = crate::bricks::standard_engine().map_err(|error| error.to_string())?;
-    let installed = engine_checks::install::noop(&mut engine)?;
+    let mut installed = engine_checks::install::noop(&mut engine)?;
+    let stages = std::mem::take(&mut installed.stages);
     let mut checked = Vec::new();
     let mut failures = Vec::new();
     for (path, text) in installed.modules.into_iter().zip(installed.texts) {
@@ -54,7 +57,7 @@ fn modules() -> Result<Vec<Checked>, String> {
         }
     }
     if failures.is_empty() {
-        Ok(checked)
+        Ok((checked, stages))
     } else {
         Err(failures.join("\n"))
     }
@@ -66,9 +69,10 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
         [flag, folder, no] if flag == "--out" && no == "--no-rga" => (PathBuf::from(folder), false),
         _ => return Err("usage: cargo xtask shaders --out DIR [--no-rga]".into()),
     };
-    let modules = modules()?;
+    let (modules, stages) = modules()?;
     let rga = if rga { rga_program(root)? } else { None };
     std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+    write_linked(&folder, &stages)?;
     let work: Vec<(&Checked, &naga::EntryPoint)> = modules
         .iter()
         .flat_map(|checked| {
@@ -130,6 +134,34 @@ pub fn run(root: &Path, options: &[String]) -> Result<(), String> {
         "{}",
         json!({"event": "written", "file": path.display().to_string()})
     );
+    Ok(())
+}
+
+fn write_linked(folder: &Path, stages: &Stages) -> Result<(), String> {
+    let linked = folder.join("linked");
+    let _ = std::fs::remove_dir_all(&linked);
+    std::fs::create_dir_all(&linked).map_err(|error| error.to_string())?;
+    let mut named: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for (entry, _, _) in stages {
+        *named.entry((*entry).to_owned()).or_default() += 1;
+    }
+    let mut taken = HashSet::default();
+    for (entry, passes, text) in stages {
+        let mut name = if named[*entry] == 1 {
+            (*entry).to_owned()
+        } else {
+            format!("{entry}.{}", passes.join("+"))
+        };
+        let base = name.clone();
+        let mut form = 1;
+        while !taken.insert(name.clone()) {
+            form += 1;
+            name = format!("{base}.{form}");
+        }
+        let path = linked.join(format!("{name}.wgsl"));
+        std::fs::write(&path, text)
+            .map_err(|error| format!("cannot write {}: {error}", path.display()))?;
+    }
     Ok(())
 }
 
