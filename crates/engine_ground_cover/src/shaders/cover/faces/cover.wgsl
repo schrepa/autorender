@@ -469,27 +469,25 @@ fn cover_canopy(site: CoverSite, drawn: bool) -> CoverCanopy {
             weight = spec.extra.z;
             share -= weight;
         }
-        let base = cover_look(at);
         let part = cover_hidden(spec, weight, dense, scale, site.error, view, layers, thin);
         hidden += part;
-        shade += part.rgb * (spec.shade.rgb - base.shade.rgb);
-        drift += part.rgb * (spec.drift.rgb - base.drift.rgb);
+        shade += part.rgb * (spec.shade.rgb - first.shade.rgb);
+        drift += part.rgb * (spec.drift.rgb - first.drift.rgb);
         lean += part.w * spec.lean;
     }
     for (var index = 0u; index < accents.w; index++) {
-        let base = cover_look(at);
-        let spec = cover_beside(base, index);
-        let part = cover_hidden(spec, spec.shape.x / base.shape.x, thick * spec.shape.x, scale,
+        let spec = cover_beside(first, index);
+        let part = cover_hidden(spec, spec.shape.x / first.shape.x, thick * spec.shape.x, scale,
             site.error, view, layers, thin);
         hidden += part;
-        shade += part.rgb * (spec.shade.rgb - base.shade.rgb);
-        drift += part.rgb * (spec.drift.rgb - base.drift.rgb);
+        shade += part.rgb * (spec.shade.rgb - first.shade.rgb);
+        drift += part.rgb * (spec.drift.rgb - first.drift.rgb);
         lean += part.w * spec.lean;
     }
     if hidden.w <= 0.0 {
         return canopy;
     }
-    let base = cover_look(at);
+    let base = first;
     let clumped = cover_clumped(base, tall);
     let leaves = 0.5 * dense * clumped.height * clumped.height;
     canopy.depth = cover_depth(leaves * hidden.w, view.x);
