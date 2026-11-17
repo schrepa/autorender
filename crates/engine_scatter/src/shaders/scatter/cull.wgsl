@@ -44,7 +44,7 @@ struct CardArgs {
 @group(1) @binding(7) var<storage, read_write> card_args: array<CardArgs>;
 @group(1) @binding(8) var<storage, read_write> picks: array<u32>;
 
-fn append(view: u32, index: u32, drawn: CullGroup, level: u32, entry: u32) {
+fn append(view: u32, index: u32, drawn: CullGroup, level: u32, entry: u32, owns: bool) {
     if level >= drawn.levels {
         return;
     }
@@ -55,13 +55,15 @@ fn append(view: u32, index: u32, drawn: CullGroup, level: u32, entry: u32) {
     }
     let draw = view * frame.strides.y + index * frame.counts.z + level;
     let slot = atomicAdd(&draws[draw].instance_count, 1u);
-    ids[start + slot] = entry;
+    if owns {
+        ids[start + slot] = entry;
+    }
 }
 
 fn list(view: u32, record: Record, group: CullGroup, level: u32, entry: u32) {
-    append(view, record.group, group, level, entry);
+    append(view, record.group, group, level, entry, true);
     for (var part = 1u; part <= group.parts; part++) {
-        append(view, record.group + part, groups[record.group + part], level, entry);
+        append(view, record.group + part, groups[record.group + part], level, entry, false);
     }
 }
 

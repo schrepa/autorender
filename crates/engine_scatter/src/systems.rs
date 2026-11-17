@@ -425,10 +425,15 @@ fn set_groups(state: &mut ScatterState) {
     held.template.clear();
     held.lists.clear();
     let mut ids = 0;
+    let mut owner = 0;
     for (layout, group) in layouts.iter().zip(&state.groups.groups) {
         let count = group.count;
+        if !layout.part {
+            owner = ids;
+            ids += count * layout.levels.len() as u32;
+        }
         held.data.push(CullGroup {
-            ids,
+            ids: owner,
             count,
             levels: layout.levels.len() as u32,
             camera: layout.camera,
@@ -440,13 +445,12 @@ fn set_groups(state: &mut ScatterState) {
             middle: group.bounds[0],
             half: group.bounds[1],
         });
-        held.lists.push(GroupLists { ids, count });
+        held.lists.push(GroupLists { ids: owner, count });
         for level in 0..LEVELS as usize {
             held.template.push(draw_args(
                 layout.levels.get(level).copied().unwrap_or((0, 0, 0)),
             ));
         }
-        ids += count * layout.levels.len() as u32;
     }
     held.ids_per_view = ids;
     let before = state.group_bytes;
