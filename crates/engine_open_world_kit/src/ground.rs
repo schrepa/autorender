@@ -168,12 +168,14 @@ pub struct TerrainEntry {
 #[derive(Resource, Clone)]
 pub struct TerrainTiles {
     pub terrains: Arc<[TerrainEntry]>,
+    pub placements: Arc<[PlacedAsset]>,
 }
 
 impl Default for TerrainTiles {
     fn default() -> Self {
         Self {
             terrains: Arc::from(Vec::new()),
+            placements: Arc::from(Vec::new()),
         }
     }
 }
