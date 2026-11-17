@@ -107,11 +107,10 @@ pub struct StartingRenderer {
 }
 
 impl StartingRenderer {
-    pub async fn finish(self) -> Result<Renderer, Error> {
-        if let Some(error) = self.validation.await {
-            return Err(failed_with("$.pipelines", error));
-        }
-        Ok(self.renderer)
+    pub fn finish(self) -> Renderer {
+        let mut renderer = self.renderer;
+        super::validate_also(&mut renderer.installing, self.validation);
+        renderer
     }
 }
 

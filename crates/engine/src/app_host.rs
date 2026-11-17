@@ -171,7 +171,7 @@ impl AppHost {
             std::task::Poll::Ready(starting) => starting,
             std::task::Poll::Pending => start.await,
         }?;
-        let renderer = Box::new(starting.finish().await?);
+        let renderer = Box::new(starting.finish());
         let mut host = Self::with(engine, renderer, display_paced);
         host.claim_passes(ahead)?;
         log_unmet(&host.engine);
