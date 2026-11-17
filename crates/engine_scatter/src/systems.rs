@@ -3,8 +3,8 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::{
     AUTHORED_LEVELS, Asset, AssetLibrary, AssetResidency, AssetUses, Background, Cut, Detail,
-    DeviceLimits, Drawn, DrawnArea, DrawnAreas, GeometryHandle, Jobs, Readable, Readback, Records,
-    Spawner, Transform, VIEW_JOBS, Views, authored_input, job_priority,
+    DeviceLimits, Drawn, DrawnArea, DrawnAreas, GeometryHandle, Jobs, Material, Readable, Readback,
+    Records, Spawner, Transform, VIEW_JOBS, Views, authored_input, job_priority,
 };
 use engine_math::collections::HashMap;
 use engine_open_world_kit::ground::{
@@ -108,6 +108,7 @@ pub(crate) struct ScatterState {
     refilled: bool,
     revisions: Option<((u64, u64), u64)>,
     placing: Vec<Placing>,
+    placements: Arc<[PlacedAsset]>,
     boxing: Boxing,
 }
 
@@ -143,6 +144,7 @@ impl Default for ScatterState {
             refilled: false,
             revisions: None,
             placing: Vec::new(),
+            placements: Arc::from(Vec::new()),
             boxing: Boxing::default(),
         }
     }
@@ -403,7 +405,10 @@ fn resolve_all<'a>(
     (resolved, kept)
 }
 
-fn asset_uses(resolved: &ResolvedTerrains<'_>) -> Vec<Asset> {
+fn asset_uses(
+    resolved: &ResolvedTerrains<'_>,
+    (placements, settings, library): (&[PlacedAsset], &ScatterSettings, &AssetLibrary),
+) -> Vec<Asset> {
     let mut wanted: Vec<Asset> = Vec::new();
     for asset in resolved
         .iter()
@@ -412,6 +417,25 @@ fn asset_uses(resolved: &ResolvedTerrains<'_>) -> Vec<Asset> {
         wanted.extend(asset.meshes().map(|mesh| Asset::Mesh(mesh.handle)));
         wanted.extend(asset.materials().map(Asset::Material));
         wanted.extend(asset.textures.iter().copied().map(Asset::Texture));
+    }
+    for asset in placements {
+        let look = settings.look(asset.mesh);
+        let lods = look.map_or(&[][..], |look| {
+            &look.lods[..look.lods.len().min(settings.lods as usize)]
+        });
+        let parts = look.map_or(&[][..], |look| {
+            &look.parts[..look.parts.len().min(settings.parts as usize)]
+        });
+        wanted.push(Asset::Mesh(asset.mesh));
+        wanted.extend(lods.iter().copied().map(Asset::Mesh));
+        wanted.extend(parts.iter().flat_map(|part| &part.meshes).copied().map(Asset::Mesh));
+        let materials =
+            std::iter::once(asset.material).chain(parts.iter().map(|part| part.material));
+        for material in materials {
+            wanted.push(Asset::Material(material));
+            let textures = library.material(material).into_iter().flat_map(Material::textures);
+            wanted.extend(textures.map(Asset::Texture));
+        }
     }
     wanted.sort_unstable();
     wanted.dedup();
@@ -505,10 +529,10 @@ type PlaceReads<'w> = (
 
 fn derive_groups(
     state: &mut ScatterState,
-    residency: &AssetResidency,
+    (residency, settings, library): (&AssetResidency, &ScatterSettings, &AssetLibrary),
     resolved: &ResolvedTerrains<'_>,
 ) {
-    let wanted = asset_uses(resolved);
+    let wanted = asset_uses(resolved, (&state.placements, settings, library));
     if state.uses.assets() != wanted.as_slice() {
         state.uses = AssetUses::new(residency, wanted);
     }
@@ -560,8 +584,15 @@ pub(crate) fn place_pool(
     if placed {
         state.placing = tiles.terrains.iter().map(Placing::of).collect();
     }
-    let derived =
-        landed || placed || settings.is_changed() || state.revisions != Some(revisions);
+    let named = tiles.is_changed() && *state.placements != *tiles.placements;
+    if named {
+        state.placements = Arc::clone(&tiles.placements);
+    }
+    let derived = landed
+        || placed
+        || named
+        || settings.is_changed()
+        || state.revisions != Some(revisions);
     state.refilled = false;
     state.released = false;
     if derived || foliage.is_changed() || maps.whole() != ground.whole {
@@ -578,7 +609,7 @@ pub(crate) fn place_pool(
         );
         if derived {
             state.revisions = Some(revisions);
-            derive_groups(state, &residency, &resolved);
+            derive_groups(state, (&residency, &settings, &library), &resolved);
         }
     }
     let refill = state.refilled;

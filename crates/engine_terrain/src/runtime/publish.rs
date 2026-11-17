@@ -257,6 +257,16 @@ pub(crate) fn publish_terrains(
                 .filter(|state| state.drawn)
                 .map(|state| entry_of((terrains, state), &settings, &assets))
                 .collect(),
+            placements: terrains
+                .entries
+                .iter()
+                .filter(|state| state.terrain.validate().is_ok())
+                .flat_map(|state| &state.terrain.surface.assets)
+                .map(|asset| PlacedAsset {
+                    mesh: asset.mesh,
+                    material: asset.material,
+                })
+                .collect(),
         };
     }
 }
