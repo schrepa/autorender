@@ -40,6 +40,4 @@ export const TOUCH_PHASES = {"began":0,"cancelled":3,"ended":2,"moved":1};
 
 export const IMAGE_FORMATS = ["png","jpeg","ktx2-rgba8"];
 
-export const HOST_SETTINGS = {"job-clock":"wall|frames"};
-
 export const HOST_OVERLAY = "set";

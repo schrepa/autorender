@@ -4,19 +4,17 @@ use engine_registry::RecordExt;
 use crate::registration;
 use crate::{
     Draw, GpuPart, LightingModule, OpenSlot, PointInput, PointSet, Scene, SceneDraw, SlotModule,
-    SlotPrepare, SurfaceKind, SurfaceTerms, TargetDecl,
+    SlotPrepare, SurfaceKind, SurfaceTerms,
 };
 
 pub trait RenderBricks {
     fn part<P: GpuPart>(&mut self) -> &mut Self;
     fn pass<N: PassName>(&mut self) -> &mut Self;
-    fn applies<N: PassName>(&mut self, module: engine_core::Module) -> &mut Self;
     fn draws<P: GpuPart>(
         &mut self,
         kind: DrawKind,
         draw: fn(&P, &SceneDraw, &mut Draw<'_, P, Scene>) -> u32,
     ) -> &mut Self;
-    fn view_target(&mut self, target: TargetDecl) -> &mut Self;
     fn generated(&mut self, wgsl: &'static [&'static str]) -> &mut Self;
     fn material_slot(&mut self, module: SlotModule) -> &mut Self;
     fn slot_prepare(&mut self, prepare: SlotPrepare) -> &mut Self;
@@ -54,18 +52,6 @@ impl RenderBricks for Bricks<'_> {
         self
     }
 
-    fn applies<N: PassName>(&mut self, module: engine_core::Module) -> &mut Self {
-        self.pass::<N>();
-        let record = self.record();
-        let scope = record.scope();
-        record.render.push(Box::new(registration::Applied {
-            pass: PassEntry::of::<N>(),
-            module,
-            scope,
-        }));
-        self
-    }
-
     fn draws<P: GpuPart>(
         &mut self,
         kind: DrawKind,
@@ -79,11 +65,6 @@ impl RenderBricks for Bricks<'_> {
         record
             .render
             .push(Box::new(registration::KindDraw::of::<P>(kind, draw)));
-        self
-    }
-
-    fn view_target(&mut self, target: TargetDecl) -> &mut Self {
-        self.record().render.push(Box::new(target));
         self
     }
 

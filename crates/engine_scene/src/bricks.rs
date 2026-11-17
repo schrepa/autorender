@@ -18,14 +18,8 @@ impl SceneDocument {
                 kinds.unlisted(object, &format!("{list}[{index}]"), &mut skipped);
             }
         }
-        let registry = world.get_resource::<Registry>();
-        for (index, look) in self.looks.iter().enumerate() {
-            let path = format!("$.looks[{index}].environment");
-            look.environment.check_in(registry, &path)?;
-            skipped.extend(look.environment.unlisted(world, &path));
-        }
         if let Some(environment) = &self.environment {
-            environment.check_in(registry, "$.environment")?;
+            environment.check_in(world.get_resource::<Registry>(), "$.environment")?;
             skipped.extend(environment.unlisted(world, "$.environment"));
         }
         Ok(skipped)

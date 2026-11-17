@@ -1,4 +1,3 @@
-use std::any::Any;
 use std::cell::{Cell, RefCell};
 use std::collections::hash_map::Entry;
 use std::fmt;
@@ -276,25 +275,6 @@ impl Settling {
     pub fn failed(&self, failed: Option<Error>) {
         join(&self.0);
         lock(&self.0).failed = failed.into_iter().map(|error| (0, error)).collect();
-    }
-}
-
-#[must_use]
-pub struct Hold {
-    _kept: Box<dyn Any + Send + Sync>,
-}
-
-impl<K: Clone + Send + Sync + 'static> From<Interest<K>> for Hold {
-    fn from(interest: Interest<K>) -> Self {
-        Self {
-            _kept: Box::new(interest),
-        }
-    }
-}
-
-impl fmt::Debug for Hold {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str("Hold")
     }
 }
 

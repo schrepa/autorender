@@ -1,8 +1,8 @@
 use super::*;
 
 impl Run {
-    pub(crate) fn view_offset(&self, view: Option<&OwnedDraw>) -> u32 {
-        view.map_or(self.uniforms.camera_slot, |view| view.slot) * CAMERA_STRIDE as u32
+    pub(crate) fn view_offset(&self) -> u32 {
+        self.uniforms.camera_slot * CAMERA_STRIDE as u32
     }
 
     pub(crate) fn write_cameras(&mut self) -> u64 {
@@ -39,28 +39,6 @@ impl Run {
             0,
             bytemuck::bytes_of(&self.uniforms.post),
         );
-    }
-
-    pub(crate) fn write_pieces(&mut self, staged: &mut Vec<u8>) -> u64 {
-        let size = (staged.len() as u64)
-            .max(crate::pieces::PIECE_ALIGN)
-            .next_multiple_of(crate::pieces::PIECE_ALIGN);
-        if self.uniforms.pieces.size() != size {
-            self.uniforms.pieces = crate::memory::buffer(
-                &self.device,
-                &wgpu::BufferDescriptor {
-                    label: Some("engine/pieces"),
-                    size,
-                    usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                    mapped_at_creation: false,
-                },
-            );
-            self.tallies.rebuilt.buffers += 1;
-            self.touch(Held::Pieces);
-        }
-        staged.resize(size as usize, 0);
-        self.queue.write_buffer(&self.uniforms.pieces, 0, staged);
-        size
     }
 
     pub(crate) fn read_back(&mut self, asked: Asked) -> bool {
@@ -113,38 +91,22 @@ impl Run {
     pub(super) fn view_of(&self, target: Target) -> Option<&wgpu::TextureView> {
         match target {
             Target::Canvas => self.canvas.view.as_ref(),
-            Target::Output(_) | Target::Scene | Target::Depth | Target::Copy(..) => {
-                self.set().target(target)
-            }
+            Target::Scene | Target::Depth | Target::Copy(..) => self.set().target(target),
         }
     }
 
-    pub(crate) fn texture_view(
-        &mut self,
-        bound: &Bound,
-        ty: Ty,
-        reading: bool,
-    ) -> Option<wgpu::TextureView> {
-        let parity = self.frames.parity;
+    pub(crate) fn texture_view(&mut self, bound: &Bound, ty: Ty) -> Option<wgpu::TextureView> {
         let dimension = match ty {
             Ty::Texture { view, .. } | Ty::StorageTexture { view, .. } => Some(view),
             Ty::Uniform | Ty::Storage { .. } | Ty::Sampler | Ty::Comparison => None,
         };
         match bound {
             Bound::Texture(texture) | Bound::Slice { texture, .. } => {
-                let index = if self.doubled(*texture) && reading {
-                    1 - parity
-                } else {
-                    parity
-                };
                 let made = self
                     .texture_tables_mut(*texture)
                     .textures
-                    .get_mut(*texture as usize)?;
-                let made = match index {
-                    1 if made[1].is_some() => made[1].as_mut()?,
-                    _ => made[0].as_mut()?,
-                };
+                    .get_mut(*texture as usize)?
+                    .as_mut()?;
                 let (mips, layers) = match bound {
                     Bound::Slice { mips, layers, .. } => (mips.clone(), layers.clone()),
                     Bound::Texture(_)
@@ -189,7 +151,7 @@ impl Run {
             .next_multiple_of(16)
     }
 
-    pub(super) fn resource(&mut self, bound: &Bound, ty: Ty, reading: bool) -> Resolved {
+    pub(super) fn resource(&mut self, bound: &Bound, ty: Ty) -> Resolved {
         match bound {
             Bound::Buffer(buffer) => match self.buffer_held(*buffer) {
                 Some((made, _)) => Resolved::Buffer(made.clone()),
@@ -204,7 +166,7 @@ impl Run {
                 None => Resolved::Placeholder(ty),
             },
             Bound::Texture(_) | Bound::Slice { .. } | Bound::Target(_) => {
-                match self.texture_view(bound, ty, reading) {
+                match self.texture_view(bound, ty) {
                     Some(view) => Resolved::View(view),
                     None => Resolved::Placeholder(ty),
                 }
@@ -318,9 +280,8 @@ impl Run {
                         self.uniforms.camera.clone(),
                         size_of::<CameraUniform>() as u64,
                     ),
-                    1 => Resolved::Buffer(self.uniforms.pieces.clone()),
                     _ => match self.machine.frame_bound.get(&binding).cloned() {
-                        Some(bound) => self.resource(&bound, ty, false),
+                        Some(bound) => self.resource(&bound, ty),
                         None => self.core_frame(binding, ty),
                     },
                 };
@@ -355,7 +316,7 @@ impl Run {
                 .clone();
             let mut resolved = Vec::with_capacity(entries.len());
             for (binding, bound, ty) in entries {
-                let found = self.resource(&bound, ty, !ty.writes());
+                let found = self.resource(&bound, ty);
                 resolved.push((binding, found));
             }
             let layout = self.machine.pipelines[pipeline].groups[group]
@@ -394,7 +355,6 @@ impl Run {
             .and_then(|slot| slot.core.as_ref());
         match core {
             Some(CoreFrame::Post) => Resolved::Buffer(self.set().post_buffer.clone()),
-            Some(CoreFrame::Linear) => Resolved::Sampler(self.uniforms.linear.clone()),
             Some(CoreFrame::Target(target)) => match self.view_of(*target) {
                 Some(view) => Resolved::View(view.clone()),
                 None => Resolved::Placeholder(ty),
@@ -415,18 +375,7 @@ impl Run {
         let held = set.targets.iter().any(|(target, made)| {
             *target == Target::Canvas && made.texture.format() == self.canvas.format
         });
-        let live: Vec<Target> = (0..self.machine.outputs.len())
-            .filter(|&index| self.planning.live.get(index).copied().unwrap_or(true))
-            .map(|index| Target::Output(index as u32))
-            .collect();
-        let kept: Vec<Target> = set
-            .targets
-            .iter()
-            .map(|(target, _)| *target)
-            .filter(|target| matches!(target, Target::Output(_)))
-            .collect();
-        if live == kept
-            && split == held
+        if split == held
             && set
                 .targets
                 .first()
@@ -455,16 +404,9 @@ impl Run {
             ),
             (Target::Depth, made("engine/depth", DEPTH_FORMAT)),
         ];
-        for target in live {
-            if let Target::Output(index) = target
-                && let Some(output) = self.machine.outputs.get(index as usize)
-            {
-                targets.push((target, made(output.name, output.format)));
-            }
-        }
         for (target, _) in &self.machine.ids.targets {
             if matches!(target, Target::Copy(..))
-                && let Some(format) = target_format(*target, &self.machine.outputs)
+                && let Some(format) = target_format(*target)
             {
                 targets.push((*target, made("engine/view-copy", format)));
             }
@@ -604,7 +546,7 @@ impl Run {
 
 #[derive(Default)]
 pub(crate) struct Tables {
-    pub(crate) textures: Vec<[Option<Allocated>; 2]>,
+    pub(crate) textures: Vec<Option<Allocated>>,
     pub(crate) sizes: Vec<Option<(wgpu::Extent3d, u32)>>,
     pub(crate) buffers: Vec<Option<(wgpu::Buffer, u64)>>,
 }
@@ -612,12 +554,7 @@ pub(crate) struct Tables {
 impl Tables {
     pub(crate) fn of(machine: &Machine) -> Self {
         Self {
-            textures: machine
-                .declared
-                .textures
-                .iter()
-                .map(|_| [None, None])
-                .collect(),
+            textures: machine.declared.textures.iter().map(|_| None).collect(),
             sizes: machine.declared.textures.iter().map(|_| None).collect(),
             buffers: machine.declared.buffers.iter().map(|_| None).collect(),
         }
@@ -667,10 +604,9 @@ impl ViewSet {
         let owned = |owner: u32| part.is_none_or(|part| owner == part);
         for (texture, made) in self.tables.textures.iter_mut().enumerate() {
             if owned(machine.declared.textures[texture].part) {
-                for held in made.iter().flatten() {
+                if let Some(held) = made.take() {
                     crate::memory::release_any(&held.texture);
                 }
-                *made = [None, None];
                 self.tables.sizes[texture] = None;
             }
         }
@@ -717,11 +653,8 @@ pub(super) fn view_passes(machine: &Machine) -> (Bits, Bits) {
     let graph = &machine.graph;
     let declared = &machine.declared.passes;
     let mut passes = Bits::of(graph.passes());
-    let mut held = Bits::of(graph.passes());
     for (index, pass) in declared.iter().enumerate() {
-        if pass.views == engine_core::PassViews::Owned {
-            held.insert(index);
-        } else if pass.per_view() {
+        if pass.per_view() {
             passes.insert(index);
         }
     }
@@ -740,7 +673,7 @@ pub(super) fn view_passes(machine: &Machine) -> (Bits, Bits) {
             varying.insert(id.index());
         }
     }
-    let spread = graph.spread(passes.clone(), varying, &held);
+    let spread = graph.spread(passes.clone(), varying);
     let mut main = Bits::of(graph.passes());
     for pass in spread.iter().filter(|&pass| !passes.contains(pass)) {
         main.insert(pass);

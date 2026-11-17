@@ -79,7 +79,6 @@ pub(crate) enum Held {
     Buffer(u32),
     Targets,
     Cameras,
-    Pieces,
 }
 
 #[derive(Default)]
@@ -88,7 +87,6 @@ pub(crate) struct Holders {
     buffers: Vec<Vec<Holder>>,
     targets: Vec<Holder>,
     cameras: Vec<Holder>,
-    pieces: Vec<Holder>,
     post: Vec<Holder>,
 }
 
@@ -104,7 +102,6 @@ impl Holders {
             for &(binding, _) in &found.entries {
                 match (binding, machine.frame_bound.get(&binding)) {
                     (0, _) => holders.cameras.push(holder),
-                    (1, _) => holders.pieces.push(holder),
                     (_, Some(bound)) => holders.hold(bound, holder),
                     (_, None) => match machine
                         .frame_slots
@@ -113,7 +110,7 @@ impl Holders {
                     {
                         Some(CoreFrame::Target(_)) => holders.targets.push(holder),
                         Some(CoreFrame::Post) => holders.post.push(holder),
-                        Some(CoreFrame::Linear) | None => {}
+                        None => {}
                     },
                 }
             }
@@ -147,7 +144,6 @@ impl Holders {
             Held::Buffer(buffer) => &self.buffers[buffer as usize],
             Held::Targets => &self.targets,
             Held::Cameras => &self.cameras,
-            Held::Pieces => &self.pieces,
         }
     }
 
@@ -215,7 +211,7 @@ pub(crate) struct Compiled {
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 enum Needed {
     Later,
-    First(Vec<(u32, bool)>),
+    First,
 }
 
 impl Compiled {
@@ -378,7 +374,6 @@ pub(crate) struct Open {
     pub(crate) layout: PassLayout,
     pub(crate) offset: u32,
     pub(crate) shared: bool,
-    pub(crate) viewed: Option<u32>,
     pub(crate) layered: bool,
     pub(crate) label: Option<u32>,
 }
@@ -410,25 +405,10 @@ pub(crate) struct Timed {
     pub(crate) open: Option<&'static str>,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct OwnedDraw {
-    pub(crate) pass: &'static str,
-    pub(crate) local: u32,
-    pub(crate) drawn: u32,
-    pub(crate) slot: u32,
-    pub(crate) layer: u32,
-    pub(crate) rect: [u32; 4],
-    pub(crate) clear: engine_core::Clear,
-    pub(crate) passes: engine_core::PassMask,
-    pub(crate) draws: bool,
-    pub(crate) mirrored: bool,
-}
-
 #[derive(Default)]
 pub(crate) struct Reached {
     pub(crate) generation: Option<u64>,
     pub(crate) parts: Vec<bool>,
-    pub(crate) sides: [Vec<(u32, bool)>; 2],
 }
 
 pub(crate) enum Placeholder {
@@ -502,7 +482,6 @@ pub(crate) struct Spare {
     colors: Vec<(u64, Option<wgpu::TextureView>, wgpu::TextureFormat, Ops)>,
     attachments: Vec<u64>,
     cameras: Vec<u8>,
-    pub(crate) pieces: Vec<u8>,
 }
 
 const TARGET_KEY: u64 = 1 << 62;
@@ -512,12 +491,10 @@ fn target_key(target: Target) -> u64 {
         Target::Scene => (0, 0),
         Target::Depth => (1, 0),
         Target::Canvas => (2, 0),
-        Target::Output(index) => (3, u64::from(index)),
         Target::Copy(layer, view) => {
             let view = match view {
                 ViewTarget::Scene => 0,
                 ViewTarget::Depth => 1,
-                ViewTarget::Output(index) => 2 + u64::from(index),
             };
             (5, view << 8 | layer as u64)
         }
@@ -600,16 +577,10 @@ fn texture_dimension(machine: &Machine, texture: u32) -> wgpu::TextureDimension 
     }
 }
 
-fn target_format(
-    target: Target,
-    outputs: &[crate::machine::OutputDecl],
-) -> Option<wgpu::TextureFormat> {
+fn target_format(target: Target) -> Option<wgpu::TextureFormat> {
     match target {
         Target::Scene | Target::Copy(_, ViewTarget::Scene) => Some(crate::machine::SCENE_FORMAT),
         Target::Depth | Target::Copy(_, ViewTarget::Depth) => Some(DEPTH_FORMAT),
-        Target::Output(index) | Target::Copy(_, ViewTarget::Output(index)) => {
-            outputs.get(index as usize).map(|output| output.format)
-        }
         Target::Canvas => None,
     }
 }
@@ -658,7 +629,7 @@ impl Run {
         self.pipelines.unlisted = 0;
         self.compile_first();
         if self.reached.generation.is_some() {
-            self.at_reached_switches(Self::compile_listed);
+            self.compile_listed();
         }
         Ok(())
     }
@@ -743,7 +714,6 @@ impl Run {
                     Held::Buffer(buffer) => self.machine.declared.buffers[buffer as usize].label,
                     Held::Targets => "targets",
                     Held::Cameras => "cameras",
-                    Held::Pieces => "pieces",
                 };
                 self.tallies.rebuilt.reasons.push(reason);
             }
@@ -830,7 +800,7 @@ impl Run {
         }
     }
 
-    pub(crate) fn scene_draw(&self, view: Option<&OwnedDraw>) -> Option<SceneDraw> {
+    pub(crate) fn scene_draw(&self) -> Option<SceneDraw> {
         let scene = self
             .machine
             .declared
@@ -841,33 +811,8 @@ impl Run {
             pass: crate::Scene::named(scene.name),
             bit: scene.bit,
             role: scene.pass.role(),
-            view: view.map(|view| view.local),
-            mirrored: view.is_some_and(|view| view.mirrored),
-            index: Some(view.map_or(self.uniforms.camera_slot, |view| view.drawn)),
+            index: Some(self.uniforms.camera_slot),
         })
-    }
-
-    pub(crate) fn owned_views(&self, views: Range<u32>) -> Vec<OwnedDraw> {
-        let Some(scene) = self
-            .machine
-            .declared
-            .passes
-            .get(self.pass as usize)
-            .and_then(|pass| pass.scene)
-        else {
-            return Vec::new();
-        };
-        self.uniforms
-            .owned
-            .iter()
-            .filter(|view| {
-                view.pass == scene.name
-                    && view.draws
-                    && views.contains(&view.local)
-                    && scene.bit.is_some_and(|bit| view.passes.has(bit))
-            })
-            .copied()
-            .collect()
     }
 
     pub(crate) fn scene_members(&self) -> Vec<KindMember> {
@@ -899,14 +844,6 @@ impl Run {
         }
     }
 
-    fn doubled(&self, texture: u32) -> bool {
-        self.machine
-            .doubled
-            .get(texture as usize)
-            .copied()
-            .unwrap_or(false)
-    }
-
     pub(crate) fn allocate(&mut self, texture: u32, size: wgpu::Extent3d, mips: u32) -> Allocation {
         self.allocate_with(texture, None, size, mips)
     }
@@ -934,7 +871,7 @@ impl Run {
         let at = texture as usize;
         let wanted = format.unwrap_or(decl.format);
         let tables = self.texture_tables(texture);
-        let same = tables.textures[at][0]
+        let same = tables.textures[at]
             .as_ref()
             .is_some_and(|made| made.texture.format() == wanted);
         if tables.sizes[at] == Some((size, mips)) && same {
@@ -961,16 +898,11 @@ impl Run {
             usage,
             dimension,
         };
-        let doubled = self.doubled(texture);
-        let fresh = [
-            Some(Allocated::new(&self.device, &made, size, mips)),
-            doubled.then(|| Allocated::new(&self.device, &made, size, mips)),
-        ];
+        let fresh = Allocated::new(&self.device, &made, size, mips);
         let tables = self.texture_tables_mut(texture);
-        for held in tables.textures[at].iter().flatten() {
+        if let Some(held) = tables.textures[at].replace(fresh) {
             crate::memory::release_any(&held.texture);
         }
-        tables.textures[at] = fresh;
         tables.sizes[at] = Some((size, mips));
         self.tallies.rebuilt.textures += 1;
         self.touch(Held::Texture(texture));
@@ -996,13 +928,8 @@ impl Run {
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
                     label: Some("engine/part-grow"),
                 });
-            for (old, new) in previous
-                .iter()
-                .zip(&self.texture_tables(texture).textures[at])
-            {
-                let (Some(old), Some(new)) = (old, new) else {
-                    continue;
-                };
+            let new = &self.texture_tables(texture).textures[at];
+            if let (Some(old), Some(new)) = (&previous, new) {
                 for level in 0..old.mips.min(new.mips) {
                     let extent = wgpu::Extent3d {
                         width: (known.width.min(size.width) >> level).max(1),
@@ -1029,7 +956,7 @@ impl Run {
             self.queue.submit_now([encoder.finish()]);
             allocation = Allocation::Kept;
         }
-        for held in previous.iter().flatten() {
+        if let Some(held) = &previous {
             crate::memory::release_any(&held.texture);
         }
         allocation
@@ -1038,16 +965,10 @@ impl Run {
     pub(crate) fn release(&mut self, texture: u32) {
         let at = texture as usize;
         let tables = self.texture_tables_mut(texture);
-        let Some(held) = tables.textures.get_mut(at) else {
+        let Some(made) = tables.textures.get_mut(at).and_then(Option::take) else {
             return;
         };
-        if held.iter().all(Option::is_none) {
-            return;
-        }
-        for made in held.iter().flatten() {
-            crate::memory::release_any(&made.texture);
-        }
-        *held = [None, None];
+        crate::memory::release_any(&made.texture);
         tables.sizes[at] = None;
         self.touch(Held::Texture(texture));
     }
@@ -1249,11 +1170,10 @@ impl Run {
     }
 
     fn written_texture(&self, texture: u32) -> Option<&Allocated> {
-        let made = self
-            .texture_tables(texture)
+        self.texture_tables(texture)
             .textures
-            .get(texture as usize)?;
-        made[self.frames.parity].as_ref().or(made[0].as_ref())
+            .get(texture as usize)?
+            .as_ref()
     }
 
     pub(crate) fn write_texture(

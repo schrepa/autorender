@@ -289,7 +289,6 @@ impl SurfaceSlot {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum LightingModel {
     #[default]
-    Lit,
     Unlit,
     Named(String),
 }
@@ -360,7 +359,7 @@ impl Material {
             maps: Vec::new(),
             slots: Vec::new(),
             values: Vec::new(),
-            lighting: LightingModel::Lit,
+            lighting: LightingModel::Unlit,
         })
     }
 
@@ -599,7 +598,7 @@ impl Material {
             && self.values.is_empty()
             && self.emissive == [0.0; 3]
             && self.state == RenderState::OPAQUE
-            && self.lighting == LightingModel::Lit;
+            && self.lighting == LightingModel::Unlit;
         (!plain).then(|| MaterialBinding {
             state: (
                 match self.state.alpha {

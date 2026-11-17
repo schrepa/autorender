@@ -4,7 +4,6 @@ use engine_core::{AttachPoint, Error, ErrorCode};
 pub enum Life {
     Frame,
     Kept,
-    Previous,
     Output,
 }
 
@@ -13,7 +12,6 @@ impl From<crate::Lifetime> for Life {
         match lifetime {
             crate::Lifetime::Frame => Self::Frame,
             crate::Lifetime::Kept => Self::Kept,
-            crate::Lifetime::Previous => Self::Previous,
         }
     }
 }
@@ -230,14 +228,8 @@ impl Node {
         match self.entry.layer {
             None if positioned_before => 2,
             None => 0,
-            Some(AttachPoint::Depth | AttachPoint::Inputs | AttachPoint::Opaque) => 1,
-            Some(
-                AttachPoint::LateOpaque
-                | AttachPoint::Transparent
-                | AttachPoint::Post
-                | AttachPoint::Display
-                | AttachPoint::Overlay,
-            ) => 2,
+            Some(AttachPoint::Inputs | AttachPoint::Opaque) => 1,
+            Some(AttachPoint::Transparent | AttachPoint::Overlay) => 2,
         }
     }
 }
@@ -261,16 +253,7 @@ pub struct StaticGraph {
     nodes: Vec<Node>,
     order: Vec<usize>,
     batches: Vec<u8>,
-    unmet: Vec<Bits>,
     starved: Bits,
-    ties: Vec<ListedTie>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct ListedTie {
-    pub first: usize,
-    pub then: usize,
-    pub resource: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -282,7 +265,6 @@ enum Tie {
     Write {
         first: usize,
         second: usize,
-        resource: usize,
     },
 }
 
@@ -357,7 +339,7 @@ fn passes_before(
     nodes: &[Node],
     after: &[Vec<PassId>],
     views: &Bits,
-) -> Result<(Vec<Bits>, Vec<ListedTie>), Error> {
+) -> Vec<Bits> {
     let count = nodes.len();
     let mut before = vec![Bits::of(count); count];
     let mut kept = Vec::new();
@@ -386,10 +368,6 @@ fn passes_before(
                     } else if reads.contains(resource) {
                         before[early].insert(late);
                     }
-                } else if entry.life == Life::Previous {
-                    if reads.contains(resource) {
-                        before[early].insert(late);
-                    }
                 } else if reads.contains(resource) {
                     if entry.life == Life::Kept && !reader.current.contains(resource) {
                         kept.push((early, late));
@@ -400,14 +378,13 @@ fn passes_before(
             }
             if reader.entry.layer.is_some()
                 && writer.entry.layer.is_some()
-                && let Some(resource) = made.intersect(&outputs).intersect(views).first()
+                && made.intersect(&outputs).intersect(views).first().is_some()
             {
                 if reader.peer(writer) {
                     if early < late {
                         ties.push(Tie::Write {
                             first: early,
                             second: late,
-                            resource,
                         });
                     }
                 } else if writer.key(early) < reader.key(late) {
@@ -429,23 +406,17 @@ fn passes_before(
             before[late].insert(pass.index());
         }
     }
-    let listed = settle_ties(resources, nodes, &mut before, &ties)?;
+    settle_ties(nodes, &mut before, &ties);
     let follows = follows_of(&before);
     for (early, late) in kept {
         if !follows[early].contains(late) {
             before[late].insert(early);
         }
     }
-    Ok((before, listed))
+    before
 }
 
-fn settle_ties(
-    resources: &[ResourceEntry],
-    nodes: &[Node],
-    before: &mut [Bits],
-    ties: &[Tie],
-) -> Result<Vec<ListedTie>, Error> {
-    let mut listed = Vec::new();
+fn settle_ties(nodes: &[Node], before: &mut [Bits], ties: &[Tie]) {
     for &tie in ties {
         if let Tie::Read { writer, reader } = tie
             && !earlier(before, reader, writer)
@@ -454,46 +425,20 @@ fn settle_ties(
         }
     }
     for &tie in ties {
-        let Tie::Write {
-            first,
-            second,
-            resource,
-        } = tie
-        else {
+        let Tie::Write { first, second } = tie else {
             continue;
         };
         if earlier(before, first, second) || earlier(before, second, first) {
             continue;
         }
         let (one, other) = (&nodes[first], &nodes[second]);
-        if one.composes && other.composes && one.entry.brick != other.entry.brick {
-            return Err(refused(
-                ErrorCode::AmbiguousPasses,
-                format!(
-                    "$.passes.{}.writes.{}",
-                    other.entry.label, resources[resource].label
-                ),
-            )
-            .got([
-                format!("{}.{}", one.entry.brick, one.entry.label),
-                format!("{}.{}", other.entry.brick, other.entry.label),
-            ]));
-        }
         let (early, late) = if one.key(first) < other.key(second) {
             (first, second)
         } else {
             (second, first)
         };
         before[late].insert(early);
-        if one.composes == other.composes && one.entry.brick != other.entry.brick {
-            listed.push(ListedTie {
-                first: early,
-                then: late,
-                resource,
-            });
-        }
     }
-    Ok(listed)
 }
 
 fn earlier(before: &[Bits], first: usize, then: usize) -> bool {
@@ -603,11 +548,7 @@ fn check_writers_ordered(
     Ok(())
 }
 
-fn unmet_of(
-    resources: &[ResourceEntry],
-    nodes: &[Node],
-    reach: &[Bits],
-) -> Result<Vec<Bits>, Error> {
+fn unmet_of(resources: &[ResourceEntry], nodes: &[Node], reach: &[Bits]) -> Vec<Bits> {
     let mut unmet = vec![Bits::of(resources.len()); nodes.len()];
     for (late, reader) in nodes.iter().enumerate() {
         for resource in reader.required().iter() {
@@ -621,22 +562,10 @@ fn unmet_of(
             if written {
                 continue;
             }
-            let own = !entry.view
-                && nodes.iter().enumerate().any(|(index, other)| {
-                    index != late
-                        && other.entry.brick == reader.entry.brick
-                        && other.outputs().contains(resource)
-                });
-            if own {
-                return Err(refused(
-                    ErrorCode::ReadBeforeWrite,
-                    format!("$.passes.{}.reads.{}", reader.entry.label, entry.label),
-                ));
-            }
             unmet[late].insert(resource);
         }
     }
-    Ok(unmet)
+    unmet
 }
 
 fn starved_of(resources: &[ResourceEntry], nodes: &[Node], unmet: &[Bits]) -> Bits {
@@ -710,11 +639,11 @@ impl StaticGraph {
                 ));
             }
         }
-        let (before, ties) = passes_before(&resources, &nodes, &after, &views)?;
+        let before = passes_before(&resources, &nodes, &after, &views);
         let order = placed_order(&nodes, &before)?;
         let reach = reach_of(&before, &order);
         check_writers_ordered(&resources, &nodes, &reach, &views)?;
-        let unmet = unmet_of(&resources, &nodes, &reach)?;
+        let unmet = unmet_of(&resources, &nodes, &reach);
         let starved = starved_of(&resources, &nodes, &unmet);
         let batches = batches_of(&nodes, &order);
         Ok(Self {
@@ -722,9 +651,7 @@ impl StaticGraph {
             nodes,
             order,
             batches,
-            unmet,
             starved,
-            ties,
         })
     }
 
@@ -732,35 +659,8 @@ impl StaticGraph {
         self.starved.contains(pass)
     }
 
-    pub fn ties(&self) -> &[ListedTie] {
-        &self.ties
-    }
-
     pub fn passes(&self) -> usize {
         self.nodes.len()
-    }
-
-    pub fn entry(&self, pass: usize) -> Option<&PassEntry> {
-        self.nodes.get(pass).map(|node| &node.entry)
-    }
-
-    pub fn label(&self, resource: usize) -> &'static str {
-        self.resources.get(resource).map_or("", |entry| entry.label)
-    }
-
-    pub fn unmet(&self) -> impl Iterator<Item = (usize, usize)> + '_ {
-        self.unmet
-            .iter()
-            .enumerate()
-            .flat_map(|(pass, unmet)| unmet.iter().map(move |resource| (pass, resource)))
-    }
-
-    pub fn writers(&self, resource: usize) -> impl Iterator<Item = usize> + '_ {
-        self.nodes
-            .iter()
-            .enumerate()
-            .filter(move |(_, node)| node.outputs().contains(resource))
-            .map(|(index, _)| index)
     }
 
     pub fn resources(&self) -> usize {
@@ -777,13 +677,7 @@ impl StaticGraph {
             .map_or_else(|| Bits::of(self.resources.len()), Node::outputs)
     }
 
-    pub fn reads(&self, pass: usize) -> Bits {
-        self.nodes
-            .get(pass)
-            .map_or_else(|| Bits::of(self.resources.len()), Node::reads_only)
-    }
-
-    pub fn spread(&self, mut passes: Bits, mut varying: Bits, held: &Bits) -> Bits {
+    pub fn spread(&self, mut passes: Bits, mut varying: Bits) -> Bits {
         let mut frame = Bits::of(self.resources.len());
         for (index, resource) in self.resources.iter().enumerate() {
             if resource.life == Life::Frame {
@@ -793,9 +687,6 @@ impl StaticGraph {
         loop {
             let mut grew = false;
             for (index, node) in self.nodes.iter().enumerate() {
-                if held.contains(index) {
-                    continue;
-                }
                 let touches = !node
                     .inputs()
                     .union(&node.outputs())
@@ -863,7 +754,7 @@ impl StaticGraph {
         }
         let mut written = ready.clone();
         for (index, resource) in self.resources.iter().enumerate() {
-            if matches!(resource.life, Life::Kept | Life::Previous) {
+            if resource.life == Life::Kept {
                 written.insert(index);
             }
         }

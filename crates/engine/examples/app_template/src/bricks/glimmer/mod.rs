@@ -9,8 +9,8 @@ use engine_core::{
     AssetResidency, AttachPoint, Attributes, BlendedPass, Brick, Bricks, Camera, Clear, Cursor,
     DrawKind, Drawn, DrawnPoses, DrawnTable, EMISSIVE_MAP, Error, ErrorCode, Events, Expected,
     Feed, FrameTime, GlobalTransforms, GpuStruct, Interest, KindDecl, KindSkip, MaterialHandle,
-    Node, Pass, PassName, PassPurpose, PassViews, Rect, Refusals, Requests, Schedule, SlotSet,
-    Source, Spawner, SurfaceSlot, Ticket, Transform, View, Writes, gpu_struct, settings, stats,
+    Node, Pass, PassName, PassViews, Rect, Refusals, Requests, Schedule, SlotSet, Source, Spawner,
+    SurfaceSlot, Ticket, Transform, View, Writes, gpu_struct, settings, stats,
 };
 use engine_render::{
     Allocation, Bind, Buffer, Draw, FaceCull, Form, FormSide, FragmentUse, GpuPart, Install,
@@ -35,7 +35,6 @@ const ROW_MATERIAL: &str = "$.drawn.material";
 const FORM: KindForm = KindForm {
     kind: GLIMMER,
     placed: FormSide::pulled(shaders::glimmer::draw::VS_GLIMMER),
-    owned: Some(FormSide::pulled(shaders::glimmer::draw::VS_GLIMMER_VIEW)),
     varyings: Varyings::SurfaceExtra(FragmentUse::Masked),
 };
 
@@ -68,7 +67,6 @@ stats! {
 gpu_struct! {
     pub struct GlimmerInstance {
         pub place: [f32; 4],
-        pub previous: [f32; 4],
         pub color: [f32; 4],
         pub ring: [f32; 4],
         pub drawn: [u32; 4],
@@ -84,7 +82,6 @@ impl PassName for GlimmerPass {
         reads: SlotSet::POSITION,
         views: PassViews::Main,
         at: AttachPoint::Opaque,
-        purpose: PassPurpose::Scene,
         takes: ringed,
     };
 }
@@ -308,13 +305,11 @@ impl GpuPart for GlimmerGpu {
             let (Some(pose), Some(material)) = (poses.drawn_pose(&globals, entity), held) else {
                 continue;
             };
-            let previous = poses.previous_drawn_pose(&globals, entity).unwrap_or(pose);
             let size = *thing.values.floats.first().unwrap_or(&settings.size);
             let [red, green, blue, alpha] = thing.values.tint;
             let [glow_red, glow_green, glow_blue] = thing.values.emission;
             let instance = GlimmerInstance {
                 place: pose.w_axis.truncate().extend(size).to_array(),
-                previous: previous.w_axis.truncate().extend(size).to_array(),
                 color: [red + glow_red, green + glow_green, blue + glow_blue, alpha],
                 ring: settings.ring,
                 drawn: [slot, 0, 0, 0],

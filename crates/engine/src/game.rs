@@ -5,8 +5,8 @@ use engine_core::{
 };
 use engine_render::{Renderer, wgpu};
 use engine_scene::{
-    RemoveOperation, SceneDocument, SceneFiles, SceneInstance, SceneLookControl,
-    SceneMaterialControl, SpawnOperation,
+    RemoveOperation, SceneDocument, SceneFiles, SceneInstance, SceneMaterialControl,
+    SpawnOperation,
 };
 
 pub fn engine(bricks: impl FnOnce(BrickList) -> BrickList) -> crate::Result<Engine> {
@@ -15,10 +15,7 @@ pub fn engine(bricks: impl FnOnce(BrickList) -> BrickList) -> crate::Result<Engi
 
 pub(crate) fn listed(list: BrickList) -> crate::Result<Engine> {
     let mut engine = Engine::listed(list.with_core(Renderer::register_places))?;
-    crate::resolution::register(&mut engine);
-    crate::pacing::register(&mut engine);
     engine
-        .operation::<SceneLookControl>()
         .operation::<SceneMaterialControl>()
         .operation::<SpawnOperation>()
         .operation::<RemoveOperation>();

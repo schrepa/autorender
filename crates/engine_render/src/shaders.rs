@@ -12,10 +12,8 @@ macro_rules! shader_modules {
             ),)*
             crate::shared::generated(crate::drawn::DRAWN_MODULE),
             crate::shared::generated(crate::drawn::DRAWN_CULL_MODULE),
-            crate::shared::generated(crate::drawn::DRAWN_FADES_MODULE),
             crate::shared::generated(crate::kinds::SURFACED_MODULE),
             crate::shared::generated(crate::shared::WRITES_MODULE),
-            crate::shared::generated(crate::shared::APPLIED_MODULE),
             crate::shared::generated(crate::shared::COMPOSITE_MODULE),
         ];
     };
@@ -25,19 +23,14 @@ shader_modules! {
     "engine::fullscreen" = "fullscreen.wgsl";
     "engine::color" = "color.wgsl";
     "engine::math" = "math.wgsl";
-    "engine::screen_points" = "screen_points.wgsl";
     "engine::mipmaps" = "mipmaps.wgsl";
     "engine::view" = "frame/view.wgsl";
     "engine::standard" = "standard.wgsl";
     "engine::mapped" = "mapped.wgsl";
     "engine::surface" = "surface.wgsl";
-    "engine::transparency" = "transparency.wgsl";
-    "engine::transparency_composite" = "transparency_composite.wgsl";
     "engine::geometry::vertex" = "geometry/vertex.wgsl";
     "engine::kinds" = "kinds.wgsl";
-    "engine::post::pixel" = "post/pixel.wgsl";
     "engine::post::frame" = "effects.wgsl";
-    "engine::post::resolve_plain" = "post/resolve_plain.wgsl";
 }
 
 pub static CORE: Source = Source::generated(crate::linker::CORE_PACKAGE, false, [0; 32], TEXTS);
@@ -58,11 +51,7 @@ pub(crate) fn core_module(path: &str) -> Module {
 }
 
 pub const PRESENTATION_MODULE: &str = "engine::presentation";
-pub const DEBUG_MODULE: &str = "engine::debug";
-pub const DECLARATIONS_MODULE: &str = "engine::geometry::declarations";
 pub const VIEW_MODULE: &str = "engine::view";
-pub const DETAIL_MODULE: &str = "engine::detail";
-pub const PYRAMID_MODULE: &str = "engine::pyramid";
 
 fn unsigned(source: &mut String, name: &str, value: u32) {
     let _ = writeln!(source, "const {name}: u32 = {value}u;");
@@ -103,37 +92,6 @@ pub fn presentation_source() -> String {
     source
 }
 
-pub fn debug_source() -> String {
-    use engine_core::GpuBits;
-    let mut source = String::from(<crate::debug::DebugRecord as GpuBits>::WGSL);
-    unsigned(
-        &mut source,
-        "DEBUG_NO_MATERIAL",
-        crate::debug::DEBUG_NO_MATERIAL,
-    );
-    source.push_str(
-        "
-fn debug_kind_color(kind: u32) -> vec3<f32> {
-    let hue = fract(f32(kind) * 0.618034 + 0.13);
-    let k = (vec3<f32>(0.0, 2.0, 4.0) / 6.0 + hue) * 6.0;
-    return 0.2 + 0.7 * saturate(abs(k % 6.0 - 3.0) - 1.0);
-}
-",
-    );
-    source
-}
-
-pub fn declarations_source() -> String {
-    use crate::slots::{DrawnSlot, FADE_LEVEL_MAX, FadeWord, FadedSlot};
-    use engine_core::GpuBits;
-    let mut source = String::from(include_str!("geometry/declarations.wgsl"));
-    for wgsl in [DrawnSlot::WGSL, FadedSlot::WGSL, FadeWord::WGSL] {
-        source.push_str(wgsl);
-    }
-    unsigned(&mut source, "FADE_LEVEL_MAX", FADE_LEVEL_MAX);
-    source
-}
-
 pub fn view_source() -> String {
     use engine_core::GpuStruct;
     let mut source = String::from(include_str!("frame/view.wgsl"));
@@ -141,12 +99,10 @@ pub fn view_source() -> String {
     source
 }
 
-pub fn generated_core() -> [(&'static str, String); 14] {
+pub fn generated_core() -> [(&'static str, String); 9] {
     let standard = crate::surface::MaterialLayout::standard();
     [
         (PRESENTATION_MODULE, presentation_source()),
-        (DEBUG_MODULE, debug_source()),
-        (DECLARATIONS_MODULE, declarations_source()),
         (crate::surface::SHADING_MODULE, standard.shading_source()),
         (
             crate::surface::MATERIALS_MODULE,
@@ -155,17 +111,8 @@ pub fn generated_core() -> [(&'static str, String); 14] {
         (crate::surface::SLOTS_MODULE, standard.slots_source(false)),
         (crate::surface::SURFACES_MODULE, standard.surfaces_source()),
         (VIEW_MODULE, view_source()),
-        (DETAIL_MODULE, engine_core::detail_wgsl()),
-        (PYRAMID_MODULE, crate::pyramid::source()),
         (crate::drawn::DRAWN_MODULE, crate::drawn::source()),
         (crate::drawn::DRAWN_CULL_MODULE, crate::drawn::cull_source()),
-        (
-            crate::drawn::DRAWN_FADES_MODULE,
-            crate::drawn::fades_source(),
-        ),
-        (
-            crate::shared::WRITES_MODULE,
-            crate::shared::pass_module(true, &[], true).1,
-        ),
+        (crate::shared::WRITES_MODULE, crate::shared::pass_module().1),
     ]
 }

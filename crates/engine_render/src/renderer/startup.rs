@@ -216,9 +216,7 @@ impl Renderer {
             #[cfg(feature = "profiling")]
             prelude_owners: Vec::new(),
             installing: None,
-            seconds: None,
             part_names: &[],
-            linked: engine_core::LinkedStats::default(),
             recovering: None,
             lost_bricks: Vec::new(),
             #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]

@@ -1,4 +1,4 @@
-use engine_settings::ErrorCode;
+use engine_settings::{ErrorCode, Expected};
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -104,16 +104,16 @@ impl Handles {
 }
 
 fn insert_each<T, H: Copy>(
-    items: Vec<T>,
+    items: impl IntoIterator<Item = Option<T>>,
     provided: Vec<Option<H>>,
     (handles, owned): (&mut Vec<H>, &mut Vec<H>),
     field: &str,
     mut insert: impl FnMut(T) -> Result<H, Error>,
 ) -> Result<(), Error> {
     for (index, (item, provided)) in items.into_iter().zip(provided).enumerate() {
-        let handle = match provided {
-            Some(handle) => handle,
-            None => {
+        let handle = match (provided, item) {
+            (Some(handle), _) => handle,
+            (None, Some(item)) => {
                 let handle = insert(item).map_err(|error| {
                     error
                         .coded(ErrorCode::AssetBudgetExceeded)
@@ -121,6 +121,13 @@ fn insert_each<T, H: Copy>(
                 })?;
                 owned.push(handle);
                 handle
+            }
+            (None, None) => {
+                return Err(Error::new(
+                    ErrorCode::MissingFile,
+                    format!("$.{field}[{index}].source"),
+                )
+                .expected(Expected::File));
             }
         };
         handles.push(handle);
@@ -390,7 +397,6 @@ impl SceneDocument {
         let empty = crate::SceneEnvironment::default();
         let environment = prepared.environment.as_ref().unwrap_or(&empty);
         context.scope(|| environment.apply_all(world, "$.environment"))?;
-        world.insert_resource(crate::SceneLooks::of(self));
         Ok(())
     }
 
@@ -437,7 +443,7 @@ impl SceneDocument {
                 |mesh| assets.insert_mesh(mesh),
             )?;
             insert_each(
-                std::mem::take(&mut prepared.textures),
+                std::mem::take(&mut prepared.textures).into_iter().map(Some),
                 provided_textures,
                 (&mut handles.textures, &mut owned.textures),
                 "textures",
@@ -450,7 +456,7 @@ impl SceneDocument {
                 .map(|(source, handle)| (source.id.as_str(), *handle))
                 .collect();
             insert_each(
-                std::mem::take(&mut prepared.materials),
+                std::mem::take(&mut prepared.materials).into_iter().map(Some),
                 provided_materials,
                 (&mut handles.materials, &mut owned.materials),
                 "materials",
@@ -501,7 +507,6 @@ impl SceneDocument {
 
 struct Replaced {
     context: Option<SceneContext>,
-    looks: Option<crate::SceneLooks>,
     scene: Option<OperationScene>,
     sections: Vec<(SettingsEntry, Value)>,
 }
@@ -512,7 +517,6 @@ impl Replaced {
         let sections = crate::loading::within(context.as_ref(), || crate::environment::held(world));
         Self {
             context,
-            looks: world.get_resource::<crate::SceneLooks>().cloned(),
             scene: world.get_resource::<OperationScene>().cloned(),
             sections,
         }
@@ -529,7 +533,6 @@ impl Replaced {
     }
 
     fn restore(self, world: &mut World) {
-        put(world, self.looks);
         put(world, self.scene);
         put(world, self.context.clone());
         crate::loading::within(self.context.as_ref(), || {

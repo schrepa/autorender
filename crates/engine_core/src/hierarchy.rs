@@ -2,7 +2,7 @@ use crate::collections::HashMap;
 use crate::presentation::pose_rows;
 use crate::ticks::{ChangeWindow, STAMP_BLOCK, ScanClock, consume_through};
 use crate::{
-    Cursor, Feed, FeedSettings, Mobility, NodePose, NodeWord, PoseRows, Since, Transform,
+    Cursor, Feed, FeedSettings, NodePose, NodeWord, PoseRows, Since, Transform,
     entity_indices::EntityIndices,
 };
 use bevy_ecs::change_detection::ContiguousRef;
@@ -424,18 +424,6 @@ fn complete_parents_first<N, E>(
     Ok(())
 }
 
-struct StaticMoves {
-    moved: BTreeSet<Entity>,
-    feed: Feed<Entity>,
-}
-
-impl StaticMoves {
-    fn record(&mut self, entity: Entity) {
-        self.moved.insert(entity);
-        self.feed.push(entity);
-    }
-}
-
 #[derive(Resource)]
 pub struct GlobalTransforms {
     query: TransformQuery,
@@ -459,7 +447,6 @@ pub struct GlobalTransforms {
     words_revision: u64,
     woken: Vec<Entity>,
     asleep: Vec<Entity>,
-    static_moves: StaticMoves,
     scans: ScanClock,
     incomplete: bool,
     limit: usize,
@@ -498,10 +485,6 @@ impl FromWorld for GlobalTransforms {
             words_revision: 0,
             woken: Vec::new(),
             asleep: Vec::new(),
-            static_moves: StaticMoves {
-                moved: BTreeSet::new(),
-                feed: Feed::new(feed),
-            },
             scans: ScanClock::default(),
             incomplete: true,
             limit: node_limit(world),
@@ -713,7 +696,6 @@ impl GlobalTransforms {
 
     pub(crate) fn resize_changes(&mut self, size: usize) {
         self.changes.resize(size);
-        self.static_moves.feed.resize(size);
     }
 
     pub fn len(&self) -> usize {
@@ -766,10 +748,6 @@ impl GlobalTransforms {
         scan
     }
 
-    #[expect(
-        clippy::too_many_lines,
-        reason = "longer than the line ceiling; it may only shrink"
-    )]
     fn scan_changed_rows(
         &mut self,
         changed_query: &mut ChangedTransforms,
@@ -795,7 +773,6 @@ impl GlobalTransforms {
             report,
             changes,
             words,
-            static_moves,
             ..
         } = self;
         let Dirty {
@@ -869,9 +846,6 @@ impl GlobalTransforms {
                     }
                     local_revisions[index] = next_revision;
                     nodes.changes.push(index as u32);
-                    if nodes.words[index].mobility == Mobility::Static {
-                        static_moves.record(entity);
-                    }
                     if nodes.asleep(index) {
                         continue;
                     }
@@ -940,9 +914,6 @@ impl GlobalTransforms {
                 }
                 checked += 1;
                 if local_changed {
-                    if self.words[count].mobility == Mobility::Static {
-                        self.static_moves.record(entity);
-                    }
                     self.dirty.mark(count, threshold);
                 }
             }
@@ -960,16 +931,6 @@ impl GlobalTransforms {
 
     fn rebuild_topology(&mut self, world: &mut World, work: &mut PropagationWork) {
         let _profile = engine_profile::span("hierarchy", "topology_rebuild");
-        for (entity, transform, _) in self.query.iter(world) {
-            let Some(&index) = self.indices.get(&entity) else {
-                continue;
-            };
-            if self.words[index].mobility == Mobility::Static
-                && !same_pose_bits(&self.locals[index], &transform.to_pose())
-            {
-                self.static_moves.record(entity);
-            }
-        }
         self.asleep.clear();
         self.asleep.extend(
             self.entities
@@ -1049,10 +1010,6 @@ impl GlobalTransforms {
         self.dirty.flags.resize(self.links.len(), true);
         self.dirty.count = self.links.len();
         self.changes.replace();
-        let indices = &self.indices;
-        self.static_moves
-            .moved
-            .retain(|entity| indices.get(entity).is_some());
         report.invalid_transforms = report.transforms;
         self.report = report;
         self.topology_revision = work.value_ids.next();

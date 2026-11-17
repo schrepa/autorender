@@ -1,10 +1,7 @@
 use bevy_ecs::world::World;
 use engine_registry::CORE_ROW;
 
-use crate::{
-    Board, FrameBudget, GlobalTransforms, Pause, PauseReason, Readiness, Views, WorkClock,
-    settings,
-};
+use crate::{Board, GlobalTransforms, Readiness, Views, settings};
 
 settings! {
     #[section("feeds")]
@@ -14,33 +11,7 @@ settings! {
     }
 }
 
-settings! {
-    #[section("frame_budget")]
-    pub struct FrameBudgetSettings {
-        pub work_ms: f32 = 4.0 => range(0.1, 1000.0),
-        pub upload_bytes: u32 = 16 << 20 => at_least(1),
-    }
-}
-
-pub(crate) fn start_frame(world: &mut World, spare_ms: f64) {
-    let budget = world
-        .get_resource::<FrameBudgetSettings>()
-        .cloned()
-        .unwrap_or_default();
-    let clock = world
-        .get_resource::<WorkClock>()
-        .and_then(|clock| clock.reading);
-    let work_ms = f64::from(budget.work_ms);
-    let preparing = world
-        .get_resource::<Pause>()
-        .is_some_and(|pause| pause.holds(PauseReason::Preparing));
-    let upload_bytes = if preparing {
-        (f64::from(budget.upload_bytes) * (work_ms + spare_ms) / work_ms) as u64
-    } else {
-        u64::from(budget.upload_bytes)
-    };
-    let clock = clock.filter(|_| !preparing);
-    world.insert_resource(FrameBudget::start(clock, (work_ms, spare_ms), upload_bytes));
+pub(crate) fn start_frame(world: &mut World) {
     let transforms = world
         .get_resource::<FeedSettings>()
         .map_or(FeedSettings::default().transforms, |feeds| feeds.transforms);

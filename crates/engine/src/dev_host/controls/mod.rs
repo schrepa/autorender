@@ -59,17 +59,12 @@ fn host_control(
             size,
         ),
         BrowserControl::Input {
-            verbs,
-            player,
             keys,
             pointer,
             touches,
         } => input::batch(
             host,
-            app,
             input::Asked {
-                verbs,
-                player,
                 keys,
                 pointer,
                 touches,

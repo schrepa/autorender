@@ -12,8 +12,6 @@ struct PlateCorner {
     @location(0) normal_u: vec4<f32>,
     @location(1) world_v: vec4<f32>,
     @location(2) @interpolate(flat) material: vec4<u32>,
-    @location(3) previous: vec3<f32>,
-    @location(6) @interpolate(flat) object: vec4<u32>,
 }
 
 fn corner_unit(corner: u32) -> vec2<f32> {
@@ -31,12 +29,9 @@ fn corner_unit(corner: u32) -> vec2<f32> {
     let uv = corner_unit(corner);
     let offset = plate.across.xyz * (uv.x - 0.5) + plate.along.xyz * (uv.y - 0.5);
     let world = plate.center.xyz + offset;
-    let shown = camera.previous_view_projection * vec4<f32>(plate.previous.xyz + offset, 1.0);
     out.clip_position = view_clip(world);
     out.normal_u = vec4<f32>(stable_normalize(cross(plate.along.xyz, plate.across.xyz)), uv.x);
     out.world_v = vec4<f32>(world, uv.y);
     out.material = vec4<u32>(PLATE_WHITE, PLATE_WHITE, PLATE_ROUGH, 0u);
-    out.previous = shown.xyw;
-    out.object = vec4<u32>(0u, plate.drawn.x, 0u, 0u);
     return out;
 }

@@ -22,7 +22,6 @@ impl RendererFacts for Facts<'_> {
 pub(crate) struct DevHost {
     pub(crate) tools: DevTools,
     agent: crate::host::DeviceGatherer,
-    input: InputBatch,
 }
 
 impl Default for DevHost {
@@ -30,15 +29,8 @@ impl Default for DevHost {
         Self {
             tools: DevTools::new(crate::stats::frame_stats_schema()),
             agent: crate::host::DeviceGatherer::default(),
-            input: InputBatch::default(),
         }
     }
-}
-
-#[derive(Default)]
-struct InputBatch {
-    held: Vec<engine_core::Driven>,
-    once: Vec<engine_core::Driven>,
 }
 
 pub(crate) enum Call<'a> {
@@ -64,7 +56,6 @@ enum Done {
 
 impl DevHost {
     pub fn drop_edges(&mut self) {
-        self.input.drop_edges();
         self.agent.drop_edges();
     }
 

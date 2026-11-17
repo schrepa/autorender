@@ -10,45 +10,28 @@ use crate::{DrawKind, Error, ErrorCode, KindDecl, gpu_bits};
 #[cfg_attr(feature = "schema", derive(schemars::JsonSchema))]
 #[serde(rename_all = "snake_case")]
 pub enum AttachPoint {
-    Depth,
     Inputs,
     Opaque,
-    LateOpaque,
     Transparent,
-    Post,
-    Display,
     Overlay,
 }
 
 impl AttachPoint {
-    pub const ALL: [Self; 8] = [
-        Self::Depth,
-        Self::Inputs,
-        Self::Opaque,
-        Self::LateOpaque,
-        Self::Transparent,
-        Self::Post,
-        Self::Display,
-        Self::Overlay,
-    ];
+    pub const ALL: [Self; 4] = [Self::Inputs, Self::Opaque, Self::Transparent, Self::Overlay];
 
     pub const fn name(self) -> &'static str {
         match self {
-            Self::Depth => "depth",
             Self::Inputs => "inputs",
             Self::Opaque => "opaque",
-            Self::LateOpaque => "late_opaque",
             Self::Transparent => "transparent",
-            Self::Post => "post",
-            Self::Display => "display",
             Self::Overlay => "overlay",
         }
     }
 
     pub const fn scene(self) -> bool {
         match self {
-            Self::Depth | Self::Opaque | Self::LateOpaque | Self::Transparent => true,
-            Self::Inputs | Self::Post | Self::Display | Self::Overlay => false,
+            Self::Opaque | Self::Transparent => true,
+            Self::Inputs | Self::Overlay => false,
         }
     }
 }
@@ -59,14 +42,7 @@ pub struct TargetName(pub &'static str);
 impl TargetName {
     pub const COLOR: Self = Self("color");
     pub const DEPTH: Self = Self("depth");
-    pub const TRANSPARENCY: Self = Self("transparency");
-    pub const ACCUMULATED: Self = Self("accumulated");
-    pub const CORE: [Self; 4] = [
-        Self::COLOR,
-        Self::DEPTH,
-        Self::TRANSPARENCY,
-        Self::ACCUMULATED,
-    ];
+    pub const CORE: [Self; 2] = [Self::COLOR, Self::DEPTH];
 
     pub const fn name(self) -> &'static str {
         self.0
@@ -79,7 +55,6 @@ pub struct Writes(pub &'static [TargetName]);
 impl Writes {
     pub const LIT: Self = Self(&[TargetName::COLOR, TargetName::DEPTH]);
     pub const DEPTH: Self = Self(&[TargetName::DEPTH]);
-    pub const NOTHING: Self = Self(&[]);
 
     pub const fn targets(self) -> &'static [TargetName] {
         self.0
@@ -96,7 +71,6 @@ impl Writes {
 pub enum PassViews {
     Every,
     Main,
-    Owned,
 }
 
 #[gpu_bits(crate = crate)]
@@ -152,18 +126,10 @@ impl SlotSet {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 #[serde(rename_all = "snake_case")]
-pub enum PassPurpose {
-    Scene,
-    Debug,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
-#[serde(rename_all = "snake_case")]
 pub enum PassRole {
     Lit,
     Depth,
     Blended,
-    Shown,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -172,7 +138,6 @@ pub struct Pass {
     pub reads: SlotSet,
     pub views: PassViews,
     pub at: AttachPoint,
-    pub purpose: PassPurpose,
     pub takes: fn(&KindDecl) -> bool,
 }
 
@@ -182,9 +147,7 @@ impl Pass {
     }
 
     pub const fn role(&self) -> PassRole {
-        if matches!(self.purpose, PassPurpose::Debug) {
-            PassRole::Shown
-        } else if matches!(self.at, AttachPoint::Transparent) {
+        if matches!(self.at, AttachPoint::Transparent) {
             PassRole::Blended
         } else if self.reads.lighting {
             PassRole::Lit
@@ -241,7 +204,6 @@ impl PassName for ColorPass {
         reads: SlotSet::ALL,
         views: PassViews::Every,
         at: AttachPoint::Opaque,
-        purpose: PassPurpose::Scene,
         takes: every,
     };
 }
@@ -251,15 +213,10 @@ pub struct BlendedPass;
 impl PassName for BlendedPass {
     const NAME: &'static str = "blended";
     const PASS: Pass = Pass {
-        writes: Writes(&[
-            TargetName::COLOR,
-            TargetName::TRANSPARENCY,
-            TargetName::ACCUMULATED,
-        ]),
+        writes: Writes(&[TargetName::COLOR]),
         reads: SlotSet::ALL,
         views: PassViews::Every,
         at: AttachPoint::Transparent,
-        purpose: PassPurpose::Scene,
         takes: every,
     };
 }

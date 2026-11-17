@@ -1,13 +1,12 @@
 use super::*;
 
+type Reach = (String, bool, Vec<(u32, ShaderStages)>);
+
 pub(crate) struct Composing {
     pub(super) linker: Linker,
     pub(super) declared: Declared,
-    pub(super) outputs: Vec<OutputDecl>,
-    pub(super) switches: Vec<(u32, engine_registry::GateId)>,
     pub(super) core_frame: Vec<(String, String, Ty)>,
     pub(super) numbers: Vec<u32>,
-    pub(super) variables: Vec<FrameVariable>,
     pub(super) frame_bound: BTreeMap<u32, Bound>,
     pub(super) material_entries: Vec<wgpu::BindGroupLayoutEntry>,
     pub(super) depth_writes: Vec<bool>,
@@ -17,26 +16,13 @@ pub(crate) struct Composing {
 
 pub(crate) fn compose(
     mut linker: Linker,
-    (declared, outputs): (Declared, Vec<OutputDecl>),
-    switches: Vec<(u32, engine_registry::GateId)>,
+    declared: Declared,
     problems: &mut Vec<Error>,
 ) -> Composing {
-    let numbered = linker.number();
-    let core_frame: Vec<(String, String, Ty)> = numbered
+    let core_frame = linker.number();
+    let numbers: Vec<u32> = core_frame
         .iter()
-        .map(|(path, name, _, ty)| (path.clone(), name.clone(), *ty))
-        .collect();
-    let numbers: Vec<u32> = numbered
-        .iter()
-        .filter_map(|(path, name, _, _)| linker.binding_of(path, name))
-        .collect();
-    let variables: Vec<FrameVariable> = numbered
-        .iter()
-        .map(|(_, name, package, ty)| FrameVariable {
-            brick: package,
-            name: Box::leak(name.clone().into_boxed_str()),
-            kind: class(*ty, name == crate::linker::CAMERA),
-        })
+        .filter_map(|(path, name, _)| linker.binding_of(path, name))
         .collect();
     let mut frame_bound = BTreeMap::new();
     for bind in &declared.frame {
@@ -67,38 +53,12 @@ pub(crate) fn compose(
                 .collect::<Vec<_>>()
                 .join("+")
         );
-        let Some((stages, reached)) = linked(
-            (&declared, decl),
-            (&outputs, &mut linker),
-            (&named, &mut *problems),
-        ) else {
+        let Some((stages, reached)) =
+            linked((&declared, decl), &mut linker, (&named, &mut *problems))
+        else {
             continue;
         };
-        let label: &'static str = Box::leak(named.into_boxed_str());
-        let is_material = |module: &str, group: u32| group == 1 && linker.is_core(module);
-        let mut own: Vec<(Class, ShaderStages)> = reached
-            .iter()
-            .filter(|(module, found, _)| found.group > 0 && !is_material(module, found.group))
-            .map(|(_, found, stages)| (class(found.ty, false), *stages))
-            .collect();
-        if reached
-            .iter()
-            .any(|(module, found, _)| is_material(module, found.group))
-        {
-            own.extend(
-                material_group
-                    .iter()
-                    .zip(&material_entries)
-                    .map(|(declared, entry)| (class(declared.ty, false), entry.visibility)),
-            );
-        }
-        let groups = reached
-            .iter()
-            .filter(|(_, found, _)| found.group > 0)
-            .map(|(_, found, _)| found.group)
-            .max()
-            .unwrap_or(0);
-        let frame_reached: Vec<(u32, ShaderStages)> = reached
+        let mut frame_reached: Vec<(u32, ShaderStages)> = reached
             .iter()
             .filter(|(_, found, _)| found.group == 0)
             .filter_map(|(module, found, stages)| {
@@ -107,29 +67,16 @@ pub(crate) fn compose(
                 Some((at as u32, *stages))
             })
             .collect();
-        let pass = match decl.scope {
-            Scoped::Pass(pass) => pass,
-            Scoped::Scene(_) | Scoped::Outside(_) => u32::MAX - decl.part,
-        };
-        reaches.push(Reach {
-            label,
-            pass,
-            alone: matches!(decl.scope, Scoped::Outside(_)),
-            own_groups: groups,
-            own,
-            reached: frame_reached,
-            fragment: fragment_key(decl, &stages),
-        });
+        frame_reached.sort_by_key(|&(variable, _)| variable);
+        let alone = matches!(decl.scope, Scoped::Outside(_));
+        reaches.push((named, alone, frame_reached));
         staged.push((decl.clone(), stages, reached));
     }
     Composing {
         linker,
         declared,
-        outputs,
-        switches,
         core_frame,
         numbers,
-        variables,
         frame_bound,
         material_entries,
         depth_writes,
@@ -138,21 +85,12 @@ pub(crate) fn compose(
     }
 }
 
-fn fragment_key(decl: &PipelineDecl, stages: &[Stage]) -> Option<u64> {
-    let rendered = matches!(decl.program, Program::Render(_));
-    stages.get(1).filter(|_| rendered).map(|stage| {
-        let mut hasher = DefaultHasher::new();
-        (stage.entry.name(), &stage.composed.text).hash(&mut hasher);
-        hasher.finish()
-    })
-}
-
 fn linked(
     (declared, decl): (&Declared, &PipelineDecl),
-    (outputs, linker): (&[OutputDecl], &mut Linker),
+    linker: &mut Linker,
     (named, problems): (&str, &mut Vec<Error>),
 ) -> Option<(Vec<Stage>, Reached)> {
-    let writes = written_module(declared, decl, (outputs, &*linker), (named, &mut *problems))?;
+    let writes = written_module(declared, decl);
     let (mut stages, mut reached, mut failed) = (Vec::new(), Reached::new(), false);
     for entry in decl.entries() {
         match linker.compose_in(entry, writes.as_ref()) {

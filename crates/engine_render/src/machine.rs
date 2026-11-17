@@ -5,7 +5,6 @@ use std::sync::Arc;
 use engine_core::{AttachPoint, Entry, Error, ErrorCode, PassViews};
 use wgpu::ShaderStages;
 
-use crate::frame_group::{Class, FrameVariable, Reach};
 use crate::graph::{
     Access as GraphAccess, BLACK, Clear, Declared as GraphPass, FAR, Life, PassEntry, PassId,
     ResourceEntry, ResourceId, StaticGraph, TRANSPARENT,
@@ -24,20 +23,10 @@ pub const SCENE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 pub(crate) const CAMERA_STRIDE: u64 = 512;
 
-#[derive(Clone, Debug)]
-pub(crate) struct OutputDecl {
-    pub(crate) name: &'static str,
-    pub(crate) format: wgpu::TextureFormat,
-    pub(crate) layers: Vec<AttachPoint>,
-    pub(crate) module: Option<String>,
-    pub(crate) last_frame: crate::LastFrame,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Target {
     Scene,
     Depth,
-    Output(u32),
     Canvas,
     Copy(AttachPoint, ViewTarget),
 }
@@ -46,7 +35,6 @@ pub(crate) fn final_target(view: ViewTarget) -> Target {
     match view {
         ViewTarget::Scene => Target::Scene,
         ViewTarget::Depth => Target::Depth,
-        ViewTarget::Output(index) => Target::Output(index),
     }
 }
 
@@ -127,7 +115,6 @@ pub(crate) struct BuiltPipeline {
     pub(crate) home: u32,
     pub(crate) layout_key: String,
     pub(crate) program_key: u64,
-    pub(crate) skipped: bool,
 }
 
 pub(crate) fn layout_key(pipeline: &BuiltPipeline) -> String {
@@ -142,7 +129,6 @@ pub(crate) struct FrameVariant {
 
 pub(crate) enum CoreFrame {
     Post,
-    Linear,
     Target(Target),
 }
 
@@ -155,7 +141,6 @@ pub(crate) type SetFormat = (Target, wgpu::TextureFormat, Clear);
 
 pub(crate) struct Machine {
     pub(crate) declared: Declared,
-    pub(crate) outputs: Vec<OutputDecl>,
     pub(crate) graph: StaticGraph,
     pub(crate) ids: Ids,
     pub(crate) pipelines: Vec<BuiltPipeline>,
@@ -163,13 +148,10 @@ pub(crate) struct Machine {
     pub(crate) frame_slots: BTreeMap<u32, FrameSlot>,
     pub(crate) frame_bound: BTreeMap<u32, Bound>,
     pub(crate) variants: Vec<FrameVariant>,
-    pub(crate) switches: Vec<(u32, engine_registry::GateId)>,
     pub(crate) view_copies: Vec<(AttachPoint, ViewTarget)>,
-    pub(crate) doubled: Vec<bool>,
     pub(crate) direct_depth: Vec<bool>,
     pub(crate) binding_bytes: BTreeMap<(Option<usize>, u32, u32), u64>,
     pub(crate) linker: Linker,
-    pub(crate) over_limit: Vec<(u32, Error)>,
 }
 
 fn layout_entries(entries: &[(u32, Ty, ShaderStages)]) -> Vec<wgpu::BindGroupLayoutEntry> {
@@ -182,16 +164,6 @@ fn layout_entries(entries: &[(u32, Ty, ShaderStages)]) -> Vec<wgpu::BindGroupLay
             count: None,
         })
         .collect()
-}
-
-fn class(ty: Ty, dynamic: bool) -> Class {
-    match ty {
-        Ty::Uniform => Class::Uniform { dynamic },
-        Ty::Storage { .. } => Class::Storage,
-        Ty::Texture { .. } => Class::Texture,
-        Ty::StorageTexture { .. } => Class::StorageTexture,
-        Ty::Sampler | Ty::Comparison => Class::Sampler,
-    }
 }
 
 fn stage_of(entry: Entry, linker: &Linker) -> ShaderStages {
@@ -228,88 +200,26 @@ pub(crate) fn shared(pass: &PassDecl) -> bool {
     pass.scene.is_some_and(|scene| scene.core)
 }
 
-pub(crate) fn pass_set(outputs: &[OutputDecl], pass: &PassDecl) -> Vec<SetFormat> {
-    let Some(layer) = pass_layer(pass) else {
+pub(crate) fn pass_set(pass: &PassDecl) -> Vec<SetFormat> {
+    if pass_layer(pass).is_none() {
         return Vec::new();
-    };
+    }
+    let scene = vec![(Target::Scene, SCENE_FORMAT, Clear::Color(BLACK))];
     match pass.scene.as_ref().filter(|scene| scene.core) {
-        Some(scene) if !scene.pass.writes.contains(engine_core::TargetName::COLOR) => scene
-            .pass
-            .writes
-            .targets()
-            .iter()
-            .filter_map(|name| outputs.iter().position(|output| output.name == name.name()))
-            .map(|index| {
-                (
-                    Target::Output(index as u32),
-                    outputs[index].format,
-                    Clear::Color(TRANSPARENT),
-                )
-            })
-            .collect(),
-        Some(_) => set_formats(outputs, pass, layer),
+        Some(scene) if !scene.pass.writes.contains(engine_core::TargetName::COLOR) => Vec::new(),
+        Some(_) => scene,
         None if !pass.colors.is_empty() => Vec::new(),
-        None => set_formats(outputs, pass, layer),
+        None => scene,
     }
 }
 
-fn written_module(
-    declared: &Declared,
-    decl: &PipelineDecl,
-    (outputs, linker): (&[OutputDecl], &Linker),
-    (path, problems): (&str, &mut Vec<Error>),
-) -> Option<Option<(String, String)>> {
-    let mut found: Option<(bool, Vec<u32>)> = None;
-    for (index, pass) in declared.passes.iter().enumerate() {
-        if !decl_in_pass(decl, index as u32, pass) {
-            continue;
-        }
-        let set = pass_set(outputs, pass);
-        let written = if lit_set(&set) {
-            let written: Vec<u32> = set
-                .iter()
-                .filter_map(|(target, ..)| match target {
-                    Target::Output(output) => Some(*output),
-                    Target::Scene | Target::Depth | Target::Canvas | Target::Copy(..) => None,
-                })
-                .collect();
-            (true, written)
-        } else if pass.written.is_empty() {
-            continue;
-        } else if pass.written.len() == pass.colors.len() && pass.targets.is_empty() {
-            (false, pass.written.clone())
-        } else {
-            problems.push(Error::new(ErrorCode::PassMismatch, path.to_owned()).got(pass.name));
-            return None;
-        };
-        if found.as_ref().is_some_and(|known| *known != written) {
-            problems.push(Error::new(ErrorCode::PassMismatch, path.to_owned()).got(pass.name));
-            return None;
-        }
-        found = Some(written);
-    }
-    Some(found.map(|(colored, written)| {
-        let listed: Vec<(&OutputDecl, bool)> = written
-            .iter()
-            .filter_map(|at| outputs.get(*at as usize))
-            .map(|output| {
-                let asks = output.module.as_deref().is_some_and(|module| {
-                    crate::shared::asks(linker.text(module).unwrap_or_default())
-                });
-                (output, asks)
-            })
-            .collect();
-        let shades = colored
-            || listed.iter().any(|(output, _)| {
-                output.module.as_deref().is_some_and(|module| {
-                    crate::shared::reads_shaded(
-                        linker.text(module).unwrap_or_default(),
-                        output.name,
-                    )
-                })
-            });
-        crate::shared::pass_module(colored, &listed, shades)
-    }))
+fn written_module(declared: &Declared, decl: &PipelineDecl) -> Option<(String, String)> {
+    declared
+        .passes
+        .iter()
+        .enumerate()
+        .any(|(index, pass)| decl_in_pass(decl, index as u32, pass) && lit_set(&pass_set(pass)))
+        .then(crate::shared::pass_module)
 }
 
 pub(crate) fn lit_set(set: &[SetFormat]) -> bool {
@@ -494,13 +404,13 @@ fn own_writes(decl: &PipelineDecl, reached: &Reached, linker: &Linker) -> Vec<Ha
         .collect()
 }
 
-fn attachments(pass: &PassDecl, outputs: &[OutputDecl], depth_writes: bool) -> Vec<Handle> {
+fn attachments(pass: &PassDecl, depth_writes: bool) -> Vec<Handle> {
     let mut found = Vec::new();
     for &(texture, _) in pass.colors.iter().chain(&pass.depths) {
         found.push(Handle::whole(texture));
     }
     if pass_layer(pass).is_some() {
-        for (target, ..) in pass_set(outputs, pass) {
+        for (target, ..) in pass_set(pass) {
             found.push(Handle::Target(target));
         }
         if shared(pass) || depth_writes {
@@ -528,17 +438,13 @@ impl Machine {
     pub(crate) fn build(
         device: &wgpu::Device,
         composing: Composing,
-        limits: &crate::pipelines::StageLimits,
         problems: &mut Vec<Error>,
     ) -> Option<Self> {
         let Composing {
             linker,
             declared,
-            outputs,
-            switches,
             core_frame,
             numbers,
-            variables,
             frame_bound,
             material_entries,
             depth_writes,
@@ -553,7 +459,6 @@ impl Machine {
             label: Some("engine/empty-group"),
             entries: &[],
         });
-        let doubled = doubled_of(&declared, &staged, &frame_bound, &linker);
         let owned: Vec<Vec<Handle>> = staged
             .iter()
             .map(|(decl, _, reached)| own_writes(decl, reached, &linker))
@@ -572,7 +477,7 @@ impl Machine {
                     }
                     let depth = depth_writes.get(index).copied().unwrap_or(true);
                     written.extend(
-                        attachments(pass, &outputs, depth)
+                        attachments(pass, depth)
                             .into_iter()
                             .map(|handle| (handle, Usage::Attached)),
                     );
@@ -586,7 +491,7 @@ impl Machine {
                 written
             })
             .collect();
-        let held: Vec<Option<(Handle, Ty)>> = (0..variables.len())
+        let held: Vec<Option<(Handle, Ty)>> = (0..core_frame.len())
             .map(|at| {
                 let (path, name, ty) = &core_frame[at];
                 let handle = match numbers.get(at).and_then(|number| frame_bound.get(number)) {
@@ -607,19 +512,50 @@ impl Machine {
                 })
             })
         };
-        let plan = match crate::frame_group::plan(&variables, &reaches, limits, &conflict) {
-            Ok(plan) => plan,
-            Err(mut refused) => {
-                problems.append(&mut refused);
-                return None;
-            }
-        };
-        let (variants, frame_keys): (Vec<FrameVariant>, Vec<String>) = plan
-            .variants
+        let mut conflicts = Vec::new();
+        let mut grouped: Vec<Vec<(u32, ShaderStages)>> = Vec::new();
+        let of_pipeline: Vec<u32> = reaches
+            .iter()
+            .enumerate()
+            .map(|(pipeline, (label, alone, reached))| {
+                if let Some(&(variable, _)) = reached
+                    .iter()
+                    .find(|&&(variable, _)| conflict(pipeline as u32, variable))
+                {
+                    conflicts.push(Error::new(
+                        ErrorCode::UsageConflict,
+                        format!("{label}.{}", core_frame[variable as usize].1),
+                    ));
+                }
+                if *alone {
+                    return u32::MAX;
+                }
+                let same = |known: &Vec<(u32, ShaderStages)>| {
+                    known.len() == reached.len()
+                        && known.iter().zip(reached).all(|(known, entry)| known.0 == entry.0)
+                };
+                match grouped.iter().position(same) {
+                    Some(at) => {
+                        for (known, entry) in grouped[at].iter_mut().zip(reached) {
+                            known.1 |= entry.1;
+                        }
+                        at as u32
+                    }
+                    None => {
+                        grouped.push(reached.clone());
+                        (grouped.len() - 1) as u32
+                    }
+                }
+            })
+            .collect();
+        if !conflicts.is_empty() {
+            problems.append(&mut conflicts);
+            return None;
+        }
+        let (variants, frame_keys): (Vec<FrameVariant>, Vec<String>) = grouped
             .iter()
             .map(|variant| {
                 let entries: Vec<(u32, Ty, ShaderStages)> = variant
-                    .entries
                     .iter()
                     .map(|&(at, stages)| (numbers[at as usize], core_frame[at as usize].2, stages))
                     .collect();
@@ -661,14 +597,8 @@ impl Machine {
             })
             .unzip();
         let material_key = format!("{material_entries:?}");
-        let over_limit = plan
-            .over
-            .iter()
-            .map(|(pipeline, error)| (staged[*pipeline as usize].0.part, error.clone()))
-            .collect();
         let mut pipelines = Vec::with_capacity(staged.len());
         for (index, (decl, stages, reached)) in staged.into_iter().enumerate() {
-            let skipped = plan.skipped.get(index).copied().unwrap_or(false);
             let material = reached
                 .iter()
                 .any(|(module, found, _)| found.group == 1 && linker.is_core(module));
@@ -712,9 +642,6 @@ impl Machine {
                 }
             }
             groups.sort_by_key(|group| group.index);
-            if skipped {
-                groups.clear();
-            }
             let mut layout_key = String::new();
             for group in &mut groups {
                 group.windows = group
@@ -750,7 +677,7 @@ impl Machine {
                     entries: &entries,
                 });
             }
-            let variant = plan.of_pipeline.get(index).copied().unwrap_or(0);
+            let variant = of_pipeline.get(index).copied().unwrap_or(0);
             let frame_key = frame_keys.get(variant as usize).map_or("", String::as_str);
             let material_shown = if material { material_key.as_str() } else { "" };
             layout_key.push_str(&format!(
@@ -765,7 +692,7 @@ impl Machine {
                 .get(variant as usize)
                 .map_or(&empty, |found| &found.layout);
             layouts.push(frame_layout);
-            for at in (1..=top).filter(|_| !skipped) {
+            for at in 1..=top {
                 let layout = match groups.iter().find(|group| group.index == at) {
                     Some(group) => &group.layout,
                     None if material && at == 1 => &material_layout,
@@ -827,13 +754,11 @@ impl Machine {
                 home,
                 layout_key,
                 program_key,
-                skipped,
             });
         }
         let direct_depth = depth_direct_of(&declared, &depth_writes);
         let view_copies = copies(&declared, &pipelines, &direct_depth);
-        let (graph, ids) = match graph_of(&declared, &outputs, &pipelines, &direct_depth, &doubled)
-        {
+        let (graph, ids) = match graph_of(&declared, &pipelines, &direct_depth) {
             Ok(built) => built,
             Err(error) => {
                 problems.push(error);
@@ -848,8 +773,6 @@ impl Machine {
                     None
                 } else if name == crate::shared::POST {
                     Some(CoreFrame::Post)
-                } else if name == crate::shared::LINEAR {
-                    Some(CoreFrame::Linear)
                 } else {
                     core_target(name).map(CoreFrame::Target)
                 };
@@ -859,7 +782,6 @@ impl Machine {
         let binding_bytes = binding_bytes_of(&pipelines);
         Some(Self {
             declared,
-            outputs,
             graph,
             ids,
             pipelines,
@@ -867,13 +789,10 @@ impl Machine {
             frame_slots,
             frame_bound,
             variants,
-            switches,
             view_copies,
-            doubled,
             direct_depth,
             binding_bytes,
             linker,
-            over_limit,
         })
     }
 }
@@ -898,72 +817,6 @@ fn binding_bytes_of(pipelines: &[BuiltPipeline]) -> BTreeMap<(Option<usize>, u32
         }
     }
     known
-}
-
-fn doubled_of(
-    declared: &Declared,
-    staged: &[(PipelineDecl, Vec<Stage>, Reached)],
-    frame_bound: &BTreeMap<u32, Bound>,
-    linker: &Linker,
-) -> Vec<bool> {
-    let texture_of = |bound: &Bound| match bound {
-        Bound::Texture(texture) | Bound::Slice { texture, .. } => Some(*texture),
-        Bound::Buffer(_)
-        | Bound::Window { .. }
-        | Bound::Sampler(_)
-        | Bound::Target(_)
-        | Bound::Asset => None,
-    };
-    declared
-        .textures
-        .iter()
-        .enumerate()
-        .map(|(texture, decl)| {
-            if decl.lifetime != Lifetime::Previous {
-                return false;
-            }
-            let texture = texture as u32;
-            declared.passes.iter().enumerate().any(|(index, pass)| {
-                let mut written = pass
-                    .colors
-                    .iter()
-                    .chain(&pass.depths)
-                    .any(|(known, _)| *known == texture);
-                let mut read = false;
-                if let Work::Copy { from, to } = pass.work {
-                    read |= from == Copied::Texture(texture);
-                    written |= to == Copied::Texture(texture);
-                }
-                for (decl, _, reached) in staged
-                    .iter()
-                    .filter(|(decl, _, _)| decl_in_pass(decl, index as u32, pass))
-                {
-                    for (module, found, _) in reached {
-                        let bound = if found.group == 0 {
-                            linker
-                                .binding_of(module, &found.name)
-                                .and_then(|number| frame_bound.get(&number))
-                                .cloned()
-                        } else {
-                            decl.bound.iter().find_map(|(var, bound)| {
-                                let (known, name) =
-                                    crate::linker::path_of((var.module(), var.name()));
-                                (known == module && name == found.name).then(|| bound.clone())
-                            })
-                        };
-                        if bound.as_ref().and_then(texture_of) == Some(texture) {
-                            if found.ty.writes() {
-                                written = true;
-                            } else {
-                                read = true;
-                            }
-                        }
-                    }
-                }
-                written && read
-            })
-        })
-        .collect()
 }
 
 fn filterable_bound(bound: Option<&Bound>, declared: &Declared) -> bool {
@@ -1000,45 +853,6 @@ fn graph_access(access: Access, clear: Clear) -> GraphAccess {
     }
 }
 
-pub(crate) fn layered(output: &OutputDecl) -> bool {
-    !output.layers.is_empty()
-}
-
-pub(crate) fn output_location(
-    outputs: &[OutputDecl],
-    pass: &PassDecl,
-    name: engine_core::TargetName,
-) -> Option<usize> {
-    let output = outputs
-        .iter()
-        .position(|output| output.name == name.name())?;
-    pass_set(outputs, pass)
-        .iter()
-        .position(|(target, ..)| *target == Target::Output(output as u32))
-}
-
-fn set_formats(outputs: &[OutputDecl], pass: &PassDecl, layer: AttachPoint) -> Vec<SetFormat> {
-    let named = pass
-        .scene
-        .map_or(engine_core::Writes::NOTHING, |scene| scene.pass.writes);
-    let mut set = vec![(Target::Scene, SCENE_FORMAT, Clear::Color(BLACK))];
-    for (index, output) in outputs.iter().enumerate() {
-        if output.layers.contains(&layer)
-            || named
-                .targets()
-                .iter()
-                .any(|name| name.name() == output.name)
-        {
-            set.push((
-                Target::Output(index as u32),
-                output.format,
-                Clear::Color(TRANSPARENT),
-            ));
-        }
-    }
-    set
-}
-
 pub(crate) fn target_read(
     view: ViewTarget,
     layer: Option<AttachPoint>,
@@ -1057,10 +871,8 @@ pub(crate) fn target_read(
 )]
 fn graph_of(
     declared: &Declared,
-    outputs: &[OutputDecl],
     pipelines: &[BuiltPipeline],
     direct: &[bool],
-    doubled: &[bool],
 ) -> Result<(StaticGraph, Ids), Error> {
     let mut resources = Vec::new();
     let mut ids = Ids {
@@ -1068,11 +880,11 @@ fn graph_of(
         buffers: Vec::new(),
         targets: Vec::new(),
     };
-    for (texture, &doubled) in declared.textures.iter().zip(doubled) {
+    for texture in &declared.textures {
         ids.textures.push(ResourceId::new(resources.len()));
         resources.push(ResourceEntry {
             label: texture.label,
-            life: if doubled { Life::Kept } else { life(texture.lifetime) },
+            life: life(texture.lifetime),
             view: false,
         });
     }
@@ -1091,15 +903,6 @@ fn graph_of(
         };
     target(Target::Scene, "scene", true, Life::Output, &mut ids);
     target(Target::Depth, "depth", true, Life::Output, &mut ids);
-    for (index, output) in outputs.iter().enumerate() {
-        target(
-            Target::Output(index as u32),
-            output.name,
-            true,
-            Life::Output,
-            &mut ids,
-        );
-    }
     target(Target::Canvas, "canvas", false, Life::Output, &mut ids);
     let copied = copies(declared, pipelines, direct);
     for &(layer, view) in &copied {
@@ -1205,7 +1008,7 @@ fn graph_of(
             Work::Render => {}
         }
         if scene.is_some() {
-            for (target, _, clear) in pass_set(outputs, pass) {
+            for (target, _, clear) in pass_set(pass) {
                 if let Some(id) = ids.target(target) {
                     let access = if entry.shared {
                         GraphAccess::Draw(clear)

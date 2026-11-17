@@ -29,25 +29,13 @@ pub use attribution::GpuPassTimes;
 pub(crate) use display::Display;
 use display::DisplayFrame;
 pub use health::DeviceHealth;
-pub use install::{
-    Ahead, FoldStep, Installation, InstalledPart, InstalledPiece, PassTie, device_limits,
-    install_noop,
-};
+pub use install::{Ahead, Installation, InstalledPart, device_limits, install_noop};
 pub use startup::StartingRenderer;
 
 pub(crate) fn new_assets(device: &wgpu::Device, queue: &crate::gpu_calls::Queue) -> Assets {
     Assets {
         meshes: GpuMeshes::new(device),
         materials: MaterialStore::new(device, queue),
-    }
-}
-
-pub fn inverse_or_identity(matrix: Mat4) -> Mat4 {
-    let inverse = matrix.inverse();
-    if inverse.is_finite() {
-        inverse
-    } else {
-        Mat4::IDENTITY
     }
 }
 
@@ -89,9 +77,7 @@ pub struct Renderer {
     #[cfg(feature = "profiling")]
     prelude_owners: Vec<(&'static str, &'static str)>,
     installing: Option<Validation>,
-    seconds: Option<f32>,
     part_names: &'static [&'static str],
-    linked: engine_core::LinkedStats,
     recovering: Option<startup::Opening>,
     lost_bricks: Vec<engine_registry::BrickId>,
     #[cfg(all(feature = "dev", not(target_arch = "wasm32")))]

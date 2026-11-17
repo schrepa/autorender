@@ -27,23 +27,19 @@ pub use engine_core::collections;
 
 mod games {
     pub use crate::frame_stats::ResolutionStats;
-    pub use crate::pacing::Pacing;
-    pub use crate::resolution::Resolution;
     pub use engine_core::{
-        Aabb, AlphaMode, Asks, AssetBudget, AssetLibrary, Attribute, Attributes, Binding,
-        BindingSource, Brick, BrickList, Bricks, Button, Camera, Clear, Clock, ColorSpace, Compare,
-        ComponentKind, ContextAsk, Contexts, Cull, CursorAsk, CursorMode, CursorRequests,
+        Aabb, AlphaMode, Asks, AssetBudget, AssetLibrary, Attribute, Attributes, Brick, BrickList,
+        Bricks, Camera, Clear, Clock, ColorSpace, Compare, ComponentKind, Cull, CursorMode,
         DepthBias, Devices, DrawKind, Drawn, DrawnProjection, DrawnState, DrawnTable, Engine,
         EngineConfig, Filter, FixedTime, FrameLimits, FrameTime, GeometryHandle, GlobalTransform,
-        GlobalTransforms, HandOver, Input, InputSettings, InstanceValues, KindDecl, KindSkip,
-        Layers, LightingModel, Listing, MakeTextures, Material, MaterialHandle, Mesh, MeshVertex,
-        Mobility, MouseButton, Mover, MoverId, Moves, Node, NodeWord, Operation, Pace, PadButton,
-        Parent, Pause, PauseReason, Player, Poses, Projection, ProvidedAssets, Rect, RenderState,
-        Sampler, SceneComponents, Schedule, Section, Source, Span, Spawner, Stick, SurfaceSlot,
-        Target, Teleport, Texture, TextureHandle, TextureRef, TextureSet, TextureSource,
-        TextureUsage, TimeScale, TouchPhase, Transform, Trigger, UvTransform, Verb, VerbId,
-        VerbShape, Verbs, View, ViewCut, ViewFacts, ViewHistory, Views, Wrap, main_camera,
-        make_fresh, math, place_camera, set_parent, set_parents,
+        GlobalTransforms, InstanceValues, KindDecl, KindSkip, Layers, LightingModel, Listing,
+        MakeTextures, Material, MaterialHandle, Mesh, MeshVertex, Mobility, MouseButton, Mover,
+        MoverId, Moves, Node, NodeWord, Operation, Pace, PadButton, Parent, Pause, PauseReason,
+        Poses, Projection, ProvidedAssets, Rect, RenderState, Sampler, SceneComponents, Schedule,
+        Section, Source, Span, Spawner, SurfaceSlot, Target, Teleport, Texture, TextureHandle,
+        TextureRef, TextureSet, TextureSource, TextureUsage, TimeScale, TouchPhase, Transform,
+        UvTransform, View, ViewCut, ViewFacts, ViewHistory, Views, Wrap, main_camera, make_fresh,
+        math, place_camera, set_parent, set_parents,
     };
 }
 pub use games::*;
@@ -78,11 +74,9 @@ mod app_host;
 #[cfg(feature = "dev")]
 mod dev_host;
 mod game_host;
-mod pacing;
-mod resolution;
 #[cfg(feature = "profiling")]
 pub use app_host::{PROFILE_DURATION_MS, PROFILE_EVENTS};
-pub use engine_render::{AdapterInfo, RenderTarget, TransparencySettings};
+pub use engine_render::{AdapterInfo, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
 pub use engine_render::{GpuPreference, NativeWindow, keep_pipeline_cache_in};
 pub use game_host::GameHost;

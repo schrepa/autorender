@@ -24,13 +24,13 @@ pub struct SceneDocument {
     pub environment: Option<SceneEnvironment>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub textures: Vec<SceneTexture>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub materials: Vec<SceneMaterial>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub meshes: Vec<SceneMesh>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub prefabs: Vec<ScenePrefab>,
     pub entities: Vec<SceneObject>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub looks: Vec<crate::SceneLook>,
 }
 
 impl SceneDocument {
@@ -132,21 +132,25 @@ impl MeshSource {
         }
     }
 
-    pub(crate) fn mesh(&self, path: &str, files: Option<&SceneFiles>) -> Result<Mesh, Error> {
+    pub(crate) fn mesh(
+        &self,
+        path: &str,
+        files: Option<&SceneFiles>,
+    ) -> Result<Option<Mesh>, Error> {
         match self {
-            Self::Cube {} => Ok(Mesh::cube()),
-            Self::Plane {} => Ok(Mesh::plane()),
+            Self::Cube {} => Ok(Some(Mesh::cube())),
+            Self::Plane {} => Ok(Some(Mesh::plane())),
             Self::Provided { name } => {
                 crate::validation::identifier(name, &format!("{path}.name"))?;
-                Ok(Mesh::cube())
+                Ok(None)
             }
             Self::Buffer { uri } => {
                 let uri_path = format!("{path}.uri");
                 valid_uri(uri, &uri_path)?;
                 let Some(files) = files else {
-                    return Ok(Mesh::cube());
+                    return Ok(None);
                 };
-                files.mesh(uri, &uri_path)?.mesh(path)
+                files.mesh(uri, &uri_path)?.mesh(path).map(Some)
             }
             Self::Inline { vertices, indices } => {
                 let extras = |present: &dyn Fn(&SceneVertex) -> bool, field: &str| {
@@ -181,6 +185,7 @@ impl MeshSource {
                     lods: None,
                 }
                 .mesh(path)
+                .map(Some)
             }
         }
     }

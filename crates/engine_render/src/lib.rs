@@ -15,7 +15,6 @@ use engine_core::{
 };
 
 use crate::draws::RawDraw;
-use crate::machine::OutputDecl;
 
 pub use engine_core::{AttachPoint, TargetName};
 pub use wgpu;
@@ -23,7 +22,6 @@ pub use wgpu;
 mod drawn;
 mod draws;
 mod encode;
-mod frame_group;
 mod gpu_calls;
 mod gpu_data;
 mod graph;
@@ -31,22 +29,15 @@ mod install;
 mod kinds;
 mod linker;
 mod machine;
-mod needs;
-mod pieces;
 mod pipelines;
-mod places;
-mod pyramid;
 mod registration;
 mod render_bricks;
 mod shaders;
 mod shared;
 mod sizes;
-pub mod slots;
 mod surface;
-mod transparency;
 mod uploads;
 
-mod core_slots;
 mod materials;
 mod memory;
 mod mesh_arena;
@@ -58,7 +49,7 @@ mod renderer;
 mod targets;
 
 pub use engine_place::{PointInput, PointSet};
-pub use gpu_data::{jitter_clip, mip_levels, pack_color, pack_surface, pyramid_extents};
+pub use gpu_data::{mip_levels, pack_color, pack_surface};
 pub use install::FragmentUse;
 pub use kinds::{
     Form, FormPass, FormSide, KindForm, KindSurface, OwnFragments, PassFragment, PerPass,
@@ -73,12 +64,11 @@ pub use platform::{AdapterInfo, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
 pub use platform::{GpuPreference, NativeWindow, keep_pipeline_cache_in};
-pub use pyramid::{PYRAMID_GROUP, PyramidExtent};
 pub use render_bricks::RenderBricks;
 #[doc(hidden)]
 pub use renderer::{
-    Ahead, DeviceHealth, FoldStep, GpuPassTimes, Installation, InstalledPart, InstalledPiece,
-    PassTie, Renderer, StartingRenderer, device_limits, install_noop,
+    Ahead, DeviceHealth, GpuPassTimes, Installation, InstalledPart, Renderer, StartingRenderer,
+    device_limits, install_noop,
 };
 pub use shaders::FULLSCREEN;
 pub use surface::{
@@ -88,40 +78,6 @@ pub use surface::{
 pub use uploads::{UploadRange, listed_ranges};
 
 pub const DEV: bool = cfg!(feature = "dev");
-
-pub use core_slots::{DEBUG_BLEND, DEBUG_TARGETS, DebugMode, DebugModes, DebugShown, Lit, Resolve};
-
-pub fn level_region(view: &engine_core::ViewFacts, level: u32) -> (u32, u32) {
-    let (display, render) = (view.size(), view.render);
-    targets::FrameRegion::new(
-        targets::FrameSize {
-            width: display.x,
-            height: display.y,
-        },
-        targets::FrameSize {
-            width: render.x,
-            height: render.y,
-        },
-    )
-    .level_region(level)
-}
-
-pub use transparency::TransparencySettings;
-
-pub mod debug {
-    use engine_core::gpu_bits;
-
-    #[gpu_bits]
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub struct DebugRecord {
-        #[bits(8)]
-        pub kind: u32,
-        #[bits(8, at = 16)]
-        pub source: u32,
-    }
-
-    pub const DEBUG_NO_MATERIAL: u32 = 0xff;
-}
 
 engine_core::settings! {
     #[section("render")]
@@ -134,9 +90,6 @@ engine_core::settings! {
 pub trait GpuPart: Sized + Send + Sync + 'static {
     type Reads: Read + 'static;
     const NAME: &'static str = "";
-    const LAZY: bool = false;
-    const TURNS_ON_IN_PLAY: bool = false;
-    const LABELS: &'static [&'static str] = &[];
     const MEMORY: &'static [&'static str] = &[];
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error>;
     fn prepare(&mut self, reads: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>);
@@ -206,24 +159,7 @@ pub struct SceneDraw {
     pub pass: Scene,
     pub bit: Option<PassBit>,
     pub role: PassRole,
-    pub view: Option<u32>,
-    pub mirrored: bool,
     pub index: Option<u32>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum LastFrame {
-    Unread,
-    Read,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct TargetDecl {
-    pub name: TargetName,
-    pub format: wgpu::TextureFormat,
-    pub written: &'static [AttachPoint],
-    pub module: Option<engine_core::Module>,
-    pub last_frame: LastFrame,
 }
 
 pub trait Scope<P> {
@@ -256,7 +192,6 @@ impl<P> Scope<P> for Scene {
 pub enum Lifetime {
     Frame,
     Kept,
-    Previous,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -422,20 +357,17 @@ pub struct RenderPipeline<'a> {
     pub writes: wgpu::ColorWrites,
 }
 
-fn target_of(name: TargetName, outputs: &[OutputDecl]) -> Result<install::ViewTarget, Error> {
-    let output = outputs.iter().position(|output| output.name == name.name());
-    install::ViewTarget::of(name)
-        .or_else(|| output.map(|at| install::ViewTarget::Output(at as u32)))
-        .ok_or_else(|| {
-            Error::new(
-                engine_core::ErrorCode::UnknownVariable,
-                format!("$.targets.{}", name.name()),
-            )
-            .got(name.name())
-        })
+fn target_of(name: TargetName) -> Result<install::ViewTarget, Error> {
+    install::ViewTarget::of(name).ok_or_else(|| {
+        Error::new(
+            engine_core::ErrorCode::UnknownVariable,
+            format!("$.targets.{}", name.name()),
+        )
+        .got(name.name())
+    })
 }
 
-fn bound_of<P>(bound: &Bind<P>, outputs: &[OutputDecl]) -> Result<install::Bound, Error> {
+fn bound_of<P>(bound: &Bind<P>) -> Result<install::Bound, Error> {
     Ok(match bound {
         Bind::Texture(texture) => install::Bound::Texture(texture.0),
         Bind::Slice {
@@ -449,18 +381,15 @@ fn bound_of<P>(bound: &Bind<P>, outputs: &[OutputDecl]) -> Result<install::Bound
         },
         Bind::Buffer(buffer) => install::Bound::Buffer(buffer.0),
         Bind::Sampler(sampler) => install::Bound::Sampler(sampler.0),
-        Bind::Target(name) => install::Bound::Target(target_of(*name, outputs)?),
+        Bind::Target(name) => install::Bound::Target(target_of(*name)?),
         Bind::Asset => install::Bound::Asset,
     })
 }
 
-fn bound_list<P>(
-    bound: &[(Var, Bind<P>)],
-    outputs: &[OutputDecl],
-) -> Result<Vec<(Var, install::Bound)>, Error> {
+fn bound_list<P>(bound: &[(Var, Bind<P>)]) -> Result<Vec<(Var, install::Bound)>, Error> {
     bound
         .iter()
-        .map(|(var, bound)| Ok((*var, bound_of(bound, outputs)?)))
+        .map(|(var, bound)| Ok((*var, bound_of(bound)?)))
         .collect()
 }
 
@@ -471,11 +400,11 @@ fn scoped<P, S: Scope<P>>(scope: &S) -> install::Scoped {
     }
 }
 
-fn copied<P>(copied: Copied<P>, outputs: &[OutputDecl]) -> Result<install::Copied, Error> {
+fn copied<P>(copied: Copied<P>) -> Result<install::Copied, Error> {
     Ok(match copied {
         Copied::Buffer(buffer) => install::Copied::Buffer(buffer.0),
         Copied::Texture(texture) => install::Copied::Texture(texture.0),
-        Copied::Target(name) => install::Copied::Target(target_of(name, outputs)?),
+        Copied::Target(name) => install::Copied::Target(target_of(name)?),
         Copied::Canvas => install::Copied::Canvas,
     })
 }
@@ -527,7 +456,7 @@ impl<P: GpuPart> Install<'_, P> {
     }
 
     pub fn frame(&mut self, variable: Var, bound: Bind<P>) -> Result<(), Error> {
-        let bound = bound_of(&bound, &self.core.outputs)?;
+        let bound = bound_of(&bound)?;
         self.core.frame(variable, bound)
     }
 
@@ -541,8 +470,7 @@ impl<P: GpuPart> Install<'_, P> {
     }
 
     pub fn copy(&mut self, name: &'static str, from: Copied<P>, to: Copied<P>) -> Pass<P> {
-        let outputs = &self.core.outputs;
-        let work = match (copied(from, outputs), copied(to, outputs)) {
+        let work = match (copied(from), copied(to)) {
             (Ok(from), Ok(to)) => install::Work::Copy { from, to },
             (Err(error), _) | (_, Err(error)) => {
                 self.core.problems.push(error);
@@ -613,7 +541,7 @@ impl<P: GpuPart> Install<'_, P> {
             samples: 1,
             faces: install::Faces::Declared,
         });
-        let bound = bound_list(bound, &self.core.outputs)?;
+        let bound = bound_list(bound)?;
         let pipeline = self.core.pipeline(scoped(scope), program, bound)?;
         Ok(Pipeline(pipeline, PhantomData))
     }
@@ -624,7 +552,7 @@ impl<P: GpuPart> Install<'_, P> {
         entry: Entry,
         bound: &[(Var, Bind<P>)],
     ) -> Result<ComputePipeline<P>, Error> {
-        let bound = bound_list(bound, &self.core.outputs)?;
+        let bound = bound_list(bound)?;
         let pipeline = self.core.pipeline(
             install::Scoped::Pass(pass.0),
             install::Program::Compute(entry),
@@ -770,39 +698,6 @@ impl<P: GpuPart> PassBuilder<'_, P> {
     }
 
     #[must_use]
-    pub fn writes(self, name: TargetName, target: Texture<P>, clear: wgpu::Color) -> Self {
-        let format = self
-            .core
-            .declared
-            .textures
-            .get(target.0 as usize)
-            .map(|texture| texture.format);
-        let output = self
-            .core
-            .outputs
-            .iter()
-            .position(|output| output.name == name.name() && Some(output.format) == format);
-        match (output, self.core.pass_mut(self.pass)) {
-            (Some(output), Some(pass)) => {
-                pass.colors.push((target.0, Access::Clear));
-                pass.written.push(output as u32);
-                pass.clears.push((
-                    target.0,
-                    graph::Clear::Color([clear.r, clear.g, clear.b, clear.a]),
-                ));
-            }
-            (_, pass) => {
-                let pass = pass.map_or("", |pass| pass.name);
-                let path = format!("$.passes.{pass}.writes.{}", name.name());
-                self.core
-                    .problems
-                    .push(Error::new(engine_core::ErrorCode::PassMismatch, path));
-            }
-        }
-        self
-    }
-
-    #[must_use]
     pub fn depth(self, target: Texture<P>, access: Access) -> Self {
         if let Some(pass) = self.core.pass_mut(self.pass) {
             pass.depths.push((target.0, access));
@@ -861,21 +756,6 @@ impl<P: GpuPart> Prepare<'_, P> {
 
     pub fn mipped(&self, material: Option<MaterialHandle>) -> bool {
         self.core.assets.materials.mipped(material)
-    }
-
-    pub fn last_frame_read(&self) -> bool {
-        let machine = &self.core.machine;
-        let ran = &self.core.set().ran;
-        machine
-            .outputs
-            .iter()
-            .enumerate()
-            .filter(|(_, output)| output.last_frame == LastFrame::Read)
-            .filter_map(|(index, _)| machine.ids.target(machine::Target::Output(index as u32)))
-            .any(|target| {
-                ran.iter()
-                    .any(|pass| machine.graph.reads(pass).contains(target.index()))
-            })
     }
 
     pub fn allocate(&mut self, texture: Texture<P>, size: wgpu::Extent3d, mips: u32) -> Allocation {
@@ -994,8 +874,7 @@ impl<P: GpuPart> Prepare<'_, P> {
 
     pub fn copy_at_end(&mut self, from: Copied<P>, to: Copied<P>, regions: &[CopyRegion]) {
         let regions = regions.to_vec();
-        let outputs = &self.core.machine.outputs;
-        match (copied(from, outputs), copied(to, outputs)) {
+        match (copied(from), copied(to)) {
             (Ok(from), Ok(to)) => self.core.queued.ending.push((from, to, regions)),
             (Err(error), _) | (_, Err(error)) => self.core.refuse(error),
         }
@@ -1102,53 +981,15 @@ impl<P: GpuPart> Encode<'_, P> {
 
     pub fn render(&mut self, attach: Attach<P>) -> Draw<'_, P, Own> {
         self.core.open_encode_span(self.timer);
-        if !self.core.begin_render(raw_attach(&attach), None) {
+        if !self.core.begin_render(raw_attach(&attach)) {
             self.core.end_render();
         }
         self.core.point = None;
         let part = self.core.part;
         Draw {
             raw: RawDraw::new(&mut *self.core, part, self.timer),
-            view: None,
-            mirrored: false,
             part: PhantomData,
         }
-    }
-
-    pub fn view(&mut self, target: &Attach<P>, local: u32) -> Option<Draw<'_, P, Own>> {
-        let view = self.core.owned_views(local..local + 1).pop()?;
-        self.open_view(target, view)
-    }
-
-    pub fn views(&mut self, own: &P, target: &Attach<P>, views: Range<u32>) -> u32 {
-        let mut drawn = 0;
-        for view in self.core.owned_views(views) {
-            if let Some(mut draw) = self.open_view(target, view) {
-                drawn += draw.scene(own);
-            }
-        }
-        drawn
-    }
-
-    fn open_view(
-        &mut self,
-        target: &Attach<P>,
-        view: encode::OwnedDraw,
-    ) -> Option<Draw<'_, P, Own>> {
-        self.core.open_encode_span(self.timer);
-        if !self.core.begin_render(raw_attach(target), Some(&view)) {
-            self.core.end_render();
-            return None;
-        }
-        self.core.point = None;
-        self.core.view_rect(view.rect);
-        let part = self.core.part;
-        Some(Draw {
-            raw: RawDraw::new(&mut *self.core, part, self.timer),
-            view: Some(view),
-            mirrored: view.mirrored,
-            part: PhantomData,
-        })
     }
 
     pub fn dispatch(&mut self, pipeline: &ComputePipeline<P>, count: Count<P>) -> u32 {
@@ -1182,8 +1023,6 @@ pub enum Recorded {
 
 pub struct Draw<'e, P, S> {
     raw: RawDraw<'e>,
-    view: Option<encode::OwnedDraw>,
-    mirrored: bool,
     part: PhantomData<fn() -> (P, S)>,
 }
 
@@ -1340,13 +1179,9 @@ fn raw_attach<P>(attach: &Attach<P>) -> encode::AttachRaw {
 
 impl<P: GpuPart> Draw<'_, P, Own> {
     pub fn scene(&mut self, own: &P) -> u32 {
-        let view = self.view;
         let run = self.raw.run();
-        match &view {
-            Some(view) => run.view_rect(view.rect),
-            None => run.reset_scissor(),
-        }
-        let Some(scene) = run.scene_draw(view.as_ref()) else {
+        run.reset_scissor();
+        let Some(scene) = run.scene_draw() else {
             return 0;
         };
         let members = run.scene_members();
@@ -1386,22 +1221,10 @@ impl<P: GpuPart> Draw<'_, P, Own> {
 gpu_struct! {
     pub struct CameraUniform {
         pub view_projection: [[f32; 4]; 4],
-        pub previous_view_projection: [[f32; 4]; 4],
-        pub inverse_view_projection: [[f32; 4]; 4],
         pub position: [f32; 4],
-        pub jitter: [f32; 4],
-        pub capture: u32,
-        pub pixel_angle: f32,
-        pub noise_phase: f32,
         pub mip_bias: f32,
-        pub previous: [f32; 4],
-        pub region: [f32; 4],
-        pub detail: [f32; 4],
-        pub view: [u32; 4],
-        pub transparency: [f32; 4],
-        pub texel: f32,
-        pub pixel_error: f32,
         pub pad_0: u32,
         pub pad_1: u32,
+        pub pad_2: u32,
     }
 }

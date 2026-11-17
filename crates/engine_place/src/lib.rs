@@ -4,7 +4,6 @@
 )]
 
 mod asks;
-mod budget;
 mod calls;
 mod drawn;
 mod feeds;
@@ -26,13 +25,11 @@ use bevy_ecs::{
 };
 use serde_json::Value;
 
-pub use asks::{Applied, AppliedView, ApplyAt, Ask, Asked, AskedView, Moment, PendingView};
-pub use budget::{BudgetUse, FrameBudget};
+pub use asks::{Applied, ApplyAt, Ask, Asked, Moment};
 pub use calls::{
-    AUTHORED_COMPONENTS, Call, Callable, Each, EntityIds, Event, EventDecl, EventPage, Lands,
-    NamedRun, Operation, RESERVED_REPLY_KEYS, Raises, ReadEvents, Refusal, Rows, SCENE_SCHEMA,
-    SchemaIn, access_of, answer, authored_component, embedded, missing_events, open_parts,
-    open_schema, page_of, rooted, scene_references, schema_of,
+    AUTHORED_COMPONENTS, Call, Callable, Each, Lands, NamedRun, Operation, RESERVED_REPLY_KEYS,
+    Refusal, Rows, SCENE_SCHEMA, SchemaIn, access_of, answer, authored_component, open_parts,
+    open_schema, scene_references, schema_of,
 };
 pub use drawn::{
     DrawKind, Drawn, DrawnBounds, DrawnProjection, InstanceValues, KindDecl, KindSkip, Layers,
@@ -43,50 +40,41 @@ pub use engine_assets::{
 };
 pub use engine_settings::{Error, ErrorCode};
 pub use feeds::{Cursor, Events, Feed, FeedView, Ring, Since, StoreId};
-pub use names::{AuthoredId, Named, OperationScene, SceneEntity, entity_named, entity_removed};
+pub use names::{AuthoredId, Named, OperationScene, SceneEntity, entity_removed};
 pub use nodes::{Clock, Mobility, Mover, MoverId, Node, NodeWord, Pace};
 pub use passes::{
     AttachPoint, BlendedPass, CORE_BRICK, ColorPass, KindCell, KindJoin, Pass, PassBit, PassCull,
-    PassEntry, PassMask, PassName, PassPurpose, PassRaster, PassRole, PassViews, ScenePass,
-    ScenePasses, SlotSet, TargetName, Writes, every, never, wgsl_name,
+    PassEntry, PassMask, PassName, PassRaster, PassRole, PassViews, ScenePass, ScenePasses, SlotSet,
+    TargetName, Writes, every, never, wgsl_name,
 };
 pub use point::{PointInput, PointSet};
 pub use readback::{FrameId, Readable, Readback};
 pub use readiness::{Awaits, CORE_ROW, Readiness, Unsettled};
-pub use requests::{Board, Census, Hold, Interest, Progress, Request, Requests, Settling, Ticket};
-pub use views::{
-    Clear, Jitter, OwnedView, OwnedViews, Rect, Target, View, ViewCut, ViewHistory, ViewJitter,
-    ViewLayer,
-};
+pub use requests::{Board, Census, Interest, Progress, Request, Requests, Settling, Ticket};
+pub use views::{Clear, Rect, Target, View, ViewCut, ViewHistory, ViewLayer};
 
 pub trait Slot: Resource + Default {
     const NAME: &'static str;
-    const WGSL: Option<&'static str> = None;
     const CALLS: &'static [Call] = &[];
-    const EVENTS: &'static [EventDecl] = &[];
 }
 
 pub trait List: Send + Sync + 'static {
     const NAME: &'static str;
     type Member: Send + Sync + 'static;
-    const WGSL: Option<&'static str> = None;
 
     fn dropped(_world: &mut World, _member: &Self::Member) {}
 }
 
 type ReadMembers = fn(&World, &mut dyn FnMut(&dyn Any));
-type ViewPlace = fn(&World, &dyn EntityIds) -> Option<AskedView>;
 
 #[derive(Clone, Copy)]
 pub struct PlaceDecl {
     name: &'static str,
     kind: PlaceKind,
-    wgsl: Option<&'static str>,
     insert: fn(&mut World),
     read: ReadMembers,
     reset: Option<fn(&mut World)>,
     ty: fn() -> TypeId,
-    view: Option<ViewPlace>,
 }
 
 impl PlaceDecl {
@@ -94,32 +82,25 @@ impl PlaceDecl {
         Self {
             name: S::NAME,
             kind: PlaceKind::Slot,
-            wgsl: S::WGSL,
             insert: insert_resource::<S>,
             read: read_resource::<S>,
             reset: None,
             ty: TypeId::of::<S>,
-            view: None,
         }
     }
 
     pub const fn ask<A: Ask>() -> Self {
-        Self {
-            view: Some(view_asked::<A>),
-            ..Self::slot::<Asked<A>>()
-        }
+        Self::slot::<Asked<A>>()
     }
 
     pub const fn ledger<R: Resource + Default>(name: &'static str) -> Self {
         Self {
             name,
             kind: PlaceKind::Ledger,
-            wgsl: None,
             insert: insert_resource::<R>,
             read: read_resource::<R>,
             reset: None,
             ty: TypeId::of::<R>,
-            view: None,
         }
     }
 
@@ -127,12 +108,10 @@ impl PlaceDecl {
         Self {
             name: L::NAME,
             kind: PlaceKind::List,
-            wgsl: L::WGSL,
             insert: insert_nothing,
             read: read_nothing,
             reset: None,
             ty: TypeId::of::<L>,
-            view: None,
         }
     }
 
@@ -140,12 +119,10 @@ impl PlaceDecl {
         Self {
             name,
             kind: PlaceKind::Component,
-            wgsl: None,
             insert: insert_component::<C>,
             read: read_nothing,
             reset: None,
             ty: TypeId::of::<C>,
-            view: None,
         }
     }
 
@@ -153,18 +130,11 @@ impl PlaceDecl {
         Self {
             name,
             kind: PlaceKind::Component,
-            wgsl: None,
             insert: insert_component::<C>,
             read: read_nothing,
             reset: Some(reset_component::<C>),
             ty: TypeId::of::<C>,
-            view: None,
         }
-    }
-
-    #[doc(hidden)]
-    pub fn view(&self, world: &World, ids: &dyn EntityIds) -> Option<AskedView> {
-        self.view.and_then(|view| view(world, ids))
     }
 
     #[doc(hidden)]
@@ -180,11 +150,6 @@ impl PlaceDecl {
     #[doc(hidden)]
     pub fn kind(&self) -> PlaceKind {
         self.kind
-    }
-
-    #[doc(hidden)]
-    pub fn wgsl(&self) -> Option<&'static str> {
-        self.wgsl
     }
 
     #[doc(hidden)]
@@ -214,12 +179,6 @@ pub enum PlaceKind {
 
 fn insert_resource<R: Resource + Default>(world: &mut World) {
     world.init_resource::<R>();
-}
-
-fn view_asked<A: Ask>(world: &World, ids: &dyn EntityIds) -> Option<AskedView> {
-    world
-        .get_resource::<Asked<A>>()
-        .map(|asked| asked.view(ids))
 }
 
 fn insert_component<C: Component>(world: &mut World) {

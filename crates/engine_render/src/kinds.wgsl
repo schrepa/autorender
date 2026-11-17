@@ -1,12 +1,8 @@
-import package::engine::drawn::drawn_records;
 import package::engine::materials::alpha_test;
-import package::engine::geometry::declarations::fade_hidden;
 import package::engine::geometry::vertex::output_color;
-import package::engine::shading::{Shaded, SurfaceInput, SurfacePoint, ViewPixel};
+import package::engine::shading::{Shaded, SurfaceInput, SurfacePoint};
 import package::engine::surface::{masked_out, opacity_cut, surface_point};
-import package::engine::view::{camera, material_bias, view_pixel};
-import package::face::debug::{DebugTargets, debug_record_with_kind, debug_targets};
-import package::face::debug_modes::point_source;
+import package::engine::view::{camera, material_bias};
 import package::generated::writes::{Outputs, blended_outputs, outputs, slot_shaded};
 
 struct SurfaceVaryings {
@@ -14,7 +10,6 @@ struct SurfaceVaryings {
     @location(0) normal_u: vec4<f32>,
     @location(1) world_v: vec4<f32>,
     @location(2) @interpolate(flat) material: vec4<u32>,
-    @location(3) previous: vec3<f32>,
 }
 
 struct SurfaceExtraVaryings {
@@ -22,7 +17,6 @@ struct SurfaceExtraVaryings {
     @location(0) normal_u: vec4<f32>,
     @location(1) world_v: vec4<f32>,
     @location(2) @interpolate(flat) material: vec4<u32>,
-    @location(3) previous: vec3<f32>,
     @location(4) color: vec4<f32>,
     @location(5) uv1: vec2<f32>,
 }
@@ -32,7 +26,6 @@ struct ShownVaryings {
     @location(0) normal_u: vec4<f32>,
     @location(1) world_v: vec4<f32>,
     @location(2) @interpolate(flat) material: vec4<u32>,
-    @location(3) previous: vec3<f32>,
     @location(6) @interpolate(flat) object: vec4<u32>,
 }
 
@@ -41,7 +34,6 @@ struct ShownExtraVaryings {
     @location(0) normal_u: vec4<f32>,
     @location(1) world_v: vec4<f32>,
     @location(2) @interpolate(flat) material: vec4<u32>,
-    @location(3) previous: vec3<f32>,
     @location(4) color: vec4<f32>,
     @location(5) uv1: vec2<f32>,
     @location(6) @interpolate(flat) object: vec4<u32>,
@@ -101,7 +93,6 @@ struct KindShaded {
 struct KindPoint {
     point: SurfacePoint,
     pixel: vec2<f32>,
-    at: ViewPixel,
 }
 
 fn surface_input(input: KindFragment, front: bool) -> SurfaceInput {
@@ -163,9 +154,6 @@ fn extra_fragment(input: SurfaceExtraVaryings) -> KindFragment {
 }
 
 fn object_fragment(values: KindFragment, object: vec4<u32>) -> KindFragment {
-    if fade_hidden(values.material.w, values.pixel) {
-        discard;
-    }
     var placed = values;
     placed.kind = object.w;
     placed.object = object.y;
@@ -194,22 +182,6 @@ fn shade(input: KindFragment, front: bool) -> KindShaded {
     return KindShaded(point, slot_shaded(surface, point, input.pixel));
 }
 
-fn drawn_pixel(clip_position: vec4<f32>, previous: vec3<f32>) -> ViewPixel {
-    return view_pixel(clip_position, vec4<f32>(previous.xy, 0.0, previous.z));
-}
-
-fn shown_targets(input: KindFragment, object: vec4<u32>, front: bool) -> DebugTargets {
-    let point = lit_point(surface_input(input, front));
-    let record = debug_record_with_kind(object.x, drawn_records[object.y].kind);
-    return debug_targets(record, object.y, object.z, point.normal, point_source(0u, point));
-}
-
-fn object_targets(input: KindFragment, object: vec4<u32>, front: bool) -> DebugTargets {
-    let point = lit_point(surface_input(input, front));
-    return debug_targets(debug_record_with_kind(object.x, object.w), object.y, object.z,
-        point.normal, point_source(0u, point));
-}
-
 @fragment
 fn fs_kind_masked_depth(input: DepthVaryings) {
     masked_depth(fragment_values(input.clip_position, input.normal_u, input.world_v,
@@ -225,44 +197,27 @@ fn fs_kind_masked_depth_extra(input: DepthExtraVaryings) {
 @fragment
 fn fs_kind_lit(input: SurfaceVaryings, @builtin(front_facing) front: bool) -> Outputs {
     let shaded = shade(surface_fragment(input), front);
-    return outputs(shaded.point, shaded.shaded, drawn_pixel(input.clip_position, input.previous));
+    return outputs(shaded.point, shaded.shaded);
 }
 
 @fragment
 fn fs_kind_lit_extra(input: SurfaceExtraVaryings, @builtin(front_facing) front: bool)
         -> Outputs {
     let shaded = shade(extra_fragment(input), front);
-    return outputs(shaded.point, shaded.shaded, drawn_pixel(input.clip_position, input.previous));
+    return outputs(shaded.point, shaded.shaded);
 }
 
 @fragment
 fn fs_kind_blended(input: SurfaceVaryings, @builtin(front_facing) front: bool) -> Outputs {
     let shaded = shade(surface_fragment(input), front);
-    return blended_outputs(shaded.point, shaded.shaded,
-        drawn_pixel(input.clip_position, input.previous));
+    return blended_outputs(shaded.point, shaded.shaded);
 }
 
 @fragment
 fn fs_kind_blended_extra(input: SurfaceExtraVaryings, @builtin(front_facing) front: bool)
         -> Outputs {
     let shaded = shade(extra_fragment(input), front);
-    return blended_outputs(shaded.point, shaded.shaded,
-        drawn_pixel(input.clip_position, input.previous));
-}
-
-@fragment
-fn fs_kind_shown(input: ShownVaryings, @builtin(front_facing) front: bool) -> DebugTargets {
-    let values = fragment_values(input.clip_position, input.normal_u, input.world_v,
-        input.material);
-    return shown_targets(values, input.object, front);
-}
-
-@fragment
-fn fs_kind_shown_extra(input: ShownExtraVaryings, @builtin(front_facing) front: bool)
-        -> DebugTargets {
-    let values = extra_values(input.clip_position, input.normal_u, input.world_v,
-        input.material, input.color, input.uv1);
-    return shown_targets(values, input.object, front);
+    return blended_outputs(shaded.point, shaded.shaded);
 }
 
 @fragment
@@ -280,39 +235,25 @@ fn fs_kind_object_masked_depth_extra(input: ObjectDepthExtraVaryings) {
 @fragment
 fn fs_kind_object_lit(input: ShownVaryings, @builtin(front_facing) front: bool) -> Outputs {
     let shaded = shade(shown_object(input), front);
-    return outputs(shaded.point, shaded.shaded, drawn_pixel(input.clip_position, input.previous));
+    return outputs(shaded.point, shaded.shaded);
 }
 
 @fragment
 fn fs_kind_object_lit_extra(input: ShownExtraVaryings, @builtin(front_facing) front: bool)
         -> Outputs {
     let shaded = shade(shown_extra_object(input), front);
-    return outputs(shaded.point, shaded.shaded, drawn_pixel(input.clip_position, input.previous));
+    return outputs(shaded.point, shaded.shaded);
 }
 
 @fragment
 fn fs_kind_object_blended(input: ShownVaryings, @builtin(front_facing) front: bool) -> Outputs {
     let shaded = shade(shown_object(input), front);
-    return blended_outputs(shaded.point, shaded.shaded,
-        drawn_pixel(input.clip_position, input.previous));
+    return blended_outputs(shaded.point, shaded.shaded);
 }
 
 @fragment
 fn fs_kind_object_blended_extra(input: ShownExtraVaryings, @builtin(front_facing) front: bool)
         -> Outputs {
     let shaded = shade(shown_extra_object(input), front);
-    return blended_outputs(shaded.point, shaded.shaded,
-        drawn_pixel(input.clip_position, input.previous));
-}
-
-@fragment
-fn fs_kind_object_shown(input: ShownVaryings, @builtin(front_facing) front: bool)
-        -> DebugTargets {
-    return object_targets(shown_object(input), input.object, front);
-}
-
-@fragment
-fn fs_kind_object_shown_extra(input: ShownExtraVaryings, @builtin(front_facing) front: bool)
-        -> DebugTargets {
-    return object_targets(shown_extra_object(input), input.object, front);
+    return blended_outputs(shaded.point, shaded.shaded);
 }

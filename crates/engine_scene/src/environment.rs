@@ -107,19 +107,7 @@ impl SceneEnvironment {
     }
 
     pub(crate) fn apply_all(&self, world: &mut World, path: &str) -> Result<(), Error> {
-        self.apply_where(world, path, |_| true)
-    }
-
-    pub(crate) fn apply_where(
-        &self,
-        world: &mut World,
-        path: &str,
-        applies: impl Fn(&str) -> bool,
-    ) -> Result<(), Error> {
-        let sections: Vec<SettingsEntry> = registered(world)
-            .filter(|section| applies(section.key))
-            .copied()
-            .collect();
+        let sections: Vec<SettingsEntry> = registered(world).copied().collect();
         for section in sections {
             let value = self
                 .value(section.key)

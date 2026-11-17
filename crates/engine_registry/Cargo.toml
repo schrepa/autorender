@@ -16,7 +16,6 @@ engine_settings.workspace = true
 engine_math.workspace = true
 bevy_ecs = { workspace = true, features = ["debug"] }
 bevy_platform.workspace = true
-bytemuck.workspace = true
 glam.workspace = true
 indexmap.workspace = true
 schemars.workspace = true

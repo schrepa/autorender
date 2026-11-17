@@ -6,8 +6,8 @@ macro_rules! __game_surface {
             { $($context)* }
             always_mut {
                 fn frame(timestamp: f64, width: u32, height: u32) -> Result<(), $crate::__private::JsValue>;
-                fn key(code: &str, down: bool) -> bool;
-                fn mouse_button(button: u32, down: bool) -> bool;
+                fn key(code: &str, down: bool);
+                fn mouse_button(button: u32, down: bool);
                 fn motion(dx: f32, dy: f32);
                 fn pointer(x: f32, y: f32);
                 fn pointer_left();

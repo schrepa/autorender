@@ -4,7 +4,7 @@ use bevy_ecs::world::World;
 
 use super::{GlobalTransforms, tracking};
 use crate::moves::MovingKinds;
-use crate::{Cursor, Events, Mobility, Mover, Node, NodeWord};
+use crate::{Mobility, Mover, Node, NodeWord};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub(super) struct Declared {
@@ -85,9 +85,6 @@ impl GlobalTransforms {
                 continue;
             }
             self.words[index] = next;
-            if before.mobility != next.mobility {
-                self.static_moves.moved.remove(&self.entities[index]);
-            }
             if rebuilt {
                 continue;
             }
@@ -143,13 +140,5 @@ impl GlobalTransforms {
 
     pub fn mobility(&self, entity: Entity) -> Option<Mobility> {
         self.word(entity).map(|word| word.mobility)
-    }
-
-    pub fn moved_static(&self) -> impl ExactSizeIterator<Item = Entity> + '_ {
-        self.static_moves.moved.iter().copied()
-    }
-
-    pub fn static_moves_since(&self, cursor: &mut Cursor) -> Events<'_, Entity> {
-        self.static_moves.feed.events(cursor)
     }
 }

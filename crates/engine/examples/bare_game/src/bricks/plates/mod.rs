@@ -4,7 +4,7 @@ use bevy_ecs::prelude::*;
 use engine_core::{
     AssetResidency, AttachPoint, Attributes, BlendedPass, Brick, Bricks, ColorPass, DrawKind,
     DrawnPoses, DrawnTable, Error, GlobalTransforms, GpuStruct, KindDecl, KindSkip, MaterialHandle,
-    Pass, PassName, PassPurpose, PassViews, SlotSet, Source, SurfaceSlot, Writes, gpu_struct,
+    Pass, PassName, PassViews, SlotSet, Source, SurfaceSlot, Writes, gpu_struct,
 };
 use engine_render::{
     Allocation, Bind, Buffer, Draw, Form, FormSide, FragmentUse, GpuPart, Install, KindForm,
@@ -33,14 +33,12 @@ const FORM: KindForm = KindForm {
         streams: &[],
         depth_bias: FormSide::UNBIASED,
     },
-    owned: None,
     varyings: Varyings::Surface(FragmentUse::Masked),
 };
 
 gpu_struct! {
     pub struct PlateInstance {
         pub center: [f32; 4],
-        pub previous: [f32; 4],
         pub across: [f32; 4],
         pub along: [f32; 4],
         pub drawn: [u32; 4],
@@ -56,7 +54,6 @@ impl PassName for PlatesPass {
         reads: SlotSet::ALL,
         views: PassViews::Main,
         at: AttachPoint::Opaque,
-        purpose: PassPurpose::Scene,
         takes: plated,
     };
 }
@@ -135,7 +132,6 @@ impl GpuPart for PlatesGpu {
             let Some(pose) = poses.drawn_pose(&globals, entity) else {
                 continue;
             };
-            let previous = poses.previous_drawn_pose(&globals, entity).unwrap_or(pose);
             if self.material.is_none() {
                 self.material = drawn
                     .material
@@ -149,7 +145,6 @@ impl GpuPart for PlatesGpu {
             }
             self.staged.push(PlateInstance {
                 center: pose.w_axis.to_array(),
-                previous: previous.w_axis.to_array(),
                 across: pose.x_axis.to_array(),
                 along: pose.z_axis.to_array(),
                 drawn: [slot, 0, 0, 0],

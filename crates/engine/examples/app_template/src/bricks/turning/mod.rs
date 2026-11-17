@@ -17,7 +17,6 @@ impl Brick for TurningBrick {
         bricks
             .join::<SceneComponents>(
                 ComponentKind::of::<Turning>("turning").schema(engine_core::schema_of::<Turning>),
-                None,
             )
             .moves::<Turning>(Pace::Tick)
             .systems(Schedule::FixedSimulation, turn);

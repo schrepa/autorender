@@ -398,7 +398,6 @@ impl<G: Game> GameHost<G> {
 
     fn dev_done(&mut self, mut reply: Value, context: &HostContext) -> Step {
         self.dev_pending = None;
-        self.apply_cursor();
         if reply["ok"] == true {
             let rendering = self.stats_value();
             let observation = reply["observation"].clone();

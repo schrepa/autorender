@@ -128,28 +128,12 @@ impl Reports {
     }
 }
 
-fn named_by(parts: &[crate::install::PartInfo], message: &str) -> Option<usize> {
-    let mut named = None;
-    for (index, part) in parts.iter().enumerate() {
-        if part.labels.iter().any(|label| message.contains(label)) {
-            if named.is_some() {
-                return None;
-            }
-            named = Some(index);
-        }
-    }
-    named
-}
-
 fn refusal(machine: &crate::machine::Machine, (pass, program): (&str, u64), text: &str) -> Error {
     let label = (machine.pipelines.iter())
         .find(|built| built.program_key == program)
-        .and_then(|built| {
-            let entry = match &built.decl.program {
-                crate::install::Program::Render(desc) => desc.vertex.name(),
-                crate::install::Program::Compute(_) => built.stages.first()?.entry.name(),
-            };
-            Some(machine.part_label(built.decl.part, entry))
+        .and_then(|built| match &built.decl.program {
+            crate::install::Program::Render(desc) => Some(desc.vertex.name()),
+            crate::install::Program::Compute(_) => Some(built.stages.first()?.entry.name()),
         });
     let path = match label {
         Some(label) => format!("$.pipelines.{pass}.{label}"),
@@ -182,33 +166,10 @@ impl Renderer {
                     refused.push(text);
                 }
             }
-            reports.messages.extend(refused.iter().cloned());
+            reports.messages.extend(refused);
             for message in std::mem::take(&mut reports.messages) {
-                let named = self
-                    .run
-                    .as_ref()
-                    .and_then(|run| named_by(&run.machine.declared.parts, &message));
-                match (named, self.run.as_mut()) {
-                    (Some(part), Some(run)) => {
-                        let held = &run.machine.declared.parts[part];
-                        if !held.lazy {
-                            if !refused.contains(&message) {
-                                let path = format!("$.gpu.{}", held.name);
-                                reports.notices.push(failed(&path).got_whole(&message));
-                            }
-                            continue;
-                        }
-                        let saved = run.part;
-                        run.part = part as u32;
-                        let error = failed("$.gpu").got_whole(&message);
-                        run.fault(error);
-                        run.part = saved;
-                    }
-                    (Some(_) | None, _) => {
-                        let error = failed("$.gpu").got_whole(message);
-                        reports.health.after(Change::Failed(error));
-                    }
-                }
+                let error = failed("$.gpu").got_whole(message);
+                reports.health.after(Change::Failed(error));
             }
             if let Some(fatal) = reports.health.fatal() {
                 return Err(fatal.clone());

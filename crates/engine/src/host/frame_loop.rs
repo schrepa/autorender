@@ -93,7 +93,6 @@ enum View {
 pub struct FrameLoop {
     stage: Stage,
     view: View,
-    started: f64,
 }
 
 impl Default for FrameLoop {
@@ -101,7 +100,6 @@ impl Default for FrameLoop {
         Self {
             stage: Stage::Unprepared,
             view: View::Sized,
-            started: 0.0,
         }
     }
 }
@@ -137,7 +135,6 @@ impl FrameLoop {
             host.resume(HostPause::Hidden);
         }
         self.view = View::Sized;
-        self.started = timestamp;
         let (stage, phase) = self.advance(host, timestamp, (width, height))?;
         self.stage = stage;
         Ok(phase)
@@ -152,8 +149,6 @@ impl FrameLoop {
         let (since, picture, before) = match &self.stage {
             Stage::Playing => {
                 host.frame(timestamp, width, height)?;
-                host.paced();
-                self.spare(host);
                 return Ok((Stage::Playing, FramePhase::Playing));
             }
             Stage::Unprepared => {
@@ -168,13 +163,7 @@ impl FrameLoop {
             } => (*since, *picture, before.clone()),
         };
         host.set_preparation_ms(now_ms() - since);
-        if picture == Picture::Hidden {
-            whole_tick(host);
-        }
         let drawn = host.framed(timestamp, (width, height), picture)?;
-        if picture == Picture::Shown {
-            self.spare(host);
-        }
         let (readiness, jobs) = host.progress();
         let render = &host.frame_times().render;
         let created = render.pipelines_created;
@@ -222,18 +211,6 @@ impl FrameLoop {
         };
         Ok((preparing(Picture::Hidden, Some(sample)), phase))
     }
-
-    fn spare<G: Game>(&self, host: &mut GameHost<G>) {
-        let margin = crate::pacing::of(host.engine().app.world()).margin_ms;
-        let spare = self.started + host.refresh_interval() - now_ms() - margin;
-        host.set_spare_time(spare);
-    }
-}
-
-fn whole_tick<G: Game>(host: &mut GameHost<G>) {
-    let margin = crate::pacing::of(host.engine().app.world()).margin_ms;
-    let tick = host.refresh_interval() - margin;
-    host.set_spare_time(tick);
 }
 
 fn in_flight<G: Game>(host: &GameHost<G>, readiness: &Readiness) -> bool {

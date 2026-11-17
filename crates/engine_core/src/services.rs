@@ -8,9 +8,9 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::lifecycle::{Discard, Insert};
 use bevy_ecs::observer::On;
 use bevy_ecs::resource::Resource;
-use bevy_ecs::system::{Query, Res, ResMut, SystemParam};
+use bevy_ecs::system::{Query, ResMut};
 use bevy_ecs::world::World;
-use engine_place::{AuthoredId, OperationScene, SceneEntity};
+use engine_place::{OperationScene, SceneEntity};
 use engine_registry::JobList;
 use glam::Mat4;
 use serde::{Serialize, de::DeserializeOwned};
@@ -106,7 +106,6 @@ pub struct ComponentKind {
     prepared: fn(&Value, &str) -> Result<Prepared, Error>,
     held: fn(&World, Entity) -> Option<Prepared>,
     insert: fn(&mut World, Entity, Prepared) -> Result<(), Error>,
-    remove: fn(&mut World, Entity),
     placement: Placement,
     check: Option<CheckHook>,
     placed: Option<PlacedHook>,
@@ -133,10 +132,6 @@ pub trait SceneForm: Clone + Serialize + DeserializeOwned + Send + Sync + 'stati
     fn held(world: &World, entity: Entity) -> Option<Self> {
         Self::read(world, entity)
     }
-
-    fn remove(world: &mut World, entity: Entity) {
-        remove_component::<Self::Component>(world, entity);
-    }
 }
 
 impl ComponentKind {
@@ -151,7 +146,6 @@ impl ComponentKind {
                 prepared: prepared_component::<F>,
                 held: held_form::<F>,
                 insert: insert_form::<F>,
-                remove: F::remove,
                 placement: Placement::Anywhere,
                 check: None,
                 placed: None,
@@ -178,7 +172,6 @@ impl ComponentKind {
                 prepared: prepared_component::<C>,
                 held: held_component::<C>,
                 insert: insert_component::<C>,
-                remove: remove_component::<C>,
                 placement: Placement::Anywhere,
                 check: None,
                 placed: None,
@@ -267,11 +260,6 @@ impl ComponentKind {
         prepared: Prepared,
     ) -> Result<(), Error> {
         (self.insert)(world, entity, prepared)
-    }
-
-    #[doc(hidden)]
-    pub fn remove(&self, world: &mut World, entity: Entity) {
-        (self.remove)(world, entity);
     }
 
     #[doc(hidden)]
@@ -526,12 +514,6 @@ fn insert_form<F: SceneForm>(
     F::insert(*form, world, entity)
 }
 
-fn remove_component<C: Component>(world: &mut World, entity: Entity) {
-    if let Ok(mut target) = world.get_entity_mut(entity) {
-        target.remove::<C>();
-    }
-}
-
 pub struct SceneComponents;
 
 impl List for SceneComponents {
@@ -554,65 +536,6 @@ pub fn scene_component(world: &World, key: &str) -> Option<ComponentKind> {
     scene_components(world)
         .find(|kind| kind.key == key)
         .cloned()
-}
-
-#[derive(SystemParam)]
-pub struct SceneIds<'w, 's> {
-    scene: Option<Res<'w, OperationScene>>,
-    entities: Query<'w, 's, (Entity, &'static SceneEntity)>,
-}
-
-impl crate::EntityIds for SceneIds<'_, '_> {
-    fn id(&self, entity: Entity) -> Option<String> {
-        SceneIds::id(self, entity).map(str::to_owned)
-    }
-}
-
-impl SceneIds<'_, '_> {
-    pub fn loaded(&self) -> bool {
-        self.scene.is_some()
-    }
-
-    pub fn len(&self) -> usize {
-        self.scene.as_ref().map_or(0, |scene| scene.entity_count())
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
-    pub fn entity(&self, id: &str) -> Option<Entity> {
-        self.scene.as_ref()?.entity(id)
-    }
-
-    pub fn named(&self, id: &str, path: &str) -> Result<Entity, Error> {
-        match &self.scene {
-            Some(scene) => scene.named(id, path, |entity| self.entities.contains(entity)),
-            None => Err(Error::new(ErrorCode::UnknownEntity, path).got(id)),
-        }
-    }
-
-    pub fn id(&self, entity: Entity) -> Option<&str> {
-        self.scene.as_ref()?;
-        self.entities
-            .get(entity)
-            .ok()
-            .map(|(_, authored)| authored.authored_id.as_str())
-    }
-
-    pub fn authored(&self, entity: Entity) -> Option<AuthoredId> {
-        self.scene.as_ref()?;
-        self.entities
-            .get(entity)
-            .ok()
-            .map(|(_, authored)| authored.authored())
-    }
-
-    pub fn holds(&self, authored: &AuthoredId, entity: Entity) -> bool {
-        self.scene
-            .as_ref()
-            .is_some_and(|scene| scene.holds(authored, entity))
-    }
 }
 
 pub(crate) fn scene_entity_inserted(
@@ -746,18 +669,6 @@ impl DeviceLimits {
             max_compute_workgroups_per_dimension: 0,
             indirect_first_instance: false,
         }
-    }
-}
-
-#[derive(Resource, Clone, Copy, Debug, Default)]
-#[component(immutable)]
-pub struct WorkClock {
-    pub reading: Option<fn() -> f64>,
-}
-
-impl WorkClock {
-    pub fn now(&self) -> Option<f64> {
-        self.reading.map(|clock| clock())
     }
 }
 

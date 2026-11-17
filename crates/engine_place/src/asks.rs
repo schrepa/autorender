@@ -2,7 +2,7 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::resource::Resource;
 use serde::Serialize;
 
-use crate::{EntityIds, Slot};
+use crate::Slot;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -33,27 +33,6 @@ pub struct Applied {
     pub node: Option<Entity>,
     pub asked: Moment,
     pub applied: Moment,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
-pub struct PendingView {
-    pub entity: Option<String>,
-    pub asked: Moment,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
-pub struct AppliedView {
-    pub entity: Option<String>,
-    pub asked: Moment,
-    pub applied: Moment,
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
-pub struct AskedView {
-    pub name: String,
-    pub at: ApplyAt,
-    pub pending: Vec<PendingView>,
-    pub applied: Vec<AppliedView>,
 }
 
 #[derive(Resource)]
@@ -116,30 +95,5 @@ impl<A: Ask> Asked<A> {
                 ask
             })
             .collect()
-    }
-
-    pub fn view(&self, ids: &dyn EntityIds) -> AskedView {
-        let named = |node: Option<Entity>| node.and_then(|node| ids.id(node));
-        AskedView {
-            name: A::NAME.to_owned(),
-            at: A::AT,
-            pending: self
-                .pending
-                .iter()
-                .map(|(ask, asked)| PendingView {
-                    entity: named(ask.node()),
-                    asked: *asked,
-                })
-                .collect(),
-            applied: self
-                .applied
-                .iter()
-                .map(|applied| AppliedView {
-                    entity: named(applied.node),
-                    asked: applied.asked,
-                    applied: applied.applied,
-                })
-                .collect(),
-        }
     }
 }

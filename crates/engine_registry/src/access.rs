@@ -172,20 +172,11 @@ impl AccessRule {
         problems.push(foreign(package, system, &name));
     }
 
-    pub fn check_type(
-        &self,
-        brick: BrickId,
-        type_id: TypeId,
-        type_name: &str,
-        filled_slot: bool,
-        problems: &mut Vec<Error>,
-    ) {
+    pub fn check_type(&self, brick: BrickId, type_name: &str, problems: &mut Vec<Error>) {
         let Some(&(package, owner)) = self.packages.get(brick.index()) else {
             return;
         };
-        if owner.is_some_and(|owner| crate_segment(type_name) == owner)
-            || (filled_slot && self.filler(type_id) == Some(brick))
-        {
+        if owner.is_some_and(|owner| crate_segment(type_name) == owner) {
             return;
         }
         problems.push(foreign(package, "registers", type_name));

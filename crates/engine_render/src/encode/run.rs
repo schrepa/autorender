@@ -13,7 +13,6 @@ pub(crate) struct Run {
     pub(crate) timed: Timed,
     pub(crate) queued: Queued,
     pub(crate) owed_mips: Vec<(u32, Range<u32>)>,
-    pub(crate) region: Option<(u32, u32)>,
     pub(crate) sets: views::Sets,
     pub(crate) tables: views::Tables,
     pub(crate) spare: Spare,
@@ -206,7 +205,6 @@ pub(crate) struct Installs {
     pub(crate) installed: Vec<FrameId>,
     pub(crate) gates: Vec<Option<engine_registry::GateId>>,
     pub(crate) pass_gates: Vec<(u32, engine_registry::GateId)>,
-    pub(crate) applied: Vec<crate::shared::AppliedModule>,
     pub(crate) features: wgpu::Features,
 }
 
@@ -220,7 +218,6 @@ impl Installs {
             installed: vec![FrameId::default(); count],
             gates: Vec::new(),
             pass_gates: Vec::new(),
-            applied: Vec::new(),
             features,
         }
     }
@@ -259,11 +256,7 @@ pub(crate) struct Uniforms {
     pub(crate) cameras: Vec<CameraUniform>,
     pub(crate) camera: wgpu::Buffer,
     pub(crate) camera_slot: u32,
-    pub(crate) owned: Vec<OwnedDraw>,
-    pub(crate) pieces: wgpu::Buffer,
-    pub(crate) piece_layout: Vec<(usize, crate::pieces::PieceAt)>,
     pub(crate) post: crate::shared::PostUniform,
-    pub(crate) linear: wgpu::Sampler,
 }
 
 #[derive(Default)]
@@ -272,7 +265,6 @@ pub(crate) struct Pipelines {
     pub(crate) listed: Option<Vec<Compiled>>,
     pub(crate) up_front: u32,
     pub(crate) unlisted: u32,
-    pub(crate) switches: Vec<(u32, bool)>,
     pub(crate) listing: bool,
     pub(crate) making: super::making::Making,
     pub(crate) refused: Vec<(&'static str, u64, String)>,
@@ -314,7 +306,6 @@ pub(crate) struct Planning {
     pub(crate) planned_at: usize,
     pub(crate) pass_decls: Vec<Arc<PassDecl>>,
     pub(crate) pass_sets: Vec<Arc<[SetFormat]>>,
-    pub(crate) live: Vec<bool>,
     pub(crate) merge: bool,
     pub(crate) labelled: Option<u32>,
     pub(crate) idle: Vec<(u32, engine_core::DrawKind, &'static str)>,
@@ -522,7 +513,7 @@ fn pass_sets_of(machine: &Machine) -> Vec<Arc<[SetFormat]>> {
         .declared
         .passes
         .iter()
-        .map(|pass| Arc::from(pass_set(&machine.outputs, pass)))
+        .map(|pass| Arc::from(pass_set(pass)))
         .collect()
 }
 
@@ -544,12 +535,6 @@ impl Run {
         assets: Assets,
     ) -> Self {
         let camera = uniform_buffer(&device, "engine/cameras", CAMERA_STRIDE);
-        let linear = crate::materials::gpu_sampler(
-            &device,
-            "engine/post-sampler",
-            engine_core::Sampler::LINEAR_CLAMP,
-        );
-        let pieces = uniform_buffer(&device, "engine/pieces", crate::pieces::PIECE_ALIGN);
         let samplers = machine
             .declared
             .samplers
@@ -576,11 +561,6 @@ impl Run {
             .map(|pass| Arc::new(pass.clone()))
             .collect();
         let pass_sets = pass_sets_of(&machine);
-        let live = machine
-            .outputs
-            .iter()
-            .map(crate::machine::layered)
-            .collect();
         Self {
             device,
             queue,
@@ -594,7 +574,6 @@ impl Run {
             timed: Timed::default(),
             queued: Queued::default(),
             owed_mips: Vec::new(),
-            region: None,
             sets,
             tables,
             spare: Spare::default(),
@@ -617,11 +596,7 @@ impl Run {
                 cameras: vec![bytemuck::Zeroable::zeroed()],
                 camera,
                 camera_slot: 0,
-                owned: Vec::new(),
-                pieces,
-                piece_layout: Vec::new(),
                 post: bytemuck::Zeroable::zeroed(),
-                linear,
             },
             pipelines: Pipelines::default(),
             planning: Planning {
@@ -630,7 +605,6 @@ impl Run {
                 planned_at: 0,
                 pass_decls,
                 pass_sets,
-                live,
                 merge: true,
                 labelled: None,
                 idle: Vec::new(),

@@ -18,14 +18,12 @@ pub(super) struct WarmShape {
 pub(super) struct Warm {
     pub(super) pipeline: u32,
     pub(super) shape: Option<WarmShape>,
-    pub(super) switches: Vec<(u32, bool)>,
     pub(super) listed: bool,
 }
 
 impl Warm {
     pub(super) fn same(&self, other: &Self) -> bool {
         self.pipeline == other.pipeline
-            && self.switches == other.switches
             && match (&self.shape, &other.shape) {
                 (Some(first), Some(second)) => {
                     first.formats == second.formats
@@ -91,7 +89,6 @@ impl Run {
     }
 
     pub(super) fn make_warm(&mut self, warm: Warm, asked: Asked) {
-        let real = std::mem::replace(&mut self.pipelines.switches, warm.switches);
         self.pipelines.listing = warm.listed;
         match warm.shape {
             Some(shape) => {
@@ -108,7 +105,6 @@ impl Run {
             }
         }
         self.pipelines.listing = false;
-        self.pipelines.switches = real;
     }
 
     fn part_reached(&self, part: u32) -> bool {
@@ -121,41 +117,18 @@ impl Run {
 
     pub(crate) fn warm_reached(&mut self, world: &World) {
         let states = world.get_resource::<engine_registry::BrickStates>();
-        let in_play: Vec<engine_registry::GateId> = self
-            .installs
-            .gates
-            .iter()
-            .zip(&self.machine.declared.parts)
-            .filter(|(_, part)| !crate::DEV && part.turns_on_in_play)
-            .filter_map(|(gate, _)| *gate)
-            .collect();
-        let side = |forced: bool| -> Vec<(u32, bool)> {
-            self.machine
-                .switches
-                .iter()
-                .zip(&self.pipelines.switches)
-                .map(|(&(id, gate), &(_, on))| {
-                    (id, if in_play.contains(&gate) { forced } else { on })
-                })
-                .collect()
-        };
         self.reached = Reached {
             generation: Some(states.map_or(0, engine_registry::BrickStates::generation)),
             parts: self
                 .installs
                 .gates
                 .iter()
-                .map(|gate| {
-                    gate.is_none_or(|gate| {
-                        in_play.contains(&gate) || states.is_none_or(|states| states.on(gate))
-                    })
-                })
+                .map(|gate| gate.is_none_or(|gate| states.is_none_or(|states| states.on(gate))))
                 .collect(),
-            sides: [side(true), side(false)],
         };
         let mut passes = vec![true; self.machine.declared.passes.len()];
         for &(pass, gate) in &self.installs.pass_gates {
-            let on = in_play.contains(&gate) || states.is_none_or(|states| states.on(gate));
+            let on = states.is_none_or(|states| states.on(gate));
             if let Some(reached) = passes.get_mut(pass as usize) {
                 *reached &= on;
             }
@@ -170,10 +143,8 @@ impl Run {
             built.ready.clear();
         }
         self.compile_first();
-        self.at_reached_switches(|run| {
-            run.compile_listed();
-            run.queue_reached();
-        });
+        self.compile_listed();
+        self.queue_reached();
     }
 
     fn pass_reached(&self, pass: u32) -> bool {
@@ -203,11 +174,9 @@ impl Run {
     }
 
     fn pass_warms(&self, pipeline: usize, pass: u32) -> Vec<Warm> {
-        let switches = &self.pipelines.switches;
         let warm = |shape| Warm {
             pipeline: pipeline as u32,
             shape,
-            switches: switches.clone(),
             listed: false,
         };
         let (formats, depth, shown) = self.pass_formats(pass);
@@ -273,7 +242,6 @@ impl Run {
                 warms.push(Warm {
                     pipeline: pipeline as u32,
                     shape: None,
-                    switches: self.pipelines.switches.clone(),
                     listed: false,
                 });
                 continue;
@@ -312,14 +280,13 @@ impl Run {
             }
             for pipeline in 0..self.machine.pipelines.len() {
                 let built = &self.machine.pipelines[pipeline];
-                if built.skipped || built.decl.scope != Scoped::Pass(pass as u32) {
+                if built.decl.scope != Scoped::Pass(pass as u32) {
                     continue;
                 }
                 let warms = match &built.decl.program {
                     Program::Compute(_) => vec![Warm {
                         pipeline: pipeline as u32,
                         shape: None,
-                        switches: self.pipelines.switches.clone(),
                         listed: false,
                     }],
                     Program::Render(desc) if desc.faces == Faces::Declared => {
@@ -334,18 +301,6 @@ impl Run {
         }
     }
 
-    pub(super) fn at_reached_switches(&mut self, work: impl Fn(&mut Self)) {
-        let [on, off] = self.reached.sides.clone();
-        let differ = on != off;
-        let real = std::mem::replace(&mut self.pipelines.switches, on);
-        work(self);
-        if differ {
-            self.pipelines.switches = off;
-            work(self);
-        }
-        self.pipelines.switches = real;
-    }
-
     pub(super) fn compile_first(&mut self) {
         if self.pipelines.settled {
             return;
@@ -356,9 +311,9 @@ impl Run {
         let mut first: Vec<(bool, usize, Warm)> = keys
             .iter()
             .filter_map(|key| {
-                let Needed::First(switches) = &key.needed else {
+                if key.needed != Needed::First {
                     return None;
-                };
+                }
                 let pipeline = self
                     .machine
                     .pipelines
@@ -370,7 +325,7 @@ impl Run {
                     .iter()
                     .map(|stage| stage.composed.text.len())
                     .sum();
-                let warm = self.listed_warm(pipeline, key, switches.clone());
+                let warm = self.listed_warm(pipeline, key);
                 Some((built.decl.speedup_only, text, warm))
             })
             .collect();
@@ -393,14 +348,14 @@ impl Run {
                 .position(|built| built.program_key == key.program)
                 .filter(|&at| self.pipeline_reached(at));
             if let Some(pipeline) = found {
-                let warm = self.listed_warm(pipeline, key, self.pipelines.switches.clone());
+                let warm = self.listed_warm(pipeline, key);
                 self.pipelines.warming.queue.push_back(warm);
             }
         }
         self.pipelines.listed = Some(keys);
     }
 
-    fn listed_warm(&self, pipeline: usize, key: &Compiled, switches: Vec<(u32, bool)>) -> Warm {
+    fn listed_warm(&self, pipeline: usize, key: &Compiled) -> Warm {
         let compute = matches!(
             self.machine.pipelines[pipeline].decl.program,
             Program::Compute(_)
@@ -413,7 +368,6 @@ impl Run {
                 shown: (key.plain, key.main),
                 variant: specialized(key),
             }),
-            switches,
             listed: true,
         }
     }

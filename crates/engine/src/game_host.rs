@@ -4,8 +4,7 @@ use crate::host::{
     DeviceGatherer, FrameLoop, FramePhase, HostPause, InputSource, JobId, JobOrder, JobScheduler,
 };
 use engine_core::{
-    BrickList, CursorMode, CursorRequests, Engine, Gathered, Input, MouseButton, Pause,
-    PauseReason, TouchPhase,
+    BrickList, CursorMode, Devices, Engine, MouseButton, Pause, PauseReason, TouchPhase,
 };
 use engine_render::{Picture, RenderTarget};
 use engine_scene::SceneFiles;
@@ -111,9 +110,7 @@ impl<G: Game> GameHost<G> {
         self.app.follow_focus(source);
         let input = self.frame_input(source);
         self.app.accept(input);
-        let framed = self.app.frame(timestamp, size, picture);
-        self.apply_cursor();
-        framed
+        self.app.frame(timestamp, size, picture)
     }
 
     pub fn input_source(&self) -> InputSource {
@@ -124,27 +121,24 @@ impl<G: Game> GameHost<G> {
         InputSource::Player
     }
 
-    fn frame_input(&mut self, source: InputSource) -> Gathered {
+    fn frame_input(&mut self, source: InputSource) -> Devices {
         match source {
             InputSource::Agent => {
                 self.input.drop_edges();
                 self.agent_input()
             }
-            InputSource::Player => Gathered {
-                devices: self.input.take(),
-                driven: Vec::new(),
-            },
+            InputSource::Player => self.input.take(),
         }
     }
 
     #[cfg(feature = "dev")]
-    fn agent_input(&mut self) -> Gathered {
+    fn agent_input(&mut self) -> Devices {
         self.development.take_input()
     }
 
     #[cfg(not(feature = "dev"))]
-    fn agent_input(&mut self) -> Gathered {
-        Gathered::default()
+    fn agent_input(&mut self) -> Devices {
+        Devices::default()
     }
 
     pub fn pause(&mut self, pause: HostPause) {
@@ -179,10 +173,6 @@ impl<G: Game> GameHost<G> {
 
     pub fn refresh_interval(&self) -> f64 {
         self.app.refresh_interval()
-    }
-
-    pub(crate) fn paced(&mut self) {
-        self.app.paced();
     }
 
     pub fn animation_frame(
@@ -227,24 +217,12 @@ impl<G: Game> GameHost<G> {
         self.frames.preparing()
     }
 
-    pub fn key(&mut self, code: &str, down: bool) -> bool {
+    pub fn key(&mut self, code: &str, down: bool) {
         self.input.key(code, down);
-        self.app
-            .engine()
-            .app
-            .world()
-            .resource::<Input>()
-            .uses_key(code)
     }
 
-    pub fn mouse_button(&mut self, button: MouseButton, down: bool) -> bool {
+    pub fn mouse_button(&mut self, button: MouseButton, down: bool) {
         self.input.mouse_button(button, down);
-        self.app
-            .engine()
-            .app
-            .world()
-            .resource::<Input>()
-            .uses_mouse(button)
     }
 
     pub fn motion(&mut self, dx: f32, dy: f32) {
@@ -276,29 +254,11 @@ impl<G: Game> GameHost<G> {
     }
 
     pub fn cursor_mode(&self) -> CursorMode {
-        self.app
-            .engine()
-            .app
-            .world()
-            .resource::<CursorRequests>()
-            .applied()
-    }
-
-    pub(crate) fn apply_cursor(&mut self) {
-        self.app
-            .engine_mut()
-            .app
-            .world_mut()
-            .resource_mut::<CursorRequests>()
-            .apply();
+        *self.app.engine().app.world().resource::<CursorMode>()
     }
 
     pub fn clear_input(&mut self) {
         self.input.clear();
-    }
-
-    pub fn set_spare_time(&mut self, milliseconds: f64) {
-        self.app.set_spare_time(milliseconds);
     }
 
     pub fn set_job_workers(&mut self, workers: u32) -> bool {
@@ -462,10 +422,6 @@ impl<G: Game> GameHost<G> {
 
     pub fn set_refresh_interval(&mut self, milliseconds: Option<f64>) {
         self.app.set_refresh_interval(milliseconds);
-    }
-
-    pub fn set_job_clock(&mut self, clock: crate::host::JobClock) {
-        self.app.set_job_clock(clock);
     }
 
     pub fn adapter(&self) -> &crate::AdapterInfo {

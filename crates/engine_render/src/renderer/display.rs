@@ -3,7 +3,7 @@ use std::cell::Cell;
 use super::*;
 use crate::gpu_data::clamped_extent;
 use crate::readback::{Arrival, Keep, Readbacks, Reader};
-use crate::targets::{FrameRegion, FrameSize};
+use crate::targets::FrameSize;
 use engine_core::{Expected, FrameId};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -43,7 +43,6 @@ pub struct Display {
     configuration: wgpu::SurfaceConfiguration,
     pub(crate) max_dimension: u32,
     state: SurfaceState,
-    pub region: FrameRegion,
     timer: Option<FrameTimer>,
 }
 
@@ -95,7 +94,6 @@ impl Display {
             } else {
                 SurfaceState::Suspended
             },
-            region: FrameRegion::whole(FrameSize { width, height }),
             timer: None,
         })
     }
@@ -159,25 +157,6 @@ impl Display {
         self.configuration.format
     }
 
-    pub(crate) fn plan_region(&mut self, render: Option<glam::UVec2>) -> FrameRegion {
-        let display = self.size();
-        self.region = match render {
-            Some(render) => FrameRegion::new(
-                display,
-                FrameSize {
-                    width: render.x,
-                    height: render.y,
-                },
-            ),
-            None => FrameRegion::whole(display),
-        };
-        self.region
-    }
-
-    pub(crate) fn times_frames(&self) -> bool {
-        self.timer.is_some()
-    }
-
     pub(crate) fn take_frame_time(&self) -> Option<(f64, (u32, u32))> {
         self.timer.as_ref()?.read.take()
     }
@@ -193,7 +172,7 @@ impl Display {
         recording: (&wgpu::Device, &mut wgpu::CommandEncoder),
         (readbacks, written, slots): (&mut Readbacks, FrameId, usize),
     ) {
-        let size = self.region.render.pixels();
+        let size = self.size().pixels();
         if let Some(timer) = &mut self.timer {
             timer.end(recording, (readbacks, written, slots), size);
         }

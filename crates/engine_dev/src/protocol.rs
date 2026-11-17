@@ -37,7 +37,7 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("camera", "GlobalTransform"),
     ("step", "PresentationState"),
     ("frames", "PresentationState"),
-    ("input", "Input"),
+    ("input", "Devices"),
     ("render", ""),
     ("pause", "status"),
     ("resume", "status"),
@@ -378,10 +378,6 @@ pub enum BrowserControl {
     },
     Input {
         #[serde(default)]
-        verbs: BTreeMap<String, Value>,
-        #[serde(default = "first_player")]
-        player: u8,
-        #[serde(default)]
         keys: Vec<String>,
         #[serde(default)]
         pointer: PointerControl,
@@ -495,10 +491,6 @@ impl schemars::JsonSchema for EnvironmentControl {
             "additionalProperties": false,
         })
     }
-}
-
-fn first_player() -> u8 {
-    1
 }
 
 fn default_profile_frames() -> u32 {

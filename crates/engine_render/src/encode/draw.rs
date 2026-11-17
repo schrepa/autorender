@@ -164,11 +164,10 @@ impl Run {
         let Some(built) = self.machine.pipelines.get(pipeline as usize) else {
             return true;
         };
-        if built.skipped
-            || built
-                .ready
-                .iter()
-                .any(|ready| ready.layout == layout && ready.bits.is_none())
+        if built
+            .ready
+            .iter()
+            .any(|ready| ready.layout == layout && ready.bits.is_none())
         {
             return true;
         }
@@ -206,10 +205,7 @@ impl Run {
                 self.tallies
                     .kinds
                     .drop_draws((part, pass), (reason, asset), 1);
-                if matches!(
-                    reason,
-                    DropReason::PipelineRefused | DropReason::PipelineOverLimit
-                ) {
+                if reason == DropReason::PipelineRefused {
                     crate::Recorded::Refused
                 } else {
                     crate::Recorded::Waiting
@@ -505,7 +501,7 @@ impl Run {
                         None => Resolved::Placeholder(ty),
                     }
                 } else {
-                    self.resource(&bound, ty, !ty.writes())
+                    self.resource(&bound, ty)
                 };
                 resolved.push((binding, found));
             }
@@ -526,13 +522,6 @@ impl Run {
         }
     }
 
-    pub(crate) fn view_rect(&mut self, rect: [u32; 4]) {
-        if let Some(open) = self.recording.open_mut() {
-            self.bound.viewport(&mut open.pass, rect);
-            self.bound.scissor(&mut open.pass, rect);
-        }
-    }
-
     pub(crate) fn within(&mut self, size: (u32, u32)) {
         if let Some(open) = self.recording.open_mut() {
             self.bound.within(&mut open.pass, size);
@@ -547,7 +536,7 @@ impl Run {
             .map(|(_, made)| (made.size.width, made.size.height));
         if let (Some(open), Some((width, height))) = (
             self.recording.open_mut().filter(|open| open.layered),
-            self.region.or(size),
+            size,
         ) {
             self.bound.scissor(&mut open.pass, [0, 0, width, height]);
         }

@@ -14,10 +14,10 @@ use serde_json::Value;
 
 use crate::access::{AccessRule, MoverRule};
 use crate::attribution::CORE_ROW;
-use crate::entries::{EventEntry, Kept, OperationEntry, PieceEntry, SettingsEntry, StatsEntry};
+use crate::entries::{Kept, OperationEntry, SettingsEntry, StatsEntry};
 use crate::hooks::{Named, add_removal};
 use crate::jobs::JobQueue;
-use crate::needs::{Accessed, PlaceUses, Read, ReadKind, RequiredFill};
+use crate::needs::{Read, RequiredFill};
 use crate::order::{self, PlaceRules};
 use crate::owners::{Shared, Used, ValueKind, Values, note, ownership};
 use crate::record::{BrickRecord, crate_segment};
@@ -76,20 +76,16 @@ pub struct Registry {
     core_fills: Vec<PlaceDecl>,
     core_sections: Vec<SettingsEntry>,
     core_operations: Vec<OperationEntry>,
-    core_events: Vec<EventEntry>,
     bases: Vec<u32>,
     rule: AccessRule,
     named: Vec<Named>,
     eachers: Vec<(TypeId, MemberEach)>,
-    lists: Vec<(TypeId, TypeId)>,
-    accessed: Vec<Accessed>,
     owners: Vec<Shared>,
     private: Vec<Vec<(ComponentId, Reset)>>,
     movers: Option<MoverRule>,
     despawn: Option<Despawn>,
     problems: Vec<Error>,
     required: Vec<RequiredFill>,
-    reads: Vec<Read>,
     unmet: Vec<Error>,
     gated: Vec<Error>,
     notices: Vec<Error>,
@@ -153,9 +149,6 @@ impl RegistryBuilder {
         for call in S::CALLS {
             registry.core_operation(OperationEntry::of(*call));
         }
-        for event in S::EVENTS {
-            registry.core_event(EventEntry::of(*event));
-        }
     }
 
     pub fn core_settings(&mut self, entry: SettingsEntry) {
@@ -164,10 +157,6 @@ impl RegistryBuilder {
 
     pub fn core_operation(&mut self, entry: OperationEntry) {
         self.registry.core_operation(entry);
-    }
-
-    pub fn core_event(&mut self, entry: EventEntry) {
-        self.registry.core_event(entry);
     }
 
     pub fn mover_rule(&mut self, rule: MoverRule) {
@@ -271,20 +260,6 @@ impl Registry {
         self.core_operations.push(entry);
     }
 
-    pub fn core_event(&mut self, mut entry: EventEntry) {
-        entry.brick = CORE_ROW;
-        if let Some(owner) = self.event(entry.name).map(|known| known.brick) {
-            let path = format!("$.events.{}", entry.name);
-            self.problems.push(
-                Error::new(ErrorCode::NameTwice, path)
-                    .got(owner)
-                    .nearest(CORE_ROW),
-            );
-            return;
-        }
-        self.core_events.push(entry);
-    }
-
     pub fn holds(&self, package: &str, type_id: TypeId) -> bool {
         let owner = self.brick(package).and_then(BrickRecord::owner);
         owner.is_some()
@@ -339,15 +314,6 @@ impl Registry {
 
     pub fn notices(&self) -> &[Error] {
         &self.notices
-    }
-
-    pub fn reads(&self) -> &[Read] {
-        &self.reads
-    }
-
-    pub fn note_reads(&mut self, kinds: &[ReadKind], reads: Vec<Read>) {
-        self.reads.retain(|read| !kinds.contains(&read.kind));
-        self.reads.extend(reads);
     }
 
     pub(crate) fn hold_gated(&mut self, rows: Vec<Error>) {
@@ -486,51 +452,6 @@ impl Registry {
             .flatten()
     }
 
-    pub fn members(&self, list: TypeId) -> impl Iterator<Item = &'static str> + '_ {
-        self.bricks
-            .iter()
-            .filter(move |record| record.joins().iter().any(|joined| joined.list == list))
-            .map(|record| record.package)
-    }
-
-    pub fn place_uses(&self, decl: &PlaceDecl) -> PlaceUses {
-        let place = decl.type_id();
-        let mut uses = PlaceUses::default();
-        for accessed in self
-            .accessed
-            .iter()
-            .filter(|accessed| accessed.place == place)
-        {
-            if accessed.write {
-                uses.write(accessed.brick);
-            } else {
-                uses.read(accessed.brick);
-            }
-        }
-        if let Some(filler) = self.filler(place) {
-            uses.write(filler);
-        }
-        for member in self.members(place) {
-            uses.write(member);
-        }
-        for read in self.reads.iter().filter(|read| read.place == decl.name()) {
-            uses.read(read.reader);
-        }
-        uses
-    }
-
-    pub fn place_members(&self, place: &str) -> Vec<&'static str> {
-        let named = |decl: &PlaceDecl| decl.name() == place;
-        self.bricks
-            .iter()
-            .filter(|record| {
-                record.fills().iter().any(|filled| named(&filled.place))
-                    || record.joins().iter().any(|joined| named(&joined.place))
-            })
-            .map(|record| record.package)
-            .collect()
-    }
-
     pub fn each_slot(&self, world: &World, slot: TypeId, each: &mut dyn FnMut(&dyn Any)) {
         if let Some(decl) = self
             .core_fills
@@ -580,16 +501,6 @@ impl Registry {
 
     pub fn operation(&self, name: &str) -> Option<&OperationEntry> {
         self.operations().find(|entry| entry.name == name)
-    }
-
-    pub fn events(&self) -> impl Iterator<Item = &EventEntry> + '_ {
-        self.core_events
-            .iter()
-            .chain(self.bricks.iter().flat_map(|record| record.events()))
-    }
-
-    pub fn event(&self, name: &str) -> Option<&EventEntry> {
-        self.events().find(|entry| entry.name == name)
     }
 
     pub fn check_named(&self, key: &str, value: &Value, path: &str) -> Result<(), Error> {
@@ -645,11 +556,6 @@ impl Registry {
             let owner = record.owner().unwrap_or(record.package);
             record.corpora::<C>().map(move |corpus| (owner, corpus))
         })
-    }
-
-    pub fn pieces(&self) -> impl Iterator<Item = (BrickId, &PieceEntry)> + '_ {
-        self.iter()
-            .filter_map(|(id, record)| record.piece_entry().map(|piece| (id, piece)))
     }
 
     pub fn frame_stats(&self, world: &World) -> BTreeMap<&'static str, Value> {
@@ -749,16 +655,6 @@ impl Registry {
                 );
             }
         }
-        for entry in record.events() {
-            if let Some(owner) = self.event(entry.name).map(|known| known.brick) {
-                let path = format!("$.events.{}", entry.name);
-                self.problems.push(
-                    Error::new(ErrorCode::NameTwice, path)
-                        .got(owner)
-                        .nearest(package),
-                );
-            }
-        }
         for filled in record.fills() {
             if let Some(owner) = self.filler(filled.slot) {
                 let path = format!("$.places.{}", filled.place.name());
@@ -831,16 +727,8 @@ impl Registry {
         let mut seen: Vec<(TypeId, &'static str)> = Vec::new();
         for (index, record) in self.bricks.iter().enumerate() {
             let brick = BrickId(index as u32);
-            let piece = record.piece_entry().map(|piece| piece.type_id);
             for owned in record.owned() {
-                let filled_slot = piece == Some(owned.type_id);
-                self.rule.check_type(
-                    brick,
-                    owned.type_id,
-                    owned.name,
-                    filled_slot,
-                    &mut self.problems,
-                );
+                self.rule.check_type(brick, owned.name, &mut self.problems);
                 match seen.iter().find(|(known, _)| *known == owned.type_id) {
                     Some(&(_, first)) => {
                         let path = format!("$.bricks.{}.registers.{}", record.package, owned.name);
@@ -868,7 +756,6 @@ impl Registry {
                 }
                 if !self.eachers.iter().any(|(list, _)| *list == joined.list) {
                     self.eachers.push((joined.list, joined.each));
-                    self.lists.push((joined.list, joined.members));
                 }
             }
         }
@@ -1127,39 +1014,12 @@ impl Registry {
         }
         self.owners = held.shared;
         self.private = held.private;
-        self.accessed = self.place_access(world, uses);
         let (reads, unmet, lacking) = self.slot_reads(world, uses);
         self.required = self.required_fills(&reads);
-        self.note_reads(&[ReadKind::Slot], reads);
         for error in unmet {
             self.report_unmet(error);
         }
         (held.needs, lacking)
-    }
-
-    fn place_access(&self, world: &World, uses: &[Used]) -> Vec<Accessed> {
-        let mut accessed = Vec::new();
-        for decl in &self.catalog {
-            let place = decl.type_id();
-            let value = self
-                .lists
-                .iter()
-                .find(|(list, _)| *list == place)
-                .map_or(place, |&(_, members)| members);
-            let Some(id) = world.components().get_id(value) else {
-                continue;
-            };
-            for used in uses.iter().filter(|used| used.id == id) {
-                if let Some(record) = self.bricks.get(used.brick.index()) {
-                    accessed.push(Accessed {
-                        place,
-                        brick: record.package,
-                        write: used.write,
-                    });
-                }
-            }
-        }
-        accessed
     }
 
     fn slot_reads(&self, world: &World, uses: &[Used]) -> (Vec<Read>, Vec<Error>, Vec<BrickId>) {
@@ -1196,7 +1056,6 @@ impl Registry {
                 let required = record.requires(slot);
                 reads.push(Read {
                     reader: record.package,
-                    kind: ReadKind::Slot,
                     place: decl.name().to_owned(),
                     providers: filler.into_iter().collect(),
                     required,

@@ -1,30 +1,25 @@
 import { CURSOR_MODES, TOUCH_PHASES, WHEEL_PIXELS } from "../generated/host";
 import type { Runtime } from "../generated/runtime";
 
-const MOUSE_RIGHT = 2;
 const WHEEL_LINES = 3;
 
 export class BrowserInput {
   game: Pick<Runtime, "key" | "mouse_button" | "motion" | "pointer" | "pointer_left" | "wheel" | "pad" | "touch" | "touch_motion"> | undefined;
   private held = new Set<string>();
-  private used = new Set<string>();
-  private buttons = new Set<number>();
   private touches = new Map<number, { x: number; y: number }>();
   private abort = new AbortController();
   private last: { x: number; y: number } | undefined;
   private mode: number = CURSOR_MODES.free;
   private locked = false;
-  private contextMenu = true;
   private padAxes = new Float32Array(6);
 
   constructor(canvas: HTMLCanvasElement) {
     const options = { signal: this.abort.signal };
     const ratio = () => window.devicePixelRatio || 1;
     canvas.addEventListener("keydown", event => {
-      if (this.held.has(event.code)) { if (this.used.has(event.code)) event.preventDefault(); return; }
-      if (event.repeat) return;
+      if (this.held.has(event.code) || event.repeat) return;
       this.held.add(event.code);
-      if (this.game?.key(event.code, true)) { this.used.add(event.code); event.preventDefault(); } else this.used.delete(event.code);
+      this.game?.key(event.code, true);
     }, options);
     window.addEventListener("keyup", event => {
       if (this.held.delete(event.code)) this.game?.key(event.code, false);
@@ -68,18 +63,11 @@ export class BrowserInput {
       }, options);
     }
     canvas.addEventListener("mousedown", event => {
-      const used = this.buttons.has(event.button) || this.game?.mouse_button(event.button, true) === true;
-      if (event.button === MOUSE_RIGHT) this.contextMenu = !used;
-      if (!used) return;
-      this.buttons.add(event.button);
-      canvas.focus();
-      event.preventDefault();
+      this.game?.mouse_button(event.button, true);
     }, options);
     window.addEventListener("mouseup", event => {
-      this.buttons.delete(event.button);
       this.game?.mouse_button(event.button, false);
     }, options);
-    canvas.addEventListener("contextmenu", event => { if (!this.contextMenu) event.preventDefault(); }, options);
     canvas.addEventListener("wheel", event => {
       const unit = event.deltaMode === WheelEvent.DOM_DELTA_PIXEL ? WHEEL_PIXELS : event.deltaMode === WheelEvent.DOM_DELTA_LINE ? WHEEL_LINES : 1;
       this.game?.wheel(-event.deltaX / unit, -event.deltaY / unit);
@@ -119,9 +107,8 @@ export class BrowserInput {
 
   clear() {
     for (const code of this.held) this.game?.key(code, false);
-    for (const button of this.buttons) this.game?.mouse_button(button, false);
     for (const id of this.touches.keys()) this.game?.touch(id, 0, 0, TOUCH_PHASES.cancelled);
-    this.held.clear(); this.used.clear(); this.buttons.clear(); this.touches.clear();
+    this.held.clear(); this.touches.clear();
     this.last = undefined; this.unlock();
   }
   dispose() { this.abort.abort(); this.clear(); this.game = undefined; }

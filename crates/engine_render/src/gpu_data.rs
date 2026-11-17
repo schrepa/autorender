@@ -1,64 +1,16 @@
-use engine_core::{Material, ViewDetail, glam::Mat4};
-
-use crate::targets::FrameRegion;
+use engine_core::{Material, glam::Mat4};
 
 pub use crate::CameraUniform;
 
 impl CameraUniform {
     pub fn exact(view_projection: Mat4, position: glam::Vec3, seconds: f32) -> Self {
-        let columns = view_projection.to_cols_array_2d();
         Self {
-            view_projection: columns,
-            previous_view_projection: columns,
-            inverse_view_projection: view_projection.inverse().to_cols_array_2d(),
+            view_projection: view_projection.to_cols_array_2d(),
             position: position.extend(seconds).to_array(),
-            jitter: [0.0; 4],
-            capture: 0,
-            pixel_angle: 0.0,
-            noise_phase: 0.0,
             mip_bias: 0.0,
-            previous: [0.0, 0.0, 0.0, seconds],
-            region: [0.0; 4],
-            detail: position.extend(0.0).to_array(),
-            view: [0; 4],
-            transparency: crate::TransparencySettings::default().weighting(),
-            texel: 0.0,
-            pixel_error: 0.0,
             pad_0: 0,
             pad_1: 0,
-        }
-    }
-
-    pub fn set_region(&mut self, region: FrameRegion) {
-        self.mip_bias = region.mip_bias();
-        self.region = region.uniform();
-    }
-
-    pub fn set_detail(&mut self, detail: ViewDetail) {
-        self.detail = detail.eye.extend(0.0).to_array();
-        self.pixel_angle = detail.pixel_angle;
-        self.texel = detail.texel;
-        self.pixel_error = detail.pixel_error;
-    }
-
-    pub fn viewed(
-        (view_projection, previous): (Mat4, Mat4),
-        position: glam::Vec3,
-        (seconds, previous_seconds): (f32, f32),
-        jitter: [f32; 2],
-        (width, height): (u32, u32),
-    ) -> Self {
-        Self {
-            view_projection: jittered(view_projection, jitter).to_cols_array_2d(),
-            previous_view_projection: previous.to_cols_array_2d(),
-            jitter: [
-                jitter[0],
-                jitter[1],
-                2.0 / width.max(1) as f32,
-                2.0 / height.max(1) as f32,
-            ],
-            previous: [0.0, 0.0, 0.0, previous_seconds],
-            ..Self::exact(view_projection, position, seconds)
+            pad_2: 0,
         }
     }
 }
@@ -80,27 +32,6 @@ pub fn pack_color(color: [f32; 4]) -> [u32; 2] {
         unit(color[0], 0.0) | unit(color[1], 0.0) << 16,
         unit(color[2], 0.0) | unit(color[3], 1.0) << 16,
     ]
-}
-
-pub fn pyramid_extents((width, height): (u32, u32), count: u32) -> Vec<[u32; 4]> {
-    let mut source = (width.max(1), height.max(1));
-    (0..count)
-        .map(|_| {
-            let written = (source.0.div_ceil(2), source.1.div_ceil(2));
-            let extent = [written.0, written.1, source.0 - 1, source.1 - 1];
-            source = written;
-            extent
-        })
-        .collect()
-}
-
-pub fn jittered(view_projection: Mat4, jitter: [f32; 2]) -> Mat4 {
-    Mat4::from_cols(
-        glam::Vec4::X,
-        glam::Vec4::Y,
-        glam::Vec4::Z,
-        glam::Vec4::new(jitter[0], jitter[1], 0.0, 1.0),
-    ) * view_projection
 }
 
 pub fn mip_levels(width: u32, height: u32) -> u32 {
@@ -137,13 +68,6 @@ pub fn mip_chain_bytes(width: u32, height: u32) -> u64 {
     (1..mip_levels(width, height))
         .map(|level| u64::from((width >> level).max(1)) * u64::from((height >> level).max(1)) * 4)
         .sum()
-}
-
-pub fn jitter_clip(offset: [f32; 2], width: u32, height: u32) -> [f32; 2] {
-    [
-        2.0 * offset[0] / width.max(1) as f32,
-        -2.0 * offset[1] / height.max(1) as f32,
-    ]
 }
 
 pub fn clamped_extent(width: u32, height: u32, limit: u32) -> Option<(u32, u32)> {

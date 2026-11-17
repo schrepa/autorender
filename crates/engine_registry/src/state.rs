@@ -6,9 +6,7 @@ use bevy_ecs::entity::Entity;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{ReadOnlySystem, RunSystemError};
 use bevy_ecs::world::World;
-use engine_place::{
-    Board, EntityIds, Error, ErrorCode, EventPage, Feed, Refusal, missing_events, page_of,
-};
+use engine_place::{Board, Error, ErrorCode, Refusal};
 use serde::Serialize;
 
 use crate::BrickId;
@@ -89,31 +87,12 @@ pub struct BrickStateView {
     pub error: Option<Refusal>,
 }
 
-pub const BRICK_STATE_EVENT: &str = "brick_state";
-
-const KEPT_CHANGES: usize = 256;
-
-#[derive(Clone, Debug)]
-pub struct BrickChange {
-    pub brick: BrickId,
-    pub gate: GateId,
-    pub state: BrickState,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum BrickStateWord {
     Off,
     On,
     Faulted,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, schemars::JsonSchema)]
-pub struct BrickChangeRow {
-    pub brick: String,
-    pub whole: bool,
-    #[serde(flatten)]
-    pub state: BrickStateView,
 }
 
 #[derive(Resource)]
@@ -128,27 +107,12 @@ pub struct BrickStates {
     unmet: Vec<BrickId>,
     installs: Vec<u64>,
     generation: u64,
-    changes: Feed<BrickChange>,
 }
 
 impl Default for BrickStates {
     fn default() -> Self {
         Self::new(Vec::new(), Vec::new(), Vec::new(), Vec::new())
     }
-}
-
-pub fn brick_changes(world: &World, _: &dyn EntityIds, after: u64) -> Result<EventPage, Error> {
-    let states = world
-        .get_resource::<BrickStates>()
-        .ok_or_else(|| missing_events(BRICK_STATE_EVENT))?;
-    let registry = world.get_resource::<Registry>();
-    page_of(states.changes(), after, |change| BrickChangeRow {
-        brick: registry
-            .and_then(|registry| registry.record(change.brick))
-            .map_or_else(String::new, |record| record.package.to_owned()),
-        whole: states.root(change.brick) == Some(change.gate),
-        state: change.state.view(),
-    })
 }
 
 impl BrickStates {
@@ -171,7 +135,6 @@ impl BrickStates {
             unmet: Vec::new(),
             installs: vec![0; gates],
             generation: 0,
-            changes: Feed::new(KEPT_CHANGES),
         }
     }
 
@@ -238,10 +201,6 @@ impl BrickStates {
         self.generation
     }
 
-    pub fn changes(&self) -> &Feed<BrickChange> {
-        &self.changes
-    }
-
     pub fn len(&self) -> usize {
         self.states.len()
     }
@@ -292,11 +251,8 @@ impl BrickStates {
         let Some(held) = self.states.get_mut(gate.index()) else {
             return;
         };
-        *held = state.clone();
+        *held = state;
         self.generation = self.generation.wrapping_add(1);
-        if let Some(brick) = self.brick(gate) {
-            self.changes.push(BrickChange { brick, gate, state });
-        }
     }
 
     fn explain(&mut self, gate: GateId, off: Off) {

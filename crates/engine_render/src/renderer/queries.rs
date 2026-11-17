@@ -15,19 +15,6 @@ impl Renderer {
         self.core.device.features()
     }
 
-    pub fn post(&self, _world: &World) -> bool {
-        let Some(run) = self.run.as_ref() else {
-            return false;
-        };
-        let composite = <crate::shared::Composite as crate::GpuPart>::NAME;
-        run.machine
-            .declared
-            .parts
-            .iter()
-            .position(|part| part.name == composite)
-            .is_some_and(|part| run.drawable(part as u32))
-    }
-
     pub fn texture_sampling(&self) -> engine_core::TextureSampling {
         use engine_core::{TextureFamily, TextureSampling};
         let features = self.core.device.features();
@@ -42,14 +29,6 @@ impl Renderer {
 
     pub fn view_size(&self) -> Option<(u32, u32)> {
         (!self.core.display.suspended()).then(|| self.core.display.size().pixels())
-    }
-
-    pub fn render_size(&self) -> Option<(u32, u32)> {
-        (!self.core.display.suspended()).then(|| self.core.display.region.render.pixels())
-    }
-
-    pub fn times_frames(&self) -> bool {
-        self.core.display.times_frames()
     }
 
     pub fn take_frame_time(&self) -> Option<(f64, (u32, u32))> {

@@ -120,10 +120,6 @@ impl<T> Feed<T> {
         self.log.size = size.max(1);
     }
 
-    pub fn store(&self) -> StoreId {
-        self.store
-    }
-
     pub fn next(&self) -> u64 {
         self.next
     }
@@ -155,11 +151,6 @@ impl<T> Feed<T> {
         let listed = self.log.from(cursor.seen).unwrap_or(&[]);
         cursor.seen = self.next;
         Events::Listed(listed)
-    }
-
-    pub fn after(&self, seen: u64) -> (u64, &[T]) {
-        let from = seen.clamp(self.log.first, self.log.end());
-        (from, self.log.from(from).unwrap_or(&[]))
     }
 
     pub fn behind(&self, cursor: &Cursor) -> u64 {

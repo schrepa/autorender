@@ -1,8 +1,6 @@
 use std::any::TypeId;
 
-use bevy_ecs::entity::Entity;
 use bevy_ecs::query::FilteredAccessSet;
-use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{
     IntoSystem, StaticSystemParam, System, SystemParam, SystemParamItem, SystemState,
 };
@@ -10,9 +8,7 @@ use bevy_ecs::world::World;
 use engine_codec::Allowed;
 use engine_settings::{Error, ErrorCode, Expected};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::{Map, Value};
-
-use crate::feeds::{Feed, StoreId};
+use serde_json::Value;
 
 pub const RESERVED_REPLY_KEYS: [&str; 4] = ["observation", "paused", "source", "rendering"];
 
@@ -143,10 +139,6 @@ impl<T> Rows<T> {
     }
 }
 
-pub trait EntityIds {
-    fn id(&self, entity: Entity) -> Option<String>;
-}
-
 pub trait Operation: Send + Sync + 'static {
     const NAME: &'static str;
     const CONTROL: bool = true;
@@ -162,10 +154,6 @@ pub trait Operation: Send + Sync + 'static {
 
     fn request_schema(_: &World) -> Value {
         schema_of::<Self::Request>()
-    }
-
-    fn reply_schema(_: &World) -> Value {
-        schema_of::<Self::Reply>()
     }
 }
 
@@ -184,10 +172,6 @@ pub trait Callable: Send + Sync + 'static {
 
     fn request_schema(_: &World) -> Value {
         schema_of::<Self::Request>()
-    }
-
-    fn reply_schema(_: &World) -> Value {
-        schema_of::<Self::Reply>()
     }
 }
 
@@ -209,10 +193,6 @@ impl<O: Operation> Callable for O {
     fn request_schema(world: &World) -> Value {
         <O as Operation>::request_schema(world)
     }
-
-    fn reply_schema(world: &World) -> Value {
-        <O as Operation>::reply_schema(world)
-    }
 }
 
 pub type NamedRun = fn(&mut World, Value) -> Result<Value, Error>;
@@ -228,7 +208,7 @@ pub struct Call {
     run: NamedRun,
     access: fn(&mut World) -> FilteredAccessSet,
     request: SchemaIn,
-    reply: SchemaIn,
+    reply: fn() -> Value,
 }
 
 impl Call {
@@ -241,7 +221,7 @@ impl Call {
             run: run_named::<O>,
             access: O::access,
             request: O::request_schema,
-            reply: O::reply_schema,
+            reply: schema_of::<O::Reply>,
         }
     }
 
@@ -269,8 +249,8 @@ impl Call {
         (self.request)(world)
     }
 
-    pub fn reply_schema(&self, world: &World) -> Value {
-        (self.reply)(world)
+    pub fn reply_schema(&self, _: &World) -> Value {
+        (self.reply)()
     }
 }
 
@@ -310,37 +290,6 @@ fn references_at(schema: &Value, found: &mut Vec<String>) {
         }
         Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => {}
     }
-}
-
-pub fn embedded(mut schema: Value, definitions: &mut Map<String, Value>) -> Value {
-    if let Some(fields) = schema.as_object_mut() {
-        fields.remove("$schema");
-        if let Some(Value::Object(theirs)) = fields.remove("$defs") {
-            for (name, definition) in theirs {
-                definitions.entry(name).or_insert(definition);
-            }
-        }
-    }
-    schema
-}
-
-pub fn rooted(mut schema: Value, definitions: Map<String, Value>) -> Value {
-    if definitions.is_empty() {
-        return schema;
-    }
-    if let Some(fields) = schema.as_object_mut() {
-        match fields.get_mut("$defs") {
-            Some(Value::Object(held)) => {
-                for (name, definition) in definitions {
-                    held.entry(name).or_insert(definition);
-                }
-            }
-            Some(_) | None => {
-                fields.insert("$defs".to_owned(), Value::Object(definitions));
-            }
-        }
-    }
-    schema
 }
 
 pub fn open_schema(schema: &Value) -> bool {
@@ -444,105 +393,4 @@ fn run_named<O: Callable>(world: &mut World, request: Value) -> Result<Value, Er
         }
     }
     Ok(reply)
-}
-
-pub trait Event: Send + Sync + 'static {
-    const NAME: &'static str;
-    type Row: Serialize + schemars::JsonSchema + 'static;
-
-    fn row(&self, ids: &dyn EntityIds) -> Self::Row;
-}
-
-pub trait Raises<E: Event>: Resource {
-    fn raised(&self) -> &Feed<E>;
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, schemars::JsonSchema)]
-pub struct EventPage {
-    #[schemars(with = "u64")]
-    pub store: StoreId,
-    pub first: u64,
-    pub next: u64,
-    pub missed: u64,
-    pub rows: Vec<Value>,
-}
-
-pub type ReadEvents = fn(&World, &dyn EntityIds, u64) -> Result<EventPage, Error>;
-
-#[derive(Clone, Copy)]
-pub struct EventDecl {
-    pub name: &'static str,
-    read: ReadEvents,
-    row: fn() -> Value,
-}
-
-impl EventDecl {
-    pub const fn of<E: Event, R: Raises<E>>() -> Self {
-        Self {
-            name: E::NAME,
-            read: read_raised::<E, R>,
-            row: schema_of::<E::Row>,
-        }
-    }
-
-    pub const fn custom<Row: schemars::JsonSchema + 'static>(
-        name: &'static str,
-        read: ReadEvents,
-    ) -> Self {
-        Self {
-            name,
-            read,
-            row: schema_of::<Row>,
-        }
-    }
-
-    pub fn read(&self, world: &World, ids: &dyn EntityIds, after: u64) -> Result<EventPage, Error> {
-        (self.read)(world, ids, after)
-    }
-
-    pub fn row_schema(&self) -> Value {
-        (self.row)()
-    }
-}
-
-pub fn page_of<T, Row: Serialize>(
-    feed: &Feed<T>,
-    after: u64,
-    row: impl Fn(&T) -> Row,
-) -> Result<EventPage, Error> {
-    let (first, listed) = feed.after(after);
-    let rows = listed
-        .iter()
-        .zip(first..)
-        .map(|(entry, at)| {
-            serde_json::to_value(row(entry)).map_err(|error| {
-                Error::new(ErrorCode::InvalidValue, format!("$.rows[{at}]")).got(error.to_string())
-            })
-        })
-        .collect::<Result<Vec<Value>, Error>>()?;
-    Ok(EventPage {
-        store: feed.store(),
-        first,
-        next: feed.next(),
-        missed: first.saturating_sub(after),
-        rows,
-    })
-}
-
-pub fn missing_events(name: &str) -> Error {
-    Error::new(ErrorCode::MissingResource, "$.name")
-        .expected(Expected::Present)
-        .got(name)
-}
-
-fn read_raised<E: Event, R: Raises<E>>(
-    world: &World,
-    ids: &dyn EntityIds,
-    after: u64,
-) -> Result<EventPage, Error> {
-    let raised = world
-        .get_resource::<R>()
-        .ok_or_else(|| missing_events(E::NAME))?
-        .raised();
-    page_of(raised, after, |event| event.row(ids))
 }

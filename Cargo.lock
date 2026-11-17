@@ -1095,7 +1095,6 @@ version = "0.1.0"
 dependencies = [
  "bevy_ecs",
  "bevy_platform",
- "bytemuck",
  "engine_math",
  "engine_place",
  "engine_profile",

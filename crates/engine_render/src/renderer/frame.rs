@@ -39,7 +39,6 @@ impl Hidden {
 struct Viewed {
     view_projection: Mat4,
     eye: glam::Vec3,
-    detail: engine_core::ViewDetail,
     seconds: f32,
 }
 
@@ -84,28 +83,8 @@ fn opaque_span(
     ))
 }
 
-fn camera_of(
-    viewed: &Viewed,
-    facts: &engine_core::ViewFacts,
-    previous_seconds: f32,
-) -> CameraUniform {
-    let region = view_region(facts);
-    let (width, height) = region.render.pixels();
-    let clip = facts.jitter.map_or([0.0; 2], |offset| {
-        crate::gpu_data::jitter_clip(offset.to_array(), width, height)
-    });
-    let mut camera = CameraUniform::viewed(
-        (viewed.view_projection, facts.previous_view_projection),
-        viewed.eye,
-        (viewed.seconds, previous_seconds),
-        clip,
-        (width, height),
-    );
-    camera.noise_phase = facts.noise - facts.noise.floor();
-    camera.previous = facts.previous_eye.extend(previous_seconds).to_array();
-    camera.set_region(region);
-    camera.set_detail(viewed.detail);
-    camera
+fn camera_of(viewed: &Viewed) -> CameraUniform {
+    CameraUniform::exact(viewed.view_projection, viewed.eye, viewed.seconds)
 }
 
 impl Renderer {
@@ -296,10 +275,6 @@ impl Renderer {
         if listed.is_empty() {
             return Ok(RenderStats::default());
         }
-        let region = self
-            .core
-            .display
-            .plan_region(views.map(|views| views.frame().render_size));
         let display = views.map_or(glam::UVec2::ONE, |views| views.frame().display_size);
         let Some(run) = self.run.as_mut() else {
             return Ok(RenderStats::default());
@@ -330,7 +305,6 @@ impl Renderer {
         };
         run.tallies.part_draws.fill(0);
         run.tallies.kinds.start_frame();
-        run.region = region.upscales().then(|| region.render.pixels());
         run.frames.asked = world
             .get_resource::<FrameTime>()
             .map_or(run.frames.current, |time| time.frame);
@@ -341,30 +315,22 @@ impl Renderer {
         run.reading.slots = settings.readback_slots.max(1) as usize;
         run.reading.slot_bytes = settings.readback_slot_bytes;
         run.settle_parts(world.get_resource::<engine_registry::BrickStates>());
-        run.set_switches(super::install::switches_of(&run.machine, world));
         warm_on_flip(run, &mut self.installing, &device, world);
         run.drop_unfilled();
         let seconds = world
             .get_resource::<FrameTime>()
             .map_or(0.0, |time| time.elapsed as f32);
-        let previous_seconds = self.seconds.replace(seconds).unwrap_or(seconds);
         let entities: Vec<bevy_ecs::entity::Entity> =
             listed.iter().map(|facts| facts.view).collect();
         run.settle_sets(&entities);
-        let detail = world
-            .get_resource::<engine_core::Detail>()
-            .cloned()
-            .unwrap_or_default();
-        let mut cameras: Vec<CameraUniform> = listed
+        let cameras: Vec<CameraUniform> = listed
             .iter()
             .map(|facts| {
-                let viewed = Viewed {
+                camera_of(&Viewed {
                     view_projection: facts.view_projection,
                     eye: facts.eye,
-                    detail: facts.detail(&detail),
                     seconds,
-                };
-                camera_of(&viewed, facts, previous_seconds)
+                })
             })
             .collect();
         let shown = surface.as_ref().map(|surface| {
@@ -376,10 +342,9 @@ impl Renderer {
         run.canvas.texture = shown.as_ref().map(|(_, texture)| texture.clone());
         run.canvas.format = run.canvas.surface;
         run.uniforms.camera_slot = 0;
-        run.uniforms.owned = owned_draws(world, &mut cameras, seconds);
         let profile_writes = engine_profile::span("render", "queue_writes");
         let row_writes = engine_profile::timed(engine_profile::row("render.writes"));
-        run.uniforms.cameras = weighted(world, cameras);
+        run.uniforms.cameras = cameras;
         run.start_runs();
         for index in 0..run.parts.len() {
             if !run.drawable(index as u32) {
@@ -408,28 +373,6 @@ impl Renderer {
             }
         }
         run.warm_running();
-        let mut live: Vec<bool> = run
-            .machine
-            .outputs
-            .iter()
-            .map(crate::machine::layered)
-            .collect();
-        for pass in run.planning.runs.iter() {
-            for (target, ..) in run
-                .planning
-                .pass_sets
-                .get(pass)
-                .into_iter()
-                .flat_map(|set| set.iter())
-            {
-                if let Target::Output(index) = target
-                    && let Some(on) = live.get_mut(*index as usize)
-                {
-                    *on = true;
-                }
-            }
-        }
-        run.planning.live = live;
         if let Some(library) = world.get_resource::<engine_core::AssetLibrary>() {
             for texture in std::mem::take(&mut run.bindings.wanted_textures) {
                 if let Some(source) = library.texture(texture) {
@@ -459,11 +402,7 @@ impl Renderer {
         if let Some(error) = run.queued.refused.take() {
             return Err(error);
         }
-        let mut camera_bytes = run.write_cameras();
-        let mut pieces = std::mem::take(&mut run.spare.pieces);
-        piece_bytes(world, &run.uniforms.piece_layout, &mut pieces);
-        camera_bytes += run.write_pieces(&mut pieces);
-        run.spare.pieces = pieces;
+        let camera_bytes = run.write_cameras();
         run.refresh_groups();
         drop(profile_writes);
         drop(row_writes);
@@ -483,7 +422,6 @@ impl Renderer {
             }
         }
         let base = run.planning.runs.clone();
-        let states = world.get_resource::<engine_registry::BrickStates>();
         let order = drawn_order(&listed);
         let last_surface = order
             .iter()
@@ -525,7 +463,6 @@ impl Renderer {
             let size = facts.size();
             run.uniforms.camera_slot = index as u32;
             run.canvas.clear = facts.clear_color.map(f64::from);
-            run.region = (facts.render != size).then_some((facts.render.x, facts.render.y));
             run.canvas.format = format;
             run.canvas.rect = (!facts.whole(extent)).then_some(facts.pixels);
             run.canvas.texture = texture;
@@ -578,17 +515,10 @@ impl Renderer {
                 Some(_) | None => false,
             };
             run.canvas.carried = carried;
-            let mut post = crate::shared::post_uniform(
-                facts.view_projection,
-                facts.eye,
-                facts.detail_eye,
-                (facts.render.x, facts.render.y),
-                (size.x, size.y),
-            );
+            let mut post = crate::shared::post_uniform((size.x, size.y));
             post.kept[0] = u32::from(
                 run.canvas.load && !run.canvas.carried && facts.clear != engine_core::Clear::All,
             );
-            post.applied = applied_mask(run, &plan, &facts, states);
             run.uniforms.post = post;
             run.write_post();
             if earlier.is_none()
@@ -858,7 +788,6 @@ impl Renderer {
                 .saturating_add(run.pipelines.warming.made()),
             pipelines_created,
             render_passes,
-            linked: self.linked,
             readback_overflows: run.reading.list.overflows(),
             kind_passes,
             kind_problems: run.tallies.kinds.problems.clone(),
@@ -1034,20 +963,6 @@ fn drawn_order(listed: &[engine_core::ViewFacts]) -> Vec<usize> {
     textures.into_iter().chain(surfaces).collect()
 }
 
-fn view_region(facts: &engine_core::ViewFacts) -> crate::targets::FrameRegion {
-    let size = facts.size();
-    crate::targets::FrameRegion::new(
-        crate::targets::FrameSize {
-            width: size.x,
-            height: size.y,
-        },
-        crate::targets::FrameSize {
-            width: facts.render.x,
-            height: facts.render.y,
-        },
-    )
-}
-
 fn canvas_of(
     run: &Run,
     facts: &engine_core::ViewFacts,
@@ -1080,77 +995,6 @@ fn canvas_of(
     }
 }
 
-fn owned_draws(
-    world: &World,
-    cameras: &mut Vec<CameraUniform>,
-    seconds: f32,
-) -> Vec<crate::encode::OwnedDraw> {
-    let Some(views) = world.get_resource::<engine_core::Views>() else {
-        return Vec::new();
-    };
-    let mut owned = Vec::new();
-    for (drawn, view) in views.drawn().iter().enumerate() {
-        let Some(pass) = view.owner else {
-            continue;
-        };
-        owned.push(crate::encode::OwnedDraw {
-            pass,
-            local: view.local,
-            drawn: drawn as u32,
-            slot: cameras.len() as u32,
-            layer: view.target.layer,
-            rect: view.target.rect,
-            clear: view.clear,
-            passes: view.passes,
-            draws: view.draws,
-            mirrored: view.view_projection.determinant() < 0.0,
-        });
-        cameras.push(owned_camera(view, seconds));
-    }
-    owned
-}
-
-fn weighted(world: &World, mut cameras: Vec<CameraUniform>) -> Vec<CameraUniform> {
-    let weighting = world
-        .get_resource::<crate::TransparencySettings>()
-        .copied()
-        .unwrap_or_default()
-        .weighting();
-    for camera in &mut cameras {
-        camera.transparency = weighting;
-    }
-    cameras
-}
-
-fn owned_camera(view: &engine_core::DrawnView, seconds: f32) -> CameraUniform {
-    let size = crate::targets::FrameSize {
-        width: view.size.x,
-        height: view.size.y,
-    };
-    let mut camera = CameraUniform::viewed(
-        (view.view_projection, view.view_projection),
-        view.position,
-        (seconds, seconds),
-        [0.0; 2],
-        (size.width, size.height),
-    );
-    camera.set_region(crate::targets::FrameRegion::whole(size));
-    let measured = engine_core::ViewDetail::perspective(
-        view.eye,
-        view.view_projection,
-        size.height,
-        view.detail,
-    );
-    camera.set_detail(if view.view_projection.row(3).truncate() == glam::Vec3::ZERO {
-        engine_core::ViewDetail::orthographic(measured.pixel_angle, view.detail)
-    } else {
-        measured
-    });
-    camera.capture = u32::from(view.capture);
-    camera.view[0] = 1 + view.local;
-    camera
-}
-
 fn keep_eligible(
     run: &mut Run,
     facts: &engine_core::ViewFacts,
@@ -1169,7 +1013,7 @@ fn keep_eligible(
         let shown = index >= declared || {
             let pass = &run.machine.declared.passes[index];
             let views = match pass.views {
-                engine_core::PassViews::Every | engine_core::PassViews::Owned => true,
+                engine_core::PassViews::Every => true,
                 engine_core::PassViews::Main => facts.target.surface(),
             };
             (!viewed || views) && (pass.layer != Some(engine_core::AttachPoint::Overlay) || overlay)
@@ -1189,62 +1033,3 @@ fn union(first: &Bits, second: &Bits) -> Bits {
     joined
 }
 
-fn applied_mask(
-    run: &Run,
-    plan: &crate::graph::Plan,
-    facts: &engine_core::ViewFacts,
-    states: Option<&engine_registry::BrickStates>,
-) -> [u32; 4] {
-    let mut mask = [0_u32; 4];
-    for (bit, member) in run.installs.applied.iter().enumerate() {
-        let passes: Vec<usize> = run
-            .machine
-            .declared
-            .passes
-            .iter()
-            .enumerate()
-            .filter(|(_, pass)| pass.name == member.pass)
-            .map(|(index, _)| index)
-            .collect();
-        let on = if passes.is_empty() {
-            member
-                .gate
-                .is_none_or(|gate| states.is_none_or(|states| states.on(gate)))
-                && match member.views {
-                    engine_core::PassViews::Every => true,
-                    engine_core::PassViews::Main => facts.target.surface(),
-                    engine_core::PassViews::Owned => false,
-                }
-        } else {
-            plan.passes
-                .iter()
-                .any(|planned| passes.contains(&planned.pass.index()))
-        };
-        if on {
-            mask[bit / 32 % 4] |= 1 << (bit % 32);
-        }
-    }
-    mask
-}
-
-fn piece_bytes(world: &World, layout: &[(usize, crate::pieces::PieceAt)], bytes: &mut Vec<u8>) {
-    bytes.clear();
-    let Some(registry) = world.get_resource::<engine_registry::Registry>() else {
-        return;
-    };
-    let entries: Vec<_> = registry.pieces().map(|(_, entry)| entry).collect();
-    let end = layout
-        .iter()
-        .map(|(_, at)| at.offset + at.size)
-        .max()
-        .unwrap_or(0);
-    bytes.resize(end as usize, 0);
-    for &(index, at) in layout {
-        let Some(found) = entries.get(index).and_then(|entry| entry.bytes(world)) else {
-            continue;
-        };
-        let start = at.offset as usize;
-        let length = found.len().min(at.size as usize);
-        bytes[start..start + length].copy_from_slice(&found[..length]);
-    }
-}

@@ -17,7 +17,6 @@ pub struct FrameStats {
     pub pipelines_listed: u32,
     pub pipelines_unlisted: u32,
     pub readiness: engine_core::Readiness,
-    pub budget: Vec<engine_core::BudgetUse>,
     pub resolution: ResolutionStats,
     pub jobs: engine_core::JobStats,
     pub refused_views: u32,

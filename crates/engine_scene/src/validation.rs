@@ -12,7 +12,7 @@ use crate::{
 
 pub(crate) struct PreparedScene {
     pub environment: Option<crate::SceneEnvironment>,
-    pub meshes: Vec<Mesh>,
+    pub meshes: Vec<Option<Mesh>>,
     pub materials: Vec<PreparedMaterial>,
     pub textures: Vec<Texture>,
     pub transforms: Vec<Transform>,
@@ -21,7 +21,7 @@ pub(crate) struct PreparedScene {
 
 struct CpuAssets {
     textures: Vec<Texture>,
-    meshes: Vec<Mesh>,
+    meshes: Vec<Option<Mesh>>,
     materials: Vec<PreparedMaterial>,
 }
 
@@ -83,7 +83,6 @@ impl SceneDocument {
         kinds: &SceneKinds,
     ) -> Result<PreparedScene, Error> {
         identifier(&self.id, "$.id")?;
-        self.validate_looks()?;
         unique_ids(self.meshes.iter().map(|mesh| mesh.id.as_str()), "$.meshes")?;
         unique_ids(
             self.materials.iter().map(|material| material.id.as_str()),

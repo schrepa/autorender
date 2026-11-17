@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use engine::command_line::CommandOption;
-use engine::host::{HostSettings, JobRef, OVERLAY, SETTINGS, SceneLoad};
+use engine::host::{HostSettings, JobRef, OVERLAY, SceneLoad};
 use engine::scene::SceneKinds;
 use engine::{
     BrickList, DefaultScene, Engine, Error, ErrorCode, Expected, Game, GameEntry, GameHost,
@@ -31,7 +31,7 @@ pub fn options() -> Vec<CommandOption> {
         } => format!("verify:{count}"),
         CacheOptions::Keep { budget } => (budget / MIB).to_string(),
     };
-    let mut options = vec![
+    vec![
         CommandOption::taking("--scene", "PATH"),
         CommandOption::taking("--size", "WxH").in_unit("px"),
         CommandOption::taking("--gpu", "discrete|integrated").defaults_to(gpu),
@@ -40,12 +40,6 @@ pub fn options() -> Vec<CommandOption> {
             .defaults_to(jobcache)
             .in_unit("MiB"),
         CommandOption::taking("--vsync", "on|off").defaults_to(switch(defaults.vsync)),
-    ];
-    options.extend(SETTINGS.iter().map(|setting| {
-        CommandOption::taking(&format!("--{}", setting.name), setting.accepted())
-            .defaults_to(setting.default_value())
-    }));
-    options.extend([
         CommandOption::taking(&format!("--{OVERLAY}"), "KEY=JSON"),
         CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
         CommandOption::taking("--offscreen", "N"),
@@ -57,8 +51,7 @@ pub fn options() -> Vec<CommandOption> {
         CommandOption::taking("--dev-artifacts", "DIR").defaults_to(default_artifacts().display()),
         CommandOption::flag("--help"),
         CommandOption::flag("--json"),
-    ]);
-    options
+    ]
 }
 
 pub fn parameters() -> Vec<(String, String)> {
@@ -324,7 +317,7 @@ impl HostOptions {
             switch if switch.strip_prefix("--").is_some_and(HostSettings::takes) => {
                 let value = arguments.value(argument)?;
                 self.settings
-                    .set(&switch[2..], &value)
+                    .set(&value)
                     .map_err(|error| error.within(switch))?;
             }
             "--packs" => self.jobs.packs = Some(arguments.value(argument)?.into()),

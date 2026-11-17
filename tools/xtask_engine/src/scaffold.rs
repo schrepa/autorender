@@ -41,7 +41,7 @@ const TEMPLATE_ONLY: [(&str, &str); 4] = [
     }
   ],
 "#,
-        "  \"materials\": [],\n",
+        "",
     ),
     (
         r#"    {
@@ -337,26 +337,9 @@ serveJobs(() => import("../../pkg/{wasm}"));
     )
 }
 
-enum Shape {
-    Slot { contract: Option<&'static str> },
-    List,
-}
-
-impl Shape {
-    const fn name(&self) -> &'static str {
-        match self {
-            Self::Slot { .. } => "slot",
-            Self::List => "list",
-        }
-    }
-}
-
 struct Claim {
-    shape: Shape,
-    place: String,
     path: String,
     package: String,
-    filler: Option<&'static str>,
 }
 
 struct BrickArguments {
@@ -475,23 +458,9 @@ fn brick(root: &Path, options: &[String]) -> Result<(), String> {
             .collect();
         let mut text = rename(&text);
         if inside == Path::new("mod.rs") {
-            text = registered(text, &named, name, claim.as_ref())?;
+            text = registered(text, &named, claim.as_ref())?;
         }
         files.push((root.join(&module).join(inside), text));
-    }
-    if let Some(Claim {
-        shape: Shape::Slot {
-            contract: Some(contract),
-        },
-        place,
-        ..
-    }) = &claim
-    {
-        files.push((
-            root.join(&module)
-                .join(format!("shaders/{name}/faces/{place}.wgsl")),
-            answers(place, contract),
-        ));
     }
     write_files(root, &files)?;
     let listed = declare_module(root, &project, name, &named)?;
@@ -513,8 +482,7 @@ fn brick(root: &Path, options: &[String]) -> Result<(), String> {
             "kind": kind.name(),
             "listed": listed,
             "part": place,
-            "claims": claim.as_ref().map(|claim| claim.shape.name()),
-            "filled_by": claim.as_ref().and_then(|claim| claim.filler),
+            "claims": claim.as_ref().map(|_| "list"),
         })
     );
     Ok(())
@@ -600,25 +568,11 @@ fn taken(root: &Path, project: &str, name: &str, engine: &Engine) -> Result<(), 
     Ok(())
 }
 
-fn registered(
-    text: String,
-    named: &str,
-    name: &str,
-    claim: Option<&Claim>,
-) -> Result<String, String> {
+fn registered(text: String, named: &str, claim: Option<&Claim>) -> Result<String, String> {
     let Some(claim) = claim else {
         return Ok(text);
     };
-    let line = match &claim.shape {
-        Shape::Slot { contract } => {
-            let wgsl = match contract {
-                Some(_) => format!("Some(shaders::{name}::faces::{}::MODULE)", claim.place),
-                None => "None".to_owned(),
-            };
-            format!(".fill::<{}>({wgsl})", claim.path)
-        }
-        Shape::List => format!(".join::<{}>(Default::default(), None)", claim.path),
-    };
+    let line = format!(".join::<{}>(Default::default())", claim.path);
     let anchor = format!(".settings::<{named}>()\n");
     if !text.contains(&anchor) {
         return Err(format!(
@@ -736,9 +690,12 @@ fn claim(
     registry: &Registry,
     part: &str,
 ) -> Result<Option<Claim>, String> {
-    let Some(decl) = registry.place(part).copied() else {
+    if !registry
+        .place(part)
+        .is_some_and(|decl| matches!(decl.kind(), PlaceKind::List))
+    {
         return Ok(None);
-    };
+    }
     let Some(declared) = declared(root, repository, part)? else {
         return Ok(None);
     };
@@ -750,23 +707,9 @@ fn claim(
             declared.package
         ));
     }
-    let shape = match decl.kind() {
-        PlaceKind::Slot => Shape::Slot {
-            contract: decl.wgsl(),
-        },
-        PlaceKind::List => Shape::List,
-        PlaceKind::Component | PlaceKind::Ledger => return Ok(None),
-    };
-    let filler = match shape {
-        Shape::Slot { .. } => registry.filler_named(part),
-        Shape::List => None,
-    };
     Ok(Some(Claim {
-        shape,
-        place: part.to_owned(),
         path: declared.path,
         package: declared.package,
-        filler,
     }))
 }
 
@@ -784,40 +727,39 @@ fn declared(root: &Path, repository: &Repository, part: &str) -> Result<Option<D
         }
         let text = fs::read_to_string(root.join(&path))
             .map_err(|error| format!("cannot read {path}: {error}"))?;
-        for marker in ["impl Slot for ", "impl List for "] {
-            for (at, _) in text.match_indices(marker) {
-                let rest = &text[at + marker.len()..];
-                let block = &rest[..rest.find('}').unwrap_or(rest.len())];
-                if !block.contains(&declaration) {
-                    continue;
-                }
-                let name: String = rest
-                    .chars()
-                    .take_while(|character| character.is_alphanumeric() || *character == '_')
-                    .collect();
-                let Some(package) = repository.own().find(|package| {
-                    package
-                        .path
-                        .as_deref()
-                        .is_some_and(|folder| path.starts_with(&format!("{folder}/src/")))
-                }) else {
-                    continue;
-                };
-                let module = module_of(&path, package.path.as_deref().unwrap_or_default());
-                let inner = if module.is_empty() {
-                    name.clone()
-                } else {
-                    format!("{module}::{name}")
-                };
-                return Ok(Some(Declared {
-                    path: format!("{}::{inner}", package.crate_name()),
-                    package: package.name.clone(),
-                    kind: package.engine["kind"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned(),
-                }));
+        let marker = "impl List for ";
+        for (at, _) in text.match_indices(marker) {
+            let rest = &text[at + marker.len()..];
+            let block = &rest[..rest.find('}').unwrap_or(rest.len())];
+            if !block.contains(&declaration) {
+                continue;
             }
+            let name: String = rest
+                .chars()
+                .take_while(|character| character.is_alphanumeric() || *character == '_')
+                .collect();
+            let Some(package) = repository.own().find(|package| {
+                package
+                    .path
+                    .as_deref()
+                    .is_some_and(|folder| path.starts_with(&format!("{folder}/src/")))
+            }) else {
+                continue;
+            };
+            let module = module_of(&path, package.path.as_deref().unwrap_or_default());
+            let inner = if module.is_empty() {
+                name.clone()
+            } else {
+                format!("{module}::{name}")
+            };
+            return Ok(Some(Declared {
+                path: format!("{}::{inner}", package.crate_name()),
+                package: package.name.clone(),
+                kind: package.engine["kind"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_owned(),
+            }));
         }
     }
     Ok(None)
@@ -833,85 +775,6 @@ fn module_of(path: &str, folder: &str) -> String {
         return String::new();
     }
     inside.replace('/', "::")
-}
-
-fn items(text: &str) -> Vec<&str> {
-    let mut items = Vec::new();
-    let mut depth = 0_u32;
-    let mut start = 0;
-    for (at, character) in text.char_indices() {
-        let ends = match character {
-            '{' => {
-                depth += 1;
-                false
-            }
-            '}' => {
-                depth = depth.saturating_sub(1);
-                depth == 0
-            }
-            ';' => depth == 0,
-            _ => false,
-        };
-        if ends {
-            let item = text[start..=at].trim();
-            if !item.is_empty() && item != ";" {
-                items.push(item);
-            }
-            start = at + 1;
-        }
-    }
-    items
-}
-
-fn declared_name(item: &str) -> Option<&str> {
-    let rest = ["struct ", "const ", "alias ", "override "]
-        .into_iter()
-        .find_map(|keyword| item.strip_prefix(keyword))?;
-    let end = rest
-        .find(|character: char| !(character.is_alphanumeric() || character == '_'))
-        .unwrap_or(rest.len());
-    Some(&rest[..end]).filter(|name| !name.is_empty())
-}
-
-fn mentions(text: &str, name: &str) -> bool {
-    let word = |character: char| character.is_alphanumeric() || character == '_';
-    text.match_indices(name).any(|(at, _)| {
-        !text[..at].chars().next_back().is_some_and(word)
-            && !text[at + name.len()..].chars().next().is_some_and(word)
-    })
-}
-
-fn answers(place: &str, contract: &str) -> String {
-    let items = items(contract);
-    let functions: Vec<&str> = items
-        .iter()
-        .copied()
-        .filter(|item| item.starts_with("fn "))
-        .collect();
-    let named: Vec<&str> = items
-        .iter()
-        .filter_map(|item| declared_name(item))
-        .filter(|name| functions.iter().any(|function| mentions(function, name)))
-        .collect();
-    let mut text = String::new();
-    match named.as_slice() {
-        [] => {}
-        [one] => text.push_str(&format!("import package::place::{place}::{one};\n")),
-        many => text.push_str(&format!(
-            "import package::place::{place}::{{{}}};\n",
-            many.join(", ")
-        )),
-    }
-    for import in items.iter().filter(|item| item.starts_with("import ")) {
-        text.push_str(import);
-        text.push('\n');
-    }
-    if !text.is_empty() {
-        text.push('\n');
-    }
-    text.push_str(&functions.join("\n\n"));
-    text.push('\n');
-    text
 }
 
 fn join_workspace(root: &Path, project: &str) -> Result<(), String> {

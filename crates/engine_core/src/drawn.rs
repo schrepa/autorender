@@ -1017,7 +1017,6 @@ fn unbounded(remove: On<Remove, DrawnBounds>, mut table: ResMut<DrawnTable>) {
 pub(crate) fn install(world: &mut World) {
     world.register_required_components::<Drawn, Transform>();
     world.init_resource::<DrawnTable>();
-    world.init_resource::<crate::DrawnAreas>();
     world.add_observer(touched);
     world.add_observer(dropped);
     world.add_observer(bounded);
@@ -1074,9 +1073,6 @@ pub(crate) fn resolve(world: &mut World) {
         .get_resource::<DrawnSettings>()
         .cloned()
         .unwrap_or_default();
-    if let Some(mut areas) = world.get_resource_mut::<crate::DrawnAreas>() {
-        areas.resize(settings.changes as usize);
-    }
     if !world.contains_resource::<DrawnTable>() {
         return;
     }

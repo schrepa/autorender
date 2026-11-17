@@ -1,14 +1,11 @@
 use bevy_ecs::entity::Entity;
-use bevy_ecs::prelude::{Res, Resource, World};
-use bevy_ecs::system::{Commands, SystemParamItem};
-use glam::{Mat4, UVec2, Vec2, Vec3};
-use serde::{Deserialize, Serialize};
+use bevy_ecs::prelude::{Resource, World};
+use glam::{Mat4, UVec2, Vec3};
 
 use crate::{
-    AssetLibrary, Camera, Clear, ColorSpace, Detail, DrawnPoses, Error, ErrorCode, FrameFacts,
-    FrameId, FrameTime, GlobalTransforms, Hold, Jitter, Layers, List, Mobility, Operation,
-    OwnedView, OwnedViews, PassBit, PassMask, PassViews, Refusal, Requests, SceneIds, ScenePasses,
-    Target, View, ViewCut, ViewDetail, ViewHistory, ViewJitter, ViewLayer, take_asks,
+    AssetLibrary, Camera, Clear, ColorSpace, DrawnPoses, Error, ErrorCode, FrameFacts, FrameId,
+    FrameTime, GlobalTransforms, Layers, PassMask, ScenePasses, Target, View, ViewCut, ViewHistory,
+    ViewLayer, take_asks,
 };
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -24,14 +21,11 @@ pub struct ViewFacts {
     pub order: i32,
     pub lens: Camera,
     pub eye: Vec3,
-    pub detail_eye: Vec3,
     pub forward: Vec3,
     pub view_projection: Mat4,
     pub previous_view_projection: Mat4,
     pub previous_eye: Vec3,
     pub history: ViewHistory,
-    pub jitter: Option<Vec2>,
-    pub noise: f32,
     pub frame: FrameId,
 }
 
@@ -44,65 +38,21 @@ impl ViewFacts {
         self.pixels == [0, 0, target.x, target.y]
     }
 
-    pub fn detail(&self, detail: &Detail) -> ViewDetail {
-        ViewDetail::perspective(
-            self.detail_eye,
-            self.view_projection,
-            self.render.y,
-            detail.chosen_error().unwrap_or(0.0),
-        )
-    }
-
     pub fn aspect(&self) -> f32 {
         self.pixels[2].max(1) as f32 / self.pixels[3].max(1) as f32
-    }
-
-    fn row(&self, ids: &SceneIds<'_, '_>) -> ViewRow {
-        let named = |entity: Entity| ids.id(entity).map(str::to_owned);
-        ViewRow {
-            view: named(self.view),
-            camera: named(self.camera),
-            texture: match self.target {
-                Target::Surface => None,
-                Target::Texture(texture) => Some(format!("{texture:?}")),
-            },
-            pixels: self.pixels,
-            render: self.render.to_array(),
-            layers: self.layers.0,
-            clear: match self.clear {
-                Clear::All => ClearRow::All,
-                Clear::DepthOnly => ClearRow::DepthOnly,
-                Clear::Nothing => ClearRow::Nothing,
-            },
-            clear_color: self.clear_color,
-            order: self.order,
-            eye: self.eye.to_array(),
-            detail_eye: self.detail_eye.to_array(),
-            forward: self.forward.to_array(),
-            history_valid: self.history.valid(),
-            jitter: self.jitter.map(|jitter| jitter.to_array()),
-            noise: self.noise,
-        }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DrawnView {
-    pub owner: Option<&'static str>,
     pub local: u32,
     pub view_projection: Mat4,
-    pub planes: Option<[[f32; 4]; 6]>,
     pub position: Vec3,
-    pub eye: Vec3,
     pub size: UVec2,
-    pub detail: f32,
-    pub takes: Option<Mobility>,
     pub layers: Layers,
     pub target: ViewLayer,
     pub clear: Clear,
-    pub capture: bool,
     pub passes: PassMask,
-    pub draws: bool,
 }
 
 #[derive(Clone, Copy, PartialEq)]
@@ -112,7 +62,6 @@ struct Key {
     render: UVec2,
     camera: Entity,
     cut: Option<u64>,
-    jittered: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -130,9 +79,7 @@ pub struct Views {
     refused: Vec<(Entity, Error)>,
     held: Vec<Held>,
     drawn: Vec<DrawnView>,
-    owned: Vec<(&'static str, u32, u32)>,
     frame: FrameFacts,
-    frozen: Option<(Entity, Vec3)>,
 }
 
 impl Views {
@@ -142,13 +89,6 @@ impl Views {
 
     pub fn drawn(&self) -> &[DrawnView] {
         &self.drawn
-    }
-
-    pub fn owned(&self, pass: &str) -> Option<std::ops::Range<u32>> {
-        self.owned
-            .iter()
-            .find(|(known, _, _)| *known == pass)
-            .map(|&(_, base, count)| base..base + count)
     }
 
     pub fn frame(&self) -> FrameFacts {
@@ -165,20 +105,6 @@ impl Views {
 
     pub fn refused(&self) -> &[(Entity, Error)] {
         &self.refused
-    }
-
-    fn reply(&self, ids: &SceneIds<'_, '_>) -> ViewsReply {
-        ViewsReply {
-            views: self.listed.iter().map(|facts| facts.row(ids)).collect(),
-            refused: self
-                .refused
-                .iter()
-                .map(|(view, error)| RefusedView {
-                    view: ids.id(*view).map(str::to_owned),
-                    error: Refusal::of(error),
-                })
-                .collect(),
-        }
     }
 }
 
@@ -293,18 +219,14 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
             .map_or(0, |time| time.frame),
     );
     let found = found(world);
-    let (held, frozen) = world
+    let held = world
         .get_resource::<Views>()
-        .map(|views| (views.held.clone(), views.frozen))
+        .map(|views| views.held.clone())
         .unwrap_or_default();
     let (globals, poses) = (
         world.get_resource::<GlobalTransforms>(),
         world.get_resource::<DrawnPoses>(),
     );
-    let given: Vec<ViewJitter> = world
-        .get_resource::<Jitter>()
-        .map(|jitter| jitter.views.clone())
-        .unwrap_or_default();
     let mut listed = Vec::with_capacity(found.len());
     let mut refused = Vec::new();
     let mut kept = Vec::with_capacity(found.len());
@@ -324,11 +246,6 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
             refused.push((entity, refuse(entity, "camera", ErrorCode::InvalidCamera)));
             continue;
         }
-        let offset = given.iter().find(|given| given.view == entity);
-        let jitter = offset
-            .filter(|_| !view.steady)
-            .map(|given| Vec2::from(given.offset));
-        let noise = offset.map_or(0.0, |given| given.noise);
         let cut = globals
             .zip(poses)
             .and_then(|(globals, poses)| poses.fresh_at(globals, view.camera));
@@ -338,7 +255,6 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
             render,
             camera: view.camera,
             cut,
-            jittered: jitter.is_some(),
         };
         let before = held.iter().find(|held| held.view == entity);
         let reset = cuts.contains(&entity) || before.is_none_or(|held| held.key != key);
@@ -351,9 +267,6 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
             view_projection,
             eye,
         });
-        let detail_eye = frozen
-            .filter(|(view, _)| *view == entity)
-            .map_or(eye, |(_, at)| at);
         listed.push(ViewFacts {
             view: entity,
             camera: view.camera,
@@ -366,274 +279,45 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
             order: view.order,
             lens,
             eye,
-            detail_eye,
             forward,
             view_projection,
             previous_view_projection: previous,
             previous_eye,
             history,
-            jitter,
-            noise,
             frame,
         });
     }
-    world.insert_resource(Views {
-        listed,
-        refused,
-        held: kept,
-        drawn: Vec::new(),
-        owned: Vec::new(),
-        frame: facts,
-        frozen,
-    });
-}
-
-pub(crate) fn settle_owned(world: &mut World) {
-    let detail = world
-        .get_resource::<Detail>()
-        .and_then(Detail::chosen_error)
-        .unwrap_or(0.0);
-    let mut published: Vec<OwnedViews> = world
-        .try_query::<&OwnedViews>()
-        .map(|mut query| query.iter(world).cloned().collect())
-        .unwrap_or_default();
-    published.sort_by_key(|views| views.pass);
-    let passes = world.get_resource::<ScenePasses>();
-    let every = passes.map_or(PassMask::NONE, |passes| {
-        passes
-            .listed()
-            .iter()
-            .filter(|listed| listed.pass.views != PassViews::Owned)
-            .filter_map(|listed| listed.bit)
-            .fold(PassMask::NONE, |mask, bit| mask.set(bit, true))
-    });
-    let placed: Vec<Vec<DrawnView>> = published
-        .iter()
-        .map(|listed| {
-            let owner = passes
-                .and_then(|passes| passes.bit(listed.pass))
-                .map_or(PassMask::NONE, PassBit::mask);
-            (0_u32..)
-                .zip(&listed.views)
-                .map(|(local, view)| owned_view(world, (listed.pass, local, owner), view))
-                .collect()
-        })
-        .collect();
-    let Some(mut views) = world.get_resource_mut::<Views>() else {
-        return;
-    };
-    let mut drawn: Vec<DrawnView> = views
-        .listed
+    let passes = world
+        .get_resource::<ScenePasses>()
+        .map_or(PassMask::NONE, |passes| {
+            passes
+                .listed()
+                .iter()
+                .filter_map(|listed| listed.bit)
+                .fold(PassMask::NONE, |mask, bit| mask.set(bit, true))
+        });
+    let drawn = listed
         .iter()
         .enumerate()
         .map(|(index, facts)| DrawnView {
-            owner: None,
             local: index as u32,
             view_projection: facts.view_projection,
-            planes: None,
             position: facts.eye,
-            eye: facts.detail_eye,
             size: facts.render,
-            detail,
-            takes: None,
             layers: facts.layers,
             target: ViewLayer {
                 layer: 0,
                 rect: facts.pixels,
             },
             clear: facts.clear,
-            capture: false,
-            passes: every,
-            draws: true,
+            passes,
         })
         .collect();
-    let mut owned = Vec::with_capacity(published.len());
-    for (listed, placed) in published.iter().zip(placed) {
-        owned.push((listed.pass, drawn.len() as u32, placed.len() as u32));
-        drawn.extend(placed);
-    }
-    if views.drawn != drawn || views.owned != owned {
-        views.drawn = drawn;
-        views.owned = owned;
-    }
-}
-
-fn owned_view(
-    world: &World,
-    (owner, local, pass): (&'static str, u32, PassMask),
-    view: &OwnedView,
-) -> DrawnView {
-    let [_, _, width, height] = view.target.rect;
-    let aspect = width.max(1) as f32 / height.max(1) as f32;
-    let lens = world.get::<Camera>(view.camera).copied();
-    let pose = world
-        .get::<crate::Transform>(view.camera)
-        .map(crate::Transform::matrix)
-        .and_then(eye_of);
-    let placed = lens
-        .zip(pose)
-        .map(|(lens, (position, forward, up))| {
-            (
-                lens.clip(aspect) * Mat4::look_to_rh(position, forward, up),
-                position,
-            )
-        })
-        .filter(|(view_projection, _)| view_projection.is_finite());
-    let (view_projection, position) = placed.unwrap_or((Mat4::ZERO, Vec3::ZERO));
-    DrawnView {
-        owner: Some(owner),
-        local,
-        view_projection,
-        planes: view.planes,
-        position,
-        eye: Vec3::from_array(view.eye),
-        size: UVec2::new(width, height),
-        detail: view.detail,
-        takes: view.takes,
-        layers: Layers::ALL,
-        target: view.target,
-        clear: view.clear,
-        capture: view.capture,
-        passes: view.passes.unwrap_or(pass),
-        draws: view.draws && placed.is_some(),
-    }
-}
-
-#[derive(Resource, Debug, Default)]
-pub struct WholeFrames {
-    requests: Requests<&'static str, ()>,
-}
-
-impl List for WholeFrames {
-    const NAME: &'static str = "whole_frames";
-    type Member = &'static str;
-}
-
-impl WholeFrames {
-    pub fn ask(&mut self, by: &'static str) -> Hold {
-        let interest = self.requests.ask(by);
-        self.end();
-        interest.into()
-    }
-
-    pub fn asked(&mut self) -> bool {
-        self.requests.settle(0.0);
-        self.end();
-        !self.requests.is_empty()
-    }
-
-    fn end(&mut self) {
-        let asked: Vec<(&'static str, crate::Ticket)> = self
-            .requests
-            .asked()
-            .map(|(&by, ticket)| (by, ticket))
-            .collect();
-        for (by, ticket) in asked {
-            self.requests.ready(&by, ticket, ());
-        }
-    }
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ViewsRequest {}
-
-#[derive(Default, Serialize, schemars::JsonSchema)]
-pub(crate) struct ViewsReply {
-    views: Vec<ViewRow>,
-    refused: Vec<RefusedView>,
-}
-
-#[derive(Serialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub(crate) enum ClearRow {
-    All,
-    DepthOnly,
-    Nothing,
-}
-
-#[derive(Serialize, schemars::JsonSchema)]
-pub(crate) struct ViewRow {
-    view: Option<String>,
-    camera: Option<String>,
-    texture: Option<String>,
-    pixels: [u32; 4],
-    render: [u32; 2],
-    layers: u32,
-    clear: ClearRow,
-    clear_color: [f32; 4],
-    order: i32,
-    eye: [f32; 3],
-    detail_eye: [f32; 3],
-    forward: [f32; 3],
-    history_valid: bool,
-    jitter: Option<[f32; 2]>,
-    noise: f32,
-}
-
-#[derive(Serialize, schemars::JsonSchema)]
-pub(crate) struct RefusedView {
-    view: Option<String>,
-    error: Refusal,
-}
-
-pub(crate) struct ViewsState;
-
-impl Operation for ViewsState {
-    const NAME: &'static str = "views";
-    const CONTROL: bool = false;
-    type Params = (Option<Res<'static, Views>>, SceneIds<'static, 'static>);
-    type Request = ViewsRequest;
-    type Reply = ViewsReply;
-
-    fn run(
-        (views, ids): SystemParamItem<'_, '_, Self::Params>,
-        _: ViewsRequest,
-    ) -> Result<ViewsReply, Error> {
-        Ok(views.map_or_else(ViewsReply::default, |views| views.reply(&ids)))
-    }
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct ViewControl {
-    #[serde(default)]
-    freeze: Option<bool>,
-}
-
-impl Operation for ViewControl {
-    const NAME: &'static str = "view";
-    type Params = (Res<'static, Views>, Commands<'static, 'static>);
-    type Request = Self;
-    type Reply = ViewReply;
-
-    fn run(
-        (views, mut commands): SystemParamItem<'_, '_, Self::Params>,
-        request: Self,
-    ) -> Result<ViewReply, Error> {
-        let main = views.main();
-        let held = views
-            .frozen
-            .filter(|(view, _)| main.is_some_and(|facts| facts.view == *view));
-        let frozen = match request.freeze {
-            Some(true) => held.or_else(|| main.map(|facts| (facts.view, facts.eye))),
-            Some(false) => None,
-            None => held,
-        };
-        if frozen != views.frozen {
-            commands.queue(move |world: &mut World| {
-                if let Some(mut views) = world.get_resource_mut::<Views>() {
-                    views.frozen = frozen;
-                }
-            });
-        }
-        Ok(ViewReply {
-            frozen_at: frozen.map(|(_, eye)| eye.to_array()),
-        })
-    }
-}
-
-#[derive(Serialize, schemars::JsonSchema)]
-pub(crate) struct ViewReply {
-    frozen_at: Option<[f32; 3]>,
+    world.insert_resource(Views {
+        listed,
+        refused,
+        held: kept,
+        drawn,
+        frame: facts,
+    });
 }

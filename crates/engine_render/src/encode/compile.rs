@@ -3,19 +3,7 @@ use super::run::Pipelines;
 use super::warming::{Asked, Warm, WarmShape};
 use super::*;
 use crate::install::{Faces, FragmentUse, RenderDecl};
-use crate::machine::{BuiltPipeline, Stage, output_location};
-
-fn stage_switches(switches: &[(u32, bool)], stages: &[Stage]) -> Vec<(u32, bool)> {
-    switches
-        .iter()
-        .filter(|(id, _)| {
-            stages
-                .iter()
-                .any(|stage| stage.composed.switches.contains(id))
-        })
-        .copied()
-        .collect()
-}
+use crate::machine::{BuiltPipeline, Stage};
 
 fn stage_key(
     stage: &Stage,
@@ -47,27 +35,16 @@ fn made_by_program(
         })
 }
 
-fn stage_constants(
-    stages: &[Stage],
-    switches: &[(u32, bool)],
-    material: &[(&str, f64)],
-) -> Vec<Vec<(String, f64)>> {
+fn stage_constants(stages: &[Stage], material: &[(&str, f64)]) -> Vec<Vec<(String, f64)>> {
     stages
         .iter()
         .map(|stage| {
-            let mut values: Vec<(String, f64)> = switches
-                .iter()
-                .filter(|(id, _)| stage.composed.switches.contains(id))
-                .map(|(id, on)| (id.to_string(), f64::from(u8::from(*on))))
-                .collect();
-            values.extend(
-                stage
-                    .composed
-                    .constants(material)
-                    .into_iter()
-                    .map(|(name, value)| (name.to_owned(), value)),
-            );
-            values
+            stage
+                .composed
+                .constants(material)
+                .into_iter()
+                .map(|(name, value)| (name.to_owned(), value))
+                .collect()
         })
         .collect()
 }
@@ -216,32 +193,6 @@ const ADDED: wgpu::BlendState = wgpu::BlendState {
     },
 };
 
-const COVERED: wgpu::BlendState = wgpu::BlendState {
-    color: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::OneMinusSrc,
-        operation: wgpu::BlendOperation::Add,
-    },
-    alpha: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::OneMinusSrc,
-        operation: wgpu::BlendOperation::Add,
-    },
-};
-
-const SUMMED: wgpu::BlendState = wgpu::BlendState {
-    color: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
-    },
-    alpha: wgpu::BlendComponent {
-        src_factor: wgpu::BlendFactor::One,
-        dst_factor: wgpu::BlendFactor::One,
-        operation: wgpu::BlendOperation::Add,
-    },
-};
-
 fn blend_targets(targets: &mut [Option<wgpu::ColorTargetState>], alpha: crate::surface::Alpha) {
     let additive = alpha == crate::surface::Alpha::Additive;
     for (location, target) in targets.iter_mut().enumerate() {
@@ -254,51 +205,7 @@ fn blend_targets(targets: &mut [Option<wgpu::ColorTargetState>], alpha: crate::s
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Weighing {
-    Covers,
-    Adds,
-    Chosen,
-}
-
-fn weigh_targets(
-    targets: &mut [Option<wgpu::ColorTargetState>],
-    weighing: Weighing,
-    (cover, accumulated): (usize, usize),
-) {
-    let adds = matches!(weighing, Weighing::Adds | Weighing::Chosen);
-    let covers = matches!(weighing, Weighing::Covers | Weighing::Chosen);
-    for (location, target) in targets.iter_mut().enumerate() {
-        let Some(target) = target else { continue };
-        let blend = if location == 0 {
-            adds.then_some(ADDED)
-        } else if location == cover {
-            covers.then_some(COVERED)
-        } else if location == accumulated {
-            covers.then_some(SUMMED)
-        } else {
-            None
-        };
-        match blend.filter(|_| blendable(target.format)) {
-            Some(blend) => target.blend = Some(blend),
-            None => target.write_mask = wgpu::ColorWrites::empty(),
-        }
-    }
-}
-
 impl Machine {
-    pub(crate) fn part_label(&self, part: u32, entry: &str) -> String {
-        match self
-            .declared
-            .parts
-            .get(part as usize)
-            .and_then(|part| part.labels.first())
-        {
-            Some(prefix) => format!("{prefix} {entry}"),
-            None => entry.to_owned(),
-        }
-    }
-
     fn pass_name(&self, pipeline: u32) -> &'static str {
         let Some(built) = self.pipelines.get(pipeline as usize) else {
             return "";
@@ -339,7 +246,6 @@ struct Shape<'f> {
     formats: &'f [Option<wgpu::TextureFormat>],
     depth: Option<(wgpu::TextureFormat, bool)>,
     main: bool,
-    switches: Vec<(u32, bool)>,
     material: Vec<(&'static str, f64)>,
     styling: Option<crate::surface::MaterialVariant>,
     raster: engine_core::PassRaster,
@@ -514,7 +420,6 @@ fn note(pipelines: &mut Pipelines, compiled: Compiled, from_list: bool) {
 struct Keyed {
     program: u64,
     key: u64,
-    switches: Vec<(u32, bool)>,
     bits: Option<crate::surface::MaterialVariant>,
     specialized: bool,
     styled: bool,
@@ -626,9 +531,6 @@ impl Run {
             .pipelines
             .get(pipeline as usize)
             .ok_or(DropReason::UnknownPipeline)?;
-        if built.skipped {
-            return Err(DropReason::PipelineOverLimit);
-        }
         if let Some(at) = built
             .ready
             .iter()
@@ -674,18 +576,6 @@ impl Run {
         Ok(built.ready.len() - 1)
     }
 
-    pub(crate) fn set_switches(&mut self, switches: Vec<(u32, bool)>) {
-        if self.pipelines.switches == switches {
-            return;
-        }
-        self.pipelines.switches = switches;
-        self.pipelines.warming.running.clear();
-        for built in &mut self.machine.pipelines {
-            built.ready.clear();
-            built.compute_ready = None;
-        }
-    }
-
     pub(super) fn compute_pipeline(
         &mut self,
         pipeline: u32,
@@ -698,31 +588,17 @@ impl Run {
         let wait = asked == Asked::Waited;
         self.split().0.collect(None);
         let built = self.machine.pipelines.get(pipeline as usize)?;
-        let (Program::Compute(_), Some(stage), false) =
-            (&built.decl.program, built.stages.first(), built.skipped)
-        else {
+        let (Program::Compute(_), Some(stage)) = (&built.decl.program, built.stages.first()) else {
             return None;
         };
-        let switches: Vec<(u32, bool)> = self
-            .pipelines
-            .switches
-            .iter()
-            .filter(|(id, _)| stage.composed.switches.contains(id))
-            .copied()
-            .collect();
-        let mut hasher = DefaultHasher::new();
-        switches.hash(&mut hasher);
-        let key = hasher.finish();
+        let key = 0;
         let program = built.program_key;
         let made = (program, key);
         if computed_by_program(&self.machine.pipelines, program, key).is_none()
             && !self.pipelines.making.refused(made)
             && !self.pipelines.making.waits(made)
         {
-            let constants: Vec<(String, f64)> = switches
-                .iter()
-                .map(|(id, on)| (id.to_string(), f64::from(u8::from(*on))))
-                .collect();
+            let constants: Vec<(String, f64)> = Vec::new();
             let stages = vec![stage_key(
                 stage,
                 (stage.entry.name(), &constants),
@@ -731,11 +607,11 @@ impl Run {
             let needed = if asked == Asked::Warmed || self.pipelines.settled {
                 Needed::Later
             } else {
-                Needed::First(switches.clone())
+                Needed::First
             };
             let job = ComputeJob {
                 device: self.device.clone(),
-                label: self.machine.part_label(built.decl.part, stage.entry.name()),
+                label: stage.entry.name().to_owned(),
                 layout: built.layout.clone(),
                 module: stage.shader(&self.device, &mut self.machine.shaders),
                 entry: stage.entry.name(),
@@ -913,7 +789,6 @@ impl Compiler<'_> {
                 shown,
                 variant,
             }),
-            switches: self.pipelines.switches.clone(),
             listed: false,
         };
         let warming = &mut self.pipelines.warming;
@@ -967,7 +842,6 @@ impl Compiler<'_> {
                     shown,
                     variant: Some(specialized),
                 }),
-                switches: self.pipelines.switches.clone(),
                 listed: false,
             };
             let warming = &mut self.pipelines.warming;
@@ -994,7 +868,6 @@ impl Compiler<'_> {
         let Program::Render(desc) = &built.decl.program else {
             return None;
         };
-        let switches = stage_switches(&self.pipelines.switches, &built.stages);
         let used = variant.map_or([false; 3], |variant| {
             variant.constants().map(|offered| {
                 built
@@ -1013,13 +886,13 @@ impl Compiler<'_> {
                 .fragment
                 .filter(|_| bits.is_some_and(|bits| bits.draw().alpha_test)),
         };
-        if built.skipped || (fragment.is_none() && formats.iter().any(Option::is_some)) {
+        if fragment.is_none() && formats.iter().any(Option::is_some) {
             return None;
         }
         let faces = faced.then(|| bits.map_or(crate::surface::FaceCull::Back, |bits| bits.cull));
         let raster = raster_of(self.machine, pipeline);
         let mut hasher = DefaultHasher::new();
-        (formats, depth, plain, main, &switches, bits).hash(&mut hasher);
+        (formats, depth, plain, main, bits).hash(&mut hasher);
         (fragment.is_some(), faces).hash(&mut hasher);
         (
             raster.bias,
@@ -1031,7 +904,6 @@ impl Compiler<'_> {
         Some(Keyed {
             program: built.program_key,
             key: hasher.finish(),
-            switches,
             bits,
             specialized,
             styled,
@@ -1065,13 +937,12 @@ impl Compiler<'_> {
             let needed = if asked == Asked::Warmed || self.pipelines.settled {
                 Needed::Later
             } else {
-                Needed::First(keyed.switches.clone())
+                Needed::First
             };
             let shape = Shape {
                 formats,
                 depth,
                 main,
-                switches: keyed.switches,
                 material: material_constants(
                     bits.filter(|_| keyed.specialized),
                     keyed.raster.clamp_near,
@@ -1130,8 +1001,7 @@ impl Compiler<'_> {
         let Program::Render(desc) = &built.decl.program else {
             return None;
         };
-        let mut constants =
-            stage_constants(&built.stages, &shape.switches, &shape.material).into_iter();
+        let mut constants = stage_constants(&built.stages, &shape.material).into_iter();
         let fragment_stage = shape.fragment.and_then(|_| built.stages.get(1));
         let written = fragment_stage
             .zip(shape.fragment)
@@ -1145,40 +1015,9 @@ impl Compiler<'_> {
                     crate::surface::Alpha::Blend | crate::surface::Alpha::Additive
                 )
             });
-        let weighed = machine
-            .declared
-            .passes
-            .get(built.home as usize)
-            .filter(|_| shape.main)
-            .and_then(|pass| {
-                let at = |name| output_location(&machine.outputs, pass, name);
-                Some((
-                    at(engine_core::TargetName::TRANSPARENCY)?,
-                    at(engine_core::TargetName::ACCUMULATED)?,
-                ))
-            });
         let mut targets = color_targets(desc, shape.formats, written.as_deref(), shape.main);
-        let declared = desc.blend.is_some() || desc.targets.is_some();
-        match (weighed, alpha) {
-            (Some(layout), alpha) => {
-                use crate::surface::Alpha;
-                let weighing = match (alpha, desc.faces) {
-                    (Some(Alpha::Additive), Faces::Declared | Faces::Material(_)) => {
-                        Some(Weighing::Adds)
-                    }
-                    (None, Faces::Declared) => (!declared).then_some(Weighing::Chosen),
-                    (
-                        Some(Alpha::Opaque | Alpha::Mask | Alpha::Blend),
-                        Faces::Declared | Faces::Material(_),
-                    )
-                    | (None, Faces::Material(_)) => Some(Weighing::Covers),
-                };
-                if let Some(weighing) = weighing {
-                    weigh_targets(&mut targets, weighing, layout);
-                }
-            }
-            (None, Some(alpha)) => blend_targets(&mut targets, alpha),
-            (None, None) => {}
+        if let Some(alpha) = alpha {
+            blend_targets(&mut targets, alpha);
         }
         let vertex = built
             .stages
@@ -1217,7 +1056,7 @@ impl Compiler<'_> {
         .collect();
         Some(RenderJob {
             device: self.device.clone(),
-            label: machine.part_label(built.decl.part, desc.vertex.name()),
+            label: desc.vertex.name().to_owned(),
             layout: built.layout.clone(),
             vertex: (vertex, desc.vertex.name(), vertex_constants),
             buffers: vertex_layouts(&desc.vertices),
@@ -1247,7 +1086,7 @@ impl Run {
         let mut depth = None;
         let mut shown = (false, false);
         if pass_layer(pass).is_some() {
-            let set = pass_set(&self.machine.outputs, pass);
+            let set = pass_set(pass);
             let main = lit_set(&set);
             shown = (!set.is_empty() && !main, main);
             for (_, format, _) in set {
@@ -1259,7 +1098,7 @@ impl Run {
             formats.insert(0, Some(self.canvas.surface));
         }
         for &view in &pass.targets {
-            formats.push(target_format(final_target(view), &self.machine.outputs));
+            formats.push(target_format(final_target(view)));
         }
         for &(texture, _) in &pass.colors {
             formats.push(

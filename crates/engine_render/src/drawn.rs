@@ -1,23 +1,21 @@
 use bevy_ecs::system::{Res, SystemParamItem};
 use engine_core::{
     CullPlan, Cursor, DeviceLimits, DrawnPoses, DrawnRecord, DrawnTable, Entry, Error, ErrorCode,
-    GlobalTransforms, GpuBits, GpuStruct, Layers, MAX_HIERARCHY_DEPTH, NodeInfo, NodePose,
-    NodeStreams, PassViews, PlanState, PoseRows, ScenePasses, Since, Var, ViewFacts, Views,
-    frustum_bounded, frustum_planes, gpu_bits, gpu_struct,
+    GlobalTransforms, GpuStruct, Layers, MAX_HIERARCHY_DEPTH, NodeInfo, NodePose, NodeStreams,
+    PoseRows, ScenePasses, Since, Var, ViewFacts, Views, frustum_bounded, frustum_planes,
+    gpu_struct,
 };
-use glam::{Mat4, Vec4};
+use glam::Mat4;
 
 use crate::shaders::core_module;
 use crate::uploads::{UploadRange, listed_ranges};
 use crate::{
-    Allocation, AttachPoint, Bind, Buffer, ComputePipeline, Copied, CopyRegion, Count, Encode,
-    GpuPart, Install, Lifetime, PYRAMID_GROUP, Pass, Prepare, TargetName, Texture, jitter_clip,
-    mip_levels, pyramid_extents, wgpu,
+    Allocation, Bind, Buffer, ComputePipeline, Count, Encode, GpuPart, Install, Lifetime, Pass,
+    Prepare,
 };
 
 pub(crate) const DRAWN_MODULE: &str = "engine::drawn";
 pub(crate) const DRAWN_CULL_MODULE: &str = "engine::drawn_cull";
-pub(crate) const DRAWN_FADES_MODULE: &str = "engine::drawn_fades";
 const CULL_GROUP: u32 = 64;
 const SLOT_BITS: u32 = u32::BITS;
 const FIRST_SLOTS: u64 = 64;
@@ -25,10 +23,7 @@ const VIEW_BYTES: u64 = 16;
 const POSE_BYTES: u64 = 48;
 const COMPOSED_BYTES: u64 = 112;
 const MIN_STORAGE_BYTES: u64 = 256;
-const PREVIOUS_POSE_ROW: &str = "memory.gpu_previous_pose_bytes";
 const NODE_LEVELS: usize = MAX_HIERARCHY_DEPTH + 1;
-const PYRAMID_LEVELS: usize = 16;
-const PYRAMID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 const WRITE_CALL_BYTES: usize = 4_096;
 
 const VARS: &str = "struct DrawnPose {
@@ -38,24 +33,10 @@ const VARS: &str = "struct DrawnPose {
 }
 
 @group(0) @binding(0) var<storage, read> drawn_records: array<DrawnRecord>;
-@group(0) @binding(0) var<storage, read> drawn_values: array<vec4<f32>>;
 @group(0) @binding(0) var<storage, read> drawn_culled: array<u32>;
 @group(0) @binding(0) var<uniform> drawn_view: vec4<u32>;
-@group(0) @binding(0) var<storage, read> drawn_fades: array<u32>;
 @group(0) @binding(0) var<storage, read> drawn_views: array<CullView>;
 @group(0) @binding(0) var<storage, read> drawn_poses: array<DrawnPose>;
-@group(0) @binding(0) var<storage, read> drawn_previous_poses: array<DrawnPose>;
-@group(0) @binding(0) var<storage, read> drawn_marks: array<u32>;
-@group(0) @binding(0) var<storage, read> drawn_occlusion: array<u32>;
-@group(0) @binding(0) var drawn_early_pyramid: texture_2d<f32>;
-@group(0) @binding(0) var drawn_opaque_pyramid: texture_2d<f32>;
-
-fn drawn_value(record: DrawnRecord, index: u32) -> f32 {
-    if index >= record.floats {
-        return 0.0;
-    }
-    return drawn_values[drawn_value_vec4(record, index)][index % 4u];
-}
 
 fn drawn_in_view(view: u32, slot: u32) -> bool {
     let words = drawn_culled[0];
@@ -68,13 +49,6 @@ fn drawn_in_view(view: u32, slot: u32) -> bool {
 
 fn drawn_shown(slot: u32) -> bool {
     return drawn_in_view(drawn_view.x, slot);
-}
-
-fn drawn_fade(slot: u32) -> u32 {
-    if slot >= arrayLength(&drawn_fades) {
-        return 0u;
-    }
-    return drawn_fades[slot];
 }
 
 fn drawn_pose_matrix(pose: DrawnPose) -> mat4x4<f32> {
@@ -90,45 +64,20 @@ fn frustum_reach(plane: vec4<f32>, low: vec3<f32>, high: vec3<f32>) -> f32 {
     let support = select(low, high, plane.xyz >= vec3<f32>(0.0));
     return dot(plane.xyz, support) + plane.w;
 }
-
-fn drawn_view_sees(view: u32, low: vec3<f32>, high: vec3<f32>) -> bool {
-    if view >= arrayLength(&drawn_views) || drawn_views[view].frustum == 0u {
-        return true;
-    }
-    for (var plane = 0u; plane < 6u; plane++) {
-        if frustum_reach(drawn_views[view].planes[plane], low, high) < 0.0 {
-            return false;
-        }
-    }
-    return true;
-}
-";
-
-const FADES: &str = "@group(0) @binding(0) var<storage, read_write> drawn_fade_words: array<u32>;
-
-fn set_drawn_fade(slot: u32, fade: u32) {
-    if slot < arrayLength(&drawn_fade_words) {
-        drawn_fade_words[slot] = fade;
-    }
-}
 ";
 
 const CULL_IMPORTS: &str = "import package::engine::drawn::{DrawnPose, DrawnRecord,
-    drawn_flags_own_projection, drawn_flags_unbounded, drawn_in_view, drawn_mark_first, drawn_mark_with_first,
-    drawn_mark_with_moving, drawn_mark_with_subpixel, drawn_marks, drawn_model,
-    drawn_occlusion, drawn_records, drawn_views, frustum_reach,
-    occlusion_mark_hidden, occlusion_mark_with_hidden, occlusion_mark_with_late};
+    drawn_flags_own_projection, drawn_flags_unbounded, drawn_model, drawn_records, drawn_views,
+    frustum_reach};
 import package::engine::math::maximum_abs;
 import package::engine::presentation::{MAX_COEFFICIENT, MAX_PRODUCT_BOUND, NO_PARENT,
     POSE_FLOATS, Pose, ROUNDING_MARGIN, drawn_local, pose_admitted, pose_trs, pose_word_blend,
     pose_word_composed, pose_word_parent_composed, pose_word_valid};
-import package::engine::pyramid::{PYRAMID_GROUP, PyramidExtent, farthest_depth, farthest_level};
 ";
 
 const CULL: &str = "
 const F32_MAX: f32 = 3.4028233e38f;
 const SUBPIXEL_MARGIN: f32 = 0.0625;
-const HIDDEN_SCALE: f32 = 0.9999847412109375;
 
 struct Rows {
     r0: vec4<f32>,
@@ -149,11 +98,6 @@ struct Level {
     pad1: u32,
 }
 
-struct Seen {
-    shown: bool,
-    mark: u32,
-}
-
 struct Projected {
     low: vec2<f32>,
     high: vec3<f32>,
@@ -169,13 +113,6 @@ struct Projected {
 @group(2) @binding(6) var<uniform> node_level: Level;
 @group(2) @binding(7) var<storage, read_write> cull_poses: array<DrawnPose>;
 @group(2) @binding(8) var<storage, read_write> cull_bits: array<u32>;
-@group(2) @binding(9) var<storage, read_write> cull_marks: array<u32>;
-@group(2) @binding(10) var<storage, read_write> cull_occlusion: array<u32>;
-@group(2) @binding(11) var source_depth: texture_depth_2d;
-@group(2) @binding(12) var source_level: texture_2d<f32>;
-@group(2) @binding(13) var target_level: texture_storage_2d<r32float, write>;
-@group(2) @binding(14) var<uniform> pyramid_extent: PyramidExtent;
-@group(2) @binding(15) var depth_pyramid: texture_2d<f32>;
 
 fn rows_matrix(rows: Rows) -> mat4x4<f32> {
     return transpose(mat4x4<f32>(rows.r0, rows.r1, rows.r2, vec4<f32>(0.0, 0.0, 0.0, 1.0)));
@@ -344,72 +281,23 @@ fn covers_no_pixel(clip_from_box: mat4x4<f32>, low: vec3<f32>, high: vec3<f32>,
     return centers.x < 0.0 || centers.y < 0.0;
 }
 
-fn hidden(clip_from_box: mat4x4<f32>, low: vec3<f32>, high: vec3<f32>,
-        viewport: vec4<f32>) -> bool {
-    let projected = project_box(clip_from_box, low, high);
-    if !projected.valid || !(projected.high.z >= 0.0 && projected.high.z <= 1.0) {
-        return false;
-    }
-    let size = viewport.xy;
-    let first = clamp(floor(vec2<f32>(projected.low.x * 0.5 + 0.5,
-        0.5 - projected.high.y * 0.5) * size), vec2<f32>(0.0), size - 1.0);
-    let last = clamp(floor(vec2<f32>(projected.high.x * 0.5 + 0.5,
-        0.5 - projected.low.y * 0.5) * size), vec2<f32>(0.0), size - 1.0);
-    var a = vec2<u32>(first) / 2u;
-    var b = vec2<u32>(last) / 2u;
-    let levels = u32(viewport.z);
-    var mip = 0u;
-    loop {
-        if (b.x - a.x <= 1u && b.y - a.y <= 1u) || mip + 1u >= levels {
-            break;
-        }
-        a = a / 2u;
-        b = b / 2u;
-        mip += 1u;
-    }
-    if b.x - a.x > 1u || b.y - a.y > 1u {
-        return false;
-    }
-    let farthest = min(
-        min(textureLoad(depth_pyramid, a, mip).r,
-            textureLoad(depth_pyramid, vec2<u32>(b.x, a.y), mip).r),
-        min(textureLoad(depth_pyramid, vec2<u32>(a.x, b.y), mip).r,
-            textureLoad(depth_pyramid, b, mip).r));
-    return projected.high.z < farthest * HIDDEN_SCALE;
-}
-
-fn seen(view: u32, slot: u32, record: DrawnRecord) -> Seen {
-    var result = Seen(false, 0u);
-    let own = drawn_flags_own_projection(record.flags);
-    if own && drawn_views[view].owned != 0u {
-        return result;
-    }
+fn seen(view: u32, slot: u32, record: DrawnRecord) -> bool {
     if drawn_flags_unbounded(record.flags) {
-        result.shown = true;
-        return result;
+        return true;
     }
-    let node = record.node;
-    if !placed(node) {
-        return result;
+    if !placed(record.node) {
+        return false;
     }
+    let own = drawn_flags_own_projection(record.flags);
     let model = drawn_model(slot);
     let low = record.bounds_min.xyz;
     let high = record.bounds_max.xyz;
     if !own && drawn_views[view].frustum != 0u && outside(view, model, low, high) {
-        return result;
+        return false;
     }
-    if !own && drawn_views[view].subpixel != 0u
-            && covers_no_pixel(drawn_views[view].rasterized * model, low, high,
-                drawn_views[view].viewport.xy) {
-        result.mark = drawn_mark_with_subpixel(0u, true);
-        return result;
-    }
-    let previous = drawn_views[view].occlusion != 0u && !own
-        && occlusion_mark_hidden(drawn_occlusion[slot]);
-    let moving = cull_frame.motion != 0u && pose_word_composed(node_info[node].y);
-    result.shown = true;
-    result.mark = drawn_mark_with_first(drawn_mark_with_moving(0u, moving), !previous);
-    return result;
+    return own || drawn_views[view].subpixel == 0u
+        || !covers_no_pixel(drawn_views[view].rasterized * model, low, high,
+            drawn_views[view].viewport.xy);
 }
 
 @compute @workgroup_size(64)
@@ -428,58 +316,12 @@ fn drawn_cull(@builtin(global_invocation_id) id: vec3<u32>) {
         let slot = first + lane;
         let record = drawn_records[slot];
         let member = (record.passes & drawn_views[view].passes) != 0u
-            && (record.layers & drawn_views[view].layers) != 0u
-            && (drawn_views[view].takes == 0u || record.mobility == drawn_views[view].takes);
-        var mark = 0u;
-        if member {
-            let found = seen(view, slot, record);
-            if found.shown {
-                bits |= 1u << lane;
-            }
-            mark = found.mark;
-        }
-        if view == 0u {
-            cull_marks[slot] = mark;
+            && (record.layers & drawn_views[view].layers) != 0u;
+        if member && seen(view, slot, record) {
+            bits |= 1u << lane;
         }
     }
     cull_bits[1u + view * words + word] = bits;
-}
-
-@compute @workgroup_size(PYRAMID_GROUP, PYRAMID_GROUP)
-fn drawn_pyramid_first(@builtin(global_invocation_id) id: vec3<u32>) {
-    if any(id.xy >= pyramid_extent.size) {
-        return;
-    }
-    let farthest = farthest_depth(source_depth, id.xy * 2u, pyramid_extent.last);
-    textureStore(target_level, id.xy, vec4<f32>(farthest, 0.0, 0.0, 0.0));
-}
-
-@compute @workgroup_size(PYRAMID_GROUP, PYRAMID_GROUP)
-fn drawn_pyramid_down(@builtin(global_invocation_id) id: vec3<u32>) {
-    if any(id.xy >= pyramid_extent.size) {
-        return;
-    }
-    let farthest = farthest_level(source_level, id.xy * 2u, pyramid_extent.last);
-    textureStore(target_level, id.xy, vec4<f32>(farthest, 0.0, 0.0, 0.0));
-}
-
-@compute @workgroup_size(64)
-fn drawn_occlusion_test(@builtin(global_invocation_id) id: vec3<u32>) {
-    let slot = id.x;
-    if slot >= cull_frame.slots {
-        return;
-    }
-    var hidden_now = occlusion_mark_hidden(cull_occlusion[slot]);
-    var late = false;
-    let record = drawn_records[slot];
-    if drawn_in_view(0u, slot) && !drawn_flags_own_projection(record.flags)
-            && !drawn_flags_unbounded(record.flags) {
-        hidden_now = hidden(drawn_views[0].rasterized * drawn_model(slot), record.bounds_min.xyz,
-            record.bounds_max.xyz, drawn_views[0].viewport);
-        late = !hidden_now && !drawn_mark_first(drawn_marks[slot]);
-    }
-    cull_occlusion[slot] = occlusion_mark_with_late(occlusion_mark_with_hidden(0u, hidden_now),
-        late);
 }
 ";
 
@@ -488,17 +330,11 @@ gpu_struct! {
         pub planes: [[f32; 4]; 6],
         pub absolute: [[f32; 4]; 4],
         pub rasterized: [[f32; 4]; 4],
-        pub view_projection: [[f32; 4]; 4],
-        pub eye: [f32; 4],
         pub viewport: [f32; 4],
         pub passes: u32,
         pub layers: u32,
-        pub takes: u32,
-        pub owned: u32,
         pub frustum: u32,
         pub subpixel: u32,
-        pub occlusion: u32,
-        pub pad: u32,
     }
 }
 
@@ -509,38 +345,17 @@ gpu_struct! {
         pub nodes: u32,
         pub slots: u32,
         pub views: u32,
-        pub motion: u32,
         pub pad_0: u32,
         pub pad_1: u32,
+        pub pad_2: u32,
     }
-}
-
-#[gpu_bits]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct DrawnMark {
-    pub first: bool,
-    pub subpixel: bool,
-    pub moving: bool,
-}
-
-#[gpu_bits]
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct OcclusionMark {
-    pub hidden: bool,
-    pub late: bool,
 }
 
 pub(crate) fn source() -> String {
     let mut source = engine_core::drawn_wgsl();
     source.push_str(CullView::WGSL);
-    source.push_str(<DrawnMark as GpuBits>::WGSL);
-    source.push_str(<OcclusionMark as GpuBits>::WGSL);
     source.push_str(VARS);
     source
-}
-
-pub(crate) fn fades_source() -> String {
-    String::from(FADES)
 }
 
 pub(crate) fn cull_source() -> String {
@@ -568,42 +383,15 @@ struct Nodes {
     bits: Vec<u64>,
 }
 
-struct Pyramid {
-    texture: Texture<DrawnGpu>,
-    extents: Vec<Buffer<DrawnGpu>>,
-    first: ComputePipeline<DrawnGpu>,
-    down: Vec<ComputePipeline<DrawnGpu>>,
-    written: Vec<[u32; 4]>,
-}
-
-struct Occlusion {
-    pass: Pass<DrawnGpu>,
-    held: Buffer<DrawnGpu>,
-    opaque: Pass<DrawnGpu>,
-    levels: Pyramid,
-    test: ComputePipeline<DrawnGpu>,
-    running: bool,
-    bytes: u64,
-    room: u64,
-    early: Pass<DrawnGpu>,
-    early_levels: Pyramid,
-}
-
 pub(crate) struct DrawnGpu {
     records: Buffer<Self>,
-    values: Buffer<Self>,
-    fades: Buffer<Self>,
     culled: Buffer<Self>,
     views: Buffer<Self>,
     view: Buffer<Self>,
     frame: Buffer<Self>,
     poses: Buffer<Self>,
-    previous: Buffer<Self>,
-    marks: Buffer<Self>,
     nodes: Nodes,
-    occlusion: Occlusion,
     cull: Pass<Self>,
-    keep: Pass<Self>,
     compose: Vec<ComputePipeline<Self>>,
     pose: ComputePipeline<Self>,
     pipeline: ComputePipeline<Self>,
@@ -614,11 +402,8 @@ pub(crate) struct DrawnGpu {
     views_sent: Vec<CullView>,
     words_sent: u32,
     frame_sent: DrawnFrame,
-    stride: usize,
     slots: u32,
     groups: [u32; 3],
-    motion_generation: Option<u64>,
-    posed: bool,
 }
 
 fn var(module: &str, name: &'static str) -> Var {
@@ -668,14 +453,6 @@ fn write_ranges<T: bytemuck::Pod>(
     (bytes, writes)
 }
 
-fn rasterized(facts: &ViewFacts) -> Mat4 {
-    let Some(offset) = facts.jitter else {
-        return facts.view_projection;
-    };
-    let [x, y] = jitter_clip(offset.to_array(), facts.render.x, facts.render.y);
-    Mat4::from_cols(Vec4::X, Vec4::Y, Vec4::Z, Vec4::new(x, y, 0.0, 1.0)) * facts.view_projection
-}
-
 fn absolute(view_projection: Mat4) -> [[f32; 4]; 4] {
     Mat4::from_cols(
         view_projection.x_axis.abs(),
@@ -689,51 +466,28 @@ fn absolute(view_projection: Mat4) -> [[f32; 4]; 4] {
 fn cull_views(
     (views, passes): (&Views, Option<&ScenePasses>),
     plan: &CullPlan,
-    levels: u32,
     entries: &mut Vec<CullView>,
 ) {
     let listed = passes.map_or(&[][..], ScenePasses::listed);
     let main = listed
         .iter()
-        .filter(|scene| scene.pass.views != PassViews::Owned)
         .filter_map(|scene| scene.bit)
         .fold(0, |mask, bit| mask | bit.mask().word());
     let facts = views.listed();
     entries.clear();
-    for (index, view) in views.drawn().iter().enumerate() {
-        let owned = view.owner.is_some();
-        let placed = if owned {
-            view.view_projection
-        } else {
-            facts
-                .get(view.local as usize)
-                .map_or(view.view_projection, rasterized)
-        };
-        let planes = match view.planes {
-            Some(planes) if owned => planes,
-            Some(_) | None => frustum_planes(placed).map(|plane| plane.to_array()),
-        };
-        let occluding = index == 0 && levels != 0;
+    for view in views.drawn() {
+        let placed = facts
+            .get(view.local as usize)
+            .map_or(view.view_projection, |facts| facts.view_projection);
         entries.push(CullView {
-            planes,
+            planes: frustum_planes(placed).map(|plane| plane.to_array()),
             absolute: absolute(placed),
             rasterized: placed.to_cols_array_2d(),
-            view_projection: view.view_projection.to_cols_array_2d(),
-            eye: view.eye.extend(0.0).to_array(),
-            viewport: [
-                view.size.x as f32,
-                view.size.y as f32,
-                if occluding { levels as f32 } else { 0.0 },
-                0.0,
-            ],
-            passes: if view.draws { view.passes.word() } else { 0 },
+            viewport: [view.size.x as f32, view.size.y as f32, 0.0, 0.0],
+            passes: view.passes.word(),
             layers: view.layers.0,
-            takes: view.takes.map_or(0, |mobility| mobility as u32 + 1),
-            owned: u32::from(owned),
-            frustum: u32::from(owned || (plan.frustum && frustum_bounded(placed))),
-            subpixel: u32::from(owned || plan.subpixel),
-            occlusion: u32::from(occluding),
-            pad: 0,
+            frustum: u32::from(plan.frustum && frustum_bounded(placed)),
+            subpixel: u32::from(plan.subpixel),
         });
     }
     if entries.is_empty() {
@@ -748,18 +502,10 @@ fn cull_views(
 impl DrawnGpu {
     fn upload(&mut self, table: &DrawnTable, slots: u64, cx: &mut Prepare<'_, Self>) {
         let records = table.records();
-        let stride = table.value_vec4s();
         let fresh = matches!(
             cx.allocate_buffer(self.records, slots * size_of::<DrawnRecord>() as u64),
             Allocation::Fresh
-        ) | matches!(
-            cx.allocate_buffer(self.values, slots * (stride.max(1) * 16) as u64),
-            Allocation::Fresh
-        ) | (stride != self.stride);
-        self.stride = stride;
-        let fades = slots * 4;
-        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.fades, fades);
-        cx.clear_buffer_range(self.fades, 0..fades);
+        );
         let changes = table.changes_since(&mut self.seen);
         if records.is_empty() {
             return;
@@ -781,9 +527,6 @@ impl DrawnGpu {
             }
         }
         write_ranges(cx, (self.records, 0), (records, 1), &self.slot_ranges);
-        if stride > 0 {
-            write_ranges(cx, (self.values, 0), (table.values(), stride), &self.slot_ranges);
-        }
     }
 
     fn ensure_nodes(&mut self, nodes: usize, parents: usize, cx: &mut Prepare<'_, Self>) {
@@ -903,271 +646,6 @@ impl DrawnGpu {
         held.level_ranges.truncate(streams.levels.len());
         Some((full, bytes, writes))
     }
-
-    fn prepare_poses(
-        &mut self,
-        (table, main): (&DrawnTable, Option<&ViewFacts>),
-        slots: u64,
-        cx: &mut Prepare<'_, Self>,
-    ) -> bool {
-        let kept = cx.last_frame_read();
-        let bytes = slots * POSE_BYTES;
-        let poses = cx.allocate_buffer(self.poses, bytes);
-        let previous =
-            cx.allocate_buffer(self.previous, if kept { bytes } else { storage_bytes(0) });
-        let fresh = poses == Allocation::Fresh || previous == Allocation::Fresh;
-        let posed = std::mem::take(&mut self.posed);
-        let generation = match table.plan() {
-            PlanState::Built { generation } => Some(generation),
-            PlanState::Stale => None,
-        };
-        let history = main.is_some_and(|main| main.history.valid());
-        let motion = kept
-            && history
-            && !fresh
-            && posed
-            && generation.is_some()
-            && self.motion_generation == generation;
-        self.motion_generation = if kept { generation } else { None };
-        cx.memory(PREVIOUS_POSE_ROW, if kept { bytes } else { 0 });
-        if kept {
-            engine_core::profile::counter("render.object_motion", f64::from(u8::from(motion)));
-            cx.copy(
-                self.keep,
-                &[CopyRegion::Bytes {
-                    from: 0,
-                    to: 0,
-                    size: bytes,
-                }],
-            );
-        }
-        motion
-    }
-
-    fn prepare_occlusion(
-        &mut self,
-        main: Option<&ViewFacts>,
-        (wanted, slots): (bool, u64),
-        cx: &mut Prepare<'_, Self>,
-    ) -> u32 {
-        let occlusion = &mut self.occlusion;
-        let count = match main {
-            Some(main) => {
-                occlusion.early_levels.size(main, cx);
-                cx.run(occlusion.early);
-                let count = occlusion.levels.size(main, cx);
-                cx.run(occlusion.opaque);
-                count
-            }
-            None => {
-                occlusion.early_levels.release(cx);
-                occlusion.levels.release(cx);
-                0
-            }
-        };
-        let bytes = slots * 4;
-        let resized = std::mem::replace(&mut occlusion.bytes, bytes) != bytes;
-        occlusion.room = occlusion.room.max(bytes);
-        let room = occlusion.room;
-        let fresh = cx.allocate_buffer(occlusion.held, room) == Allocation::Fresh || resized;
-        if main.is_none() || !wanted {
-            if occlusion.running {
-                cx.clear_buffer_range(occlusion.held, 0..room);
-                occlusion.running = false;
-            }
-            return 0;
-        }
-        if fresh || !occlusion.running {
-            cx.clear_buffer_range(occlusion.held, 0..room);
-        }
-        occlusion.running = true;
-        cx.run(occlusion.pass);
-        count
-    }
-}
-
-impl Pyramid {
-    fn install(
-        cx: &mut Install<'_, DrawnGpu>,
-        pass: Pass<DrawnGpu>,
-        texture: Texture<DrawnGpu>,
-        extent: &'static str,
-    ) -> Result<Self, Error> {
-        let extents: Vec<Buffer<DrawnGpu>> = (0..PYRAMID_LEVELS)
-            .map(|_| cx.buffer(extent, Lifetime::Kept))
-            .collect();
-        let entry = |name: &'static str| Entry::generated(core_module(DRAWN_CULL_MODULE), name);
-        let level = |mips: std::ops::Range<u32>| Bind::Slice {
-            texture,
-            mips,
-            layers: 0..1,
-        };
-        let first = cx.compute_pipeline(
-            pass,
-            entry("drawn_pyramid_first"),
-            &[
-                (
-                    var(DRAWN_CULL_MODULE, "source_depth"),
-                    Bind::Target(TargetName::DEPTH),
-                ),
-                (var(DRAWN_CULL_MODULE, "target_level"), level(0..1)),
-                (
-                    var(DRAWN_CULL_MODULE, "pyramid_extent"),
-                    Bind::Buffer(extents[0]),
-                ),
-            ],
-        )?;
-        let mut down = Vec::with_capacity(PYRAMID_LEVELS - 1);
-        for at in 1..PYRAMID_LEVELS as u32 {
-            down.push(cx.compute_pipeline(
-                pass,
-                entry("drawn_pyramid_down"),
-                &[
-                    (var(DRAWN_CULL_MODULE, "source_level"), level(at - 1..at)),
-                    (var(DRAWN_CULL_MODULE, "target_level"), level(at..at + 1)),
-                    (
-                        var(DRAWN_CULL_MODULE, "pyramid_extent"),
-                        Bind::Buffer(extents[at as usize]),
-                    ),
-                ],
-            )?);
-        }
-        Ok(Self {
-            texture,
-            extents,
-            first,
-            down,
-            written: Vec::new(),
-        })
-    }
-
-    fn size(&mut self, main: &ViewFacts, cx: &mut Prepare<'_, DrawnGpu>) -> u32 {
-        let (display, render) = (main.size(), main.render);
-        let base = (
-            display.x.div_ceil(2).max(1).next_power_of_two(),
-            display.y.div_ceil(2).max(1).next_power_of_two(),
-        );
-        let count = mip_levels(base.0, base.1)
-            .min(covering_levels(render.x.max(render.y)))
-            .min(PYRAMID_LEVELS as u32);
-        let (Allocation::Fresh | Allocation::Kept) = cx.allocate(
-            self.texture,
-            wgpu::Extent3d {
-                width: base.0,
-                height: base.1,
-                depth_or_array_layers: 1,
-            },
-            count,
-        );
-        for (level, extent) in pyramid_extents((render.x, render.y), count)
-            .into_iter()
-            .enumerate()
-        {
-            let buffer = self.extents[level];
-            let fresh = cx.allocate_buffer(buffer, 16) == Allocation::Fresh;
-            if fresh || self.written.get(level) != Some(&extent) {
-                cx.write(buffer, 0, &extent);
-            }
-            match self.written.get_mut(level) {
-                Some(known) => *known = extent,
-                None => self.written.push(extent),
-            }
-        }
-        self.written.truncate(count as usize);
-        count
-    }
-
-    fn release(&mut self, cx: &mut Prepare<'_, DrawnGpu>) {
-        if self.written.is_empty() {
-            return;
-        }
-        cx.release(self.texture);
-        for &extent in &self.extents[..self.written.len()] {
-            cx.release_buffer(extent);
-        }
-        self.written.clear();
-    }
-
-    fn encode(&self, cx: &mut Encode<'_, DrawnGpu>) {
-        for (index, &[width, height, _, _]) in self.written.iter().enumerate() {
-            let pipeline = match index.checked_sub(1) {
-                None => &self.first,
-                Some(down) => match self.down.get(down) {
-                    Some(pipeline) => pipeline,
-                    None => break,
-                },
-            };
-            cx.dispatch(
-                pipeline,
-                Count::Groups([
-                    width.div_ceil(PYRAMID_GROUP),
-                    height.div_ceil(PYRAMID_GROUP),
-                    1,
-                ]),
-            );
-        }
-    }
-}
-
-fn covering_levels(widest: u32) -> u32 {
-    let last = widest.max(1) - 1;
-    (u32::BITS - last.leading_zeros()).max(2) - 1
-}
-
-fn install_occlusion(
-    cx: &mut Install<'_, DrawnGpu>,
-    cull: Pass<DrawnGpu>,
-    frame: Buffer<DrawnGpu>,
-) -> Result<Occlusion, Error> {
-    let pass = cx
-        .pass("drawn_occlusion")
-        .at(AttachPoint::Opaque)
-        .after(cull)
-        .label("engine/drawn-occlusion")
-        .id();
-    let held = cx.buffer("drawn_occlusion", Lifetime::Kept);
-    cx.frame(var(DRAWN_MODULE, "drawn_occlusion"), Bind::Buffer(held))?;
-    let opaque = cx
-        .pass("drawn_opaque_pyramid")
-        .at(AttachPoint::Opaque)
-        .label("engine/drawn-opaque-pyramid")
-        .id();
-    let pyramid = cx.texture("drawn_depth_pyramid", PYRAMID_FORMAT, Lifetime::Frame);
-    cx.frame(var(DRAWN_MODULE, "drawn_opaque_pyramid"), Bind::Texture(pyramid))?;
-    let levels = Pyramid::install(cx, opaque, pyramid, "drawn_pyramid_extent")?;
-    let test = cx.compute_pipeline(
-        pass,
-        Entry::generated(core_module(DRAWN_CULL_MODULE), "drawn_occlusion_test"),
-        &[
-            (var(DRAWN_CULL_MODULE, "cull_frame"), Bind::Buffer(frame)),
-            (var(DRAWN_CULL_MODULE, "cull_occlusion"), Bind::Buffer(held)),
-            (
-                var(DRAWN_CULL_MODULE, "depth_pyramid"),
-                Bind::Texture(pyramid),
-            ),
-        ],
-    )?;
-    let early = cx
-        .pass("drawn_early_pyramid")
-        .at(AttachPoint::Inputs)
-        .views(PassViews::Main)
-        .label("engine/drawn-early-pyramid")
-        .id();
-    let early_depth = cx.texture("drawn_early_pyramid", PYRAMID_FORMAT, Lifetime::Frame);
-    cx.frame(var(DRAWN_MODULE, "drawn_early_pyramid"), Bind::Texture(early_depth))?;
-    let early_levels = Pyramid::install(cx, early, early_depth, "drawn_early_extent")?;
-    Ok(Occlusion {
-        pass,
-        held,
-        opaque,
-        levels,
-        test,
-        running: false,
-        bytes: 0,
-        room: 0,
-        early,
-        early_levels,
-    })
 }
 
 impl GpuPart for DrawnGpu {
@@ -1181,21 +659,16 @@ impl GpuPart for DrawnGpu {
         Res<'static, CullPlan>,
     );
     const NAME: &'static str = "drawn";
-    const MEMORY: &'static [&'static str] = &[PREVIOUS_POSE_ROW];
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
         let drawn_at = |name: &'static str| var(DRAWN_MODULE, name);
         let culled_at = |name: &'static str| var(DRAWN_CULL_MODULE, name);
         let records = cx.buffer("drawn_records", Lifetime::Kept);
-        let values = cx.buffer("drawn_values", Lifetime::Kept);
-        let fades = cx.buffer("drawn_fades", Lifetime::Kept);
         let culled = cx.buffer("drawn_culled", Lifetime::Kept);
         let views = cx.buffer("drawn_views", Lifetime::Kept);
         let view = cx.view_buffer("drawn_view", Lifetime::Kept);
         let frame = cx.buffer("drawn_frame", Lifetime::Kept);
         let poses = cx.buffer("drawn_poses", Lifetime::Kept);
-        let previous = cx.buffer("drawn_previous_poses", Lifetime::Previous);
-        let marks = cx.buffer("drawn_marks", Lifetime::Kept);
         let nodes = Nodes {
             locals: cx.buffer("drawn_node_locals", Lifetime::Kept),
             info: cx.buffer("drawn_node_info", Lifetime::Kept),
@@ -1216,24 +689,11 @@ impl GpuPart for DrawnGpu {
             bits: Vec::new(),
         };
         cx.frame(drawn_at("drawn_records"), Bind::Buffer(records))?;
-        cx.frame(drawn_at("drawn_values"), Bind::Buffer(values))?;
         cx.frame(drawn_at("drawn_culled"), Bind::Buffer(culled))?;
         cx.frame(drawn_at("drawn_view"), Bind::Buffer(view))?;
-        cx.frame(drawn_at("drawn_fades"), Bind::Buffer(fades))?;
         cx.frame(drawn_at("drawn_views"), Bind::Buffer(views))?;
         cx.frame(drawn_at("drawn_poses"), Bind::Buffer(poses))?;
-        cx.frame(drawn_at("drawn_previous_poses"), Bind::Buffer(previous))?;
-        cx.frame(drawn_at("drawn_marks"), Bind::Buffer(marks))?;
-        cx.frame(
-            var(DRAWN_FADES_MODULE, "drawn_fade_words"),
-            Bind::Buffer(fades),
-        )?;
         let cull = cx.pass("drawn_cull").label("engine/drawn-cull").id();
-        let keep = cx.copy(
-            "drawn_keep_poses",
-            Copied::Buffer(poses),
-            Copied::Buffer(previous),
-        );
         let entry = |name: &'static str| Entry::generated(core_module(DRAWN_CULL_MODULE), name);
         let node_binds = |level: Buffer<Self>| {
             [
@@ -1269,25 +729,17 @@ impl GpuPart for DrawnGpu {
                 (culled_at("cull_frame"), Bind::Buffer(frame)),
                 (culled_at("node_info"), Bind::Buffer(nodes.info)),
                 (culled_at("cull_bits"), Bind::Buffer(culled)),
-                (culled_at("cull_marks"), Bind::Buffer(marks)),
             ],
         )?;
-        let occlusion = install_occlusion(cx, cull, frame)?;
         Ok(Self {
             records,
-            values,
-            fades,
             culled,
             views,
             view,
             frame,
             poses,
-            previous,
-            marks,
             nodes,
-            occlusion,
             cull,
-            keep,
             compose,
             pose,
             pipeline,
@@ -1298,11 +750,8 @@ impl GpuPart for DrawnGpu {
             views_sent: Vec::new(),
             words_sent: 0,
             frame_sent: DrawnFrame::default(),
-            stride: 0,
             slots: 0,
             groups: [0; 3],
-            motion_generation: None,
-            posed: false,
         })
     }
 
@@ -1318,13 +767,11 @@ impl GpuPart for DrawnGpu {
         let count = table.records().len();
         let slots = (count as u64).next_power_of_two().max(FIRST_SLOTS);
         self.upload(&table, slots, cx);
-        let main = views.main();
         let streams = poses.streams(&hierarchy);
         let uploaded = self.upload_nodes(&poses, &streams, cx);
-        let motion = self.prepare_poses((&*table, main), slots, cx);
-        let (Allocation::Fresh | Allocation::Kept) = cx.allocate_buffer(self.marks, slots * 4);
-        let levels = self.prepare_occlusion(main, (plan.occlusion, slots), cx);
-        cull_views((&views, passes.as_deref()), &plan, levels, &mut self.entries);
+        let (Allocation::Fresh | Allocation::Kept) =
+            cx.allocate_buffer(self.poses, slots * POSE_BYTES);
+        cull_views((&views, passes.as_deref()), &plan, &mut self.entries);
         let listed = self.entries.len();
         let words = (count as u32).div_ceil(SLOT_BITS).max(1);
         let bytes = (1 + u64::from(words) * listed as u64) * 4;
@@ -1359,16 +806,18 @@ impl GpuPart for DrawnGpu {
             nodes: streams.info.len() as u32,
             slots: self.slots,
             views: listed as u32,
-            motion: u32::from(motion),
             pad_0: 0,
             pad_1: 0,
+            pad_2: 0,
         };
         if fresh || bytemuck::bytes_of(&frame) != bytemuck::bytes_of(&self.frame_sent) {
             cx.write(self.frame, 0, &[frame]);
             self.frame_sent = frame;
         }
         self.groups = [words.div_ceil(CULL_GROUP), listed as u32, 1];
-        cx.run(self.cull);
+        if self.slots != 0 {
+            cx.run(self.cull);
+        }
         if engine_core::profile::active() {
             use engine_core::profile::counter;
             let (full, bytes, writes) = uploaded.unwrap_or((false, 0, 0));
@@ -1389,18 +838,6 @@ impl GpuPart for DrawnGpu {
     }
 
     fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
-        if pass == self.occlusion.pass {
-            self.encode_occlusion(cx);
-            return 0;
-        }
-        if pass == self.occlusion.early {
-            self.occlusion.early_levels.encode(cx);
-            return 0;
-        }
-        if pass == self.occlusion.opaque {
-            self.occlusion.levels.encode(cx);
-            return 0;
-        }
         if pass != self.cull {
             return 0;
         }
@@ -1414,23 +851,10 @@ impl GpuPart for DrawnGpu {
                 );
             }
         }
-        self.posed = self.slots == 0
-            || cx.dispatch(
-                &self.pose,
-                Count::Groups([self.slots.div_ceil(CULL_GROUP), 1, 1]),
-            ) != 0;
+        cx.dispatch(
+            &self.pose,
+            Count::Groups([self.slots.div_ceil(CULL_GROUP), 1, 1]),
+        );
         cx.dispatch(&self.pipeline, Count::Groups(self.groups))
-    }
-}
-
-impl DrawnGpu {
-    fn encode_occlusion(&self, cx: &mut Encode<'_, Self>) {
-        let occlusion = &self.occlusion;
-        if self.slots != 0 {
-            cx.dispatch(
-                &occlusion.test,
-                Count::Groups([self.slots.div_ceil(CULL_GROUP), 1, 1]),
-            );
-        }
     }
 }

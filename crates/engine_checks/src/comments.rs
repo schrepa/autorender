@@ -8,7 +8,7 @@ const SCRIPTS: [&str; 4] = [".ts", ".mjs", ".js", ".cjs"];
 
 const SHELLS: [&str; 2] = [".ps1", ".sh"];
 
-const MARKS: [&str; 2] = ["optics:", "filter:"];
+const MARKS: [&str; 1] = ["optics:"];
 
 pub fn covers(path: &str) -> bool {
     [".rs", ".wgsl"]

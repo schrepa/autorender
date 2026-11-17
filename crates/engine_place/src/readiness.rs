@@ -77,10 +77,6 @@ impl Readiness {
         self.failed.push((by.to_owned(), error));
     }
 
-    pub fn of<'a>(&'a self, brick: &'a str) -> impl Iterator<Item = &'a Unsettled> + 'a {
-        self.unsettled.iter().filter(move |row| row.brick == brick)
-    }
-
     fn note(&mut self, brick: &'static str, left: u64, awaits: Awaits) {
         if left == 0 {
             return;

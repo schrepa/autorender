@@ -13,19 +13,18 @@ use bevy_ecs::system::{
     SystemParam, SystemParamFunction,
 };
 use bevy_ecs::world::World;
-use engine_place::{Call, Event, EventDecl, Raises};
+use engine_place::Call;
 use engine_registry::{
-    BrickRecord, BrickStates, EventEntry, GateFn, JobList, MembersOf, NamedField, OperationEntry,
-    PlainSystems, Registry, RegistryBuilder, Removal, SectionRule, SettingsEntry, SpawnedBy,
-    StatsEntry,
+    BrickRecord, BrickStates, GateFn, JobList, MembersOf, NamedField, OperationEntry, PlainSystems,
+    Registry, RegistryBuilder, Removal, SectionRule, SettingsEntry, SpawnedBy, StatsEntry,
 };
 use serde_json::Value;
 
 use crate::moves::NodeKind;
 use crate::{
-    Board, Callable, Error, ErrorCode, GpuStruct, JobKind, KindDecl, List, Module, Mover, MoverId,
-    Operation, OperationScene, Pace, Parent, PlaceDecl, RecordKey, SceneContext, SceneEntity,
-    SceneIds, Section, Slot, Source, SubScene, Switch,
+    Board, Callable, Error, ErrorCode, JobKind, KindDecl, List, Mover, MoverId, Operation,
+    OperationScene, Pace, Parent, PlaceDecl, RecordKey, SceneContext, SceneEntity, Section, Slot,
+    Source, SubScene, Switch,
 };
 
 pub trait Brick: 'static {
@@ -118,23 +117,8 @@ impl Bricks<'_> {
         self
     }
 
-    #[track_caller]
-    pub fn fill<S: Slot>(&mut self, wgsl: Option<Module>) -> &mut Self {
-        self.record.fill::<S>(wgsl.map(boxed_module));
-        self
-    }
-
-    pub fn requires<S: Slot>(&mut self) -> &mut Self {
-        self.record.require::<S>();
-        self
-    }
-
-    pub fn join<L: List>(
-        &mut self,
-        member: impl Into<L::Member>,
-        wgsl: Option<Module>,
-    ) -> &mut Self {
-        self.record.join::<L>(member.into(), wgsl.map(boxed_module));
+    pub fn join<L: List>(&mut self, member: impl Into<L::Member>) -> &mut Self {
+        self.record.join::<L>(member.into());
         self
     }
 
@@ -177,17 +161,6 @@ impl Bricks<'_> {
         self
     }
 
-    pub fn piece<T: Resource<Mutability = Mutable> + Default + GpuStruct>(&mut self) -> &mut Self {
-        const {
-            assert!(
-                std::mem::size_of::<T>().is_multiple_of(16),
-                "a piece is not a multiple of 16 bytes"
-            );
-        }
-        self.record.piece::<T>();
-        self
-    }
-
     pub fn draw_kind(&mut self, kind: KindDecl) -> &mut Self {
         self.record.render.push(Box::new(kind));
         self
@@ -206,12 +179,6 @@ impl Bricks<'_> {
     {
         self.record
             .operation(OperationEntry::of(Call::of::<O>().observed()));
-        self
-    }
-
-    #[track_caller]
-    pub fn event<E: Event, R: Raises<E>>(&mut self) -> &mut Self {
-        self.record.event(EventEntry::of(EventDecl::of::<E, R>()));
         self
     }
 
@@ -272,10 +239,6 @@ where
     Box::new(IntoSystem::<(), bool, (IsFunctionSystem, M)>::into_system(
         gate,
     ))
-}
-
-fn boxed_module(module: Module) -> Box<dyn Any + Send + Sync> {
-    Box::new(module)
 }
 
 #[track_caller]
@@ -469,8 +432,6 @@ impl<D: ReadOnlyQueryData + 'static, F: QueryFilter + 'static> sealed::Sealed
 impl<D: ReadOnlyQueryData + 'static, F: QueryFilter + 'static> Read for Query<'_, '_, D, F> {}
 impl<L: List> sealed::Sealed for Joined<'_, L> {}
 impl<L: List> Read for Joined<'_, L> {}
-impl sealed::Sealed for SceneIds<'_, '_> {}
-impl Read for SceneIds<'_, '_> {}
 impl<S: Slot> sealed::Sealed for Filled<'_, S> {}
 impl<S: Slot> Read for Filled<'_, S> {}
 
@@ -868,11 +829,6 @@ fn report(world: &mut World, error: Error) {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Schedule {
     FrameStart,
-    FixedPreSimulation,
-    FixedMove,
     FixedSimulation,
-    FixedPostSimulation,
     Presentation,
-    WorldSync,
-    ViewSync,
 }

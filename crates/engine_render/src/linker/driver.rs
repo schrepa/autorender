@@ -16,7 +16,6 @@ pub(super) struct Prepared {
     pub(super) named: HashMap<String, usize>,
     pub(super) overrides: Vec<Vec<(String, String)>>,
     pub(super) declared: Vec<Vec<String>>,
-    pub(super) pieces: Vec<(String, String, String)>,
 }
 
 #[derive(Default)]

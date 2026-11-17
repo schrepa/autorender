@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
-use engine_place::{EntityIds, Error, OperationScene, SceneEntity};
+use engine_place::{Error, OperationScene};
 use serde_json::Value;
 
 #[derive(Clone, Copy)]
@@ -46,15 +46,5 @@ impl<B: 'static> Copy for SpawnedBy<B> {}
 impl<B: 'static> std::fmt::Debug for SpawnedBy<B> {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(formatter, "SpawnedBy<{}>", std::any::type_name::<B>())
-    }
-}
-
-pub struct SceneNames<'w>(pub &'w World);
-
-impl EntityIds for SceneNames<'_> {
-    fn id(&self, entity: Entity) -> Option<String> {
-        self.0
-            .get::<SceneEntity>(entity)
-            .map(|authored| authored.authored_id.clone())
     }
 }

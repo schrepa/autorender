@@ -1,7 +1,7 @@
 import package::engine::drawn::drawn_shown;
 import package::engine::shading::flat;
 import package::engine::slots::flat_point;
-import package::engine::view::{camera, stable_normalize, view_clip, view_pixel};
+import package::engine::view::{camera, stable_normalize, view_clip};
 import package::generated::glimmer::GlimmerInstance;
 import package::generated::writes::{Outputs, outputs};
 @group(2) @binding(0) var<storage, read> glimmers: array<GlimmerInstance>;
@@ -19,23 +19,11 @@ struct GlimmerCorner {
     @location(0) normal_u: vec4<f32>,
     @location(1) world_v: vec4<f32>,
     @location(2) @interpolate(flat) material: vec4<u32>,
-    @location(3) previous: vec3<f32>,
     @location(4) color: vec4<f32>,
     @location(5) uv1: vec2<f32>,
 }
 
-struct ShownGlimmerCorner {
-    @invariant @builtin(position) clip_position: vec4<f32>,
-    @location(0) normal_u: vec4<f32>,
-    @location(1) world_v: vec4<f32>,
-    @location(2) @interpolate(flat) material: vec4<u32>,
-    @location(3) previous: vec3<f32>,
-    @location(4) color: vec4<f32>,
-    @location(5) uv1: vec2<f32>,
-    @location(6) @interpolate(flat) object: vec4<u32>,
-}
-
-struct RingCorner { @invariant @builtin(position) clip: vec4<f32>, @location(0) unit: vec2<f32>, @location(1) color: vec4<f32>, @location(2) previous: vec4<f32> }
+struct RingCorner { @invariant @builtin(position) clip: vec4<f32>, @location(0) unit: vec2<f32>, @location(1) color: vec4<f32> }
 
 fn corner_unit(corner: u32) -> vec2<f32> {
     return vec2<f32>(f32((50u >> corner) & 1u), f32((44u >> corner) & 1u)) * 2.0 - 1.0;
@@ -53,42 +41,26 @@ fn glimmer_corner(corner: u32, glimmer: GlimmerInstance) -> GlimmerCorner {
     let unit = corner_unit(corner);
     let offset = facing_offset(glimmer, unit, 1.0);
     let world = glimmer.place.xyz + offset;
-    let shown = camera.previous_view_projection * vec4<f32>(glimmer.previous.xyz + offset, 1.0);
     let uv = unit * 0.5 + 0.5;
     var out: GlimmerCorner;
     out.clip_position = view_clip(world);
     out.normal_u = vec4<f32>(stable_normalize(camera.position.xyz - world), uv.x);
     out.world_v = vec4<f32>(world, uv.y);
     out.material = vec4<u32>(GLIMMER_WHITE, GLIMMER_WHITE, GLIMMER_ROUGH, 0u);
-    out.previous = shown.xyw;
     out.color = glimmer.color;
     out.uv1 = uv;
     return out;
 }
 
 @vertex fn vs_glimmer(@builtin(vertex_index) corner: u32, @builtin(instance_index) index: u32)
-        -> ShownGlimmerCorner {
+        -> GlimmerCorner {
     let glimmer = glimmers[index];
-    var out: ShownGlimmerCorner;
     if !drawn_shown(glimmer.drawn.x) {
+        var out: GlimmerCorner;
         out.clip_position = GLIMMER_HIDDEN;
         return out;
     }
-    let placed = glimmer_corner(corner, glimmer);
-    out.clip_position = placed.clip_position;
-    out.normal_u = placed.normal_u;
-    out.world_v = placed.world_v;
-    out.material = placed.material;
-    out.previous = placed.previous;
-    out.color = placed.color;
-    out.uv1 = placed.uv1;
-    out.object = vec4<u32>(0u, glimmer.drawn.x, 0u, 0u);
-    return out;
-}
-
-@vertex fn vs_glimmer_view(@builtin(vertex_index) corner: u32,
-        @builtin(instance_index) index: u32) -> GlimmerCorner {
-    return glimmer_corner(corner, glimmers[index]);
+    return glimmer_corner(corner, glimmer);
 }
 
 @vertex fn vs_ring(@builtin(vertex_index) corner: u32, @builtin(instance_index) index: u32) -> RingCorner {
@@ -101,7 +73,6 @@ fn glimmer_corner(corner: u32, glimmer: GlimmerInstance) -> GlimmerCorner {
     let unit = corner_unit(corner);
     let offset = facing_offset(glimmer, unit, GLIMMER_RING);
     out.clip = camera.view_projection * vec4<f32>(glimmer.place.xyz + offset, 1.0);
-    out.previous = camera.previous_view_projection * vec4<f32>(glimmer.previous.xyz + offset, 1.0);
     out.unit = unit;
     out.color = glimmer.ring;
     return out;
@@ -110,6 +81,5 @@ fn glimmer_corner(corner: u32, glimmer: GlimmerInstance) -> GlimmerCorner {
 @fragment fn fs_ring(corner: RingCorner) -> Outputs {
     let reach = length(corner.unit);
     if reach > 1.0 || reach < GLIMMER_RING_INNER { discard; }
-    return outputs(flat_point(corner.color), flat(corner.color),
-        view_pixel(corner.clip, corner.previous));
+    return outputs(flat_point(corner.color), flat(corner.color));
 }

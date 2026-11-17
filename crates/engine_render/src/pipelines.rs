@@ -16,21 +16,6 @@ pub struct StageLimits {
     pub dynamic_storage_buffers: u32,
 }
 
-impl StageLimits {
-    pub(crate) fn of(limits: &wgpu::Limits) -> Self {
-        Self {
-            bind_groups: limits.max_bind_groups,
-            uniform_buffers: limits.max_uniform_buffers_per_shader_stage,
-            storage_buffers: limits.max_storage_buffers_per_shader_stage,
-            sampled_textures: limits.max_sampled_textures_per_shader_stage,
-            samplers: limits.max_samplers_per_shader_stage,
-            storage_textures: limits.max_storage_textures_per_shader_stage,
-            dynamic_uniform_buffers: limits.max_dynamic_uniform_buffers_per_pipeline_layout,
-            dynamic_storage_buffers: limits.max_dynamic_storage_buffers_per_pipeline_layout,
-        }
-    }
-}
-
 pub const REQUIRED_LIMITS: StageLimits = StageLimits {
     bind_groups: 4,
     uniform_buffers: 12,

@@ -8,36 +8,11 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    Callable, Camera, Clear, ComponentKind, Drawn, DrawnProjection, DrawnTable, Error, ErrorCode,
-    Expected, GeometryHandle, GlobalTransforms, InstanceValues, Layers, List, MaterialHandle,
-    Mover, Node, Parent, PassMask, Placed, Placement, Rect, Rows, Rule, SceneComponents,
-    SceneContext, SceneCx, SceneEntity, SceneForm, ScenePasses, Setting, Target, TextureHandle,
-    View, entity_named, scene_component, scene_components,
+    Camera, Clear, ComponentKind, Drawn, DrawnProjection, DrawnTable, Error, ErrorCode,
+    GeometryHandle, InstanceValues, Layers, List, MaterialHandle, Mover, Node, PassMask, Rect,
+    Rule, SceneComponents, SceneCx, SceneEntity, SceneForm, ScenePasses, Setting, Target,
+    TextureHandle, View,
 };
-
-pub struct ChangeOperation;
-
-impl Callable for ChangeOperation {
-    const NAME: &'static str = "change";
-    type Request = ChangeRequest;
-    type Reply = Rows<ComponentChanged>;
-
-    fn answer(world: &mut World, request: ChangeRequest) -> Result<Self::Reply, Error> {
-        let context = world.get_resource::<SceneContext>().cloned();
-        Ok(Rows::each(
-            "changes",
-            request.changes,
-            |change| match &context {
-                Some(context) => context.scope(|| changed(world, change)),
-                None => changed(world, change),
-            },
-        ))
-    }
-
-    fn request_schema(world: &World) -> Value {
-        change_request(world)
-    }
-}
 
 static CORE: LazyLock<[ComponentKind; 5]> = LazyLock::new(|| {
     let node = ComponentKind::of::<Node>("node");
@@ -340,99 +315,4 @@ pub(crate) fn keys_taken(world: &World) -> Vec<Error> {
             .nearest(owner)
         })
         .collect()
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ComponentChange {
-    pub entity: String,
-    pub component: String,
-    #[serde(default)]
-    pub data: Value,
-}
-
-fn change_request(world: &World) -> Value {
-    let changes: Vec<Value> = scene_components(world)
-        .map(|kind| {
-            serde_json::json!({
-                "type": "object",
-                "properties": {
-                    "entity": { "type": "string" },
-                    "component": { "const": kind.key(), "type": "string" },
-                    "data": crate::authored_component(kind.key()),
-                },
-                "required": ["entity", "component"],
-                "additionalProperties": false,
-            })
-        })
-        .collect();
-    let mut schema = crate::schema_of::<ChangeRequest>();
-    if let Some(held) = schema.get_mut("$defs").and_then(Value::as_object_mut) {
-        held.insert(
-            "ComponentChange".to_owned(),
-            serde_json::json!({ "oneOf": changes }),
-        );
-    }
-    schema
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct ChangeRequest {
-    pub changes: Vec<ComponentChange>,
-}
-
-#[derive(Serialize, schemars::JsonSchema)]
-pub struct ComponentChanged {
-    pub entity: String,
-    pub component: String,
-    pub removed: bool,
-}
-
-fn changed(world: &mut World, change: ComponentChange) -> Result<ComponentChanged, Error> {
-    let ComponentChange {
-        entity,
-        component,
-        data,
-    } = change;
-    let node = entity_named(world, &entity, "$.entity")?;
-    let kind = scene_component(world, &component).ok_or_else(|| {
-        Error::new(ErrorCode::UnknownVariant, "$.component")
-            .got(&component)
-            .variants(scene_components(world).map(ComponentKind::key))
-    })?;
-    author(world, &kind, node, &data)?;
-    Ok(ComponentChanged {
-        entity,
-        component,
-        removed: data.is_null(),
-    })
-}
-
-fn author(
-    world: &mut World,
-    kind: &ComponentKind,
-    node: Entity,
-    value: &Value,
-) -> Result<(), Error> {
-    if value.is_null() {
-        kind.remove(world, node);
-        return Ok(());
-    }
-    kind.validate(value, "$.data")?;
-    match kind.placement() {
-        Placement::Roots(code) if world.get::<Parent>(node).is_some() => {
-            return Err(Error::new(code, "$.entity").expected(Expected::Absent));
-        }
-        Placement::Roots(_) | Placement::Anywhere => {}
-    }
-    let placed = world
-        .get_resource::<GlobalTransforms>()
-        .and_then(|globals| globals.get(node))
-        .and_then(|global| global.matrix());
-    if let Some(matrix) = placed {
-        kind.validate_placed(value, Placed { world: matrix }, "$.data")?;
-    }
-    kind.read(world, node, value)
-        .map_err(|error| error.within("$.data"))
 }

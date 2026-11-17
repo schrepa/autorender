@@ -1,12 +1,8 @@
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::Entity;
-use bevy_ecs::resource::Resource;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    ApplyAt, Ask, Error, ErrorCode, FrameId, Layers, Mobility, NodeId, PassMask, Slot,
-    TextureHandle,
-};
+use crate::{ApplyAt, Ask, Error, ErrorCode, FrameId, Layers, NodeId, TextureHandle};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Target {
@@ -158,44 +154,8 @@ impl Ask for ViewCut {
     const AT: ApplyAt = ApplyAt::FrameStart;
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct ViewJitter {
-    pub view: Entity,
-    pub offset: [f32; 2],
-    pub noise: f32,
-}
-
-#[derive(Resource, Clone, Debug, Default, PartialEq)]
-pub struct Jitter {
-    pub views: Vec<ViewJitter>,
-}
-
-impl Slot for Jitter {
-    const NAME: &'static str = "jitter";
-}
-
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct ViewLayer {
     pub layer: u32,
     pub rect: [u32; 4],
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct OwnedView {
-    pub camera: NodeId,
-    pub target: ViewLayer,
-    pub clear: Clear,
-    pub capture: bool,
-    pub passes: Option<PassMask>,
-    pub draws: bool,
-    pub planes: Option<[[f32; 4]; 6]>,
-    pub eye: [f32; 3],
-    pub detail: f32,
-    pub takes: Option<Mobility>,
-}
-
-#[derive(Component, Clone, Debug, Default, PartialEq)]
-pub struct OwnedViews {
-    pub pass: &'static str,
-    pub views: Vec<OwnedView>,
 }

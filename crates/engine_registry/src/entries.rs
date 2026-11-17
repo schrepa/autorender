@@ -5,14 +5,12 @@ use bevy_ecs::component::{ComponentId, Mutable};
 use bevy_ecs::query::FilteredAccessSet;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
-use engine_place::{
-    Call, Callable, Error, ErrorCode, EventDecl, EventPage, GpuStruct, Lands, List, PlaceDecl, Slot,
-};
+use engine_place::{Call, Callable, Error, ErrorCode, Lands, List, PlaceDecl};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
-use crate::members::{MembersOf, add_member, drop_members, each_member, init_members};
+use crate::members::{add_member, drop_members, each_member, init_members};
 use crate::registry::MemberEach;
 use crate::state::{GateId, Scope};
 
@@ -53,23 +51,11 @@ pub struct Filled {
     pub place: PlaceDecl,
     pub slot: TypeId,
     pub scope: Scope,
-    pub wgsl: Option<Box<dyn Any + Send + Sync>>,
     pub(crate) reset: fn(&mut World),
     pub(crate) id: fn(&mut World) -> ComponentId,
 }
 
 impl Filled {
-    pub(crate) fn of<S: Slot>(scope: Scope, wgsl: Option<Box<dyn Any + Send + Sync>>) -> Self {
-        Self {
-            place: PlaceDecl::slot::<S>(),
-            slot: TypeId::of::<S>(),
-            scope,
-            wgsl,
-            reset: reset_of::<S>,
-            id: resource_id_of::<S>,
-        }
-    }
-
     pub fn reset(&self, world: &mut World) {
         (self.reset)(world);
     }
@@ -85,9 +71,7 @@ pub struct JoinEntry {
     pub place: PlaceDecl,
     pub list: TypeId,
     pub scope: Scope,
-    pub wgsl: Option<Box<dyn Any + Send + Sync>>,
     pub(crate) member: Option<Box<dyn Any + Send + Sync>>,
-    pub(crate) members: TypeId,
     pub(crate) add: MemberAdd,
     pub(crate) init: fn(&mut World),
     pub(crate) each: MemberEach,
@@ -95,18 +79,12 @@ pub struct JoinEntry {
 }
 
 impl JoinEntry {
-    pub(crate) fn of<L: List>(
-        scope: Scope,
-        member: L::Member,
-        wgsl: Option<Box<dyn Any + Send + Sync>>,
-    ) -> Self {
+    pub(crate) fn of<L: List>(scope: Scope, member: L::Member) -> Self {
         Self {
             place: PlaceDecl::list::<L>(),
             list: TypeId::of::<L>(),
             scope,
-            wgsl,
             member: Some(Box::new(member)),
-            members: TypeId::of::<MembersOf<L>>(),
             add: add_member::<L>,
             init: init_members::<L>,
             each: each_member::<L>,
@@ -324,69 +302,8 @@ impl OperationEntry {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct EventEntry {
-    pub name: &'static str,
-    pub brick: &'static str,
-    pub at: &'static Location<'static>,
-    event: EventDecl,
-}
-
-impl EventEntry {
-    #[track_caller]
-    pub fn of(event: EventDecl) -> Self {
-        Self {
-            name: event.name,
-            brick: "",
-            at: Location::caller(),
-            event,
-        }
-    }
-
-    pub fn read(&self, world: &World, after: u64) -> Result<EventPage, Error> {
-        self.event.read(world, &crate::SceneNames(world), after)
-    }
-
-    pub fn row_schema(&self) -> Value {
-        self.event.row_schema()
-    }
-}
-
 fn no_scene_check(_: &Value, _: &str, _: &dyn Any) -> Result<(), Error> {
     Ok(())
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct PieceEntry {
-    pub type_id: TypeId,
-    pub name: &'static str,
-    pub wgsl_name: &'static str,
-    pub wgsl: &'static str,
-    pub size: usize,
-    bytes: fn(&World) -> Option<&[u8]>,
-    id: fn(&World) -> Option<ComponentId>,
-}
-
-impl PieceEntry {
-    pub(crate) fn of<T: Resource<Mutability = Mutable> + Default + GpuStruct>() -> Self {
-        Self {
-            type_id: TypeId::of::<T>(),
-            name: std::any::type_name::<T>(),
-            wgsl_name: T::WGSL_NAME,
-            wgsl: T::WGSL,
-            size: size_of::<T>(),
-            bytes: bytes_of::<T>,
-            id: World::component_id::<T>,
-        }
-    }
-
-    pub fn bytes<'w>(&self, world: &'w World) -> Option<&'w [u8]> {
-        (self.bytes)(world)
-    }
-
-    pub fn component_id(&self, world: &World) -> Option<ComponentId> {
-        (self.id)(world)
-    }
 }
 
 pub fn parse_section<T: DeserializeOwned>(
@@ -428,10 +345,6 @@ fn touch_of<T: Resource>(world: &mut World) {
     let _ = world.modify_resource::<T, ()>(|_| {});
 }
 
-fn resource_id_of<T: Resource>(world: &mut World) -> ComponentId {
-    world.register_component::<T>()
-}
-
 fn current_of<T: Resource + Default + Serialize>(world: &World) -> Value {
     match world.get_resource::<T>() {
         Some(value) => to_json(value),
@@ -462,10 +375,6 @@ fn default_of<T: Default + Serialize>() -> Value {
 
 fn present_of<T: Resource>(world: &World) -> bool {
     world.contains_resource::<T>()
-}
-
-fn bytes_of<T: Resource + GpuStruct>(world: &World) -> Option<&[u8]> {
-    world.get_resource::<T>().map(bytemuck::bytes_of)
 }
 
 fn to_json(value: &impl Serialize) -> Value {

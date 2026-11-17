@@ -19,7 +19,6 @@ pub enum DropReason {
     MaterialFailed,
     GeometryLacksStreams,
     NoRenderPass,
-    PipelineOverLimit,
     PipelineCompiling,
     PipelineRefused,
     MissingInput,
@@ -46,7 +45,6 @@ impl DropReason {
             | Self::GeometryFailed
             | Self::MaterialWaiting
             | Self::MaterialFailed
-            | Self::PipelineOverLimit
             | Self::PipelineCompiling
             | Self::RowIncomplete => false,
         }
@@ -114,16 +112,6 @@ impl DrawReports {
             }
         }
     }
-
-    pub fn kinds_of<'a>(&'a self, brick: &'a str) -> impl Iterator<Item = &'a KindPass> + 'a {
-        self.kinds.iter().filter(move |pass| pass.brick == brick)
-    }
-
-    pub fn dropped_of<'a>(&'a self, brick: &'a str) -> impl Iterator<Item = &'a DroppedDraws> + 'a {
-        self.dropped
-            .iter()
-            .filter(move |dropped| dropped.brick == brick)
-    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -146,7 +134,6 @@ pub struct RenderStats {
     pub pipelines: u32,
     pub pipelines_created: u32,
     pub render_passes: Names,
-    pub linked: LinkedStats,
     #[serde(skip_serializing_if = "none_overflowed")]
     #[cfg_attr(feature = "schema", schemars(skip))]
     pub readback_overflows: u64,
@@ -157,73 +144,6 @@ pub struct RenderStats {
 
 fn none_overflowed(overflows: &u64) -> bool {
     *overflows == 0
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct LinkedStats {
-    pub faces: &'static [(&'static str, &'static str)],
-    pub nobody: &'static [&'static str],
-    pub lists: &'static [(&'static str, &'static [&'static str])],
-}
-
-struct FaceBricks(&'static [(&'static str, &'static str)]);
-
-impl Serialize for FaceBricks {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_map(self.0.iter().copied())
-    }
-}
-
-struct ListBricks(&'static [(&'static str, &'static [&'static str])]);
-
-impl Serialize for ListBricks {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_map(self.0.iter().copied())
-    }
-}
-
-#[derive(Serialize)]
-struct LinkedJson {
-    faces: FaceBricks,
-    nobody: &'static [&'static str],
-    lists: ListBricks,
-}
-
-impl Serialize for LinkedStats {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        LinkedJson {
-            faces: FaceBricks(self.faces),
-            nobody: self.nobody,
-            lists: ListBricks(self.lists),
-        }
-        .serialize(serializer)
-    }
-}
-
-#[cfg(feature = "schema")]
-impl schemars::JsonSchema for LinkedStats {
-    fn inline_schema() -> bool {
-        true
-    }
-
-    fn schema_name() -> std::borrow::Cow<'static, str> {
-        "LinkedStats".into()
-    }
-
-    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
-        let faces = generator.subschema_for::<std::collections::BTreeMap<String, String>>();
-        let nobody = generator.subschema_for::<Vec<String>>();
-        let lists = generator.subschema_for::<std::collections::BTreeMap<String, Vec<String>>>();
-        schemars::json_schema!({
-            "type": "object",
-            "properties": {
-                "faces": faces,
-                "nobody": nobody,
-                "lists": lists,
-            },
-            "required": ["faces", "nobody", "lists"],
-        })
-    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

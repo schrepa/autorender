@@ -14,7 +14,6 @@
       "lighting": "unlit"
     }
   ],
-  "meshes": [],
   "entities": [
     {
       "id": "spark",

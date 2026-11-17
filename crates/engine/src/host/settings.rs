@@ -4,72 +4,28 @@ use engine_registry::SettingsEntry;
 use engine_settings::Expected;
 use serde_json::Value;
 
-use super::JobClock;
 use crate::{Game, GameHost};
-
-#[derive(Clone, Copy, Debug)]
-pub struct Setting {
-    pub name: &'static str,
-    pub values: &'static [&'static str],
-}
-
-impl Setting {
-    pub fn accepted(&self) -> String {
-        self.values.join("|")
-    }
-
-    pub fn default_value(&self) -> &'static str {
-        self.values[0]
-    }
-}
 
 pub const OVERLAY: &str = "set";
 
-const JOB_CLOCK: Setting = Setting {
-    name: "job-clock",
-    values: &["wall", "frames"],
-};
-
-pub const SETTINGS: &[Setting] = &[JOB_CLOCK];
-
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct HostSettings {
-    pub job_clock: Option<JobClock>,
     pub overlay: Vec<(String, Value)>,
 }
 
 impl HostSettings {
     pub fn takes(name: &str) -> bool {
-        name == OVERLAY || SETTINGS.iter().any(|setting| setting.name == name)
+        name == OVERLAY
     }
 
-    pub fn set(&mut self, name: &str, value: &str) -> Result<bool, Error> {
-        if name == OVERLAY {
-            self.overlay.push(overlaid(value)?);
-        } else if name == JOB_CLOCK.name {
-            self.job_clock = Some(job_clock(value)?);
-        } else {
-            return Ok(false);
-        }
-        Ok(true)
+    pub fn set(&mut self, entry: &str) -> Result<(), Error> {
+        self.overlay.push(overlaid(entry)?);
+        Ok(())
     }
 
     pub fn apply<G: Game>(&self, host: &mut GameHost<G>) -> Result<(), Error> {
-        if let Some(clock) = self.job_clock {
-            host.set_job_clock(clock);
-        }
         host.set_settings(&self.overlay)
             .map_err(|error| error.within(OVERLAY))
-    }
-}
-
-fn job_clock(value: &str) -> Result<JobClock, Error> {
-    match value {
-        "wall" => Ok(JobClock::Wall),
-        "frames" => Ok(JobClock::Frames),
-        _ => Err(Error::new(ErrorCode::InvalidValue, "$")
-            .got(value)
-            .variants(JOB_CLOCK.values.iter().copied())),
     }
 }
 

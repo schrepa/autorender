@@ -1,5 +1,4 @@
 /target/
-/.tools/
 /web/node_modules/
 /web/dist/
 /web/pkg/
@@ -8,7 +7,5 @@
 /web/dist-profile/
 /artifacts/
 *.log
-/web/public/highlands/
 /web/public/cooked/
 zz-*
-/web/public/scenes/

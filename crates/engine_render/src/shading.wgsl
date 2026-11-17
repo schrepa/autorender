@@ -31,11 +31,6 @@ struct SurfaceInput {
     object: u32,
 }
 
-struct ViewPixel {
-    clip: vec4<f32>,
-    previous: vec4<f32>,
-}
-
 fn flat(color: vec4<f32>) -> Shaded {
     var shaded: Shaded;
     shaded.linear = color.rgb;

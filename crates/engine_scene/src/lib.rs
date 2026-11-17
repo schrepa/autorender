@@ -11,7 +11,6 @@ mod files;
 mod hierarchy;
 mod instance;
 mod loading;
-mod looks;
 mod material;
 mod spawning;
 mod texture;
@@ -30,7 +29,6 @@ pub use environment::SceneEnvironment;
 pub use environment::section_schemas;
 pub use files::{SceneFile, SceneFileKind, SceneFiles};
 pub use instance::{MeshOrigin, SceneInstance, TextureOrigin};
-pub use looks::{SCENE_LOOK, SceneLook, SceneLookControl, SceneLooks};
 pub use material::{
     SceneAlphaMode, SceneCull, SceneDepthBias, SceneFilter, SceneMap, SceneMaterial,
     SceneMaterialControl, SceneMipmapFilter, SceneSlot, SceneSlotFill, SceneTextureMap, SceneWrap,

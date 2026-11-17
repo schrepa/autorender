@@ -210,9 +210,9 @@ impl Run {
         clippy::too_many_lines,
         reason = "longer than the line ceiling; it may only shrink"
     )]
-    pub(crate) fn begin_render(&mut self, attach: AttachRaw, view: Option<&OwnedDraw>) -> bool {
+    pub(crate) fn begin_render(&mut self, attach: AttachRaw) -> bool {
         self.pay_arena();
-        let offset = self.view_offset(view);
+        let offset = self.view_offset();
         let Some(pass) = self.planning.pass_decls.get(self.pass as usize).cloned() else {
             return false;
         };
@@ -280,7 +280,7 @@ impl Run {
         let lone = crate::shared::draws_canvas(&pass) && !composites && self.canvas.rect.is_some();
         match attach {
             AttachRaw::Declared => {
-                let at = view.map_or(0, |view| view.layer);
+                let at = 0;
                 if layer.is_some() && !lone {
                     let set = self.pass_set(self.pass);
                     main = lit_set(&set);
@@ -351,8 +351,7 @@ impl Run {
                     colors.push((
                         key(target),
                         self.view_of(target).cloned(),
-                        target_format(target, &self.machine.outputs)
-                            .unwrap_or(crate::machine::SCENE_FORMAT),
+                        target_format(target).unwrap_or(crate::machine::SCENE_FORMAT),
                         ops,
                     ));
                 }
@@ -415,7 +414,7 @@ impl Run {
                 }
             }
             AttachRaw::Depth(texture, layer) => {
-                let layer = view.map_or(layer.unwrap_or(0), |view| view.layer);
+                let layer = layer.unwrap_or(0);
                 if !self.depth_attachment(&pass, texture, layer, &mut depth) {
                     return self.mismatch(pass.name);
                 }
@@ -438,7 +437,7 @@ impl Run {
                     ..planned
                 };
                 let format = self.machine.declared.textures[color as usize].format;
-                let at = view.map_or(layer.unwrap_or(0), |view| view.layer);
+                let at = layer.unwrap_or(0);
                 let view = self.attachment_view(color, 0, at);
                 colors.push((
                     (u64::from(color) * 4_096 + u64::from(at)) * 64 + 10_000,
@@ -480,9 +479,6 @@ impl Run {
                 }
             }
         }
-        if let Some(view) = view {
-            keep_loads(view.clear, &mut colors, depth.as_mut());
-        }
         let mut attachments = std::mem::take(&mut self.spare.attachments);
         attachments.clear();
         attachments.extend(
@@ -491,11 +487,10 @@ impl Run {
                 .map(|(key, ..)| *key)
                 .chain(depth.as_ref().map(|(key, ..)| *key)),
         );
-        let loads = view.is_some_and(|view| !view.clear.depth() && !view.clear.color());
-        let viewed = view.is_some().then_some(self.pass);
         if let Some(open) = self.recording.open_mut()
             && self.planning.merge
-            && ((open.shared && is_shared) || (loads && open.viewed == viewed))
+            && open.shared
+            && is_shared
             && open.attachments == attachments
         {
             open.offset = offset;
@@ -557,7 +552,7 @@ impl Run {
                     stencil_ops: None,
                 },
             );
-        let mut render = encoder
+        let render = encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some(label),
                 color_attachments: &color_attachments[..colors.len().min(MOST_COLORS)],
@@ -568,19 +563,12 @@ impl Run {
             })
             .forget_lifetime();
         self.bound.forget();
-        if layer.is_some()
-            && !lone
-            && let Some(region) = self.region
-        {
-            self.bound.within(&mut render, region);
-        }
         self.recording.transition(Step::Render(Box::new(Open {
             pass: render,
             attachments,
             layout,
             offset,
             shared: is_shared,
-            viewed,
             layered: layer.is_some(),
             label: None,
         })));
@@ -683,15 +671,11 @@ impl Run {
         mip: u32,
         layer: u32,
     ) -> Option<wgpu::TextureView> {
-        let parity = self.frames.parity;
         let made = self
             .texture_tables_mut(texture)
             .textures
-            .get_mut(texture as usize)?;
-        let made = match parity {
-            1 if made[1].is_some() => made[1].as_mut()?,
-            _ => made[0].as_mut()?,
-        };
+            .get_mut(texture as usize)?
+            .as_mut()?;
         made.slice(
             &(mip..mip + 1),
             &(layer..layer + 1),
@@ -769,25 +753,6 @@ fn color_ops(ops: Ops) -> wgpu::Operations<wgpu::Color> {
         } else {
             wgpu::StoreOp::Discard
         },
-    }
-}
-
-fn keep_loads(
-    clear: engine_core::Clear,
-    colors: &mut [(u64, Option<wgpu::TextureView>, wgpu::TextureFormat, Ops)],
-    depth: Option<&mut (
-        u64,
-        wgpu::TextureView,
-        wgpu::TextureFormat,
-        Option<Ops>,
-        bool,
-    )>,
-) {
-    for (_, _, _, ops) in colors.iter_mut().filter(|_| !clear.color()) {
-        ops.load = Load::Load;
-    }
-    if let Some((_, _, _, Some(ops), _)) = depth.filter(|_| !clear.depth()) {
-        ops.load = Load::Load;
     }
 }
 

@@ -8,17 +8,14 @@ use bevy_ecs::lifecycle::{Add, Remove};
 use bevy_ecs::observer::On;
 use bevy_ecs::prelude::{Commands, Query, Res, ResMut, Without};
 use bevy_ecs::resource::Resource;
-use bevy_ecs::system::{SystemParam, SystemParamItem};
+use bevy_ecs::system::SystemParam;
 use bevy_ecs::world::World;
-use engine_place::SceneEntity;
-use engine_registry::{MoverRule, Registry, SceneNames};
-use serde::{Deserialize, Serialize};
+use engine_registry::{MoverRule, Registry};
 
 use crate::hierarchy::tracking::Invalidation;
 use crate::{
-    ApplyAt, Ask, Asked, AskedView, Brick, Error, ErrorCode, Expected, FixedTime, FrameTime,
-    GlobalTransforms, Lands, Moment, Mover, MoverId, Operation, Pace, Refusals, Rows, SceneIds,
-    Transform, edit_transform,
+    ApplyAt, Ask, Asked, Brick, FixedTime, FrameTime, GlobalTransforms, Moment, Mover, MoverId,
+    Pace, Transform, edit_transform,
 };
 
 mod key {
@@ -122,21 +119,6 @@ impl Ask for Teleport {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct HandOver {
-    pub node: Entity,
-    pub to: Mover,
-}
-
-impl Ask for HandOver {
-    const NAME: &'static str = "hand_over";
-    const AT: ApplyAt = ApplyAt::TickEnd;
-
-    fn node(&self) -> Option<Entity> {
-        Some(self.node)
-    }
-}
-
 #[derive(SystemParam)]
 pub struct Asks<'w, 's, A: Ask> {
     commands: Commands<'w, 's>,
@@ -196,29 +178,10 @@ pub(crate) fn moment(world: &World) -> Moment {
     }
 }
 
-fn paced_handovers(world: &mut World, pace: Pace) -> Vec<HandOver> {
-    if world
-        .get_resource::<Asked<HandOver>>()
-        .is_none_or(Asked::is_empty)
-    {
-        return Vec::new();
-    }
-    let now = moment(world);
-    world
-        .resource_mut::<Asked<HandOver>>()
-        .take_where(now, |handover| handover.to.pace == pace)
-}
-
 pub(crate) fn end_tick(world: &mut World) -> bool {
-    let handovers = paced_handovers(world, Pace::Tick);
     let teleports = take_asks::<Teleport>(world);
-    if handovers.is_empty() && teleports.is_empty() {
+    if teleports.is_empty() {
         return false;
-    }
-    for HandOver { node, to } in handovers {
-        if let Ok(mut held) = world.get_entity_mut(node) {
-            held.insert(to);
-        }
     }
     let fresh: Vec<Entity> = teleports
         .into_iter()
@@ -256,18 +219,11 @@ fn frame_teleports(world: &mut World) -> Vec<Teleport> {
 }
 
 pub(crate) fn start_frame(world: &mut World) -> bool {
-    let handovers = paced_handovers(world, Pace::Frame);
     let teleports = frame_teleports(world);
-    if handovers.is_empty() && teleports.is_empty() {
+    if teleports.is_empty() {
         return false;
     }
-    let mut fresh = Vec::with_capacity(handovers.len() + teleports.len());
-    for HandOver { node, to } in handovers {
-        if let Ok(mut held) = world.get_entity_mut(node) {
-            held.insert(to);
-            fresh.push(node);
-        }
-    }
+    let mut fresh = Vec::with_capacity(teleports.len());
     for Teleport { node, to } in teleports {
         if edit_transform(world, node, |transform| *transform = to).is_ok() {
             fresh.push(node);
@@ -280,13 +236,10 @@ pub(crate) fn start_frame(world: &mut World) -> bool {
 #[derive(Resource, Default)]
 pub(crate) struct MovingKinds(pub(crate) Vec<ComponentId>);
 
-#[derive(Resource, Default)]
-pub(crate) struct Claims(Vec<(ComponentId, Mover)>);
-
 #[derive(Clone, Copy)]
 pub(crate) enum NodeKind {
     Claimed {
-        claim: fn(&mut World, Mover) -> ComponentId,
+        claim: fn(&mut World, Mover),
         mover: Mover,
     },
     Moving {
@@ -294,9 +247,7 @@ pub(crate) enum NodeKind {
     },
 }
 
-pub const MOVER_PART: &str = "mover";
-
-pub(crate) fn claim<C: Component>(world: &mut World, mover: Mover) -> ComponentId {
+pub(crate) fn claim<C: Component>(world: &mut World, mover: Mover) {
     world.add_observer(move |add: On<Add, C>, mut commands: Commands| {
         let node = add.entity;
         commands.queue(move |world: &mut World| claimed(world, node, mover));
@@ -305,86 +256,22 @@ pub(crate) fn claim<C: Component>(world: &mut World, mover: Mover) -> ComponentI
         let node = remove.entity;
         commands.queue(move |world: &mut World| released(world, node, mover));
     });
-    world.register_component::<C>()
-}
-
-fn claimants(world: &World, node: Entity) -> Option<(Option<Mover>, Vec<Mover>)> {
-    let held = world.get_entity(node).ok()?;
-    let claimants = world
-        .get_resource::<Claims>()
-        .map_or_else(Vec::new, |claims| {
-            claims
-                .0
-                .iter()
-                .filter(|&&(kind, _)| held.contains_id(kind))
-                .map(|&(_, mover)| mover)
-                .collect()
-        });
-    Some((held.get::<Mover>().copied(), claimants))
+    world.register_component::<C>();
 }
 
 fn claimed(world: &mut World, node: Entity, mover: Mover) {
-    let Some((holder, claimants)) = claimants(world, node) else {
-        return;
-    };
-    let holder = match holder {
-        Some(holder) => holder,
-        None => {
-            world.entity_mut(node).insert(mover);
-            mover
-        }
-    };
-    settle(world, node, Some(holder), &claimants);
+    if let Ok(mut held) = world.get_entity_mut(node)
+        && !held.contains::<Mover>()
+    {
+        held.insert(mover);
+    }
 }
 
 fn released(world: &mut World, node: Entity, mover: Mover) {
-    let Some((holder, claimants)) = claimants(world, node) else {
-        if let Some(mut refusals) = world.get_resource_mut::<Refusals>() {
-            refusals.accept(node, MOVER_PART);
-        }
-        return;
-    };
-    let holder = match holder {
-        Some(holder)
-            if holder.by == mover.by
-                && claimants.iter().all(|claimant| claimant.by != mover.by) =>
-        {
-            let next = claimants.first().copied();
-            let mut held = world.entity_mut(node);
-            match next {
-                Some(next) => {
-                    held.insert(next);
-                }
-                None => {
-                    held.remove::<Mover>();
-                }
-            }
-            next
-        }
-        holder => holder,
-    };
-    settle(world, node, holder, &claimants);
-}
-
-fn settle(world: &mut World, node: Entity, holder: Option<Mover>, claimants: &[Mover]) {
-    let conflict = holder.and_then(|holder| {
-        claimants
-            .iter()
-            .find(|claimant| claimant.by != holder.by)
-            .map(|claimant| (holder, *claimant))
-    });
-    let Some(mut refusals) = world.get_resource_mut::<Refusals>() else {
-        return;
-    };
-    match conflict {
-        Some((holder, claimant)) => refusals.refuse(
-            node,
-            MOVER_PART,
-            Error::new(ErrorCode::UsageConflict, "$.mover")
-                .got(claimant.by)
-                .nearest(holder.by),
-        ),
-        None => refusals.accept(node, MOVER_PART),
+    if let Ok(mut held) = world.get_entity_mut(node)
+        && held.get::<Mover>().is_some_and(|holder| holder.by == mover.by)
+    {
+        held.remove::<Mover>();
     }
 }
 
@@ -408,170 +295,12 @@ pub(crate) fn install_kinds(world: &mut World) {
                 .flat_map(|record| record.entries::<NodeKind>().copied())
                 .collect()
         });
-    let mut claims = Vec::new();
     let mut moving = Vec::new();
     for kind in kinds {
         match kind {
-            NodeKind::Claimed { claim, mover } => claims.push((claim(world, mover), mover)),
+            NodeKind::Claimed { claim, mover } => claim(world, mover),
             NodeKind::Moving { track } => moving.push(track(world)),
         }
     }
-    world.insert_resource(Claims(claims));
     world.insert_resource(MovingKinds(moving));
-}
-
-#[derive(Serialize, schemars::JsonSchema)]
-pub(crate) struct MovedNode {
-    id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    name: Option<String>,
-}
-
-fn named(world: &World, node: Entity) -> MovedNode {
-    let authored = world.get::<SceneEntity>(node);
-    MovedNode {
-        id: authored.map(|authored| authored.authored_id.clone()),
-        name: authored.map(|authored| authored.name.clone()),
-    }
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct MovesRequest {}
-
-#[derive(Serialize, schemars::JsonSchema)]
-pub(crate) struct MovesReply {
-    asks: Vec<AskedView>,
-    moved_static: Vec<MovedNode>,
-}
-
-pub(crate) struct MovesState;
-
-impl Operation for MovesState {
-    const NAME: &'static str = "moves";
-    const CONTROL: bool = false;
-    type Params = &'static World;
-    type Request = MovesRequest;
-    type Reply = MovesReply;
-
-    fn run(
-        world: SystemParamItem<'_, '_, Self::Params>,
-        _: MovesRequest,
-    ) -> Result<MovesReply, Error> {
-        let ids = SceneNames(world);
-        let asks: Vec<AskedView> =
-            world
-                .get_resource::<Registry>()
-                .map_or_else(Vec::new, |registry| {
-                    registry
-                        .catalog()
-                        .iter()
-                        .filter_map(|place| place.view(world, &ids))
-                        .collect()
-                });
-        let moved_static: Vec<MovedNode> =
-            world
-                .get_resource::<GlobalTransforms>()
-                .map_or_else(Vec::new, |globals| {
-                    globals
-                        .moved_static()
-                        .map(|node| named(world, node))
-                        .collect()
-                });
-        Ok(MovesReply { asks, moved_static })
-    }
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct TransformWrite {
-    entity: String,
-    #[serde(default)]
-    translation: Option<[f32; 3]>,
-    #[serde(default)]
-    rotation: Option<[f32; 4]>,
-    #[serde(default)]
-    scale: Option<[f32; 3]>,
-}
-
-#[derive(Deserialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub(crate) struct TeleportControl {
-    moves: Vec<TransformWrite>,
-}
-
-#[derive(Serialize, schemars::JsonSchema)]
-pub(crate) struct Teleported {
-    entity: String,
-    lands: Lands,
-}
-
-fn finite<const N: usize>(values: Option<[f32; N]>, path: &str) -> Result<Option<[f32; N]>, Error> {
-    match values {
-        Some(held) if held.iter().any(|value| !value.is_finite()) => {
-            Err(Error::new(ErrorCode::InvalidValue, path)
-                .expected(Expected::Finite)
-                .got(held.to_vec()))
-        }
-        Some(_) | None => Ok(values),
-    }
-}
-
-fn written(held: &Transform, write: &TransformWrite) -> Result<Transform, Error> {
-    let translation = finite(write.translation, "$.translation")?;
-    let scale = finite(write.scale, "$.scale")?;
-    let rotation = match finite(write.rotation, "$.rotation")? {
-        Some(rotation) => {
-            let rotation = glam::Quat::from_array(rotation);
-            if rotation.length_squared() <= f32::EPSILON {
-                return Err(Error::new(ErrorCode::InvalidValue, "$.rotation")
-                    .expected(Expected::Normalized)
-                    .got(rotation.to_array()));
-            }
-            Some(rotation.normalize())
-        }
-        None => None,
-    };
-    Ok(Transform {
-        translation: translation.map_or(held.translation, glam::Vec3::from_array),
-        rotation: rotation.unwrap_or(held.rotation),
-        scale: scale.map_or(held.scale, glam::Vec3::from_array),
-    })
-}
-
-impl Operation for TeleportControl {
-    const NAME: &'static str = Teleport::NAME;
-    const LANDS: Lands = Lands::NextStep;
-    type Params = (
-        SceneIds<'static, 'static>,
-        Query<'static, 'static, (&'static Transform, Option<&'static Mover>)>,
-        Asks<'static, 'static, Teleport>,
-    );
-    type Request = Self;
-    type Reply = Rows<Teleported>;
-
-    fn run(
-        (ids, nodes, mut asks): SystemParamItem<'_, '_, Self::Params>,
-        request: Self,
-    ) -> Result<Rows<Teleported>, Error> {
-        Ok(Rows::each("moves", request.moves, |write| {
-            let node = ids.named(&write.entity, "$.entity")?;
-            let (held, mover) = nodes.get(node).map_err(|_| {
-                Error::new(ErrorCode::MissingComponent, "$.entity")
-                    .expected(Expected::Present)
-                    .got(&write.entity)
-            })?;
-            let to = written(held, &write)?;
-            asks.send(Teleport { node, to });
-            let lands = if tick_paced(mover) {
-                Lands::NextStep
-            } else {
-                Lands::NextFrame
-            };
-            Ok(Teleported {
-                entity: write.entity,
-                lands,
-            })
-        }))
-    }
 }

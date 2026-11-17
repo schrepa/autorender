@@ -1,6 +1,6 @@
 use engine_core::{
-    BrickList, Engine, ErrorCode, FrameFacts, FrameTiming, Gathered, GpuFrameTime, JobExchange,
-    JobId, JobMessage, JobRef, PauseReason, RecordExchange, RenderScale, RenderStats, WorkClock,
+    BrickList, Devices, Engine, ErrorCode, FrameFacts, JobExchange, JobId, JobMessage, JobRef,
+    PauseReason, RecordExchange, RenderStats,
 };
 use engine_registry::Registry;
 use engine_render::{Picture, RenderTarget, Renderer};
@@ -8,8 +8,6 @@ use engine_render::{Picture, RenderTarget, Renderer};
 use crate::frame_stats::{FrameStats, PassPipelines, ResolutionStats};
 use crate::host::InputSource;
 use crate::host::policy::FRAME_INTERVAL_MS;
-use crate::pacing::Pacing;
-use crate::resolution::Resolution;
 use crate::{Error, Result};
 
 #[path = "app_attribution.rs"]
@@ -40,32 +38,8 @@ pub fn now_ms() -> f64 {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum JobClock {
-    #[default]
-    Wall,
-    Frames,
-}
-
-impl JobClock {
-    fn reading(self) -> Option<fn() -> f64> {
-        match self {
-            Self::Wall => Some(now_ms),
-            Self::Frames => None,
-        }
-    }
-}
-
-fn wire(
-    engine: &mut Engine,
-    renderer: &Renderer,
-    (workers, verifying): (u32, bool),
-    clock: JobClock,
-) {
+fn wire(engine: &mut Engine, renderer: &Renderer, (workers, verifying): (u32, bool)) {
     let world = engine.app.world_mut();
-    world.insert_resource(WorkClock {
-        reading: clock.reading(),
-    });
     if let Some(mut records) = world.get_resource_mut::<RecordExchange>() {
         records.set_sampling(Some(renderer.texture_sampling()));
     }
@@ -74,29 +48,6 @@ fn wire(
         jobs.set_verifying(verifying);
     }
     crate::game::limit(engine, renderer.device_limits());
-}
-
-#[derive(Clone, Copy, Debug)]
-enum Refresh {
-    Measured(f64),
-    Declared(f64),
-}
-
-impl Refresh {
-    fn ms(self) -> f64 {
-        match self {
-            Self::Measured(ms) | Self::Declared(ms) => ms,
-        }
-    }
-
-    fn measured(self, interval: f64, pacing: &Pacing) -> Self {
-        match self {
-            Self::Measured(ms) if interval > 0.0 && interval < pacing.interval_limit_ms => {
-                Self::Measured(ms + (interval - ms) * pacing.smoothing)
-            }
-            Self::Measured(_) | Self::Declared(_) => self,
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -111,14 +62,11 @@ pub(crate) struct AppHost {
     focus: Focus,
     stats: FrameStats,
     size: (u32, u32),
-    job_clock: JobClock,
     overlay: crate::host::SettingsLog,
     pipeline_list: crate::host::PipelineList,
     pixel_ratio: f64,
-    refresh: Refresh,
-    display_paced: bool,
+    refresh: f64,
     gpu_ms: Option<f32>,
-    suspends: u64,
     #[cfg(feature = "profiling")]
     profile_frame: u64,
     #[cfg(any(feature = "dev", feature = "profiling"))]
@@ -157,7 +105,6 @@ impl AppHost {
         bricks: impl FnOnce(BrickList) -> BrickList,
         build: impl FnOnce(&mut Engine) -> Result<()>,
     ) -> Result<Self> {
-        let display_paced = target.on_display();
         let mut engine = built(|| {
             let mut engine = crate::engine(bricks)?;
             build(&mut engine)?;
@@ -172,28 +119,25 @@ impl AppHost {
             std::task::Poll::Pending => start.await,
         }?;
         let renderer = Box::new(starting.finish());
-        let mut host = Self::with(engine, renderer, display_paced);
+        let mut host = Self::with(engine, renderer);
         host.claim_passes(ahead)?;
         log_unmet(&host.engine);
         Ok(host)
     }
 
-    fn with(mut engine: Engine, renderer: Box<Renderer>, display_paced: bool) -> Self {
-        wire(&mut engine, &renderer, (0, false), JobClock::Wall);
+    fn with(mut engine: Engine, renderer: Box<Renderer>) -> Self {
+        wire(&mut engine, &renderer, (0, false));
         Self {
             engine,
             renderer,
             focus: Focus::Held,
             stats: FrameStats::default(),
             size: (0, 0),
-            job_clock: JobClock::Wall,
             overlay: crate::host::SettingsLog::default(),
             pipeline_list: crate::host::PipelineList::default(),
             pixel_ratio: 1.0,
-            refresh: Refresh::Measured(FRAME_INTERVAL_MS),
-            display_paced,
+            refresh: FRAME_INTERVAL_MS,
             gpu_ms: None,
-            suspends: 0,
             #[cfg(feature = "profiling")]
             profile_frame: 0,
             #[cfg(any(feature = "dev", feature = "profiling"))]
@@ -231,7 +175,7 @@ impl AppHost {
             .world()
             .get_resource::<JobExchange>()
             .map_or((0, false), |jobs| (jobs.workers(), jobs.verifying()));
-        wire(&mut engine, &self.renderer, jobs, self.job_clock);
+        wire(&mut engine, &self.renderer, jobs);
         let replaced = std::mem::replace(&mut self.engine, engine);
         self.reloaded();
         if let Err(error) = self.claim_passes(None) {
@@ -290,13 +234,6 @@ impl AppHost {
         Ok(())
     }
 
-    pub fn set_job_clock(&mut self, clock: JobClock) {
-        self.job_clock = clock;
-        self.engine.app.world_mut().insert_resource(WorkClock {
-            reading: clock.reading(),
-        });
-    }
-
     pub fn set_pixel_ratio(&mut self, ratio: f64) {
         self.pixel_ratio = if ratio.is_finite() && ratio > 0.0 {
             ratio
@@ -306,59 +243,28 @@ impl AppHost {
     }
 
     pub fn set_refresh_interval(&mut self, milliseconds: Option<f64>) {
-        self.refresh = match milliseconds.filter(|ms| ms.is_finite() && *ms > 0.0) {
-            Some(ms) => Refresh::Declared(ms),
-            None => Refresh::Measured(self.refresh.ms()),
-        };
+        if let Some(ms) = milliseconds.filter(|ms| ms.is_finite() && *ms > 0.0) {
+            self.refresh = ms;
+        }
     }
 
     pub fn refresh_interval(&self) -> f64 {
-        self.refresh.ms()
-    }
-
-    pub(crate) fn paced(&mut self) {
-        let interval = self.engine.frame_time().real_seconds * 1000.0;
-        let pacing = crate::pacing::of(self.engine.app.world());
-        self.refresh = self.refresh.measured(interval, &pacing);
+        self.refresh
     }
 
     pub(crate) fn set_preparation_ms(&mut self, milliseconds: f64) {
         self.stats.preparation_ms = milliseconds;
     }
 
-    fn report_timing(&mut self, interval: Option<f64>) {
-        let timing = self.renderer.take_frame_time();
-        if let Some((ms, _)) = timing {
+    fn report_timing(&mut self) {
+        if let Some((ms, _)) = self.renderer.take_frame_time() {
             self.gpu_ms = Some(ms as f32);
         }
-        let report = FrameTiming {
-            gpu_timed: self.renderer.times_frames(),
-            gpu: timing.map(|(ms, render_size)| GpuFrameTime { ms, render_size }),
-            render_size: self.renderer.render_size(),
-            interval_ms: interval,
-            refresh_ms: self.display_paced.then(|| self.refresh.ms()),
-            suspends: self.suspends,
-        };
-        self.engine.app.world_mut().insert_resource(report);
-    }
-
-    fn size_frame(&self, (width, height): (u32, u32)) -> (u32, u32) {
-        let world = self.engine.app.world();
-        let resolution = world
-            .get_resource::<Resolution>()
-            .copied()
-            .unwrap_or_default();
-        let scale = world
-            .get_resource::<RenderScale>()
-            .copied()
-            .unwrap_or_default();
-        crate::host::render_size((width, height), self.pixel_ratio, &resolution, scale.0)
-            .unwrap_or((width, height))
     }
 
     fn resolution_stats(&self, (width, height): (u32, u32)) -> ResolutionStats {
         let (display_width, display_height) = self.renderer.view_size().unwrap_or((0, 0));
-        let (render_width, render_height) = self.renderer.render_size().unwrap_or((0, 0));
+        let (render_width, render_height) = self.renderer.view_size().unwrap_or((0, 0));
         ResolutionStats {
             display_width,
             display_height,
@@ -368,10 +274,6 @@ impl AppHost {
                 .saturating_sub(u64::from(display_width) * u64::from(display_height)),
             gpu_ms: self.gpu_ms,
         }
-    }
-
-    pub fn set_spare_time(&mut self, milliseconds: f64) {
-        self.engine.set_spare_time(milliseconds);
     }
 
     pub fn set_job_workers(&mut self, workers: u32) {
@@ -483,12 +385,7 @@ impl AppHost {
             self.engine.frame(timestamp_ms * 0.001)?;
             let simulation_ms = now_ms() - start;
             let time = self.engine.frame_time();
-            let drawn = self.render_frame(
-                (width, height),
-                (simulation_ms, time.ticks),
-                Some(time.real_seconds * 1000.0),
-                picture,
-            )?;
+            let drawn = self.render_frame((width, height), (simulation_ms, time.ticks), picture)?;
             self.engine.exchange();
             drawn
         };
@@ -521,7 +418,6 @@ impl AppHost {
             self.render_frame(
                 (width, height),
                 (simulation_ms, fixed_steps),
-                None,
                 Picture::Shown,
             )?;
         }
@@ -544,7 +440,7 @@ impl AppHost {
             let _core = attribution::core_scope();
             self.deliver();
             self.engine.frame_without_ticks();
-            self.render_frame((width, height), (0.0, 0), None, Picture::Shown)?;
+            self.render_frame((width, height), (0.0, 0), Picture::Shown)?;
         }
         self.end_attribution();
         Ok(())
@@ -560,13 +456,13 @@ impl AppHost {
             self.deliver();
             self.engine
                 .present(engine_core::Presented::Between { alpha })?;
-            self.render_frame((width, height), (0.0, 0), None, Picture::Shown)?;
+            self.render_frame((width, height), (0.0, 0), Picture::Shown)?;
         }
         self.end_attribution();
         Ok(())
     }
 
-    pub(crate) fn accept(&mut self, input: Gathered) {
+    pub(crate) fn accept(&mut self, input: Devices) {
         let _profile = engine_profile::span("cpu", "host.input");
         engine_core::accept_input(self.engine.app.world_mut(), input);
     }
@@ -580,14 +476,13 @@ impl AppHost {
         &mut self,
         (width, height): (u32, u32),
         (simulation_ms, fixed_steps): (f64, u32),
-        interval: Option<f64>,
         picture: Picture,
     ) -> Result<bool> {
         if self.size != (width, height) {
             self.renderer.resize(width, height);
             self.size = (width, height);
         }
-        self.report_timing(interval);
+        self.report_timing();
         let time = self.engine.frame_time();
         let tick = self
             .engine
@@ -616,7 +511,6 @@ impl AppHost {
             pipelines_listed: 0,
             pipelines_unlisted: 0,
             readiness: self.engine.readiness().clone(),
-            budget: self.engine.budget().uses().to_vec(),
             resolution: self.resolution_stats((width, height)),
             jobs: engine_core::JobStats::default(),
             refused_views: 0,
@@ -641,25 +535,10 @@ impl AppHost {
     ) -> Result<(f64, f64, RenderStats)> {
         let before_extraction = now_ms();
         self.engine.start_frame();
-        let (render_width, render_height) = self.size_frame((width, height));
-        let whole = self
-            .engine
-            .app
-            .world_mut()
-            .get_resource_mut::<engine_core::WholeFrames>()
-            .is_some_and(|mut whole| whole.asked());
-        let world = self.engine.app.world();
-        let post = self.renderer.post(world);
         let display_size = self.display_size((width, height));
-        let render_size = if !whole && post {
-            glam::UVec2::new(render_width, render_height)
-                .clamp(glam::UVec2::ONE, display_size.max(glam::UVec2::ONE))
-        } else {
-            display_size
-        };
         let facts = FrameFacts {
             display_size,
-            render_size,
+            render_size: display_size,
             pixel_ratio: self.pixel_ratio as f32,
         };
         self.engine.set_frame(facts);
@@ -792,8 +671,7 @@ impl AppHost {
     }
 
     pub fn suspend(&mut self) {
-        self.suspends += 1;
         self.engine.reset_clock();
-        engine_core::suspend_input(self.engine.app.world_mut());
+        engine_core::hold_input(self.engine.app.world_mut());
     }
 }

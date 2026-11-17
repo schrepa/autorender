@@ -8,11 +8,8 @@ use wesl::Mangler as _;
 mod driver;
 
 pub const CORE_PACKAGE: &str = "engine_render";
-pub const CORE_PREFIX: &str = "engine";
 pub const CAMERA: &str = "camera";
-pub const PIECES: &str = "pieces";
-const CORE_BINDINGS: [&str; 2] = [CAMERA, PIECES];
-const RESERVED: [&str; 4] = ["engine", "generated", "face", "place"];
+const CORE_BINDINGS: [&str; 1] = [CAMERA];
 const GENERATED_ROOT: &str = "generated::";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,7 +109,6 @@ pub(crate) struct Composed {
     pub(crate) module: String,
     pub(crate) text: String,
     pub(crate) bindings: Vec<String>,
-    pub(crate) switches: Vec<u32>,
     pub(crate) overrides: Vec<(String, String)>,
 }
 
@@ -156,10 +152,6 @@ pub(crate) fn path_of(var_or_entry: (engine_core::Module, &str)) -> (&'static st
         .get(module.index() as usize)
         .map_or("", |text| text.path());
     (path, name.to_owned())
-}
-
-fn prefix(path: &str) -> &str {
-    path.split("::").next().unwrap_or(path)
 }
 
 impl Linker {
@@ -297,32 +289,6 @@ impl Linker {
             .collect()
     }
 
-    pub(crate) fn face_readers(&self) -> Vec<(&'static str, String)> {
-        let mut found: Vec<(&'static str, String)> = Vec::new();
-        for module in &self.modules {
-            let own = prefix(&module.path);
-            if own == crate::places::FACE_ROOT || own == crate::places::PLACE_ROOT {
-                continue;
-            }
-            for imported in imports(&module.text) {
-                let mut segments = imported.split("::");
-                if segments.next() != Some(crate::places::FACE_ROOT) {
-                    continue;
-                }
-                let Some(face) = segments.next().filter(|face| !face.is_empty()) else {
-                    continue;
-                };
-                if !found
-                    .iter()
-                    .any(|(package, known)| *package == module.package && known == face)
-                {
-                    found.push((module.package, face.to_owned()));
-                }
-            }
-        }
-        found
-    }
-
     pub(crate) fn declared(&self, var: Var) -> Option<&Declaration> {
         let (path, name) = path_of((var.module(), var.name()));
         self.module(path)?
@@ -345,83 +311,19 @@ impl Linker {
         }
     }
 
-    pub(crate) fn check(&self, fills: &dyn Fn(&'static str, &str) -> bool) -> Vec<Error> {
+    pub(crate) fn check(&self) -> Vec<Error> {
         let mut problems = Vec::new();
-        let mut prefixes: Vec<(&'static str, &str)> = Vec::new();
         for module in self.modules.iter().filter(|module| !module.generated) {
             let path = format!("$.shaders.{}", module.path);
-            let first = prefix(&module.path);
-            let core = module.package == CORE_PACKAGE;
-            if core != (first == CORE_PREFIX) || (!core && RESERVED.contains(&first)) {
-                problems.push(Error::new(ErrorCode::ModuleOutsideBrick, path).got(module.package));
-                continue;
-            }
-            match prefixes
-                .iter()
-                .find(|(package, _)| *package == module.package)
-            {
-                Some((_, known)) if *known != first => {
-                    problems.push(Error::new(ErrorCode::ModuleOutsideBrick, path).got(first));
-                    continue;
-                }
-                Some(_) => {}
-                None => {
-                    if let Some((owner, _)) = prefixes.iter().find(|(_, known)| *known == first) {
-                        problems.push(Error::new(ErrorCode::NameTwice, path).got(*owner));
-                        continue;
-                    }
-                    prefixes.push((module.package, first));
-                }
-            }
-            if !core
-                && let Some(declared) = module.declared.iter().find(|declared| {
-                    declared.group == 0 && CORE_BINDINGS.contains(&declared.name.as_str())
-                })
-            {
-                problems
-                    .push(Error::new(ErrorCode::BindingForeign, path.clone()).got(&declared.name));
-            }
             let found = hex_floats(&module.text);
             if !found.is_empty() {
-                problems.push(Error::new(ErrorCode::ShaderLink, path.clone()).got(found));
-            }
-            for imported in imports(&module.text) {
-                if !self.may_import(module, first, &imported, fills) {
-                    let refused = Error::new(ErrorCode::ImportForeign, path.clone());
-                    problems.push(if imported.starts_with("generated::") {
-                        refused.nearest(format!("generated::{first}")).got(imported)
-                    } else {
-                        refused.got(imported)
-                    });
-                }
+                problems.push(Error::new(ErrorCode::ShaderLink, path).got(found));
             }
         }
         problems
     }
 
-    fn may_import(
-        &self,
-        module: &Module,
-        own: &str,
-        imported: &str,
-        fills: &dyn Fn(&'static str, &str) -> bool,
-    ) -> bool {
-        let mut segments = imported.split("::");
-        let first = segments.next().unwrap_or_default();
-        let second = segments.next().unwrap_or_default();
-        match first {
-            "engine" | "face" => true,
-            "place" => module.package == CORE_PACKAGE || fills(module.package, second),
-            "generated" => match second {
-                "pieces" => segments.next() == Some(own),
-                "writes" | "composite" | "passes" | "kinds" | "applied" => true,
-                _ => second == own,
-            },
-            _ => first == own,
-        }
-    }
-
-    pub(crate) fn number(&mut self) -> Vec<(String, String, &'static str, Ty)> {
+    pub(crate) fn number(&mut self) -> Vec<(String, String, Ty)> {
         let mut ordered: Vec<(&'static str, usize, usize)> = Vec::new();
         for (index, module) in self.modules.iter().enumerate() {
             for (at, declared) in module.declared.iter().enumerate() {
@@ -454,10 +356,10 @@ impl Linker {
             };
             let key = (module.path.clone(), declared.name.clone());
             if self.numbers.insert(key.clone(), number).is_none() {
-                listed.push((key.0, key.1, package, declared.ty));
+                listed.push((key.0, key.1, declared.ty));
             }
         }
-        listed.sort_by_key(|(path, name, _, _)| {
+        listed.sort_by_key(|(path, name, _)| {
             self.numbers.get(&(path.clone(), name.clone())).copied()
         });
         self.numbered = true;
@@ -535,8 +437,7 @@ impl Linker {
             None => driver::linked_entry(&main, kept, (prepared, writes), &mut self.parsed)
                 .map_err(|error| failed(&error))?,
         };
-        let text = pieces_read_in_place(&prepared.pieces, linked.text, &linked.functions);
-        let switches = switch_ids(&text);
+        let text = linked.text;
         let mut overrides = Vec::new();
         for (source, names) in self.modules.iter().zip(&prepared.overrides) {
             for (name, other) in names {
@@ -550,7 +451,6 @@ impl Linker {
             module: module.to_owned(),
             text,
             bindings: linked.bindings,
-            switches,
             overrides,
         });
         self.composed.insert(key, Arc::clone(&composed));
@@ -631,33 +531,6 @@ impl Linker {
     pub(crate) fn defines(&self, path: &str, function: &str) -> bool {
         self.module(path)
             .is_some_and(|module| defines_function(&module.text, function))
-    }
-
-    pub(crate) fn provided(&self, path: &str) -> Vec<String> {
-        use wesl::syntax::{GlobalDeclaration, TranslationUnit};
-        let Some(module) = self.module(path) else {
-            return Vec::new();
-        };
-        let Ok(unit) = module.text.parse::<TranslationUnit>() else {
-            return Vec::new();
-        };
-        let mut names: Vec<String> = unit
-            .global_declarations
-            .iter()
-            .filter_map(|declaration| match declaration.node() {
-                GlobalDeclaration::Declaration(item) => Some(item.ident.to_string()),
-                GlobalDeclaration::Struct(item) => Some(item.ident.to_string()),
-                GlobalDeclaration::TypeAlias(item) => Some(item.ident.to_string()),
-                GlobalDeclaration::Void
-                | GlobalDeclaration::Function(_)
-                | GlobalDeclaration::ConstAssert(_)
-                | GlobalDeclaration::Compound(_) => None,
-            })
-            .collect();
-        for import in &unit.imports {
-            imported_names(&import.content, &mut names);
-        }
-        names
     }
 
     pub(crate) fn unused(
@@ -773,52 +646,7 @@ fn prepare(
                     .collect()
             })
             .collect(),
-        pieces: pieces_read(modules),
     })
-}
-
-fn pieces_read(modules: &[Module]) -> Vec<(String, String, String)> {
-    let Ok(arena) = module_path(crate::pieces::PIECES_MODULE) else {
-        return Vec::new();
-    };
-    let arena = driver::mangled(&arena, crate::pieces::PIECES_BINDING);
-    let inner = format!("{}::", crate::pieces::PIECES_MODULE);
-    let mut read = Vec::new();
-    for source in modules {
-        let Some(prefix) = source.path.strip_prefix(&inner) else {
-            continue;
-        };
-        let Ok(path) = module_path(&source.path) else {
-            continue;
-        };
-        let call = format!("{}()", driver::mangled(&path, "piece"));
-        read.push((format!("fn {call}"), call, format!("{arena}.{prefix}")));
-    }
-    read
-}
-
-fn pieces_read_in_place(
-    pieces: &[(String, String, String)],
-    mut text: String,
-    functions: &[String],
-) -> String {
-    for (declaration, call, replacement) in pieces {
-        let named = call
-            .strip_suffix("()")
-            .is_some_and(|name| functions.iter().any(|known| known == name));
-        if !named {
-            continue;
-        }
-        let Some(at) = text.find(declaration.as_str()) else {
-            continue;
-        };
-        let end = text[at..]
-            .find('}')
-            .map_or(text.len(), |close| at + close + 1);
-        text.replace_range(at..end, "");
-        text = text.replace(call.as_str(), replacement);
-    }
-    text
 }
 
 fn numbered_text(numbers: &BTreeMap<(String, String), u32>, module: &Module) -> String {
@@ -861,19 +689,6 @@ fn handed_text(base: Option<&str>, parts: &[Part]) -> String {
         }
     }
     text
-}
-
-fn imported_names(content: &wesl::syntax::ImportContent, names: &mut Vec<String>) {
-    match content {
-        wesl::syntax::ImportContent::Item(item) => {
-            names.push(item.rename.as_ref().unwrap_or(&item.ident).to_string());
-        }
-        wesl::syntax::ImportContent::Collection(imports) => {
-            for import in imports {
-                imported_names(&import.content, names);
-            }
-        }
-    }
 }
 
 fn declares_struct(text: &str, name: &str) -> bool {
@@ -1000,43 +815,6 @@ fn declared_overrides(text: &str) -> Vec<String> {
             (!name.is_empty()).then_some(name)
         })
         .collect()
-}
-
-fn switch_ids(text: &str) -> Vec<u32> {
-    let mut ids = Vec::new();
-    for (at, _) in text.match_indices("@id(") {
-        let digits: String = text[at + 4..]
-            .chars()
-            .take_while(char::is_ascii_digit)
-            .collect();
-        if let Ok(id) = digits.parse::<u32>()
-            && !ids.contains(&id)
-        {
-            ids.push(id);
-        }
-    }
-    ids.sort_unstable();
-    ids
-}
-
-fn imports(text: &str) -> Vec<String> {
-    let mut found = Vec::new();
-    for line in text.lines() {
-        let Some(path) = line.trim_start().strip_prefix("import package::") else {
-            continue;
-        };
-        let path: String = path
-            .chars()
-            .take_while(|character| {
-                character.is_ascii_alphanumeric() || *character == '_' || *character == ':'
-            })
-            .collect();
-        let path = path.trim_end_matches(':').to_owned();
-        if !path.is_empty() && !found.contains(&path) {
-            found.push(path);
-        }
-    }
-    found
 }
 
 pub(crate) fn declarations(text: &str) -> Vec<Declaration> {

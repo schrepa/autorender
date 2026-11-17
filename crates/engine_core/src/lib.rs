@@ -14,13 +14,9 @@ mod clock;
 mod cook;
 mod cull;
 mod cursor;
-mod detail;
 mod drawn;
-mod drawn_areas;
 mod entity_indices;
 mod files;
-mod folds;
-mod frame_timing;
 mod hierarchy;
 mod input;
 mod jobs;
@@ -44,7 +40,6 @@ mod statistics;
 mod ticks;
 mod transform_edits;
 mod views;
-mod why;
 
 pub mod profile {
     pub use engine_profile::{Aggregate, Span, active, counter, now_ms, span, tally, waited};
@@ -52,10 +47,7 @@ pub mod profile {
 
 pub use admission::admit;
 pub use assets::*;
-pub use authoring::{
-    ChangeOperation, ChangeRequest, ComponentChange, ComponentChanged, DrawnForm, ViewForm,
-    core_components,
-};
+pub use authoring::{DrawnForm, ViewForm, core_components};
 pub use background::{Background, Delivers, Landed, Taken};
 pub use bevy_app::App;
 pub use bricks::*;
@@ -63,12 +55,10 @@ pub use clock::*;
 pub use cook::{Cook, CookAsks, CookList, cook};
 pub use cull::{CullPlan, Culling, frustum_bounded, frustum_planes, frustum_sees};
 pub use cursor::*;
-pub use detail::{DetailLevel, ViewDetail, detail_level, detail_wgsl, kept_levels, seen_share};
 pub use drawn::{
     DRAWN_PART, DrawnBatch, DrawnFlags, DrawnRecord, DrawnSettings, DrawnState, DrawnTable,
     PlanState, drawn_wgsl,
 };
-pub use drawn_areas::{DrawnArea, DrawnAreas};
 pub use engine_assets::{
     Aabb, AlphaMode, Asset, AssetBudget, AssetLibrary, Attribute, AttributeFormat, Attributes,
     BASE_COLOR_MAP, ColorSpace, Compare, Cull, DepthBias, EMISSIVE_MAP, FIRST_NAMED_LOCATION,
@@ -78,30 +68,24 @@ pub use engine_assets::{
     UvTransform, Wrap, attributes_wgsl, lod_input,
 };
 pub use engine_place::{
-    AUTHORED_COMPONENTS, AppliedView, AskedView, AuthoredId, Call, Callable, Each, EntityIds,
-    Event, EventDecl, EventPage, Lands, Named, Operation, OperationScene, PendingView,
-    RESERVED_REPLY_KEYS, Raises, ReadEvents, Refusal, Rows, SCENE_SCHEMA, SceneEntity, SchemaIn,
-    authored_component, embedded, entity_named, entity_removed, missing_events, open_parts,
-    open_schema, page_of, rooted, scene_references, schema_of,
+    AUTHORED_COMPONENTS, AuthoredId, Call, Callable, Each, Lands, Named, Operation,
+    OperationScene, RESERVED_REPLY_KEYS, Refusal, Rows, SCENE_SCHEMA, SceneEntity, SchemaIn,
+    authored_component, entity_removed, open_parts, open_schema, scene_references, schema_of,
 };
 pub use engine_place::{
-    Applied, ApplyAt, Ask, Asked, AttachPoint, Awaits, BlendedPass, Board, BudgetUse, Census,
-    Clock, ColorPass, Cursor, DrawKind, Drawn, DrawnBounds, DrawnProjection, Error, ErrorCode,
-    Events, Feed, FeedView, FrameBudget, GeometryHandle, GpuStruct, Hold, InstanceValues, Interest,
-    JobRef, KindCell, KindDecl, KindJoin, KindSkip, Layers, List, MaterialHandle, Mobility, Moment,
-    Mover, MoverId, Node, NodeId, NodeWord, Pace, Pass, PassBit, PassCull, PassEntry, PassMask,
-    PassName, PassPurpose, PassRaster, PassRole, PassViews, PlaceDecl, PositionReach, Progress,
-    Readiness, Request, Requests, Ring, ScenePass, ScenePasses, Settling, Since, Slot, SlotSet,
-    Stamp, StoreId, TargetName, TextureHandle, Ticket, Unsettled, Writes, every, gpu_consts, never,
+    Applied, ApplyAt, Ask, Asked, AttachPoint, Awaits, BlendedPass, Board, Census, Clock,
+    ColorPass, Cursor, DrawKind, Drawn, DrawnBounds, DrawnProjection, Error, ErrorCode, Events,
+    Feed, FeedView, GeometryHandle, GpuStruct, InstanceValues, Interest, JobRef, KindCell,
+    KindDecl, KindJoin, KindSkip, Layers, List, MaterialHandle, Mobility, Moment, Mover, MoverId,
+    Node, NodeId, NodeWord, Pace, Pass, PassBit, PassCull, PassEntry, PassMask, PassName,
+    PassRaster, PassRole, PassViews, PlaceDecl, PositionReach, Progress, Readiness, Request,
+    Requests, Ring, ScenePass, ScenePasses, Settling, Since, Slot, SlotSet, Stamp, StoreId,
+    TargetName, TextureHandle, Ticket, Unsettled, Writes, every, gpu_consts, never,
 };
 pub use engine_place::{
     BitField, BitValue, FrameId, GpuBits, Readable, Readback, decode_bits, gpu_bits,
 };
-pub use engine_place::{
-    Clear, Jitter, OwnedView, OwnedViews, Rect, Target, View, ViewCut, ViewHistory, ViewJitter,
-    ViewLayer,
-};
-pub use engine_registry::SceneNames;
+pub use engine_place::{Clear, Rect, Target, View, ViewCut, ViewHistory, ViewLayer};
 pub use engine_registry::call;
 pub use engine_registry::{FrameFacts, RecordParity, fault_of};
 pub use engine_settings::{
@@ -110,38 +94,32 @@ pub use engine_settings::{
 };
 pub use engine_textures::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
 pub use files::Files;
-pub use folds::FoldOrder;
-pub use frame_timing::{FrameTiming, GpuFrameTime, RenderScale};
 pub use glam;
 pub use hierarchy::*;
 pub use input::*;
 pub use jobs::*;
 pub use mesh_lods::MeshLevels;
-pub use moves::{
-    Applies, Asks, HandOver, MOVER_PART, Moves, Teleport, mover_of, send_ask, take_asks,
-};
+pub use moves::{Applies, Asks, Moves, Teleport, mover_of, send_ask, take_asks};
 pub use presentation::*;
 pub use provided::*;
 pub use records::*;
 pub use refusals::{Refusals, Refused};
 pub use render_stats::{DrawReports, KindRefusal};
-pub use render_stats::{
-    DropReason, DroppedDraws, KindPass, KindPassState, LinkedStats, Names, RenderStats,
-};
+pub use render_stats::{DropReason, DroppedDraws, KindPass, KindPassState, Names, RenderStats};
 pub use scene::*;
 pub use schedules::{RunPace, RunPoint};
-pub use section::{Cut, EventsQuery, Section, Switch};
+pub use section::{Cut, Section, Switch};
 pub use services::{
     Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, Levels, PartDraws, Placed,
-    Placement, Prepared, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneForm, SceneIds,
-    SubScene, SubSceneEntity, WorkClock, scene_component, scene_components,
+    Placement, Prepared, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneForm, SubScene,
+    SubSceneEntity, scene_component, scene_components,
 };
-pub use shared::{FeedSettings, FrameBudgetSettings};
+pub use shared::FeedSettings;
 pub use source::{Entry, Module, ShaderText, Source, Var};
 pub use statistics::{Distribution, median};
 pub use ticks::ScanClock;
 pub(crate) use transform_edits::edit_transform;
-pub use views::{DrawnView, ViewFacts, Views, WholeFrames, main_camera};
+pub use views::{DrawnView, ViewFacts, Views, main_camera};
 
 #[doc(hidden)]
 pub mod textures {
@@ -177,38 +155,25 @@ use bevy_ecs::system::ResMut;
 use bevy_ecs::world::World;
 use clock::{Advanced, FixedClock, Interval};
 use engine_registry::{
-    BRICK_STATE_EVENT, BrickChangeRow, BrickHooks, EventEntry, GateDriver, JobList, JobListed,
-    MembersOf, OperationEntry, Registry, RegistryBuilder, brick_changes,
+    BrickHooks, GateDriver, JobList, JobListed, MembersOf, OperationEntry, Registry,
+    RegistryBuilder,
 };
-use schedules::{
-    FixedMove, FixedPostSimulation, FixedPreSimulation, FixedSimulation, FrameStart, Presentation,
-    TransformPropagation, ViewSync, WorldSync,
-};
+use schedules::{FixedSimulation, FrameStart, Presentation, TransformPropagation};
 
 static CORE_PLACES: &[PlaceDecl] = &[
     PlaceDecl::list::<SceneComponents>(),
-    PlaceDecl::list::<CursorRequests>(),
-    PlaceDecl::list::<Contexts>(),
-    PlaceDecl::list::<Verbs>(),
-    PlaceDecl::list::<WholeFrames>(),
     PlaceDecl::list::<Pause>(),
     PlaceDecl::list::<CookList>(),
     PlaceDecl::list::<TextureJobs>(),
-    PlaceDecl::ledger::<FrameBudget>("frame_budget"),
     PlaceDecl::ledger::<Readiness>("readiness"),
     PlaceDecl::ledger::<AssetLibrary>("asset_library"),
     PlaceDecl::ledger::<RecordExchange>("record_exchange"),
     PlaceDecl::ledger::<Refusals>("refusals"),
     PlaceDecl::ledger::<Files>("files"),
-    PlaceDecl::ledger::<DrawnAreas>("drawn_areas"),
     PlaceDecl::component::<Drawn>("drawn"),
-    PlaceDecl::component::<OwnedViews>("owned_views"),
     PlaceDecl::ask::<Teleport>(),
-    PlaceDecl::ask::<HandOver>(),
     PlaceDecl::ask::<ViewCut>(),
     PlaceDecl::component::<View>("view"),
-    PlaceDecl::slot::<Jitter>(),
-    PlaceDecl::slot::<RenderScale>(),
     PlaceDecl::component::<Camera>("camera"),
 ];
 
@@ -229,7 +194,6 @@ pub struct Engine {
     interval: Interval,
     gates: Option<GateDriver>,
     facts: Option<FrameFacts>,
-    spare_ms: f64,
     finalized: bool,
     board: Board,
 }
@@ -276,28 +240,12 @@ fn has_systems(world: &World, label: impl ScheduleLabel) -> bool {
 fn core_entries(registry: &mut RegistryBuilder) {
     registry.core_settings(bricks::settings_entry::<Detail>());
     registry.core_settings(bricks::settings_entry::<FeedSettings>());
-    registry.core_settings(bricks::settings_entry::<FrameBudgetSettings>());
     registry.core_settings(bricks::settings_entry::<DrawnSettings>());
     registry.core_settings(bricks::settings_entry::<Culling>());
     registry.core_settings(bricks::settings_entry::<FrameLimits>());
-    registry.core_settings(bricks::settings_entry::<InputSettings>());
-    registry.core_settings(bricks::settings_entry::<FoldOrder>());
-    registry.core_operation(OperationEntry::of(Call::of::<views::ViewControl>()));
-    registry.core_operation(OperationEntry::of(Call::of::<moves::TeleportControl>()));
-    registry.core_operation(OperationEntry::of(Call::of::<ChangeOperation>()));
-    registry.core_operation(OperationEntry::of(Call::of::<moves::MovesState>()));
-    registry.core_operation(OperationEntry::of(Call::of::<views::ViewsState>()));
-    registry.core_operation(OperationEntry::of(Call::of::<input::Rebind>()));
-    registry.core_operation(OperationEntry::of(Call::of::<why::Why>().observed()));
-    registry.core_operation(OperationEntry::of(Call::of::<EventsQuery>()));
-    registry.core_event(EventEntry::of(EventDecl::custom::<BrickChangeRow>(
-        BRICK_STATE_EVENT,
-        brick_changes,
-    )));
     registry.mover_rule(moves::rule());
     registry.despawn_rule(hierarchy::despawn_owned);
     registry.fill_core::<Asked<Teleport>>();
-    registry.fill_core::<Asked<HandOver>>();
     registry.fill_core::<Asked<ViewCut>>();
     registry.writers_first::<Pause>();
     registry.writers_first::<TimeScale>();
@@ -373,17 +321,14 @@ impl Engine {
                 tick: 0,
             })
             .init_resource::<FrameTime>()
-            .init_resource::<FrameTiming>()
             .init_resource::<Pause>()
             .init_resource::<TimeScale>()
             .init_resource::<FrameLimits>()
             .init_resource::<Readiness>()
             .init_resource::<Refusals>()
-            .init_resource::<FrameBudget>()
             .init_resource::<Views>()
             .init_resource::<Detail>()
             .init_resource::<FeedSettings>()
-            .init_resource::<FrameBudgetSettings>()
             .init_resource::<DrawnSettings>()
             .init_resource::<Culling>()
             .init_resource::<CullPlan>()
@@ -394,16 +339,10 @@ impl Engine {
             .init_resource::<Files>()
             .init_resource::<RecordExchange>()
             .insert_resource(DeviceLimits::without_device(cores))
-            .init_resource::<WorkClock>()
             .init_resource::<PartDraws>()
             .init_resource::<MeshLevels>()
-            .init_resource::<Input>()
             .init_resource::<Devices>()
-            .init_resource::<Contexts>()
-            .init_resource::<InputSettings>()
-            .init_resource::<FoldOrder>()
-            .init_resource::<CursorRequests>()
-            .init_resource::<WholeFrames>()
+            .init_resource::<CursorMode>()
             .init_resource::<ProvidedAssets>()
             .init_resource::<PresentationState>()
             .init_resource::<DrawnPoses>()
@@ -411,7 +350,6 @@ impl Engine {
             .init_resource::<moves::Key>()
             .init_resource::<moves::MovingKinds>()
             .init_resource::<Asked<Teleport>>()
-            .init_resource::<Asked<HandOver>>()
             .init_resource::<Asked<ViewCut>>()
             .insert_resource(TransformNodeLimit(config.max_transform_nodes))
             .init_resource::<GlobalTransforms>()
@@ -424,7 +362,6 @@ impl Engine {
             interval: Interval::Fresh,
             gates: None,
             facts: None,
-            spare_ms: 0.0,
             finalized: false,
             board,
         }
@@ -458,7 +395,7 @@ impl Engine {
         let world = self.app.world_mut();
         world.insert_resource(JobListed::of(&jobs));
         world.resource_mut::<JobExchange>().set_list(jobs);
-        let labels: [InternedScheduleLabel; 8] = Schedule::ALL.map(Schedule::label);
+        let labels: [InternedScheduleLabel; 3] = Schedule::ALL.map(Schedule::label);
         let mut gates = registry.install(world, &labels);
         for default in list.defaults() {
             default(world);
@@ -472,7 +409,6 @@ impl Engine {
             .map(|members| members.names_twice(|kind| kind.key()))
             .unwrap_or_default();
         twice.extend(authoring::keys_taken(world));
-        twice.extend(input::install(world));
         let registrars: Vec<fn(&mut World) -> ComponentId> = world
             .get_resource::<MembersOf<SceneComponents>>()
             .map(|members| members.all().iter().map(ComponentKind::registrar).collect())
@@ -558,10 +494,6 @@ impl Engine {
             .world()
             .get_resource::<Registry>()
             .map_or(&[], Registry::notices)
-    }
-
-    pub fn budget(&self) -> &FrameBudget {
-        self.app.world().resource::<FrameBudget>()
     }
 
     pub fn set_compiling(&mut self, compiling: u32) {
@@ -705,14 +637,6 @@ impl Engine {
         }
     }
 
-    pub fn set_spare_time(&mut self, milliseconds: f64) {
-        self.spare_ms = if milliseconds.is_finite() {
-            milliseconds.max(0.0)
-        } else {
-            0.0
-        };
-    }
-
     pub fn start_frame(&mut self) {
         self.scoped(|engine| {
             engine.finalize();
@@ -780,13 +704,9 @@ impl Engine {
         for _ in 0..advanced.ticks {
             self.run_fixed_tick();
         }
-        if self.app.world().resource::<Pause>().paused() {
-            modify(self.app.world_mut(), Input::drop_tick_edges);
-        }
         records::exchange(self.app.world_mut());
         files::read_files(self.app.world_mut());
         jobs::exchange_orders(self.app.world_mut());
-        modify(self.app.world_mut(), Input::begin_frame);
         presentation::present(self.app.world_mut(), presented);
         {
             let _profile = engine_profile::span("ecs", "Presentation");
@@ -800,43 +720,19 @@ impl Engine {
     fn run_fixed_tick(&mut self) {
         let _profile = engine_profile::span("cpu", "fixed_tick");
         let step = self.clock.step_seconds();
-        let mut tick = 0;
         modify(self.app.world_mut(), |time: &mut FixedTime| {
             time.elapsed_seconds += step;
             time.tick = time.tick.saturating_add(1);
-            tick = time.tick;
         });
-        modify(self.app.world_mut(), |input: &mut Input| {
-            input.begin_tick(tick);
-        });
-        if has_systems(self.app.world(), FixedPreSimulation) {
-            {
-                let _profile = engine_profile::span("ecs", "FixedPreSimulation");
-                self.app.world_mut().run_schedule(FixedPreSimulation);
-            }
-            self.refresh_transforms();
-        }
-        if has_systems(self.app.world(), FixedMove) {
-            let _profile = engine_profile::span("ecs", "FixedMove");
-            self.app.world_mut().run_schedule(FixedMove);
-        }
         {
             let _profile = engine_profile::span("ecs", "FixedSimulation");
             self.app.world_mut().run_schedule(FixedSimulation);
         }
         self.refresh_transforms();
-        if has_systems(self.app.world(), FixedPostSimulation) {
-            {
-                let _profile = engine_profile::span("ecs", "FixedPostSimulation");
-                self.app.world_mut().run_schedule(FixedPostSimulation);
-            }
-            self.refresh_transforms();
-        }
         if moves::end_tick(self.app.world_mut()) {
             self.refresh_transforms();
         }
         presentation::capture(self.app.world_mut());
-        modify(self.app.world_mut(), Input::hide_edges);
     }
 
     pub fn reset_clock(&mut self) {
@@ -844,7 +740,6 @@ impl Engine {
         self.interval = self.interval.next(None).0;
         let world = self.app.world_mut();
         presentation::fresh_all(world);
-        modify(world, Input::drop_tick_edges);
         modify(world, |time: &mut FrameTime| {
             time.ticks = 0;
             time.seconds = 0.0;
@@ -870,7 +765,6 @@ impl Engine {
             presentation::gather(engine.app.world_mut());
             engine.sync_view();
             shared::settle_readiness(engine.app.world_mut(), &engine.board);
-            modify(engine.app.world_mut(), Input::hide_edges);
         });
         Ok(RenderFrame {
             world: self.app.world(),
@@ -879,13 +773,11 @@ impl Engine {
 
     fn sync_world(&mut self) {
         let _profile = engine_profile::span("ecs", "WorldSync");
-        let spare_ms = std::mem::take(&mut self.spare_ms);
-        shared::start_frame(self.app.world_mut(), spare_ms);
+        shared::start_frame(self.app.world_mut());
         records::exchange(self.app.world_mut());
         files::read_files(self.app.world_mut());
         jobs::exchange_orders(self.app.world_mut());
         mesh_lods::settle(self.app.world_mut());
-        self.app.world_mut().run_schedule(WorldSync);
     }
 
     #[doc(hidden)]
@@ -905,8 +797,6 @@ impl Engine {
         views::settle(world, facts);
         assets::settle_assets(world);
         cull::settle(world);
-        world.run_schedule(ViewSync);
-        views::settle_owned(world);
         assets::settle_assets(world);
         cull::settle(world);
     }

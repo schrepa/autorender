@@ -30,7 +30,6 @@ pub(crate) enum Bound {
 pub(crate) enum ViewTarget {
     Scene,
     Depth,
-    Output(u32),
 }
 
 impl ViewTarget {
@@ -105,7 +104,6 @@ pub(crate) struct PassDecl {
     pub(crate) views: PassViews,
     pub(crate) after: Vec<u32>,
     pub(crate) colors: Vec<(u32, Access)>,
-    pub(crate) written: Vec<u32>,
     pub(crate) targets: Vec<ViewTarget>,
     pub(crate) depths: Vec<(u32, Access)>,
     pub(crate) clears: Vec<(u32, Clear)>,
@@ -171,7 +169,7 @@ impl PassDecl {
     }
 
     pub(crate) fn per_view(&self) -> bool {
-        self.views != PassViews::Owned && (self.layer.is_some() || crate::shared::composites(self))
+        self.layer.is_some() || crate::shared::composites(self)
     }
 }
 
@@ -217,9 +215,6 @@ pub(crate) struct PartInfo {
     pub(crate) ty: TypeId,
     pub(crate) package: &'static str,
     pub(crate) name: &'static str,
-    pub(crate) lazy: bool,
-    pub(crate) turns_on_in_play: bool,
-    pub(crate) labels: &'static [&'static str],
     pub(crate) memory: &'static [&'static str],
     pub(crate) owner: &'static str,
     pub(crate) profile: u16,
@@ -286,7 +281,6 @@ impl Declared {
 pub(crate) struct Reinstall {
     pub(crate) install: crate::registration::InstallFn,
     pub(crate) package: &'static str,
-    pub(crate) fills: Vec<TypeId>,
     pub(crate) from: Counts,
     pub(crate) to: Counts,
 }
@@ -294,17 +288,11 @@ pub(crate) struct Reinstall {
 pub(crate) struct InstallCore {
     pub(crate) part: u32,
     pub(crate) package: &'static str,
-    pub(crate) fills: Vec<TypeId>,
     pub(crate) declared: Declared,
     pub(crate) draws: Vec<KindMember>,
     pub(crate) passes: engine_core::ScenePasses,
-    pub(crate) outputs: Vec<crate::machine::OutputDecl>,
     pub(crate) linker: Linker,
     pub(crate) problems: Vec<Error>,
-}
-
-fn core_entry(entry: Entry) -> bool {
-    std::ptr::eq(entry.module().source(), crate::shared::core_source())
 }
 
 impl InstallCore {
@@ -312,11 +300,9 @@ impl InstallCore {
         Self {
             part: 0,
             package: "",
-            fills: Vec::new(),
             declared: Declared::default(),
             draws: Vec::new(),
             passes: engine_core::ScenePasses::default(),
-            outputs: Vec::new(),
             linker,
             problems: Vec::new(),
         }
@@ -399,7 +385,6 @@ impl InstallCore {
 
     pub(crate) fn frame(&mut self, var: Var, bound: Bound) -> Result<(), Error> {
         let path = self.path(&format!("frame.{}", var.name()));
-        self.owns(var.module().source().package(), &path)?;
         self.linker.add_source(var.module().source());
         match self.linker.declared(var) {
             Some(declared) if declared.group == 0 => {}
@@ -418,13 +403,6 @@ impl InstallCore {
         Ok(())
     }
 
-    fn owns(&self, package: &str, path: &str) -> Result<(), Error> {
-        if package == self.package {
-            return Ok(());
-        }
-        Err(Error::new(ErrorCode::ForeignAccess, path.to_owned()).got(package))
-    }
-
     pub(crate) fn pass(&mut self, name: &'static str, work: Work) -> u32 {
         self.declared.passes.push(PassDecl {
             name,
@@ -437,7 +415,6 @@ impl InstallCore {
             views: PassViews::Every,
             after: Vec::new(),
             colors: Vec::new(),
-            written: Vec::new(),
             depths: Vec::new(),
             clears: Vec::new(),
             targets: Vec::new(),
@@ -524,16 +501,12 @@ impl InstallCore {
             speedup_only: false,
         };
         for entry in decl.entries() {
-            if !core_entry(entry) {
-                self.owns(entry.module().source().package(), &path)?;
-            }
             self.linker.add_source(entry.module().source());
             if !self.linker.has_entry(entry) {
                 return Err(Error::new(ErrorCode::UnknownModule, path).got(entry.name()));
             }
         }
         for (var, bound) in &decl.bound {
-            self.owns(var.module().source().package(), &path)?;
             match self.linker.declared(*var) {
                 Some(declared) if declared.group > 0 => {}
                 Some(_) | None => {

@@ -40,15 +40,11 @@ pub fn builtins() -> Value {
         "NodeWord": schemars::schema_for!(engine_core::NodeWord),
         "PresentationState": schemars::schema_for!(engine_core::PresentationState),
         "Readiness": schemars::schema_for!(engine_core::Readiness),
-        "FrameBudget": schemars::schema_for!(engine_core::FrameBudget),
         "Records": schemars::schema_for!(engine_core::Records),
         "MeshLevels": schemars::schema_for!(engine_core::MeshLevels),
         "Hierarchy": schemars::schema_for!(views::HierarchyView),
         "DrawnMesh": schemars::schema_for!(views::DrawnMeshView),
-        "Input": schemars::schema_for!(engine_core::Input),
         "Devices": schemars::schema_for!(engine_core::Devices),
-        "Contexts": schemars::schema_for!(engine_core::Contexts),
-        "CursorRequests": schemars::schema_for!(engine_core::CursorRequests),
         "Jobs": schemars::schema_for!(views::JobsView),
     })
 }
@@ -115,17 +111,7 @@ pub fn calls(world: &World) -> Result<Value, String> {
             })
         })
         .collect();
-    let events: Vec<Value> = registry
-        .events()
-        .map(|event| {
-            json!({
-                "name": event.name,
-                "brick": event.brick,
-                "row": event.row_schema(),
-            })
-        })
-        .collect();
-    Ok(json!({ "calls": calls, "events": events, "run_points": run_points() }))
+    Ok(json!({ "calls": calls, "run_points": run_points() }))
 }
 
 fn run_points() -> Vec<engine_core::RunPoint> {
@@ -174,21 +160,6 @@ fn declared_schemas(
                 closed(&what, &schema, problems);
                 scene_reached(&what, &schema, scene, problems);
             }
-        }
-    }
-    for event in registry.events() {
-        let row = event.row_schema();
-        if engine_core::open_schema(&row) {
-            problems.push(format!(
-                "event {} ({}) declares no row schema: derive JsonSchema on its row type",
-                event.name, event.brick
-            ));
-        } else {
-            closed(
-                &format!("event {} ({}) row", event.name, event.brick),
-                &row,
-                problems,
-            );
         }
     }
 }
@@ -276,7 +247,6 @@ pub fn game(world: &World) -> Result<Vec<(&'static str, String)>, String> {
         "queries": queries,
         "controls": controls,
         "bricks": registry.names().collect::<Vec<_>>(),
-        "events": registry.events().map(|event| event.name).collect::<Vec<_>>(),
         "lands": registry
             .operations()
             .map(|operation| (operation.name, operation.lands.name()))
@@ -677,7 +647,6 @@ const DOCUMENT: &[(&str, &str)] = &[
     ("revision", "structure"),
     ("entities", "structure"),
     ("prefabs", "structure"),
-    ("looks", "structure"),
     ("environment", "Environment"),
     ("meshes", "DrawnMesh.mesh"),
     ("materials", "DrawnMesh.material"),

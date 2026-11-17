@@ -114,6 +114,7 @@ impl Worker {
         }
     }
 
+    #[must_use]
     pub fn asking(mut self) -> Self {
         self.shares.asking = true;
         self

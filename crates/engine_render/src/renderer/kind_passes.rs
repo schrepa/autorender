@@ -220,10 +220,6 @@ fn draw_reports(run: &Run, listed: &[KindPass]) -> DrawReports {
             brick: kind_brick(run, refused.kind),
             error: refused.error.clone(),
         })
-        .chain(run.machine.over_limit.iter().map(|(part, error)| KindRefusal {
-            brick: brick_of(run, *part),
-            error: error.clone(),
-        }))
         .collect();
     DrawReports {
         kinds,

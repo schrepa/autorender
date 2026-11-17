@@ -10,8 +10,8 @@ export function parseJson<T>(json: Json<T>): T {
 
 export interface Runtime {
   frame(timestamp: number, width: number, height: number): void;
-  key(code: string, down: boolean): boolean;
-  mouse_button(button: number, down: boolean): boolean;
+  key(code: string, down: boolean): void;
+  mouse_button(button: number, down: boolean): void;
   motion(dx: number, dy: number): void;
   pointer(x: number, y: number): void;
   pointer_left(): void;

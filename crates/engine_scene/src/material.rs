@@ -336,7 +336,6 @@ impl SceneMaterial {
             values: (!material.values().is_empty())
                 .then(|| material.values().iter().cloned().collect()),
             lighting: Some(match material.lighting() {
-                LightingModel::Lit => "lit".to_owned(),
                 LightingModel::Unlit => "unlit".to_owned(),
                 LightingModel::Named(name) => name.clone(),
             }),
@@ -487,7 +486,6 @@ impl SceneMaterial {
         }
         if let Some(lighting) = &self.lighting {
             material = material.with_lighting(match lighting.as_str() {
-                "lit" => LightingModel::Lit,
                 "unlit" => LightingModel::Unlit,
                 named => LightingModel::Named(named.to_owned()),
             });

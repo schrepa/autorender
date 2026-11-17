@@ -121,13 +121,6 @@ pub fn entity_removed(id: &str, path: &str) -> Error {
         .got(id)
 }
 
-pub fn entity_named(world: &World, id: &str, path: &str) -> Result<Entity, Error> {
-    match world.get_resource::<OperationScene>() {
-        Some(scene) => scene.named_in(world, id, path),
-        None => Err(Error::new(ErrorCode::UnknownEntity, path).got(id)),
-    }
-}
-
 #[derive(SystemParam)]
 pub struct Named<'w, 's> {
     scene: Option<Res<'w, OperationScene>>,

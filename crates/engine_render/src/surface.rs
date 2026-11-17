@@ -17,7 +17,6 @@ pub const MAPPED_MODULE: &str = "engine::mapped";
 pub const STANDARD_MODULE: &str = "engine::standard";
 pub const RECORD: &str = "material_record";
 pub const LIGHTING_ENTRY: &str = "lit";
-pub const LIGHTED_ENTRY: &str = "lighted";
 pub const PREPARE_ENTRY: &str = "prepare";
 pub const DERIVE_ENTRY: &str = "derive";
 pub const MASK_MIP_SCALE: f32 = 0.25;
@@ -34,8 +33,7 @@ pub enum Alpha {
 #[gpu_bits]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Lighting {
-    Lit = 0,
-    Unlit = 1,
+    Unlit = 0,
 }
 
 #[gpu_bits]
@@ -221,14 +219,12 @@ pub struct LightingModule {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ModelForm {
     Shades,
-    Adjusts,
 }
 
 impl ModelForm {
     pub(crate) const fn entry(self) -> &'static str {
         match self {
             Self::Shades => LIGHTING_ENTRY,
-            Self::Adjusts => LIGHTED_ENTRY,
         }
     }
 }
@@ -563,9 +559,7 @@ impl MaterialLayout {
 
     fn lay_models(&mut self, models: &[(LightingModule, String)], problems: &mut Vec<Error>) {
         for (declared, path) in models {
-            let core = [Lighting::Lit, Lighting::Unlit]
-                .iter()
-                .any(|model| snake(model) == declared.name);
+            let core = snake(&Lighting::Unlit) == declared.name;
             if core || self.models.iter().any(|(name, ..)| *name == declared.name) {
                 problems.push(wrong_name(
                     format!("$.lighting_models.{}", declared.name),
@@ -657,13 +651,12 @@ impl MaterialLayout {
 
     pub(crate) fn model(&self, lighting: &LightingModel) -> Option<u32> {
         match lighting {
-            LightingModel::Lit => Some(Lighting::Lit.bits()),
             LightingModel::Unlit => Some(Lighting::Unlit.bits()),
             LightingModel::Named(name) => self
                 .models
                 .iter()
                 .position(|(known, ..)| known == name)
-                .map(|at| at as u32 + 2),
+                .map(|at| at as u32 + 1),
         }
     }
 
@@ -697,7 +690,6 @@ impl MaterialLayout {
         }
         source.push_str(<DrawState as GpuBits>::WGSL);
         source.push_str(<Alpha as BitValue>::WGSL);
-        source.push_str(<Lighting as BitValue>::WGSL);
         let _ = writeln!(
             source,
             "const MASK_MIP_SCALE: f32 = {:?};",
@@ -761,42 +753,20 @@ impl MaterialLayout {
     }
 
     fn model_functions(&self, imports: &mut String, body: &mut String) {
-        let _ = writeln!(imports, "import package::face::lit::{LIGHTING_ENTRY};");
         body.push_str(
             "\nfn shade(point: SurfacePoint, pixel: vec2<f32>) -> Shaded {\n    var shaded = modeled(point, pixel);\n    shaded.opacity = point.opacity;\n    return shaded;\n}\n",
         );
-        body.push_str(
-            "\nfn modeled(point: SurfacePoint, pixel: vec2<f32>) -> Shaded {\n    if point.lighting == LIGHTING_UNLIT {\n        return unlit(point);\n    }\n",
-        );
+        body.push_str("\nfn modeled(point: SurfacePoint, pixel: vec2<f32>) -> Shaded {\n");
         for (index, (_, path, form)) in self.models.iter().enumerate() {
-            let id = index + 2;
+            let id = index + 1;
             let entry = form.entry();
             let _ = writeln!(imports, "import package::{path}::{entry} as model_{id};");
-            if *form == ModelForm::Shades {
-                let _ = writeln!(
-                    body,
-                    "    if point.lighting == {id}u {{\n        return model_{id}(point, pixel);\n    }}"
-                );
-            }
-        }
-        let adjusts = self
-            .models
-            .iter()
-            .enumerate()
-            .filter(|(_, (.., form))| *form == ModelForm::Adjusts);
-        let mut lighted = "point";
-        for (index, _) in adjusts {
-            let id = index + 2;
-            if lighted == "point" {
-                body.push_str("    var lighted = point;\n");
-                lighted = "lighted";
-            }
             let _ = writeln!(
                 body,
-                "    if point.lighting == {id}u {{\n        lighted = model_{id}(point);\n    }}"
+                "    if point.lighting == {id}u {{\n        return model_{id}(point, pixel);\n    }}"
             );
         }
-        let _ = writeln!(body, "    return {LIGHTING_ENTRY}({lighted}, pixel);\n}}");
+        body.push_str("    return unlit(point);\n}\n");
     }
 
     pub(crate) fn slots_source(&self, full: bool) -> String {
@@ -894,7 +864,7 @@ impl MaterialLayout {
         if full {
             self.model_functions(&mut imports, &mut body);
         }
-        let mut used = vec!["material_module".to_owned(), "LIGHTING_UNLIT".to_owned()];
+        let mut used = vec!["material_module".to_owned()];
         used.extend(
             self.slot_names()
                 .map(|name| format!("SLOT_{}", upper(name))),
@@ -958,7 +928,7 @@ impl MaterialLayout {
                 Error::new(ErrorCode::UnknownVariable, format!("{path}.lighting"))
                     .got(format!("{:?}", material.lighting())),
             );
-            Lighting::Lit.bits()
+            Lighting::Unlit.bits()
         });
         words[8] = model;
         words[9] = alpha.bits();
@@ -1075,7 +1045,6 @@ fn draw_of(state: engine_core::RenderState) -> DrawState {
 
 fn snake(model: &Lighting) -> &'static str {
     match model {
-        Lighting::Lit => "lit",
         Lighting::Unlit => "unlit",
     }
 }

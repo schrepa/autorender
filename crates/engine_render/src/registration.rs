@@ -18,9 +18,6 @@ pub(crate) type InstallFn = fn(&mut World, &mut InstallCore) -> Result<Box<dyn I
 pub(crate) struct PartRecord {
     pub(crate) part: TypeId,
     pub(crate) name: &'static str,
-    pub(crate) lazy: bool,
-    pub(crate) turns_on_in_play: bool,
-    pub(crate) labels: &'static [&'static str],
     pub(crate) memory: &'static [&'static str],
     pub(crate) scope: Scope,
     pub(crate) install: InstallFn,
@@ -35,9 +32,6 @@ impl PartRecord {
             } else {
                 P::NAME
             },
-            lazy: P::LAZY,
-            turns_on_in_play: P::TURNS_ON_IN_PLAY,
-            labels: P::LABELS,
             memory: P::MEMORY,
             scope,
             install: install::<P>,
@@ -49,12 +43,6 @@ pub(crate) struct Generated(pub(crate) &'static [&'static str]);
 
 pub(crate) struct PassScope {
     pub(crate) name: &'static str,
-    pub(crate) scope: Scope,
-}
-
-pub(crate) struct Applied {
-    pub(crate) pass: engine_core::PassEntry,
-    pub(crate) module: engine_core::Module,
     pub(crate) scope: Scope,
 }
 
@@ -78,7 +66,7 @@ impl KindDraw {
                 move |part: &dyn Any, scene: &SceneDraw, raw: &mut RawDraw<'_>| match part
                     .downcast_ref::<P>()
                 {
-                    Some(part) => draw(part, scene, &mut Draw::retyped(raw, scene.mirrored)),
+                    Some(part) => draw(part, scene, &mut Draw::retyped(raw)),
                     None => 0,
                 },
             ),
@@ -94,11 +82,9 @@ pub(crate) struct KindMember {
 }
 
 impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
-    pub(crate) fn retyped<'r>(raw: &'r mut RawDraw<'_>, mirrored: bool) -> Draw<'r, P, S> {
+    pub(crate) fn retyped<'r>(raw: &'r mut RawDraw<'_>) -> Draw<'r, P, S> {
         Draw {
             raw: raw.reborrow(),
-            view: None,
-            mirrored,
             part: PhantomData,
         }
     }

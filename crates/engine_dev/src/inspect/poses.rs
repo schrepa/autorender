@@ -30,28 +30,18 @@ impl DevTools {
             read: Box::new(node_word_view),
         })
         .expect("descriptor_bounded");
-        let states: [(&str, StateRegister); 9] = [
+        let states: [(&str, StateRegister); 5] = [
             (
                 "PresentationState",
                 Self::register_state::<PresentationState>,
             ),
             ("Readiness", Self::register_state::<engine_core::Readiness>),
-            (
-                "FrameBudget",
-                Self::register_state::<engine_core::FrameBudget>,
-            ),
             ("Records", Self::register_state::<engine_core::Records>),
             (
                 "MeshLevels",
                 Self::register_state::<engine_core::MeshLevels>,
             ),
-            ("Input", Self::register_state::<engine_core::Input>),
             ("Devices", Self::register_state::<engine_core::Devices>),
-            ("Contexts", Self::register_state::<engine_core::Contexts>),
-            (
-                "CursorRequests",
-                Self::register_state::<engine_core::CursorRequests>,
-            ),
         ];
         for (name, register) in states {
             register(self, schemas, name).expect("descriptor_bounded");

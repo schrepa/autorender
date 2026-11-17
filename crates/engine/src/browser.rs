@@ -133,9 +133,10 @@ impl<G: Game> PageHost<G> {
             .map_err(js)? as u32)
     }
 
-    pub fn mouse_button(&mut self, button: u32, down: bool) -> bool {
-        engine_core::MouseButton::of(button)
-            .is_some_and(|button| self.host.mouse_button(button, down))
+    pub fn mouse_button(&mut self, button: u32, down: bool) {
+        if let Some(button) = engine_core::MouseButton::of(button) {
+            self.host.mouse_button(button, down);
+        }
     }
 
     pub fn pad(&mut self, index: u32, buttons: u32, axes: Vec<f32>) {
@@ -264,18 +265,11 @@ impl<G: Game> PageHost<G> {
     pub fn apply_host_settings(&mut self, query: &str) -> Result<(), JsValue> {
         let parameters = web_sys::UrlSearchParams::new_with_str(query)?;
         let mut settings = crate::host::HostSettings::default();
-        for setting in crate::host::SETTINGS {
-            if let Some(value) = parameters.get(setting.name) {
-                settings
-                    .set(setting.name, &value)
-                    .map_err(|error| js(error.within(&format!("?{}", setting.name))))?;
-            }
-        }
         let overlay = crate::host::OVERLAY;
         for entry in parameters.get_all(overlay).iter() {
             let entry = entry.as_string().unwrap_or_default();
             settings
-                .set(overlay, &entry)
+                .set(&entry)
                 .map_err(|error| js(error.within(&format!("?{overlay}"))))?;
         }
         settings.apply(&mut self.host).map_err(js)

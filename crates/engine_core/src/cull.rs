@@ -12,7 +12,6 @@ settings! {
     #[schemars(rename = "SceneCulling")]
     pub struct Culling {
         pub frustum: bool = true => any,
-        pub occlusion: bool = true => any,
         pub subpixel: bool = true => any,
         pub instances: Option<u32> = None => at_least(1),
     }
@@ -27,7 +26,6 @@ impl Culling {
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct CullPlan {
     pub frustum: bool,
-    pub occlusion: bool,
     pub subpixel: bool,
     pub budget: u32,
     pub over_budget: bool,
@@ -71,7 +69,6 @@ pub(crate) fn settle(world: &mut World) {
     let budget = culling.budget();
     let plan = CullPlan {
         frustum: culling.frustum,
-        occlusion: culling.occlusion,
         subpixel: culling.subpixel,
         budget,
         over_budget: drawn > budget as usize,
