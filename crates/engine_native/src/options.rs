@@ -208,15 +208,15 @@ pub fn open_scene<G: Game>(
     match scene {
         StartScene::Empty => {}
         StartScene::Declared { scene, folder } => {
-            let files = SceneLoad::new(scene.text, &kinds).and_then(SceneLoad::finish)?;
-            host.open_scene(scene.text, &files)?;
+            let (document, files) = SceneLoad::new(scene.text, &kinds).and_then(SceneLoad::opened)?;
+            host.open_document(&document, &files)?;
             host.set_file_root(folder);
         }
         StartScene::File(path) => {
             let source = std::fs::read_to_string(path)
                 .map_err(|error| crate::file_error("--scene", path, &error))?;
-            let files = crate::files::scene_files(path, &source, &kinds)?;
-            host.open_scene(&source, &files)?;
+            let (document, files) = crate::files::scene_opened(path, &source, &kinds)?;
+            host.open_document(&document, &files)?;
             host.set_file_root(&folder_of(path));
             #[cfg(feature = "dev")]
             host.watch_source(path);
