@@ -127,7 +127,7 @@ impl SkyMaps {
         (settings, occludes): (&SkyOcclusion, bool),
         (eye, now): (Vec3, f64),
         (changed, quiet, preparing): (bool, bool, bool),
-        draws: &mut Vec<SkyDraw>,
+        (free, draws): (usize, &mut Vec<SkyDraw>),
     ) {
         draws.clear();
         if !occludes {
@@ -152,7 +152,9 @@ impl SkyMaps {
             }
         }
         let reaches = [near * SPAN, far * SPAN];
-        for layer in self.choose(count as usize, eye, reaches, (quiet, preparing)) {
+        let mut chosen = self.choose(count as usize, eye, reaches, (quiet, preparing));
+        chosen.truncate(free);
+        for layer in chosen {
             draws.push(self.redraw(layer, count, (eye, now), reaches));
         }
         self.drawn = draws.len() as u32;

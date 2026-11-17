@@ -64,6 +64,7 @@ pub struct ImpostorRecords {
     pub asked: u32,
     pub refused: u32,
     pub live: u32,
+    pub awaited: u32,
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]

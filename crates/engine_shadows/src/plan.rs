@@ -10,7 +10,7 @@ use engine_core::{
     Settling, Since, Spawner, Switched, Transform, ViewDetail, ViewFacts, Views, mover_of,
 };
 use engine_places_rendering::shadows::{
-    CasterMap, Refresh, Region as MapView, ShadowMaps,
+    CasterMap, Refresh, Region as MapView, SHADOW_REGIONS, ShadowMaps,
 };
 use engine_places_rendering::sky::SkyLight;
 use engine_places_rendering::sun::Sun;
@@ -311,8 +311,9 @@ pub(crate) fn plan_shadows(
         }
     }
     let quiet = readiness.loading.total == 0 && readiness.compiling == 0;
-    plan.levels
-        .plan(live_cameras(&plan.cameras, (&moves, &lenses)), !quiet);
+    let room = live_cameras(&plan.cameras, (&moves, &lenses)).min(SHADOW_REGIONS as usize);
+    plan.levels.plan(room, !quiet);
+    let free = room.saturating_sub(plan.levels.regions.len());
     plan.moving = if changes.moving > 0 { key.moving } else { 0 };
     let occludes = occluding.on();
     let preparing = pause.holds(PauseReason::Preparing);
@@ -320,7 +321,7 @@ pub(crate) fn plan_shadows(
         (&sky, occludes),
         (eye, time.real_elapsed),
         (casters_changed, quiet, preparing),
-        &mut plan.sky_draws,
+        (free, &mut plan.sky_draws),
     );
     crate::regions::views(
         &plan.levels,
