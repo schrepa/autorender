@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
@@ -718,6 +719,81 @@ pub(crate) fn place_blocks(
     }
 }
 
+type Texels = fn(&DrawnWater, usize) -> &[u8];
+
+fn block_rectangles<T>(written: &BTreeMap<u32, T>) -> Vec<(u32, [u32; 2])> {
+    let mut rectangles = Vec::new();
+    let mut ids = written.keys().copied().peekable();
+    while let Some(start) = ids.next() {
+        let mut end = start + 1;
+        while ids
+            .next_if(|&next| next == end && next / PER_LAYER == start / PER_LAYER)
+            .is_some()
+        {
+            end += 1;
+        }
+        let mut at = start;
+        while at < end {
+            let column = at % SIDE;
+            let left = end - at;
+            if column == 0 && left >= SIDE {
+                let rows = left / SIDE;
+                rectangles.push((at, [SIDE, rows]));
+                at += rows * SIDE;
+            } else {
+                let width = left.min(SIDE - column);
+                rectangles.push((at, [width, 1]));
+                at += width;
+            }
+        }
+    }
+    rectangles
+}
+
+fn write_rectangle(
+    cx: &mut Prepare<'_, WaterGpu>,
+    (texture, texel, texels): (Texture<WaterGpu>, u32, Texels),
+    written: &BTreeMap<u32, (&DrawnWater, usize)>,
+    (first, [width, rows]): (u32, [u32; 2]),
+) {
+    let block = |at: u32| {
+        let (drawn, offset) = written[&at];
+        texels(drawn, offset)
+    };
+    let row_bytes = (BLOCK * texel) as usize;
+    let data: Cow<'_, [u8]> = if width * rows == 1 {
+        Cow::Borrowed(block(first))
+    } else {
+        let mut data = Vec::with_capacity((width * rows * BLOCK) as usize * row_bytes);
+        for row in 0..rows {
+            for line in 0..BLOCK as usize {
+                for column in 0..width {
+                    let texels = block(first + row * SIDE + column);
+                    data.extend_from_slice(&texels[line * row_bytes..(line + 1) * row_bytes]);
+                }
+            }
+        }
+        Cow::Owned(data)
+    };
+    let index = first % PER_LAYER;
+    let origin = wgpu::Origin3d {
+        x: index % SIDE * BLOCK,
+        y: index / SIDE * BLOCK,
+        z: first / PER_LAYER,
+    };
+    let layout = wgpu::TexelCopyBufferLayout {
+        offset: 0,
+        bytes_per_row: Some(width * BLOCK * texel),
+        rows_per_image: Some(rows * BLOCK),
+    };
+    let extent = wgpu::Extent3d {
+        width: width * BLOCK,
+        height: rows * BLOCK,
+        depth_or_array_layers: 1,
+    };
+    cx.write_texture(texture, origin, &data, layout, extent);
+}
+
 pub(crate) struct BlocksGpu {
     pub(crate) surface: Texture<WaterGpu>,
     pub(crate) info: Texture<WaterGpu>,
@@ -770,37 +846,15 @@ impl BlocksGpu {
         let refilled = (surface == Allocation::Fresh || info == Allocation::Fresh)
             .then(|| blocks.all_writes());
         self.prepare_wet(blocks, cx);
-        let block = wgpu::Extent3d {
-            width: BLOCK,
-            height: BLOCK,
-            depth_or_array_layers: 1,
-        };
+        let mut written: BTreeMap<u32, (&DrawnWater, usize)> = BTreeMap::new();
         for (at, drawn, offset) in refilled.as_ref().unwrap_or(&blocks.writes) {
-            let index = at % PER_LAYER;
-            let origin = wgpu::Origin3d {
-                x: index % SIDE * BLOCK,
-                y: index / SIDE * BLOCK,
-                z: at / PER_LAYER,
-            };
-            let rows = |texel: u32| wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(BLOCK * texel),
-                rows_per_image: Some(BLOCK),
-            };
-            cx.write_texture(
-                self.surface,
-                origin,
-                drawn.surfaces(*offset),
-                rows(SURFACE_BYTES),
-                block,
-            );
-            cx.write_texture(
-                self.info,
-                origin,
-                drawn.info(*offset),
-                rows(INFO_BYTES),
-                block,
-            );
+            written.insert(*at, (&**drawn, *offset));
+        }
+        for (first, count) in block_rectangles(&written) {
+            let texture = (self.surface, SURFACE_BYTES, DrawnWater::surfaces as Texels);
+            write_rectangle(cx, texture, &written, (first, count));
+            let texture = (self.info, INFO_BYTES, DrawnWater::info as Texels);
+            write_rectangle(cx, texture, &written, (first, count));
         }
         self.prepare_directory(blocks, (ground, terrains), cx);
     }
@@ -836,27 +890,34 @@ impl BlocksGpu {
             }
             return;
         }
+        let mut layers: BTreeMap<u32, (Vec<u32>, Vec<[f32; 2]>)> = BTreeMap::new();
         for &(layer, slot) in &blocks.layer_writes {
             if layer >= ground.layers {
                 continue;
             }
-            let at = (layer as usize * entry * 4) as u64;
-            if let Some(held) = blocks.held(slot) {
-                cx.write(self.directory, at, &held.blocks);
-            } else {
-                let fill = if knows(terrains, slot.0) {
-                    WATER_WAITING
-                } else {
-                    NO_WATER_BLOCK
-                };
-                cx.write(self.directory, at, &vec![fill; entry]);
-            }
+            let directory = match blocks.held(slot) {
+                Some(held) => held.blocks.to_vec(),
+                None if knows(terrains, slot.0) => vec![WATER_WAITING; entry],
+                None => vec![NO_WATER_BLOCK; entry],
+            };
             let heights = ground_tile(ground, slot)
                 .filter(|tile| tile.layer == layer)
                 .map_or_else(
                     || vec![UNKNOWN_HEIGHTS; entry],
                     |tile| blocks.patch_heights(tile),
                 );
+            layers.insert(layer, (directory, heights));
+        }
+        let mut runs = layers.into_iter().peekable();
+        while let Some((first, (mut directory, mut heights))) = runs.next() {
+            let mut next = first + 1;
+            while let Some((_, (more, higher))) = runs.next_if(|(layer, _)| *layer == next) {
+                directory.extend(more);
+                heights.extend(higher);
+                next += 1;
+            }
+            let at = (first as usize * entry * 4) as u64;
+            cx.write(self.directory, at, &directory);
             cx.write(self.heights, 2 * at, &heights);
         }
     }
