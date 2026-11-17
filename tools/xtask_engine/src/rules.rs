@@ -13,6 +13,7 @@ pub const RULES: Rules = Rules {
         wide_structs: &[],
         unsafe_files: &[
             "crates/engine_profile/src/allocator.rs",
+            "crates/engine_profile/src/heap.rs",
             "crates/engine_profiler/src/counters.rs",
             "crates/engine_profiler/src/pix.rs",
             "crates/engine_profiler/src/renderdoc.rs",
