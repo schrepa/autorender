@@ -26,6 +26,7 @@ const ERROR_CELLS: u32 = engine_heightfield::TILE_QUADS / 2;
 const FEWEST_LAYERS: u32 = 16;
 const RIVER_PLANES: u32 = 4;
 const BED_SAMPLES: usize = (LAYER_SIZE * LAYER_SIZE) as usize;
+const RIVER_ROW: usize = LAYER_SIZE as usize;
 
 const _: () = assert!(
     LAYER_SIZE >= 2 * ERROR_CELLS && LAYER_SIZE >> SURFACE_ERROR_MIPS >= 1,
@@ -385,17 +386,21 @@ impl TileAtlas {
             entry,
             tile,
         } = *placing;
-        let mut rivers = RiverMaps::default();
-        if let Some(edges) = &tile.river_edges {
-            rivers.edges = true;
-            write_river(cx, handles.rivers, (layer, 0), edges);
-        }
-        if let Some(beds) = &tile.river_beds {
-            rivers.beds = true;
-            for (plane, bed) in beds.as_chunks::<BED_SAMPLES>().0.iter().take(3).enumerate() {
-                write_river(cx, handles.rivers, (layer, plane as u32 + 1), bed);
-            }
-        }
+        let edges = tile.river_edges.as_deref();
+        let beds = tile.river_beds.as_deref();
+        let rivers = RiverMaps {
+            edges: edges.is_some(),
+            beds: beds.is_some(),
+        };
+        let planes: Vec<&[u16]> = edges
+            .into_iter()
+            .chain(
+                beds.into_iter()
+                    .flat_map(|beds| beds.as_chunks::<BED_SAMPLES>().0.iter().take(3))
+                    .map(|bed| bed.as_slice()),
+            )
+            .collect();
+        write_rivers(cx, handles.rivers, (layer, u32::from(edges.is_none())), &planes);
         let spacing = tile.spacing;
         self.control_jobs.push(ControlJob {
             layer,
@@ -653,27 +658,41 @@ fn write_layer(
     );
 }
 
-fn write_river(
+fn write_rivers(
     cx: &mut Prepare<'_, TerrainGpu>,
     texture: Texture<TerrainGpu>,
-    (layer, plane): (u32, u32),
-    texels: &[u16],
+    (layer, first): (u32, u32),
+    planes: &[&[u16]],
 ) {
+    let joined: Vec<u16>;
+    let texels = match planes {
+        [] => return,
+        [plane] => *plane,
+        _ => {
+            let rows: Vec<&[[u16; RIVER_ROW]]> =
+                planes.iter().map(|plane| plane.as_chunks().0).collect();
+            joined = (0..RIVER_ROW)
+                .flat_map(|row| rows.iter().flat_map(move |plane| plane[row]))
+                .collect();
+            &joined
+        }
+    };
+    let count = planes.len() as u32;
     cx.write_texture(
         texture,
         wgpu::Origin3d {
-            x: plane * LAYER_SIZE,
+            x: first * LAYER_SIZE,
             y: 0,
             z: layer,
         },
         bytemuck::cast_slice(texels),
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(LAYER_SIZE * 2),
+            bytes_per_row: Some(count * LAYER_SIZE * 2),
             rows_per_image: Some(LAYER_SIZE),
         },
         wgpu::Extent3d {
-            width: LAYER_SIZE,
+            width: count * LAYER_SIZE,
             height: LAYER_SIZE,
             depth_or_array_layers: 1,
         },

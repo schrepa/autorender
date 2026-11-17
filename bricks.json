@@ -2158,7 +2158,7 @@
         }
       ],
       "type": "engine_terrain::runtime::brick::TerrainBrick",
-      "version": "f2fca51b0765724206db70d3541130a17489f5845f29246e35db58b5a709fa2b"
+      "version": "8b2c94b5bef42c887979f627c618537348f8d96f3c4c602d5467c086b2577377"
     },
     {
       "dependencies": [
@@ -2430,7 +2430,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "e8a9b6399b149224d5f0558d0af45097544d9afbdcba024a5ac24b838f9e0f58"
+      "version": "866eddc8871d3c57551ff696263f6c2e7aad7435d488ef5b2e24a66c4f5eeafc"
     },
     {
       "dependencies": [
