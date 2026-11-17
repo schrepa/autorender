@@ -20,12 +20,12 @@ use crate::pool::Reach;
 use crate::snapping::widened;
 use crate::far_cover::{CanopyMaps, wanted};
 use crate::gpu::{PLACED, SLACK};
-use crate::groups::{Groups, Kept, Resolved, resolve};
+use crate::groups::{Groups, Kept, Resolved, object_boxes, reboxed, resolve};
 use crate::layouts::{
     CanopyPiece, CullFrame, CullGroup, CullView, DrawArgs, LEVELS, PlacedRecord, PlacedValues,
     PoseData, SlotColor, draw_args,
 };
-use crate::pool::{Pooled, ScatterPool};
+use crate::pool::{PoolKey, Pooled, ScatterPool};
 use crate::settings::{
     CanopySettings, FoliageSettings, PlacedLook, ScatterSettings, ScatterStats,
 };
@@ -45,6 +45,13 @@ const GROUPS_FIRST: u64 = 32;
 pub(crate) struct GroupLists {
     pub(crate) ids: u32,
     pub(crate) count: u32,
+}
+
+#[derive(Default)]
+struct Boxing {
+    fresh: HashMap<PoolKey, Vec<(Vec3, Vec3)>>,
+    reboxed: Vec<bool>,
+    published: Option<u64>,
 }
 
 #[derive(Default)]
@@ -99,6 +106,7 @@ pub(crate) struct ScatterState {
     refilled: bool,
     revisions: Option<((u64, u64), u64)>,
     placing: Vec<Placing>,
+    boxing: Boxing,
 }
 
 impl Default for ScatterState {
@@ -131,6 +139,7 @@ impl Default for ScatterState {
             refilled: false,
             revisions: None,
             placing: Vec::new(),
+            boxing: Boxing::default(),
         }
     }
 }
@@ -203,6 +212,9 @@ pub(crate) fn take_impostors(
         state.groups.take_impostors(&records);
         let before = std::mem::replace(&mut state.impostors, records);
         state.restyled = (before != state.impostors).then(|| card_pixel(state, &before));
+        if state.restyled.is_some() {
+            state.boxing.reboxed = reboxed(&before, &state.impostors);
+        }
     }
     state.impostor_live = held.as_ref().map_or(0, |held| held.live);
     state.impostor_refused = held.as_ref().map_or(0, |held| held.refused);
@@ -288,11 +300,16 @@ fn look_meshes(look: &PlacedLook) -> Vec<GeometryHandle> {
         .collect()
 }
 
+fn same_look(meshes: &[GeometryHandle], look: &PlacedLook) -> bool {
+    meshes
+        .split_first()
+        .is_some_and(|(&mesh, lods)| mesh == look.mesh && lods == look.lods.as_slice())
+}
+
 fn measured<'a>(authored: &'a [Authored], look: &PlacedLook) -> &'a [f32] {
-    let meshes = look_meshes(look);
     authored
         .iter()
-        .find(|held| held.meshes == meshes)
+        .find(|held| same_look(&held.meshes, look))
         .and_then(|held| held.work.ready())
         .map_or(&[], Vec::as_slice)
 }
@@ -306,7 +323,7 @@ fn measure_looks(
         settings
             .looks
             .iter()
-            .any(|look| look_meshes(look) == held.meshes)
+            .any(|look| same_look(&held.meshes, look))
     });
     let mut landed = false;
     for held in authored.iter_mut().filter(|held| held.work.waiting()) {
@@ -314,10 +331,10 @@ fn measure_looks(
         landed |= !held.work.waiting();
     }
     for look in settings.looks.iter().filter(|look| !look.lods.is_empty()) {
-        let meshes = look_meshes(look);
-        if authored.iter().any(|held| held.meshes == meshes) {
+        if authored.iter().any(|held| same_look(&held.meshes, look)) {
             continue;
         }
+        let meshes = look_meshes(look);
         let Some(found) = meshes
             .iter()
             .map(|&handle| library.mesh(handle).map(|mesh| &**mesh))
@@ -519,6 +536,7 @@ pub(crate) fn place_pool(
         * 16;
     state.group_data.first_instance = limits.indirect_first_instance;
     state.pool.settle();
+    state.boxing.fresh.clear();
     let revisions = (library.revision(), residency.revision());
     state.library = revisions.0;
     let placed = tiles.is_changed() && !same_placing(&state.placing, &tiles);
@@ -568,6 +586,10 @@ pub(crate) fn place_pool(
                     state
                         .groups
                         .tile_objects(terrain.terrain, terrain.origin, &tile.placed);
+                if !objects.2.is_empty() {
+                    let boxes = object_boxes((&objects.0, &objects.2), &state.impostors);
+                    state.boxing.fresh.insert((terrain.terrain, tile.key), boxes);
+                }
                 state.pool.insert(
                     (terrain.terrain, tile.key),
                     (Arc::clone(&tile.placed), tile.stamp, terrain.origin),
@@ -664,7 +686,32 @@ fn same_tile(tile: &PooledTile, pooled: &Pooled) -> bool {
     tile.stamp == pooled.stamp && tile.slots == pooled.slots && tile.identity == pooled.identity()
 }
 
-pub(crate) fn publish_tiles(state: Res<ScatterState>, mut placed: ResMut<PlacedTiles>) {
+fn tile_impostors(
+    state: &ScatterState,
+    fresh: &mut HashMap<PoolKey, Vec<(Vec3, Vec3)>>,
+    ((terrain, key), pooled): (PoolKey, &Pooled),
+    kept: Option<Vec<(Vec3, Vec3)>>,
+) -> Vec<(Vec3, Vec3)> {
+    let Some(mut boxes) = kept else {
+        return fresh.remove(&(terrain, key)).unwrap_or_else(|| {
+            let impostors = &state.impostors;
+            state.groups.tile_boxes(terrain, pooled.origin, &pooled.placed, impostors)
+        });
+    };
+    let reboxed = &state.boxing.reboxed;
+    let moved = |group: usize| reboxed.get(group).copied().unwrap_or(true);
+    if state.restyled.is_some() && pooled.groups().any(moved) {
+        state.groups.rebox(
+            (terrain, pooled.origin, &pooled.placed),
+            (&state.impostors, reboxed),
+            &mut boxes,
+        );
+    }
+    boxes
+}
+
+pub(crate) fn publish_tiles(mut state: ResMut<ScatterState>, mut placed: ResMut<PlacedTiles>) {
+    let state = &mut *state;
     let boxes = state
         .impostors
         .iter()
@@ -672,15 +719,20 @@ pub(crate) fn publish_tiles(state: Res<ScatterState>, mut placed: ResMut<PlacedT
     if !placed.groups.iter().copied().eq(boxes.clone()) {
         placed.groups = boxes.collect();
     }
+    let mut fresh = std::mem::take(&mut state.boxing.fresh);
+    let revision = state.pool.revision();
+    let published = state.boxing.published.replace(revision);
+    let state = &*state;
     let stale = state.restyled.is_some() || state.refilled;
     let held = &placed.tiles;
     let mut pool = state.pool.pooled();
     let current = !stale
         && held.len() == pool.len()
-        && pool.all(|(&(terrain, key), pooled)| {
-            held.binary_search_by_key(&(terrain, key), |tile| (tile.terrain, tile.key))
-                .is_ok_and(|at| same_tile(&held[at], pooled))
-        });
+        && (published == Some(revision)
+            || pool.all(|(&(terrain, key), pooled)| {
+                held.binary_search_by_key(&(terrain, key), |tile| (tile.terrain, tile.key))
+                    .is_ok_and(|at| same_tile(&held[at], pooled))
+            }));
     if current {
         return;
     }
@@ -694,7 +746,11 @@ pub(crate) fn publish_tiles(state: Res<ScatterState>, mut placed: ResMut<PlacedT
                 .binary_search_by_key(&(terrain, key), |tile| (tile.terrain, tile.key))
                 .ok()
                 .map(|at| &mut before[at])
-                .filter(|tile| !stale && same_tile(tile, pooled))
+                .filter(|tile| {
+                    !state.refilled
+                        && tile.stamp == pooled.stamp
+                        && tile.identity == pooled.identity()
+                })
                 .map(|tile| std::mem::take(&mut tile.impostors));
             PooledTile {
                 terrain,
@@ -702,14 +758,7 @@ pub(crate) fn publish_tiles(state: Res<ScatterState>, mut placed: ResMut<PlacedT
                 stamp: pooled.stamp,
                 slots: pooled.slots.clone(),
                 identity: pooled.identity(),
-                impostors: kept.unwrap_or_else(|| {
-                    state.groups.tile_boxes(
-                        terrain,
-                        pooled.origin,
-                        &pooled.placed,
-                        &state.impostors,
-                    )
-                }),
+                impostors: tile_impostors(state, &mut fresh, ((terrain, key), pooled), kept),
             }
         }));
 }
