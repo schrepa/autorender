@@ -101,14 +101,18 @@ impl Swell {
 
     pub(crate) fn errors(&self, still: &[u16], water: &TileWater, spacing: f32) -> Arc<[u16]> {
         let cells = ERROR_CELLS as usize;
+        let samples = 2 * cells + 1;
+        let sampled: Vec<f32> = (0..samples * samples)
+            .map(|at| {
+                let (flow, ..) = water.sample_info((at % samples) as i32, (at / samples) as i32);
+                self.calm(flow.length())
+            })
+            .collect();
         let mut calm: Vec<f32> = (0..cells * cells)
             .map(|cell| {
-                let (x, z) = ((2 * (cell % cells)) as i32, (2 * (cell / cells)) as i32);
+                let first = 2 * (cell / cells) * samples + 2 * (cell % cells);
                 (0..9)
-                    .map(|corner| {
-                        let (flow, ..) = water.sample_info(x + corner % 3, z + corner / 3);
-                        self.calm(flow.length())
-                    })
+                    .map(|corner| sampled[first + corner / 3 * samples + corner % 3])
                     .fold(0.0, max)
             })
             .collect();
