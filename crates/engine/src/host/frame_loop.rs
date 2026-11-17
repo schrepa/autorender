@@ -210,11 +210,11 @@ impl FrameLoop {
         if !drawn {
             return Ok((preparing(Picture::Hidden, before), waiting));
         }
-        let sample = Sample::of(&readiness, &jobs);
-        let progressed = uploaded || before.as_ref() != Some(&sample);
-        if !busy && (readiness.worked() || !progressed) {
+        if !busy && readiness.worked() {
             return Ok((preparing(Picture::Shown, None), waiting));
         }
+        let sample = Sample::of(&readiness, &jobs);
+        let progressed = uploaded || before.as_ref() != Some(&sample);
         let phase = if progressed {
             FramePhase::Collecting
         } else {
