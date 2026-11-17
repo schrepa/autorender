@@ -6,7 +6,8 @@ use engine_render::{
 };
 
 use crate::probes::{
-    CAPTURED_ACK, FACES, FaceJob, LOST_ACK, ProbeAcks, ProbeState, ProbeWords, SETS, captured_bytes,
+    CAPTURED_ACK, Captured, FACES, FaceJob, LOST_ACK, ProbeAcks, ProbeState, ProbeWords, SETS,
+    captured_bytes,
 };
 use crate::{ProbeLightPass, ProbePass, SURFACES, shaders};
 
@@ -210,10 +211,18 @@ impl GpuPart for ProbesGpu {
             if ran && drawn == Recorded::StandIn {
                 self.stood_in.extend_from_slice(&taken.slots);
             }
-            cx.deliver::<ProbeAcks>(CAPTURED_ACK, captured_bytes(ran, &taken.slots));
+            let stood_in = taken.slots.iter().any(|slot| self.stood_in.contains(slot));
+            let captured = match (ran, stood_in) {
+                (false, _) => Captured::Missed,
+                (true, true) => Captured::StoodIn,
+                (true, false) if taken.finished => Captured::Finished,
+                (true, false) => Captured::Drawn,
+            };
+            cx.deliver::<ProbeAcks>(CAPTURED_ACK, captured_bytes(captured, &taken.slots));
         }
         if !self.stood_in.is_empty() && cx.warming() == 0 {
-            cx.deliver::<ProbeAcks>(CAPTURED_ACK, captured_bytes(false, &self.stood_in));
+            let missed = captured_bytes(Captured::Missed, &self.stood_in);
+            cx.deliver::<ProbeAcks>(CAPTURED_ACK, missed);
             self.stood_in.clear();
         }
         self.allocate(&state, cx);
@@ -304,6 +313,7 @@ impl ProbesGpu {
             for job in &self.jobs {
                 let target = Attach::Color(self.radiance, Some(job.lit));
                 let Some(mut draw) = cx.view(&target, job.known.face) else {
+                    self.drawn = Recorded::Waiting;
                     continue;
                 };
                 draw.draw(
@@ -320,6 +330,7 @@ impl ProbesGpu {
         let mut drawn = 0;
         for job in self.jobs.iter().filter(|job| job.draws) {
             let Some(mut draw) = cx.view(&Attach::Declared, job.known.face) else {
+                self.drawn = Recorded::Waiting;
                 continue;
             };
             drawn += draw.scene(self);

@@ -1,8 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine_core::{
     Camera, Clear, Cursor, Cut, Detail, DeviceLimits, Events, FrameBudget, GlobalTransforms,
-    Mobility, Mover, Moves, Node, OwnedView, OwnedViews, Pace, PassName, Readable, Readback,
-    Settling, Spawner, StoreId, Transform, ViewLayer, mover_of,
+    Mobility, Mover, Moves, Node, OwnedView, OwnedViews, Pace, PassName, Pause, PauseReason,
+    Readable, Readback, Readiness, Settling, Spawner, StoreId, Transform, ViewLayer, mover_of,
 };
 use engine_math as math;
 use engine_places_rendering::probes::{ProbeCaptures, ProbeFace};
@@ -84,8 +84,39 @@ pub(crate) struct FaceJob {
     pub(crate) draws: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Captured {
+    Missed,
+    Drawn,
+    Finished,
+    StoodIn,
+}
+
+impl Captured {
+    fn of(byte: u8) -> Self {
+        match byte {
+            1 => Self::Drawn,
+            2 => Self::Finished,
+            3 => Self::StoodIn,
+            _ => Self::Missed,
+        }
+    }
+
+    fn byte(self) -> u8 {
+        match self {
+            Self::Missed => 0,
+            Self::Drawn => 1,
+            Self::Finished => 2,
+            Self::StoodIn => 3,
+        }
+    }
+}
+
 enum ProbeAck {
-    Captured { ran: bool, slots: Vec<(usize, u64)> },
+    Captured {
+        captured: Captured,
+        slots: Vec<(usize, u64)>,
+    },
     Lost,
 }
 
@@ -94,9 +125,9 @@ pub(crate) struct ProbeAcks {
     acks: Vec<ProbeAck>,
 }
 
-pub(crate) fn captured_bytes(ran: bool, slots: &[(usize, u64)]) -> Vec<u8> {
+pub(crate) fn captured_bytes(captured: Captured, slots: &[(usize, u64)]) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(1 + slots.len() * SLOT_ACK_BYTES);
-    bytes.push(u8::from(ran));
+    bytes.push(captured.byte());
     for &(slot, key) in slots {
         bytes.extend_from_slice(&(slot as u32).to_le_bytes());
         bytes.extend_from_slice(&key.to_le_bytes());
@@ -110,7 +141,7 @@ impl Readable for ProbeAcks {
             self.acks.push(ProbeAck::Lost);
             return;
         }
-        let Some((&ran, listed)) = read.value.split_first() else {
+        let Some((&captured, listed)) = read.value.split_first() else {
             return;
         };
         let slots = listed
@@ -125,7 +156,7 @@ impl Readable for ProbeAcks {
             })
             .collect();
         self.acks.push(ProbeAck::Captured {
-            ran: ran != 0,
+            captured: Captured::of(captured),
             slots,
         });
     }
@@ -283,6 +314,19 @@ impl ProbeSlots {
         held.capture = held.capture.max(Capture::Recapture);
     }
 
+    fn held(&self, cube: u32) -> Option<(usize, u64)> {
+        let slot = cube.checked_sub(1)? as usize;
+        Some((slot, self.slots.get(slot)?.as_ref()?.probe.key))
+    }
+
+    fn owed(&self, owed: &mut Vec<(usize, u64)>) -> u32 {
+        let held = |slot: usize| self.slots.get(slot).and_then(Option::as_ref);
+        owed.retain(|&(slot, key)| held(slot).is_some_and(|held| held.probe.key == key));
+        owed.iter()
+            .filter(|&&(slot, _)| held(slot).is_some_and(|held| held.capture == Capture::Ready))
+            .count() as u32
+    }
+
     fn capturing(&self) -> Option<(usize, u64)> {
         let sequence = self.capturing?;
         Some((sequence.slot, self.slots[sequence.slot].as_ref()?.probe.key))
@@ -339,10 +383,12 @@ pub(crate) struct ProbeState {
     faces: Vec<ProbeFace>,
     pub(crate) finished: Option<(u32, u32)>,
     pub(crate) taken: Vec<(usize, u64)>,
+    owed: Vec<(usize, u64)>,
     words: Vec<[u32; 4]>,
     words_changed: bool,
     stats: ReflectionProbeStats,
     settling: Settling,
+    reported: u32,
     cameras: Vec<Entity>,
 }
 
@@ -367,10 +413,12 @@ impl Default for ProbeState {
             faces: Vec::new(),
             finished: None,
             taken: Vec::new(),
+            owed: Vec::new(),
             words: Vec::new(),
             words_changed: false,
             stats: ReflectionProbeStats::default(),
             settling: Settling::default(),
+            reported: 0,
             cameras: Vec::new(),
         }
     }
@@ -407,10 +455,21 @@ impl ProbeState {
     fn acknowledge(&mut self, acks: &mut ProbeAcks) {
         for ack in acks.acks.drain(..) {
             match ack {
-                ProbeAck::Captured { ran: true, .. } => {}
-                ProbeAck::Captured { ran: false, slots } => {
+                ProbeAck::Captured {
+                    captured: Captured::Drawn | Captured::StoodIn,
+                    ..
+                } => {}
+                ProbeAck::Captured {
+                    captured: Captured::Finished,
+                    slots,
+                } => self.owed.retain(|held| !slots.contains(held)),
+                ProbeAck::Captured {
+                    captured: Captured::Missed,
+                    slots,
+                } => {
                     for (slot, key) in slots {
                         self.slots.missed(slot, key);
+                        self.owed.retain(|&held| held != (slot, key));
                     }
                 }
                 ProbeAck::Lost => self.maps_lost = true,
@@ -418,7 +477,12 @@ impl ProbeState {
         }
     }
 
-    fn capture(&mut self, probes: &[RenderReflectionProbe], sun: Vec3, budget: &mut FrameBudget) {
+    fn capture(
+        &mut self,
+        probes: &[RenderReflectionProbe],
+        sun: Vec3,
+        mut budget: Option<&mut FrameBudget>,
+    ) {
         let texels = u64::from(self.size) * u64::from(self.size);
         let mut used = [false; FACES];
         while let Some(due) = self.slots.next_face(probes, sun) {
@@ -431,7 +495,9 @@ impl ProbeState {
             } else {
                 lit_texel_bytes()
             };
-            if !budget.spend(BUDGET, texels * texel_bytes) {
+            if let Some(budget) = budget.as_deref_mut()
+                && !budget.spend(BUDGET, texels * texel_bytes)
+            {
                 break;
             }
             used[due.face] = true;
@@ -454,6 +520,7 @@ impl ProbeState {
                 self.taken.push(held);
             }
             if self.slots.face_drawn() {
+                self.owed.extend(self.slots.held(due.cube));
                 self.finished = Some((due.cube, self.set));
                 self.set = (self.set + 1) % SETS;
             }
@@ -462,10 +529,10 @@ impl ProbeState {
 }
 
 pub(crate) fn plan_captures(
-    settings: Res<ReflectionProbeSettings>,
-    limits: Res<DeviceLimits>,
+    (settings, limits): (Res<ReflectionProbeSettings>, Res<DeviceLimits>),
     (sky, sun): (Res<SkyLight>, Res<Sun>),
     (globals, mut budget): (Res<GlobalTransforms>, ResMut<FrameBudget>),
+    (readiness, pause): (Res<Readiness>, Res<Pause>),
     gathered: Res<ProbeList>,
     mut acks: ResMut<ProbeAcks>,
     mut state: ResMut<ProbeState>,
@@ -501,6 +568,9 @@ pub(crate) fn plan_captures(
         least: math::sin_cos(settings.sun_turn.to_radians()).1,
     };
     state.slots.plan(probes, (cubes - 1) as usize, &marks);
+    if marks.lost {
+        state.owed.clear();
+    }
     if let Some(ready) = state.slots.changed_ready() {
         grid_words(&ready, &mut state.words);
         state.words_changed = true;
@@ -515,15 +585,22 @@ pub(crate) fn plan_captures(
     let asked = gathered.cut as u64 + count;
     let counted = |count: u64| count.min(u64::from(u32::MAX)) as u32;
     let probe_cut = Cut::of(counted(asked), counted(kept));
-    if state.views {
-        state.capture(probes, sun, &mut budget);
+    let preparing = pause.holds(PauseReason::Preparing);
+    let quiet = readiness.loading.total == 0
+        && readiness.compiling == 0
+        && readiness.settling <= state.reported;
+    if state.views && !preparing {
+        state.capture(probes, sun, Some(&mut budget));
+    } else if state.views && quiet {
+        state.capture(probes, sun, None);
     }
     let waiting = if state.views {
-        state.slots.unready()
+        state.slots.unready() + state.slots.owed(&mut state.owed)
     } else {
         0
     };
     state.settling.left(waiting);
+    state.reported = waiting;
     state.stats = ReflectionProbeStats {
         ready: state.slots.ready(),
         faces: state.jobs.iter().filter(|job| job.draws).count() as u32,

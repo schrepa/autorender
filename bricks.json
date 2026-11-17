@@ -1540,7 +1540,7 @@
         }
       ],
       "type": "engine_probes::ReflectionProbesBrick",
-      "version": "835c2e666fd487b64d2de7a3f95686dbcaeb3b49919a841cdb1b26efb1ee394a"
+      "version": "6540448010bbc6f0f5bfeedd18aff1efb0495a08815d4a971d86d032ff6787ce"
     },
     {
       "dependencies": [
@@ -4936,7 +4936,8 @@
       "members": [],
       "name": "readiness",
       "readers": [
-        "engine_shadows"
+        "engine_shadows",
+        "engine_probes"
       ],
       "smokes": [],
       "writers": []
