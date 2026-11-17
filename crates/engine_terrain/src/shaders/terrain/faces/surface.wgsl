@@ -164,10 +164,12 @@ fn image_sample(table: u32, u: f32, v: f32, level: u32) -> f32 {
     var columns: array<f32, 4>;
     for (var column = 0; column < 4; column++) {
         let xi = x - 1 + column;
-        columns[column] = wz.x * image_texel(entry, xi, z - 1, packed)
-            + wz.y * image_texel(entry, xi, z, packed)
-            + wz.z * image_texel(entry, xi, z + 1, packed)
-            + wz.w * image_texel(entry, xi, z + 2, packed);
+        var sum = 0.0;
+        for (var row = 0; row < 4; row++) {
+            let part = wz[row] * image_texel(entry, xi, z - 1 + row, packed);
+            sum = select(sum + part, part, row == 0);
+        }
+        columns[column] = sum;
     }
     return wx.x * columns[0] + wx.y * columns[1] + wx.z * columns[2] + wx.w * columns[3];
 }
@@ -277,14 +279,15 @@ fn surface_site(terrain: u32, inputs: SurfaceInputs) -> u32 {
     }
     let show = shown(vec2<f32>(inputs.x, inputs.z));
     let table = section + 8u;
-    let sun = map_value(word(table + 1u), inputs, show);
-    let soil = map_value(word(table + 2u), inputs, show);
-    let exposure = map_value(word(table + 3u), inputs, show);
-    let soft = pmax(soil, pmax(inputs.erosion, 0.0));
+    var maps = vec3<f32>(0.0);
+    for (var kind = 0u; kind < 3u; kind++) {
+        maps[kind] = map_value(word(table + 1u + kind), inputs, show);
+    }
+    let soft = pmax(maps.y, pmax(inputs.erosion, 0.0));
     return site_byte(inputs.wetness, real(section), real(section + 1u))
-        | (site_byte(sun, real(section + 2u), real(section + 3u)) << 8u)
+        | (site_byte(maps.x, real(section + 2u), real(section + 3u)) << 8u)
         | (site_byte(soft, real(section + 4u), real(section + 5u)) << 16u)
-        | (site_byte(exposure, real(section + 6u), real(section + 7u)) << 24u);
+        | (site_byte(maps.z, real(section + 6u), real(section + 7u)) << 24u);
 }
 
 fn path_at(point: vec2<f32>) -> vec2<f32> {
@@ -420,15 +423,14 @@ fn surface_inputs(terrain: u32, ground: SurfaceGround, level: u32, river: vec4<f
         let image_spacing = real(hydrology);
         let u = inputs.x / image_spacing;
         let v = inputs.z / image_spacing;
-        let flow = decode(image_sample(image_table(hydrology, 0u), u, v, level),
-            real(hydrology + 1u), real(hydrology + 2u));
-        let wetness = decode(image_sample(image_table(hydrology, 1u), u, v, level),
-            real(hydrology + 3u), real(hydrology + 4u));
-        let lake = decode(image_sample(image_table(hydrology, 2u), u, v, level),
-            real(hydrology + 5u), real(hydrology + 6u));
-        inputs.flow = flow * show;
-        inputs.wetness = wetness * show;
-        inputs.lake = lake * show;
+        var read = vec3<f32>(0.0);
+        for (var image = 0u; image < 3u; image++) {
+            read[image] = decode(image_sample(image_table(hydrology, image), u, v, level),
+                real(hydrology + 1u + 2u * image), real(hydrology + 2u + 2u * image));
+        }
+        inputs.flow = read.x * show;
+        inputs.wetness = read.y * show;
+        inputs.lake = read.z * show;
         inputs.river = river.x;
         inputs.grain = river.y;
         inputs.power = river.z;
