@@ -119,6 +119,7 @@ impl<G: Game> PageHost<G> {
                 }
             }
         }
+        host.prepare_pipelines();
         Ok(Self { host })
     }
 
