@@ -353,21 +353,29 @@ impl Run {
         let Some(keys) = self.pipelines.listed.take() else {
             return;
         };
-        for key in &keys {
-            let Needed::First(switches) = &key.needed else {
-                continue;
-            };
-            let found = self
-                .machine
-                .pipelines
-                .iter()
-                .position(|built| built.program_key == key.program)
-                .filter(|&at| !self.machine.pipelines[at].decl.speedup_only)
-                .filter(|&at| self.pipeline_reached(at));
-            if let Some(pipeline) = found {
-                let warm = self.listed_warm(pipeline, key, switches.clone());
-                self.make_warm(warm, Asked::Drawn);
-            }
+        let mut first: Vec<(usize, Warm)> = keys
+            .iter()
+            .filter_map(|key| {
+                let Needed::First(switches) = &key.needed else {
+                    return None;
+                };
+                let pipeline = self
+                    .machine
+                    .pipelines
+                    .iter()
+                    .position(|built| built.program_key == key.program)
+                    .filter(|&at| !self.machine.pipelines[at].decl.speedup_only)?;
+                let text = self.machine.pipelines[pipeline]
+                    .stages
+                    .iter()
+                    .map(|stage| stage.composed.text.len())
+                    .sum();
+                Some((text, self.listed_warm(pipeline, key, switches.clone())))
+            })
+            .collect();
+        first.sort_by_key(|&(text, _)| std::cmp::Reverse(text));
+        for (_, warm) in first {
+            self.make_warm(warm, Asked::Drawn);
         }
         self.pipelines.listed = Some(keys);
     }
