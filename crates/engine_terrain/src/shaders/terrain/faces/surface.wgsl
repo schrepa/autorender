@@ -164,10 +164,12 @@ fn image_sample(table: u32, u: f32, v: f32, level: u32) -> f32 {
     var columns: array<f32, 4>;
     for (var column = 0; column < 4; column++) {
         let xi = x - 1 + column;
-        columns[column] = wz.x * image_texel(entry, xi, z - 1, packed)
-            + wz.y * image_texel(entry, xi, z, packed)
-            + wz.z * image_texel(entry, xi, z + 1, packed)
-            + wz.w * image_texel(entry, xi, z + 2, packed);
+        var sum = 0.0;
+        for (var row = 0; row < 4; row++) {
+            let part = wz[row] * image_texel(entry, xi, z - 1 + row, packed);
+            sum = select(sum + part, part, row == 0);
+        }
+        columns[column] = sum;
     }
     return wx.x * columns[0] + wx.y * columns[1] + wx.z * columns[2] + wx.w * columns[3];
 }
@@ -277,14 +279,15 @@ fn surface_site(terrain: u32, inputs: SurfaceInputs) -> u32 {
     }
     let show = shown(vec2<f32>(inputs.x, inputs.z));
     let table = section + 8u;
-    let sun = map_value(word(table + 1u), inputs, show);
-    let soil = map_value(word(table + 2u), inputs, show);
-    let exposure = map_value(word(table + 3u), inputs, show);
-    let soft = pmax(soil, pmax(inputs.erosion, 0.0));
+    var maps = vec3<f32>(0.0);
+    for (var kind = 0u; kind < 3u; kind++) {
+        maps[kind] = map_value(word(table + 1u + kind), inputs, show);
+    }
+    let soft = pmax(maps.y, pmax(inputs.erosion, 0.0));
     return site_byte(inputs.wetness, real(section), real(section + 1u))
-        | (site_byte(sun, real(section + 2u), real(section + 3u)) << 8u)
+        | (site_byte(maps.x, real(section + 2u), real(section + 3u)) << 8u)
         | (site_byte(soft, real(section + 4u), real(section + 5u)) << 16u)
-        | (site_byte(exposure, real(section + 6u), real(section + 7u)) << 24u);
+        | (site_byte(maps.z, real(section + 6u), real(section + 7u)) << 24u);
 }
 
 fn path_at(point: vec2<f32>) -> vec2<f32> {
@@ -420,15 +423,14 @@ fn surface_inputs(terrain: u32, ground: SurfaceGround, level: u32, river: vec4<f
         let image_spacing = real(hydrology);
         let u = inputs.x / image_spacing;
         let v = inputs.z / image_spacing;
-        let flow = decode(image_sample(image_table(hydrology, 0u), u, v, level),
-            real(hydrology + 1u), real(hydrology + 2u));
-        let wetness = decode(image_sample(image_table(hydrology, 1u), u, v, level),
-            real(hydrology + 3u), real(hydrology + 4u));
-        let lake = decode(image_sample(image_table(hydrology, 2u), u, v, level),
-            real(hydrology + 5u), real(hydrology + 6u));
-        inputs.flow = flow * show;
-        inputs.wetness = wetness * show;
-        inputs.lake = lake * show;
+        var read = vec3<f32>(0.0);
+        for (var image = 0u; image < 3u; image++) {
+            read[image] = decode(image_sample(image_table(hydrology, image), u, v, level),
+                real(hydrology + 1u + 2u * image), real(hydrology + 2u + 2u * image));
+        }
+        inputs.flow = read.x * show;
+        inputs.wetness = read.y * show;
+        inputs.lake = read.z * show;
         inputs.river = river.x;
         inputs.grain = river.y;
         inputs.power = river.z;
@@ -446,30 +448,16 @@ fn surface_inputs(terrain: u32, ground: SurfaceGround, level: u32, river: vec4<f
     return inputs;
 }
 
-fn input_ramp(code: u32, inputs: SurfaceInputs, low: f32, high: f32) -> f32 {
-    let g = inputs.gradient;
-    switch code {
-        case OP_HEIGHT: { return ramp(inputs.height, low, high); }
-        case OP_GRADIENT: { return ramp(sqrt(g.x * g.x + g.y * g.y), low, high); }
-        case OP_CURVATURE: { return ramp(inputs.curvature, low, high); }
-        case OP_WORN: { return ramp(pmax(-inputs.erosion, 0.0), low, high); }
-        case OP_DEPOSIT: { return ramp(pmax(inputs.erosion, 0.0), low, high); }
-        case OP_FLOW: { return ramp(inputs.flow, low, high); }
-        case OP_WETNESS: { return ramp(inputs.wetness, low, high); }
-        case OP_LAKE: { return ramp(inputs.lake, low, high); }
-        case OP_RIVER: { return ramp(inputs.river, low, high); }
-        case OP_GRAIN: { return ramp(inputs.grain, low, high); }
-        case OP_POWER: { return ramp(inputs.power, low, high); }
-        case OP_FLOOD: { return ramp(inputs.flood, low, high); }
-        default: {
-            let d = inputs.path_distance;
-            let s = inputs.spacing;
-            let h = inputs.path_half;
-            let sum = ramp(abs(d + -0.375 * s) - h, low, high) + ramp(abs(d + -0.125 * s) - h, low, high)
-                + ramp(abs(d + 0.125 * s) - h, low, high) + ramp(abs(d + 0.375 * s) - h, low, high);
-            return sum * 0.25;
-        }
+fn input_path(inputs: SurfaceInputs, low: f32, high: f32) -> f32 {
+    let d = inputs.path_distance;
+    let s = inputs.spacing;
+    let h = inputs.path_half;
+    var sum = 0.0;
+    for (var tap = 0u; tap < 4u; tap++) {
+        let ramped = ramp(abs(d + (-0.375 + 0.25 * f32(tap)) * s) - h, low, high);
+        sum = select(sum + ramped, ramped, tap == 0u);
     }
+    return sum * 0.25;
 }
 
 fn input_value(code: u32, inputs: SurfaceInputs) -> f32 {
@@ -500,6 +488,11 @@ fn evaluate(start: u32, inputs: SurfaceInputs) -> f32 {
         if code == OP_END || top > MAX_STACK {
             break;
         }
+        var slot = top;
+        var shaped = false;
+        var value = 0.0;
+        var low = 0.0;
+        var high = 0.0;
         switch code {
             case OP_CONSTANT: {
                 stack[top] = real(pc + 1u);
@@ -507,32 +500,36 @@ fn evaluate(start: u32, inputs: SurfaceInputs) -> f32 {
                 pc += 2u;
             }
             case OP_HEIGHT, OP_GRADIENT, OP_CURVATURE, OP_WORN, OP_DEPOSIT, OP_FLOW, OP_WETNESS,
-                OP_LAKE, OP_RIVER, OP_PATH, OP_GRAIN, OP_POWER, OP_FLOOD: {
-                stack[top] = input_ramp(code, inputs, real(pc + 1u), real(pc + 2u));
+                OP_LAKE, OP_RIVER, OP_PATH, OP_GRAIN, OP_POWER, OP_FLOOD, OP_VALUE: {
+                let valued = code == OP_VALUE;
+                low = real(pc + 1u);
+                high = real(pc + 2u);
+                if code == OP_PATH {
+                    stack[top] = input_path(inputs, low, high);
+                } else {
+                    value = input_value(select(code, word(pc + 1u), valued), inputs);
+                    stack[top] = value;
+                    shaped = !valued;
+                }
                 top += 1u;
-                pc += 3u;
+                pc += select(3u, 2u, valued);
             }
             case OP_FACING: {
-                let tilt = real(pc + 1u) * inputs.gradient.x + real(pc + 2u) * inputs.gradient.y;
-                stack[top] = ramp(tilt, real(pc + 3u), real(pc + 4u));
+                value = real(pc + 1u) * inputs.gradient.x + real(pc + 2u) * inputs.gradient.y;
+                low = real(pc + 3u);
+                high = real(pc + 4u);
+                shaped = true;
                 top += 1u;
                 pc += 5u;
             }
-            case OP_VALUE: {
-                stack[top] = input_value(word(pc + 1u), inputs);
+            case OP_MAP, OP_MAP_VALUE: {
+                value = surface_maps[min(word(pc + 1u), MAX_MAPS - 1u)];
+                stack[top] = value;
+                shaped = code == OP_MAP;
+                low = real(pc + 2u);
+                high = real(pc + 3u);
                 top += 1u;
-                pc += 2u;
-            }
-            case OP_MAP: {
-                stack[top] = ramp(surface_maps[min(word(pc + 1u), MAX_MAPS - 1u)],
-                    real(pc + 2u), real(pc + 3u));
-                top += 1u;
-                pc += 4u;
-            }
-            case OP_MAP_VALUE: {
-                stack[top] = surface_maps[min(word(pc + 1u), MAX_MAPS - 1u)];
-                top += 1u;
-                pc += 2u;
+                pc += select(2u, 4u, shaped);
             }
             case OP_NOISE: {
                 stack[top] = noise_mask(inputs.x, inputs.z, inputs.spacing, real(pc + 1u),
@@ -575,15 +572,40 @@ fn evaluate(start: u32, inputs: SurfaceInputs) -> f32 {
                 pc += 1u;
             }
             case OP_REMAP: {
-                stack[top - 1u] = ramp(stack[top - 1u], real(pc + 1u), real(pc + 2u));
+                slot = top - 1u;
+                value = stack[slot];
+                low = real(pc + 1u);
+                high = real(pc + 2u);
+                shaped = true;
                 pc += 3u;
             }
             default: {
                 return 0.0;
             }
         }
+        if shaped {
+            stack[slot] = ramp(value, low, high);
+        }
     }
     return stack[0];
+}
+
+fn surface_add(materials: ptr<function, array<u32, MAX_MATERIALS>>,
+        weights: ptr<function, array<f32, MAX_MATERIALS>>, count: ptr<function, u32>,
+        material: u32, part: f32) {
+    var placed = false;
+    for (var m = 0u; m < *count; m++) {
+        if (*materials)[m] == material {
+            (*weights)[m] += part;
+            placed = true;
+            break;
+        }
+    }
+    if !placed && *count < MAX_MATERIALS {
+        (*materials)[*count] = material;
+        (*weights)[*count] = part;
+        *count += 1u;
+    }
 }
 
 fn surface_control(terrain: u32, inputs: SurfaceInputs) -> u32 {
@@ -603,17 +625,30 @@ fn surface_control(terrain: u32, inputs: SurfaceInputs) -> u32 {
         let current = index - 1u;
         let at = program + BIOME_WORDS * current;
         var fit = 1.0;
-        if current > 0u {
-            fit = clamp_rule(evaluate(word(at), inputs), 0.0, 1.0);
-        }
-        let share = fit * remaining;
-        remaining *= 1.0 - fit;
-        if current < wet_biomes {
-            let held = fit * soaking;
-            soaking *= 1.0 - fit;
-            let rule = word(at + 2u);
-            if held > 0.0 && rule != NONE {
-                wet += held * clamp_rule(evaluate(rule, inputs), 0.0, 1.0);
+        var share = 0.0;
+        for (var ask = 0u; ask < 2u; ask++) {
+            let wetting = ask == 1u;
+            var rule = word(at);
+            var asking = current > 0u;
+            var held = 0.0;
+            if wetting {
+                share = fit * remaining;
+                remaining *= 1.0 - fit;
+                if current >= wet_biomes {
+                    break;
+                }
+                held = fit * soaking;
+                soaking *= 1.0 - fit;
+                rule = word(at + 2u);
+                asking = held > 0.0 && rule != NONE;
+            }
+            if asking {
+                let value = clamp_rule(evaluate(rule, inputs), 0.0, 1.0);
+                if wetting {
+                    wet += held * value;
+                } else {
+                    fit = value;
+                }
             }
         }
         if share > 0.0 {
@@ -625,27 +660,45 @@ fn surface_control(terrain: u32, inputs: SurfaceInputs) -> u32 {
                 let entry = list + 1u + 3u * l;
                 var held = 1.0;
                 var cover = 1.0;
-                if l > 0u {
-                    let value = evaluate(word(entry + 2u), inputs);
-                    held = clamp_rule(value, 0.0, 1.0);
-                    cover = clamp_rule(value * real(entry + 1u), 0.0, 1.0);
+                var weight = 0.0;
+                var pair = vec2<u32>(word(entry), word(entry));
+                let sequence = pair.x & ~LAYER_COVERS;
+                var members = 0u;
+                var total = 0.0;
+                var along = 0.0;
+                var ask = 0u;
+                loop {
+                    let growing = ask > 0u;
+                    if growing || l > 0u {
+                        var rule = word(entry + 2u);
+                        if growing {
+                            rule = word(sequence + 2u * ask);
+                        }
+                        let value = evaluate(rule, inputs);
+                        if growing {
+                            let grows = clamp_rule(value, 0.0, 1.0);
+                            total += grows;
+                            along += grows * f32(ask - 1u);
+                        } else {
+                            held = clamp_rule(value, 0.0, 1.0);
+                            cover = clamp_rule(value * real(entry + 1u), 0.0, 1.0);
+                        }
+                    }
+                    if !growing {
+                        weight = cover * left;
+                        left *= 1.0 - cover;
+                        if weight > 0.0 && (pair.x & LAYER_COVERS) != 0u {
+                            members = word(sequence);
+                        }
+                    }
+                    if ask >= members {
+                        break;
+                    }
+                    ask += 1u;
                 }
-                let weight = cover * left;
-                left *= 1.0 - cover;
                 if weight > 0.0 {
-                    var pair = vec2<u32>(word(entry), word(entry));
                     var split = 0.0;
                     if (pair.x & LAYER_COVERS) != 0u {
-                        let sequence = pair.x & ~LAYER_COVERS;
-                        let members = word(sequence);
-                        var total = 0.0;
-                        var along = 0.0;
-                        for (var c = 0u; c < members; c++) {
-                            let grows = clamp_rule(
-                                evaluate(word(sequence + 2u + 2u * c), inputs), 0.0, 1.0);
-                            total += grows;
-                            along += grows * f32(c);
-                        }
                         let place = pmin(along / pmax(total, 1.0e-6) * held, f32(members - 1u));
                         let lower = u32(place);
                         let upper = min(lower + 1u, members - 1u);
@@ -657,19 +710,7 @@ fn surface_control(terrain: u32, inputs: SurfaceInputs) -> u32 {
                         let material = select(pair.x, pair.y, side == 1u);
                         let part = select(weight * (1.0 - split), weight * split, side == 1u);
                         if part > 0.0 {
-                            var placed = false;
-                            for (var m = 0u; m < count; m++) {
-                                if materials[m] == material {
-                                    weights[m] += part;
-                                    placed = true;
-                                    break;
-                                }
-                            }
-                            if !placed && count < MAX_MATERIALS {
-                                materials[count] = material;
-                                weights[count] = part;
-                                count += 1u;
-                            }
+                            surface_add(&materials, &weights, &count, material, part);
                         }
                     }
                 }
@@ -682,19 +723,24 @@ fn surface_control(terrain: u32, inputs: SurfaceInputs) -> u32 {
             break;
         }
     }
+    return surface_pick(&materials, &weights, count, wet);
+}
+
+fn surface_pick(materials: ptr<function, array<u32, MAX_MATERIALS>>,
+        weights: ptr<function, array<f32, MAX_MATERIALS>>, count: u32, wet: f32) -> u32 {
     var first = 0u;
     var first_weight = -1.0;
     var second = 0u;
     var second_weight = -1.0;
     for (var m = 0u; m < count; m++) {
-        let weight = weights[m];
+        let weight = (*weights)[m];
         if weight > first_weight {
             second = first;
             second_weight = first_weight;
-            first = materials[m];
+            first = (*materials)[m];
             first_weight = weight;
         } else if weight > second_weight {
-            second = materials[m];
+            second = (*materials)[m];
             second_weight = weight;
         }
     }
