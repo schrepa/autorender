@@ -297,9 +297,9 @@ impl SurfaceTrees {
             }
             held => {
                 let (_, buffer) = handles.slots[slot];
-                let (Allocation::Fresh | Allocation::Kept) =
-                    cx.allocate_buffer(buffer, tree_bytes(depth));
-                cx.write(buffer, 0, &vec![0_u32; (tree_bytes(depth) / 4) as usize]);
+                if cx.allocate_buffer(buffer, tree_bytes(depth)) == Allocation::Kept {
+                    cx.write(buffer, 0, &vec![0_u32; (tree_bytes(depth) / 4) as usize]);
+                }
                 seed(cx, buffer, depth);
                 *held = Some(Tree {
                     owner,
