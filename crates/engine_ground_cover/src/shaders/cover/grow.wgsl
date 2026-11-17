@@ -896,7 +896,8 @@ fn grow_candidate(at: vec2<u32>, order: u32, candidate: u32, owner: vec3<u32>) {
         return;
     }
     let density = cover_dense(row);
-    let accents = cover_look(row).accents;
+    let look = cover_look(row);
+    let accents = look.accents;
     let accented = accents.y > 0u;
     if density <= 0.0 || (owned && !accented) {
         return;
@@ -912,7 +913,7 @@ fn grow_candidate(at: vec2<u32>, order: u32, candidate: u32, owner: vec3<u32>) {
         at_spec = select(accent, row, accent == COVER_NO_LAYER);
     }
     let spec = spec_look(at_spec, density);
-    let base_patches = cover_look(row).patches;
+    let base_patches = look.patches;
     let pulled = spec.tuft.z > 0.0 || spec.fans.y > 0.0;
     let grown = select(run.growth.xy, run.growth.zw, pulled);
     let finer = error * spec.tuft.w;
@@ -989,8 +990,8 @@ fn grow_candidate(at: vec2<u32>, order: u32, candidate: u32, owner: vec3<u32>) {
     }
     let rise = saturate((keep - rank) / max(run.grow_in * keep, 1.0e-4));
     var tall: CoverMaterial;
-    tall.patches = cover_look(row).patches;
-    tall.clump = cover_look(row).clump;
+    tall.patches = look.patches;
+    tall.clump = look.clump;
     let clumped = cover_clumped(spec, cover_tall(clump, tall, scale, 0.0));
     let width = spec.shape.w * scale * clumped.height;
     let height = mix(spec.shape.y, spec.shape.z, unit(hash(seed ^ 0xc2b2ae35u)))
