@@ -185,6 +185,12 @@ impl Brick for ScatterBrick {
             .draws::<gpu::ScatterGpu>(gpu::PLACED, gpu::ScatterGpu::draw)
             .slot_prepare(SlotPrepare {
                 module: shaders::scatter::world_mapped::MODULE,
+            })
+            .slot_prepare(SlotPrepare {
+                module: shaders::scatter::grounded::MODULE,
+            })
+            .slot_prepare(SlotPrepare {
+                module: shaders::scatter::leaves::MODULE,
             });
         for (name, module, slots, maps, values, reach) in LOOKS {
             for &slot in slots {

@@ -9,6 +9,12 @@ struct Grounding {
     up: vec3<f32>,
 }
 
+var<private> held_grounding: Grounding;
+
+fn prepare_grounding(input: SurfaceInput) {
+    held_grounding = grounding(input);
+}
+
 fn grounding(input: SurfaceInput) -> Grounding {
     return grounding_of(placed_values_of(input.kind, input.object), input.world);
 }
@@ -47,17 +53,17 @@ fn ground_metalness(at: Grounding, metal: f32) -> f32 {
 }
 
 fn grounded_color(input: SurfaceInput, color: vec3<f32>) -> vec3<f32> {
-    return ground_color(grounding(input), color);
+    return ground_color(held_grounding, color);
 }
 
 fn grounded_normal(input: SurfaceInput, facing: vec3<f32>) -> vec3<f32> {
-    return ground_normal(grounding(input), facing);
+    return ground_normal(held_grounding, facing);
 }
 
 fn grounded_roughness(input: SurfaceInput, rough: f32) -> f32 {
-    return ground_roughness(grounding(input), rough);
+    return ground_roughness(held_grounding, rough);
 }
 
 fn grounded_metalness(input: SurfaceInput, metal: f32) -> f32 {
-    return ground_metalness(grounding(input), metal);
+    return ground_metalness(held_grounding, metal);
 }

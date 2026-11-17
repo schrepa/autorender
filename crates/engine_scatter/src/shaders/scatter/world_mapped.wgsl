@@ -7,7 +7,7 @@ import package::engine::materials::{MAP_BASE_COLOR, MAP_METALLIC_ROUGHNESS, MAP_
 import package::engine::shading::{SurfaceInput, SurfacePoint};
 import package::engine::view::{material_detail, stable_normalize};
 import package::scatter::grounding::{grounded_color, grounded_metalness, grounded_normal,
-    grounded_roughness};
+    grounded_roughness, prepare_grounding};
 
 const NORMAL_ROUNDING: f32 = 1.7320508 / 255.0;
 
@@ -107,6 +107,7 @@ var<private> held_look: WorldLook;
 
 fn prepare(input: SurfaceInput, point: SurfacePoint) {
     held_look = sampled_look(input, point);
+    prepare_grounding(input);
 }
 
 fn sampled_look(input: SurfaceInput, point: SurfacePoint) -> WorldLook {
