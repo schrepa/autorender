@@ -111,11 +111,12 @@ class Shelf {
   private async write(key: string, raw: number, stored: Uint8Array) {
     const head = new Uint8Array(RAW);
     new DataView(head.buffer).setUint32(0, raw, true);
-    if (!this.index.store(key, RAW + stored.length)) return;
+    const file = new Blob([head, stored as Uint8Array<ArrayBuffer>]);
+    if (!this.index.store(key, file.size)) return;
     this.changed();
     try {
       const writable = await (await this.directory.getFileHandle(key, { create: true })).createWritable();
-      await writable.write(new Blob([head, stored as Uint8Array<ArrayBuffer>]));
+      await writable.write(file);
       await writable.close();
     } catch (error) {
       this.index.failed();
