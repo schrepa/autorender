@@ -70,10 +70,19 @@ fn ground_color(index: u32, info: TerrainInfo, terrain: GroundTerrain, local: ve
     let far = mix(first.far, second.far, share);
     let colors = ground_colors(terrain, info.levels.w, local, 0u);
     let world = info.origin.xyz + vec3<f32>(local.x, 0.0, local.y);
-    let vegetated = mix(
-        snap_vegetated(index, material.first, first.far.rgb, world, colors.a, info.origin.w),
-        snap_vegetated(index, material.second, second.far.rgb, world, colors.a, info.origin.w),
-        share);
+    var low = 0.0;
+    var high = 0.0;
+    for (var part = 0u; part < 2u; part++) {
+        let latter = part == 1u;
+        let shown = snap_vegetated(index, select(material.first, material.second, latter),
+            select(first.far.rgb, second.far.rgb, latter), world, colors.a, info.origin.w);
+        if latter {
+            high = shown;
+        } else {
+            low = shown;
+        }
+    }
+    let vegetated = mix(low, high, share);
     let tint = macro_color(colors) * cover_tint(colors.a, vegetated);
     return pack4x8unorm(vec4<f32>(sqrt(saturate(far.rgb * tint)),
         max(saturate(far.w), 1.0 / 255.0)));
