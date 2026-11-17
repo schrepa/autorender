@@ -60,6 +60,8 @@ pub(super) fn bake(
                 key: work.asked_key().copied(),
                 work,
                 drawn: state.terrain.rivers.clone(),
+                looked: HashMap::default(),
+                ahead: None,
             });
             return true;
         }

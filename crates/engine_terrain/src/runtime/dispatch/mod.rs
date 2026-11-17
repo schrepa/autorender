@@ -45,11 +45,14 @@ pub(super) fn load_tiles(
     missing: &[(TileKey, u32)],
     (target, keep, named): (&HashSet<TileKey>, &HashSet<TileKey>, &[TileKey]),
     work: &Work<'_>,
-    frame: u64,
+    (frame, gpu): (u64, bool),
     asking: &mut Asking<'_, '_, '_>,
 ) -> bool {
     let authored = state.terrain.layers.clone();
     if bake(state, &authored, asking, frame) {
+        if let Some(ahead) = ahead_recipe(state, gpu) {
+            look_ahead(state, missing, (target, keep), (ahead, work), asking);
+        }
         return true;
     }
     load_records(state, missing, (target, keep, named), work, asking, frame);
@@ -132,7 +135,7 @@ fn load_records(
         if held.and_then(TileSlot::failed) == Some(record) {
             continue;
         }
-        let fetched = fetch_tile(asking.jobs, &input, priority);
+        let fetched = ask_tile(state, asking, key, (&input, priority));
         let slot = TileSlot::needed(fetched, (record, generation, priority));
         state.slots.insert(key, slot);
     }
@@ -143,6 +146,9 @@ fn load_records(
         asking,
         frame,
     );
+    if let Some(bake) = state.bake.as_mut() {
+        bake.looked.clear();
+    }
 }
 
 fn prefetch(
@@ -189,18 +195,127 @@ fn prefetch(
         }
         let priority = job_priority(IDLE_JOBS, place as u32);
         let job = state.tile_job(recipe.hash(), key);
-        let work = fetch_tile(asking.jobs, &job.identity(), priority);
+        let work = ask_tile(state, asking, key, (&job.identity(), priority));
         let slot = TileSlot::ahead(work, generation);
         state.slots.insert(key, slot);
     }
 }
 
+fn ahead_recipe(state: &mut TerrainState, gpu: bool) -> Option<(RecordKey, TileMaterials)> {
+    if state.around.is_some() || state.recipe.is_some() || state.baked.is_some() {
+        return None;
+    }
+    let bake = state.bake.as_ref().filter(|bake| bake.work.waiting())?;
+    if let Some(ahead) = bake.ahead {
+        return Some(ahead);
+    }
+    let materials = if gpu {
+        TileMaterials::Program
+    } else {
+        TileMaterials::Baked
+    };
+    let recipe = recipe_of(state, baked_stack(bake.key?), (None, materials));
+    let ahead = (RecordKey::shared(&crate::jobs::share_recipe(&recipe)), materials);
+    state.bake.as_mut()?.ahead = Some(ahead);
+    Some(ahead)
+}
+
+fn look_ahead(
+    state: &mut TerrainState,
+    missing: &[(TileKey, u32)],
+    (target, keep): (&HashSet<TileKey>, &HashSet<TileKey>),
+    ((recipe, materials), work): ((RecordKey, TileMaterials), &Work<'_>),
+    asking: &mut Asking<'_, '_, '_>,
+) {
+    state.looked_from(state.generation());
+    let Some(mut looked) = state.bake.as_mut().map(|bake| std::mem::take(&mut bake.looked)) else {
+        return;
+    };
+    looked.retain(|key, _| keep.contains(key) && state.store.loads(key));
+    let mut order: Vec<(u32, TileKey)> = looked
+        .iter()
+        .map(|(key, (_, priority, _))| (*priority, *key))
+        .collect();
+    order.sort_unstable();
+    for (_, key) in order {
+        if work.spent() > 0 && work.expired() {
+            break;
+        }
+        let Some((input, _, look)) = looked.get_mut(&key) else {
+            continue;
+        };
+        let tile = match look.poll(asking.records) {
+            Landed::Waiting | Landed::Failed(_) => continue,
+            Landed::Ready(tile) => Arc::clone(tile),
+        };
+        let placed = *input == state.tile_job(recipe.hash(), key).identity()
+            && target.contains(&key)
+            && tile.key() == key;
+        if placed && !work.spend(2 * TILE_ARRAY_BYTES) {
+            break;
+        }
+        looked.remove(&key);
+        if placed {
+            let stamps = state.reaching(key);
+            state.store.arrive(tile, stamps, materials);
+        }
+    }
+    for &(key, priority) in missing {
+        if !state.store.loads(&key) {
+            continue;
+        }
+        let input = state.tile_job(recipe.hash(), key).identity();
+        if looked.get(&key).is_some_and(|(asked, _, _)| *asked == input) {
+            continue;
+        }
+        let look = asking.jobs.look(&TILE_BUILD, &input, priority, decode_tile);
+        looked.insert(key, (input, priority, look));
+    }
+    if let Some(bake) = state.bake.as_mut() {
+        bake.looked = looked;
+    }
+}
+
+fn ask_tile(
+    state: &mut TerrainState,
+    asking: &mut Asking<'_, '_, '_>,
+    key: TileKey,
+    (input, priority): (&[u8], u32),
+) -> TileWork {
+    let looked = state
+        .bake
+        .as_mut()
+        .and_then(|bake| bake.looked.remove(&key));
+    let Some((asked, _, mut look)) = looked.filter(|(asked, _, _)| asked == input) else {
+        return fetch_tile(asking.jobs, input, priority);
+    };
+    let landed = match look.poll(asking.records) {
+        Landed::Ready(_) => Some(true),
+        Landed::Failed(_) => Some(false),
+        Landed::Waiting => None,
+    };
+    match landed {
+        Some(true) => look,
+        Some(false) => {
+            drop(look);
+            fetch_tile(asking.jobs, &asked, priority)
+        }
+        None => {
+            let work = fetch_tile(asking.jobs, &asked, priority);
+            drop(look);
+            work
+        }
+    }
+}
+
 fn fetch_tile(jobs: &mut Jobs<'_, '_>, input: &[u8], priority: u32) -> TileWork {
-    jobs.fetch(&TILE_BUILD, input, priority, |bytes| {
-        crate::jobs::tile_output(&bytes)
-            .map(Arc::new)
-            .map_err(|error| TILE_BUILD.undecoded(error))
-    })
+    jobs.fetch(&TILE_BUILD, input, priority, decode_tile)
+}
+
+fn decode_tile(bytes: Arc<[u8]>) -> Result<Arc<Tile>, engine_core::Error> {
+    crate::jobs::tile_output(&bytes)
+        .map(Arc::new)
+        .map_err(|error| TILE_BUILD.undecoded(error))
 }
 
 fn landed_tile(landed: Landed<'_, Arc<Tile>>) -> Option<Result<Arc<Tile>, String>> {
@@ -215,6 +330,24 @@ pub(crate) struct SharedRecipe {
     pub(crate) key: RecordKey,
     pub(crate) stack: Arc<Layers>,
     materials: TileMaterials,
+}
+
+fn baked_stack(bake: RecordKey) -> RecordKey {
+    RecordKey::shared_tagged(BAKED_STACK, &bake.hash())
+}
+
+fn recipe_of(
+    state: &TerrainState,
+    stack: RecordKey,
+    (view, materials): (Option<StackView>, TileMaterials),
+) -> TerrainRecipe {
+    TerrainRecipe {
+        stack: stack.hash(),
+        view,
+        pyramid: state.terrain.pyramid,
+        surface: state.terrain.surface.rules.authored().clone(),
+        materials: materials == TileMaterials::Baked,
+    }
 }
 
 pub(crate) fn share_recipe(
@@ -259,7 +392,7 @@ pub(crate) fn share_recipe(
             let bytes = crate::jobs::share_stack(&stack);
             let key = match baked {
                 Some(baked) => {
-                    let key = RecordKey::shared_tagged(BAKED_STACK, &baked.hash());
+                    let key = baked_stack(baked);
                     jobs.share_as(key, bytes);
                     key
                 }
@@ -269,13 +402,7 @@ pub(crate) fn share_recipe(
             key
         }
     };
-    let recipe = TerrainRecipe {
-        stack: stack_key.hash(),
-        view,
-        pyramid: state.terrain.pyramid,
-        surface: state.terrain.surface.rules.authored().clone(),
-        materials: state.materials == TileMaterials::Baked,
-    };
+    let recipe = recipe_of(state, stack_key, (view, state.materials));
     let key = jobs.share(crate::jobs::share_recipe(&recipe));
     let shared = SharedRecipe {
         key,
