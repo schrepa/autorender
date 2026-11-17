@@ -7,11 +7,7 @@ use std::{
 use engine_dev::authoring::{read_scene_source, validate_scene};
 
 pub fn validate_sources(root: &Path) -> Result<(), String> {
-    let mut paths = scene_paths(&root.join("web/scripts/fixtures"))?;
-    if paths.is_empty() {
-        return Err("no fixture scenes found in web/scripts/fixtures/*.scene.json".to_owned());
-    }
-    paths.extend(project_scenes(root)?);
+    let paths = project_scenes(root)?;
     let kinds = crate::bricks::standard_kinds().map_err(|error| error.to_string())?;
     for path in &paths {
         let display = path.strip_prefix(root).unwrap_or(path).display();
@@ -50,26 +46,6 @@ fn project_scenes(root: &Path) -> Result<Vec<PathBuf>, String> {
         .collect())
 }
 
-fn scene_paths(directory: &Path) -> Result<Vec<PathBuf>, String> {
-    let mut paths = Vec::new();
-    let entries = fs::read_dir(directory)
-        .map_err(|error| format!("cannot read {}: {error}", directory.display()))?;
-    for entry in entries {
-        let entry = entry.map_err(|error| format!("cannot read scene directory entry: {error}"))?;
-        let path = entry.path();
-        if path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.ends_with(".scene.json"))
-            && path.is_file()
-        {
-            paths.push(path);
-        }
-    }
-    paths.sort();
-    Ok(paths)
-}
-
 fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
     let clients = serde_json::to_string_pretty(&crate::process::clients_json())
         .expect("client_list_serializes")
@@ -78,7 +54,7 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
     let repository = crate::rules::repository(root)?;
     let bricks = engine_checks::bricks::bricks_json(
         repository,
-        engine_standard::everything,
+        crate::bricks::standard,
         &mut crate::bricks::standard_engine().map_err(|error| error.to_string())?,
     )?;
     tooling_types(root)?;

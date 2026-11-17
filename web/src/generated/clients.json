@@ -1,18 +1,10 @@
 [
   {
-    "folder": "crates/engine_player",
-    "game": "player",
-    "native": "engine-player-native",
-    "package": "engine_player",
-    "page": "player.html",
-    "wasm": "engine_player"
-  },
-  {
-    "folder": "examples/highlands",
-    "game": "highlands",
-    "native": "highlands-native",
-    "package": "highlands",
-    "page": "highlands.html",
-    "wasm": "highlands"
+    "folder": "crates/engine/examples/bare_game",
+    "game": "bare",
+    "native": "bare_game-native",
+    "package": "bare_game",
+    "page": "bare.html",
+    "wasm": "bare_game"
   }
 ]

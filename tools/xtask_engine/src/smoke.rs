@@ -8,7 +8,7 @@ use crate::Failure;
 use crate::pipeline::build_native;
 use crate::process::{Project, project_option, run};
 
-pub const PLAYER: &str = "crates/engine_player";
+pub const PLAYER: &str = "crates/engine/examples/bare_game";
 
 const USAGE: &str =
     "usage: cargo xtask smoke [NAME...] --limit-ms MS [--project DIR] | [--project DIR] --list";

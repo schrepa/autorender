@@ -10,11 +10,12 @@ use engine_assetc::{
 };
 use engine_core::{Error, ErrorCode, Expected};
 use engine_dev::authoring;
-use engine_places_simulation::physics::INVALID_COLLIDER;
 use engine_scene::{SceneDocument, SceneKinds};
 use serde_json::{Value, json};
 
 const COLLIDER: &str = "collider";
+
+const INVALID_COLLIDER: ErrorCode = ErrorCode::brick("invalid_collider");
 
 const DRAWN: &str = "drawn";
 

@@ -32,7 +32,10 @@ pub fn listed(root: &Path, within: &[&str]) -> Result<Vec<String>, String> {
 }
 
 pub fn ours(path: &str) -> bool {
-    !path.starts_with("vendor/") && !path.contains("/generated/") && !path.starts_with("generated/")
+    !path.starts_with("vendor/")
+        && !path.starts_with("archive/")
+        && !path.contains("/generated/")
+        && !path.starts_with("generated/")
 }
 
 pub fn source(path: &str) -> bool {

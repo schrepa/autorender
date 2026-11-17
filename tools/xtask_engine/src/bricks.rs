@@ -1,10 +1,14 @@
 use engine::Engine;
-use engine_core::{BrickList, Error, ErrorCode};
+use engine_core::{BrickList, Error, ErrorCode, Listing};
 use engine_registry::Registry;
 use engine_scene::{SceneDocument, SceneKinds};
 
+pub fn standard<L: Listing>(list: L) -> L {
+    list
+}
+
 pub fn standard_engine() -> Result<Engine, Error> {
-    engine::engine(engine_standard::everything::<BrickList>)
+    engine::engine(standard::<BrickList>)
 }
 
 pub fn standard_kinds() -> Result<SceneKinds, Error> {

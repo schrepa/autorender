@@ -1,8 +1,5 @@
 use std::collections::BTreeMap;
 
-use engine_places::surface::{
-    METALLIC_ROUGHNESS_MAP, METALNESS, OCCLUSION, OCCLUSION_MAP, OCCLUSION_STRENGTH, ROUGHNESS,
-};
 use engine_scene::{
     SceneAlphaMode, SceneCull, SceneDocument, SceneFilter, SceneMap, SceneMaterial,
     SceneMipmapFilter, SceneSlot, SceneSlotFill, SceneTexture, SceneTextureMap, SceneWrap,
@@ -16,6 +13,13 @@ use engine_core::{
 };
 
 use crate::{ImportedFile, unsupported};
+
+const ROUGHNESS: &str = "roughness";
+const METALNESS: &str = "metalness";
+const OCCLUSION: &str = "occlusion";
+const OCCLUSION_STRENGTH: &str = "occlusion_strength";
+const METALLIC_ROUGHNESS_MAP: &str = "metallic_roughness";
+const OCCLUSION_MAP: &str = "occlusion";
 
 const GLTF_SLOTS: [(&str, &[&str]); 3] = [
     (ROUGHNESS, &[METALLIC_ROUGHNESS_MAP]),

@@ -12,7 +12,7 @@ const COOKED: &str = "web/public/cooked";
 
 const READ_BACK: &str = "target/cook";
 
-const PLAYER: &str = "crates/engine_player";
+const PLAYER: &str = "crates/engine/examples/bare_game";
 
 const CHECK_FRAMES: &str = "600";
 const CHECK_SIZE: &str = "640x360";

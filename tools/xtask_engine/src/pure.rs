@@ -1,7 +1,3 @@
-mod gltf;
-mod import;
-mod requests;
-mod scenes;
 mod simplify;
 
 use std::collections::BTreeMap;
@@ -18,35 +14,17 @@ use crate::smoke::PLAYER;
 
 const GOLDENS: &str = "tools/xtask_engine/pure/goldens.json";
 
-pub(crate) const LISTED: &str = "crates/engine_player/generated/corpora.json";
+pub(crate) const LISTED: &str = "crates/engine/examples/bare_game/generated/corpora.json";
 
 pub(crate) struct Corpus {
     pub name: &'static str,
     pub run: fn(&Path, &mut Observations) -> Result<(), String>,
 }
 
-pub(crate) const CORPORA: &[Corpus] = &[
-    Corpus {
-        name: "scenes",
-        run: scenes::run,
-    },
-    Corpus {
-        name: "requests",
-        run: requests::run,
-    },
-    Corpus {
-        name: "simplify",
-        run: simplify::run,
-    },
-    Corpus {
-        name: "gltf",
-        run: gltf::run,
-    },
-    Corpus {
-        name: "import",
-        run: import::run,
-    },
-];
+pub(crate) const CORPORA: &[Corpus] = &[Corpus {
+    name: "simplify",
+    run: simplify::run,
+}];
 
 pub(crate) fn listed(root: &Path) -> Result<Vec<Value>, String> {
     let text = fs::read_to_string(root.join(LISTED))
@@ -81,10 +59,6 @@ pub(crate) struct Observations {
 impl Observations {
     pub fn record(&mut self, name: impl Into<String>, value: impl Into<Value>) {
         self.values.insert(name.into(), value.into());
-    }
-
-    pub fn hash(&mut self, name: impl Into<String>, bytes: &[u8]) {
-        self.record(name, hash(bytes));
     }
 
     pub fn check(&mut self, holds: bool, what: impl FnOnce() -> String) {
