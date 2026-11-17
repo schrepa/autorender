@@ -226,7 +226,21 @@ export class JobPool {
 
   private unpack(stored: Uint8Array, raw: number): Promise<Uint8Array> {
     if (this.size === 0) return Promise.resolve().then(() => this.game.bindings.JobWorker.unpack(stored, raw));
-    return this.task({ type: "unpack", bytes: stored, raw }, [stored.buffer as ArrayBuffer]) as Promise<Uint8Array>;
+    const frames = zstdFrames(stored, raw);
+    if (!frames) return this.task({ type: "unpack", bytes: stored, raw }, [stored.buffer as ArrayBuffer]) as Promise<Uint8Array>;
+    const parts = frames.map(([start, end, size]) => {
+      const bytes = stored.slice(start, end);
+      return this.task({ type: "unpack", bytes, raw: size }, [bytes.buffer]) as Promise<Uint8Array>;
+    });
+    return Promise.all(parts).then(parts => {
+      const output = new Uint8Array(raw);
+      let at = 0;
+      for (const part of parts) {
+        output.set(part, at);
+        at += part.length;
+      }
+      return output;
+    });
   }
 
   private compress(bytes: Uint8Array): Promise<Uint8Array> {
@@ -350,4 +364,41 @@ function workerCount(requested: string | null): number {
   if (requested === "off") return 0;
   if (/^\d+$/.test(requested) && Number.isSafeInteger(Number(requested))) return Number(requested);
   throw engineFailure({ code: "invalid_value", path: "?workers", allowed: { kind: "at_least", min: 0 }, got: requested });
+}
+
+const ZSTD_MAGIC = 0xfd2fb528;
+const DICTIONARY_BYTES = [0, 1, 2, 4];
+
+function zstdFrames(stored: Uint8Array, raw: number): [number, number, number][] | undefined {
+  const view = new DataView(stored.buffer, stored.byteOffset, stored.byteLength);
+  const frames: [number, number, number][] = [];
+  let at = 0;
+  let total = 0;
+  while (at < stored.length) {
+    if (at + 5 > stored.length || view.getUint32(at, true) !== ZSTD_MAGIC) return undefined;
+    const start = at;
+    const descriptor = stored[at + 4];
+    const single = (descriptor & 0x20) !== 0;
+    at += 5 + (single ? 0 : 1) + DICTIONARY_BYTES[descriptor & 3];
+    const sizeBytes = [single ? 1 : 0, 2, 4, 8][descriptor >> 6];
+    if (sizeBytes === 0 || at + sizeBytes > stored.length) return undefined;
+    const size = sizeBytes === 1 ? view.getUint8(at)
+      : sizeBytes === 2 ? view.getUint16(at, true) + 256
+      : sizeBytes === 4 ? view.getUint32(at, true) : Number(view.getBigUint64(at, true));
+    at += sizeBytes;
+    let last = false;
+    while (!last) {
+      if (at + 3 > stored.length) return undefined;
+      const header = view.getUint16(at, true) | (view.getUint8(at + 2) << 16);
+      const type = (header >> 1) & 3;
+      if (type === 3) return undefined;
+      last = (header & 1) !== 0;
+      at += 3 + (type === 1 ? 1 : header >>> 3);
+    }
+    at += (descriptor & 4) !== 0 ? 4 : 0;
+    if (at > stored.length) return undefined;
+    frames.push([start, at, size]);
+    total += size;
+  }
+  return frames.length > 1 && total === raw ? frames : undefined;
 }
