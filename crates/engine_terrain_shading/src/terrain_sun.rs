@@ -104,6 +104,7 @@ pub(crate) struct SunPlan {
     slide: Option<(f64, Vec<(u32, Window)>)>,
     stale: u32,
     dropped: bool,
+    preparing: bool,
     tiles: Cursor,
     builds: u32,
     pub(crate) walked: u32,
@@ -246,6 +247,7 @@ pub(crate) fn plan(
     (mut plan, mut piece): (ResMut<SunPlan>, ResMut<HorizonsPiece>),
 ) {
     let plan = &mut *plan;
+    plan.preparing = pause.holds(PauseReason::Preparing);
     let moves = AtlasMoves::since(&atlas, &mut plan.tiles);
     if moves.all {
         plan.stale = u32::MAX;
@@ -310,7 +312,7 @@ pub(crate) fn plan(
     }
     let mut blend = 0.0;
     if let Some((began, windows)) = plan.slide.take() {
-        let seconds = if pause.holds(PauseReason::Preparing) {
+        let seconds = if plan.preparing {
             0.0
         } else {
             f64::from(settings.sun_slide_seconds)
@@ -478,7 +480,12 @@ impl SunGpu {
             return;
         }
         let slice = settings.sun_rows.min(side.next_multiple_of(SUN_GROUP));
-        let most = (settings.sun_rows / slice).max(1) as usize;
+        let slices = side.div_ceil(slice) as usize;
+        let most = if plan.preparing {
+            (build.windows.len() - self.at.0) * slices
+        } else {
+            (settings.sun_rows / slice).max(1) as usize
+        };
         let before = self.at;
         let mut jobs = Vec::with_capacity(most);
         for _ in 0..most {
@@ -502,7 +509,7 @@ impl SunGpu {
         }
         let bytes = |count: usize, size: usize| ((count * size) as u64).next_power_of_two();
         let (Allocation::Fresh | Allocation::Kept) =
-            cx.allocate_buffer(self.jobs, bytes(most, size_of::<SunJob>()));
+            cx.allocate_buffer(self.jobs, bytes(LEVELS * slices, size_of::<SunJob>()));
         cx.write(self.jobs, 0, &jobs);
         let (Allocation::Fresh | Allocation::Kept) =
             cx.allocate_buffer(self.terrains, bytes(terrains.len(), size_of::<SunTerrain>()));
