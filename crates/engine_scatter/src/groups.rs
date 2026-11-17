@@ -259,6 +259,55 @@ pub(crate) struct GroupLayout {
     pub(crate) part: bool,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct Changed {
+    pub(crate) set: bool,
+    pub(crate) records: bool,
+    pub(crate) colors: bool,
+    pub(crate) values: bool,
+}
+
+impl Changed {
+    pub(crate) const NONE: Self = Self {
+        set: false,
+        records: false,
+        colors: false,
+        values: false,
+    };
+
+    pub(crate) const ALL: Self = Self {
+        set: true,
+        records: true,
+        colors: true,
+        values: true,
+    };
+
+    fn join(self, other: Self) -> Self {
+        Self {
+            set: self.set || other.set,
+            records: self.records || other.records,
+            colors: self.colors || other.colors,
+            values: self.values || other.values,
+        }
+    }
+}
+
+pub(crate) struct Regrouped(HashMap<Entity, Vec<Changed>>);
+
+impl Regrouped {
+    pub(crate) fn tile(&self, terrain: Entity, placed: &[Placed]) -> Changed {
+        let table = self.0.get(&terrain).map_or(&[][..], Vec::as_slice);
+        placed.iter().fold(Changed::NONE, |held, placed| {
+            held.join(
+                table
+                    .get(usize::from(placed.asset))
+                    .copied()
+                    .unwrap_or(Changed::NONE),
+            )
+        })
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct Groups {
     pub(crate) groups: Vec<DrawGroup>,
@@ -443,6 +492,35 @@ impl Groups {
                     && a.objects == b.objects
                     && a.grounding == b.grounding
             })
+    }
+
+    pub(crate) fn regrouped(&self, now: &Self) -> Regrouped {
+        let mut table: HashMap<Entity, Vec<Changed>> = HashMap::default();
+        for &terrain in self.by_asset.keys().chain(now.by_asset.keys()) {
+            let before = self.by_asset.get(&terrain).map_or(&[][..], Vec::as_slice);
+            let after = now.by_asset.get(&terrain).map_or(&[][..], Vec::as_slice);
+            let moved = self.terrains.get(&terrain) != now.terrains.get(&terrain);
+            let at = |table: &[Option<u32>], asset: usize| table.get(asset).copied().flatten();
+            let changes = (0..before.len().max(after.len())).map(|asset| {
+                match (at(before, asset), at(after, asset)) {
+                    (None, None) => Changed::NONE,
+                    (Some(old), Some(new)) => {
+                        let (was, is) = (&self.groups[old as usize], &now.groups[new as usize]);
+                        Changed {
+                            set: false,
+                            records: moved || old != new || was.sphere != is.sphere,
+                            colors: was.color != is.color,
+                            values: was.grounding != is.grounding
+                                || was.sway != is.sway
+                                || was.look != is.look,
+                        }
+                    }
+                    _ => Changed::ALL,
+                }
+            });
+            table.insert(terrain, changes.collect());
+        }
+        Regrouped(table)
     }
 
     pub(crate) fn tile_objects(
