@@ -448,30 +448,16 @@ fn surface_inputs(terrain: u32, ground: SurfaceGround, level: u32, river: vec4<f
     return inputs;
 }
 
-fn input_ramp(code: u32, inputs: SurfaceInputs, low: f32, high: f32) -> f32 {
-    let g = inputs.gradient;
-    switch code {
-        case OP_HEIGHT: { return ramp(inputs.height, low, high); }
-        case OP_GRADIENT: { return ramp(sqrt(g.x * g.x + g.y * g.y), low, high); }
-        case OP_CURVATURE: { return ramp(inputs.curvature, low, high); }
-        case OP_WORN: { return ramp(pmax(-inputs.erosion, 0.0), low, high); }
-        case OP_DEPOSIT: { return ramp(pmax(inputs.erosion, 0.0), low, high); }
-        case OP_FLOW: { return ramp(inputs.flow, low, high); }
-        case OP_WETNESS: { return ramp(inputs.wetness, low, high); }
-        case OP_LAKE: { return ramp(inputs.lake, low, high); }
-        case OP_RIVER: { return ramp(inputs.river, low, high); }
-        case OP_GRAIN: { return ramp(inputs.grain, low, high); }
-        case OP_POWER: { return ramp(inputs.power, low, high); }
-        case OP_FLOOD: { return ramp(inputs.flood, low, high); }
-        default: {
-            let d = inputs.path_distance;
-            let s = inputs.spacing;
-            let h = inputs.path_half;
-            let sum = ramp(abs(d + -0.375 * s) - h, low, high) + ramp(abs(d + -0.125 * s) - h, low, high)
-                + ramp(abs(d + 0.125 * s) - h, low, high) + ramp(abs(d + 0.375 * s) - h, low, high);
-            return sum * 0.25;
-        }
+fn input_path(inputs: SurfaceInputs, low: f32, high: f32) -> f32 {
+    let d = inputs.path_distance;
+    let s = inputs.spacing;
+    let h = inputs.path_half;
+    var sum = 0.0;
+    for (var tap = 0u; tap < 4u; tap++) {
+        let ramped = ramp(abs(d + (-0.375 + 0.25 * f32(tap)) * s) - h, low, high);
+        sum = select(sum + ramped, ramped, tap == 0u);
     }
+    return sum * 0.25;
 }
 
 fn input_value(code: u32, inputs: SurfaceInputs) -> f32 {
@@ -502,6 +488,11 @@ fn evaluate(start: u32, inputs: SurfaceInputs) -> f32 {
         if code == OP_END || top > MAX_STACK {
             break;
         }
+        var slot = top;
+        var shaped = false;
+        var value = 0.0;
+        var low = 0.0;
+        var high = 0.0;
         switch code {
             case OP_CONSTANT: {
                 stack[top] = real(pc + 1u);
@@ -509,32 +500,36 @@ fn evaluate(start: u32, inputs: SurfaceInputs) -> f32 {
                 pc += 2u;
             }
             case OP_HEIGHT, OP_GRADIENT, OP_CURVATURE, OP_WORN, OP_DEPOSIT, OP_FLOW, OP_WETNESS,
-                OP_LAKE, OP_RIVER, OP_PATH, OP_GRAIN, OP_POWER, OP_FLOOD: {
-                stack[top] = input_ramp(code, inputs, real(pc + 1u), real(pc + 2u));
+                OP_LAKE, OP_RIVER, OP_PATH, OP_GRAIN, OP_POWER, OP_FLOOD, OP_VALUE: {
+                let valued = code == OP_VALUE;
+                low = real(pc + 1u);
+                high = real(pc + 2u);
+                if code == OP_PATH {
+                    stack[top] = input_path(inputs, low, high);
+                } else {
+                    value = input_value(select(code, word(pc + 1u), valued), inputs);
+                    stack[top] = value;
+                    shaped = !valued;
+                }
                 top += 1u;
-                pc += 3u;
+                pc += select(3u, 2u, valued);
             }
             case OP_FACING: {
-                let tilt = real(pc + 1u) * inputs.gradient.x + real(pc + 2u) * inputs.gradient.y;
-                stack[top] = ramp(tilt, real(pc + 3u), real(pc + 4u));
+                value = real(pc + 1u) * inputs.gradient.x + real(pc + 2u) * inputs.gradient.y;
+                low = real(pc + 3u);
+                high = real(pc + 4u);
+                shaped = true;
                 top += 1u;
                 pc += 5u;
             }
-            case OP_VALUE: {
-                stack[top] = input_value(word(pc + 1u), inputs);
+            case OP_MAP, OP_MAP_VALUE: {
+                value = surface_maps[min(word(pc + 1u), MAX_MAPS - 1u)];
+                stack[top] = value;
+                shaped = code == OP_MAP;
+                low = real(pc + 2u);
+                high = real(pc + 3u);
                 top += 1u;
-                pc += 2u;
-            }
-            case OP_MAP: {
-                stack[top] = ramp(surface_maps[min(word(pc + 1u), MAX_MAPS - 1u)],
-                    real(pc + 2u), real(pc + 3u));
-                top += 1u;
-                pc += 4u;
-            }
-            case OP_MAP_VALUE: {
-                stack[top] = surface_maps[min(word(pc + 1u), MAX_MAPS - 1u)];
-                top += 1u;
-                pc += 2u;
+                pc += select(2u, 4u, shaped);
             }
             case OP_NOISE: {
                 stack[top] = noise_mask(inputs.x, inputs.z, inputs.spacing, real(pc + 1u),
@@ -577,12 +572,19 @@ fn evaluate(start: u32, inputs: SurfaceInputs) -> f32 {
                 pc += 1u;
             }
             case OP_REMAP: {
-                stack[top - 1u] = ramp(stack[top - 1u], real(pc + 1u), real(pc + 2u));
+                slot = top - 1u;
+                value = stack[slot];
+                low = real(pc + 1u);
+                high = real(pc + 2u);
+                shaped = true;
                 pc += 3u;
             }
             default: {
                 return 0.0;
             }
+        }
+        if shaped {
+            stack[slot] = ramp(value, low, high);
         }
     }
     return stack[0];
