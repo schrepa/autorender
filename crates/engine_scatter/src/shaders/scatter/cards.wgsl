@@ -9,6 +9,7 @@ import package::face::lighting::SURFACE_THIN;
 import package::engine::drawn::{INPUT_BATCH, INPUT_DRAW, INPUT_SLOT};
 import package::engine::geometry::declarations::faded_slot_slot;
 import package::face::debug::debug_record_with_kind;
+import package::face::foliage::foliage;
 import package::generated::kinds::KIND_PLACED;
 import package::generated::writes::{DepthOutputs, Outputs, depth_outputs, outputs};
 import package::scatter::faces::placed_tiles::placed_impostor;
@@ -53,8 +54,9 @@ fn plant_point(baked: SurfacePoint, slot: u32) -> SurfacePoint {
     var color = baked.base_color;
     if baked.kind == SURFACE_THIN {
         let look = carried_look(values.look);
-        color = varied(color, values.tint, look);
-        point = set_transmission(point, light_through(look, baked.occlusion));
+        let held = foliage();
+        color = varied(color, values.tint, look, held);
+        point = set_transmission(point, light_through(look, baked.occlusion, held));
         point = set_direct_softness(point, look.softness);
     }
     let at = grounding_of(values, baked.world);
