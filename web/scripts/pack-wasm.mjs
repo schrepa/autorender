@@ -1,14 +1,14 @@
 // @ts-check
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
-import { initSync, PackDirectory } from "../pkg-dev/bare_game.js";
 
-const [path, listed] = process.argv.slice(2);
-if (!path || !listed) {
-  console.error("usage: node web/scripts/pack-wasm.mjs PACK RECORDS.json");
+const [name, path, listed] = process.argv.slice(2);
+if (!name || !path || !listed) {
+  console.error("usage: node web/scripts/pack-wasm.mjs WASM PACK RECORDS.json");
   process.exit(1);
 }
-initSync({ module: readFileSync(new URL("../pkg-dev/bare_game_bg.wasm", import.meta.url)) });
+const { initSync, PackDirectory } = await import(`../pkg-dev/${name}.js`);
+initSync({ module: readFileSync(new URL(`../pkg-dev/${name}_bg.wasm`, import.meta.url)) });
 const pack = readFileSync(path);
 const header = pack.subarray(0, 32);
 const [at, stored] = PackDirectory.locate(header);

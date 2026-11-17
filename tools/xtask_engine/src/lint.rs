@@ -119,7 +119,7 @@ fn clients_changed(lint: &Lint) -> bool {
 }
 
 fn replay_changed(lint: &Lint) -> bool {
-    let (Ok(repository), Ok(corpora)) = (repository(&lint.root), pure::listed(&lint.root)) else {
+    let (Ok(repository), Ok(games)) = (repository(&lint.root), pure::listed(&lint.root)) else {
         return true;
     };
     let found = |package: Option<&str>| {
@@ -133,7 +133,7 @@ fn replay_changed(lint: &Lint) -> bool {
         "tools/xtask_engine/src/pure".to_owned(),
         "tools/xtask_engine/pure/".to_owned(),
     ];
-    for corpus in &corpora {
+    for corpus in games.iter().flat_map(|game| &game.corpora) {
         let Some(owner) = found(corpus["owner"].as_str()) else {
             return true;
         };
@@ -150,7 +150,7 @@ fn replay_changed(lint: &Lint) -> bool {
             || folders
                 .iter()
                 .any(|folder| path.starts_with(folder.as_str()))
-            || path == pure::LISTED
+            || games.iter().any(|game| game.file == path)
             || path == "tools/xtask_engine/src/bricks.rs"
     })
 }

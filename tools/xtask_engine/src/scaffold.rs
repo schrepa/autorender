@@ -25,9 +25,9 @@ const TEMPLATE_SCENE: &str = "template.scene.json";
 
 const TEMPLATE_ONLY: [(&str, &str); 4] = [
     ("use crate::bricks::glimmer::GlimmerBrick;\n", ""),
-    ("        .with::<GlimmerBrick>()\n", ""),
+    (".with::<GlimmerBrick>()", ""),
     (
-        r#",
+        r#"  "materials": [
     {
       "id": "disc",
       "color": [1.0, 1.0, 1.0, 1.0],
@@ -38,8 +38,10 @@ const TEMPLATE_ONLY: [(&str, &str); 4] = [
       "alpha_cutoff": 0.5,
       "cull": "none",
       "lighting": "unlit"
-    }"#,
-        "",
+    }
+  ],
+"#,
+        "  \"materials\": [],\n",
     ),
     (
         r#"    {
@@ -51,6 +53,7 @@ const TEMPLATE_ONLY: [(&str, &str); 4] = [
           "floats": [0.5]
         }
       },
+      "turning": {},
       "transform": {
         "translation": [0.0, 3.5, 0.0]
       }

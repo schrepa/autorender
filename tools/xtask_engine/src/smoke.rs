@@ -8,10 +8,8 @@ use crate::Failure;
 use crate::pipeline::build_native;
 use crate::process::{Project, project_option, run};
 
-pub const PLAYER: &str = "crates/engine/examples/bare_game";
-
 const USAGE: &str =
-    "usage: cargo xtask smoke [NAME...] --limit-ms MS [--project DIR] | [--project DIR] --list";
+    "usage: cargo xtask smoke [NAME...] --limit-ms MS --project DIR | --project DIR --list";
 
 struct Options {
     project: String,
@@ -23,7 +21,7 @@ struct Options {
 fn options(arguments: &[String]) -> Result<Options, String> {
     let (project, rest) = project_option(arguments)?;
     let mut options = Options {
-        project: project.unwrap_or_else(|| PLAYER.to_owned()),
+        project: project.ok_or(USAGE)?,
         names: Vec::new(),
         list: false,
         limit_ms: None,

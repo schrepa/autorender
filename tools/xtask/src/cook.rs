@@ -6,25 +6,24 @@ use serde_json::{Value, json};
 
 use crate::Failure;
 use crate::pipeline::build_native;
-use crate::process::{Project, project_option, run};
+use crate::process::{Project, clients, project_option, run};
 
 const COOKED: &str = "web/public/cooked";
 
 const READ_BACK: &str = "target/cook";
 
-const PLAYER: &str = "crates/engine/examples/bare_game";
-
 const CHECK_FRAMES: &str = "600";
 const CHECK_SIZE: &str = "640x360";
 const PASSES: [&str; 2] = ["records", "pipelines"];
 
-const USAGE: &str = "usage: cargo xtask cook [--project DIR] [PATH.scene.json...] \
+const USAGE: &str = "usage: cargo xtask cook --project DIR [PATH.scene.json...] \
                      --limit-ms MS | --check [--sample N]";
 
 struct Pack {
     name: String,
     program: String,
     scene: Option<String>,
+    wasm: Option<String>,
 }
 
 impl Pack {
@@ -77,33 +76,32 @@ pub fn cook(root: &Path, options: &[String]) -> Result<(), Failure> {
     if check == limit.is_some() || (sample.is_some() && !check) {
         return Err(USAGE.into());
     }
-    let mut packs = Vec::new();
-    if let Some(folder) = &project {
-        let project = Project::read(root, folder)?;
+    let named = project.ok_or(USAGE)?;
+    let project = Project::read(root, &named)?;
+    let program = build_native(root, &project)?;
+    let wasm = clients()
+        .iter()
+        .find(|client| client.package == project.package)
+        .map(|client| client.wasm.clone());
+    scenes.extend(
+        project
+            .scenes
+            .iter()
+            .map(|scene| format!("{named}/{scene}")),
+    );
+    let mut packs = vec![Pack {
+        name: project.package.clone(),
+        program: program.clone(),
+        scene: None,
+        wasm: wasm.clone(),
+    }];
+    for scene in scenes {
         packs.push(Pack {
-            name: project.package.clone(),
-            program: build_native(root, &project)?,
-            scene: None,
+            name: scene_id(root, &scene)?,
+            program: program.clone(),
+            scene: Some(scene),
+            wasm: wasm.clone(),
         });
-        scenes.extend(
-            project
-                .scenes
-                .iter()
-                .map(|scene| format!("{folder}/{scene}")),
-        );
-    }
-    if !scenes.is_empty() {
-        let program = build_native(root, &Project::read(root, PLAYER)?)?;
-        for scene in scenes {
-            packs.push(Pack {
-                name: scene_id(root, &scene)?,
-                program: program.clone(),
-                scene: Some(scene),
-            });
-        }
-    }
-    if packs.is_empty() {
-        return Err(format!("name a project or scene files\n{USAGE}").into());
     }
     for (at, pack) in packs.iter().enumerate() {
         if let Some(other) = packs[..at].iter().find(|other| other.name == pack.name) {
@@ -175,13 +173,13 @@ fn cooked_by(pack: &Pack) -> String {
 }
 
 fn check_packs(root: &Path, packs: &[Pack], sample: Option<&str>) -> Result<(), Failure> {
-    if sample.is_none() {
+    if sample.is_none() && packs.iter().any(|pack| pack.wasm.is_some()) {
         crate::pipeline::build_wasm(root, true)?;
     }
     let mut problems = Vec::new();
     for pack in packs {
         let read = read_back(root, pack, &mut problems)?;
-        if sample.is_none() {
+        if let (None, Some(wasm)) = (sample, pack.wasm.as_deref()) {
             let listed = root
                 .join(READ_BACK)
                 .join(format!("{}.records.json", pack.name));
@@ -191,7 +189,7 @@ fn check_packs(root: &Path, packs: &[Pack], sample: Option<&str>) -> Result<(), 
             }
             fs::write(&listed, Value::Array(read).to_string())
                 .map_err(|error| format!("cannot write {}: {error}", listed.display()))?;
-            read_in_wasm(root, pack, &listed, &mut problems)?;
+            read_in_wasm(root, pack, wasm, &listed, &mut problems)?;
         }
         run_on_pack(root, pack, sample, &mut problems)?;
     }
@@ -288,6 +286,7 @@ fn read_back(root: &Path, pack: &Pack, problems: &mut Vec<Value>) -> Result<Vec<
 fn read_in_wasm(
     root: &Path,
     pack: &Pack,
+    wasm: &str,
     listed: &Path,
     problems: &mut Vec<Value>,
 ) -> Result<(), String> {
@@ -296,11 +295,11 @@ fn read_in_wasm(
     let record = json!({
         "event": "running",
         "program": "node",
-        "arguments": ["web/scripts/pack-wasm.mjs", file, listed],
+        "arguments": ["web/scripts/pack-wasm.mjs", wasm, file, listed],
     });
     println!("{record}");
     let output = Command::new("node")
-        .args(["web/scripts/pack-wasm.mjs", &file, &listed])
+        .args(["web/scripts/pack-wasm.mjs", wasm, &file, &listed])
         .current_dir(root)
         .output()
         .map_err(|error| format!("cannot run node: {error}"))?;

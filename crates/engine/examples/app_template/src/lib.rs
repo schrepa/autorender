@@ -1,5 +1,4 @@
 use engine::prelude::*;
-use engine_fly_camera::FlyCameraBrick;
 
 pub mod bricks {
     pub mod glimmer;
@@ -15,10 +14,7 @@ pub struct Template;
 impl Game for Template {}
 
 pub fn bricks<L: Listing>(list: L) -> L {
-    engine_standard_rendering::rendering(list)
-        .with::<FlyCameraBrick>()
-        .with::<TurningBrick>()
-        .with::<GlimmerBrick>()
+    list.with::<TurningBrick>().with::<GlimmerBrick>()
 }
 
 engine::game!(

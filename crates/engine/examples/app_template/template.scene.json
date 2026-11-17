@@ -1,20 +1,7 @@
 {
   "id": "template",
   "revision": 1,
-  "environment": {
-    "dynamic_resolution": {
-      "enabled": true
-    }
-  },
   "materials": [
-    {
-      "id": "ground",
-      "color": [0.35, 0.4, 0.45, 1.0]
-    },
-    {
-      "id": "block",
-      "color": [0.9, 0.5, 0.2, 1.0]
-    },
     {
       "id": "disc",
       "color": [1.0, 1.0, 1.0, 1.0],
@@ -27,40 +14,8 @@
       "lighting": "unlit"
     }
   ],
-  "meshes": [
-    {
-      "id": "cube",
-      "source": {
-        "kind": "cube"
-      }
-    }
-  ],
+  "meshes": [],
   "entities": [
-    {
-      "id": "ground",
-      "drawn": {
-        "kind": "mesh",
-        "mesh": "cube",
-        "material": "ground"
-      },
-      "transform": {
-        "translation": [0.0, -0.5, 0.0],
-        "scale": [20.0, 1.0, 20.0]
-      }
-    },
-    {
-      "id": "block",
-      "drawn": {
-        "kind": "mesh",
-        "mesh": "cube",
-        "material": "block"
-      },
-      "turning": {},
-      "transform": {
-        "translation": [0.0, 1.0, 0.0],
-        "scale": [2.0, 2.0, 2.0]
-      }
-    },
     {
       "id": "spark",
       "drawn": {
@@ -70,6 +25,7 @@
           "floats": [0.5]
         }
       },
+      "turning": {},
       "transform": {
         "translation": [0.0, 3.5, 0.0]
       }

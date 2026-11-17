@@ -9,12 +9,17 @@ use std::time::Instant;
 use serde_json::{Map, Value, json};
 
 use crate::Failure;
-use crate::process::Project;
-use crate::smoke::PLAYER;
+use crate::process::{Project, clients};
 
 const GOLDENS: &str = "tools/xtask_engine/pure/goldens.json";
 
-pub(crate) const LISTED: &str = "crates/engine/examples/bare_game/generated/corpora.json";
+const LISTED: &str = "generated/corpora.json";
+
+pub(crate) struct Listed {
+    pub folder: String,
+    pub file: String,
+    pub corpora: Vec<Value>,
+}
 
 pub(crate) struct Corpus {
     pub name: &'static str,
@@ -26,15 +31,27 @@ pub(crate) const CORPORA: &[Corpus] = &[Corpus {
     run: simplify::run,
 }];
 
-pub(crate) fn listed(root: &Path) -> Result<Vec<Value>, String> {
-    let text = fs::read_to_string(root.join(LISTED))
-        .map_err(|error| format!("cannot read {LISTED}: {error}"))?;
-    let listed: Value =
-        serde_json::from_str(&text).map_err(|error| format!("{LISTED} is not JSON: {error}"))?;
-    listed
-        .as_array()
-        .cloned()
-        .ok_or_else(|| format!("{LISTED} is not a JSON array"))
+pub(crate) fn listed(root: &Path) -> Result<Vec<Listed>, String> {
+    let mut games = Vec::new();
+    for package in crate::rules::repository(root)?.projects() {
+        let (Some(folder), Some(file)) = (package.path.clone(), package.file(LISTED)) else {
+            continue;
+        };
+        let text = fs::read_to_string(root.join(&file))
+            .map_err(|error| format!("cannot read {file}: {error}"))?;
+        let corpora: Value =
+            serde_json::from_str(&text).map_err(|error| format!("{file} is not JSON: {error}"))?;
+        let corpora = corpora
+            .as_array()
+            .cloned()
+            .ok_or_else(|| format!("{file} is not a JSON array"))?;
+        games.push(Listed {
+            folder,
+            file,
+            corpora,
+        });
+    }
+    Ok(games)
 }
 
 pub(crate) fn names(root: &Path) -> Vec<String> {
@@ -45,6 +62,7 @@ pub(crate) fn names(root: &Path) -> Vec<String> {
         .chain(
             games
                 .iter()
+                .flat_map(|game| &game.corpora)
                 .filter_map(|corpus| corpus["name"].as_str().map(str::to_owned)),
         )
         .collect()
@@ -75,11 +93,12 @@ struct Observed {
     values: BTreeMap<String, Value>,
     broken: Vec<String>,
     jobs: Option<String>,
+    wasm: Option<String>,
     seconds: f64,
 }
 
 impl Observed {
-    fn reported(record: &Value) -> Option<Self> {
+    fn reported(record: &Value, wasm: Option<&str>) -> Option<Self> {
         Some(Self {
             corpus: record["corpus"].as_str()?.to_owned(),
             values: record["values"].as_object()?.clone().into_iter().collect(),
@@ -89,6 +108,7 @@ impl Observed {
                 .map(|broken| broken.as_str().map(str::to_owned))
                 .collect::<Option<_>>()?,
             jobs: record["jobs"].as_str().map(str::to_owned),
+            wasm: wasm.map(str::to_owned),
             seconds: record["seconds"].as_f64()?,
         })
     }
@@ -130,16 +150,20 @@ pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
             values: observations.values,
             broken: observations.broken,
             jobs: None,
+            wasm: None,
             seconds: start.elapsed().as_secs_f64(),
         });
     }
-    if every || !asked.is_empty() {
-        let names = if every {
-            engine::smokes::ALL.to_owned()
-        } else {
-            asked.join(",")
-        };
-        observed.extend(reported(root, &names)?);
+    for game in listed(root)? {
+        let own: Vec<&str> = game
+            .corpora
+            .iter()
+            .filter_map(|corpus| corpus["name"].as_str())
+            .filter(|name| every || asked.contains(name))
+            .collect();
+        if !own.is_empty() {
+            observed.extend(reported(root, &game.folder, &own.join(","))?);
+        }
     }
     if let Some(twice) = observed.iter().enumerate().find(|(at, one)| {
         observed[..*at]
@@ -159,8 +183,15 @@ pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
     let mut problems = judged(&observed, &mut goldens, bless, &mut summary);
     if wasm {
         for corpus in &observed {
-            if let Some(jobs) = &corpus.jobs {
-                replayed(root, &corpus.corpus, jobs, &mut summary, &mut problems)?;
+            if let (Some(jobs), Some(wasm)) = (&corpus.jobs, &corpus.wasm) {
+                replayed(
+                    root,
+                    &corpus.corpus,
+                    wasm,
+                    jobs,
+                    &mut summary,
+                    &mut problems,
+                )?;
             }
         }
     }
@@ -186,8 +217,12 @@ pub fn pure(root: &Path, options: &[String]) -> Result<(), Failure> {
     )))
 }
 
-fn reported(root: &Path, names: &str) -> Result<Vec<Observed>, Failure> {
-    let project = Project::read(root, PLAYER)?;
+fn reported(root: &Path, folder: &str, names: &str) -> Result<Vec<Observed>, Failure> {
+    let project = Project::read(root, folder)?;
+    let wasm = clients()
+        .iter()
+        .find(|client| client.package == project.package)
+        .map(|client| client.wasm.as_str());
     let program = crate::pipeline::build_native(root, &project)?;
     let record = json!({
         "event": "running",
@@ -213,7 +248,7 @@ fn reported(root: &Path, names: &str) -> Result<Vec<Observed>, Failure> {
         .filter_map(|line| serde_json::from_str::<Value>(line).ok())
         .filter(|record| record["event"] == "corpus_observed")
         .map(|record| {
-            Observed::reported(&record)
+            Observed::reported(&record, wasm)
                 .ok_or_else(|| format!("{program} --pure reported {record}").into())
         })
         .collect()
@@ -284,12 +319,13 @@ fn judged(
 fn replayed(
     root: &Path,
     name: &str,
+    wasm: &str,
     jobs: &str,
     summary: &mut Vec<Value>,
     problems: &mut Vec<String>,
 ) -> Result<(), Failure> {
     let start = Instant::now();
-    let replayed = replay_in_wasm(root, jobs)?;
+    let replayed = replay_in_wasm(root, wasm, jobs)?;
     let seconds = start.elapsed().as_secs_f64();
     let mismatched = replayed["mismatched"].as_u64().unwrap_or(0);
     summary.push(json!({
@@ -308,17 +344,17 @@ fn replayed(
     Ok(())
 }
 
-fn replay_in_wasm(root: &Path, jobs: &str) -> Result<Value, Failure> {
+fn replay_in_wasm(root: &Path, wasm: &str, jobs: &str) -> Result<Value, Failure> {
     crate::pipeline::build_wasm(root, true)?;
     let jobs = root.join(jobs).display().to_string();
     let record = serde_json::json!({
         "event": "running",
         "program": "node",
-        "arguments": ["web/scripts/pure-wasm.mjs", jobs],
+        "arguments": ["web/scripts/pure-wasm.mjs", wasm, jobs],
     });
     println!("{record}");
     let output = std::process::Command::new("node")
-        .args(["web/scripts/pure-wasm.mjs", &jobs])
+        .args(["web/scripts/pure-wasm.mjs", wasm, &jobs])
         .current_dir(root)
         .output()
         .map_err(|error| format!("cannot run node: {error}"))?;

@@ -157,7 +157,7 @@ fn authoring_commands() -> Vec<Command> {
             [
                 CommandOption::taking("NAME", "NAME...|all"),
                 CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
-                CommandOption::taking("--project", "DIR"),
+                CommandOption::taking("--project", "DIR").required(),
             ],
         ),
         Command::new(
@@ -183,7 +183,7 @@ fn checking_commands() -> Vec<Command> {
         Command::new(
             "cook",
             [
-                CommandOption::taking("--project", "DIR"),
+                CommandOption::taking("--project", "DIR").required(),
                 CommandOption::taking("SCENE", "PATH.scene.json..."),
                 CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
                 CommandOption::flag("--check"),
