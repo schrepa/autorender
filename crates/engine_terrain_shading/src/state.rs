@@ -4,8 +4,8 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::collections::HashMap;
 use engine_core::{
-    AssetLibrary, Background, Cursor, DeviceLimits, Error, Feed, FrameId,
-    FrameTime, JobFailures, JobKind, Jobs, Landed, Progress, Readable, Readback, RecordExchange,
+    AssetLibrary, Background, Cursor, DeviceLimits, Error, Feed, FrameId, FrameTime, JobFailures,
+    JobKind, Jobs, Landed, Pause, PauseReason, Progress, Readable, Readback, RecordExchange,
     RecordKey, Records, Settling, Since, Stamp, TextureHandle, TextureSet, TextureSource,
     TextureUsage, Views, codec, content_hash,
 };
@@ -401,6 +401,7 @@ pub(crate) struct Atlas {
     pub(crate) next_layer: u32,
     pub(crate) capacity: u32,
     pub(crate) now: f32,
+    began: f32,
     changes: Feed<AtlasChange>,
 }
 
@@ -417,6 +418,7 @@ impl Default for Atlas {
             next_layer: 0,
             capacity: 0,
             now: 0.0,
+            began: 0.0,
             changes: Feed::new(TerrainShading::default().tile_feed as usize),
         }
     }
@@ -461,6 +463,11 @@ impl Atlas {
         self.placed.remove(&id);
         self.arrivals.remove(&id);
         self.surfaced.remove(&id);
+    }
+
+    fn tick(&mut self, now: f32, preparing: bool) {
+        self.now = now;
+        self.began = if preparing { f32::MIN } else { now };
     }
 
     fn has_room(&self) -> bool {
@@ -526,25 +533,25 @@ impl Atlas {
                     self.surfaced.remove(&id);
                 }
                 (Some(false), true) => {
-                    self.surfaced.insert(id, self.now);
+                    self.surfaced.insert(id, self.began);
                 }
                 _ => {}
             }
         }
         if arriving {
-            self.arrivals.insert(id, self.now);
+            self.arrivals.insert(id, self.began);
             if tile.control.is_some() && !shades {
-                self.surfaced.insert(id, self.now);
+                self.surfaced.insert(id, self.began);
             }
         }
         if shades {
             if shading {
-                self.surfaced.insert(id, self.now);
+                self.surfaced.insert(id, self.began);
             } else {
                 self.surfaced.remove(&id);
             }
         } else if program && tile.control.is_none() {
-            self.surfaced.insert(id, self.now);
+            self.surfaced.insert(id, self.began);
         }
         self.slots.insert(id, layer);
         self.placed.insert(
@@ -582,7 +589,7 @@ impl Atlas {
     }
 
     fn show_shading(&mut self, id: TileId, layer: u32) {
-        self.surfaced.insert(id, self.now);
+        self.surfaced.insert(id, self.began);
         self.changes.push(AtlasChange::Moved(id));
         self.changes
             .push(AtlasChange::Placed(id, layer, Upload::Shaded));
@@ -640,14 +647,14 @@ pub(crate) fn place_tiles(
         Res<FrameTime>,
         Res<TerrainShading>,
     ),
-    (bakes, mut derived): (Res<Bakes>, ResMut<Derived>),
+    (bakes, mut derived, pause): (Res<Bakes>, ResMut<Derived>, Res<Pause>),
     mut atlas: ResMut<Atlas>,
     (mut ground, mut baking): (ResMut<GroundTiles>, ResMut<GroundBaking>),
 ) {
     let atlas = &mut *atlas;
     let layers = std::mem::take(&mut derived.layers);
     let looks = derived.looks.take();
-    atlas.now = time.real_elapsed as f32;
+    atlas.tick(time.real_elapsed as f32, pause.holds(PauseReason::Preparing));
     atlas.changes.resize(settings.tile_feed as usize);
     let attached = |entry: &TerrainEntry| {
         bakes
@@ -1249,7 +1256,7 @@ pub(crate) fn count(
     (part, sun): (Res<PartStats>, Res<crate::terrain_sun::SunPlan>),
     (mut stats, settling): (ResMut<TerrainShadingStats>, Res<RecordsSettling>),
 ) {
-    settling.0.left(records_left(&settings, &tiles, &bakes));
+    settling.0.left(records_left(&settings, &tiles, &bakes) + sun.left());
     let drawn = part.drawn;
     let [leaves, refused] = totals.grounds;
     let (shaded_tiles, shading_records) = bakes

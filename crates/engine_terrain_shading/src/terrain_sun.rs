@@ -1,5 +1,7 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Cursor, DeviceLimits, Error, FrameTime, Readable, Readback, Views};
+use engine_core::{
+    Cursor, DeviceLimits, Error, FrameTime, Pause, PauseReason, Readable, Readback, Views,
+};
 use engine_open_world_kit::ground::TerrainTiles;
 use engine_places_rendering::sky::SkyLight;
 use engine_places_rendering::sun::Sun;
@@ -136,6 +138,12 @@ impl SunPlan {
         self.dropped = false;
     }
 
+    pub(crate) fn left(&self) -> u32 {
+        let built = self.build.as_ref().map_or(0, |build| build.windows.len());
+        let sliding = self.slide.as_ref().map_or(0, |(_, windows)| windows.len());
+        (built + sliding) as u32
+    }
+
     fn marches(&self, (tiles, atlas): (&TerrainTiles, &Atlas), (terrain, key): TileId) -> u32 {
         let (Some(marched), Some(entry)) = (
             self.key,
@@ -233,13 +241,8 @@ fn held(tiles: &TerrainTiles, atlas: &Atlas) -> impl Iterator<Item = usize> {
 
 pub(crate) fn plan(
     (settings, tiles, atlas): (Res<TerrainShading>, Res<TerrainTiles>, Res<Atlas>),
-    (sun, sky, views, limits, time): (
-        Res<Sun>,
-        Res<SkyLight>,
-        Res<Views>,
-        Res<DeviceLimits>,
-        Res<FrameTime>,
-    ),
+    (sun, sky, views, limits): (Res<Sun>, Res<SkyLight>, Res<Views>, Res<DeviceLimits>),
+    (time, pause): (Res<FrameTime>, Res<Pause>),
     (mut plan, mut piece): (ResMut<SunPlan>, ResMut<HorizonsPiece>),
 ) {
     let plan = &mut *plan;
@@ -307,7 +310,11 @@ pub(crate) fn plan(
     }
     let mut blend = 0.0;
     if let Some((began, windows)) = plan.slide.take() {
-        let seconds = f64::from(settings.sun_slide_seconds);
+        let seconds = if pause.holds(PauseReason::Preparing) {
+            0.0
+        } else {
+            f64::from(settings.sun_slide_seconds)
+        };
         if seconds > 0.0 && now - began < seconds {
             blend = ((now - began) / seconds) as f32;
             plan.slide = Some((began, windows));
