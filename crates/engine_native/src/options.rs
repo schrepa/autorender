@@ -208,15 +208,15 @@ pub fn open_scene<G: Game>(
     match scene {
         StartScene::Empty => {}
         StartScene::Declared { scene, folder } => {
-            let files = SceneLoad::new(scene.text, &kinds).and_then(SceneLoad::finish)?;
-            host.open_scene(scene.text, &files)?;
+            let (document, files) = SceneLoad::new(scene.text, &kinds).and_then(SceneLoad::opened)?;
+            host.open_document(&document, &files)?;
             host.set_file_root(folder);
         }
         StartScene::File(path) => {
             let source = std::fs::read_to_string(path)
                 .map_err(|error| crate::file_error("--scene", path, &error))?;
-            let files = crate::files::scene_files(path, &source, &kinds)?;
-            host.open_scene(&source, &files)?;
+            let (document, files) = crate::files::scene_opened(path, &source, &kinds)?;
+            host.open_document(&document, &files)?;
             host.set_file_root(&folder_of(path));
             #[cfg(feature = "dev")]
             host.watch_source(path);
@@ -542,6 +542,9 @@ impl HostOptions {
         if let Some(names) = &options.pure {
             return crate::pure::run(names, move |_| bricks);
         }
+        let sampled = options.offscreen.is_some() && options.sample_to.is_some();
+        let mut launch = crate::offscreen::Launch::sampled(sampled);
+        launch.phase("launch.files");
         let scene = options.start_scene(&game);
         let files = options.game_files::<G>();
         engine::game::report_missing::<G>(&files);
@@ -559,7 +562,7 @@ impl HostOptions {
             return options.run_cook(pack, move |_| bricks, build, &scene);
         }
         match options.offscreen {
-            Some(frames) => options.run_offscreen(frames, move |_| bricks, build, &scene),
+            Some(frames) => options.run_offscreen(frames, (move |_| bricks, build), &scene, launch),
             None => {
                 let report = crate::run(
                     Window {
@@ -752,9 +755,12 @@ impl HostOptions {
     fn run_offscreen<G: Game, E: Into<engine::Error>>(
         &self,
         frames: u32,
-        bricks: impl FnOnce(BrickList) -> BrickList,
-        build: impl FnOnce(&mut Engine) -> Result<G, E>,
+        (bricks, build): (
+            impl FnOnce(BrickList) -> BrickList,
+            impl FnOnce(&mut Engine) -> Result<G, E>,
+        ),
         scene: &StartScene,
+        mut launch: crate::offscreen::Launch,
     ) -> engine::Result<()> {
         let size = self.size.unwrap_or((1280, 720));
         let pix = self.loads_pix().then(Pix::load).flatten();
@@ -763,11 +769,23 @@ impl HostOptions {
         if self.sample_to.is_some() {
             engine_profiler::sample_heap_from_launch();
         }
-        let mut game = Offscreen::launch(size, self.gpu, &self.jobs, bricks, build)?;
+        launch.phase("launch.jobs");
+        let jobs = self.jobs.pool(false);
+        launch.phase("launch.engine");
+        let mut game = Offscreen::launch_with(size, self.gpu, jobs, bricks, |engine| {
+            launch.phase("launch.game");
+            let built = build(engine);
+            launch.phase("launch.renderer");
+            built
+        })?;
+        launch.phase("launch.scene");
         open_scene(game.host_mut(), scene, self.environment.as_deref())?;
+        launch.phase("launch.settings");
         self.settings.apply(game.host_mut())?;
+        launch.phase("launch.prepare");
         game.prepare(0.0)?;
         let prepared_ms = started.elapsed().as_secs_f64() * 1000.0;
+        let launched = launch.stop();
         let record = Record {
             gpu_capture: self.gpu_capture.clone(),
             profile: self.sample_to.as_ref().map(|folder| ProfileRecord {
@@ -794,6 +812,15 @@ impl HostOptions {
         let recorded = game.record(Frames::Count(frames), at, &record, pix.as_ref())?;
         if let Some(error) = recorded.failed {
             return Err(error);
+        }
+        if let Some(folder) = &self.sample_to {
+            let context = json!({
+                "program": program(),
+                "arguments": std::env::args().skip(1).collect::<Vec<_>>(),
+                "size": [size.0, size.1],
+                "prepare_ms": prepared_ms,
+            });
+            launched.write(folder, context, game.host().adapter())?;
         }
         let stats: serde_json::Value =
             serde_json::from_str(&game.host().stats()).expect("stats_json");

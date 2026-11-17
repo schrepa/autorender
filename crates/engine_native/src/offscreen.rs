@@ -59,6 +59,68 @@ pub struct Recorded {
     pub failed: Option<engine::Error>,
 }
 
+#[cfg(feature = "profiling")]
+pub(crate) struct Launch(Option<engine_profiler::LaunchCapture>);
+
+#[cfg(not(feature = "profiling"))]
+pub(crate) struct Launch;
+
+#[cfg(feature = "profiling")]
+impl Launch {
+    pub(crate) fn sampled(on: bool) -> Self {
+        Self(on.then(engine_profiler::LaunchCapture::start))
+    }
+
+    pub(crate) fn phase(&mut self, name: &'static str) {
+        if let Some(capture) = &mut self.0 {
+            capture.phase(name);
+        }
+    }
+
+    pub(crate) fn stop(self) -> Launched {
+        Launched(self.0.map(engine_profiler::LaunchCapture::stop))
+    }
+}
+
+#[cfg(not(feature = "profiling"))]
+impl Launch {
+    pub(crate) fn sampled(_: bool) -> Self {
+        Self
+    }
+
+    pub(crate) fn phase(&mut self, _: &'static str) {}
+
+    pub(crate) fn stop(self) -> Launched {
+        Launched
+    }
+}
+
+#[cfg(feature = "profiling")]
+pub(crate) struct Launched(Option<engine_profiler::LaunchProfile>);
+
+#[cfg(not(feature = "profiling"))]
+pub(crate) struct Launched;
+
+impl Launched {
+    #[cfg(feature = "profiling")]
+    pub(crate) fn write(
+        self,
+        folder: &Path,
+        context: Value,
+        adapter: &engine::AdapterInfo,
+    ) -> engine::Result<()> {
+        match self.0 {
+            Some(profile) => profile.write(folder, "launch", context, adapter).map(drop),
+            None => Ok(()),
+        }
+    }
+
+    #[cfg(not(feature = "profiling"))]
+    pub(crate) fn write(self, _: &Path, _: Value, _: &engine::AdapterInfo) -> engine::Result<()> {
+        Ok(())
+    }
+}
+
 impl<G: Game> Offscreen<G> {
     pub fn launch<E: Into<engine::Error>>(
         size: (u32, u32),
