@@ -18,6 +18,7 @@ pub const STANDARD_MODULE: &str = "engine::standard";
 pub const RECORD: &str = "material_record";
 pub const LIGHTING_ENTRY: &str = "lit";
 pub const LIGHTED_ENTRY: &str = "lighted";
+pub const PREPARE_ENTRY: &str = "prepare";
 pub const DERIVE_ENTRY: &str = "derive";
 pub const MASK_MIP_SCALE: f32 = 0.25;
 
@@ -206,6 +207,11 @@ pub struct SlotModule {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub struct SlotPrepare {
+    pub module: Module,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct LightingModule {
     pub name: &'static str,
     pub module: Module,
@@ -284,6 +290,7 @@ pub(crate) struct SurfaceDecls {
     pub(crate) sets: Vec<(PointSet, &'static str)>,
     pub(crate) terms: Vec<(SurfaceTerms, String)>,
     pub(crate) models: Vec<(LightingModule, String)>,
+    pub(crate) prepares: Vec<String>,
     pub(crate) kinds: Vec<SurfaceKind>,
     pub(crate) left: Vec<LeftInput>,
 }
@@ -319,6 +326,7 @@ pub(crate) struct MaterialLayout {
     slots: Vec<LaidSlot>,
     skipped: Vec<LaidSlot>,
     models: Vec<(&'static str, String, ModelForm)>,
+    prepares: Vec<String>,
     kinds: Vec<SurfaceKind>,
     notices: Vec<Error>,
 }
@@ -421,6 +429,7 @@ impl MaterialLayout {
             slots: Vec::new(),
             skipped: Vec::new(),
             models: Vec::new(),
+            prepares: declared.prepares.clone(),
             kinds: vec![SurfaceKind::SOLID],
             notices: Vec::new(),
         };
@@ -821,6 +830,7 @@ impl MaterialLayout {
             "import package::engine::shading::{PositionInput, Shaded, SurfaceInput, SurfacePoint, unlit};\n",
         );
         let mut body = String::new();
+        let mut prepared: Vec<(usize, String)> = Vec::new();
         let surface = "input: SurfaceInput, point: SurfacePoint";
         let mut signed: Vec<(&'static str, &'static str, &str, &str, &str)> = SurfaceSlot::ALL
             .into_iter()
@@ -863,6 +873,10 @@ impl MaterialLayout {
                 );
                 for (index, (_, _, path, _)) in modules.iter().enumerate() {
                     let id = index + 1;
+                    if let Some(at) = self.prepares.iter().position(|known| known == path) {
+                        let term = format!("material_module(SLOT_{}) == {id}u", upper(name));
+                        prepared.push((at, term));
+                    }
                     let _ = writeln!(imports, "import package::{path}::{name} as {name}_{id};");
                     let _ = writeln!(
                         body,
@@ -872,6 +886,28 @@ impl MaterialLayout {
             }
             let _ = writeln!(body, "    return standard_{name}({args});\n}}");
         }
+        body.push_str("\nfn prepare_slots(input: SurfaceInput, point: SurfacePoint) {\n");
+        for (at, path) in self.prepares.iter().enumerate() {
+            let picked: Vec<&str> = prepared
+                .iter()
+                .filter(|(known, _)| *known == at)
+                .map(|(_, term)| term.as_str())
+                .collect();
+            if picked.is_empty() {
+                continue;
+            }
+            let id = at + 1;
+            let _ = writeln!(
+                imports,
+                "import package::{path}::{PREPARE_ENTRY} as prepare_{id};"
+            );
+            let _ = writeln!(
+                body,
+                "    if {} {{\n        prepare_{id}(input, point);\n    }}",
+                picked.join("\n        || ")
+            );
+        }
+        body.push_str("}\n");
         body.push_str(
             "\nfn open_slots(input: SurfaceInput, point: SurfacePoint) -> SurfacePoint {\n    var filled = point;\n",
         );

@@ -26,7 +26,7 @@ use engine_places::surface::{
     TRANSMISSION,
 };
 use engine_places_rendering::lighting::inputs;
-use engine_render::{PointInput, RenderBricks, SlotModule};
+use engine_render::{PointInput, RenderBricks, SlotModule, SlotPrepare};
 
 pub use settings::{
     CanopySettings, FoliageSettings, PlacedLook, PlacedPart, ScatterSettings, ScatterStats,
@@ -182,7 +182,10 @@ impl Brick for ScatterBrick {
                 streams: &[],
                 skips: &[],
             })
-            .draws::<gpu::ScatterGpu>(gpu::PLACED, gpu::ScatterGpu::draw);
+            .draws::<gpu::ScatterGpu>(gpu::PLACED, gpu::ScatterGpu::draw)
+            .slot_prepare(SlotPrepare {
+                module: shaders::scatter::world_mapped::MODULE,
+            });
         for (name, module, slots, maps, values, reach) in LOOKS {
             for &slot in slots {
                 bricks.material_slot(SlotModule {

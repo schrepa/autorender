@@ -1,7 +1,7 @@
 import package::engine::materials::material_model;
 import package::engine::shading::{SurfaceInput, SurfacePoint};
-import package::engine::slots::{derived, open_slots, slot_base_color, slot_cutoff, slot_emissive,
-    slot_kind, slot_normal, slot_opacity, standard_point};
+import package::engine::slots::{derived, open_slots, prepare_slots, slot_base_color, slot_cutoff,
+    slot_emissive, slot_kind, slot_normal, slot_opacity, standard_point};
 import package::engine::surfaces::SURFACE_SOLID;
 import package::engine::view::stable_normalize;
 
@@ -26,6 +26,7 @@ fn placed(input: SurfaceInput) -> SurfacePoint {
 
 fn surface_point(input: SurfaceInput) -> SurfacePoint {
     var point = placed(input);
+    prepare_slots(input, point);
     point.base_color = slot_base_color(input, point);
     point.opacity = slot_opacity(input, point);
     point.normal = slot_normal(input, point);

@@ -103,35 +103,10 @@ fn top_amount(up: f32, input: SurfaceInput, look: WorldLook) -> f32 {
     return smoothstep(1.0 - reach, 1.2 - reach, lift) * step(1.0e-4, reach);
 }
 
-struct LookKey {
-    world: vec3<u32>,
-    across: vec3<u32>,
-    down: vec3<u32>,
-    facing: vec3<u32>,
-}
-
 var<private> held_look: WorldLook;
-var<private> held_key: LookKey;
-var<private> look_held: bool;
 
-fn look_key(input: SurfaceInput, point: SurfacePoint) -> LookKey {
-    return LookKey(bitcast<vec3<u32>>(input.world), bitcast<vec3<u32>>(input.world_dx),
-        bitcast<vec3<u32>>(input.world_dy), bitcast<vec3<u32>>(point.geometric));
-}
-
-fn same_key(a: LookKey, b: LookKey) -> bool {
-    return all(a.world == b.world) && all(a.across == b.across) && all(a.down == b.down)
-        && all(a.facing == b.facing);
-}
-
-fn world_look(input: SurfaceInput, point: SurfacePoint) -> WorldLook {
-    let key = look_key(input, point);
-    if !look_held || !same_key(key, held_key) {
-        held_look = sampled_look(input, point);
-        held_key = key;
-        look_held = true;
-    }
-    return held_look;
+fn prepare(input: SurfaceInput, point: SurfacePoint) {
+    held_look = sampled_look(input, point);
 }
 
 fn sampled_look(input: SurfaceInput, point: SurfacePoint) -> WorldLook {
@@ -194,16 +169,16 @@ fn top_color() -> vec3<f32> {
 }
 
 fn base_color(input: SurfaceInput, point: SurfacePoint) -> vec3<f32> {
-    let look = world_look(input, point);
+    let look = held_look;
     return grounded_color(input, mix(look.base.rgb * input.color.rgb, top_color(), look.top));
 }
 
 fn normal(input: SurfaceInput, point: SurfacePoint) -> vec3<f32> {
-    return grounded_normal(input, world_look(input, point).normal);
+    return grounded_normal(input, held_look.normal);
 }
 
 fn roughness(input: SurfaceInput, point: SurfacePoint) -> f32 {
-    let look = world_look(input, point);
+    let look = held_look;
     var rough = input.surface.x * look.factors.x;
     if look.slopes > 0.0 {
         let alpha = rough * rough;
@@ -214,10 +189,10 @@ fn roughness(input: SurfaceInput, point: SurfacePoint) -> f32 {
 }
 
 fn metalness(input: SurfaceInput, point: SurfacePoint) -> f32 {
-    let look = world_look(input, point);
+    let look = held_look;
     return grounded_metalness(input, mix(input.surface.y * look.factors.y, 0.0, look.top));
 }
 
 fn occlusion(input: SurfaceInput, point: SurfacePoint) -> f32 {
-    return world_look(input, point).occlusion;
+    return held_look.occlusion;
 }
