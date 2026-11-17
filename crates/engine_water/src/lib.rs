@@ -101,7 +101,7 @@ pub struct WaterBrick;
 
 impl Brick for WaterBrick {
     const SOURCE: &'static Source = &SOURCE;
-    const JOBS: &'static [&'static JobKind] = &[&jobs::TILE_WATER, &jobs::DRAWN, &jobs::REWATER];
+    const JOBS: &'static [&'static JobKind] = &[&jobs::DRAWN, &jobs::REWATER];
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks

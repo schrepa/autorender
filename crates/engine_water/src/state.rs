@@ -3,8 +3,8 @@ use std::sync::{Arc, PoisonError, RwLock};
 
 use bevy_ecs::prelude::*;
 use engine_core::{
-    Background, Cursor, Error, Feed, FrameBudget, FrameTime, JobFailures, Jobs, RecordKey, Records,
-    Since, Spawner, Taken, VIEW_JOBS, Views, job_priority,
+    Cursor, Error, Feed, JobFailures, Jobs, RecordKey, Since, Spawner, VIEW_JOBS, Views,
+    job_priority,
 };
 use engine_heightfield::tile::TileJob;
 use engine_heightfield::{
@@ -19,8 +19,8 @@ use glam::{Vec2, Vec3};
 use crate::drawn::{DrawnWork, draw_input, start_drawing};
 use crate::emitters::Emitters;
 use crate::flow::Running;
-use crate::jobs::drawn::{DrawnWater, is_dry};
-use crate::jobs::{DRAWN, TILE_WATER};
+use crate::jobs::DRAWN;
+use crate::jobs::drawn::DrawnWater;
 use crate::water_blocks::Blocks;
 use crate::waves::{Swell, Waves};
 use crate::{RiverFlow, TileWater, Water, WaterBrick};
@@ -28,7 +28,6 @@ use crate::{RiverFlow, TileWater, Water, WaterBrick};
 pub(crate) type Watered = Option<Arc<Running>>;
 
 pub(crate) enum Work {
-    Base(Background<(Arc<[u8]>, bool)>),
     Draw(DrawnWork),
     Redraw(DrawnWork, Watered),
 }
@@ -248,73 +247,10 @@ impl WaterTerrain {
             let Some(job) = self.tile_job(key) else {
                 return;
             };
-            let work = jobs.fetch(
-                &TILE_WATER,
-                &engine_codec::encode(&job),
-                job_priority(VIEW_JOBS, place),
-                |bytes| {
-                    let dry = is_dry(&bytes).map_err(|error| TILE_WATER.undecoded(error))?;
-                    Ok((bytes, dry))
-                },
-            );
             if let Some(held) = self.held.get_mut(&key) {
-                held.work = Some(Work::Base(work));
-            }
-        }
-    }
-
-    fn take_bases(
-        &mut self,
-        (records, budget): (&Records, &FrameBudget),
-        (failures, jobs): (&mut JobFailures, &mut Jobs),
-        frame: u64,
-    ) {
-        let mut taken = false;
-        let asked: Vec<TileKey> = self
-            .held
-            .iter()
-            .filter(|(_, held)| matches!(held.work, Some(Work::Base(_))))
-            .map(|(&key, _)| key)
-            .collect();
-        for key in asked {
-            if taken && budget.expired() {
-                break;
-            }
-            let Some(held) = self
-                .held
-                .get_mut(&key)
-                .filter(|held| matches!(held.work, Some(Work::Base(_))))
-            else {
-                continue;
-            };
-            let Some(Work::Base(work)) = held.work.take() else {
-                continue;
-            };
-            let made = match work.take(records) {
-                Taken::Waiting(work) => {
-                    held.work = Some(Work::Base(work));
-                    continue;
-                }
-                Taken::Ready(made) => Ok(made),
-                Taken::Failed(error) => Err(error),
-            };
-            taken = true;
-            match made {
-                Ok((_, true)) => {
-                    held.keep_made();
-                    held.hold(None);
-                    held.watered = None;
-                    self.touch(key);
-                }
-                Ok((record, false)) => {
-                    let input = draw_input(held, &record);
-                    let priority = job_priority(VIEW_JOBS, 0);
-                    held.work = Some(Work::Draw(start_drawing(jobs, &DRAWN, input, priority)));
-                }
-                Err(error) => {
-                    failures.record(frame, error.to_string());
-                    held.made = Some(Err(error));
-                }
+                let input = draw_input(held, &job);
+                let priority = job_priority(VIEW_JOBS, place);
+                held.work = Some(Work::Draw(start_drawing(jobs, &DRAWN, input, priority)));
             }
         }
     }
@@ -442,15 +378,12 @@ impl WaterQuery for WaterSurface {
 
 pub(crate) fn follow(
     tiles: Res<TerrainTiles>,
-    records: Res<Records>,
     views: Res<Views>,
-    time: Res<FrameTime>,
-    (budget, settings): (Res<FrameBudget>, Res<Water>),
+    settings: Res<Water>,
     mut jobs: Jobs,
     mut state: ResMut<WaterState>,
 ) {
     let eye = views.main().map_or(Vec3::ZERO, |main| main.detail_eye);
-    let frame = time.frame;
     let feed = settings.tile_feed as usize;
     let state = &mut *state;
     state.dropped = false;
@@ -490,7 +423,6 @@ pub(crate) fn follow(
         let local = Vec2::new(eye.x - entry.origin.x, eye.z - entry.origin.z);
         terrain.take_faces(entry);
         terrain.follow_faces(&mut jobs, local);
-        terrain.take_bases((&records, &budget), (&mut state.failures, &mut jobs), frame);
         state.terrains.push(terrain);
     }
     state.dropped = !before.is_empty();

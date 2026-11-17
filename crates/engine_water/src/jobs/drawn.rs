@@ -2,14 +2,14 @@ use std::sync::Arc;
 
 use bytemuck::Pod;
 use engine_codec::{Codec, Reader, record};
-use engine_core::{Error, ErrorCode, Job, JobCx, RecordKey};
+use engine_core::{Error, ErrorCode, Job, JobCx, RecordKey, codec};
 use engine_heightfield::ErrorPyramid;
 use engine_heightfield::rivers::Rivers;
 use engine_heightfield::tile::{Footprint, PATCH_QUADS, PATCHES_PER_TILE, TILE_STRIDE, TileJob};
 use glam::Vec2;
 
 use super::gpu::{NO_WATER_SURFACE, WATER_BLOCK as BLOCK};
-use super::tile_water::{TileWater, WaterMesh, rewatered};
+use super::tile_water::{BaseWater, TileWater, WaterMesh, rewatered};
 use super::{Finished, kinds, outside, recipe};
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -58,10 +58,6 @@ impl DrawnWater {
     pub(crate) fn info(&self, at: usize) -> &[u8] {
         &self.texels[at + SURFACES..at + PATCH_BYTES]
     }
-}
-
-pub(crate) fn is_dry(record: &[u8]) -> Result<bool, Error> {
-    Ok(!Reader::new(record).get::<bool>()?)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -315,14 +311,42 @@ pub(crate) fn landed(bytes: &[u8]) -> Result<Option<DrawnParts>, Error> {
     }))
 }
 
-pub(crate) fn start_drawn(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
-    let mut rest = input;
+struct TileDrawn {
+    base: BaseWater,
+    heights: Vec<f32>,
+}
+
+impl Job for TileDrawn {
+    fn step(&mut self, budget: u64, _: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
+        let mut budget = budget;
+        let Some(water) = self.base.advance(&mut budget)? else {
+            return Ok(None);
+        };
+        let output = match engine_codec::decode::<Option<TileWater>>(&codec::encode(&water))? {
+            Some(water) => drawn_output(&water, &paint(&water, &self.heights, None)),
+            None => dry_output(),
+        };
+        Ok(Some(output))
+    }
+}
+
+pub(crate) fn start_drawn(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
+    let (tile, mut rest) = headed::<TileJob>(input)?;
     let heights = take_words::<f32>(&mut rest, SAMPLES)?;
-    let output = match engine_codec::decode::<Option<TileWater>>(rest)? {
-        Some(water) => drawn_output(&water, &paint(&water, &heights, None)),
-        None => dry_output(),
-    };
-    Ok(Box::new(Finished(Some(output))))
+    if !rest.is_empty() {
+        return Err(Error::new(ErrorCode::InvalidValue, "$.water_draw").got(rest.len()));
+    }
+    let kinds = kinds(cx);
+    let recipe = recipe(cx, tile.recipe, &kinds)?;
+    if !recipe.pyramid.contains(tile.key) {
+        return Err(outside(tile.key));
+    }
+    let base = BaseWater::new(
+        recipe.stamped(&tile.stamps, &kinds)?,
+        recipe.pyramid,
+        tile.key,
+    );
+    Ok(Box::new(TileDrawn { base, heights }))
 }
 
 pub(crate) fn start_rewater(input: &[u8], cx: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {

@@ -22,9 +22,9 @@ pub(crate) fn start_drawing(
     })
 }
 
-pub(crate) fn draw_input(held: &HeldWater, record: &[u8]) -> Vec<u8> {
-    let mut input = bytemuck::cast_slice::<f32, u8>(&held.face.heights).to_vec();
-    input.extend_from_slice(record);
+pub(crate) fn draw_input(held: &HeldWater, tile: &TileJob) -> Vec<u8> {
+    let mut input = engine_codec::encode(tile);
+    input.extend_from_slice(bytemuck::cast_slice::<f32, u8>(&held.face.heights));
     input
 }
 
@@ -80,10 +80,7 @@ pub(crate) fn draw(
             let (work, flood) = match held.work.take() {
                 Some(Work::Draw(work)) => (work, None),
                 Some(Work::Redraw(work, to)) => (work, Some(to)),
-                other @ (Some(Work::Base(_)) | None) => {
-                    held.work = other;
-                    continue;
-                }
+                None => continue,
             };
             let record = work.asked_key().copied();
             let made = match work.take(&*records) {
