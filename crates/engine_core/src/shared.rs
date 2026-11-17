@@ -40,6 +40,7 @@ pub(crate) fn start_frame(world: &mut World, spare_ms: f64) {
     } else {
         u64::from(budget.upload_bytes)
     };
+    let clock = clock.filter(|_| !preparing);
     world.insert_resource(FrameBudget::start(clock, (work_ms, spare_ms), upload_bytes));
     let transforms = world
         .get_resource::<FeedSettings>()
