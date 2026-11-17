@@ -6,7 +6,8 @@ import package::generated::terrain_shading::{CONTROL_PLANE, DETAIL_ANISOTROPY, N
     PaletteEntry, SITE_PLANE, SUMMARY_FIRST, SUMMARY_LAST, SUMMARY_PLANES, TABLE_LOOK, TILE_PLANES,
     control_a, control_b, control_blend};
 import package::terrain_shading::draw_shared::{terrain_site_gain, terrain_site_lush};
-import package::terrain_shading::tables::{table_look, table_terrain, terrain_tables};
+import package::terrain_shading::tables::{TERRAIN_DIRECTORY, TERRAIN_MACRO_MAP, TERRAIN_ORIGIN,
+    table_floats, table_look, table_words, terrain_at, terrain_tables};
 
 @group(0) @binding(0) var heights: texture_2d_array<f32>;
 @group(0) @binding(2) var tile_maps: texture_2d_array<u32>;
@@ -17,15 +18,18 @@ import package::terrain_shading::tables::{table_look, table_terrain, terrain_tab
 @group(0) @binding(9) var tile_summaries: texture_2d_array<u32>;
 
 fn terrain_info(terrain: u32) -> TerrainInfo {
-    let held = table_terrain(terrain);
+    let at = terrain_at(terrain);
+    let origin = table_floats(at + TERRAIN_ORIGIN);
+    let directory = table_words(at + TERRAIN_DIRECTORY);
     var info: TerrainInfo;
-    info.origin = vec4<f32>(held.origin.xyz, held.anchor.w);
-    info.levels = vec4<u32>(held.directory.x, held.directory.y, held.directory.z, held.macro_map.x);
+    info.origin = vec4<f32>(origin.xyz, table_floats(at).w);
+    info.levels = vec4<u32>(directory.x, directory.y, directory.z,
+        table_words(at + TERRAIN_MACRO_MAP).x);
     return info;
 }
 
 fn ground_sky(terrain: u32, local: vec2<f32>) -> vec4<f32> {
-    let layer = table_terrain(terrain).directory.w;
+    let layer = table_words(terrain_at(terrain) + TERRAIN_DIRECTORY).w;
     if layer == 0u {
         return vec4<f32>(1.0, 0.5, 0.5, 0.5);
     }

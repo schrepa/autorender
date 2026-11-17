@@ -12,12 +12,20 @@ fn table_floats(at: u32) -> vec4<f32> {
     return bitcast<vec4<f32>>(table_words(at));
 }
 
+const TERRAIN_ORIGIN: u32 = 12u;
+const TERRAIN_DIRECTORY: u32 = 16u;
+const TERRAIN_MACRO_MAP: u32 = 24u;
+
+fn terrain_at(index: u32) -> u32 {
+    return terrain_tables[TABLE_TERRAINS] + index * TERRAIN_WORDS;
+}
+
 fn table_terrain(index: u32) -> TerrainUniform {
-    let at = terrain_tables[TABLE_TERRAINS] + index * TERRAIN_WORDS;
+    let at = terrain_at(index);
     return TerrainUniform(table_floats(at), table_floats(at + 4u), table_words(at + 8u),
-        table_floats(at + 12u), table_words(at + 16u), table_floats(at + 20u),
-        table_words(at + 24u), table_floats(at + 28u), table_floats(at + 32u),
-        table_words(at + 36u));
+        table_floats(at + TERRAIN_ORIGIN), table_words(at + TERRAIN_DIRECTORY),
+        table_floats(at + 20u), table_words(at + TERRAIN_MACRO_MAP), table_floats(at + 28u),
+        table_floats(at + 32u), table_words(at + 36u));
 }
 
 fn table_view(index: u32) -> TerrainView {
