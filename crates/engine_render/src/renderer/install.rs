@@ -363,8 +363,8 @@ fn material_layout(
     problems: &mut Vec<Error>,
 ) -> crate::surface::MaterialLayout {
     use crate::surface::{
-        LeftInput, LightingModule, MaterialLayout, OpenSlot, SlotModule, SurfaceDecls, SurfaceKind,
-        SurfaceTerms,
+        LeftInput, LightingModule, MaterialLayout, OpenSlot, SlotModule, SlotPrepare, SurfaceDecls,
+        SurfaceKind, SurfaceTerms,
     };
     use engine_place::{PointInput, PointSet};
     let package = |brick: engine_registry::BrickId| {
@@ -407,9 +407,15 @@ fn material_layout(
     }
     for (_, model) in registry.render_entries::<LightingModule>() {
         linker.add_source(model.module.source());
-        let (path, name) = crate::linker::path_of((model.module, crate::surface::LIGHTING_ENTRY));
+        let (path, name) = crate::linker::path_of((model.module, model.form.entry()));
         roots.push((path.to_owned(), name));
         declared.models.push((*model, path.to_owned()));
+    }
+    for (_, prepare) in registry.render_entries::<SlotPrepare>() {
+        linker.add_source(prepare.module.source());
+        let (path, name) = crate::linker::path_of((prepare.module, crate::surface::PREPARE_ENTRY));
+        roots.push((path.to_owned(), name));
+        declared.prepares.push(path.to_owned());
     }
     declared.kinds = registry
         .render_entries::<SurfaceKind>()

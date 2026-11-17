@@ -17,6 +17,8 @@ pub const MAPPED_MODULE: &str = "engine::mapped";
 pub const STANDARD_MODULE: &str = "engine::standard";
 pub const RECORD: &str = "material_record";
 pub const LIGHTING_ENTRY: &str = "lit";
+pub const LIGHTED_ENTRY: &str = "lighted";
+pub const PREPARE_ENTRY: &str = "prepare";
 pub const DERIVE_ENTRY: &str = "derive";
 pub const MASK_MIP_SCALE: f32 = 0.25;
 
@@ -205,9 +207,30 @@ pub struct SlotModule {
 }
 
 #[derive(Clone, Copy, Debug)]
+pub struct SlotPrepare {
+    pub module: Module,
+}
+
+#[derive(Clone, Copy, Debug)]
 pub struct LightingModule {
     pub name: &'static str,
     pub module: Module,
+    pub form: ModelForm,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ModelForm {
+    Shades,
+    Adjusts,
+}
+
+impl ModelForm {
+    pub(crate) const fn entry(self) -> &'static str {
+        match self {
+            Self::Shades => LIGHTING_ENTRY,
+            Self::Adjusts => LIGHTED_ENTRY,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -267,6 +290,7 @@ pub(crate) struct SurfaceDecls {
     pub(crate) sets: Vec<(PointSet, &'static str)>,
     pub(crate) terms: Vec<(SurfaceTerms, String)>,
     pub(crate) models: Vec<(LightingModule, String)>,
+    pub(crate) prepares: Vec<String>,
     pub(crate) kinds: Vec<SurfaceKind>,
     pub(crate) left: Vec<LeftInput>,
 }
@@ -301,7 +325,8 @@ pub(crate) struct MaterialLayout {
     derives: Vec<String>,
     slots: Vec<LaidSlot>,
     skipped: Vec<LaidSlot>,
-    models: Vec<(&'static str, String)>,
+    models: Vec<(&'static str, String, ModelForm)>,
+    prepares: Vec<String>,
     kinds: Vec<SurfaceKind>,
     notices: Vec<Error>,
 }
@@ -404,6 +429,7 @@ impl MaterialLayout {
             slots: Vec::new(),
             skipped: Vec::new(),
             models: Vec::new(),
+            prepares: declared.prepares.clone(),
             kinds: vec![SurfaceKind::SOLID],
             notices: Vec::new(),
         };
@@ -566,14 +592,15 @@ impl MaterialLayout {
             let core = [Lighting::Lit, Lighting::Unlit]
                 .iter()
                 .any(|model| snake(model) == declared.name);
-            if core || self.models.iter().any(|(name, _)| *name == declared.name) {
+            if core || self.models.iter().any(|(name, ..)| *name == declared.name) {
                 problems.push(wrong_name(
                     format!("$.lighting_models.{}", declared.name),
                     declared.name,
                 ));
                 continue;
             }
-            self.models.push((declared.name, path.clone()));
+            self.models
+                .push((declared.name, path.clone(), declared.form));
         }
     }
 
@@ -661,7 +688,7 @@ impl MaterialLayout {
             LightingModel::Named(name) => self
                 .models
                 .iter()
-                .position(|(known, _)| known == name)
+                .position(|(known, ..)| known == name)
                 .map(|at| at as u32 + 2),
         }
     }
@@ -759,11 +786,51 @@ impl MaterialLayout {
         }
     }
 
+    fn model_functions(&self, imports: &mut String, body: &mut String) {
+        let _ = writeln!(imports, "import package::face::lit::{LIGHTING_ENTRY};");
+        body.push_str(
+            "\nfn shade(point: SurfacePoint, pixel: vec2<f32>) -> Shaded {\n    var shaded = modeled(point, pixel);\n    shaded.opacity = point.opacity;\n    return shaded;\n}\n",
+        );
+        body.push_str(
+            "\nfn modeled(point: SurfacePoint, pixel: vec2<f32>) -> Shaded {\n    if point.lighting == LIGHTING_UNLIT {\n        return unlit(point);\n    }\n",
+        );
+        for (index, (_, path, form)) in self.models.iter().enumerate() {
+            let id = index + 2;
+            let entry = form.entry();
+            let _ = writeln!(imports, "import package::{path}::{entry} as model_{id};");
+            if *form == ModelForm::Shades {
+                let _ = writeln!(
+                    body,
+                    "    if point.lighting == {id}u {{\n        return model_{id}(point, pixel);\n    }}"
+                );
+            }
+        }
+        let adjusts = self
+            .models
+            .iter()
+            .enumerate()
+            .filter(|(_, (.., form))| *form == ModelForm::Adjusts);
+        let mut lighted = "point";
+        for (index, _) in adjusts {
+            let id = index + 2;
+            if lighted == "point" {
+                body.push_str("    var lighted = point;\n");
+                lighted = "lighted";
+            }
+            let _ = writeln!(
+                body,
+                "    if point.lighting == {id}u {{\n        lighted = model_{id}(point);\n    }}"
+            );
+        }
+        let _ = writeln!(body, "    return {LIGHTING_ENTRY}({lighted}, pixel);\n}}");
+    }
+
     pub(crate) fn slots_source(&self, full: bool) -> String {
         let mut imports = String::from(
             "import package::engine::shading::{PositionInput, Shaded, SurfaceInput, SurfacePoint, unlit};\n",
         );
         let mut body = String::new();
+        let mut prepared: Vec<(usize, String)> = Vec::new();
         let surface = "input: SurfaceInput, point: SurfacePoint";
         let mut signed: Vec<(&'static str, &'static str, &str, &str, &str)> = SurfaceSlot::ALL
             .into_iter()
@@ -806,6 +873,10 @@ impl MaterialLayout {
                 );
                 for (index, (_, _, path, _)) in modules.iter().enumerate() {
                     let id = index + 1;
+                    if let Some(at) = self.prepares.iter().position(|known| known == path) {
+                        let term = format!("material_module(SLOT_{}) == {id}u", upper(name));
+                        prepared.push((at, term));
+                    }
                     let _ = writeln!(imports, "import package::{path}::{name} as {name}_{id};");
                     let _ = writeln!(
                         body,
@@ -815,6 +886,28 @@ impl MaterialLayout {
             }
             let _ = writeln!(body, "    return standard_{name}({args});\n}}");
         }
+        body.push_str("\nfn prepare_slots(input: SurfaceInput, point: SurfacePoint) {\n");
+        for (at, path) in self.prepares.iter().enumerate() {
+            let picked: Vec<&str> = prepared
+                .iter()
+                .filter(|(known, _)| *known == at)
+                .map(|(_, term)| term.as_str())
+                .collect();
+            if picked.is_empty() {
+                continue;
+            }
+            let id = at + 1;
+            let _ = writeln!(
+                imports,
+                "import package::{path}::{PREPARE_ENTRY} as prepare_{id};"
+            );
+            let _ = writeln!(
+                body,
+                "    if {} {{\n        prepare_{id}(input, point);\n    }}",
+                picked.join("\n        || ")
+            );
+        }
+        body.push_str("}\n");
         body.push_str(
             "\nfn open_slots(input: SurfaceInput, point: SurfacePoint) -> SurfacePoint {\n    var filled = point;\n",
         );
@@ -825,25 +918,7 @@ impl MaterialLayout {
         body.push_str("    return filled;\n}\n");
         self.point_functions(&mut imports, &mut body);
         if full {
-            let _ = writeln!(imports, "import package::face::lit::{LIGHTING_ENTRY};");
-            body.push_str(
-                "\nfn shade(point: SurfacePoint, pixel: vec2<f32>) -> Shaded {\n    var shaded = modeled(point, pixel);\n    shaded.opacity = point.opacity;\n    return shaded;\n}\n",
-            );
-            body.push_str(
-                "\nfn modeled(point: SurfacePoint, pixel: vec2<f32>) -> Shaded {\n    if point.lighting == LIGHTING_UNLIT {\n        return unlit(point);\n    }\n",
-            );
-            for (index, (_, path)) in self.models.iter().enumerate() {
-                let id = index + 2;
-                let _ = writeln!(
-                    imports,
-                    "import package::{path}::{LIGHTING_ENTRY} as model_{id};"
-                );
-                let _ = writeln!(
-                    body,
-                    "    if point.lighting == {id}u {{\n        return model_{id}(point, pixel);\n    }}"
-                );
-            }
-            let _ = writeln!(body, "    return {LIGHTING_ENTRY}(point, pixel);\n}}");
+            self.model_functions(&mut imports, &mut body);
         }
         let mut used = vec!["material_module".to_owned(), "LIGHTING_UNLIT".to_owned()];
         used.extend(

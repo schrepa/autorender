@@ -17,7 +17,7 @@ use engine_core::{
 };
 use engine_open_world_kit::ground::{Cover, FarCover};
 use engine_places_rendering::lighting::inputs;
-use engine_render::{LightingModule, RenderBricks};
+use engine_render::{LightingModule, ModelForm, RenderBricks};
 
 pub use settings::{
     CoverAccent, CoverAtlas, CoverAtlasCell, CoverBladeForm, CoverCards, CoverClump, CoverLight,
@@ -65,6 +65,7 @@ impl Brick for GroundCoverBrick {
             .lighting_model(LightingModule {
                 name: surface::FIELD,
                 module: shaders::cover::field::MODULE,
+                form: ModelForm::Adjusts,
             })
             .point_input(inputs::OCCLUSION)
             .point_input(inputs::DIRECT_BLOCKED);
