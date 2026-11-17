@@ -61,6 +61,7 @@ export function jobCacheSettings(): JobCacheSettings | undefined {
 class Shelf {
   private timer = 0;
   private readonly writing = new Map<string, Promise<void>>();
+  private readonly handles = new Map<string, FileSystemFileHandle>();
 
   private constructor(private readonly directory: FileSystemDirectoryHandle, readonly index: JobCacheIndex) {}
 
@@ -69,7 +70,17 @@ class Shelf {
     const saved = await directory.getFileHandle(INDEX).then(handle => handle.getFile()).then(file => file.text()).catch(() => undefined);
     const shelf = new Shelf(directory, index(saved));
     shelf.changed();
+    void shelf.list();
     return shelf;
+  }
+
+  private async list() {
+    const entries = this.directory as unknown as { entries(): AsyncIterable<[string, FileSystemHandle]> };
+    try {
+      for await (const [name, handle] of entries.entries()) {
+        if (handle.kind === "file" && this.index.lists(name) && !this.handles.has(name)) this.handles.set(name, handle as FileSystemFileHandle);
+      }
+    } catch {}
   }
 
   size(key: string): number {
@@ -85,7 +96,8 @@ class Shelf {
     if (!this.index.holds(key)) return undefined;
     let file: Uint8Array | undefined;
     try {
-      file = new Uint8Array(await (await (await this.directory.getFileHandle(key)).getFile()).arrayBuffer());
+      const handle = this.handles.get(key) ?? await this.directory.getFileHandle(key);
+      file = new Uint8Array(await (await handle.getFile()).arrayBuffer());
     } catch {}
     const hit = this.index.hit(key, file?.length);
     this.changed();
@@ -109,7 +121,10 @@ class Shelf {
   async sweep() {
     const names = this.directory as unknown as { keys(): AsyncIterable<string> };
     for await (const name of names.keys()) {
-      if (name !== INDEX && !this.writing.has(name) && !this.index.lists(name)) await this.directory.removeEntry(name).catch(() => undefined);
+      if (name !== INDEX && !this.writing.has(name) && !this.index.lists(name)) {
+        this.handles.delete(name);
+        await this.directory.removeEntry(name).catch(() => undefined);
+      }
     }
   }
 
@@ -120,9 +135,11 @@ class Shelf {
     if (!this.index.store(key, file.size)) return;
     this.changed();
     try {
-      const writable = await (await this.directory.getFileHandle(key, { create: true })).createWritable();
+      const handle = await this.directory.getFileHandle(key, { create: true });
+      const writable = await handle.createWritable();
       await writable.write(file);
       await writable.close();
+      this.handles.set(key, handle);
     } catch (error) {
       this.index.failed();
       console.warn(`The record store stopped keeping records: ${String(error)}`);
@@ -130,7 +147,10 @@ class Shelf {
   }
 
   changed() {
-    for (const key of this.index.take_removed()) void this.directory.removeEntry(key).catch(() => undefined);
+    for (const key of this.index.take_removed()) {
+      this.handles.delete(key);
+      void this.directory.removeEntry(key).catch(() => undefined);
+    }
     if (this.timer) return;
     this.timer = window.setTimeout(() => {
       this.timer = 0;
