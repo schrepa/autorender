@@ -1540,7 +1540,7 @@
         }
       ],
       "type": "engine_probes::ReflectionProbesBrick",
-      "version": "cebf9f602c591ec1303682bf213c5a31ad0908dfae1170896209c5ed1c819814"
+      "version": "1a9bbb82d874a9e3481dd1953d2b8557469cb6968dece3a2e48b6d7fed3e64d2"
     },
     {
       "dependencies": [
@@ -2622,7 +2622,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "22454ff07527c10a8e7408b3798c17b27f67fb963e5f6dede00d547f6d50ba1b"
+      "version": "793276d198420171c24e84639ab1cd650c4909cc93658df28aa3538b9232db9e"
     },
     {
       "dependencies": [
