@@ -923,6 +923,7 @@ impl ScatterGpu {
         held.views.extend(listed.iter().map(|(view, _)| *view));
         if state.released {
             held.sizes = Sizes::default();
+            held.view_peak = 0;
         }
         let view_count = listed.len() as u32;
         held.view_peak = held.view_peak.max(view_count);
