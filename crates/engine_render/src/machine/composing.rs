@@ -118,6 +118,7 @@ pub(crate) fn compose(
             own_groups: groups,
             own,
             reached: frame_reached,
+            fragment: fragment_key(decl, &stages),
         });
         staged.push((decl.clone(), stages, reached));
     }
@@ -135,6 +136,15 @@ pub(crate) fn compose(
         reaches,
         staged,
     }
+}
+
+fn fragment_key(decl: &PipelineDecl, stages: &[Stage]) -> Option<u64> {
+    let rendered = matches!(decl.program, Program::Render(_));
+    stages.get(1).filter(|_| rendered).map(|stage| {
+        let mut hasher = DefaultHasher::new();
+        (stage.entry.name(), &stage.composed.text).hash(&mut hasher);
+        hasher.finish()
+    })
 }
 
 fn linked(
