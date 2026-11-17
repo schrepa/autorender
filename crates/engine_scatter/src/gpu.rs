@@ -790,14 +790,13 @@ impl ScatterGpu {
             *size = bytes;
         }
         let objects = state.objects;
-        if fresh || self.held.uploaded != Some(state.slot_sequence) {
-            let missed = self.held.uploaded.map(|seen| seen + 1) != Some(state.slot_sequence);
-            if fresh || missed {
-                for write in state.pool.whole(&state.groups) {
-                    self.write_slot(cx, &write, objects);
-                }
-                self.held.snap.wrote_whole();
+        let next = self.held.uploaded.map(|seen| seen + 1) == Some(state.slot_sequence);
+        if fresh || (!next && self.held.uploaded != Some(state.slot_sequence)) {
+            for write in state.pool.whole(&state.groups) {
+                self.write_slot(cx, &write, objects);
             }
+            self.held.snap.wrote_whole();
+        } else if next {
             for write in &state.pool.writes {
                 if let Some(slots) = self.write_slot(cx, write, objects) {
                     self.held.snap.wrote(slots);
