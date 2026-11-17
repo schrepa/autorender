@@ -6,7 +6,7 @@ use engine_place::PlaceKind;
 use engine_registry::{BrickStates, GateId, MembersOf, Registry, RegistryBuilder, SettingsEntry};
 
 use super::*;
-use crate::install::{InstallCore, PartInfo, Reinstall};
+use crate::install::{InstallCore, PartInfo, Reinstall, Scoped};
 use crate::linker::{CORE_PACKAGE, Linker, Part};
 use crate::machine::{Machine, OutputDecl};
 use crate::places::{Answered, Fed, checked, face_module, face_source, fold_cost, place_module};
@@ -73,6 +73,7 @@ pub struct Installation {
     pub parts: Vec<InstalledPart>,
     pub modules: Vec<String>,
     pub texts: Vec<String>,
+    pub stages: Vec<(&'static str, Vec<&'static str>, String)>,
     pub layouts: usize,
     pub frame_variants: usize,
     pub pieces: Vec<InstalledPiece>,
@@ -120,6 +121,31 @@ fn fold_steps(built: &Built) -> Vec<crate::shared::Step> {
     found
 }
 
+fn stage_texts(machine: &Machine) -> Vec<(&'static str, Vec<&'static str>, String)> {
+    let mut seen = std::collections::BTreeMap::new();
+    let mut stages: Vec<(&'static str, Vec<&'static str>, String)> = Vec::new();
+    for built in &machine.pipelines {
+        let pass = match built.decl.scope {
+            Scoped::Scene(name) | Scoped::Outside(name) => name,
+            Scoped::Pass(pass) => machine
+                .declared
+                .passes
+                .get(pass as usize)
+                .map_or("", |declared| declared.group.unwrap_or(declared.name)),
+        };
+        for stage in &built.stages {
+            let at = *seen.entry(stage.text_key()).or_insert_with(|| {
+                stages.push((stage.entry.name(), Vec::new(), stage.composed.text.clone()));
+                stages.len() - 1
+            });
+            if !stages[at].1.contains(&pass) {
+                stages[at].1.push(pass);
+            }
+        }
+    }
+    stages
+}
+
 fn listing(built: &mut Built, order: Option<&engine_core::FoldOrder>) -> Installation {
     let modules = built.machine.linker.paths();
     let texts = modules
@@ -162,6 +188,7 @@ fn listing(built: &mut Built, order: Option<&engine_core::FoldOrder>) -> Install
         parts,
         modules,
         texts,
+        stages: Vec::new(),
         layouts: layouts.len(),
         frame_variants: machine.variants.len(),
         pieces: built.placed.pieces.clone(),
@@ -1165,10 +1192,11 @@ pub fn install_noop(world: &mut World) -> Result<Installation, Vec<Error>> {
     if !over.is_empty() {
         return Err(over);
     }
-    let listed = listing(
+    let mut listed = listing(
         &mut installed,
         world.get_resource::<engine_core::FoldOrder>(),
     );
+    listed.stages = stage_texts(&installed.machine);
     let queue = crate::gpu_calls::Queue::new(queue);
     let mut assets = new_assets(&device, &queue);
     assets
