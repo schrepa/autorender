@@ -656,8 +656,8 @@ impl Run {
         }
         self.pipelines.listed = Some(keys);
         self.pipelines.unlisted = 0;
+        self.compile_first();
         if self.reached.generation.is_some() {
-            self.compile_first();
             self.at_reached_switches(Self::compile_listed);
         }
         Ok(())

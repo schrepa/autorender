@@ -138,9 +138,16 @@ impl Renderer {
     }
 
     pub fn create_listed_pipelines(&mut self, record: &[u8]) -> Result<(), Error> {
-        self.run
-            .as_mut()
-            .map_or(Ok(()), |run| run.create_listed(record))
+        let Some(run) = self.run.as_mut() else {
+            return Ok(());
+        };
+        if run.reached.generation.is_some() {
+            return run.create_listed(record);
+        }
+        let scope = crate::gpu_calls::validation_scope(&self.core.device);
+        let created = run.create_listed(record);
+        validate_also(&mut self.installing, Box::pin(scope.pop()));
+        created
     }
 
     pub fn pipelines_listed(&self) -> (u32, u32) {

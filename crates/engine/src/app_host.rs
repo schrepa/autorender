@@ -257,6 +257,11 @@ impl AppHost {
         self.pipeline_list.waiting()
     }
 
+    pub(crate) fn take_pipelines(&mut self) {
+        self.pipeline_list
+            .take(&mut self.engine, &mut self.renderer);
+    }
+
     pub(crate) fn cook(&mut self) {
         engine_core::cook(self.engine.app.world_mut());
     }

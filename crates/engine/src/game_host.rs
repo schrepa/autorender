@@ -447,6 +447,7 @@ impl<G: Game> GameHost<G> {
             }
         }
         self.app.report_jobs_held(self.jobs.held());
+        self.app.take_pipelines();
     }
 
     pub fn report_job_cache(&mut self, hits: u64, misses: u64, bytes: u64, mismatches: u64) {

@@ -53,6 +53,17 @@ pub fn inverse_or_identity(matrix: Mat4) -> Mat4 {
 
 type Validation = std::pin::Pin<Box<dyn std::future::Future<Output = Option<wgpu::Error>>>>;
 
+fn validate_also(installing: &mut Option<Validation>, popped: Validation) {
+    *installing = Some(match installing.take() {
+        None => popped,
+        Some(earlier) => Box::pin(async move {
+            let first = earlier.await;
+            let second = popped.await;
+            first.or(second)
+        }),
+    });
+}
+
 pub(crate) struct Core {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: crate::gpu_calls::Queue,

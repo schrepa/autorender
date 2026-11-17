@@ -1025,7 +1025,7 @@ fn warm_on_flip(
     }
     let scope = crate::gpu_calls::validation_scope(device);
     run.warm_reached(world);
-    *installing = Some(Box::pin(scope.pop()));
+    super::validate_also(installing, Box::pin(scope.pop()));
 }
 
 fn drawn_order(listed: &[engine_core::ViewFacts]) -> Vec<usize> {
