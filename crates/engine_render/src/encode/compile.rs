@@ -893,7 +893,7 @@ impl Compiler<'_> {
         self.compile_with(pipeline, targets, shown, variant, Asked::Waited)
     }
 
-    fn speedup_unmade(
+    pub(super) fn speedup_unmade(
         &mut self,
         pipeline: u32,
         targets: (
