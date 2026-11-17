@@ -93,6 +93,8 @@ pub(crate) struct ScatterState {
     pub(crate) left_objects: u32,
     pub(crate) moved: Vec<(Entity, Reach)>,
     pub(crate) restyled: Option<f32>,
+    coarse: Option<f32>,
+    owed_coarse: Option<f32>,
     pub(crate) released: bool,
     pub(crate) impostors: Vec<ImpostorRecord>,
     pub(crate) impostor_generation: u64,
@@ -126,6 +128,8 @@ impl Default for ScatterState {
             left_objects: 0,
             moved: Vec::new(),
             restyled: None,
+            coarse: None,
+            owed_coarse: None,
             released: false,
             impostors: Vec::new(),
             impostor_generation: 0,
@@ -212,12 +216,20 @@ pub(crate) fn take_impostors(
         state.groups.take_impostors(&records);
         let before = std::mem::replace(&mut state.impostors, records);
         state.restyled = (before != state.impostors).then(|| card_pixel(state, &before));
-        if state.restyled.is_some() {
+        if let Some(pixel) = state.restyled {
             state.boxing.reboxed = reboxed(&before, &state.impostors);
+            let owed = state.owed_coarse.unwrap_or(f32::INFINITY);
+            state.owed_coarse = Some(engine_math::min(owed, pixel));
         }
     }
     state.impostor_live = held.as_ref().map_or(0, |held| held.live);
     state.impostor_refused = held.as_ref().map_or(0, |held| held.refused);
+    let awaited = held.as_ref().map_or(0, |held| held.awaited);
+    state.coarse = if awaited == 0 {
+        state.owed_coarse.take()
+    } else {
+        None
+    };
 }
 
 pub(crate) fn publish_canopy(
@@ -812,7 +824,7 @@ pub(crate) fn publish_changes(
     }
     if std::mem::take(&mut resnapped.full) {
         areas.push(DrawnArea::All);
-    } else if let Some(pixel) = state.restyled.filter(|pixel| pixel.is_finite()) {
+    } else if let Some(pixel) = state.coarse.filter(|pixel| pixel.is_finite()) {
         areas.push(DrawnArea::Coarse { pixel });
     }
 }

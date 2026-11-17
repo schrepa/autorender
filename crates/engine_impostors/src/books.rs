@@ -1317,11 +1317,13 @@ fn supply_all(
         let record = match supplied {
             Some(Supplied::Waiting) => {
                 book.waiting = book.waiting.saturating_add(1);
+                settled.awaited += 1;
                 ImpostorRecord::default()
             }
             Some(supplied) => {
                 settled.asked += 1;
                 settled.refused += u32::from(matches!(supplied, Supplied::Refused));
+                settled.awaited += u32::from(matches!(supplied, Supplied::Coming));
                 supplied.record()
             }
             None => ImpostorRecord::default(),
@@ -1358,6 +1360,7 @@ fn write_records(written: &mut Written<'_, '_, '_>, entity: Entity, settled: &Im
     current.asked = settled.asked;
     current.refused = settled.refused;
     current.live = settled.live;
+    current.awaited = settled.awaited;
 }
 
 fn settle_book(
@@ -1383,6 +1386,7 @@ fn settle_book(
         settled.records.clear();
         settled.asked = 0;
         settled.refused = 0;
+        settled.awaited = 0;
         supply_all(
             book,
             cx,
