@@ -407,7 +407,7 @@ fn material_layout(
     }
     for (_, model) in registry.render_entries::<LightingModule>() {
         linker.add_source(model.module.source());
-        let (path, name) = crate::linker::path_of((model.module, crate::surface::LIGHTING_ENTRY));
+        let (path, name) = crate::linker::path_of((model.module, model.form.entry()));
         roots.push((path.to_owned(), name));
         declared.models.push((*model, path.to_owned()));
     }

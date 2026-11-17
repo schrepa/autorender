@@ -85,7 +85,8 @@ pub use renderer::{
 };
 pub use shaders::FULLSCREEN;
 pub use surface::{
-    DrawState, FaceCull, LightingModule, MaterialValue, MaterialVariant, OpenSlot, SlotModule,
+    DrawState, FaceCull, LightingModule, MaterialValue, MaterialVariant, ModelForm, OpenSlot,
+    SlotModule,
     SurfaceKind, SurfaceTerms, material_state,
 };
 pub use uploads::{UploadRange, listed_ranges};

@@ -14,8 +14,8 @@ use engine_core::{
 };
 use engine_render::{
     Allocation, Bind, Buffer, Draw, FaceCull, Form, FormColor, FormDepth, FormFragment, FormSide,
-    FragmentPass, FragmentUse, GpuPart, Install, KindForm, Lifetime, LightingModule, PassFragment,
-    PointInput, Prepare, RenderBricks, Scene, SceneDraw, Shape, SlotModule, Varyings,
+    FragmentPass, FragmentUse, GpuPart, Install, KindForm, Lifetime, LightingModule, ModelForm,
+    PassFragment, PointInput, Prepare, RenderBricks, Scene, SceneDraw, Shape, SlotModule, Varyings,
 };
 
 pub const GLIMMER: DrawKind = DrawKind("glimmer");
@@ -159,6 +159,7 @@ impl Brick for GlimmerBrick {
             .lighting_model(LightingModule {
                 name: LOOK,
                 module: shaders::glimmer::bands::MODULE,
+                form: ModelForm::Shades,
             })
             .point_input(ADDED_LIGHT)
             .generated(GENERATED)
