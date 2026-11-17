@@ -46,6 +46,7 @@ struct Slot {
     probe: RenderReflectionProbe,
     capture: Capture,
     sun: Vec3,
+    early: bool,
 }
 
 impl Slot {
@@ -59,6 +60,7 @@ struct Sequence {
     slot: usize,
     face: usize,
     draws: bool,
+    early: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -244,6 +246,7 @@ impl ProbeSlots {
                     probe: *probe,
                     capture: Capture::Waiting,
                     sun: Vec3::ZERO,
+                    early: false,
                 });
                 self.changed |= probe.interior.is_some();
             }
@@ -268,6 +271,7 @@ impl ProbeSlots {
                 slot: waiting,
                 face: 0,
                 draws,
+                early: false,
             });
             self.during = Capture::Ready;
         }
@@ -281,10 +285,11 @@ impl ProbeSlots {
         })
     }
 
-    fn face_drawn(&mut self) -> bool {
-        let Some(sequence) = self.capturing else {
+    fn face_drawn(&mut self, quiet: bool) -> bool {
+        let Some(mut sequence) = self.capturing else {
             return false;
         };
+        sequence.early |= sequence.draws && !quiet;
         if sequence.face + 1 < FACES {
             self.capturing = Some(Sequence {
                 face: sequence.face + 1,
@@ -296,9 +301,31 @@ impl ProbeSlots {
         let during = std::mem::take(&mut self.during);
         if let Some(slot) = self.slots[sequence.slot].as_mut() {
             slot.capture = during;
+            if sequence.draws {
+                slot.early = sequence.early;
+            }
             self.changed = true;
         }
         true
+    }
+
+    fn retake_early(&mut self) {
+        for (index, slot) in self.slots.iter_mut().enumerate() {
+            let Some(slot) = slot
+                .as_mut()
+                .filter(|slot| slot.early && !slot.capture.draws())
+            else {
+                continue;
+            };
+            slot.early = false;
+            slot.capture = Capture::Recapture;
+            if self
+                .capturing
+                .is_some_and(|sequence| sequence.slot == index)
+            {
+                self.during = self.during.max(Capture::Recapture);
+            }
+        }
     }
 
     fn missed(&mut self, slot: usize, key: u64) {
@@ -344,7 +371,7 @@ impl ProbeSlots {
         self.slots
             .iter()
             .flatten()
-            .filter(|slot| slot.capture != Capture::Ready)
+            .filter(|slot| slot.capture != Capture::Ready || slot.early)
             .count() as u32
     }
 
@@ -481,7 +508,7 @@ impl ProbeState {
         &mut self,
         probes: &[RenderReflectionProbe],
         sun: Vec3,
-        mut budget: Option<&mut FrameBudget>,
+        (quiet, budget): (bool, &mut FrameBudget),
     ) {
         let texels = u64::from(self.size) * u64::from(self.size);
         let mut used = [false; FACES];
@@ -495,9 +522,7 @@ impl ProbeState {
             } else {
                 lit_texel_bytes()
             };
-            if let Some(budget) = budget.as_deref_mut()
-                && !budget.spend(BUDGET, texels * texel_bytes)
-            {
+            if !budget.spend(BUDGET, texels * texel_bytes) {
                 break;
             }
             used[due.face] = true;
@@ -519,7 +544,7 @@ impl ProbeState {
             {
                 self.taken.push(held);
             }
-            if self.slots.face_drawn() {
+            if self.slots.face_drawn(quiet) {
                 self.owed.extend(self.slots.held(due.cube));
                 self.finished = Some((due.cube, self.set));
                 self.set = (self.set + 1) % SETS;
@@ -589,10 +614,11 @@ pub(crate) fn plan_captures(
     let quiet = readiness.loading.total == 0
         && readiness.compiling == 0
         && readiness.settling <= state.reported;
-    if state.views && !preparing {
-        state.capture(probes, sun, Some(&mut budget));
-    } else if state.views && quiet {
-        state.capture(probes, sun, None);
+    if quiet {
+        state.slots.retake_early();
+    }
+    if state.views && (quiet || !preparing) {
+        state.capture(probes, sun, (quiet, &mut budget));
     }
     let waiting = if state.views {
         state.slots.unready() + state.slots.owed(&mut state.owed)
