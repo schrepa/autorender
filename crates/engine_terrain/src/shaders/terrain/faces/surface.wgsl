@@ -590,6 +590,24 @@ fn evaluate(start: u32, inputs: SurfaceInputs) -> f32 {
     return stack[0];
 }
 
+fn surface_add(materials: ptr<function, array<u32, MAX_MATERIALS>>,
+        weights: ptr<function, array<f32, MAX_MATERIALS>>, count: ptr<function, u32>,
+        material: u32, part: f32) {
+    var placed = false;
+    for (var m = 0u; m < *count; m++) {
+        if (*materials)[m] == material {
+            (*weights)[m] += part;
+            placed = true;
+            break;
+        }
+    }
+    if !placed && *count < MAX_MATERIALS {
+        (*materials)[*count] = material;
+        (*weights)[*count] = part;
+        *count += 1u;
+    }
+}
+
 fn surface_control(terrain: u32, inputs: SurfaceInputs) -> u32 {
     surface_base = surface_materials[terrain].base;
     surface_terrain = terrain;
@@ -607,17 +625,30 @@ fn surface_control(terrain: u32, inputs: SurfaceInputs) -> u32 {
         let current = index - 1u;
         let at = program + BIOME_WORDS * current;
         var fit = 1.0;
-        if current > 0u {
-            fit = clamp_rule(evaluate(word(at), inputs), 0.0, 1.0);
-        }
-        let share = fit * remaining;
-        remaining *= 1.0 - fit;
-        if current < wet_biomes {
-            let held = fit * soaking;
-            soaking *= 1.0 - fit;
-            let rule = word(at + 2u);
-            if held > 0.0 && rule != NONE {
-                wet += held * clamp_rule(evaluate(rule, inputs), 0.0, 1.0);
+        var share = 0.0;
+        for (var ask = 0u; ask < 2u; ask++) {
+            let wetting = ask == 1u;
+            var rule = word(at);
+            var asking = current > 0u;
+            var held = 0.0;
+            if wetting {
+                share = fit * remaining;
+                remaining *= 1.0 - fit;
+                if current >= wet_biomes {
+                    break;
+                }
+                held = fit * soaking;
+                soaking *= 1.0 - fit;
+                rule = word(at + 2u);
+                asking = held > 0.0 && rule != NONE;
+            }
+            if asking {
+                let value = clamp_rule(evaluate(rule, inputs), 0.0, 1.0);
+                if wetting {
+                    wet += held * value;
+                } else {
+                    fit = value;
+                }
             }
         }
         if share > 0.0 {
@@ -629,27 +660,45 @@ fn surface_control(terrain: u32, inputs: SurfaceInputs) -> u32 {
                 let entry = list + 1u + 3u * l;
                 var held = 1.0;
                 var cover = 1.0;
-                if l > 0u {
-                    let value = evaluate(word(entry + 2u), inputs);
-                    held = clamp_rule(value, 0.0, 1.0);
-                    cover = clamp_rule(value * real(entry + 1u), 0.0, 1.0);
+                var weight = 0.0;
+                var pair = vec2<u32>(word(entry), word(entry));
+                let sequence = pair.x & ~LAYER_COVERS;
+                var members = 0u;
+                var total = 0.0;
+                var along = 0.0;
+                var ask = 0u;
+                loop {
+                    let growing = ask > 0u;
+                    if growing || l > 0u {
+                        var rule = word(entry + 2u);
+                        if growing {
+                            rule = word(sequence + 2u * ask);
+                        }
+                        let value = evaluate(rule, inputs);
+                        if growing {
+                            let grows = clamp_rule(value, 0.0, 1.0);
+                            total += grows;
+                            along += grows * f32(ask - 1u);
+                        } else {
+                            held = clamp_rule(value, 0.0, 1.0);
+                            cover = clamp_rule(value * real(entry + 1u), 0.0, 1.0);
+                        }
+                    }
+                    if !growing {
+                        weight = cover * left;
+                        left *= 1.0 - cover;
+                        if weight > 0.0 && (pair.x & LAYER_COVERS) != 0u {
+                            members = word(sequence);
+                        }
+                    }
+                    if ask >= members {
+                        break;
+                    }
+                    ask += 1u;
                 }
-                let weight = cover * left;
-                left *= 1.0 - cover;
                 if weight > 0.0 {
-                    var pair = vec2<u32>(word(entry), word(entry));
                     var split = 0.0;
                     if (pair.x & LAYER_COVERS) != 0u {
-                        let sequence = pair.x & ~LAYER_COVERS;
-                        let members = word(sequence);
-                        var total = 0.0;
-                        var along = 0.0;
-                        for (var c = 0u; c < members; c++) {
-                            let grows = clamp_rule(
-                                evaluate(word(sequence + 2u + 2u * c), inputs), 0.0, 1.0);
-                            total += grows;
-                            along += grows * f32(c);
-                        }
                         let place = pmin(along / pmax(total, 1.0e-6) * held, f32(members - 1u));
                         let lower = u32(place);
                         let upper = min(lower + 1u, members - 1u);
@@ -661,19 +710,7 @@ fn surface_control(terrain: u32, inputs: SurfaceInputs) -> u32 {
                         let material = select(pair.x, pair.y, side == 1u);
                         let part = select(weight * (1.0 - split), weight * split, side == 1u);
                         if part > 0.0 {
-                            var placed = false;
-                            for (var m = 0u; m < count; m++) {
-                                if materials[m] == material {
-                                    weights[m] += part;
-                                    placed = true;
-                                    break;
-                                }
-                            }
-                            if !placed && count < MAX_MATERIALS {
-                                materials[count] = material;
-                                weights[count] = part;
-                                count += 1u;
-                            }
+                            surface_add(&materials, &weights, &count, material, part);
                         }
                     }
                 }
@@ -686,19 +723,24 @@ fn surface_control(terrain: u32, inputs: SurfaceInputs) -> u32 {
             break;
         }
     }
+    return surface_pick(&materials, &weights, count, wet);
+}
+
+fn surface_pick(materials: ptr<function, array<u32, MAX_MATERIALS>>,
+        weights: ptr<function, array<f32, MAX_MATERIALS>>, count: u32, wet: f32) -> u32 {
     var first = 0u;
     var first_weight = -1.0;
     var second = 0u;
     var second_weight = -1.0;
     for (var m = 0u; m < count; m++) {
-        let weight = weights[m];
+        let weight = (*weights)[m];
         if weight > first_weight {
             second = first;
             second_weight = first_weight;
-            first = materials[m];
+            first = (*materials)[m];
             first_weight = weight;
         } else if weight > second_weight {
-            second = materials[m];
+            second = (*materials)[m];
             second_weight = weight;
         }
     }
