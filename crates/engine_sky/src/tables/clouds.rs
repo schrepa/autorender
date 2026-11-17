@@ -115,11 +115,34 @@ impl CloudNoise {
             Volume::Detail => &mut self.detail,
         };
         let texels = &mut volume[start..start + residuals.len()];
-        for (index, residual) in residuals.iter().enumerate() {
-            texels[index] = residual.wrapping_add(predicted(texels, size, index));
-        }
+        texels.copy_from_slice(residuals);
+        summed(texels, size);
         Ok(())
     }
+}
+
+fn add_onto(texels: &mut [u8], apart: usize) {
+    for at in (apart..texels.len()).step_by(apart) {
+        let (done, rest) = texels.split_at_mut(at);
+        let below = &done[at - apart..];
+        for (texel, &under) in rest[..apart].iter_mut().zip(below) {
+            *texel = texel.wrapping_add(under);
+        }
+    }
+}
+
+fn summed(texels: &mut [u8], size: usize) {
+    for line in texels.chunks_exact_mut(size) {
+        let mut sum = 0_u8;
+        for texel in line {
+            sum = sum.wrapping_add(*texel);
+            *texel = sum;
+        }
+    }
+    for plane in texels.chunks_exact_mut(size * size) {
+        add_onto(plane, size);
+    }
+    add_onto(texels, size * size);
 }
 
 fn predicted(texels: &[u8], size: usize, index: usize) -> u8 {

@@ -68,7 +68,7 @@ struct TableState<T> {
     kind: &'static JobKind,
     name: &'static str,
     wanted: Option<Vec<Vec<u8>>>,
-    parts: Vec<Background<Option<Vec<u8>>>>,
+    parts: Vec<Background<Option<Arc<[u8]>>>>,
     assembling: Option<T>,
     ready: Option<StaticTable<T>>,
 }
@@ -96,7 +96,7 @@ impl<T: Assembly> TableState<T> {
             .enumerate()
             .map(|(place, identity)| {
                 let priority = job_priority(URGENT_JOBS, place as u32);
-                jobs.fetch(kind, identity, priority, |bytes| Ok(Some(bytes.to_vec())))
+                jobs.fetch(kind, identity, priority, |bytes| Ok(Some(bytes)))
             })
             .collect();
         self.assembling = None;
