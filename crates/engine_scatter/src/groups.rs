@@ -14,7 +14,7 @@ use engine_render::{pack_color, pack_surface};
 use glam::Vec3;
 
 use crate::layouts::{
-    LEVELS, NO_LAYER, PlacedRecord, PlacedValues, RANK_MAX, ScatterTerrain, SlotColor,
+    LEVELS, NO_LAYER, PlacedRecord, PlacedValues, PoseData, RANK_MAX, ScatterTerrain, SlotColor,
     TERRAIN_INDEX, WIND_REACH, pose_rows,
 };
 use crate::pool::TileObjects;
@@ -266,7 +266,52 @@ pub(crate) struct Groups {
     pub(crate) colors: Vec<[u32; 2]>,
     pub(crate) asks: Vec<Option<ImpostorAsk>>,
     indices: HashMap<(Entity, usize), u32>,
+    by_asset: HashMap<Entity, Vec<Option<u32>>>,
     terrains: HashMap<Entity, u32>,
+}
+
+fn impostor_box(
+    views: Option<&ImpostorRecord>,
+    pose: impl FnOnce() -> PoseData,
+) -> (Vec3, Vec3) {
+    let Some(views) = views.filter(|views| views.framed()) else {
+        return (Vec3::ZERO, Vec3::ZERO);
+    };
+    let pose = pose();
+    let [x, y, z, _] = views.sphere;
+    let [half_x, half_y, half_z] = views.extent;
+    let middle = |row: [f32; 4]| row[0] * x + row[1] * y + row[2] * z + row[3];
+    let spread =
+        |row: [f32; 4]| row[0].abs() * half_x + row[1].abs() * half_y + row[2].abs() * half_z;
+    (
+        Vec3::new(middle(pose[0]), middle(pose[1]), middle(pose[2])),
+        Vec3::new(spread(pose[0]), spread(pose[1]), spread(pose[2])),
+    )
+}
+
+fn box_input(record: Option<&ImpostorRecord>) -> Option<[u32; 6]> {
+    record.filter(|record| record.framed()).map(|record| {
+        let [x, y, z, _] = record.sphere;
+        let [half_x, half_y, half_z] = record.extent;
+        [x, y, z, half_x, half_y, half_z].map(f32::to_bits)
+    })
+}
+
+pub(crate) fn reboxed(before: &[ImpostorRecord], now: &[ImpostorRecord]) -> Vec<bool> {
+    (0..before.len().max(now.len()))
+        .map(|group| box_input(before.get(group)) != box_input(now.get(group)))
+        .collect()
+}
+
+pub(crate) fn object_boxes(
+    (poses, records): (&[PoseData], &[PlacedRecord]),
+    impostors: &[ImpostorRecord],
+) -> Vec<(Vec3, Vec3)> {
+    poses
+        .iter()
+        .zip(records)
+        .map(|(pose, record)| impostor_box(impostors.get(record.group as usize), || *pose))
+        .collect()
 }
 
 impl Groups {
@@ -278,6 +323,7 @@ impl Groups {
         let mut layouts = Vec::new();
         let mut colors = Vec::new();
         let mut indices = HashMap::default();
+        let mut by_asset: HashMap<Entity, Vec<Option<u32>>> = HashMap::default();
         for (terrain, assets) in terrains {
             for (asset_index, asset) in assets.iter().enumerate() {
                 let Some(asset) = asset else {
@@ -301,6 +347,11 @@ impl Groups {
                 let material = asset.material.material;
                 let objects = groups.len() as u32;
                 indices.insert((*terrain, asset_index), objects);
+                let table: &mut Vec<Option<u32>> = by_asset.entry(*terrain).or_default();
+                if table.len() <= asset_index {
+                    table.resize(asset_index + 1, None);
+                }
+                table[asset_index] = Some(objects);
                 let color = slot_color(material);
                 let sphere = (
                     (low + high) * 0.5,
@@ -370,8 +421,14 @@ impl Groups {
             colors,
             asks,
             indices,
+            by_asset,
             terrains: terrain_indices(terrains),
         }
+    }
+
+    fn assets(&self, terrain: Entity) -> impl Fn(&Placed) -> Option<u32> + '_ {
+        let table = self.by_asset.get(&terrain).map_or(&[][..], Vec::as_slice);
+        |placed| table.get(usize::from(placed.asset)).copied().flatten()
     }
 
     pub(crate) fn same_objects(&self, other: &Self) -> bool {
@@ -406,8 +463,9 @@ impl Groups {
             .copied()
             .unwrap_or(TERRAIN_INDEX)
             .min(TERRAIN_INDEX);
+        let group_of = self.assets(terrain);
         for placed in placed {
-            let Some(&group) = self.indices.get(&(terrain, usize::from(placed.asset))) else {
+            let Some(group) = group_of(placed) else {
                 continue;
             };
             let near = placed.near_level.map_or(0, |level| u32::from(level) + 1);
@@ -451,27 +509,35 @@ impl Groups {
         placed: &[Placed],
         impostors: &[ImpostorRecord],
     ) -> Vec<(Vec3, Vec3)> {
+        let group_of = self.assets(terrain);
         placed
             .iter()
             .filter_map(|placed| {
-                let &group = self.indices.get(&(terrain, usize::from(placed.asset)))?;
-                let Some(views) = impostors.get(group as usize).filter(|views| views.framed())
-                else {
-                    return Some((Vec3::ZERO, Vec3::ZERO));
-                };
-                let pose = pose_rows(placed.model(origin, placed.position[1]));
-                let [x, y, z, _] = views.sphere;
-                let [half_x, half_y, half_z] = views.extent;
-                let middle = |row: [f32; 4]| row[0] * x + row[1] * y + row[2] * z + row[3];
-                let spread = |row: [f32; 4]| {
-                    row[0].abs() * half_x + row[1].abs() * half_y + row[2].abs() * half_z
-                };
-                Some((
-                    Vec3::new(middle(pose[0]), middle(pose[1]), middle(pose[2])),
-                    Vec3::new(spread(pose[0]), spread(pose[1]), spread(pose[2])),
-                ))
+                let group = group_of(placed)?;
+                Some(impostor_box(impostors.get(group as usize), || {
+                    pose_rows(placed.model(origin, placed.position[1]))
+                }))
             })
             .collect()
+    }
+
+    pub(crate) fn rebox(
+        &self,
+        (terrain, origin, placed): (Entity, Vec3, &[Placed]),
+        (impostors, reboxed): (&[ImpostorRecord], &[bool]),
+        boxes: &mut [(Vec3, Vec3)],
+    ) {
+        let group_of = self.assets(terrain);
+        let grouped = placed
+            .iter()
+            .filter_map(|placed| Some((placed, group_of(placed)? as usize)));
+        for ((placed, group), held) in grouped.zip(boxes) {
+            if reboxed.get(group).copied().unwrap_or(true) {
+                *held = impostor_box(impostors.get(group), || {
+                    pose_rows(placed.model(origin, placed.position[1]))
+                });
+            }
+        }
     }
 
     pub(crate) fn take_impostors(&mut self, records: &[ImpostorRecord]) {

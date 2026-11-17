@@ -42,6 +42,10 @@ impl Pooled {
     pub(crate) fn identity(&self) -> u64 {
         self.placed.as_ptr() as usize as u64
     }
+
+    pub(crate) fn groups(&self) -> impl Iterator<Item = usize> + '_ {
+        self.groups.iter().map(|&(group, _)| group as usize)
+    }
 }
 
 pub(crate) enum SlotWrite {
@@ -80,6 +84,7 @@ pub(crate) struct ScatterPool {
     tiles: HashMap<PoolKey, Pooled>,
     free: Vec<Range<u32>>,
     moved: Vec<(Entity, Reach)>,
+    revision: u64,
 }
 
 impl ScatterPool {
@@ -87,8 +92,13 @@ impl ScatterPool {
         *self = Self {
             counts: vec![0; groups],
             spreads: vec![Spread::NONE; groups],
+            revision: self.revision + 1,
             ..Self::default()
         };
+    }
+
+    pub(crate) fn revision(&self) -> u64 {
+        self.revision
     }
 
     pub(crate) fn settle(&mut self) {
@@ -123,6 +133,7 @@ impl ScatterPool {
             ));
             false
         });
+        self.revision += u64::from(!freed.is_empty());
         for (slots, bounds, groups, far) in freed {
             self.moved.extend(bounds.map(|bounds| (id, bounds)));
             for (group, count) in groups {
@@ -148,6 +159,7 @@ impl ScatterPool {
             return;
         }
         let slots = self.allocate(count);
+        self.revision += 1;
         let mut groups: Vec<(u32, u32)> = Vec::new();
         let mut far = 0;
         for record in &objects.2 {
@@ -275,6 +287,7 @@ impl ScatterPool {
         let count = from.end - from.start;
         let start = self.free[at].start;
         pooled.slots = start..start + count;
+        self.revision += 1;
         self.free[at].start += count;
         if self.free[at].is_empty() {
             self.free.remove(at);
