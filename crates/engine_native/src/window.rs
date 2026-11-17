@@ -348,6 +348,7 @@ impl<G: Game> Running<G> {
         }
         let timestamp = engine::host::now_ms();
         let (width, height) = self.size;
+        self.exchange_jobs();
         let phase = self.host.animation_frame(timestamp, width, height)?;
         engine::profiling::mark_speed();
         self.exchange_jobs();

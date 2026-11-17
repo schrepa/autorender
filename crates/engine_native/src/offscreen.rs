@@ -354,6 +354,7 @@ impl<G: Game> Offscreen<G> {
 
     pub fn starting(&mut self, timestamp: f64) -> engine::Result<FramePhase> {
         let (width, height) = self.size;
+        self.exchange_jobs();
         let phase = self.host.animation_frame(timestamp, width, height)?;
         self.exchange_jobs();
         self.host.wait_for_gpu()?;
@@ -362,6 +363,7 @@ impl<G: Game> Offscreen<G> {
 
     pub fn frame(&mut self, timestamp: f64) -> engine::Result<()> {
         let (width, height) = self.size;
+        self.exchange_jobs();
         self.host.frame(timestamp, width, height)?;
         self.exchange_jobs();
         self.host.wait_for_gpu()

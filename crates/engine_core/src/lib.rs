@@ -908,6 +908,16 @@ impl Engine {
         self.app.world_mut().run_schedule(WorldSync);
     }
 
+    #[doc(hidden)]
+    pub fn exchange(&mut self) {
+        self.scoped(|engine| {
+            let world = engine.app.world_mut();
+            records::exchange(world);
+            files::read_files(world);
+            jobs::exchange_orders(world);
+        });
+    }
+
     fn sync_view(&mut self) {
         let _profile = engine_profile::span("ecs", "ViewSync");
         let facts = self.facts.unwrap_or_default();

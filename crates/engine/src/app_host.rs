@@ -475,12 +475,14 @@ impl AppHost {
             self.engine.frame(timestamp_ms * 0.001)?;
             let simulation_ms = now_ms() - start;
             let time = self.engine.frame_time();
-            self.render_frame(
+            let drawn = self.render_frame(
                 (width, height),
                 (simulation_ms, time.ticks),
                 Some(time.real_seconds * 1000.0),
                 picture,
-            )?
+            )?;
+            self.engine.exchange();
+            drawn
         };
         drop(profile);
         self.end_attribution();
