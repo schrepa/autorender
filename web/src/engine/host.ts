@@ -208,7 +208,7 @@ export interface GameOptions<T extends Runtime> {
   interrupted?(reason: string): void;
 }
 
-interface Live<T> { kind: "preparing" | "playing"; game: T; paused: boolean; busy: boolean; level: boolean }
+interface Live<T> { kind: "preparing" | "playing"; game: T; paused: boolean; busy: boolean; level: boolean; shown: boolean }
 type HostState<T> = { kind: "starting" } | Live<T> | { kind: "failed"; stopped: string | undefined; busy: boolean } | { kind: "disposed" };
 
 export function startGame<T extends Runtime>(options: GameOptions<T>) {
@@ -234,7 +234,7 @@ let request = 0;
 const hud = new FrameHud(canvas);
 const pace = new GpuPace(canvas, () => {
   const current = live();
-  if (current?.kind === "playing" && !current.paused && !document.hidden) run(current, performance.now(), true);
+  if (current?.kind === "playing" && current.shown && !current.paused && !document.hidden) run(current, performance.now(), true);
 });
 let jobs: JobPool | undefined;
 const ticks = new MessageChannel();
@@ -343,13 +343,29 @@ function guarded(work: () => void) {
   try { work(); } catch (error) { fail(error); }
 }
 
-function started(current: Live<T>) {
+function gpuQueue(): GPUQueue | undefined {
+  return (canvas.getContext("webgpu") as GPUCanvasContext | null)?.getConfiguration()?.device.queue;
+}
+
+function starting(current: Live<T>, submitted: number) {
   current.kind = "playing";
+  const queue = gpuQueue();
+  if (!queue) { started(current, submitted); return; }
+  void queue.onSubmittedWorkDone().then(() => {
+    if (live() !== current || current.shown) return;
+    started(current, submitted);
+    if (!request && !current.paused && !document.hidden) request = requestAnimationFrame(frame);
+  }, () => undefined);
+}
+
+function started(current: Live<T>, submitted: number) {
+  current.shown = true;
+  performance.mark("engine-shown", { detail: { submitted } });
   jobs?.started();
   hud.reset();
   canvas.style.visibility = "";
   message.hidden = true;
-  setStatus("WebGPU active", "running");
+  if (!current.paused && !document.hidden) setStatus("WebGPU active", "running");
 }
 
 function pollLevel(current: Live<T>) {
@@ -371,6 +387,7 @@ function frame(timestamp: number) {
   request = 0;
   const current = live();
   if (!current || current.paused || document.hidden) return;
+  if (current.kind === "playing" && !current.shown) return;
   if (current.kind === "playing" && pace.animation(timestamp)) {
     request = requestAnimationFrame(frame);
     return;
@@ -393,7 +410,7 @@ function run(current: Live<T>, at: number, early: boolean) {
     jobs?.exchange();
     if (current.kind === "preparing") hud.preparing(game, phase);
     if (phase === FRAME_PHASES.started) {
-      started(current);
+      starting(current, performance.now());
     } else if (phase === FRAME_PHASES.playing) {
       pollLevel(current);
       options.afterFrame?.(game, timestamp);
@@ -404,7 +421,7 @@ function run(current: Live<T>, at: number, early: boolean) {
       hud.reset();
       return;
     }
-    if (live() && !request) schedule(phase);
+    if (live() && !request && (current.kind === "preparing" || current.shown)) schedule(phase);
   } catch (error) { fail(error); }
 }
 
@@ -422,13 +439,14 @@ function resume() {
   if (!current || document.hidden) return;
   if (current.paused) { setStatus("Paused", "paused"); return; }
   if (request) return;
-  if (current.kind === "preparing") {
+  if (!current.shown) {
     message.hidden = false;
     message.textContent = "Loading…";
     setStatus("Loading", "preparing");
   } else {
     setStatus("WebGPU active", "running");
   }
+  if (current.kind === "playing" && !current.shown) return;
   request = requestAnimationFrame(frame);
 }
 
@@ -474,7 +492,7 @@ async function start() {
   const created = await options.create(canvas, lifecycle.signal);
   performance.mark("engine-created");
   if (disposed()) { created.free(); return; }
-  state = { kind: prepares ? "preparing" : "playing", game: created, paused: development && !preparedDevelopment, busy: false, level: false };
+  state = { kind: prepares ? "preparing" : "playing", game: created, paused: development && !preparedDevelopment, busy: false, level: false, shown: !prepares };
   created.apply_host_settings(location.search);
   created.set_preparation(prepares);
   connectInput();
@@ -535,8 +553,7 @@ async function start() {
         jobs?.exchange();
       },
       source: options.source,
-      gpuWorkDone: () => (canvas.getContext("webgpu") as GPUCanvasContext | null)
-        ?.getConfiguration()?.device.queue.onSubmittedWorkDone(),
+      gpuWorkDone: () => gpuQueue()?.onSubmittedWorkDone(),
       fail, stopped: () => state.kind === "failed" ? state.stopped : undefined,
       controls: Object.fromEntries(Object.entries(options.controls ?? {}).map(([name, control]) => [name, {
         values: control.values, run: (args: Record<string, unknown>) => control.run(created, args),
