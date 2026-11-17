@@ -4,7 +4,11 @@ import package::engine::shading::{SurfaceInput, SurfacePoint};
 import package::engine::mapped::base_color as mapped_base_color;
 import package::engine::mapped::normal as mapped_normal;
 import package::scatter::grounding::{grounded_color, grounded_metalness, grounded_normal,
-    grounded_roughness};
+    grounded_roughness, prepare_grounding};
+
+fn prepare(input: SurfaceInput, point: SurfacePoint) {
+    prepare_grounding(input);
+}
 
 fn metal_rough(input: SurfaceInput) -> vec4<f32> {
     if !map_present(MAP_METALLIC_ROUGHNESS) {

@@ -12,8 +12,12 @@ import package::face::lighting::SURFACE_THIN;
 import package::generated::kinds::KIND_PLACED;
 import package::scatter::grounded::{mapped_metalness, mapped_roughness};
 import package::scatter::grounding::{grounded_color, grounded_metalness, grounded_normal,
-    grounded_roughness};
+    grounded_roughness, prepare_grounding};
 import package::scatter::values::placed_values_of;
+
+fn prepare(input: SurfaceInput, point: SurfacePoint) {
+    prepare_grounding(input);
+}
 
 const GREY: vec3<f32> = vec3<f32>(0.57735027);
 
