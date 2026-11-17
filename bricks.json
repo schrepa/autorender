@@ -427,7 +427,7 @@
         }
       ],
       "type": "engine_impostors::ImpostorsBrick",
-      "version": "35e605d1805728d553cdc96e5f2eaba9365c991eddbbea13966c33eb08837eb5"
+      "version": "8e47e77fc208c54abe68aefadf73a752ac6eca8b4a8a69dba1c2108512114eab"
     },
     {
       "dependencies": [
@@ -2528,6 +2528,14 @@
         },
         {
           "kind": "face",
+          "place": "foliage",
+          "providers": [
+            "engine_scatter"
+          ],
+          "required": false
+        },
+        {
+          "kind": "face",
           "place": "shadows",
           "providers": [
             "engine_shadows"
@@ -2547,14 +2555,6 @@
           "place": "sun",
           "providers": [
             "engine_sun"
-          ],
-          "required": false
-        },
-        {
-          "kind": "face",
-          "place": "foliage",
-          "providers": [
-            "engine_scatter"
           ],
           "required": false
         },
@@ -2622,7 +2622,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "3cbad32956b2839c1e5dbc77be9275c222be1a3640ab9e6614af67205a18457e"
+      "version": "7eca508a2fa919317a9cacd60438375b8cdfc5a301adade76b7cb58655fbf027"
     },
     {
       "dependencies": [
