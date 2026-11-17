@@ -285,12 +285,18 @@ fn written_module(
         found = Some(written);
     }
     Some(found.map(|(colored, written)| {
-        let listed: Vec<&OutputDecl> = written
+        let listed: Vec<(&OutputDecl, bool)> = written
             .iter()
             .filter_map(|at| outputs.get(*at as usize))
+            .map(|output| {
+                let asks = output.module.as_deref().is_some_and(|module| {
+                    crate::shared::asks(linker.text(module).unwrap_or_default())
+                });
+                (output, asks)
+            })
             .collect();
         let shades = colored
-            || listed.iter().any(|output| {
+            || listed.iter().any(|(output, _)| {
                 output.module.as_deref().is_some_and(|module| {
                     crate::shared::reads_shaded(
                         linker.text(module).unwrap_or_default(),
