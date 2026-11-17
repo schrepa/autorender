@@ -120,6 +120,7 @@ impl<G: Game> PageHost<G> {
             }
         }
         host.prepare_pipelines();
+        host.engine_mut().exchange();
         Ok(Self { host })
     }
 
