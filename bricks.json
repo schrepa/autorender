@@ -3381,8 +3381,8 @@
     }
   ],
   "frame": {
-    "frame_variants": 55,
-    "layouts": 121,
+    "frame_variants": 51,
+    "layouts": 117,
     "pieces": [
       {
         "brick": "engine_sun",
