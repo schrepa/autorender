@@ -29,6 +29,7 @@ pub(crate) const SKIPPED: u8 = 0;
 pub(crate) const LOST: u8 = 1;
 pub(crate) const SKY_LOST: u8 = 2;
 pub(crate) const SKY_STALE: u8 = 3;
+pub(crate) const WAITED: u8 = 4;
 
 #[derive(Resource, Default)]
 pub(crate) struct ShadowDrawn {
@@ -57,6 +58,7 @@ pub(crate) struct ShadowPlan {
     pub(crate) key: Option<LevelKey>,
     pub(crate) layout: u8,
     pub(crate) restarted: bool,
+    pub(crate) preparing: bool,
     pub(crate) sky: SkyMaps,
     pub(crate) sky_draws: Vec<SkyDraw>,
     pub(crate) views: Vec<MapView>,
@@ -65,8 +67,16 @@ pub(crate) struct ShadowPlan {
     pub(crate) composes: Vec<ComposeData>,
     pub(crate) composed: Vec<(u32, Range<u32>)>,
     moving: u32,
-    settling: Settling,
+    settling: Finishing,
     cameras: Vec<Entity>,
+}
+
+struct Finishing(Settling);
+
+impl Default for Finishing {
+    fn default() -> Self {
+        Self(Settling::on_finished())
+    }
 }
 
 impl ShadowPlan {
@@ -90,7 +100,8 @@ impl ShadowPlan {
             match status {
                 LOST => self.levels.forget(None),
                 SKY_LOST => self.sky.forget(),
-                SKY_STALE => self.sky.stale(),
+                SKY_STALE => self.sky.stale(&levels),
+                WAITED => self.levels.wait(&levels),
                 _ => self.levels.forget(Some(&levels)),
             }
         }
@@ -311,16 +322,20 @@ pub(crate) fn plan_shadows(
         }
     }
     let quiet = readiness.loading.total == 0 && readiness.compiling == 0;
-    let room = live_cameras(&plan.cameras, (&moves, &lenses)).min(SHADOW_REGIONS as usize);
-    plan.levels.plan(room, !quiet);
+    plan.preparing = pause.holds(PauseReason::Preparing);
+    let held = plan.preparing && !readiness.only_finishing();
+    let live = live_cameras(&plan.cameras, (&moves, &lenses)).min(SHADOW_REGIONS as usize);
+    let room = if held { 0 } else { live };
+    let holds = (!plan.preparing && !quiet, readiness.compiling > 0);
+    plan.levels.plan(room, holds);
     let free = room.saturating_sub(plan.levels.regions.len());
-    plan.moving = if changes.moving > 0 { key.moving } else { 0 };
+    let moving = changes.moving > 0 && !held;
+    plan.moving = if moving { key.moving } else { 0 };
     let occludes = occluding.on();
-    let preparing = pause.holds(PauseReason::Preparing);
     plan.sky.prepare(
         (&sky, occludes),
         (eye, time.real_elapsed),
-        (casters_changed, quiet, preparing),
+        (casters_changed, quiet, plan.preparing),
         (free, &mut plan.sky_draws),
     );
     crate::regions::views(
@@ -391,6 +406,7 @@ pub(crate) fn shadow_stats(
     let levels = &plan.levels;
     let drawn = levels.regions.len() as u32;
     plan.settling
+        .0
         .left((levels.wanted - drawn).saturating_add(plan.sky.left()));
     let (sky_maps, sky_drawn) = plan.sky.counts();
     let (held, side, bytes) = plan.key.map_or((0, 0, 0), |key| {

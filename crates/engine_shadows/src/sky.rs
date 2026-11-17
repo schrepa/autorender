@@ -108,9 +108,10 @@ impl SkyMaps {
         self.layers = [Layer::default(); LAYERS];
     }
 
-    pub(crate) fn stale(&mut self) {
-        for layer in &mut self.layers {
-            layer.stale |= layer.drawn.is_some();
+    pub(crate) fn stale(&mut self, layers: &[u32]) {
+        for (index, layer) in (0_u32..).zip(&mut self.layers) {
+            let listed = layers.is_empty() || layers.contains(&index);
+            layer.stale |= listed && layer.drawn.is_some();
         }
     }
 
@@ -201,7 +202,7 @@ impl SkyMaps {
         (quiet, preparing): (bool, bool),
     ) -> Vec<usize> {
         let missing: Vec<usize> = in_use(count)
-            .filter(|&layer| quiet && self.layers[layer].drawn.is_none())
+            .filter(|&layer| (quiet || preparing) && self.layers[layer].drawn.is_none())
             .collect();
         if !missing.is_empty() {
             return missing;

@@ -90,6 +90,7 @@ pub(crate) struct Level {
     half_depth: f32,
     pub(crate) window: Rect,
     redraw: Rect,
+    waited: Rect,
     pub(crate) wanted: Rect,
 }
 
@@ -103,6 +104,7 @@ impl Level {
             half_depth: 0.5 * texel * side as f32 * ((1.0 + rise) / basis.sine() + 1.0),
             window: NONE,
             redraw: NONE,
+            waited: NONE,
             wanted: NONE,
         }
     }
@@ -239,6 +241,7 @@ impl Levels {
             level.wanted = level.extent(eye, key.side);
             level.window = meet(level.window, level.wanted);
             level.redraw = meet(level.redraw, level.window);
+            level.waited = meet(level.waited, level.window);
         }
         restart
     }
@@ -270,12 +273,20 @@ impl Levels {
     pub(crate) fn forget(&mut self, levels: Option<&[u32]>) {
         for (index, level) in (0_u32..).zip(&mut self.levels) {
             if levels.is_none_or(|levels| levels.contains(&index)) {
-                (level.window, level.redraw) = (NONE, NONE);
+                (level.window, level.redraw, level.waited) = (NONE, NONE, NONE);
             }
         }
     }
 
-    pub(crate) fn plan(&mut self, cameras: usize, held_redraws: bool) {
+    pub(crate) fn wait(&mut self, levels: &[u32]) {
+        for (index, level) in (0_u32..).zip(&mut self.levels) {
+            if levels.contains(&index) {
+                level.waited = level.window;
+            }
+        }
+    }
+
+    pub(crate) fn plan(&mut self, cameras: usize, (held_redraws, held_waits): (bool, bool)) {
         let Self {
             levels,
             regions,
@@ -300,14 +311,21 @@ impl Levels {
                 }
             }
         }
-        let room = if held_redraws { 0 } else { room };
+        let owed = if held_redraws { 0 } else { room };
         for (level, held) in levels.iter_mut().enumerate().rev() {
             if empty(held.redraw) {
                 continue;
             }
             *redraws += 1;
-            if take(regions, (wanted, room), Region { level, rect: held.redraw }) {
+            if take(regions, (wanted, owed), Region { level, rect: held.redraw }) {
                 held.redraw = NONE;
+            }
+        }
+        let owed = if held_waits { 0 } else { room };
+        for (level, held) in levels.iter_mut().enumerate().rev() {
+            let rect = held.waited;
+            if !empty(rect) && take(regions, (wanted, owed), Region { level, rect }) {
+                held.waited = NONE;
             }
         }
     }

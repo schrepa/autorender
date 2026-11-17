@@ -12,7 +12,7 @@ use engine_render::{
 use crate::ShadowPass;
 use crate::constants::SKY_LAYERS;
 use crate::gpu_layouts::{ComposeData, ShadowLevel, SkyViews};
-use crate::plan::{LOST, SKY_LOST, SKY_STALE, ShadowDrawn, ShadowPlan};
+use crate::plan::{LOST, SKY_LOST, SKY_STALE, ShadowDrawn, ShadowPlan, WAITED};
 use crate::shaders;
 use crate::sky::RESOLUTION;
 
@@ -61,6 +61,19 @@ pub(crate) struct ShadowsGpu {
     sky_drawn: Recorded,
     stood_in: Vec<(u32, Vec<u8>)>,
     sky_stood_in: bool,
+    preparing: bool,
+    region_levels: Vec<u32>,
+    sky_layers: Vec<u32>,
+    waited: Vec<u32>,
+    sky_waited: Vec<u32>,
+}
+
+fn listed(status: u8, listed: &[u32]) -> Vec<u8> {
+    let mut bytes = vec![status];
+    for word in listed {
+        bytes.extend_from_slice(&word.to_le_bytes());
+    }
+    bytes
 }
 
 fn extent(width: u32, height: u32, layers: u32) -> wgpu::Extent3d {
@@ -218,6 +231,11 @@ impl GpuPart for ShadowsGpu {
             sky_drawn: Recorded::Exact,
             stood_in: Vec::new(),
             sky_stood_in: false,
+            preparing: false,
+            region_levels: Vec::new(),
+            sky_layers: Vec::new(),
+            waited: Vec::new(),
+            sky_waited: Vec::new(),
         })
     }
 
@@ -227,16 +245,23 @@ impl GpuPart for ShadowsGpu {
         cx: &mut Prepare<'_, Self>,
     ) {
         let kept = std::mem::take(&mut self.kept);
+        let waited = std::mem::take(&mut self.waited);
+        let sky_waited = std::mem::take(&mut self.sky_waited);
         if let Some((layout, levels)) = self.drawing.take() {
-            if !(cx.ran(self.maps) && cx.ran(self.composing_pass)) || kept == Recorded::Waiting {
+            if !(cx.ran(self.maps) && cx.ran(self.composing_pass)) {
+                cx.deliver::<ShadowDrawn>(layout, levels);
+            } else if kept == Recorded::Waiting && self.preparing {
+                cx.deliver::<ShadowDrawn>(layout, listed(WAITED, &waited));
+            } else if kept == Recorded::Waiting {
                 cx.deliver::<ShadowDrawn>(layout, levels);
             } else if kept == Recorded::StandIn {
                 self.stood_in.push((layout, levels));
             }
         }
         let layout = u32::from(plan.layout);
+        let stale = if self.preparing { &sky_waited[..] } else { &[] };
         match std::mem::take(&mut self.sky_drawn) {
-            Recorded::Waiting => cx.deliver::<ShadowDrawn>(layout, vec![SKY_STALE]),
+            Recorded::Waiting => cx.deliver::<ShadowDrawn>(layout, listed(SKY_STALE, stale)),
             Recorded::StandIn => self.sky_stood_in = true,
             Recorded::Exact | Recorded::Refused => {}
         }
@@ -270,6 +295,12 @@ impl GpuPart for ShadowsGpu {
         if !self.composed.is_empty() {
             self.drawing = Some((layout, plan.drawn_bytes()));
         }
+        self.preparing = plan.preparing;
+        let regions = plan.levels().regions.iter();
+        self.region_levels.clear();
+        self.region_levels.extend(regions.map(|region| region.level as u32));
+        self.sky_layers.clear();
+        self.sky_layers.extend(plan.sky_draws.iter().map(|draw| draw.layer as u32));
     }
 
     fn view(&mut self, view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
@@ -321,7 +352,11 @@ impl GpuPart for ShadowsGpu {
                     },
                 );
             }
-            self.kept = self.kept.max(cx.recorded());
+            let recorded = cx.recorded();
+            if recorded == Recorded::Waiting {
+                self.waited.extend(self.composed.iter().map(|&(level, _)| level));
+            }
+            self.kept = self.kept.max(recorded);
             return 0;
         }
         let count = |map: CasterMap| self.at.iter().filter(|at| at.map == map).count() as u32;
@@ -330,8 +365,15 @@ impl GpuPart for ShadowsGpu {
         let sky = moving.end..moving.end + count(CasterMap::Sky);
         cx.span("shadow_regions");
         cx.recorded();
-        let mut drawn = cx.views(self, &Attach::Depth(self.regions, None), 0..regions);
-        self.kept = self.kept.max(cx.recorded());
+        let mut drawn = 0;
+        for index in 0..regions {
+            drawn += cx.views(self, &Attach::Depth(self.regions, None), index..index + 1);
+            let recorded = cx.recorded();
+            if recorded == Recorded::Waiting {
+                self.waited.extend(self.region_levels.get(index as usize));
+            }
+            self.kept = self.kept.max(recorded);
+        }
         if !moving.is_empty() {
             cx.span("shadow_moving");
             drawn += cx.views(self, &Attach::Depth(self.levels, None), moving);
@@ -339,8 +381,14 @@ impl GpuPart for ShadowsGpu {
         }
         if !sky.is_empty() {
             cx.span("shadow_sky");
-            drawn += cx.views(self, &Attach::Depth(self.sky, None), sky);
-            self.sky_drawn = cx.recorded();
+            for (index, view) in sky.enumerate() {
+                drawn += cx.views(self, &Attach::Depth(self.sky, None), view..view + 1);
+                let recorded = cx.recorded();
+                if recorded == Recorded::Waiting {
+                    self.sky_waited.extend(self.sky_layers.get(index));
+                }
+                self.sky_drawn = self.sky_drawn.max(recorded);
+            }
         }
         drawn
     }
