@@ -737,6 +737,11 @@ impl Run {
                 (stage.entry.name(), &constants),
                 (&built.layout_key, None),
             )];
+            let needed = if asked == Asked::Warmed || self.pipelines.settled {
+                Needed::Later
+            } else {
+                Needed::First(switches.clone())
+            };
             let job = ComputeJob {
                 device: self.device.clone(),
                 label: self.machine.part_label(built.decl.part, stage.entry.name()),
@@ -746,10 +751,24 @@ impl Run {
                 constants,
                 cache: self.pipelines.cache.clone(),
             };
+            let noted = (!self.machine.makes_records(pipeline)).then(|| {
+                (
+                    Compiled {
+                        program,
+                        formats: Vec::new(),
+                        depth: None,
+                        plain: false,
+                        main: false,
+                        variant: None,
+                        needed,
+                    },
+                    self.pipelines.listing,
+                )
+            });
             let pass = self.machine.pass_name(pipeline);
             self.pipelines
                 .making
-                .submit(made, (pass, None, stages), move || job.make());
+                .submit(made, (pass, noted, stages), move || job.make());
             if asked == Asked::Warmed {
                 self.pipelines.warming.fed = Some(made);
             }

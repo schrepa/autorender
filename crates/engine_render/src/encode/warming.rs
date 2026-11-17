@@ -365,17 +365,7 @@ impl Run {
                 .filter(|&at| !self.machine.pipelines[at].decl.speedup_only)
                 .filter(|&at| self.pipeline_reached(at));
             if let Some(pipeline) = found {
-                let warm = Warm {
-                    pipeline: pipeline as u32,
-                    shape: Some(WarmShape {
-                        formats: key.formats.clone(),
-                        depth: key.depth,
-                        shown: (key.plain, key.main),
-                        variant: specialized(key),
-                    }),
-                    switches: switches.clone(),
-                    listed: true,
-                };
+                let warm = self.listed_warm(pipeline, key, switches.clone());
                 self.make_warm(warm, Asked::Drawn);
             }
         }
@@ -394,20 +384,29 @@ impl Run {
                 .position(|built| built.program_key == key.program)
                 .filter(|&at| self.pipeline_reached(at));
             if let Some(pipeline) = found {
-                self.pipelines.warming.queue.push_back(Warm {
-                    pipeline: pipeline as u32,
-                    shape: Some(WarmShape {
-                        formats: key.formats.clone(),
-                        depth: key.depth,
-                        shown: (key.plain, key.main),
-                        variant: specialized(key),
-                    }),
-                    switches: self.pipelines.switches.clone(),
-                    listed: true,
-                });
+                let warm = self.listed_warm(pipeline, key, self.pipelines.switches.clone());
+                self.pipelines.warming.queue.push_back(warm);
             }
         }
         self.pipelines.listed = Some(keys);
+    }
+
+    fn listed_warm(&self, pipeline: usize, key: &Compiled, switches: Vec<(u32, bool)>) -> Warm {
+        let compute = matches!(
+            self.machine.pipelines[pipeline].decl.program,
+            Program::Compute(_)
+        );
+        Warm {
+            pipeline: pipeline as u32,
+            shape: (!compute).then(|| WarmShape {
+                formats: key.formats.clone(),
+                depth: key.depth,
+                shown: (key.plain, key.main),
+                variant: specialized(key),
+            }),
+            switches,
+            listed: true,
+        }
     }
 
     pub(crate) fn warm(&mut self) {
