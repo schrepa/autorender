@@ -3,9 +3,7 @@ import { warmAdapter } from "./adapter";
 import { type GameBindings, loadGame } from "./bindings";
 import { type Runtime, startGame } from "./host";
 import type { JobWorkerClass } from "./jobs";
-import { fetchBytes, loadSceneFiles, loadSceneSource } from "./source";
-
-declare const __GAME_FILES__: string[];
+import { loadSceneFiles, loadSceneSource } from "./source";
 
 const SCENE_SUFFIX = ".scene.json";
 
@@ -18,18 +16,12 @@ interface SceneLoader {
   free(): void;
 }
 
-interface FileSet {
-  add_buffer(uri: string, bytes: Uint8Array): void;
-}
-
 export interface PlayedBindings extends GameBindings {
-  SceneFileSet: new () => FileSet;
   SceneLoad: new (source: string) => SceneLoader;
 }
 
 export interface Playable<T extends Runtime> {
-  create(canvas: HTMLCanvasElement, scene?: string, files?: unknown, gameFiles?: unknown): Promise<T>;
-  files(): string[];
+  create(canvas: HTMLCanvasElement, scene?: string, files?: unknown): Promise<T>;
 }
 
 export interface PlayedGame<T extends Runtime, B extends PlayedBindings> {
@@ -46,13 +38,6 @@ function checkedScene(path: string, base: string): string {
     throw new Error(`${path}: expected a ${SCENE_SUFFIX} URL of ${location.origin}`);
   }
   return url.href;
-}
-
-async function gameFiles(set: FileSet, paths: string[], signal: AbortSignal): Promise<FileSet> {
-  await Promise.all(paths.filter(path => __GAME_FILES__.includes(path)).map(async path => {
-    set.add_buffer(path, await fetchBytes(new URL(`${import.meta.env.BASE_URL}${path}`, location.href).href, signal));
-  }));
-  return set;
 }
 
 function settled<T>(promise: Promise<T>): Promise<T> {
@@ -80,25 +65,13 @@ export function playGame<T extends Runtime, B extends PlayedBindings>(game: Play
     source,
     async create(canvas, signal) {
       signal.addEventListener("abort", () => opening.abort(signal.reason), { once: true });
-      const loaded = await bindings();
-      const played = game.game(loaded);
-      const scene = (async () => {
-        const text = await firstText;
-        return { text, files: source && text !== undefined ? await source.files(text, signal) : undefined };
-      })();
-      const [{ text, files }, found] = await Promise.all([scene, gameFiles(new loaded.SceneFileSet(), played.files(), signal)]);
+      const played = game.game(await bindings());
+      const text = await firstText;
+      const files = source && text !== undefined ? await source.files(text, signal) : undefined;
       signal.throwIfAborted();
-      const running = await played.create(canvas, text, files, found);
+      const running = await played.create(canvas, text, files);
       if (url !== undefined) running.set_file_root(new URL(".", sceneUrl()).href);
       return running;
-    },
-    async level(running, path, signal, progress) {
-      const target = checkedScene(path, url === undefined ? location.href : sceneUrl());
-      const text = await loadSceneSource(target, signal);
-      const files = await loadSceneFiles(target, text, await bindings(), signal, progress);
-      signal.throwIfAborted();
-      running.reload_scene(text, files);
-      running.set_file_root(new URL(".", target).href);
     },
   });
 }

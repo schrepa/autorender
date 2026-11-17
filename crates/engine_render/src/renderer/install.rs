@@ -390,7 +390,7 @@ fn material_layout(
     problems: &mut Vec<Error>,
 ) -> crate::surface::MaterialLayout {
     use crate::surface::{
-        LeftInput, LightingModule, MaterialLayout, OpenSlot, SlotModule, SlotPrepare, SurfaceDecls,
+        LightingModule, MaterialLayout, OpenSlot, SlotModule, SlotPrepare, SurfaceDecls,
         SurfaceKind, SurfaceTerms,
     };
     use engine_place::{PointInput, PointSet};
@@ -448,22 +448,6 @@ fn material_layout(
         .render_entries::<SurfaceKind>()
         .map(|(_, kind)| *kind)
         .collect();
-    for (brick, open) in registry.left_render_entries::<OpenSlot>() {
-        let name = open.input.name;
-        declared.left.push(LeftInput {
-            brick,
-            name,
-            opens: true,
-        });
-    }
-    for (brick, input) in registry.left_render_entries::<PointInput>() {
-        let name = input.name;
-        declared.left.push(LeftInput {
-            brick,
-            name,
-            opens: false,
-        });
-    }
     let layout = MaterialLayout::of(&declared, problems);
     for (path, text) in [
         (crate::surface::SHADING_MODULE, layout.shading_source()),

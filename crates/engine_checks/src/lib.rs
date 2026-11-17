@@ -1,5 +1,3 @@
-pub mod app;
-pub mod bricks;
 pub mod comments;
 pub mod files;
 pub mod generated;
@@ -35,26 +33,11 @@ pub struct Rules {
     pub errors: Option<Errors>,
 }
 
-impl Rules {
-    pub const NONE: Self = Self {
-        exceptions: Exceptions::NONE,
-        errors: None,
-    };
-}
-
 #[derive(Clone, Copy)]
 pub struct Exceptions {
     pub long_files: &'static [(&'static str, usize)],
     pub wide_structs: &'static [(&'static str, &'static str, usize)],
     pub unsafe_files: &'static [&'static str],
-}
-
-impl Exceptions {
-    pub const NONE: Self = Self {
-        long_files: &[],
-        wide_structs: &[],
-        unsafe_files: &[],
-    };
 }
 
 #[derive(Clone, Copy)]

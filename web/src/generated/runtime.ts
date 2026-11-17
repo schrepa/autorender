@@ -1,5 +1,4 @@
 import type { JobOrder } from "../engine/jobs";
-import type { Distribution } from "./host";
 import type { Reply, Step } from "./reply";
 import type { FrameStats } from "./stats";
 
@@ -20,7 +19,6 @@ export interface Runtime {
   pad(index: number, buttons: number, axes: Float32Array): void;
   touch(id: number, x: number, y: number, phase: number): void;
   touch_motion(id: number, dx: number, dy: number): void;
-  clear_input(): void;
   animation_frame(timestamp: number, width: number, height: number): number;
   set_preparation(enabled: boolean): void;
   set_job_workers(workers: number): boolean;
@@ -39,16 +37,11 @@ export interface Runtime {
   reset_camera(): void;
   reload_scene(source: string, files: unknown): void;
   set_file_root(root: string): void;
-  take_level_request(): string | undefined;
-  report_level(done: number, total: number): void;
-  fail_level(message: string): void;
   set_pixel_ratio(ratio: number): void;
-  set_setting(key: string, value: string): void;
   apply_host_settings(query: string): void;
   stats(): Json<FrameStats>;
   cursor_mode(): number;
   job_hash(): Uint8Array;
-  distribution(values: Float64Array): Json<Distribution | null>;
   dev_request?(line: string, context: string): Json<Step>;
   dev_resume?(outcome: string, context: string): Json<Step>;
   dev_reloaded?(source: string, context: string, files?: unknown): Json<Step>;

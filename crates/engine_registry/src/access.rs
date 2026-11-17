@@ -43,7 +43,6 @@ pub struct AccessRule {
     packages: Vec<(&'static str, Option<&'static str>)>,
     games: Vec<bool>,
     places: HashMap<TypeId, Catalogued>,
-    left_out: HashMap<TypeId, &'static str>,
     movers: Option<MoverRule>,
 }
 
@@ -57,13 +56,8 @@ impl AccessRule {
             packages,
             games,
             places: HashMap::default(),
-            left_out: HashMap::default(),
             movers,
         }
-    }
-
-    pub(crate) fn left_out(&mut self, type_id: TypeId, package: &'static str) {
-        self.left_out.insert(type_id, package);
     }
 
     pub(crate) fn place(&mut self, type_id: TypeId, kind: PlaceKind, filler: Option<BrickId>) {
@@ -135,18 +129,6 @@ impl AccessRule {
                 continue;
             }
             let own = owner.is_some_and(|owner| crate_segment(&name) == owner);
-            if own
-                && let Some(left) = info
-                    .type_id()
-                    .and_then(|type_id| self.left_out.get(&type_id))
-            {
-                problems.push(
-                    Error::new(ErrorCode::MissingResource, path)
-                        .got(&*name)
-                        .nearest(*left),
-                );
-                continue;
-            }
             if own || core_type(&name) {
                 continue;
             }

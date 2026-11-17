@@ -159,7 +159,7 @@ impl JobCx<'_> {
 
 #[doc(hidden)]
 pub fn job_list(kinds: &[&'static JobKind]) -> Result<JobList, Error> {
-    let core: [&'static JobKind; 2] = [&MESH_LODS, &AUTHORED_LEVELS];
+    let core: [&'static JobKind; 1] = [&MESH_LODS];
     JobList::new(
         core.into_iter()
             .chain(kinds.iter().copied())
@@ -503,20 +503,10 @@ impl Job for Whole {
     }
 }
 
-pub static AUTHORED_LEVELS: JobKind =
-    JobKind::new("engine::authored_levels", &LODBUILD, start_authored_levels);
-
 fn start_mesh_lods(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
     Ok(Box::new(Whole {
         input: input.to_vec(),
         run: engine_lodbuild::run,
-    }))
-}
-
-fn start_authored_levels(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
-    Ok(Box::new(Whole {
-        input: input.to_vec(),
-        run: engine_lodbuild::run_authored,
     }))
 }
 

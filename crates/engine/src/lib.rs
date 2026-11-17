@@ -16,7 +16,7 @@ pub type Result<T, E = Error> = std::result::Result<T, E>;
 
 #[doc(hidden)]
 pub mod surface;
-pub use game::{Arrival, DefaultScene, Game, GameEntry, GameFiles, LoadedScene, engine};
+pub use game::{Arrival, DefaultScene, Game, GameEntry, LoadedScene, engine};
 #[cfg(not(target_arch = "wasm32"))]
 pub use surface::runtime_typescript;
 #[cfg(not(target_arch = "wasm32"))]
@@ -24,7 +24,6 @@ pub mod tooling;
 
 pub use engine_command_line as command_line;
 pub use engine_core::collections;
-pub use engine_core::smoke_eq;
 
 mod games {
     pub use crate::frame_stats::ResolutionStats;
@@ -36,14 +35,14 @@ mod games {
         ComponentKind, ContextAsk, Contexts, Cull, CursorAsk, CursorMode, CursorRequests,
         DepthBias, Devices, DrawKind, Drawn, DrawnProjection, DrawnState, DrawnTable, Engine,
         EngineConfig, Filter, FixedTime, FrameLimits, FrameTime, GeometryHandle, GlobalTransform,
-        GlobalTransforms, HandOver, Hit, Input, InputSettings, InstanceValues, KindDecl, KindSkip,
+        GlobalTransforms, HandOver, Input, InputSettings, InstanceValues, KindDecl, KindSkip,
         Layers, LightingModel, Listing, MakeTextures, Material, MaterialHandle, Mesh, MeshVertex,
         Mobility, MouseButton, Mover, MoverId, Moves, Node, NodeWord, Operation, Pace, PadButton,
-        Parent, Pause, PauseReason, Picking, Player, Poses, Projection, ProvidedAssets, Ray, Rect,
-        RenderState, Sampler, SceneComponents, Schedule, Section, Smoke, Source, Span, Spawner,
-        Stick, SurfaceSlot, Target, Teleport, Texture, TextureHandle, TextureRef, TextureSet,
-        TextureSource, TextureUsage, TimeScale, TouchPhase, Transform, Trigger, UvTransform, Verb,
-        VerbId, VerbShape, Verbs, View, ViewCut, ViewFacts, ViewHistory, Views, Wrap, main_camera,
+        Parent, Pause, PauseReason, Player, Poses, Projection, ProvidedAssets, Rect, RenderState,
+        Sampler, SceneComponents, Schedule, Section, Source, Span, Spawner, Stick, SurfaceSlot,
+        Target, Teleport, Texture, TextureHandle, TextureRef, TextureSet, TextureSource,
+        TextureUsage, TimeScale, TouchPhase, Transform, Trigger, UvTransform, Verb, VerbId,
+        VerbShape, Verbs, View, ViewCut, ViewFacts, ViewHistory, Views, Wrap, main_camera,
         make_fresh, math, place_camera, set_parent, set_parents,
     };
 }
@@ -85,9 +84,7 @@ mod resolution;
 pub use app_host::{PROFILE_DURATION_MS, PROFILE_EVENTS};
 pub use engine_render::{AdapterInfo, RenderTarget, TransparencySettings};
 #[cfg(not(target_arch = "wasm32"))]
-pub use engine_render::{
-    GpuPreference, NativeWindow, keep_pipeline_cache_in, start_native_instances_with,
-};
+pub use engine_render::{GpuPreference, NativeWindow, keep_pipeline_cache_in};
 pub use game_host::GameHost;
 
 pub fn scene_kinds(
@@ -146,7 +143,7 @@ macro_rules! __if_dev {
 pub mod prelude {
     pub use crate::games::*;
     pub use crate::host::TypedSettings;
-    pub use crate::{Arrival, Game, GameFiles, LoadedScene};
+    pub use crate::{Arrival, Game, LoadedScene};
     pub use bevy_ecs::{
         bundle::Bundle,
         change_detection::{DetectChanges, DetectChangesMut, Mut, Ref},

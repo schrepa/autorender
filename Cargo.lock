@@ -907,19 +907,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "engine_assetc"
-version = "0.1.0"
-dependencies = [
- "engine_core",
- "engine_lodbuild",
- "engine_scene",
- "glam 0.30.9",
- "gltf",
- "serde_json",
- "sha2",
-]
-
-[[package]]
 name = "engine_assets"
 version = "0.1.0"
 dependencies = [
@@ -937,12 +924,9 @@ dependencies = [
 name = "engine_checks"
 version = "0.1.0"
 dependencies = [
- "bevy_ecs",
  "engine",
  "engine_command_line",
  "engine_core",
- "engine_place",
- "engine_registry",
  "engine_render",
  "serde_json",
  "toml_edit",
@@ -1053,16 +1037,11 @@ dependencies = [
  "engine_registry",
  "engine_worker",
  "gilrs",
- "gltf",
- "naga",
  "png",
  "pollster",
  "serde_json",
  "sha2",
- "tiff",
- "toml_edit",
  "winit",
- "zip",
  "zstd",
 ]
 
@@ -1086,7 +1065,6 @@ dependencies = [
  "engine_gpu_bits",
  "engine_math",
  "engine_settings",
- "engine_smoke",
  "schemars",
  "serde",
  "serde_json",
@@ -1103,15 +1081,11 @@ dependencies = [
 name = "engine_profiler"
 version = "0.1.0"
 dependencies = [
- "ash",
  "backtrace",
  "engine",
  "fxprof-processed-profile",
  "iced-x86",
- "libc",
- "mach2",
  "serde_json",
- "wgpu",
  "windows-sys 0.61.2",
 ]
 
@@ -1182,14 +1156,6 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_path_to_error",
-]
-
-[[package]]
-name = "engine_smoke"
-version = "0.1.0"
-dependencies = [
- "serde",
- "serde_json",
 ]
 
 [[package]]
@@ -1945,12 +1911,6 @@ checksum = "52d3a9855747c17eaf4383823f135220716ab49bea5fbea7dd42cc9a92f8aa31"
 dependencies = [
  "logos-codegen",
 ]
-
-[[package]]
-name = "mach2"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0d28e293f2b8c9d2b2d1c0193bd3c1cbdc0d2cf396888dc01162f7cf9d6c3f3"
 
 [[package]]
 name = "memchr"
@@ -4124,7 +4084,6 @@ version = "0.1.0"
 dependencies = [
  "engine_scene",
  "engine_worker",
- "png",
  "serde_json",
  "sha2",
  "toml_edit",
@@ -4136,7 +4095,6 @@ version = "0.1.0"
 dependencies = [
  "bevy_ecs",
  "engine",
- "engine_assetc",
  "engine_checks",
  "engine_command_line",
  "engine_core",

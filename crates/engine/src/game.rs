@@ -1,8 +1,7 @@
 use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 use engine_core::{
-    BrickList, Bricks, Camera, DeviceLimits, Engine, Error, Smoke, Transform, main_camera,
-    place_camera,
+    BrickList, Bricks, Camera, DeviceLimits, Engine, Error, Transform, main_camera, place_camera,
 };
 use engine_render::{Renderer, wgpu};
 use engine_scene::{
@@ -41,10 +40,6 @@ pub(crate) fn limit(engine: &mut Engine, limits: DeviceLimits) {
 }
 
 pub trait Game: Resource + Sized {
-    const FILES: &'static [&'static str] = &[];
-
-    const SMOKES: &'static [Smoke] = &[];
-
     fn register(_bricks: &mut Bricks<'_>) {}
 
     fn load_scene(
@@ -130,63 +125,6 @@ impl<G> Clone for GameEntry<G> {
 
 impl<G> Copy for GameEntry<G> {}
 
-#[derive(Resource, Default)]
-pub struct GameFiles {
-    files: SceneFiles,
-    root: String,
-}
-
-impl GameFiles {
-    pub fn new(files: SceneFiles, root: impl Into<String>) -> Self {
-        Self {
-            files,
-            root: root.into(),
-        }
-    }
-
-    pub fn bytes(&self, name: &str) -> Option<&[u8]> {
-        self.files.buffer(name, "$").ok()
-    }
-
-    pub fn root(&self) -> &str {
-        &self.root
-    }
-}
-
-impl From<SceneFiles> for GameFiles {
-    fn from(files: SceneFiles) -> Self {
-        Self::new(files, "")
-    }
-}
-
-pub fn report_missing<G: Game>(files: &GameFiles) {
-    for file in G::FILES {
-        if files.bytes(file).is_some() {
-            continue;
-        }
-        let record = serde_json::json!({
-            "event": "optional_file_missing",
-            "file": file,
-            "level": "notice",
-        });
-        #[cfg(target_arch = "wasm32")]
-        web_sys::console::info_1(&wasm_bindgen::JsValue::from_str(&record.to_string()));
-        #[cfg(not(target_arch = "wasm32"))]
-        eprintln!("{record}");
-    }
-}
-
 pub fn default_build<G: Default>(_: &mut Engine) -> crate::Result<G> {
     Ok(G::default())
-}
-
-pub fn built<G: Game>(
-    entry: &GameEntry<G>,
-    engine: &mut Engine,
-    files: impl Into<GameFiles>,
-) -> crate::Result<G> {
-    engine.app.world_mut().insert_resource(files.into());
-    let game = (entry.build)(engine);
-    engine.app.world_mut().remove_resource::<GameFiles>();
-    game
 }

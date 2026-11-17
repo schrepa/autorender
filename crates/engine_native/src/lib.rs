@@ -10,28 +10,21 @@ pub mod files;
 mod input;
 mod job_cache;
 mod jobs;
-#[cfg(feature = "profiling")]
-mod live;
 mod offscreen;
 mod options;
 #[cfg(feature = "dev")]
 mod pure;
-#[cfg(feature = "dev")]
-pub mod smoke;
 mod window;
 
 use std::process::ExitCode;
 
 pub use engine::GpuPreference;
 pub use engine_profiler as profiler;
-pub use engine_profiler::{Pix, RenderDoc};
 pub use job_cache::JobStore;
 pub use jobs::{CacheOptions, JobOptions, JobPool, Written};
-pub use offscreen::{Frames, Offscreen, PixRecord, ProfileRecord, Record, Recorded};
-pub use options::{
-    Argument, Arguments, HostOptions, StartScene, Vendor, open_scene, options, parameters,
-};
-pub use window::{Measure, Window, WindowReport, run};
+pub use offscreen::{Frames, Offscreen, ProfileRecord, Record, Recorded};
+pub use options::{Argument, Arguments, HostOptions, StartScene, open_scene, options, parameters};
+pub use window::{Window, run};
 
 pub fn main<G: engine::Game>(
     game: engine::GameEntry<G>,
@@ -43,13 +36,7 @@ pub fn main<G: engine::Game>(
         return ExitCode::SUCCESS;
     }
     match HostOptions::parse(arguments) {
-        Ok(options) => {
-            #[cfg(feature = "dev")]
-            if let Some(names) = &options.smoke {
-                return smoke::of_game(&options, names, game);
-            }
-            exit(options.run(game))
-        }
+        Ok(options) => exit(options.run(game)),
         Err(error) => {
             let record = serde_json::json!({"event": "arguments_rejected", "error": error});
             eprintln!("{record}");

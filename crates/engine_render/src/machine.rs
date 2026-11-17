@@ -214,7 +214,7 @@ fn stage_of(entry: Entry, linker: &Linker) -> ShaderStages {
 
 pub(crate) fn writes_depth(depth: DepthUse) -> bool {
     match depth {
-        DepthUse::None | DepthUse::Test | DepthUse::TestStrictly => false,
+        DepthUse::None | DepthUse::Test => false,
         DepthUse::Write { .. } | DepthUse::Overwrite => true,
         DepthUse::Compare { write, .. } => write,
     }

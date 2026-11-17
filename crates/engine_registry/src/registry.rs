@@ -8,9 +8,7 @@ use bevy_ecs::schedule::{
 };
 use bevy_ecs::system::{IntoSystem, ScheduleSystem};
 use bevy_ecs::world::World;
-use engine_place::{
-    AttachPoint, Board, Callable, Error, ErrorCode, PlaceDecl, PlaceKind, Slot, Smoke,
-};
+use engine_place::{Board, Callable, Error, ErrorCode, PlaceDecl, PlaceKind, Slot};
 use engine_settings::Expected;
 use serde_json::Value;
 
@@ -19,7 +17,7 @@ use crate::attribution::CORE_ROW;
 use crate::entries::{EventEntry, Kept, OperationEntry, PieceEntry, SettingsEntry, StatsEntry};
 use crate::hooks::{Named, add_removal};
 use crate::jobs::JobQueue;
-use crate::needs::{Accessed, LeftOut, PlaceUses, Read, ReadKind, RequiredFill};
+use crate::needs::{Accessed, PlaceUses, Read, ReadKind, RequiredFill};
 use crate::order::{self, PlaceRules};
 use crate::owners::{Shared, Used, ValueKind, Values, note, ownership};
 use crate::record::{BrickRecord, crate_segment};
@@ -80,7 +78,6 @@ pub struct Registry {
     core_operations: Vec<OperationEntry>,
     core_events: Vec<EventEntry>,
     bases: Vec<u32>,
-    left_out: Vec<&'static str>,
     rule: AccessRule,
     named: Vec<Named>,
     eachers: Vec<(TypeId, MemberEach)>,
@@ -91,8 +88,6 @@ pub struct Registry {
     movers: Option<MoverRule>,
     despawn: Option<Despawn>,
     problems: Vec<Error>,
-    left: Vec<LeftOut>,
-    known: Vec<LeftOut>,
     required: Vec<RequiredFill>,
     reads: Vec<Read>,
     unmet: Vec<Error>,
@@ -104,7 +99,6 @@ pub struct Registry {
 pub struct RegistryBuilder {
     registry: Registry,
     listed: Vec<&'static str>,
-    left_owned: Vec<(TypeId, &'static str)>,
     firsts: Vec<TypeId>,
     orders: Vec<(&'static str, &'static str)>,
 }
@@ -132,9 +126,6 @@ impl RegistryBuilder {
             return;
         }
         registry.check_names(&record);
-        registry.left_out.retain(|&left| left != package);
-        registry.left.retain(|left| left.package != package);
-        registry.known.retain(|known| known.package != package);
         self.listed.push(package);
         registry.bricks.push(record);
     }
@@ -194,43 +185,16 @@ impl RegistryBuilder {
         }
     }
 
-    pub fn leave_out(&mut self, record: BrickRecord) {
-        let package = record.package;
-        if self.registry.has(package) {
-            return;
-        }
-        self.left_owned
-            .extend(record.owned().iter().map(|owned| (owned.type_id, package)));
-        if !self.registry.left_out.contains(&package) {
-            self.registry.left_out.push(package);
-            self.registry.left.push(LeftOut::of(record));
-        }
-    }
-
-    pub fn known(&mut self, record: BrickRecord) {
-        let registry = &mut self.registry;
-        let package = record.package;
-        if registry.has(package)
-            || registry.left_out.contains(&package)
-            || registry.known.iter().any(|known| known.package == package)
-        {
-            return;
-        }
-        registry.known.push(LeftOut::of(record));
-    }
-
     pub fn install(self, world: &mut World, schedules: &[InternedScheduleLabel]) -> GateDriver {
         let Self {
             mut registry,
             listed,
-            left_owned,
             firsts,
             orders,
         } = self;
         registry.number();
         registry.catalog_records();
-        registry.check_smokes();
-        registry.rule = registry.rule_of(&left_owned);
+        registry.rule = registry.rule_of();
         registry.check_owned();
         for decl in &registry.catalog {
             decl.insert(world);
@@ -321,19 +285,6 @@ impl Registry {
         self.core_events.push(entry);
     }
 
-    pub fn left_out(&self) -> &[&'static str] {
-        &self.left_out
-    }
-
-    pub fn left_render_entries<T: Any>(&self) -> impl Iterator<Item = (&'static str, &T)> + '_ {
-        self.left.iter().chain(&self.known).flat_map(|left| {
-            left.render
-                .iter()
-                .filter_map(|entry| entry.downcast_ref::<T>())
-                .map(move |entry| (left.package, entry))
-        })
-    }
-
     pub fn holds(&self, package: &str, type_id: TypeId) -> bool {
         let owner = self.brick(package).and_then(BrickRecord::owner);
         owner.is_some()
@@ -397,30 +348,6 @@ impl Registry {
     pub fn note_reads(&mut self, kinds: &[ReadKind], reads: Vec<Read>) {
         self.reads.retain(|read| !kinds.contains(&read.kind));
         self.reads.extend(reads);
-    }
-
-    pub fn could_provide(&self, place: &str) -> Vec<&'static str> {
-        self.handed_over(|handed| handed.provides(place))
-    }
-
-    pub fn could_write(&self, target: &str, before: Option<AttachPoint>) -> Vec<&'static str> {
-        self.handed_over(|handed| handed.writes(target, before))
-    }
-
-    fn handed_over(&self, wanted: impl Fn(&LeftOut) -> bool) -> Vec<&'static str> {
-        let packages = |handed: &[LeftOut]| -> Vec<&'static str> {
-            handed
-                .iter()
-                .filter(|&left| wanted(left))
-                .map(|left| left.package)
-                .collect()
-        };
-        let left = packages(self.left.as_slice());
-        if left.is_empty() {
-            packages(self.known.as_slice())
-        } else {
-            left
-        }
     }
 
     pub(crate) fn hold_gated(&mut self, rows: Vec<Error>) {
@@ -713,27 +640,11 @@ impl Registry {
         }
     }
 
-    pub fn smokes(&self) -> impl Iterator<Item = (&'static str, &'static Smoke)> + '_ {
-        let bricks = self.bricks.iter().flat_map(|record| {
-            let package = record.package;
-            record.smokes().iter().map(move |smoke| (package, smoke))
-        });
-        let places = self.catalog.iter().flat_map(|decl| {
-            let name = decl.name();
-            decl.smokes().iter().map(move |smoke| (name, smoke))
-        });
-        bricks.chain(places)
-    }
-
     pub fn corpora<C: Any>(&self) -> impl Iterator<Item = (&'static str, &'static C)> + '_ {
         self.bricks.iter().flat_map(|record| {
             let owner = record.owner().unwrap_or(record.package);
             record.corpora::<C>().map(move |corpus| (owner, corpus))
         })
-    }
-
-    pub fn smoke(&self, name: &str) -> Option<(&'static str, &'static Smoke)> {
-        self.smokes().find(|(_, smoke)| smoke.name == name)
     }
 
     pub fn pieces(&self) -> impl Iterator<Item = (BrickId, &PieceEntry)> + '_ {
@@ -897,26 +808,7 @@ impl Registry {
         self.catalog.sort_by(|a, b| a.name().cmp(b.name()));
     }
 
-    fn check_smokes(&mut self) {
-        let mut seen: Vec<(&'static str, &'static str)> = Vec::new();
-        let mut twice: Vec<Error> = Vec::new();
-        for (owner, smoke) in self.smokes() {
-            match seen.iter().find(|(name, _)| *name == smoke.name) {
-                Some(&(_, first)) => {
-                    let path = format!("$.smokes.{}", smoke.name);
-                    twice.push(
-                        Error::new(ErrorCode::NameTwice, path)
-                            .got(first)
-                            .nearest(owner),
-                    );
-                }
-                None => seen.push((smoke.name, owner)),
-            }
-        }
-        self.problems.append(&mut twice);
-    }
-
-    fn rule_of(&self, left_owned: &[(TypeId, &'static str)]) -> AccessRule {
+    fn rule_of(&self) -> AccessRule {
         let mut rule = AccessRule::new(
             self.bricks
                 .iter()
@@ -931,11 +823,6 @@ impl Registry {
                 PlaceKind::List | PlaceKind::Component | PlaceKind::Ledger => None,
             };
             rule.place(decl.type_id(), decl.kind(), filler);
-        }
-        for &(type_id, package) in left_owned {
-            if !self.bricks.iter().any(|record| record.owns(type_id)) {
-                rule.left_out(type_id, package);
-            }
         }
         rule
     }
@@ -1315,17 +1202,13 @@ impl Registry {
                     required,
                 });
                 if required && filler.is_none() {
-                    let missing = Error::new(
-                        ErrorCode::PlaceNotFilled,
-                        format!("$.bricks.{}.reads.{}", record.package, decl.name()),
-                    )
-                    .expected(Expected::Present);
-                    let could = self.could_provide(decl.name());
-                    unmet.push(if could.is_empty() {
-                        missing
-                    } else {
-                        missing.nearest(could)
-                    });
+                    unmet.push(
+                        Error::new(
+                            ErrorCode::PlaceNotFilled,
+                            format!("$.bricks.{}.reads.{}", record.package, decl.name()),
+                        )
+                        .expected(Expected::Present),
+                    );
                     lacking.push(brick);
                 }
             }

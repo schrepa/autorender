@@ -1,10 +1,4 @@
-#![cfg_attr(
-    any(unix, target_arch = "x86_64"),
-    expect(
-        unsafe_code,
-        reason = "follows frame pointers within a thread's stack and reads sampled code"
-    )
-)]
+#![cfg_attr(target_arch = "x86_64", expect(unsafe_code, reason = "reads sampled code"))]
 
 use std::cell::RefCell;
 use std::fmt::Arguments;
@@ -17,15 +11,7 @@ use std::time::{Duration, Instant};
 #[path = "windows.rs"]
 mod os;
 
-#[cfg(target_vendor = "apple")]
-#[path = "macos.rs"]
-mod os;
-
-#[cfg(all(unix, not(target_vendor = "apple")))]
-#[path = "linux.rs"]
-mod os;
-
-#[cfg(not(any(windows, unix)))]
+#[cfg(not(windows))]
 mod os {
     pub(super) const METHOD: Option<&str> = None;
     #[derive(Clone, Copy)]
@@ -240,37 +226,6 @@ fn run(
         interval_ms: interval.as_secs_f64() * 1000.0,
         method,
     }
-}
-
-#[cfg(unix)]
-pub(crate) fn walk_frame_pointers(
-    pc: u64,
-    mut fp: u64,
-    (low, high): (u64, u64),
-    frames: &mut [u64],
-) -> usize {
-    if frames.is_empty() || pc == 0 {
-        return 0;
-    }
-    frames[0] = pc;
-    let mut depth = 1;
-    while depth < frames.len() {
-        if fp < low || fp.saturating_add(16) > high || !fp.is_multiple_of(8) {
-            break;
-        }
-        // SAFETY: both words lie within the stack's bounds, checked above.
-        let (next, ret) = unsafe { (*(fp as *const u64), *((fp + 8) as *const u64)) };
-        if ret == 0 {
-            break;
-        }
-        frames[depth] = ret;
-        depth += 1;
-        if next <= fp {
-            break;
-        }
-        fp = next;
-    }
-    depth
 }
 
 #[cfg(target_arch = "x86_64")]

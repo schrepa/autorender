@@ -7,7 +7,6 @@
     "present",
     "environment",
     "camera",
-    "benchmark",
     "step",
     "frames",
     "input",
@@ -54,7 +53,6 @@
     "invalid_selector",
     "invalid_revision",
     "invalid_arguments",
-    "invalid_benchmark",
     "invalid_presentation_alpha",
     "invalid_shape",
     "binding_conflict",
@@ -106,12 +104,8 @@
     "runtime_panicked",
     "capture_requires_pause",
     "capture_failed",
-    "benchmark_interrupted",
-    "benchmark_timeout",
-    "benchmark_failed",
     "invalid_measurement",
     "profiling_unavailable",
-    "pix_unavailable",
     "bridge_unreachable",
     "bridge_error",
     "origin_rejected",
@@ -183,9 +177,7 @@
     "schedule_ambiguity"
   ],
   "events": [
-    "brick_state",
-    "input",
-    "load"
+    "brick_state"
   ],
   "lands": {
     "change": "now",

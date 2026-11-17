@@ -16,7 +16,6 @@ policy! {
     pub const PIPELINE_CACHE_MIB: u64 = 256;
     pub const PACK_CACHE_MIB: u64 = 1024;
     pub const WHEEL_PIXELS: f32 = 100.0;
-    pub const BENCHMARK_LIMIT_MS: u64 = 10_000;
     pub const READ_BACK_LIMIT_MS: u64 = 120_000;
 }
 

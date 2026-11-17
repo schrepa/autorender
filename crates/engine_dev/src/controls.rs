@@ -1,4 +1,4 @@
-use crate::protocol::{BenchmarkInput, BenchmarkMode, CaptureRequest, ProfileRequest, bounds};
+use crate::protocol::{CaptureRequest, ProfileRequest, bounds};
 use crate::results::{EnvironmentResult, ParentResult, result};
 use crate::{BrowserControl, EnvironmentControl, bounded};
 use bevy_ecs::prelude::World;
@@ -22,26 +22,6 @@ impl BrowserControl {
 
     pub fn validate(&self) -> Result<(), Error> {
         match self {
-            Self::Benchmark {
-                warmup,
-                samples,
-                mode,
-                script,
-            } => {
-                bounded(
-                    *warmup,
-                    bounds::WARMUP,
-                    ErrorCode::InvalidBenchmark,
-                    "$.warmup",
-                )?;
-                bounded(
-                    *samples,
-                    bounds::SAMPLES,
-                    ErrorCode::InvalidBenchmark,
-                    "$.samples",
-                )?;
-                validated_script(mode, script, warmup + samples)?;
-            }
             Self::Frames {
                 count, interval_ms, ..
             } => {
@@ -100,32 +80,6 @@ impl BrowserControl {
         }
         Ok(())
     }
-}
-
-fn validated_script(
-    mode: &BenchmarkMode,
-    script: &[BenchmarkInput],
-    frames: u32,
-) -> Result<(), Error> {
-    if matches!(mode, BenchmarkMode::Render | BenchmarkMode::Present) && !script.is_empty() {
-        return Err(Error::new(ErrorCode::InvalidBenchmark, "$.script").expected(Expected::Absent));
-    }
-    for (index, entry) in script.iter().enumerate() {
-        if entry.at >= frames {
-            return Err(
-                Error::new(ErrorCode::InvalidBenchmark, format!("$.script[{index}].at"))
-                    .at_most(u64::from(frames - 1))
-                    .got(entry.at),
-            );
-        }
-        BrowserControl::parse("input", Value::Object(entry.input.clone()), true).map_err(
-            |error| Error {
-                path: format!("$.script[{index}].input"),
-                ..error
-            },
-        )?;
-    }
-    Ok(())
 }
 
 impl CaptureRequest {

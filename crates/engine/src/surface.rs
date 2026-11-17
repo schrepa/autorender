@@ -15,7 +15,6 @@ macro_rules! __game_surface {
                 fn pad(index: u32, buttons: u32, axes: Vec<f32>);
                 fn touch(id: u32, x: f32, y: f32, phase: u32);
                 fn touch_motion(id: u32, dx: f32, dy: f32);
-                fn clear_input();
                 fn animation_frame(timestamp: f64, width: u32, height: u32) -> Result<u32, $crate::__private::JsValue>;
                 fn set_preparation(enabled: bool);
                 fn set_job_workers(workers: u32) -> bool;
@@ -34,18 +33,13 @@ macro_rules! __game_surface {
                 fn reset_camera();
                 fn reload_scene(source: &str, files: SceneFileSet) -> Result<(), $crate::__private::JsValue>;
                 fn set_file_root(root: &str);
-                fn take_level_request() -> Option<String>;
-                fn report_level(done: u32, total: u32);
-                fn fail_level(message: &str);
                 fn set_pixel_ratio(ratio: f64);
-                fn set_setting(key: &str, value: &str) -> Result<(), $crate::__private::JsValue>;
                 fn apply_host_settings(query: &str) -> Result<(), $crate::__private::JsValue>;
             }
             always_ref {
                 fn stats() -> String as Json<FrameStats>;
                 fn cursor_mode() -> u32;
                 fn job_hash() -> Vec<u8>;
-                fn distribution(values: Vec<f64>) -> String as Json<Option<Distribution>>;
             }
             dev_mut {
                 fn dev_request(line: &str, context: &str) -> String as Json<Step>;
@@ -69,7 +63,6 @@ macro_rules! game {
 
         impl $crate::Brick for GameBrick {
             const SOURCE: &'static $crate::Source = &SOURCE;
-            const SMOKES: &'static [$crate::Smoke] = <$game as $crate::Game>::SMOKES;
 
             fn register(bricks: &mut $crate::Bricks<'_>) {
                 <$game as $crate::Game>::register(bricks);
@@ -272,24 +265,15 @@ macro_rules! __export_game {
                 canvas: $crate::__private::web_sys::HtmlCanvasElement,
                 scene: Option<String>,
                 files: Option<SceneFileSet>,
-                game_files: Option<SceneFileSet>,
             ) -> Result<$name, $crate::__private::JsValue> {
                 Ok(Self {
                     host: $crate::browser::PageHost::start(
                         canvas,
                         GAME,
                         scene.map(|source| (source, files.map(|set| set.files).unwrap_or_default())),
-                        game_files.map(|set| set.files).unwrap_or_default(),
                     )
                     .await?,
                 })
-            }
-
-            pub fn files() -> Vec<String> {
-                <$game as $crate::Game>::FILES
-                    .iter()
-                    .map(|file| (*file).to_owned())
-                    .collect()
             }
         }
 
@@ -354,7 +338,6 @@ pub fn typescript(methods: &[SurfaceMethod]) -> String {
     use std::fmt::Write;
     let mut output = String::from(
         "import type { JobOrder } from \"../engine/jobs\";\n\
-         import type { Distribution } from \"./host\";\n\
          import type { Reply, Step } from \"./reply\";\n\
          import type { FrameStats } from \"./stats\";\n\n\
          export type Json<T> = string & { readonly json?: T };\n\n\
@@ -418,13 +401,7 @@ fn json_type(json: &str) -> String {
         .strip_prefix("Json<")
         .and_then(|json| json.strip_suffix('>'))
         .unwrap_or_else(|| panic!("json_method_type {json}"));
-    match payload
-        .strip_prefix("Option<")
-        .and_then(|payload| payload.strip_suffix('>'))
-    {
-        Some(inner) => format!("Json<{inner} | null>"),
-        None => format!("Json<{payload}>"),
-    }
+    format!("Json<{payload}>")
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -437,7 +414,6 @@ fn typescript_type(ty: &str) -> String {
         "String" | "&str" => "string",
         "Vec<u8>" | "Uint8Array" => "Uint8Array",
         "Vec<f32>" => "Float32Array",
-        "Vec<f64>" => "Float64Array",
         "Vec<u32>" => "Uint32Array",
         "Array" => "JobOrder[]",
         "SceneFileSet" => "unknown",

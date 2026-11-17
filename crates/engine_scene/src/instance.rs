@@ -290,10 +290,7 @@ impl SceneDocument {
         let kinds = SceneKinds::of(world);
         let mut prepared = self.prepare(Some(files), &kinds)?;
         let skipped = crate::loading::named(self).scope(|| self.admit(world, &kinds))?;
-        let chose_left_out = world
-            .get_resource::<engine_registry::Registry>()
-            .is_some_and(|registry| !registry.left_out().is_empty());
-        if let Some(first) = skipped.first().filter(|_| !chose_left_out) {
+        if let Some(first) = skipped.first() {
             return Err(first.clone());
         }
         let replaced = Replaced::of(world);

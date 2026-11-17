@@ -7,8 +7,8 @@ use engine_core::{
 
 use crate::install::{Faces, FragmentUse, InstallCore, Program, RenderDecl, Scoped};
 use crate::{
-    Bind, DEBUG_BLEND, DepthUse, Draw, FaceCull, GpuPart, Install, Own, Pipeline, Scene,
-    VertexLayout, bound_list,
+    Bind, DEBUG_BLEND, DepthUse, Draw, FaceCull, GpuPart, Install, Pipeline, Scene, VertexLayout,
+    bound_list,
 };
 
 pub(crate) const KINDS_MODULE: &str = "engine::kinds";
@@ -83,21 +83,6 @@ impl OwnFragments {
     };
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum FormTopology {
-    List,
-    Strip,
-}
-
-impl FormTopology {
-    fn primitive(self) -> wgpu::PrimitiveTopology {
-        match self {
-            Self::List => wgpu::PrimitiveTopology::TriangleList,
-            Self::Strip => wgpu::PrimitiveTopology::TriangleStrip,
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct FormSide {
     pub vertex: Entry,
@@ -137,129 +122,12 @@ impl KindForm {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FormDepth {
-    Written,
-    Tested,
-    TestedStrictly,
-    Overwritten,
-    Ignored,
-    Matched,
-}
-
-impl FormDepth {
-    fn depth_use(self, bias: DepthBias) -> DepthUse {
-        match self {
-            Self::Written => written(bias),
-            Self::Matched => DepthUse::Compare {
-                compare: wgpu::CompareFunction::Equal,
-                write: false,
-                bias: depth_bias(bias),
-            },
-            Self::Tested => DepthUse::Test,
-            Self::TestedStrictly => DepthUse::TestStrictly,
-            Self::Overwritten => DepthUse::Overwrite,
-            Self::Ignored => DepthUse::None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Channels {
-    pub red: bool,
-    pub green: bool,
-    pub blue: bool,
-    pub alpha: bool,
-}
-
-impl Channels {
-    pub const ALL: Self = Self {
-        red: true,
-        green: true,
-        blue: true,
-        alpha: true,
-    };
-
-    fn writes(self) -> wgpu::ColorWrites {
-        [
-            (self.red, wgpu::ColorWrites::RED),
-            (self.green, wgpu::ColorWrites::GREEN),
-            (self.blue, wgpu::ColorWrites::BLUE),
-            (self.alpha, wgpu::ColorWrites::ALPHA),
-        ]
-        .into_iter()
-        .filter(|(on, _)| *on)
-        .fold(wgpu::ColorWrites::empty(), |writes, (_, channel)| {
-            writes | channel
-        })
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct FormTarget {
-    pub blend: Option<wgpu::BlendState>,
-    pub channels: Channels,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum FormColor {
-    Written,
-    Blended(wgpu::BlendState),
-    Targets(&'static [FormTarget]),
-}
-
-impl FormColor {
-    fn blend(self) -> Option<wgpu::BlendState> {
-        match self {
-            Self::Blended(blend) => Some(blend),
-            Self::Written | Self::Targets(_) => None,
-        }
-    }
-
-    fn targets(self) -> Option<Vec<(Option<wgpu::BlendState>, wgpu::ColorWrites)>> {
-        match self {
-            Self::Targets(targets) => Some(
-                targets
-                    .iter()
-                    .map(|target| (target.blend, target.channels.writes()))
-                    .collect(),
-            ),
-            Self::Written | Self::Blended(_) => None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum FragmentPass {
-    Scene(Scene),
-    Own(&'static str),
-}
-
-impl FragmentPass {
-    fn scene(self) -> Option<&'static str> {
-        match self {
-            Self::Scene(scene) => Some(scene.name()),
-            Self::Own(_) => None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum FormFragment {
-    Role(PassRole),
-    Entry {
-        entry: Entry,
-        cull: FaceCull,
-        depth: FormDepth,
-        color: FormColor,
-    },
-}
-
 #[derive(Clone, Copy, Debug)]
 pub struct PassFragment {
-    pub pass: FragmentPass,
+    pub pass: Scene,
     pub side: Option<FormSide>,
-    pub fragment: FormFragment,
+    pub entry: Entry,
+    pub cull: FaceCull,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -276,23 +144,9 @@ struct FormScene {
     mirrored: Option<u32>,
 }
 
-#[derive(Clone, Copy, Debug)]
-struct FormOwn {
-    pass: u32,
-    pipeline: u32,
-}
-
-const EVERY_ROLE: [PassRole; 4] = [
-    PassRole::Lit,
-    PassRole::Depth,
-    PassRole::Blended,
-    PassRole::Shown,
-];
-
 pub struct Form<P> {
     kind: DrawKind,
     scenes: Vec<FormScene>,
-    owns: Vec<FormOwn>,
     part: PhantomData<fn() -> P>,
 }
 
@@ -438,13 +292,9 @@ fn fragment_of(
     })
 }
 
-fn primitive(
-    topology: FormTopology,
-    mirrored: bool,
-    cull: Option<wgpu::Face>,
-) -> wgpu::PrimitiveState {
+fn primitive(mirrored: bool, cull: Option<wgpu::Face>) -> wgpu::PrimitiveState {
     wgpu::PrimitiveState {
-        topology: topology.primitive(),
+        topology: wgpu::PrimitiveTopology::TriangleList,
         front_face: if mirrored {
             wgpu::FrontFace::Cw
         } else {
@@ -472,7 +322,7 @@ fn written(bias: DepthBias) -> DepthUse {
 fn kind_program(
     (varyings, side): (Varyings, FormSide),
     (role, views): (PassRole, PassViews),
-    (mirrored, topology): (bool, FormTopology),
+    mirrored: bool,
     surfaced: Option<SurfacedEntries>,
 ) -> Option<Program> {
     let fragment = fragment_of(role, varyings, views, surfaced)?;
@@ -488,7 +338,7 @@ fn kind_program(
         vertex: side.vertex,
         fragment: Some(fragment.entry),
         vertices: side.streams.to_vec(),
-        primitive: primitive(topology, mirrored, fragment.cull),
+        primitive: primitive(mirrored, fragment.cull),
         depth: match role {
             PassRole::Blended => DepthUse::Test,
             PassRole::Lit | PassRole::Depth | PassRole::Shown => written(side.depth_bias),
@@ -501,65 +351,25 @@ fn kind_program(
     }))
 }
 
-fn pass_program(
-    (form, surfaced): (&KindForm, Option<SurfacedEntries>),
-    own: &PassFragment,
-    views: PassViews,
-    (mirrored, topology): (bool, FormTopology),
-) -> Option<Program> {
+fn pass_program(form: &KindForm, own: &PassFragment, views: PassViews, mirrored: bool) -> Program {
     let side = own.side.unwrap_or_else(|| form.side(views));
-    let (entry, cull, depth, color) = match own.fragment {
-        FormFragment::Role(role) => {
-            return kind_program(
-                (form.varyings, side),
-                (role, views),
-                (mirrored, topology),
-                surfaced,
-            );
-        }
-        FormFragment::Entry {
-            entry,
-            cull,
-            depth,
-            color,
-        } => (entry, cull, depth, color),
-    };
-    Some(Program::Render(RenderDecl {
+    Program::Render(RenderDecl {
         vertex: side.vertex,
-        fragment: Some(entry),
+        fragment: Some(own.entry),
         vertices: side.streams.to_vec(),
-        primitive: primitive(topology, mirrored, cull.face()),
-        depth: depth.depth_use(side.depth_bias),
-        blend: color.blend(),
+        primitive: primitive(mirrored, own.cull.face()),
+        depth: DepthUse::Test,
+        blend: None,
         writes: wgpu::ColorWrites::ALL,
-        targets: color.targets(),
+        targets: None,
         samples: 1,
         faces: Faces::Declared,
-    }))
+    })
 }
 
 impl<P: GpuPart> Install<'_, P> {
     pub fn form(&mut self, form: &KindForm, bound: &[(Var, Bind<P>)]) -> Result<Form<P>, Error> {
-        self.form_built(form, (&EVERY_ROLE, &[]), FormTopology::List, bound)
-    }
-
-    pub fn form_for(
-        &mut self,
-        form: &KindForm,
-        roles: &[PassRole],
-        bound: &[(Var, Bind<P>)],
-    ) -> Result<Form<P>, Error> {
-        self.form_built(form, (roles, &[]), FormTopology::List, bound)
-    }
-
-    pub fn form_shaped(
-        &mut self,
-        form: &KindForm,
-        topology: FormTopology,
-        owns: &[PassFragment],
-        bound: &[(Var, Bind<P>)],
-    ) -> Result<Form<P>, Error> {
-        self.form_built(form, (&EVERY_ROLE, owns), topology, bound)
+        self.form_built(form, &[], bound)
     }
 
     pub fn form_owning(
@@ -568,7 +378,7 @@ impl<P: GpuPart> Install<'_, P> {
         owns: &[PassFragment],
         bound: &[(Var, Bind<P>)],
     ) -> Result<Form<P>, Error> {
-        self.form_built(form, (&EVERY_ROLE, owns), FormTopology::List, bound)
+        self.form_built(form, owns, bound)
     }
 
     pub fn speedup_form_owning(
@@ -579,8 +389,7 @@ impl<P: GpuPart> Install<'_, P> {
     ) -> Result<Form<P>, Error> {
         let built = self.form_owning(form, owns, bound)?;
         let scenes = built.scenes.iter().flat_map(|scene| [scene.plain, scene.mirrored]);
-        let owned = built.owns.iter().map(|own| Some(own.pipeline));
-        for pipeline in scenes.chain(owned).flatten() {
+        for pipeline in scenes.flatten() {
             self.core.speedup_only(pipeline);
         }
         Ok(built)
@@ -589,8 +398,7 @@ impl<P: GpuPart> Install<'_, P> {
     fn form_built(
         &mut self,
         form: &KindForm,
-        (roles, owns): (&[PassRole], &[PassFragment]),
-        topology: FormTopology,
+        owns: &[PassFragment],
         bound: &[(Var, Bind<P>)],
     ) -> Result<Form<P>, Error> {
         let bound = bound_list(bound, &self.core.outputs)?;
@@ -603,29 +411,10 @@ impl<P: GpuPart> Install<'_, P> {
             .filter(|listed| listed.bit.is_some() && self.core.passes.takes(listed, form.kind))
             .copied()
             .collect();
-        let path = format!("forms.{}.owns", form.kind.0);
-        let mut passes: Vec<FormOwn> = Vec::new();
         for own in owns {
-            match own.pass {
-                FragmentPass::Scene(scene) => {
-                    if !listed.iter().any(|listed| listed.name == scene.name()) {
-                        return Err(Error::new(ErrorCode::PassMismatch, path).got(scene.name()));
-                    }
-                }
-                FragmentPass::Own(name) => {
-                    let (pass, views) = self.own_pass(name, &path)?;
-                    if passes.iter().any(|known| known.pass == pass) {
-                        return Err(Error::new(ErrorCode::NameTwice, path).got(name));
-                    }
-                    let Some(program) =
-                        pass_program((form, surfaced), own, views, (false, topology))
-                    else {
-                        return Err(Error::new(ErrorCode::PassMismatch, path).got(name));
-                    };
-                    let reached = self.reached(&program, &bound);
-                    let pipeline = self.core.pipeline(Scoped::Pass(pass), program, reached)?;
-                    passes.push(FormOwn { pass, pipeline });
-                }
+            if !listed.iter().any(|listed| listed.name == own.pass.name()) {
+                let path = format!("forms.{}.owns", form.kind.0);
+                return Err(Error::new(ErrorCode::PassMismatch, path).got(own.pass.name()));
             }
         }
         let mut scenes = Vec::with_capacity(listed.len());
@@ -636,27 +425,24 @@ impl<P: GpuPart> Install<'_, P> {
                 PassViews::Owned => true,
                 PassViews::Every | PassViews::Main => false,
             };
-            let own = owns
-                .iter()
-                .find(|own| own.pass.scene() == Some(listed.name));
-            let built = own.is_some() || roles.contains(&facts.0);
+            let own = owns.iter().find(|own| own.pass.name() == listed.name);
             let program_of = |mirrored: bool| match own {
-                Some(own) => pass_program((form, surfaced), own, facts.1, (mirrored, topology)),
+                Some(own) => Some(pass_program(form, own, facts.1, mirrored)),
                 None => kind_program(
                     (form.varyings, form.side(facts.1)),
                     facts,
-                    (mirrored, topology),
+                    mirrored,
                     surfaced,
                 ),
             };
-            let plain = match program_of(false).filter(|_| built) {
+            let plain = match program_of(false) {
                 Some(program) => {
                     let reached = self.reached(&program, &bound);
                     Some(self.core.pipeline(scope, program, reached)?)
                 }
                 None => None,
             };
-            let mirrored = match program_of(true).filter(|_| built && owned) {
+            let mirrored = match program_of(true).filter(|_| owned) {
                 Some(program) => {
                     let reached = self.reached(&program, &bound);
                     Some(self.core.pipeline(scope, program, reached)?)
@@ -676,7 +462,6 @@ impl<P: GpuPart> Install<'_, P> {
         Ok(Form {
             kind: form.kind,
             scenes,
-            owns: passes,
             part: PhantomData,
         })
     }
@@ -691,24 +476,6 @@ impl<P: GpuPart> Install<'_, P> {
             | Varyings::Object(_)
             | Varyings::ObjectExtra(_)
             | Varyings::Own(_) => Ok(None),
-        }
-    }
-
-    fn own_pass(&self, name: &'static str, path: &str) -> Result<(u32, PassViews), Error> {
-        let part = self.core.part;
-        let mut found = self
-            .core
-            .declared
-            .passes
-            .iter()
-            .enumerate()
-            .filter(|(_, declared)| {
-                declared.part == part && declared.scene.is_none() && declared.name == name
-            });
-        match (found.next(), found.next()) {
-            (Some((at, declared)), None) => Ok((at as u32, declared.views)),
-            (Some(_), Some(_)) => Err(Error::new(ErrorCode::NameTwice, path).got(name)),
-            (None, _) => Err(Error::new(ErrorCode::PassMismatch, path).got(name)),
         }
     }
 
@@ -849,15 +616,5 @@ impl<P: GpuPart> Draw<'_, P, Scene> {
         run.tallies
             .kinds
             .drop_draws((part, pass), (reason, None), rows);
-    }
-}
-
-impl<P: GpuPart> Draw<'_, P, Own> {
-    pub fn form(&mut self, form: &Form<P>) -> Option<Pipeline<P, Own>> {
-        let pass = self.raw.run().pass;
-        form.owns
-            .iter()
-            .find(|own| own.pass == pass)
-            .map(|own| Pipeline(own.pipeline, PhantomData))
     }
 }

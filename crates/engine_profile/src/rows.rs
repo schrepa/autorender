@@ -1,17 +1,12 @@
-use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use crate::Row;
 
 const SPEED_ROUNDS: u32 = 4096;
-const SLOW_MS: f64 = 4.0;
-const SLOW_KEPT: usize = 1 << 18;
 
 static ROWS: Mutex<Vec<Row>> = Mutex::new(Vec::new());
 static WAITS: Mutex<Vec<Row>> = Mutex::new(Vec::new());
 static SPEED: Mutex<Vec<f64>> = Mutex::new(Vec::new());
-static SLOW: Mutex<Vec<(u64, &'static str, f64)>> = Mutex::new(Vec::new());
-static FRAME: AtomicU64 = AtomicU64::new(0);
 
 fn held<T>(table: &'static Mutex<T>) -> MutexGuard<'static, T> {
     table.lock().unwrap_or_else(PoisonError::into_inner)
@@ -71,20 +66,11 @@ impl Drop for RowScope {
     fn drop(&mut self) {
         let ms = now_ms() - self.start;
         let allocations = crate::allocation_snapshot().allocations - self.allocations;
-        let Some(name) = held(&ROWS).get_mut(self.row).map(|row| {
+        if let Some(row) = held(&ROWS).get_mut(self.row) {
             row.ms += ms;
             row.worst_ms = row.worst_ms.max(ms);
             row.runs += 1;
             row.allocations += allocations;
-            row.name
-        }) else {
-            return;
-        };
-        if ms >= SLOW_MS {
-            let mut slow = held(&SLOW);
-            if slow.len() < SLOW_KEPT {
-                slow.push((FRAME.load(Relaxed), name, ms));
-            }
         }
     }
 }
@@ -111,7 +97,6 @@ pub fn waited(kind: &str, asked: f64) {
 }
 
 pub fn mark_speed() {
-    FRAME.fetch_add(1, Relaxed);
     let start = now_ms();
     let mut value = 0x9e37_79b9_7f4a_7c15_u64;
     for _ in 0..SPEED_ROUNDS {
@@ -135,14 +120,6 @@ pub fn take_rows() -> Vec<Row> {
         row.allocations = 0;
     }
     taken
-}
-
-pub fn frame_mark() -> u64 {
-    FRAME.load(Relaxed)
-}
-
-pub fn take_slow() -> Vec<(u64, &'static str, f64)> {
-    std::mem::take(&mut *held(&SLOW))
 }
 
 pub fn take_waits() -> Vec<Row> {

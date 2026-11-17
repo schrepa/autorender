@@ -126,15 +126,6 @@ fn depth_stencil_state(
             },
             wgpu::DepthBiasState::default(),
         ),
-        DepthUse::TestStrictly => (
-            false,
-            if view_depth {
-                wgpu::CompareFunction::Greater
-            } else {
-                wgpu::CompareFunction::Less
-            },
-            wgpu::DepthBiasState::default(),
-        ),
         DepthUse::Write { bias } => (
             true,
             if view_depth {

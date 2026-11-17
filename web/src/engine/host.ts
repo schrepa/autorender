@@ -1,4 +1,4 @@
-import { type Distribution, FRAME_INTERVAL_MS, FRAME_PHASES, HOST_PAUSES } from "../generated/host";
+import { FRAME_INTERVAL_MS, FRAME_PHASES, HOST_PAUSES } from "../generated/host";
 import { engineError, engineFailure } from "../generated/errors";
 import { parseJson, type Runtime } from "../generated/runtime";
 import type { FrameStats } from "../generated/stats";
@@ -8,21 +8,9 @@ import { fatal, panicReport } from "./panic";
 import { HOST_PARAMETERS } from "./parameters";
 import "./style.css";
 
-export type { Distribution, FrameStats, Runtime };
+export type { FrameStats, Runtime };
 export function readStats(runtime: Pick<Runtime, "stats">): FrameStats {
   return parseJson(runtime.stats());
-}
-export function readDistribution(runtime: Pick<Runtime, "distribution">, values: readonly number[]): Distribution | null {
-  return parseJson(runtime.distribution(Float64Array.from(values)));
-}
-export interface HostControls<T extends Runtime> {
-  mutate(action: (game: T) => void): void;
-  setResolutionScale(scale: number): void;
-  setInputEnabled(enabled: boolean): void;
-  distribution(values: readonly number[]): Distribution | null;
-  size(): [number, number];
-  paused(): boolean;
-  busy(): boolean;
 }
 const PAGE_ELEMENTS = ["scene", "status", "message", "pause", "reset", "fps", "simulation", "extraction", "draws", "uploads", "render-time"];
 
@@ -59,7 +47,6 @@ function metric(id: string, value: string, unit = "") {
 }
 
 class FrameHud {
-  private frames = 0;
   private span: { start: number; frames: number } | undefined;
   private intervals = 0;
   private elapsed = 0;
@@ -68,8 +55,6 @@ class FrameHud {
   private submission = 0;
   private samples = 0;
   private marked = { at: -Infinity, phase: -1 };
-
-  constructor(private readonly canvas: HTMLCanvasElement) {}
 
   preparing(runtime: Runtime, phase: number) {
     const at = performance.now();
@@ -89,12 +74,11 @@ class FrameHud {
     this.simulation = 0; this.extraction = 0; this.submission = 0; this.samples = 0;
   }
 
-  frame(runtime: Runtime, timestamp: number): boolean {
-    this.frames++;
+  frame(runtime: Runtime, timestamp: number) {
     const span = this.span;
-    if (!span) { this.span = { start: timestamp, frames: 0 }; return false; }
+    if (!span) { this.span = { start: timestamp, frames: 0 }; return; }
     span.frames++;
-    if (timestamp - span.start < 250) return false;
+    if (timestamp - span.start < 250) return;
     this.elapsed += timestamp - span.start; this.intervals += span.frames;
     this.span = { start: timestamp, frames: 0 };
     const stats = readStats(runtime);
@@ -109,18 +93,9 @@ class FrameHud {
     element("uploads").textContent = `${(stats.upload_bytes / 1024).toFixed(0)} KiB / frame`;
     const triangles = stats.triangles === null ? "" : ` · ${stats.triangles.toLocaleString("en-US")} triangles`;
     element("render-time").textContent = `${stats.instances} drawn${triangles} · CPU render ${(this.submission / this.samples).toFixed(2)} ms · GPU time not measured`;
-    const dataset = this.canvas.dataset;
-    dataset.frames = String(this.frames);
-    dataset.instances = String(stats.instances);
-    dataset.residentMeshes = String(stats.resident_meshes);
-    dataset.meshUploadBytes = String(stats.mesh_upload_bytes);
-    dataset.residentMeshBytes = String(stats.resident_mesh_bytes);
-    dataset.residentTextures = String(stats.resident_textures);
-    dataset.textureUploadBytes = String(stats.texture_upload_bytes);
     if (this.samples >= 4) {
       this.simulation = 0; this.extraction = 0; this.submission = 0; this.samples = 0; this.elapsed = 0; this.intervals = 0;
     }
-    return true;
   }
 }
 
@@ -198,17 +173,10 @@ export interface GameOptions<T extends Runtime> {
   create(canvas: HTMLCanvasElement, signal: AbortSignal): Promise<T>;
   controls?: Record<string, { values: string; run(game: T, args: Record<string, unknown>): unknown }>;
   parameters?: Record<string, string>;
-  poll?(game: T): void;
-  level?(game: T, path: string, signal: AbortSignal, progress: (done: number, total: number) => void): Promise<void>;
   source?: { url: string; load(signal: AbortSignal): Promise<string>; files(source: string, signal: AbortSignal): Promise<unknown> };
-  ready?(game: T, controls: HostControls<T>): void;
-  beforeFrame?(game: T, timestamp: number): void;
-  afterFrame?(game: T, timestamp: number): void;
-  afterHostFrame?(game: T, timestamp: number): void;
-  interrupted?(reason: string): void;
 }
 
-interface Live<T> { kind: "preparing" | "playing"; game: T; paused: boolean; busy: boolean; level: boolean; shown: boolean }
+interface Live<T> { kind: "preparing" | "playing"; game: T; paused: boolean; busy: boolean; shown: boolean }
 type HostState<T> = { kind: "starting" } | Live<T> | { kind: "failed"; stopped: string | undefined; busy: boolean } | { kind: "disposed" };
 
 export function startGame<T extends Runtime>(options: GameOptions<T>) {
@@ -231,7 +199,7 @@ if (prepares) canvas.style.visibility = "hidden";
 let state: HostState<T> = { kind: "starting" };
 let disposeDevelopment: (() => void) | undefined;
 let request = 0;
-const hud = new FrameHud(canvas);
+const hud = new FrameHud();
 const pace = new GpuPace(canvas, () => {
   const current = live();
   if (current?.kind === "playing" && current.shown && !current.paused && !document.hidden) run(current, performance.now(), true);
@@ -244,7 +212,6 @@ ticks.port1.onmessage = (event: MessageEvent<number>) => {
 };
 let pixelWidth = 1;
 let pixelHeight = 1;
-let inputEnabled = true;
 
 function setStatus(text: string, shown: string) {
   status.replaceChildren(document.createElement("i"), document.createTextNode(text));
@@ -269,11 +236,7 @@ function exclusive<R>(work: () => Promise<R>): Promise<R> | undefined {
 function clearInput() { input.clear(); }
 
 function connectInput() {
-  input.game = inputEnabled ? live()?.game : undefined;
-}
-
-function interrupt(reason: string) {
-  if (state.kind !== "failed") options.interrupted?.(reason);
+  input.game = live()?.game;
 }
 
 function suspendGame() {
@@ -297,7 +260,6 @@ function resize() {
   const width = Math.round(bounds.width * ratio);
   const height = Math.round(bounds.height * ratio);
   const idle = pixelWidth === 0 || pixelHeight === 0;
-  if (width !== pixelWidth || height !== pixelHeight) interrupt("resize");
   pixelWidth = width;
   pixelHeight = height;
   current.game.set_pixel_ratio(ratio);
@@ -315,7 +277,6 @@ function halt() {
 }
 
 function stopClock() {
-  interrupt("suspension");
   halt();
   suspendGame();
 }
@@ -347,40 +308,24 @@ function gpuQueue(): GPUQueue | undefined {
   return (canvas.getContext("webgpu") as GPUCanvasContext | null)?.getConfiguration()?.device.queue;
 }
 
-function starting(current: Live<T>, submitted: number) {
+function starting(current: Live<T>) {
   current.kind = "playing";
   const queue = gpuQueue();
-  if (!queue) { started(current, submitted); return; }
+  if (!queue) { started(current); return; }
   void queue.onSubmittedWorkDone().then(() => {
     if (live() !== current || current.shown) return;
-    started(current, submitted);
+    started(current);
     if (!request && !current.paused && !document.hidden) request = requestAnimationFrame(frame);
   }, () => undefined);
 }
 
-function started(current: Live<T>, submitted: number) {
+function started(current: Live<T>) {
   current.shown = true;
-  performance.mark("engine-shown", { detail: { submitted } });
   jobs?.started();
   hud.reset();
   canvas.style.visibility = "";
   message.hidden = true;
   if (!current.paused && !document.hidden) setStatus("WebGPU active", "running");
-}
-
-function pollLevel(current: Live<T>) {
-  if (current.level || !options.level) return;
-  const game = current.game;
-  const path = game.take_level_request();
-  if (path === undefined) return;
-  current.level = true;
-  game.report_level(0, 0);
-  void options.level(game, path, lifecycle.signal, (done, total) => game.report_level(done, total))
-    .catch(error => {
-      if (fatal(error)) fail(error);
-      else if (live() === current) game.fail_level(String(error));
-    })
-    .finally(() => { current.level = false; });
 }
 
 function frame(timestamp: number) {
@@ -401,7 +346,6 @@ function run(current: Live<T>, at: number, early: boolean) {
   const since = performance.now();
   const timestamp = current.kind === "playing" ? pace.time(at) : at;
   try {
-    if (current.kind === "playing") options.beforeFrame?.(game, timestamp);
     jobs?.exchange();
     input.pollPads();
     const phase = game.animation_frame(timestamp, pixelWidth, pixelHeight);
@@ -410,12 +354,9 @@ function run(current: Live<T>, at: number, early: boolean) {
     jobs?.exchange();
     if (current.kind === "preparing") hud.preparing(game, phase);
     if (phase === FRAME_PHASES.started) {
-      starting(current, performance.now());
+      starting(current);
     } else if (phase === FRAME_PHASES.playing) {
-      pollLevel(current);
-      options.afterFrame?.(game, timestamp);
-      if (hud.frame(game, timestamp)) options.poll?.(game);
-      options.afterHostFrame?.(game, timestamp);
+      hud.frame(game, timestamp);
     } else if (phase === FRAME_PHASES.idle) {
       pace.stop();
       hud.reset();
@@ -450,14 +391,12 @@ function resume() {
   request = requestAnimationFrame(frame);
 }
 
-window.addEventListener("blur", () => { interrupt("focus_lost"); pauseGame("focus"); }, listenerOptions);
+window.addEventListener("blur", () => pauseGame("focus"), listenerOptions);
 window.addEventListener("focus", () => resumeGame("focus"), listenerOptions);
-canvas.addEventListener("blur", () => interrupt("focus_lost"), listenerOptions);
 window.addEventListener("error", event => { if (fatal(event.error)) fail(event.error); }, listenerOptions);
 window.addEventListener("unhandledrejection", event => { if (fatal(event.reason)) fail(event.reason); }, listenerOptions);
 document.addEventListener("visibilitychange", () => {
   if (document.hidden) {
-    interrupt("suspension");
     halt();
     pauseGame("hidden");
     if (state.kind !== "failed") setStatus("Suspended", "suspended");
@@ -490,9 +429,8 @@ async function start() {
   reset.disabled = true;
   if (!("gpu" in navigator)) throw engineFailure({ code: "runtime_unavailable", path: "$", expected: "gpu" });
   const created = await options.create(canvas, lifecycle.signal);
-  performance.mark("engine-created");
   if (disposed()) { created.free(); return; }
-  state = { kind: prepares ? "preparing" : "playing", game: created, paused: development && !preparedDevelopment, busy: false, level: false, shown: !prepares };
+  state = { kind: prepares ? "preparing" : "playing", game: created, paused: development && !preparedDevelopment, busy: false, shown: !prepares };
   created.apply_host_settings(location.search);
   created.set_preparation(prepares);
   connectInput();
@@ -502,41 +440,6 @@ async function start() {
   message.hidden = true;
   pause.disabled = false;
   reset.disabled = false;
-  options.ready?.(created, {
-    mutate(action) {
-      const current = live();
-      if (!current || current.busy) throw engineFailure({ code: "runtime_busy", path: "$" });
-      const game = current.game;
-      stopClock();
-      try {
-        action(game);
-        game.suspend();
-        game.frame(performance.now(), pixelWidth, pixelHeight);
-        game.suspend();
-        options.poll?.(game);
-      } catch (error) {
-        if (fatal(error)) fail(error);
-        throw error;
-      } finally { resume(); }
-    },
-    setResolutionScale(scale) {
-      if (!Number.isFinite(scale) || scale < 0.25 || scale > 2) {
-        throw engineFailure({ code: "out_of_range", path: "$.scale", allowed: { kind: "range", min: 0.25, max: 2 }, got: scale });
-      }
-      live()?.game.set_setting("resolution.scale", JSON.stringify(scale));
-    },
-    setInputEnabled(enabled) {
-      inputEnabled = enabled; clearInput();
-      live()?.game.clear_input();
-      connectInput();
-    },
-    distribution: values => {
-      const current = live();
-      return current ? readDistribution(current.game, values) : null;
-    },
-    size: () => [pixelWidth, pixelHeight], paused: () => live()?.paused ?? false,
-    busy: () => live()?.busy ?? true,
-  });
   if (development) {
     const { connectDevelopment } = await import("./dev");
     if (disposed()) return;
@@ -544,10 +447,7 @@ async function start() {
       game: created, signal: lifecycle.signal, paused: () => live()?.paused ?? false,
       setPaused, exclusive,
       size: () => [pixelWidth, pixelHeight],
-      poll: () => {
-        input.setCursorMode(created.cursor_mode());
-        options.poll?.(created);
-      },
+      poll: () => input.setCursorMode(created.cursor_mode()),
       frame(timestamp) {
         created.frame(timestamp, pixelWidth, pixelHeight);
         jobs?.exchange();
@@ -567,7 +467,7 @@ async function start() {
   resume();
 }
 
-window.addEventListener("pagehide", () => { interrupt("suspension"); halt(); pauseGame("suspended"); }, listenerOptions);
+window.addEventListener("pagehide", () => { halt(); pauseGame("suspended"); }, listenerOptions);
 window.addEventListener("pageshow", () => { resumeGame("suspended"); resume(); }, listenerOptions);
 if (import.meta.hot) import.meta.hot.dispose(() => {
   const current = live();

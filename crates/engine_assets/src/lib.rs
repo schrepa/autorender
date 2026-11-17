@@ -20,7 +20,7 @@ pub use library::{
     Asset, AssetBudget, AssetLibrary, GeometryHandle, MaterialHandle, SceneAssets, SceneTable,
     TextureHandle,
 };
-pub use lod::{authored_input, lod_input, takes_levels};
+pub use lod::{lod_input, takes_levels};
 pub use material::{
     AlphaMode, BASE_COLOR_MAP, Compare, Cull, DepthBias, EMISSIVE_MAP, Filter, LightingModel,
     MAPPED, MAPPED_MAPS, MAPPED_SLOTS, Material, MaterialBinding, NORMAL_MAP, RenderState, Sampler,

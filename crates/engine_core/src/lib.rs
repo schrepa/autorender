@@ -24,12 +24,10 @@ mod frame_timing;
 mod hierarchy;
 mod input;
 mod jobs;
-mod loads;
 pub mod math;
 mod mesh_lods;
 mod moves;
 pub use engine_math::collections;
-mod nearest;
 mod presentation;
 pub mod presentation_bounds;
 mod provided;
@@ -67,8 +65,8 @@ pub use cull::{CullPlan, Culling, frustum_bounded, frustum_planes, frustum_sees}
 pub use cursor::*;
 pub use detail::{DetailLevel, ViewDetail, detail_level, detail_wgsl, kept_levels, seen_share};
 pub use drawn::{
-    DRAWN_PART, DrawnBatch, DrawnCensus, DrawnFlags, DrawnRecord, DrawnSettings, DrawnState,
-    DrawnTable, PlanState, drawn_wgsl,
+    DRAWN_PART, DrawnBatch, DrawnFlags, DrawnRecord, DrawnSettings, DrawnState, DrawnTable,
+    PlanState, drawn_wgsl,
 };
 pub use drawn_areas::{DrawnArea, DrawnAreas};
 pub use engine_assets::{
@@ -77,7 +75,7 @@ pub use engine_assets::{
     Filter, GeometryStream, InstanceInput, LightingModel, LodInput, LodLevel, MAPPED, MAPPED_MAPS,
     MAPPED_SLOTS, Material, MaterialBinding, Mesh, MeshLods, MeshVertex, NORMAL_MAP, NamedStream,
     RenderState, Sampler, StreamShape, SurfaceSlot, Texture, TextureFormat, TextureRef,
-    UvTransform, Wrap, attributes_wgsl, authored_input, lod_input,
+    UvTransform, Wrap, attributes_wgsl, lod_input,
 };
 pub use engine_place::{
     AUTHORED_COMPONENTS, AppliedView, AskedView, AuthoredId, Call, Callable, Each, EntityIds,
@@ -90,12 +88,11 @@ pub use engine_place::{
     Applied, ApplyAt, Ask, Asked, AttachPoint, Awaits, BlendedPass, Board, BudgetUse, Census,
     Clock, ColorPass, Cursor, DrawKind, Drawn, DrawnBounds, DrawnProjection, Error, ErrorCode,
     Events, Feed, FeedView, FrameBudget, GeometryHandle, GpuStruct, Hold, InstanceValues, Interest,
-    JobRef, KindCell, KindDecl, KindJoin, KindSkip, Layers, Level, LevelView, List, MaterialHandle,
-    Mobility, Moment, Mover, MoverId, Node, NodeId, NodeWord, Pace, Pass, PassBit, PassCull,
-    PassEntry, PassMask, PassName, PassPurpose, PassRaster, PassRole, PassViews, PlaceDecl,
-    PositionReach, Progress, Readiness, Request, Requests, Ring, ScenePass, ScenePasses, Settling,
-    Since, Slot, SlotSet, Smoke, SmokeFailure, SmokeSession, Stamp, StoreId, TargetName,
-    TextureHandle, Ticket, Unsettled, Writes, every, gpu_consts, never, smoke_check, smoke_eq,
+    JobRef, KindCell, KindDecl, KindJoin, KindSkip, Layers, List, MaterialHandle, Mobility, Moment,
+    Mover, MoverId, Node, NodeId, NodeWord, Pace, Pass, PassBit, PassCull, PassEntry, PassMask,
+    PassName, PassPurpose, PassRaster, PassRole, PassViews, PlaceDecl, PositionReach, Progress,
+    Readiness, Request, Requests, Ring, ScenePass, ScenePasses, Settling, Since, Slot, SlotSet,
+    Stamp, StoreId, TargetName, TextureHandle, Ticket, Unsettled, Writes, every, gpu_consts, never,
 };
 pub use engine_place::{
     BitField, BitValue, FrameId, GpuBits, Readable, Readback, decode_bits, gpu_bits,
@@ -119,12 +116,10 @@ pub use glam;
 pub use hierarchy::*;
 pub use input::*;
 pub use jobs::*;
-pub use loads::{Load, Loaded, Loads};
 pub use mesh_lods::MeshLevels;
 pub use moves::{
     Applies, Asks, HandOver, MOVER_PART, Moves, Teleport, mover_of, send_ask, take_asks,
 };
-pub use nearest::Nearest;
 pub use presentation::*;
 pub use provided::*;
 pub use records::*;
@@ -146,11 +141,7 @@ pub use source::{Entry, Module, ShaderText, Source, Var};
 pub use statistics::{Distribution, median};
 pub use ticks::ScanClock;
 pub(crate) use transform_edits::edit_transform;
-pub use views::{DrawnView, Hit, Picking, Ray, ViewFacts, Views, WholeFrames, main_camera};
-
-pub mod codec {
-    pub use engine_codec::{decode, encode};
-}
+pub use views::{DrawnView, ViewFacts, Views, WholeFrames, main_camera};
 
 #[doc(hidden)]
 pub mod textures {
@@ -303,8 +294,6 @@ fn core_entries(registry: &mut RegistryBuilder) {
         BRICK_STATE_EVENT,
         brick_changes,
     )));
-    registry.core_event(EventEntry::of(EventDecl::of::<InputChange, InputChanges>()));
-    registry.core_event(EventEntry::of(EventDecl::of::<Load, Loads>()));
     registry.mover_rule(moves::rule());
     registry.despawn_rule(hierarchy::despawn_owned);
     registry.fill_core::<Asked<Teleport>>();
@@ -388,7 +377,6 @@ impl Engine {
             .init_resource::<Pause>()
             .init_resource::<TimeScale>()
             .init_resource::<FrameLimits>()
-            .init_resource::<Level>()
             .init_resource::<Readiness>()
             .init_resource::<Refusals>()
             .init_resource::<FrameBudget>()
@@ -410,8 +398,6 @@ impl Engine {
             .init_resource::<PartDraws>()
             .init_resource::<MeshLevels>()
             .init_resource::<Input>()
-            .init_resource::<InputChanges>()
-            .init_resource::<Loads>()
             .init_resource::<Devices>()
             .init_resource::<Contexts>()
             .init_resource::<InputSettings>()
@@ -468,12 +454,6 @@ impl Engine {
         core_entries(&mut registry);
         for listed in list.listed() {
             registry.add(listed.record());
-        }
-        for left in list.left() {
-            registry.leave_out(left.record());
-        }
-        for known in list.known() {
-            registry.known(known.record());
         }
         let world = self.app.world_mut();
         world.insert_resource(JobListed::of(&jobs));

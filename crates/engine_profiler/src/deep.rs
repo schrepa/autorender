@@ -1,7 +1,6 @@
 use engine::collections::HashMap;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -42,13 +41,6 @@ struct HeapSample {
 }
 
 static HEAP: Mutex<Vec<HeapSample>> = Mutex::new(Vec::new());
-static FROM_LAUNCH: AtomicBool = AtomicBool::new(false);
-
-pub fn sample_heap_from_launch() {
-    HEAP.lock().unwrap_or_else(PoisonError::into_inner).clear();
-    FROM_LAUNCH.store(true, Ordering::Relaxed);
-    engine::profiling::sample_allocations(Some(sample_heap));
-}
 
 fn sample_heap(brick: u16, bytes: usize) {
     let mut frames = [0_u64; HEAP_FRAMES];
@@ -90,11 +82,8 @@ impl DeepCapture {
     ) -> Result<Self, Error> {
         host.profiling_start(max_events)?;
         let bricks = host.profile_bricks();
-        if !FROM_LAUNCH.swap(false, Ordering::Relaxed) {
-            HEAP.lock().unwrap_or_else(PoisonError::into_inner).clear();
-            engine::profiling::sample_allocations(Some(sample_heap));
-        }
-        crate::counters::begin();
+        HEAP.lock().unwrap_or_else(PoisonError::into_inner).clear();
+        engine::profiling::sample_allocations(Some(sample_heap));
         let sampler = (!threads.is_empty())
             .then(|| Sampler::start(threads, INTERVAL, engine::host::now_ms))
             .flatten();
@@ -107,7 +96,6 @@ impl DeepCapture {
         folder: &Path,
         stem: &str,
         context: Value,
-        play: Value,
     ) -> Result<ProfileFiles, Error> {
         let samples = self.sampler.map(Sampler::finish);
         engine::profiling::sample_allocations(None);
@@ -117,9 +105,6 @@ impl DeepCapture {
         host.profiling_poll();
         report["gpu"] = host.profiling_report();
         report["context"] = context;
-        if let Some(counters) = crate::counters::end() {
-            report["gpu_counters"] = counters;
-        }
         let symbols = Symbols::of(samples.as_ref(), &heap);
         report["heap_samples_by_brick"] = heap_by_brick(&heap, &symbols, &self.bricks);
         let profile = firefox_profile(&report, samples.as_ref(), &symbols, host.adapter());
@@ -140,9 +125,6 @@ impl DeepCapture {
         summary["heap_samples_by_brick"] = report["heap_samples_by_brick"].clone();
         summary["spans_by_brick"] = spans_by_brick(&report);
         summary["gpu_memory"] = host.gpu_allocations();
-        if !play.is_null() {
-            summary["play"] = play;
-        }
         summary["files"] = json!({
             "report": files.report.display().to_string(),
             "firefox": files.firefox.display().to_string(),
@@ -163,105 +145,6 @@ fn write(path: &Path, value: &dyn erased::Write) -> Result<(), Error> {
     value
         .write(&mut std::io::BufWriter::new(file))
         .map_err(|_| unwritable(path))
-}
-
-pub struct LaunchCapture {
-    sampler: Option<Sampler>,
-    start_ms: f64,
-    phase: Option<(&'static str, f64)>,
-    spans: Vec<Value>,
-}
-
-pub struct LaunchProfile {
-    samples: Option<Samples>,
-    report: Value,
-}
-
-impl LaunchCapture {
-    pub fn start() -> Self {
-        let start_ms = engine::host::now_ms();
-        let sampler = SampledThread::current("Main thread")
-            .and_then(|main| Sampler::start(vec![main], INTERVAL, engine::host::now_ms));
-        Self {
-            sampler,
-            start_ms,
-            phase: None,
-            spans: Vec::new(),
-        }
-    }
-
-    pub fn phase(&mut self, name: &'static str) {
-        let now = engine::host::now_ms();
-        if let Some((ended, began)) = self.phase.replace((name, now)) {
-            self.spans.push(json!({
-                "kind": "span",
-                "name": ended,
-                "start_ms": began,
-                "duration_ms": now - began,
-            }));
-        }
-    }
-
-    pub fn stop(mut self) -> LaunchProfile {
-        let end_ms = engine::host::now_ms();
-        if let Some((ended, began)) = self.phase.take() {
-            self.spans.push(json!({
-                "kind": "span",
-                "name": ended,
-                "start_ms": began,
-                "duration_ms": end_ms - began,
-            }));
-        }
-        let samples = self.sampler.take().map(Sampler::finish);
-        let report = json!({
-            "cpu": {
-                "start_ms": self.start_ms,
-                "end_ms": end_ms,
-                "events": std::mem::take(&mut self.spans),
-                "complete": true,
-            },
-        });
-        LaunchProfile { samples, report }
-    }
-}
-
-impl Drop for LaunchCapture {
-    fn drop(&mut self) {
-        if let Some(sampler) = self.sampler.take() {
-            drop(sampler.finish());
-        }
-    }
-}
-
-impl LaunchProfile {
-    pub fn write(
-        mut self,
-        folder: &Path,
-        stem: &str,
-        context: Value,
-        adapter: &engine::AdapterInfo,
-    ) -> Result<ProfileFiles, Error> {
-        self.report["context"] = context;
-        let symbols = Symbols::of(self.samples.as_ref(), &[]);
-        let profile = firefox_profile(&self.report, self.samples.as_ref(), &symbols, adapter);
-        let mut summary = summary(&self.report, self.samples.as_ref(), &symbols, adapter);
-        summary["spans"] = self.report["cpu"]["events"].clone();
-        std::fs::create_dir_all(folder).map_err(|_| unwritable(folder))?;
-        let files = ProfileFiles {
-            report: folder.join(format!("{stem}.json")),
-            firefox: folder.join(format!("{stem}.firefox.json")),
-            summary: folder.join(format!("{stem}.summary.json")),
-            complete: self.samples.is_some(),
-        };
-        summary["files"] = json!({
-            "report": files.report.display().to_string(),
-            "firefox": files.firefox.display().to_string(),
-        });
-        write(&files.report, &self.report)?;
-        write(&files.firefox, &profile)?;
-        write(&files.summary, &summary)?;
-        Ok(files)
-    }
 }
 
 mod erased {
@@ -755,13 +638,11 @@ fn summary(
     adapter: &engine::AdapterInfo,
 ) -> Value {
     let mut threads = Vec::new();
-    let mut deepest = 0;
     for thread in samples.into_iter().flat_map(|samples| &samples.threads) {
         let mut own: HashMap<String, u64> = HashMap::default();
         let mut inclusive: HashMap<String, u64> = HashMap::default();
         for sample in &thread.samples {
             let names = functions(&sample.stack, symbols);
-            deepest = deepest.max(names.len());
             if let Some(leaf) = names.last() {
                 *own.entry(leaf.clone()).or_default() += 1;
             }
@@ -886,8 +767,6 @@ fn summary(
         "hot_instructions": instructions,
         "gpu_passes_ms": passes.iter().take(40).map(|(name, ms, frames)| json!({"name": name, "median_ms": ms, "frames": frames})).collect::<Vec<_>>(),
         "gpu_draws_ms": draws.iter().take(25).map(|(label, ms, statistics)| json!({"draw": label, "median_ms": ms, "statistics": statistics})).collect::<Vec<_>>(),
-        "gpu_counters": report["gpu_counters"],
-        "recommended": crate::capabilities::recommended(adapter, sampled && deepest < 8),
         "viewers": ["https://profiler.firefox.com", "https://ui.perfetto.dev"],
     })
 }

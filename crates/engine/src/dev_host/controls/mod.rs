@@ -77,8 +77,7 @@ fn host_control(
         ),
         BrowserControl::Step { ticks } => input::step(host, app, ticks, size),
         BrowserControl::Render {} => view::render(app, size),
-        control @ (BrowserControl::Benchmark { .. }
-        | BrowserControl::Frames { .. }
+        control @ (BrowserControl::Frames { .. }
         | BrowserControl::Pause { .. }
         | BrowserControl::Resume { .. }
         | BrowserControl::Game { .. }

@@ -25,13 +25,12 @@ use crate::moves::NodeKind;
 use crate::{
     Board, Callable, Error, ErrorCode, GpuStruct, JobKind, KindDecl, List, Module, Mover, MoverId,
     Operation, OperationScene, Pace, Parent, PlaceDecl, RecordKey, SceneContext, SceneEntity,
-    SceneIds, Section, Slot, Smoke, Source, SubScene, Switch,
+    SceneIds, Section, Slot, Source, SubScene, Switch,
 };
 
 pub trait Brick: 'static {
     const SOURCE: &'static Source;
     const JOBS: &'static [&'static JobKind] = &[];
-    const SMOKES: &'static [Smoke] = &[];
     const CORPORA: &'static [Corpus] = &[];
     fn register(bricks: &mut Bricks<'_>);
 }
@@ -319,10 +318,6 @@ pub trait Listing: Sized {
     #[must_use]
     fn with<B: Brick>(self) -> Self;
     #[must_use]
-    fn without<B: Brick>(self) -> Self;
-    #[must_use]
-    fn knows<B: Brick>(self) -> Self;
-    #[must_use]
     fn places(self, places: &'static [PlaceDecl]) -> Self;
     #[must_use]
     fn settings<S: Section>(self, value: S) -> Self;
@@ -335,7 +330,6 @@ pub type ListDefault = Arc<dyn Fn(&mut World) + Send + Sync>;
 pub struct Listed {
     source: &'static Source,
     jobs: &'static [&'static JobKind],
-    smokes: &'static [Smoke],
     record: fn() -> BrickRecord,
 }
 
@@ -344,7 +338,6 @@ impl Listed {
         Self {
             source: B::SOURCE,
             jobs: B::JOBS,
-            smokes: B::SMOKES,
             record: record_of::<B>,
         }
     }
@@ -361,10 +354,6 @@ impl Listed {
         self.jobs
     }
 
-    pub fn smokes(&self) -> &'static [Smoke] {
-        self.smokes
-    }
-
     pub fn record(&self) -> BrickRecord {
         (self.record)()
     }
@@ -376,7 +365,7 @@ fn record_of<B: Brick>() -> BrickRecord {
         .iter()
         .map(|corpus| corpus as &'static (dyn Any + Send + Sync))
         .collect();
-    let mut record = BrickRecord::new::<B>(source.package(), source.hash(), B::SMOKES, corpora);
+    let mut record = BrickRecord::new::<B>(source.package(), source.hash(), corpora);
     record.set_game(source.game());
     if let Some(first) = source.modules().first() {
         let path = first.path();
@@ -390,8 +379,6 @@ fn record_of<B: Brick>() -> BrickRecord {
 #[derive(Clone, Default)]
 pub struct BrickList {
     bricks: Vec<Listed>,
-    left: Vec<Listed>,
-    known: Vec<Listed>,
     places: Vec<&'static [PlaceDecl]>,
     core: Vec<fn(&mut RegistryBuilder)>,
     defaults: Vec<ListDefault>,
@@ -408,14 +395,6 @@ impl BrickList {
 
     pub fn place_sets(&self) -> &[&'static [PlaceDecl]] {
         &self.places
-    }
-
-    pub fn left(&self) -> &[Listed] {
-        &self.left
-    }
-
-    pub fn known(&self) -> &[Listed] {
-        &self.known
     }
 
     pub fn core_places(&self) -> &[fn(&mut RegistryBuilder)] {
@@ -443,12 +422,7 @@ impl BrickList {
             .iter_mut()
             .flat_map(BrickRecord::take_members)
             .collect();
-        let mut kinds = self.jobs();
-        kinds.extend(
-            self.left
-                .iter()
-                .flat_map(|left| left.jobs().iter().copied()),
-        );
+        let kinds = self.jobs();
         crate::job_list_with(&kinds, members)
     }
 
@@ -457,53 +431,11 @@ impl BrickList {
         self.core.push(register);
         self
     }
-
-    #[must_use]
-    fn leave(mut self, out: Vec<Listed>) -> Self {
-        for listed in out {
-            if !self
-                .left
-                .iter()
-                .any(|left| std::ptr::eq(left.source, listed.source))
-            {
-                self.left.push(listed);
-            }
-        }
-        self
-    }
 }
 
 impl Listing for BrickList {
     fn with<B: Brick>(mut self) -> Self {
-        self.left
-            .retain(|left| !std::ptr::eq(left.source, B::SOURCE));
-        self.known
-            .retain(|known| !std::ptr::eq(known.source, B::SOURCE));
         self.bricks.push(Listed::of::<B>());
-        self
-    }
-
-    fn without<B: Brick>(mut self) -> Self {
-        self.known
-            .retain(|known| !std::ptr::eq(known.source, B::SOURCE));
-        let (mut out, kept) = std::mem::take(&mut self.bricks)
-            .into_iter()
-            .partition::<Vec<_>, _>(|listed| std::ptr::eq(listed.source, B::SOURCE));
-        self.bricks = kept;
-        if out.is_empty() {
-            out.push(Listed::of::<B>());
-        }
-        self.leave(out)
-    }
-
-    fn knows<B: Brick>(mut self) -> Self {
-        let held = |listed: &Listed| std::ptr::eq(listed.source, B::SOURCE);
-        if !self.bricks.iter().any(held)
-            && !self.left.iter().any(held)
-            && !self.known.iter().any(held)
-        {
-            self.known.push(Listed::of::<B>());
-        }
         self
     }
 

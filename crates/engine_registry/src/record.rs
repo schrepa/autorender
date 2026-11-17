@@ -5,7 +5,7 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::schedule::{InternedScheduleLabel, IntoScheduleConfigs, ScheduleConfigs};
 use bevy_ecs::system::ScheduleSystem;
 use bevy_ecs::world::World;
-use engine_place::{Error, ErrorCode, GpuStruct, List, PlaceDecl, Slot, Smoke};
+use engine_place::{Error, ErrorCode, GpuStruct, List, PlaceDecl, Slot};
 
 use crate::entries::{
     EventEntry, Filled, JoinEntry, OperationEntry, Owned, PieceEntry, SettingsEntry, StatsEntry,
@@ -64,7 +64,6 @@ pub struct BrickRecord {
     owner: Option<&'static str>,
     source: [u8; 32],
     prefix: Option<&'static str>,
-    smokes: &'static [Smoke],
     corpora: Vec<&'static (dyn Any + Send + Sync)>,
     pub(crate) scopes: Vec<ScopeEntry>,
     current: Scope,
@@ -90,7 +89,6 @@ impl BrickRecord {
     pub fn new<B: 'static>(
         package: &'static str,
         source: [u8; 32],
-        smokes: &'static [Smoke],
         corpora: Vec<&'static (dyn Any + Send + Sync)>,
     ) -> Self {
         let type_name = std::any::type_name::<B>();
@@ -104,7 +102,6 @@ impl BrickRecord {
             owner: owner_of(type_name, package),
             source,
             prefix: None,
-            smokes,
             corpora,
             scopes: vec![ScopeEntry {
                 parent: None,
@@ -157,10 +154,6 @@ impl BrickRecord {
 
     pub fn prefix(&self) -> Option<&'static str> {
         self.prefix
-    }
-
-    pub fn smokes(&self) -> &'static [Smoke] {
-        self.smokes
     }
 
     pub fn corpora<C: Any>(&self) -> impl Iterator<Item = &'static C> + '_ {

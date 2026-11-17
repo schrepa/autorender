@@ -41,8 +41,6 @@ declare global {
   }
 }
 
-const TIMING = "raf_paced";
-
 export function connectDevelopment(host: Host): () => void {
   let disposed = false;
   const runtime = host.game;
@@ -67,14 +65,11 @@ export function connectDevelopment(host: Host): () => void {
     gpuWaits++;
     const gpu = within(done, READ_BACK_LIMIT_MS, "gpu_work", host.signal)
       .finally(() => { gpuWaits--; });
-    await animationFrames(count, host.signal, undefined, gpu);
+    await animationFrames(count, host.signal, gpu);
   }
   function context(): string {
     const [width, height] = host.size();
-    const page: HostContext = {
-      width, height, paused: host.paused(), device_pixel_ratio: globalThis.devicePixelRatio ?? 1,
-      user_agent: globalThis.navigator?.userAgent ?? "unknown", source: host.source?.url ?? null, timing: TIMING,
-    };
+    const page: HostContext = { width, height, paused: host.paused(), source: host.source?.url ?? null };
     return JSON.stringify(page);
   }
   function refuse(failure: Failure): Reply {
@@ -92,10 +87,6 @@ export function connectDevelopment(host: Host): () => void {
       case "pause":
         host.setPaused(effect.paused);
         return resumed({});
-      case "wait": {
-        const now = await animationFrames(1, host.signal, effect.within_ms);
-        return resumed(globalThis.document?.hidden ? { interrupted: true } : { now });
-      }
       case "frame":
         await presented(1);
         if (closed()) throw engineFailure(CLOSED);
@@ -181,12 +172,10 @@ function failure(thrown: EngineError): Failure {
 }
 
 async function nameAdapters(reply: Reply) {
-  const result = reply.result as { adapter?: AdapterStatus; benchmark?: { environment?: { adapter?: AdapterStatus } } } | null | undefined;
-  for (const holder of [result, result?.benchmark?.environment]) {
-    if (!holder?.adapter) continue;
-    const browser = await adapterInfo();
-    holder.adapter = { ...holder.adapter, vendor: holder.adapter.vendor || browser?.vendor || "", architecture: browser?.architecture ?? "" };
-  }
+  const result = reply.result as { adapter?: AdapterStatus } | null | undefined;
+  if (!result?.adapter) return;
+  const browser = await adapterInfo();
+  result.adapter = { ...result.adapter, vendor: result.adapter.vendor || browser?.vendor || "", architecture: browser?.architecture ?? "" };
 }
 
 const PRESENTATION_TIMEOUT_MS = 5000;
@@ -207,7 +196,7 @@ function within<T>(promise: Promise<T>, limit: number, waited: string, signal: A
   });
 }
 
-function animationFrames(count: number, signal: AbortSignal, within?: number, gpu?: Promise<void>): Promise<number> {
+function animationFrames(count: number, signal: AbortSignal, gpu?: Promise<void>): Promise<void> {
   return new Promise((resolve, reject) => {
     let request = 0;
     let left = count;
@@ -215,21 +204,19 @@ function animationFrames(count: number, signal: AbortSignal, within?: number, gp
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const arm = () => {
       if (settled) return;
-      timeout = within === undefined
-        ? setTimeout(() => finish(engineFailure({ code: "command_timeout", path: "$", got: { waited: "presentation", limit_ms: PRESENTATION_TIMEOUT_MS } })), PRESENTATION_TIMEOUT_MS)
-        : setTimeout(() => finish(undefined, performance.now()), within);
+      timeout = setTimeout(() => finish(engineFailure({ code: "command_timeout", path: "$", got: { waited: "presentation", limit_ms: PRESENTATION_TIMEOUT_MS } })), PRESENTATION_TIMEOUT_MS);
     };
-    function finish(error?: Error, timestamp = 0) {
+    function finish(error?: Error) {
       if (settled) return;
       settled = true;
       clearTimeout(timeout);
       cancelAnimationFrame(request);
       signal.removeEventListener("abort", aborted);
-      if (error) reject(error); else resolve(timestamp);
+      if (error) reject(error); else resolve();
     }
     function aborted() { finish(engineFailure(CLOSED)); }
-    function next(timestamp: number) {
-      if (--left <= 0) finish(undefined, timestamp);
+    function next() {
+      if (--left <= 0) finish();
       else request = requestAnimationFrame(next);
     }
     signal.addEventListener("abort", aborted, { once: true });

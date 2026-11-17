@@ -4,7 +4,7 @@ use std::{
     process::{Command, ExitCode},
 };
 
-use xtask::{Failure, cook, dev, look, pipeline, process};
+use xtask::{Failure, cook, dev, pipeline, process};
 
 const ENGINE: &str = "xtask_engine";
 
@@ -27,7 +27,6 @@ fn execute() -> Result<ExitCode, Failure> {
         return engine(&root, &task, &options);
     }
     match task.as_str() {
-        "look" => look::look(&root, &options)?,
         "cook" => cook::cook(&root, &options)?,
         "dev" => dev::dev(&root, &options)?,
         "agent" => agent(&root, &options)?,

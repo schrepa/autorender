@@ -10,7 +10,6 @@ export class BrowserInput {
   private used = new Set<string>();
   private buttons = new Set<number>();
   private touches = new Map<number, { x: number; y: number }>();
-  private pointers = new Map<number, { key: string; target: HTMLElement }>();
   private abort = new AbortController();
   private last: { x: number; y: number } | undefined;
   private mode: number = CURSOR_MODES.free;
@@ -96,22 +95,6 @@ export class BrowserInput {
       this.locked = locked;
       this.last = undefined;
     }, options);
-    for (const button of document.querySelectorAll<HTMLElement>("[data-key]")) {
-      const key = button.dataset.key!;
-      button.addEventListener("pointerdown", event => {
-        if (event.button !== 0 || this.pointers.has(event.pointerId)) return;
-        if (!this.game?.key(key, true)) return;
-        event.preventDefault(); button.setPointerCapture(event.pointerId);
-        this.pointers.set(event.pointerId, { key, target: button });
-      }, options);
-      for (const name of ["pointerup", "pointercancel", "lostpointercapture"] as const) {
-        button.addEventListener(name, event => {
-          const pointer = this.pointers.get(event.pointerId);
-          if (pointer?.target !== button) return;
-          this.pointers.delete(event.pointerId); this.game?.key(pointer.key, false);
-        }, options);
-      }
-    }
   }
 
   setCursorMode(mode: number) {
@@ -138,8 +121,7 @@ export class BrowserInput {
     for (const code of this.held) this.game?.key(code, false);
     for (const button of this.buttons) this.game?.mouse_button(button, false);
     for (const id of this.touches.keys()) this.game?.touch(id, 0, 0, TOUCH_PHASES.cancelled);
-    for (const { key } of this.pointers.values()) this.game?.key(key, false);
-    this.held.clear(); this.used.clear(); this.buttons.clear(); this.touches.clear(); this.pointers.clear();
+    this.held.clear(); this.used.clear(); this.buttons.clear(); this.touches.clear();
     this.last = undefined; this.unlock();
   }
   dispose() { this.abort.abort(); this.clear(); this.game = undefined; }

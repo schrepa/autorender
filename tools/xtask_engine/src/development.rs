@@ -102,7 +102,7 @@ fn format_scene(path: &str) -> Result<Value, Error> {
     }))
 }
 
-pub(crate) fn alive(pid: u64) -> bool {
+fn alive(pid: u64) -> bool {
     let listed = if cfg!(windows) {
         Command::new("tasklist")
             .args(["/FI", &format!("PID eq {pid}"), "/NH", "/FO", "CSV"])

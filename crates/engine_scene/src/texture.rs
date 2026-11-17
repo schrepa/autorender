@@ -51,17 +51,6 @@ impl SceneTexture {
         }
     }
 
-    pub fn file(id: impl Into<String>, uri: impl Into<String>) -> Self {
-        Self {
-            id: id.into(),
-            width: None,
-            height: None,
-            rgba8: None,
-            uri: Some(uri.into()),
-            provided: None,
-        }
-    }
-
     pub(crate) fn texture(&self, path: &str, files: Option<&SceneFiles>) -> Result<Texture, Error> {
         match (
             &self.provided,

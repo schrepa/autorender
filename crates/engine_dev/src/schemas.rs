@@ -41,7 +41,6 @@ pub fn builtins() -> Value {
         "PresentationState": schemars::schema_for!(engine_core::PresentationState),
         "Readiness": schemars::schema_for!(engine_core::Readiness),
         "FrameBudget": schemars::schema_for!(engine_core::FrameBudget),
-        "Level": schemars::schema_for!(engine_core::Level),
         "Records": schemars::schema_for!(engine_core::Records),
         "MeshLevels": schemars::schema_for!(engine_core::MeshLevels),
         "Hierarchy": schemars::schema_for!(views::HierarchyView),

@@ -51,12 +51,6 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
         .expect("client_list_serializes")
         + "
 ";
-    let repository = crate::rules::repository(root)?;
-    let bricks = engine_checks::bricks::bricks_json(
-        repository,
-        crate::bricks::standard,
-        &mut crate::bricks::standard_engine().map_err(|error| error.to_string())?,
-    )?;
     tooling_types(root)?;
     let protocol = serde_json::to_string_pretty(&engine_dev::schemas::summary())
         .map_err(|error| format!("cannot write JSON: {error}"))?;
@@ -90,7 +84,6 @@ fn generated(root: &Path) -> Result<Vec<(String, String)>, String> {
             ),
         ),
         ("web/src/generated/errors.ts".to_owned(), error_codes()),
-        (engine_checks::bricks::FILE.to_owned(), bricks),
     ]);
     Ok(files)
 }

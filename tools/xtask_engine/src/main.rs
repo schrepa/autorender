@@ -1,14 +1,12 @@
 mod authoring;
 mod bricks;
 mod development;
-mod importing;
 mod lint;
 mod pure;
 mod rules;
 mod scaffold;
 mod shader_report;
 mod ship;
-mod smoke;
 
 use std::{env, process::ExitCode};
 
@@ -38,9 +36,6 @@ fn execute() -> Result<(), Failure> {
     if task == "scene" {
         return Ok(development::scene(&options)?);
     }
-    if task == "asset" {
-        return Ok(importing::asset(&options)?);
-    }
     if task == "build" {
         let profiling = match options.as_slice() {
             [] => false,
@@ -49,9 +44,6 @@ fn execute() -> Result<(), Failure> {
         };
         authoring::validate_sources(&root)?;
         return Ok(pipeline::build(&root, profiling)?);
-    }
-    if task == "smoke" {
-        return smoke::smoke(&root, &options);
     }
     if task == "pure" {
         return pure::pure(&root, &options);
@@ -127,18 +119,6 @@ fn authoring_commands() -> Vec<Command> {
                 CommandOption::taking("--expected-revision", "N").required(),
             ],
         ),
-        Command::new(
-            "asset import",
-            [
-                CommandOption::taking("--file", "PATH").required(),
-                CommandOption::taking("--id", "ID").required(),
-                CommandOption::taking("--output", "PATH"),
-                CommandOption::taking("--into", "PATH"),
-                CommandOption::taking("--expected-revision", "N"),
-                CommandOption::flag("--replace"),
-                CommandOption::flag("--as-prefab"),
-            ],
-        ),
         Command::new("generate", [CommandOption::flag("--check")]),
         Command::new(
             "new app",
@@ -150,14 +130,6 @@ fn authoring_commands() -> Vec<Command> {
                 CommandOption::taking("NAME", "NAME").required(),
                 CommandOption::taking("--project", "DIR").required(),
                 CommandOption::taking("--place", "PLACE"),
-            ],
-        ),
-        Command::new(
-            "smoke",
-            [
-                CommandOption::taking("NAME", "NAME...|all"),
-                CommandOption::taking("--limit-ms", "MS").in_unit("ms"),
-                CommandOption::taking("--project", "DIR").required(),
             ],
         ),
         Command::new(
@@ -192,17 +164,6 @@ fn checking_commands() -> Vec<Command> {
         Command::new(
             "ship",
             [CommandOption::taking("--project", "DIR").required()],
-        ),
-        Command::new(
-            "look",
-            [
-                CommandOption::taking("PROJECT", "DIR").required(),
-                CommandOption::taking("--limit-ms", "MS")
-                    .in_unit("ms")
-                    .required(),
-                CommandOption::flag("--browser"),
-                CommandOption::taking("--out", "DIR"),
-            ],
         ),
         engine_checks::stages::command(),
         Command::new("help", [CommandOption::flag("--json")]),

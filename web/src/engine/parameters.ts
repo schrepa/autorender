@@ -6,5 +6,4 @@ export const HOST_PARAMETERS: Record<string, string> = {
   prepare: "1",
   workers: "N|off",
   jobcache: "off|verify|N",
-  environment: "NAME",
 };

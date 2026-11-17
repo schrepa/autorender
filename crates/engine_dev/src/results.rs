@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::{InspectorDescriptor, InspectorKind};
 
-pub const UNTYPED_RESULTS: &[&str] = &["benchmark", "reload"];
+pub const UNTYPED_RESULTS: &[&str] = &["reload"];
 
 macro_rules! results {
     ($($op:ident: $result:ty),* $(,)?) => {

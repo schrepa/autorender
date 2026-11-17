@@ -61,8 +61,7 @@ pub use engine_place::{PointInput, PointSet};
 pub use gpu_data::{jitter_clip, mip_levels, pack_color, pack_surface, pyramid_extents};
 pub use install::FragmentUse;
 pub use kinds::{
-    Channels, Form, FormColor, FormDepth, FormFragment, FormPass, FormSide, FormTarget,
-    FormTopology, FragmentPass, KindForm, KindSurface, OwnFragments, PassFragment, PerPass,
+    Form, FormPass, FormSide, KindForm, KindSurface, OwnFragments, PassFragment, PerPass,
     RoleFragments, Varyings,
 };
 pub use machine::{DEPTH_FORMAT, SCENE_FORMAT};
@@ -73,9 +72,7 @@ pub use memory::GpuMemory;
 pub use platform::{AdapterInfo, RenderTarget};
 #[cfg(not(target_arch = "wasm32"))]
 #[doc(hidden)]
-pub use platform::{
-    GpuPreference, NativeWindow, keep_pipeline_cache_in, start_native_instances_with,
-};
+pub use platform::{GpuPreference, NativeWindow, keep_pipeline_cache_in};
 pub use pyramid::{PYRAMID_GROUP, PyramidExtent};
 pub use render_bricks::RenderBricks;
 #[doc(hidden)]
@@ -398,7 +395,6 @@ pub enum Shape<'a, P, S> {
 pub enum DepthUse {
     None,
     Test,
-    TestStrictly,
     Write {
         bias: wgpu::DepthBiasState,
     },

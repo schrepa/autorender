@@ -316,10 +316,6 @@ impl AppHost {
         self.refresh.ms()
     }
 
-    pub fn set_display_paced(&mut self, paced: bool) {
-        self.display_paced = paced;
-    }
-
     pub(crate) fn paced(&mut self) {
         let interval = self.engine.frame_time().real_seconds * 1000.0;
         let pacing = crate::pacing::of(self.engine.app.world());

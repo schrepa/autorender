@@ -2,11 +2,10 @@ use crate::app_host::{AppHost, Focus};
 use crate::game::{Arrival, Game, LoadedScene};
 use crate::host::{
     DeviceGatherer, FrameLoop, FramePhase, HostPause, InputSource, JobId, JobOrder, JobScheduler,
-    LevelLoad, LevelStep,
 };
 use engine_core::{
-    BrickList, CursorMode, CursorRequests, Engine, ErrorCode, Gathered, Input, Level, MouseButton,
-    Pause, PauseReason, Progress, TouchPhase,
+    BrickList, CursorMode, CursorRequests, Engine, Gathered, Input, MouseButton, Pause,
+    PauseReason, TouchPhase,
 };
 use engine_render::{Picture, RenderTarget};
 use engine_scene::SceneFiles;
@@ -18,7 +17,6 @@ pub struct GameHost<G: Game> {
     input: DeviceGatherer,
     frames: FrameLoop,
     jobs: JobScheduler,
-    level: LevelLoad,
     #[cfg(feature = "dev")]
     development: crate::dev_host::DevHost,
     #[cfg(feature = "dev")]
@@ -51,7 +49,6 @@ impl<G: Game> GameHost<G> {
             input: DeviceGatherer::default(),
             frames: FrameLoop::default(),
             jobs: JobScheduler::default(),
-            level: LevelLoad::default(),
             #[cfg(feature = "dev")]
             development: crate::dev_host::DevHost::default(),
             #[cfg(feature = "dev")]
@@ -98,72 +95,6 @@ impl<G: Game> GameHost<G> {
         self.suspend();
     }
 
-    fn level_mut(&mut self) -> bevy_ecs::world::Mut<'_, Level> {
-        self.app
-            .engine_mut()
-            .app
-            .world_mut()
-            .resource_mut::<Level>()
-    }
-
-    pub fn take_level_request(&mut self) -> Option<String> {
-        self.level_mut().take_asked()
-    }
-
-    pub fn report_level(&mut self, done: u32, total: u32) {
-        self.level_mut()
-            .progress(Progress::of(u64::from(done), u64::from(total)));
-    }
-
-    pub fn fail_level(&mut self, message: &str) {
-        self.level_failed(crate::Error::new(ErrorCode::SourceIo, "$.path").got(message));
-    }
-
-    fn level_failed(&mut self, error: crate::Error) {
-        self.level = LevelLoad::Idle;
-        self.level_mut().fail(error);
-    }
-
-    fn level_built(&mut self) {
-        self.level_mut().built();
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    fn open_level(&mut self) {
-        let Some(path) = self.take_level_request() else {
-            return;
-        };
-        let kinds = engine_scene::SceneKinds::of(self.app.engine().app.world());
-        match LevelLoad::open(&path, &kinds) {
-            Ok(level) => {
-                self.level = level;
-                self.report_level(0, 0);
-            }
-            Err(error) => self.level_failed(error),
-        }
-    }
-
-    fn step_level(&mut self) {
-        #[cfg(not(target_arch = "wasm32"))]
-        self.open_level();
-        if matches!(self.level, LevelLoad::Idle) {
-            return;
-        }
-        match self.level.step() {
-            Ok(LevelStep::Progress(progress)) => self.level_mut().progress(progress),
-            #[cfg(not(target_arch = "wasm32"))]
-            Ok(LevelStep::Ready {
-                folder,
-                source,
-                files,
-            }) => match self.reload_scene(&source, &files) {
-                Ok(()) => self.set_file_root(&folder.to_string_lossy()),
-                Err(error) => self.level_failed(error),
-            },
-            Err(error) => self.level_failed(error),
-        }
-    }
-
     pub fn frame(&mut self, timestamp: f64, width: u32, height: u32) -> crate::Result<()> {
         self.framed(timestamp, (width, height), Picture::Shown)
             .map(drop)
@@ -175,7 +106,6 @@ impl<G: Game> GameHost<G> {
         size: (u32, u32),
         picture: Picture,
     ) -> crate::Result<bool> {
-        self.step_level();
         self.prepare_pipelines();
         let source = self.input_source();
         self.app.follow_focus(source);
@@ -507,7 +437,6 @@ impl<G: Game> GameHost<G> {
         self.app.replay_settings()?;
         self.app.reloaded();
         self.suspend();
-        self.level_built();
         Ok(())
     }
 
@@ -535,26 +464,12 @@ impl<G: Game> GameHost<G> {
         self.app.set_refresh_interval(milliseconds);
     }
 
-    pub fn set_display_paced(&mut self, paced: bool) {
-        self.app.set_display_paced(paced);
-    }
-
     pub fn set_job_clock(&mut self, clock: crate::host::JobClock) {
         self.app.set_job_clock(clock);
     }
 
     pub fn adapter(&self) -> &crate::AdapterInfo {
         self.app.renderer.adapter()
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn start_debugger_capture(&mut self) -> bool {
-        self.app.renderer.start_debugger_capture()
-    }
-
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn stop_debugger_capture(&mut self) -> crate::Result<()> {
-        self.app.renderer.stop_debugger_capture()
     }
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -616,19 +531,10 @@ impl<G: Game> GameHost<G> {
         self.watch();
         let path = self.source.clone()?;
         let kinds = engine_scene::SceneKinds::of(self.app.engine().app.world());
-        let mut load = match LevelLoad::open(&path.to_string_lossy(), &kinds) {
-            Ok(load) => load,
-            Err(error) => return Some(Err(error)),
-        };
-        loop {
-            match load.step() {
-                Ok(LevelStep::Progress(_)) => {}
-                Ok(LevelStep::Ready { source, files, .. }) => {
-                    return Some(self.reload_scene(&source, &files));
-                }
-                Err(error) => return Some(Err(error)),
-            }
-        }
+        Some(
+            read_scene(&path, &kinds)
+                .and_then(|(source, files)| self.reload_scene(&source, &files)),
+        )
     }
 
     fn watch(&mut self) {
@@ -663,6 +569,29 @@ fn modified(path: &std::path::Path) -> Option<std::time::SystemTime> {
     std::fs::metadata(path)
         .and_then(|metadata| metadata.modified())
         .ok()
+}
+
+#[cfg(all(feature = "dev", not(target_arch = "wasm32")))]
+fn read_scene(
+    path: &std::path::Path,
+    kinds: &engine_scene::SceneKinds,
+) -> crate::Result<(String, SceneFiles)> {
+    use engine_core::{Error, ErrorCode};
+    let source = std::fs::read_to_string(path).map_err(|error| {
+        Error::new(ErrorCode::SourceIo, "$.path").got(format!("{}: {error}", path.display()))
+    })?;
+    let mut load = crate::host::SceneLoad::new(&source, kinds)?;
+    let folder = path.parent().unwrap_or(std::path::Path::new("."));
+    for read in load.take_reads().into_iter().rev() {
+        let file = folder.join(&read.uri);
+        let bytes = std::fs::read(&file).map_err(|error| {
+            Error::new(ErrorCode::SourceIo, "$.path").got(format!("{}: {error}", file.display()))
+        })?;
+        if let Some(image) = load.read(&read.uri, bytes)? {
+            load.decode(&read.uri, &image)?;
+        }
+    }
+    Ok((source, load.finish()?))
 }
 
 #[cfg(feature = "dev")]

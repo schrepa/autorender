@@ -22,7 +22,6 @@ pub struct MeshLods {
 
 const LODS_MAGIC: &[u8; 4] = b"ELOD";
 const INPUT_MAGIC: &[u8; 4] = b"ELDI";
-const AUTHORED_MAGIC: &[u8; 4] = b"ELDA";
 
 impl MeshLods {
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -148,35 +147,6 @@ pub fn input_bytes(vertices: &[MeshVertex], indices: &[u32]) -> Vec<u8> {
         bytes.extend_from_slice(&index.to_le_bytes());
     }
     bytes
-}
-
-pub fn authored_bytes(meshes: &[(&[MeshVertex], &[u32])]) -> Vec<u8> {
-    let mut bytes = AUTHORED_MAGIC.to_vec();
-    bytes.extend_from_slice(&(meshes.len() as u32).to_le_bytes());
-    for &(vertices, indices) in meshes {
-        let one = input_bytes(vertices, indices);
-        bytes.extend_from_slice(&(one.len() as u32).to_le_bytes());
-        bytes.extend_from_slice(&one);
-    }
-    bytes
-}
-
-pub(crate) fn authored_inputs(bytes: &[u8]) -> Result<Vec<LodInput>, Error> {
-    let mut words = Words::new(bytes, AUTHORED_MAGIC)
-        .ok_or_else(|| invalid("$.authored").expected(Expected::Matching))?;
-    let count = words
-        .next()
-        .ok_or_else(|| invalid("$.authored").expected(Expected::Present))?;
-    let mut inputs = Vec::new();
-    for mesh in 0..count {
-        let one = words
-            .next()
-            .and_then(|length| bytes.get(words.at..words.at + length as usize))
-            .ok_or_else(|| invalid(format!("$.authored[{mesh}]")).expected(Expected::Present))?;
-        words.at += one.len();
-        inputs.push(LodInput::from_bytes(one)?);
-    }
-    Ok(inputs)
 }
 
 impl LodInput {

@@ -1,24 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpStream;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
-
-const PEOPLES_PORTS: std::ops::RangeInclusive<u16> = 5173..=5175;
-
-fn free_port() -> Result<u16, String> {
-    for _ in 0..16 {
-        let port = TcpListener::bind("127.0.0.1:0")
-            .and_then(|listener| listener.local_addr())
-            .map(|address| address.port())
-            .map_err(|error| format!("no free port: {error}"))?;
-        if !PEOPLES_PORTS.contains(&port) {
-            return Ok(port);
-        }
-    }
-    Err("no free port outside 5173-5175".into())
-}
 
 pub struct Server {
     child: Child,
@@ -80,16 +65,6 @@ impl Server {
             }
             std::thread::sleep(Duration::from_millis(250));
         }
-    }
-
-    pub fn page(root: &Path, log: &Path, limit: Duration) -> Result<Self, String> {
-        crate::pipeline::prepare_dev(root)?;
-        let server = Self::vite(root, free_port()?, log, limit)?;
-        eprintln!(
-            "{}",
-            serde_json::json!({"event": "serving", "url": server.url})
-        );
-        Ok(server)
     }
 }
 

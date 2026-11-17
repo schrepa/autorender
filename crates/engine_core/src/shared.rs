@@ -2,7 +2,7 @@ use bevy_ecs::world::World;
 use engine_registry::CORE_ROW;
 
 use crate::{
-    Board, FrameBudget, GlobalTransforms, Level, Pause, PauseReason, Readiness, Views, WorkClock,
+    Board, FrameBudget, GlobalTransforms, Pause, PauseReason, Readiness, Views, WorkClock,
     settings,
 };
 
@@ -11,7 +11,6 @@ settings! {
     pub struct FeedSettings {
         pub transforms: u32 = 16384 => at_least(1),
         pub mesh_residency: u32 = 4096 => at_least(1),
-        pub events: u32 = 1024 => at_least(1),
     }
 }
 
@@ -51,11 +50,6 @@ pub(crate) fn start_frame(world: &mut World, spare_ms: f64) {
     if let Some(mut poses) = world.get_resource_mut::<crate::DrawnPoses>() {
         poses.resize_changes(transforms as usize);
     }
-    let now = world.resource::<crate::FrameTime>().real_elapsed;
-    if let Some(mut level) = world.get_resource_mut::<Level>() {
-        level.settle(now);
-    }
-    crate::loads::settle_level(world);
 }
 
 pub(crate) fn settle_readiness(world: &mut World, board: &Board) {
@@ -77,5 +71,4 @@ pub(crate) fn settle_readiness(world: &mut World, board: &Board) {
         reports.add_to(&mut readiness);
     }
     world.insert_resource(readiness);
-    crate::loads::settle_scene(world);
 }

@@ -1,5 +1,4 @@
 use std::{
-    fs,
     path::{Path, PathBuf},
     process::Command,
 };
@@ -112,12 +111,6 @@ pub fn clients_json() -> serde_json::Value {
         .collect()
 }
 
-pub fn read_json(path: &Path) -> Result<serde_json::Value, String> {
-    let text = fs::read_to_string(path)
-        .map_err(|error| format!("cannot read {}: {error}", path.display()))?;
-    serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))
-}
-
 pub fn hash(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
@@ -188,12 +181,6 @@ impl Project {
 
     pub fn program(&self) -> String {
         format!("{}{}", self.native, std::env::consts::EXE_SUFFIX)
-    }
-
-    pub fn client(&self) -> Option<&'static Client> {
-        clients()
-            .iter()
-            .find(|client| client.package == self.package)
     }
 }
 

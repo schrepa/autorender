@@ -42,8 +42,7 @@ pub use bricks::{
 pub use collector::*;
 #[cfg(feature = "enabled")]
 pub use rows::{
-    RowScope, frame_mark, mark_speed, now_ms, row, take_rows, take_slow, take_speed, take_waits,
-    tally, timed, waited,
+    RowScope, mark_speed, now_ms, row, take_rows, take_speed, take_waits, tally, timed, waited,
 };
 #[cfg(feature = "enabled")]
 pub use threads::{announce_thread, listen_to_threads};
@@ -74,14 +73,6 @@ mod disabled {
     #[inline(always)]
     pub fn current_frame() -> u64 {
         0
-    }
-    #[inline(always)]
-    pub fn recording_frame() -> u64 {
-        0
-    }
-    #[inline(always)]
-    pub fn record_for<R>(_: u64, record: impl FnOnce() -> R) -> R {
-        record()
     }
     pub struct RowScope;
     impl Drop for RowScope {
@@ -116,13 +107,6 @@ mod disabled {
     }
     pub fn take_speed() -> Option<(f64, f64)> {
         None
-    }
-    #[inline(always)]
-    pub fn frame_mark() -> u64 {
-        0
-    }
-    pub fn take_slow() -> Vec<(u64, &'static str, f64)> {
-        Vec::new()
     }
     pub struct Aggregate;
     impl Aggregate {

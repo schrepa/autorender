@@ -9,11 +9,6 @@ use glam::Vec2;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-mod changes;
-
-use changes::raise_changes;
-pub use changes::{InputChange, InputChanges};
-
 use crate::{
     Error, ErrorCode, Hold, Interest, InvalidSetting, List, Operation, Requests, Rule, Section,
     Setting, Ticket, settings,
@@ -1410,7 +1405,6 @@ pub(crate) fn install(world: &mut World) -> Vec<Error> {
 #[doc(hidden)]
 pub fn accept_input(world: &mut World, gathered: Gathered) {
     let Gathered { devices, driven } = gathered;
-    raise_changes(world, &devices);
     let settings = world
         .get_resource::<InputSettings>()
         .cloned()

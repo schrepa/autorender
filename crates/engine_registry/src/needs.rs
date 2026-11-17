@@ -1,10 +1,8 @@
-use std::any::{Any, TypeId};
+use std::any::TypeId;
 
-use engine_place::{AttachPoint, PassEntry, PassViews, PlaceDecl};
 use serde::Serialize;
 
 use crate::BrickId;
-use crate::record::BrickRecord;
 use crate::state::GateId;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -50,42 +48,6 @@ pub(crate) struct Accessed {
     pub(crate) place: TypeId,
     pub(crate) brick: &'static str,
     pub(crate) write: bool,
-}
-
-#[derive(Debug)]
-pub(crate) struct LeftOut {
-    pub(crate) package: &'static str,
-    pub(crate) places: Vec<&'static str>,
-    pub(crate) passes: Vec<PassEntry>,
-    pub(crate) render: Vec<Box<dyn Any + Send + Sync>>,
-}
-
-impl LeftOut {
-    pub(crate) fn of(mut record: BrickRecord) -> Self {
-        Self {
-            package: record.package,
-            places: record.places().map(PlaceDecl::name).collect(),
-            passes: record.render_entries::<PassEntry>().copied().collect(),
-            render: std::mem::take(&mut record.render),
-        }
-    }
-
-    pub(crate) fn provides(&self, place: &str) -> bool {
-        self.places.contains(&place)
-    }
-
-    pub(crate) fn writes(&self, target: &str, before: Option<AttachPoint>) -> bool {
-        self.passes.iter().any(|entry| {
-            entry.pass.views != PassViews::Owned
-                && before.is_none_or(|at| entry.pass.at < at)
-                && entry
-                    .pass
-                    .writes
-                    .targets()
-                    .iter()
-                    .any(|written| written.name() == target)
-        })
-    }
 }
 
 #[derive(Clone, Copy, Debug)]

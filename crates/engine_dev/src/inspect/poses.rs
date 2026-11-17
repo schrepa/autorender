@@ -30,7 +30,7 @@ impl DevTools {
             read: Box::new(node_word_view),
         })
         .expect("descriptor_bounded");
-        let states: [(&str, StateRegister); 10] = [
+        let states: [(&str, StateRegister); 9] = [
             (
                 "PresentationState",
                 Self::register_state::<PresentationState>,
@@ -40,7 +40,6 @@ impl DevTools {
                 "FrameBudget",
                 Self::register_state::<engine_core::FrameBudget>,
             ),
-            ("Level", Self::register_state::<engine_core::Level>),
             ("Records", Self::register_state::<engine_core::Records>),
             (
                 "MeshLevels",

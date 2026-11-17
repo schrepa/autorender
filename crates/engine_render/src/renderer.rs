@@ -68,8 +68,6 @@ pub(crate) struct Core {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: crate::gpu_calls::Queue,
     pub(crate) adapter: crate::AdapterInfo,
-    #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) debugger_capture: bool,
     pub(crate) display: Display,
     pub(crate) health: Arc<Mutex<health::Reports>>,
     pub(crate) profiler: GpuProfiler,

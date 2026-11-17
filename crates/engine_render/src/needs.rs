@@ -112,7 +112,7 @@ fn readers_of(machine: &Machine, pass: usize) -> Vec<usize> {
         .collect()
 }
 
-fn unmet_of(machine: &Machine, scenes: &ScenePasses, registry: &Registry) -> Vec<Error> {
+fn unmet_of(machine: &Machine, scenes: &ScenePasses) -> Vec<Error> {
     let mut unmet = Vec::new();
     for (pass, resource) in machine.graph.unmet() {
         let target = named(machine, resource);
@@ -139,9 +139,6 @@ fn unmet_of(machine: &Machine, scenes: &ScenePasses, registry: &Registry) -> Vec
             if reader.is_empty() || reader == crate::linker::CORE_PACKAGE {
                 continue;
             }
-            let could = target
-                .map(|name| registry.could_write(name, entry.layer))
-                .unwrap_or_default();
             let unwritten = Error::new(
                 ErrorCode::ReadBeforeWrite,
                 format!("$.bricks.{reader}.passes.{}.reads.{label}", entry.label),
@@ -150,11 +147,7 @@ fn unmet_of(machine: &Machine, scenes: &ScenePasses, registry: &Registry) -> Vec
                 "before": entry.layer.map(AttachPoint::name),
                 "listed_writers": listed,
             }));
-            unmet.push(if could.is_empty() {
-                unwritten
-            } else {
-                unwritten.nearest(could)
-            });
+            unmet.push(unwritten);
         }
     }
     unmet
@@ -163,7 +156,7 @@ fn unmet_of(machine: &Machine, scenes: &ScenePasses, registry: &Registry) -> Vec
 pub(crate) fn report(machine: &Machine, scenes: &ScenePasses, registry: &mut Registry) {
     let reads = reads_of(machine, scenes, registry);
     registry.note_reads(&[ReadKind::Face, ReadKind::Target], reads);
-    for error in unmet_of(machine, scenes, registry) {
+    for error in unmet_of(machine, scenes) {
         registry.report_unmet(error);
     }
 }

@@ -79,18 +79,6 @@ impl SceneLooks {
     }
 }
 
-pub fn show_look(world: &mut World, name: &str, path: &str) -> Result<(), Error> {
-    let Some(look) = look_named(world.get_resource::<SceneLooks>(), name, path)? else {
-        return Ok(());
-    };
-    let context = crate::loading::kept(world);
-    crate::loading::within(context.as_ref(), || {
-        look.environment
-            .check_in(world.get_resource::<Registry>(), &look.at)?;
-        look.apply(world)
-    })
-}
-
 struct Look {
     environment: SceneEnvironment,
     at: String,

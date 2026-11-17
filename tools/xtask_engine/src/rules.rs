@@ -14,16 +14,10 @@ pub const RULES: Rules = Rules {
         unsafe_files: &[
             "crates/engine_profile/src/allocator.rs",
             "crates/engine_profile/src/heap.rs",
-            "crates/engine_profiler/src/counters.rs",
-            "crates/engine_profiler/src/pix.rs",
-            "crates/engine_profiler/src/renderdoc.rs",
-            "crates/engine_profiler/src/sampler/linux.rs",
-            "crates/engine_profiler/src/sampler/macos.rs",
             "crates/engine_profiler/src/sampler/mod.rs",
             "crates/engine_profiler/src/sampler/windows.rs",
             "crates/engine_profiler/src/stack.rs",
             "crates/engine_render/src/renderer/cache.rs",
-            "crates/engine_render/src/renderer/native.rs",
         ],
     },
     errors: Some(Errors {

@@ -1,34 +1,6 @@
-#![expect(unsafe_code, reason = "starts and stops a graphics debugger's capture")]
-
 use super::*;
 
 impl Renderer {
-    pub fn start_debugger_capture(&mut self) -> bool {
-        if self.core.debugger_capture {
-            return false;
-        }
-        self.core.debugger_capture = true;
-        // SAFETY: no other capture is active (the flag pairs every start
-        // with one stop); the debugger's own rules are its documentation's.
-        unsafe {
-            self.core.device.start_graphics_debugger_capture();
-        }
-        true
-    }
-
-    pub fn stop_debugger_capture(&mut self) -> Result<(), Error> {
-        if !self.core.debugger_capture {
-            return Ok(());
-        }
-        self.wait_for_gpu()?;
-        self.core.debugger_capture = false;
-        // SAFETY: the capture started above is the one active.
-        unsafe {
-            self.core.device.stop_graphics_debugger_capture();
-        }
-        Ok(())
-    }
-
     pub fn gpu_allocations(&self) -> serde_json::Value {
         let Some(report) = self.core.device.generate_allocator_report() else {
             return serde_json::Value::Null;

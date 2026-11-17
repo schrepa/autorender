@@ -100,15 +100,6 @@ pub enum DrawnState {
     Refused(Error),
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct DrawnCensus {
-    pub drawn: u32,
-    pub hidden: u32,
-    pub unplaced: u32,
-    pub waiting: u32,
-    pub refused: u32,
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PlanState {
     Stale,
@@ -276,53 +267,8 @@ impl DrawnTable {
         self.held.get(&entity).map(|held| &held.state)
     }
 
-    pub fn states(&self) -> impl Iterator<Item = (Entity, &DrawnState)> + '_ {
-        self.held
-            .iter()
-            .map(|(&entity, held)| (entity, &held.state))
-    }
-
     pub(crate) fn drawn_count(&self) -> usize {
         self.owners.len() - self.free.len()
-    }
-
-    pub fn census(&self, kind: DrawKind) -> DrawnCensus {
-        let mut census = DrawnCensus::default();
-        let PlanState::Built { .. } = self.plan else {
-            for held in self.held.values().filter(|held| held.drawn.kind == kind) {
-                let count = match held.state {
-                    DrawnState::Drawn { .. } => &mut census.drawn,
-                    DrawnState::Hidden => &mut census.hidden,
-                    DrawnState::Unplaced => &mut census.unplaced,
-                    DrawnState::Waiting => &mut census.waiting,
-                    DrawnState::Refused(_) => &mut census.refused,
-                };
-                *count += 1;
-            }
-            return census;
-        };
-        census.drawn = self
-            .batches
-            .iter()
-            .filter(|batch| batch.kind == kind)
-            .map(|batch| batch.instances.end - batch.instances.start)
-            .sum();
-        if self.held.len() == self.drawn_count() {
-            return census;
-        }
-        for held in self.held.values() {
-            let count = match held.state {
-                DrawnState::Drawn { .. } => continue,
-                DrawnState::Hidden => &mut census.hidden,
-                DrawnState::Unplaced => &mut census.unplaced,
-                DrawnState::Waiting => &mut census.waiting,
-                DrawnState::Refused(_) => &mut census.refused,
-            };
-            if held.drawn.kind == kind {
-                *count += 1;
-            }
-        }
-        census
     }
 
     pub fn slot(&self, entity: Entity) -> Option<u32> {

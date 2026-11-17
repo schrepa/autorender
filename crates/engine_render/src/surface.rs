@@ -275,13 +275,6 @@ type LaidSlot = (&'static str, &'static str, String, &'static [&'static str]);
 
 type LaidOpen = (PointInput, String, &'static str);
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct LeftInput {
-    pub(crate) brick: &'static str,
-    pub(crate) name: &'static str,
-    pub(crate) opens: bool,
-}
-
 #[derive(Default)]
 pub(crate) struct SurfaceDecls {
     pub(crate) slots: Vec<(SlotModule, String, &'static str)>,
@@ -292,19 +285,6 @@ pub(crate) struct SurfaceDecls {
     pub(crate) models: Vec<(LightingModule, String)>,
     pub(crate) prepares: Vec<String>,
     pub(crate) kinds: Vec<SurfaceKind>,
-    pub(crate) left: Vec<LeftInput>,
-}
-
-impl SurfaceDecls {
-    fn left_of(&self, name: &str, opens: bool) -> Vec<&'static str> {
-        let mut bricks = Vec::new();
-        for left in &self.left {
-            if left.name == name && (left.opens || !opens) && !bricks.contains(&left.brick) {
-                bricks.push(left.brick);
-            }
-        }
-        bricks
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -529,9 +509,7 @@ impl MaterialLayout {
                     problems.push(wrong_name(at, set.name));
                 }
                 None => {
-                    let notice = Error::new(ErrorCode::InputUnread, at)
-                        .got(&by)
-                        .nearest(declared.left_of(set.name, false));
+                    let notice = Error::new(ErrorCode::InputUnread, at).got(&by);
                     self.notices.push(notice);
                     self.sets.push((set, false));
                 }
@@ -576,13 +554,9 @@ impl MaterialLayout {
         }
         for (slot, fillers) in unopened {
             let at = format!("$.material_slots.{slot}");
-            let notice = Error::new(ErrorCode::SlotUnopened, at).got(fillers);
-            let openers = declared.left_of(slot, true);
-            let notice = if openers.is_empty() {
-                notice.variants(self.slot_names())
-            } else {
-                notice.nearest(openers)
-            };
+            let notice = Error::new(ErrorCode::SlotUnopened, at)
+                .got(fillers)
+                .variants(self.slot_names());
             self.notices.push(notice);
         }
     }

@@ -14,9 +14,6 @@ pub enum Effect {
     Pause {
         paused: bool,
     },
-    Wait {
-        within_ms: f64,
-    },
     Frame {
         timestamp: f64,
     },
@@ -35,10 +32,6 @@ pub enum Effect {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Outcome {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub now: Option<f64>,
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub interrupted: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub failed: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -64,9 +57,6 @@ pub struct HostContext {
     pub width: u32,
     pub height: u32,
     pub paused: bool,
-    pub device_pixel_ratio: f64,
-    pub user_agent: String,
     #[serde(default)]
     pub source: Option<String>,
-    pub timing: String,
 }

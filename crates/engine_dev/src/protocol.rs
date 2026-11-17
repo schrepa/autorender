@@ -22,8 +22,6 @@ pub mod bounds {
     }
 
     pub const ALPHA: Rule = Rule::Range(0.0, 1.0);
-    pub const WARMUP: Rule = Rule::Range(0.0, 120.0);
-    pub const SAMPLES: Rule = Rule::Range(1.0, 240.0);
     pub const TICKS: Rule = Rule::AtLeast(1.0);
     pub const FRAMES: Rule = Rule::Range(1.0, 240.0);
     pub const FRAME_INTERVAL: Rule = Rule::Range(1.0, 1000.0);
@@ -37,7 +35,6 @@ pub const CONTROL_STATE: &[(&str, &str)] = &[
     ("present", "PresentationState"),
     ("environment", "Environment"),
     ("camera", "GlobalTransform"),
-    ("benchmark", ""),
     ("step", "PresentationState"),
     ("frames", "PresentationState"),
     ("input", "Input"),
@@ -308,14 +305,6 @@ pub struct DeepProfile {
     pub max_events: Option<u32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cpu_samples: Option<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub vendor: Option<Vendor>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum Vendor {
-    Pix,
 }
 
 impl Query {
@@ -375,18 +364,6 @@ pub enum BrowserControl {
         #[schemars(transform = stated(camera_depth()))]
         far: f32,
     },
-    Benchmark {
-        #[serde(default = "default_warmup")]
-        #[schemars(transform = stated(bounds::WARMUP))]
-        warmup: u32,
-        #[serde(default = "default_samples")]
-        #[schemars(transform = stated(bounds::SAMPLES))]
-        samples: u32,
-        #[serde(default)]
-        mode: BenchmarkMode,
-        #[serde(default)]
-        script: Vec<BenchmarkInput>,
-    },
     Step {
         #[schemars(transform = stated(bounds::TICKS))]
         ticks: u32,
@@ -435,11 +412,10 @@ pub enum BrowserControl {
 }
 
 impl BrowserControl {
-    pub const NAMES: [&'static str; 13] = [
+    pub const NAMES: [&'static str; 12] = [
         "present",
         "environment",
         "camera",
-        "benchmark",
         "step",
         "frames",
         "input",
@@ -464,7 +440,6 @@ impl BrowserControl {
             | Self::Step { .. }
             | Self::Input { .. }
             | Self::Render {}
-            | Self::Benchmark { .. }
             | Self::Frames { .. }
             | Self::Pause { .. }
             | Self::Resume { .. }
@@ -478,7 +453,6 @@ impl BrowserControl {
             Self::Present { .. }
             | Self::Environment(..)
             | Self::Camera { .. }
-            | Self::Benchmark { .. }
             | Self::Step { .. }
             | Self::Frames { .. }
             | Self::Input { .. }
@@ -523,33 +497,8 @@ impl schemars::JsonSchema for EnvironmentControl {
     }
 }
 
-#[derive(Debug, Default, Deserialize, Serialize, schemars::JsonSchema)]
-#[serde(rename_all = "snake_case")]
-pub enum BenchmarkMode {
-    #[default]
-    Step,
-    Render,
-    Present,
-    Paced,
-}
-
-#[derive(Debug, Deserialize, Serialize, schemars::JsonSchema)]
-#[serde(deny_unknown_fields)]
-pub struct BenchmarkInput {
-    pub at: u32,
-    pub input: serde_json::Map<String, serde_json::Value>,
-}
-
 fn first_player() -> u8 {
     1
-}
-
-fn default_warmup() -> u32 {
-    30
-}
-
-fn default_samples() -> u32 {
-    120
 }
 
 fn default_profile_frames() -> u32 {

@@ -33,7 +33,6 @@ const CLOSED: &[(&str, &[&str])] = &[
             "engine_lodbuild",
             "engine_sources",
             "engine_command_line",
-            "engine_smoke",
         ],
     ),
     ("core", engine_registry::CORE_CRATES),
@@ -167,7 +166,7 @@ fn check(root: &Path, problems: &mut Vec<String>) -> Result<usize, String> {
     draw_kind_free(&root, &members, problems)?;
     build_scripts_inside(&root, &members, &folders, problems)?;
     for member in &members {
-        check_member(&root, &workspace, member, &folders, problems)?;
+        check_member(&workspace, member, &folders, problems)?;
     }
     Ok(members.len())
 }
@@ -584,7 +583,6 @@ fn implements_brick(line: &str) -> bool {
 }
 
 fn check_member(
-    root: &Path,
     workspace: &Item,
     member: &Member,
     folders: &BTreeMap<&Path, &Member>,
@@ -621,20 +619,8 @@ fn check_member(
             "{at}: a {kind} crate needs [lints.rust] unsafe_code = \"forbid\""
         ));
     }
-    let leaf_side = member.at.starts_with("crates/") || member.at.starts_with("tools/");
-    let examples = root.join("examples");
     for dependency in &member.dependencies {
         let edge = format!("{at}: {} {}", dependency.table, dependency.key);
-        let into_examples = dependency
-            .path
-            .as_ref()
-            .is_some_and(|path| path.starts_with(&examples));
-        if leaf_side && into_examples {
-            problems.push(format!(
-                "{edge}: nothing in crates/ or tools/ depends on examples/"
-            ));
-            continue;
-        }
         if let Some(target) = dependency.path.as_deref().and_then(|dir| folders.get(dir)) {
             if !allowed(member, kind, target) {
                 let target_kind = target.kind.as_deref().unwrap_or("no kind");
@@ -699,22 +685,9 @@ fn allowed(member: &Member, kind: &str, target: &Member) -> bool {
             target_kind,
             "host" | "list" | "brick" | "kit" | "shared" | "place" | "core" | "support"
         ),
-        "tool" => {
-            target_kind != "brick"
-                && (!target.at.starts_with("examples/")
-                    || game(&member.at).is_some_and(|own| game(&target.at) == Some(own)))
-        }
+        "tool" => target_kind != "brick",
         _ => false,
     }
-}
-
-fn game(at: &str) -> Option<&str> {
-    let name = at
-        .strip_prefix("examples/")?
-        .split('/')
-        .next()
-        .filter(|name| !name.is_empty())?;
-    at.get(.."examples/".len() + name.len())
 }
 
 fn external(kind: &str, package: &str) -> Option<String> {

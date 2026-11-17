@@ -8,7 +8,6 @@ mod budget;
 mod calls;
 mod drawn;
 mod feeds;
-mod level;
 mod names;
 mod nodes;
 mod passes;
@@ -43,9 +42,7 @@ pub use engine_assets::{
     AttributeFormat, GeometryHandle, MaterialHandle, StreamShape, TextureHandle,
 };
 pub use engine_settings::{Error, ErrorCode};
-pub use engine_smoke::{SmokeFailure, SmokeSession, ask, smoke_check, smoke_eq};
 pub use feeds::{Cursor, Events, Feed, FeedView, Ring, Since, StoreId};
-pub use level::{Level, LevelView};
 pub use names::{AuthoredId, Named, OperationScene, SceneEntity, entity_named, entity_removed};
 pub use nodes::{Clock, Mobility, Mover, MoverId, Node, NodeWord, Pace};
 pub use passes::{
@@ -65,7 +62,6 @@ pub use views::{
 pub trait Slot: Resource + Default {
     const NAME: &'static str;
     const WGSL: Option<&'static str> = None;
-    const SMOKES: &'static [Smoke] = &[];
     const CALLS: &'static [Call] = &[];
     const EVENTS: &'static [EventDecl] = &[];
 }
@@ -74,7 +70,6 @@ pub trait List: Send + Sync + 'static {
     const NAME: &'static str;
     type Member: Send + Sync + 'static;
     const WGSL: Option<&'static str> = None;
-    const SMOKES: &'static [Smoke] = &[];
 
     fn dropped(_world: &mut World, _member: &Self::Member) {}
 }
@@ -87,7 +82,6 @@ pub struct PlaceDecl {
     name: &'static str,
     kind: PlaceKind,
     wgsl: Option<&'static str>,
-    smokes: &'static [Smoke],
     insert: fn(&mut World),
     read: ReadMembers,
     reset: Option<fn(&mut World)>,
@@ -101,7 +95,6 @@ impl PlaceDecl {
             name: S::NAME,
             kind: PlaceKind::Slot,
             wgsl: S::WGSL,
-            smokes: S::SMOKES,
             insert: insert_resource::<S>,
             read: read_resource::<S>,
             reset: None,
@@ -122,7 +115,6 @@ impl PlaceDecl {
             name,
             kind: PlaceKind::Ledger,
             wgsl: None,
-            smokes: &[],
             insert: insert_resource::<R>,
             read: read_resource::<R>,
             reset: None,
@@ -136,7 +128,6 @@ impl PlaceDecl {
             name: L::NAME,
             kind: PlaceKind::List,
             wgsl: L::WGSL,
-            smokes: L::SMOKES,
             insert: insert_nothing,
             read: read_nothing,
             reset: None,
@@ -150,7 +141,6 @@ impl PlaceDecl {
             name,
             kind: PlaceKind::Component,
             wgsl: None,
-            smokes: &[],
             insert: insert_component::<C>,
             read: read_nothing,
             reset: None,
@@ -164,7 +154,6 @@ impl PlaceDecl {
             name,
             kind: PlaceKind::Component,
             wgsl: None,
-            smokes: &[],
             insert: insert_component::<C>,
             read: read_nothing,
             reset: Some(reset_component::<C>),
@@ -196,11 +185,6 @@ impl PlaceDecl {
     #[doc(hidden)]
     pub fn wgsl(&self) -> Option<&'static str> {
         self.wgsl
-    }
-
-    #[doc(hidden)]
-    pub fn smokes(&self) -> &'static [Smoke] {
-        self.smokes
     }
 
     #[doc(hidden)]
@@ -293,27 +277,6 @@ impl JobRef {
     pub fn source(&self) -> [u8; 32] {
         self.source
     }
-}
-
-impl engine_codec::Codec for JobRef {
-    fn write(&self, out: &mut engine_codec::Writer) {
-        out.put(&self.name.to_string()).put(&self.source);
-    }
-
-    fn read(input: &mut engine_codec::Reader<'_>) -> Result<Self, Error> {
-        let name: String = input.get()?;
-        let source: [u8; 32] = input.get()?;
-        Ok(Self {
-            name: name.into_boxed_str(),
-            source,
-        })
-    }
-}
-
-#[derive(Clone, Copy)]
-pub struct Smoke {
-    pub name: &'static str,
-    pub run: fn(&mut dyn SmokeSession) -> Result<(), SmokeFailure>,
 }
 
 pub const UNIFORM_BINDING_BYTES: u64 = 16_384;

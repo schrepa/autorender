@@ -1,11 +1,3 @@
-export interface Distribution {
-  max: number;
-  median: number;
-  min: number;
-  p95: number;
-  p99: number;
-}
-
 export interface PanicReport {
   location: string;
   message: string;
@@ -35,8 +27,6 @@ export const PIPELINE_CACHE_MIB = 256;
 export const PACK_CACHE_MIB = 1024;
 
 export const WHEEL_PIXELS = 100.0;
-
-export const BENCHMARK_LIMIT_MS = 10000;
 
 export const READ_BACK_LIMIT_MS = 120000;
 

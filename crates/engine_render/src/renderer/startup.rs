@@ -196,8 +196,6 @@ impl Renderer {
             device,
             queue,
             adapter: adapter_info,
-            #[cfg(not(target_arch = "wasm32"))]
-            debugger_capture: false,
             display,
             health,
             profiler,

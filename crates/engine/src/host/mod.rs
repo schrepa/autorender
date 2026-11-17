@@ -1,9 +1,7 @@
 mod adapter;
-mod environment;
 mod frame_loop;
 mod input;
 mod jobs;
-mod level;
 mod pipeline_list;
 pub mod policy;
 mod resolution;
@@ -20,12 +18,10 @@ pub use engine_core::{
 pub use engine_panic::{PANIC_GLOBAL, PANIC_PREFIX, PanicReport};
 pub use engine_registry::JobList;
 pub use engine_registry::{call, run_operation};
-pub use environment::{HostEnvironment, KNOWN_DIFFERENCES};
 pub use frame_loop::{FrameLoop, FramePhase, HostPause};
 pub use input::{DeviceGatherer, InputSource};
 pub use jobs::JobOrder;
 pub(crate) use jobs::{Finished, JobScheduler};
-pub(crate) use level::{LevelLoad, LevelStep};
 pub(crate) use pipeline_list::PipelineList;
 pub use resolution::{render_size, view_size};
 pub use scene_load::{
@@ -41,13 +37,9 @@ pub fn typescript() -> String {
     use crate::tooling::{constant, declarations};
     let schema =
         |schema: schemars::Schema| serde_json::to_value(schema).expect("schema_serializes");
-    let mut output = declarations(&schema(schemars::schema_for!(Distribution)), "Distribution")
+    let mut output = declarations(&schema(schemars::schema_for!(PanicReport)), "PanicReport")
         .trim_start()
         .to_owned();
-    output.push_str(&declarations(
-        &schema(schemars::schema_for!(PanicReport)),
-        "PanicReport",
-    ));
     output.push_str(&declarations(
         &schema(schemars::schema_for!(AdapterStatus)),
         "AdapterStatus",

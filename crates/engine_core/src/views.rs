@@ -1,28 +1,15 @@
 use bevy_ecs::entity::Entity;
-use bevy_ecs::prelude::{Query, Res, Resource, World};
-use bevy_ecs::system::{Commands, SystemParam, SystemParamItem};
-use glam::{Mat4, UVec2, Vec2, Vec3, Vec4};
+use bevy_ecs::prelude::{Res, Resource, World};
+use bevy_ecs::system::{Commands, SystemParamItem};
+use glam::{Mat4, UVec2, Vec2, Vec3};
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AssetLibrary, Camera, Clear, ColorSpace, Detail, Drawn, DrawnFlags, DrawnPoses, DrawnTable,
-    Error, ErrorCode, FrameFacts, FrameId, FrameTime, GlobalTransforms, Hold, Jitter, Layers, List,
-    Mobility, Operation, OwnedView, OwnedViews, PassBit, PassMask, PassViews, Refusal, Requests,
-    SceneIds, ScenePasses, Target, View, ViewCut, ViewDetail, ViewHistory, ViewJitter, ViewLayer,
-    take_asks,
+    AssetLibrary, Camera, Clear, ColorSpace, Detail, DrawnPoses, Error, ErrorCode, FrameFacts,
+    FrameId, FrameTime, GlobalTransforms, Hold, Jitter, Layers, List, Mobility, Operation,
+    OwnedView, OwnedViews, PassBit, PassMask, PassViews, Refusal, Requests, SceneIds, ScenePasses,
+    Target, View, ViewCut, ViewDetail, ViewHistory, ViewJitter, ViewLayer, take_asks,
 };
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Ray {
-    pub origin: Vec3,
-    pub direction: Vec3,
-}
-
-impl Ray {
-    pub fn at(&self, distance: f32) -> Vec3 {
-        self.origin + self.direction * distance
-    }
-}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewFacts {
@@ -68,51 +55,6 @@ impl ViewFacts {
 
     pub fn aspect(&self) -> f32 {
         self.pixels[2].max(1) as f32 / self.pixels[3].max(1) as f32
-    }
-
-    pub fn covers(&self, pixel: Vec2) -> bool {
-        let [x, y, width, height] = self.pixels.map(|value| value as f32);
-        pixel.x >= x && pixel.y >= y && pixel.x < x + width && pixel.y < y + height
-    }
-
-    fn device(&self, pixel: Vec2) -> Vec2 {
-        let [x, y, width, height] = self.pixels.map(|value| value as f32);
-        Vec2::new(
-            (pixel.x - x) / crate::math::max(width, 1.0) * 2.0 - 1.0,
-            1.0 - (pixel.y - y) / crate::math::max(height, 1.0) * 2.0,
-        )
-    }
-
-    pub fn ray(&self, pixel: Vec2) -> Option<Ray> {
-        let inverse = self.view_projection.inverse();
-        if !inverse.is_finite() || !pixel.is_finite() {
-            return None;
-        }
-        let device = self.device(pixel);
-        let point = |depth: f32| {
-            let clip = inverse * Vec4::new(device.x, device.y, depth, 1.0);
-            (clip.w.abs() > f32::EPSILON).then(|| clip.truncate() / clip.w)
-        };
-        let near = point(1.0)?;
-        let far = point(0.0)?;
-        let direction = (far - near).try_normalize()?;
-        Some(Ray {
-            origin: near,
-            direction,
-        })
-    }
-
-    pub fn pixel_of(&self, point: Vec3) -> Option<Vec2> {
-        let clip = self.view_projection * point.extend(1.0);
-        if clip.w <= f32::EPSILON || !clip.is_finite() {
-            return None;
-        }
-        let device = clip.truncate() / clip.w;
-        let [x, y, width, height] = self.pixels.map(|value| value as f32);
-        Some(Vec2::new(
-            x + (device.x * 0.5 + 0.5) * width,
-            y + (0.5 - device.y * 0.5) * height,
-        ))
     }
 
     fn row(&self, ids: &SceneIds<'_, '_>) -> ViewRow {
@@ -219,13 +161,6 @@ impl Views {
 
     pub fn get(&self, view: Entity) -> Option<&ViewFacts> {
         self.listed.iter().find(|facts| facts.view == view)
-    }
-
-    pub fn at(&self, pixel: Vec2) -> Option<&ViewFacts> {
-        self.listed
-            .iter()
-            .filter(|facts| facts.target.surface() && facts.covers(pixel))
-            .max_by_key(|facts| facts.order)
     }
 
     pub fn refused(&self) -> &[(Entity, Error)] {
@@ -596,69 +531,6 @@ impl WholeFrames {
         for (by, ticket) in asked {
             self.requests.ready(&by, ticket, ());
         }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Hit {
-    pub drawn: Entity,
-    pub distance: f32,
-}
-
-#[derive(SystemParam)]
-pub struct Picking<'w, 's> {
-    table: Res<'w, DrawnTable>,
-    drawn: Query<'w, 's, &'static Drawn>,
-    poses: Res<'w, DrawnPoses>,
-    globals: Res<'w, GlobalTransforms>,
-}
-
-fn slab(origin: Vec3, direction: Vec3, low: Vec3, high: Vec3) -> Option<f32> {
-    let inverse = direction.recip();
-    let first = (low - origin) * inverse;
-    let second = (high - origin) * inverse;
-    let near = first.min(second).max_element();
-    let far = first.max(second).min_element();
-    let near = crate::math::max(near, 0.0);
-    (far >= near && far.is_finite()).then_some(near)
-}
-
-impl Picking<'_, '_> {
-    pub fn ray(&self, ray: Ray, layers: Layers) -> Vec<Hit> {
-        let mut hits = Vec::new();
-        for (slot, record) in self.table.records().iter().enumerate() {
-            let Some(owner) = self.table.owner(slot as u32) else {
-                continue;
-            };
-            if DrawnFlags::of(record).unbounded {
-                continue;
-            }
-            let Ok(drawn) = self.drawn.get(owner) else {
-                continue;
-            };
-            if !drawn.layers.overlaps(layers) {
-                continue;
-            }
-            let Some(pose) = self.poses.drawn_pose(&self.globals, owner) else {
-                continue;
-            };
-            let inverse = pose.inverse();
-            if !inverse.is_finite() {
-                continue;
-            }
-            let origin = inverse.transform_point3(ray.origin);
-            let direction = inverse.transform_vector3(ray.direction);
-            let low = Vec4::from_array(record.bounds_min).truncate();
-            let high = Vec4::from_array(record.bounds_max).truncate();
-            if let Some(distance) = slab(origin, direction, low, high) {
-                hits.push(Hit {
-                    drawn: owner,
-                    distance,
-                });
-            }
-        }
-        hits.sort_by(|a, b| a.distance.total_cmp(&b.distance));
-        hits
     }
 }
 

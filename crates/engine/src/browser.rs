@@ -94,19 +94,12 @@ impl<G: Game> PageHost<G> {
         canvas: HtmlCanvasElement,
         game: GameEntry<G>,
         scene: Option<(String, SceneFiles)>,
-        files: SceneFiles,
     ) -> Result<Self, JsValue> {
         let bricks = (game.bricks)(BrickList::default());
-        let files = crate::GameFiles::from(files);
-        crate::game::report_missing::<G>(&files);
         let target = engine_render::RenderTarget::Canvas(canvas);
-        let mut host = GameHost::launch(
-            target,
-            move |_| bricks,
-            |engine| crate::game::built(&game, engine, files),
-        )
-        .await
-        .map_err(js)?;
+        let mut host = GameHost::launch(target, move |_| bricks, game.build)
+            .await
+            .map_err(js)?;
         match scene {
             Some((source, files)) => host.open_scene(&source, &files).map_err(js)?,
             None => {
@@ -268,12 +261,6 @@ impl<G: Game> PageHost<G> {
         self.host.reload_scene(source, &files.into()).map_err(js)
     }
 
-    pub fn set_setting(&mut self, key: &str, value: &str) -> Result<(), JsValue> {
-        let value = engine_settings::parse_json::<serde_json::Value>(value)
-            .map_err(|error| js(error.within("$.value")))?;
-        self.host.set_setting(key, value).map_err(js)
-    }
-
     pub fn apply_host_settings(&mut self, query: &str) -> Result<(), JsValue> {
         let parameters = web_sys::UrlSearchParams::new_with_str(query)?;
         let mut settings = crate::host::HostSettings::default();
@@ -291,20 +278,11 @@ impl<G: Game> PageHost<G> {
                 .set(overlay, &entry)
                 .map_err(|error| js(error.within(&format!("?{overlay}"))))?;
         }
-        let world = self.host.engine_mut().app.world_mut();
-        if let Some(environment) = parameters.get("environment") {
-            crate::scene::show_look(world, &environment, "?environment").map_err(js)?;
-        }
         settings.apply(&mut self.host).map_err(js)
     }
 
     pub fn job_hash(&self) -> Vec<u8> {
         self.host.job_list().hash().to_vec()
-    }
-
-    pub fn distribution(&self, values: Vec<f64>) -> String {
-        serde_json::to_string(&crate::host::Distribution::of(&values))
-            .expect("distribution_serializes")
     }
 }
 

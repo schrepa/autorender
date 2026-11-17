@@ -8,7 +8,7 @@ autoexamples = false
 
 [features]
 default = []
-dev = ["engine/dev", "dep:base64", "dep:engine_registry", "dep:gltf", "dep:naga", "dep:sha2", "dep:tiff", "dep:toml_edit", "dep:zip"]
+dev = ["engine/dev", "dep:base64", "dep:engine_registry", "dep:sha2"]
 profiling = ["engine/profiling", "engine_profiler/profiling"]
 
 [dependencies]
@@ -24,12 +24,7 @@ pollster.workspace = true
 zstd.workspace = true
 base64 = { workspace = true, optional = true }
 engine_registry = { workspace = true, optional = true }
-gltf = { workspace = true, optional = true }
-naga = { workspace = true, optional = true, features = ["wgsl-in", "spv-out"] }
 sha2 = { workspace = true, optional = true }
-tiff = { workspace = true, optional = true }
-toml_edit = { workspace = true, optional = true }
-zip = { workspace = true, optional = true }
 
 [lints]
 workspace = true

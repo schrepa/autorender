@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, RecvTimeoutError, channel};
+use std::sync::mpsc::{Receiver, RecvTimeoutError, TryRecvError, channel};
 use std::time::{Duration, Instant};
 
 use engine::dev::{Artifact, Effect, HostContext, Outcome, Step};
@@ -10,13 +10,11 @@ use engine::{Error, ErrorCode, Expected, Game, GameHost};
 use serde_json::{Map, Value, json};
 use sha2::{Digest, Sha256};
 
+use crate::Offscreen;
 #[cfg(feature = "profiling")]
-use crate::{Frames, PixRecord, ProfileRecord, Record};
-use crate::{Offscreen, Pix};
+use crate::{Frames, ProfileRecord, Record};
 use crate::{file_error, files};
 
-const FRAME: Duration = Duration::from_micros(16_667);
-const TIMING: &str = "offscreen_gpu_waited";
 const PROFILE_CAPTURE: &str = "ProfileCapture";
 
 pub struct GameControl<G: Game> {
@@ -29,9 +27,7 @@ pub struct DevSession<G: Game> {
     game: Offscreen<G>,
     controls: BTreeMap<String, GameControl<G>>,
     parameters: BTreeMap<String, String>,
-    document: Option<String>,
     artifacts: PathBuf,
-    pix: Option<Pix>,
     captures: u32,
     paused: bool,
     started: Instant,
@@ -55,9 +51,7 @@ impl<G: Game> DevSession<G> {
             game,
             controls: BTreeMap::new(),
             parameters: BTreeMap::new(),
-            document: None,
             artifacts,
-            pix: None,
             captures: 0,
             paused: true,
             started: Instant::now(),
@@ -95,12 +89,6 @@ impl<G: Game> DevSession<G> {
         self
     }
 
-    #[must_use]
-    pub fn pix(mut self, pix: Option<Pix>) -> Self {
-        self.pix = pix;
-        self
-    }
-
     pub fn run(mut self) -> engine::Result<()> {
         let lines = read_lines();
         let size = self.game.size();
@@ -113,31 +101,36 @@ impl<G: Game> DevSession<G> {
             "controls": self.controls.iter().map(|(name, control)| (name.clone(), json!(control.values))).collect::<Map<_, _>>(),
             "parameters": self.parameters,
         }));
-        let mut next = Instant::now();
         loop {
-            let wait = if self.paused {
-                Duration::from_millis(50)
+            let line = if self.paused {
+                match lines.recv_timeout(Duration::from_millis(50)) {
+                    Ok(line) => Some(line),
+                    Err(RecvTimeoutError::Timeout) => None,
+                    Err(RecvTimeoutError::Disconnected) => return Ok(()),
+                }
             } else {
-                next.saturating_duration_since(Instant::now())
+                match lines.try_recv() {
+                    Ok(line) => Some(line),
+                    Err(TryRecvError::Empty) => None,
+                    Err(TryRecvError::Disconnected) => return Ok(()),
+                }
             };
-            match lines.recv_timeout(wait) {
-                Ok(line) => {
+            match line {
+                Some(line) => {
                     let (id, line) = request_id(&line);
-                    let mut reply = self.request(&line, &|| None);
+                    let mut reply = self.request(&line);
                     if let Some(id) = id {
                         reply["id"] = id;
                     }
                     self.reply(&reply);
                 }
-                Err(RecvTimeoutError::Timeout) => {}
-                Err(RecvTimeoutError::Disconnected) => return Ok(()),
-            }
-            if !self.paused && Instant::now() >= next {
-                next = Instant::now() + FRAME;
-                let timestamp = self.now();
-                if let Err(error) = self.game.frame(timestamp) {
-                    eprintln!("{}", json!({"event": "frame_failed", "error": error}));
+                None if !self.paused => {
+                    let timestamp = self.now();
+                    if let Err(error) = self.game.frame(timestamp) {
+                        eprintln!("{}", json!({"event": "frame_failed", "error": error}));
+                    }
                 }
+                None => {}
             }
             self.game.exchange_jobs();
             self.follow_source();
@@ -149,7 +142,7 @@ impl<G: Game> DevSession<G> {
             return;
         };
         let mut reply = match followed {
-            Ok(()) => self.request(r#"{"verb":"query","name":"status"}"#, &|| None),
+            Ok(()) => self.request(r#"{"verb":"query","name":"status"}"#),
             Err(error) => self.error(&error),
         };
         reply["event"] = json!("source_changed");
@@ -166,7 +159,7 @@ impl<G: Game> DevSession<G> {
         let _ = out.flush();
     }
 
-    fn request(&mut self, line: &str, late: &dyn Fn() -> Option<Value>) -> Value {
+    fn request(&mut self, line: &str) -> Value {
         if let Ok(Value::Object(command)) = serde_json::from_str::<Value>(line) {
             if command.get("verb") == Some(&json!("profile"))
                 && let Some(deep) = command.get("deep")
@@ -196,10 +189,7 @@ impl<G: Game> DevSession<G> {
             }
             match step {
                 Step::Reply(reply) => return reply,
-                Step::Effect(effect) => match late() {
-                    Some(error) => return json!({"ok": false, "error": error}),
-                    None => step = self.carry(effect),
-                },
+                Step::Effect(effect) => step = self.carry(effect),
             }
         }
     }
@@ -214,10 +204,6 @@ impl<G: Game> DevSession<G> {
                 self.paused = paused;
                 Outcome::default()
             }
-            Effect::Wait { .. } => Outcome {
-                now: Some(engine::host::now_ms()),
-                ..Outcome::default()
-            },
             Effect::Frame { timestamp } => match self.game.frame(timestamp) {
                 Ok(()) => Outcome::default(),
                 Err(error) => failed(error),
@@ -277,14 +263,11 @@ impl<G: Game> DevSession<G> {
             width,
             height,
             paused: self.paused,
-            device_pixel_ratio: 1.0,
-            user_agent: "engine_native".to_owned(),
             source: self
                 .game
                 .host()
                 .source()
                 .map(|path| path.display().to_string()),
-            timing: TIMING.to_owned(),
         }
     }
 
@@ -293,10 +276,6 @@ impl<G: Game> DevSession<G> {
     }
 
     fn read_source(&mut self) -> Result<Option<(String, SceneFiles)>, Error> {
-        if let Some(document) = &self.document {
-            let files = engine::smokes::scene_files(document, &self.kinds())?;
-            return Ok(Some((document.clone(), files)));
-        }
         let Some(path) = self.game.host().source().map(Path::to_owned) else {
             return Ok(None);
         };
@@ -368,7 +347,7 @@ impl<G: Game> DevSession<G> {
 
     #[cfg(feature = "profiling")]
     fn profile(&mut self, command: &Map<String, Value>) -> Value {
-        let options = ["duration_ms", "max_events", "cpu_samples", "vendor"];
+        let options = ["duration_ms", "max_events", "cpu_samples"];
         if let Some(unknown) = command.keys().find(|key| !options.contains(&key.as_str())) {
             return self.error(
                 &Error::new(ErrorCode::UnknownField, format!("$.deep.{unknown}"))
@@ -404,24 +383,6 @@ impl<G: Game> DevSession<G> {
             (None, _) => return self.error(&out_of_range("duration_ms", durations)),
             (Some(_), None) => return self.error(&out_of_range("max_events", events)),
         };
-        let pix = match command.get("vendor") {
-            None => false,
-            Some(vendor) if vendor == "pix" => true,
-            Some(vendor) => {
-                return self.error(
-                    &Error::new(ErrorCode::UnknownVariant, "$.deep.vendor")
-                        .got(vendor)
-                        .variants(["pix"]),
-                );
-            }
-        };
-        if pix && self.pix.is_none() {
-            return self.error(
-                &Error::new(ErrorCode::PixUnavailable, "$.deep.vendor")
-                    .expected(Expected::Supported)
-                    .got("pix"),
-            );
-        }
         if !self.paused {
             return self
                 .error(&Error::new(ErrorCode::PauseRequired, "$").expected(Expected::Paused));
@@ -430,11 +391,10 @@ impl<G: Game> DevSession<G> {
         self.captures += 1;
         let stem = format!("profile-{}", self.captures);
         let record = Record {
-            gpu_capture: None,
             profile: Some(ProfileRecord {
                 folder: self.artifacts.clone(),
-                stem: stem.clone(),
-                max_events: Some(max_events as usize),
+                stem,
+                max_events: max_events as usize,
                 cpu_samples: command.get("cpu_samples") != Some(&json!(false)),
                 context: json!({
                     "program": "engine_native",
@@ -444,19 +404,13 @@ impl<G: Game> DevSession<G> {
                     "observation_start": before["observation"],
                 }),
             }),
-            pix_counters: pix.then(|| PixRecord {
-                folder: self.artifacts.join(format!("{stem}-pix")),
-                counters: Vec::new(),
-            }),
         };
         let started = self.started;
         let at = |_| started.elapsed().as_secs_f64() * 1000.0;
-        let recorded = match self.game.record(
-            Frames::For(Duration::from_millis(duration)),
-            at,
-            &record,
-            self.pix.as_ref(),
-        ) {
+        let recorded = match self
+            .game
+            .record(Frames::For(Duration::from_millis(duration)), at, &record)
+        {
             Ok(recorded) => recorded,
             Err(error) => {
                 return self.error(&Error::new(ErrorCode::CaptureFailed, "$").got(error));
@@ -464,12 +418,6 @@ impl<G: Game> DevSession<G> {
         };
         let after = self.status();
         let files = recorded.profile.unwrap_or_default();
-        let pix_file = |name: &str| {
-            record
-                .pix_counters
-                .as_ref()
-                .map(|dive| dive.folder.join(name).display().to_string())
-        };
         json!({"ok": true, "observation": after["observation"], "result": {
             "temporary": true, "paused": true,
             "complete": files["complete"] == true && recorded.failed.is_none(),
@@ -479,9 +427,6 @@ impl<G: Game> DevSession<G> {
                 "firefox": files["firefox"],
                 "summary": files["summary"],
                 "cpu_profile": null,
-                "pix_capture": pix_file("frame.wpix"),
-                "pix_events": pix_file("pix-events.csv"),
-                "pix_summary": pix_file("pix.summary.json"),
             },
         }})
     }
@@ -526,14 +471,11 @@ impl<G: Game> DevSession<G> {
                         "default": events.end(),
                     },
                     "cpu_samples": {"type": "boolean", "default": true},
-                    "vendor": {"enum": ["pix"]},
                 }},
             }},
             "status": {
                 "available": true,
                 "native": true,
-                "counters": engine_profiler::counters::enabled(),
-                "pix": self.pix.is_some(),
             },
         });
         reply
@@ -542,24 +484,6 @@ impl<G: Game> DevSession<G> {
     #[cfg(not(feature = "profiling"))]
     fn describe_profile(&mut self, _: &Map<String, Value>) -> Value {
         self.error(&Error::new(ErrorCode::ProfilingUnavailable, "$").expected(Expected::Supported))
-    }
-}
-
-impl<G: Game> engine::smokes::GpuSession for DevSession<G> {
-    fn world(&self) -> &engine::bevy_ecs::world::World {
-        self.game.host().engine().app.world()
-    }
-
-    fn send(&mut self, line: &str, late: &dyn Fn() -> Option<Value>) -> Value {
-        let reply = self.request(line, late);
-        self.game.exchange_jobs();
-        reply
-    }
-
-    fn play(&mut self, document: &str) -> engine::Result<()> {
-        self.document = Some(document.to_owned());
-        let files = engine::smokes::scene_files(document, &self.kinds())?;
-        self.game.host_mut().reload_scene(document, &files)
     }
 }
 

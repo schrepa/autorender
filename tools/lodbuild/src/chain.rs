@@ -109,30 +109,6 @@ pub(crate) fn levels(input: &LodInput) -> Result<MeshLods, Error> {
     Ok(lods)
 }
 
-pub(crate) fn authored_errors(finest: &LodInput, levels: &[LodInput]) -> Vec<f32> {
-    let finest_points: Vec<Vec3> = finest
-        .vertices
-        .iter()
-        .map(|vertex| Vec3::from(vertex.position))
-        .collect();
-    let step = mean_edge(&finest_points, &finest.indices) * SAMPLE_STEP;
-    let mut error = 0.0_f32;
-    levels
-        .iter()
-        .map(|level| {
-            let mut points = finest_points.clone();
-            let offset = points.len() as u32;
-            points.extend(level.vertices.iter().map(|vertex| Vec3::from(vertex.position)));
-            let indices: Vec<u32> = level.indices.iter().map(|index| index + offset).collect();
-            error = max(
-                error,
-                surface_distance(&points, &finest.indices, &indices, step),
-            );
-            error
-        })
-        .collect()
-}
-
 fn settle(lods: &mut MeshLods, indices: &mut Vec<u32>, error: f32) {
     while let Some(finer) = lods.levels.last()
         && finer.error >= error

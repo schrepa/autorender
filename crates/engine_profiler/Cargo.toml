@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-description = "Profiles and GPU captures of native engine games: graphics debuggers' frame captures, and deep profiles, hardware counters and vendor deep dives"
+description = "Deep profiles of native engine games"
 
 [features]
 default = []
@@ -15,10 +15,6 @@ profiling = [
     "dep:iced-x86",
     "dep:fxprof-processed-profile",
     "dep:windows-sys",
-    "dep:libc",
-    "dep:mach2",
-    "dep:ash",
-    "dep:wgpu",
 ]
 
 [dependencies]
@@ -27,17 +23,9 @@ serde_json = { workspace = true, optional = true }
 backtrace = { workspace = true, optional = true }
 iced-x86 = { workspace = true, optional = true }
 fxprof-processed-profile = { workspace = true, optional = true }
-ash = { workspace = true, optional = true }
-wgpu = { workspace = true, optional = true, features = ["vulkan"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { workspace = true, optional = true }
-
-[target.'cfg(unix)'.dependencies]
-libc = { workspace = true, optional = true }
-
-[target.'cfg(target_vendor = "apple")'.dependencies]
-mach2 = { workspace = true, optional = true }
 
 [lints.rust]
 unsafe_code = "deny"

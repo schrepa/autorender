@@ -19,7 +19,6 @@ png.workspace = true
 tiff.workspace = true
 naga = { workspace = true, features = ["wgsl-in", "spv-out"] }
 sha2.workspace = true
-engine_assetc.workspace = true
 engine = { workspace = true, features = ["dev"] }
 engine_checks.workspace = true
 engine_sources.workspace = true

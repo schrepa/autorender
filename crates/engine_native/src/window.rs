@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -14,8 +13,6 @@ use winit::window::WindowId;
 use crate::host_error;
 use crate::input::Input;
 use crate::jobs::{JobOptions, JobPool};
-#[cfg(feature = "profiling")]
-use crate::live::LiveProfile;
 use crate::options::StartScene;
 
 #[derive(Clone, Debug)]
@@ -27,26 +24,6 @@ pub struct Window {
     pub vsync: bool,
     pub settings: HostSettings,
     pub scene: StartScene,
-    pub environment: Option<String>,
-    pub measure: Option<Measure>,
-    pub profile: Option<PathBuf>,
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct Measure {
-    pub settle: Duration,
-    pub frames: u32,
-}
-
-#[derive(Clone, Debug)]
-pub struct WindowReport {
-    pub frames: u32,
-    pub elapsed_ms: f64,
-    pub cpu_ms: Vec<f64>,
-    pub stats: String,
-    pub adapter: engine::AdapterInfo,
-    pub size: (u32, u32),
-    pub window: (u32, u32),
 }
 
 impl Window {
@@ -59,9 +36,6 @@ impl Window {
             vsync: true,
             settings: HostSettings::default(),
             scene: StartScene::Empty,
-            environment: None,
-            measure: None,
-            profile: None,
         }
     }
 }
@@ -75,7 +49,7 @@ pub fn run<'a, G: Game, E: Into<engine::Error>>(
     window: Window,
     bricks: impl FnOnce(BrickList) -> BrickList + 'a,
     build: impl FnOnce(&mut Engine) -> Result<G, E> + 'a,
-) -> engine::Result<Option<WindowReport>> {
+) -> engine::Result<()> {
     let event_loop = EventLoop::new()
         .map_err(|error| host_error(ErrorCode::RenderFailed, "$.event_loop", error))?;
     let mut app = App {
@@ -86,7 +60,7 @@ pub fn run<'a, G: Game, E: Into<engine::Error>>(
         )),
         input: Input::default(),
         running: None,
-        outcome: Ok(None),
+        outcome: Ok(()),
     };
     event_loop
         .run_app(&mut app)
@@ -99,7 +73,7 @@ struct App<'a, G: Game> {
     build: Option<Build<'a, G>>,
     input: Input,
     running: Option<Running<G>>,
-    outcome: engine::Result<Option<WindowReport>>,
+    outcome: engine::Result<()>,
 }
 
 struct Running<G: Game> {
@@ -108,10 +82,6 @@ struct Running<G: Game> {
     size: (u32, u32),
     title: Title,
     jobs: JobPool,
-    playing: Option<Instant>,
-    measured: Vec<(Instant, f64)>,
-    #[cfg(feature = "profiling")]
-    profile: Option<LiveProfile>,
 }
 
 impl<'a, G: Game> App<'a, G> {
@@ -120,12 +90,6 @@ impl<'a, G: Game> App<'a, G> {
         event_loop: &ActiveEventLoop,
         (bricks, build): Build<'a, G>,
     ) -> engine::Result<Running<G>> {
-        #[cfg(feature = "profiling")]
-        engine_profiler::sampler::listen_for_threads();
-        #[cfg(feature = "profiling")]
-        if self.options.profile.is_some() {
-            engine_profiler::sample_heap_from_launch();
-        }
         let attributes =
             winit::window::Window::default_attributes().with_title(&self.options.title);
         let attributes = match self.options.size {
@@ -150,33 +114,17 @@ impl<'a, G: Game> App<'a, G> {
         )))?);
         host.set_pixel_ratio(window.scale_factor());
         host.set_refresh_interval(refresh_interval(&window));
-        host.set_display_paced(self.options.measure.is_none());
-        crate::open_scene(
-            &mut host,
-            &self.options.scene,
-            self.options.environment.as_deref(),
-        )?;
+        crate::open_scene(&mut host, &self.options.scene)?;
         self.options.settings.apply(&mut host)?;
         let mut jobs = self.options.jobs.pool(false);
         jobs.attach(&mut host);
-        if self.options.measure.is_none() {
-            self.input.connect_pads();
-        }
-        #[cfg(feature = "profiling")]
-        let profile = match &self.options.profile {
-            Some(folder) => Some(LiveProfile::start(&mut host, folder.clone())?),
-            None => None,
-        };
+        self.input.connect_pads();
         Ok(Running {
             window,
             host,
             size,
             title: Title::new(&self.options.title),
             jobs,
-            playing: None,
-            measured: Vec::new(),
-            #[cfg(feature = "profiling")]
-            profile,
         })
     }
 }
@@ -213,13 +161,6 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
         let Some(running) = &mut self.running else {
             return;
         };
-        #[cfg(feature = "profiling")]
-        if let Some(profile) = &mut running.profile {
-            profile.noted(&event);
-        }
-        if self.options.measure.is_some() && matches!(event, WindowEvent::Focused(_)) {
-            return;
-        }
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Moved(_) => self.input.regrab(),
@@ -279,18 +220,7 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                     }
                 };
                 self.input.apply_cursor(&running.host, &running.window);
-                #[cfg(feature = "profiling")]
-                if let Some(profile) = &mut running.profile {
-                    profile.frame(phase, start.elapsed(), &running.host);
-                }
                 if phase == FramePhase::Idle {
-                    return;
-                }
-                if let Some(measure) = self.options.measure
-                    && let Some(report) = running.measured(measure, start)
-                {
-                    self.outcome = Ok(Some(report));
-                    event_loop.exit();
                     return;
                 }
                 match phase {
@@ -320,21 +250,7 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
         if let DeviceEvent::MouseMotion { delta } = event
             && let Some(running) = &mut self.running
         {
-            #[cfg(feature = "profiling")]
-            if let Some(profile) = &mut running.profile {
-                profile.motion(delta);
-            }
             Input::motion(&mut running.host, delta);
-        }
-    }
-
-    #[cfg(feature = "profiling")]
-    fn exiting(&mut self, _: &ActiveEventLoop) {
-        if let Some(running) = &mut self.running
-            && let Some(profile) = running.profile.take()
-            && let Err(error) = profile.finish(&mut running.host)
-        {
-            self.outcome = Err(error);
         }
     }
 }
@@ -350,7 +266,6 @@ impl<G: Game> Running<G> {
         let (width, height) = self.size;
         self.exchange_jobs();
         let phase = self.host.animation_frame(timestamp, width, height)?;
-        engine::profiling::mark_speed();
         self.exchange_jobs();
         match phase {
             FramePhase::Playing => self.title.frame(&self.window, timestamp, &self.host),
@@ -364,34 +279,6 @@ impl<G: Game> Running<G> {
 
     fn exchange_jobs(&mut self) {
         self.jobs.exchange(&mut self.host);
-    }
-
-    fn measured(&mut self, measure: Measure, start: Instant) -> Option<WindowReport> {
-        if self.host.preparing() {
-            return None;
-        }
-        let playing = *self.playing.get_or_insert(start);
-        if start.duration_since(playing) < measure.settle {
-            return None;
-        }
-        let stats = self.host.frame_times();
-        self.measured.push((
-            start,
-            stats.simulation_ms + stats.extraction_ms + stats.render_ms,
-        ));
-        if self.measured.len() < measure.frames as usize {
-            return None;
-        }
-        let resolution = stats.resolution;
-        Some(WindowReport {
-            frames: measure.frames,
-            elapsed_ms: self.measured[0].0.elapsed().as_secs_f64() * 1000.0,
-            cpu_ms: self.measured.iter().map(|&(_, cpu)| cpu).collect(),
-            stats: self.host.stats(),
-            adapter: self.host.adapter().clone(),
-            size: (resolution.render_width, resolution.render_height),
-            window: self.size,
-        })
     }
 }
 

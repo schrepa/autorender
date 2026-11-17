@@ -361,12 +361,6 @@
     },
     "FeedSettings": {
       "properties": {
-        "events": {
-          "default": 1024,
-          "format": "uint32",
-          "minimum": 1,
-          "type": "integer"
-        },
         "mesh_residency": {
           "default": 4096,
           "format": "uint32",

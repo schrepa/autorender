@@ -15,7 +15,7 @@ use crate::serve::Server;
 pub const PORT: u16 = 5173;
 
 const USAGE: &str = "usage: cargo xtask dev [--game NAME] [--port N]";
-const TREES: [&str; 4] = ["crates", "examples", "tools", "vendor"];
+const TREES: [&str; 3] = ["crates", "tools", "vendor"];
 const FILES: [&str; 4] = [
     "Cargo.toml",
     "Cargo.lock",

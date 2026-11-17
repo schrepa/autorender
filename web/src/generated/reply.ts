@@ -90,7 +90,7 @@ export interface DigestResult {
   hash: string;
 }
 
-export type Effect = { kind: "pause"; paused: boolean } | { kind: "wait"; within_ms: number } | { kind: "frame"; timestamp: number } | { kind: "show" } | { args: Record<string, unknown>; kind: "game"; name: string } | { kind: "source" } | { contents: unknown; kind: "save"; name: string };
+export type Effect = { kind: "pause"; paused: boolean } | { kind: "frame"; timestamp: number } | { kind: "show" } | { args: Record<string, unknown>; kind: "game"; name: string } | { kind: "source" } | { contents: unknown; kind: "save"; name: string };
 
 export type EntityComponents = Record<string, unknown> | string[];
 
@@ -133,12 +133,9 @@ export interface GameResult {
 }
 
 export interface HostContext {
-  device_pixel_ratio: number;
   height: number;
   paused: boolean;
   source?: string | null;
-  timing: string;
-  user_agent: string;
   width: number;
 }
 
@@ -208,9 +205,7 @@ export interface OpResults {
 export interface Outcome {
   artifact?: Artifact | null;
   failed?: string | null;
-  interrupted?: boolean;
   missing?: string[] | null;
-  now?: number | null;
   result?: unknown;
 }
 

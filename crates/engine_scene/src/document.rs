@@ -45,24 +45,6 @@ impl SceneDocument {
         Ok(document)
     }
 
-    pub fn to_json(&self) -> Result<String, Error> {
-        self.structure()?;
-        let mut output = BoundedSource {
-            bytes: Vec::new(),
-            exceeded: false,
-        };
-        let result = serde_json::to_writer_pretty(&mut output, self);
-        if output.exceeded {
-            return Err(source_too_large());
-        }
-        result.map_err(|_| Error::new(ErrorCode::InvalidJson, "$"))?;
-        if output.bytes.len() == MAX_SOURCE_BYTES {
-            return Err(source_too_large());
-        }
-        output.bytes.push(b'\n');
-        Ok(String::from_utf8(output.bytes).expect("json_utf8"))
-    }
-
     #[cfg(feature = "schema")]
     pub fn schema_json(registry: &engine_registry::Registry, kinds: &crate::SceneKinds) -> String {
         let mut schema =
@@ -96,29 +78,6 @@ impl SceneDocument {
         let mut source = serde_json::to_string_pretty(&schema).expect("schema_serializes");
         source.push('\n');
         source
-    }
-}
-
-fn source_too_large() -> Error {
-    Error::new(ErrorCode::SourceTooLarge, "$").at_most(MAX_SOURCE_BYTES as u64)
-}
-
-struct BoundedSource {
-    bytes: Vec<u8>,
-    exceeded: bool,
-}
-
-impl std::io::Write for BoundedSource {
-    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-        if bytes.len() > MAX_SOURCE_BYTES - self.bytes.len() {
-            self.exceeded = true;
-            return Err(std::io::ErrorKind::FileTooLarge.into());
-        }
-        self.bytes.extend_from_slice(bytes);
-        Ok(bytes.len())
-    }
-    fn flush(&mut self) -> std::io::Result<()> {
-        Ok(())
     }
 }
 

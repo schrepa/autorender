@@ -249,25 +249,15 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
         }
         files.push((crate_dir.join(inside), text));
     }
-    let tool = format!("{name}-xtask");
     files.extend([
-        (crate_dir.join("xtask/Cargo.toml"), xtask_manifest(&name)),
-        (crate_dir.join("xtask/src/main.rs"), xtask_main(&wasm)),
-        (
-            crate_dir.join(".cargo/config.toml"),
-            format!("[alias]\nxtask = \"run -p {tool} --\"\n"),
-        ),
         (root.join("web").join(&page), page_html(&name, &pascal)),
         (web.join("main.ts"), page_entry(&wasm, &pascal)),
         (web.join("worker.ts"), worker_entry(&wasm)),
     ]);
     files.retain(|(path, _)| !path.exists());
     write_files(root, &files)?;
-    for member in ["", "/xtask"] {
-        join_workspace(root, &format!("{project}{member}"))?;
-    }
+    join_workspace(root, &project)?;
     join_dependencies(root, &name, &project)?;
-    run(root, "cargo", &["run", "-p", &tool, "--", "generate"])?;
     run(
         root,
         "cargo",
@@ -282,7 +272,6 @@ fn app(root: &Path, options: &[String]) -> Result<(), String> {
             "project": project,
             "page": format!("web/{page}"),
             "native": format!("{name}-native"),
-            "xtask": tool,
         })
     );
     Ok(())
@@ -303,36 +292,6 @@ fn game_manifest(template: &str, name: &str, page: &str) -> Result<String, Strin
         .replace(&format!("native = \"{TEMPLATE_CRATE}-native\"\n"), "")
         .replace(TEMPLATE_CRATE, name)
         .replace(TEMPLATE_KIND, &engine))
-}
-
-fn xtask_manifest(name: &str) -> String {
-    format!(
-        r#"[package]
-name = "{name}-xtask"
-version.workspace = true
-edition.workspace = true
-rust-version.workspace = true
-publish.workspace = true
-
-[dependencies]
-engine_checks.workspace = true
-{name} = {{ workspace = true, features = ["dev"] }}
-
-[package.metadata.engine]
-kind = "tool"
-"#
-    )
-}
-
-fn xtask_main(wasm: &str) -> String {
-    format!(
-        r#"use {wasm} as app;
-
-fn main() -> std::process::ExitCode {{
-    engine_checks::app::main(env!("CARGO_MANIFEST_DIR"), app::GAME.bricks, app::GAME.build)
-}}
-"#
-    )
 }
 
 fn page_html(name: &str, pascal: &str) -> String {

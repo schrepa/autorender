@@ -7,9 +7,9 @@ use engine::{
 };
 use serde_json::{Value, json};
 
+use crate::file_error;
 use crate::files::Image;
 use crate::jobs::{JobOptions, JobPool};
-use crate::{Pix, RenderDoc, file_error};
 
 const PREPARING_SAID_EVERY: Duration = Duration::from_secs(5);
 
@@ -27,24 +27,16 @@ pub enum Frames {
 
 #[derive(Clone, Debug, Default)]
 pub struct Record {
-    pub gpu_capture: Option<PathBuf>,
     pub profile: Option<ProfileRecord>,
-    pub pix_counters: Option<PixRecord>,
 }
 
 #[derive(Clone, Debug)]
 pub struct ProfileRecord {
     pub folder: PathBuf,
     pub stem: String,
-    pub max_events: Option<usize>,
+    pub max_events: usize,
     pub cpu_samples: bool,
     pub context: Value,
-}
-
-#[derive(Clone, Debug)]
-pub struct PixRecord {
-    pub folder: PathBuf,
-    pub counters: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -52,73 +44,8 @@ pub struct Recorded {
     pub frames: u32,
     pub cpu_ms: Vec<f64>,
     pub elapsed_ms: f64,
-    pub captured: Option<&'static str>,
-    pub capture: Option<PathBuf>,
     pub profile: Option<Value>,
-    pub pix_counters: Option<Value>,
     pub failed: Option<engine::Error>,
-}
-
-#[cfg(feature = "profiling")]
-pub(crate) struct Launch(Option<engine_profiler::LaunchCapture>);
-
-#[cfg(not(feature = "profiling"))]
-pub(crate) struct Launch;
-
-#[cfg(feature = "profiling")]
-impl Launch {
-    pub(crate) fn sampled(on: bool) -> Self {
-        Self(on.then(engine_profiler::LaunchCapture::start))
-    }
-
-    pub(crate) fn phase(&mut self, name: &'static str) {
-        if let Some(capture) = &mut self.0 {
-            capture.phase(name);
-        }
-    }
-
-    pub(crate) fn stop(self) -> Launched {
-        Launched(self.0.map(engine_profiler::LaunchCapture::stop))
-    }
-}
-
-#[cfg(not(feature = "profiling"))]
-impl Launch {
-    pub(crate) fn sampled(_: bool) -> Self {
-        Self
-    }
-
-    pub(crate) fn phase(&mut self, _: &'static str) {}
-
-    pub(crate) fn stop(self) -> Launched {
-        Launched
-    }
-}
-
-#[cfg(feature = "profiling")]
-pub(crate) struct Launched(Option<engine_profiler::LaunchProfile>);
-
-#[cfg(not(feature = "profiling"))]
-pub(crate) struct Launched;
-
-impl Launched {
-    #[cfg(feature = "profiling")]
-    pub(crate) fn write(
-        self,
-        folder: &Path,
-        context: Value,
-        adapter: &engine::AdapterInfo,
-    ) -> engine::Result<()> {
-        match self.0 {
-            Some(profile) => profile.write(folder, "launch", context, adapter).map(drop),
-            None => Ok(()),
-        }
-    }
-
-    #[cfg(not(feature = "profiling"))]
-    pub(crate) fn write(self, _: &Path, _: Value, _: &engine::AdapterInfo) -> engine::Result<()> {
-        Ok(())
-    }
 }
 
 impl<G: Game> Offscreen<G> {
@@ -158,35 +85,19 @@ impl<G: Game> Offscreen<G> {
         frames: Frames,
         mut at: impl FnMut(u32) -> f64,
         record: &Record,
-        pix: Option<&Pix>,
     ) -> engine::Result<Recorded> {
-        if !cfg!(feature = "profiling")
-            && (record.profile.is_some() || record.pix_counters.is_some())
-        {
+        if !cfg!(feature = "profiling") && record.profile.is_some() {
             return Err(
                 Error::new(ErrorCode::UnsupportedCommand, "$").expected(Expected::Supported)
             );
         }
-        let gpu_capture = record.gpu_capture.clone().or_else(|| {
-            record
-                .pix_counters
-                .as_ref()
-                .map(|dive| dive.folder.join("frame.wpix"))
-        });
-        if let Some(dive) = &record.pix_counters {
-            std::fs::create_dir_all(&dive.folder)
-                .map_err(|error| file_error("$.folder", &dive.folder, &error))?;
-        }
         #[cfg(feature = "profiling")]
         let capture = match &record.profile {
-            Some(profile) => Some(self.start_profile(
-                profile.max_events.unwrap_or(engine::profiling::MAX_EVENTS),
-                profile.cpu_samples,
-            )?),
+            Some(profile) => Some(self.start_profile(profile.max_events, profile.cpu_samples)?),
             None => None,
         };
         let started = Instant::now();
-        let (mut drawn, mut cpu_ms, mut captured, mut failed) = (0, Vec::new(), None, None);
+        let (mut drawn, mut cpu_ms, mut failed) = (0, Vec::new(), None);
         loop {
             #[cfg(feature = "dev")]
             if let Some(Err(error)) = self.host.follow_source() {
@@ -204,14 +115,7 @@ impl<G: Game> Offscreen<G> {
                 Frames::Count(count) => drawn + 1 >= count,
                 Frames::For(time) => started.elapsed() >= time,
             };
-            let timestamp = at(drawn);
-            let frame = match (&gpu_capture, last) {
-                (Some(path), true) => self
-                    .capture_frame(timestamp, pix, path)
-                    .map(|by| captured = Some(by)),
-                _ => self.frame(timestamp),
-            };
-            if let Err(error) = frame {
+            if let Err(error) = self.frame(at(drawn)) {
                 failed = Some(error);
                 break;
             }
@@ -242,35 +146,11 @@ impl<G: Game> Offscreen<G> {
         };
         #[cfg(not(feature = "profiling"))]
         let profile = None;
-        #[cfg(feature = "profiling")]
-        let pix_counters = match (&record.pix_counters, &gpu_capture) {
-            (Some(dive), Some(path)) if failed.is_none() => {
-                if captured != Some("pix") {
-                    return Err(Error::new(ErrorCode::PixUnavailable, "$")
-                        .expected(Expected::Supported)
-                        .got(serde_json::json!({
-                            "backend": self.host.adapter().backend,
-                            "captured": captured,
-                        })));
-                }
-                Some(engine_profiler::vendor::pix_counters(
-                    path,
-                    &dive.folder,
-                    &dive.counters,
-                )?)
-            }
-            _ => None,
-        };
-        #[cfg(not(feature = "profiling"))]
-        let pix_counters = None;
         Ok(Recorded {
             frames: drawn,
             cpu_ms,
             elapsed_ms,
-            captured,
-            capture: gpu_capture,
             profile,
-            pix_counters,
             failed,
         })
     }
@@ -300,7 +180,7 @@ impl<G: Game> Offscreen<G> {
         stem: &str,
         context: Value,
     ) -> engine::Result<engine_profiler::ProfileFiles> {
-        capture.finish(&mut self.host, folder, stem, context, Value::Null)
+        capture.finish(&mut self.host, folder, stem, context)
     }
 
     pub fn exchange_jobs(&mut self) {
@@ -324,7 +204,6 @@ impl<G: Game> Offscreen<G> {
         let mut said = started;
         self.host.set_preparation(true);
         loop {
-            let began = Instant::now();
             let at = timestamp + started.elapsed().as_secs_f64() * 1000.0;
             let phase = self.starting(at)?;
             if phase == FramePhase::Started {
@@ -340,15 +219,6 @@ impl<G: Game> Offscreen<G> {
                 });
                 eprintln!("{record}");
             }
-            self.pace(began);
-        }
-    }
-
-    fn pace(&self, began: Instant) {
-        let interval =
-            Duration::try_from_secs_f64(self.host.refresh_interval() / 1000.0).unwrap_or_default();
-        if let Some(rest) = interval.checked_sub(began.elapsed()) {
-            std::thread::sleep(rest);
         }
     }
 
@@ -367,32 +237,6 @@ impl<G: Game> Offscreen<G> {
         self.host.frame(timestamp, width, height)?;
         self.exchange_jobs();
         self.host.wait_for_gpu()
-    }
-
-    pub fn capture_frame(
-        &mut self,
-        timestamp: f64,
-        pix: Option<&Pix>,
-        path: &Path,
-    ) -> engine::Result<&'static str> {
-        let pix = pix.filter(|_| self.host.adapter().backend == "Dx12");
-        self.host.wait_for_gpu()?;
-        if let Some(pix) = pix {
-            pix.begin(path)?;
-            let frame = self.frame(timestamp);
-            pix.end()?;
-            return frame.map(|()| "pix");
-        }
-        if let Some(renderdoc) = RenderDoc::attached() {
-            renderdoc.begin(path)?;
-            let frame = self.frame(timestamp);
-            renderdoc.end()?;
-            return frame.map(|()| "renderdoc");
-        }
-        self.host.start_debugger_capture();
-        let frame = self.frame(timestamp);
-        self.host.stop_debugger_capture()?;
-        frame.map(|()| "debugger")
     }
 
     pub fn image(&self) -> engine::Result<Image> {

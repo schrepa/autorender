@@ -40,10 +40,6 @@ pub struct Progress {
 }
 
 impl Progress {
-    pub const fn of(done: u64, total: u64) -> Self {
-        Self { done, total }
-    }
-
     #[must_use]
     pub fn and(self, other: Self) -> Self {
         Self {
@@ -63,13 +59,8 @@ impl Progress {
         self.total.saturating_sub(self.done)
     }
 
-    fn asked(progress: Option<Self>) -> Self {
-        let progress = progress.unwrap_or_default();
-        let total = progress.total.max(1);
-        Self {
-            done: progress.done.min(total - 1),
-            total,
-        }
+    const fn asked() -> Self {
+        Self { done: 0, total: 1 }
     }
 }
 
@@ -318,7 +309,6 @@ impl fmt::Debug for Settling {
 struct Held<V, A> {
     request: Request<V>,
     interests: u32,
-    progress: Option<Progress>,
     since: f64,
     serial: u64,
     work: Option<A>,
@@ -368,7 +358,7 @@ impl<K: Clone, V, A> fmt::Debug for Requests<K, V, A> {
 
 fn left_asked<V, A>(tally: &mut Tally, held: &Held<V, A>) {
     match &held.request {
-        Request::Asked(_) => tally.loading = tally.loading.less(Progress::asked(held.progress)),
+        Request::Asked(_) => tally.loading = tally.loading.less(Progress::asked()),
         Request::Failed(_) => tally.failed.retain(|(serial, _)| *serial != held.serial),
         Request::Ready(_) | Request::Missing => {}
     }
@@ -399,9 +389,8 @@ impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
         let ticket = Ticket::next();
         let mut tally = lock(&self.tally);
         left_asked(&mut tally, held);
-        tally.loading = tally.loading.and(Progress::asked(None));
+        tally.loading = tally.loading.and(Progress::asked());
         held.request = Request::Asked(ticket);
-        held.progress = None;
         held.since = self.now;
         held.work = None;
         self.asked.insert(ticket, key.clone());
@@ -418,11 +407,10 @@ impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
                 self.serials += 1;
                 self.asked.insert(ticket, free.key().clone());
                 let mut tally = lock(&self.tally);
-                tally.loading = tally.loading.and(Progress::asked(None));
+                tally.loading = tally.loading.and(Progress::asked());
                 free.insert(Held {
                     request: Request::Asked(ticket),
                     interests: 1,
-                    progress: None,
                     since: self.now,
                     serial: self.serials,
                     work: None,
@@ -514,23 +502,6 @@ impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
             .filter_map(|(key, held)| Some((key, held.work.as_ref()?)))
     }
 
-    pub fn progress_of(&self, key: &K) -> Option<Progress> {
-        self.entries.get(key)?.progress
-    }
-
-    pub fn progress(&mut self, key: &K, progress: Progress) {
-        if let Some(held) = self.entries.get_mut(key)
-            && matches!(held.request, Request::Asked(_))
-        {
-            let mut tally = lock(&self.tally);
-            tally.loading = tally
-                .loading
-                .less(Progress::asked(held.progress))
-                .and(Progress::asked(Some(progress)));
-            held.progress = Some(progress);
-        }
-    }
-
     pub fn ready(&mut self, key: &K, ticket: Ticket, value: V) -> bool {
         self.end(key, ticket, Request::Ready(value))
     }
@@ -557,7 +528,6 @@ impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
         }
         self.asked.remove(&ticket);
         held.request = end;
-        held.progress = None;
         held.work = None;
         true
     }
@@ -596,7 +566,7 @@ impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
             match &held.request {
                 Request::Asked(_) => {
                     census.asked += 1;
-                    census.loading = census.loading.and(Progress::asked(held.progress));
+                    census.loading = census.loading.and(Progress::asked());
                     census.oldest_asked_seconds =
                         census.oldest_asked_seconds.max(self.now - held.since);
                 }

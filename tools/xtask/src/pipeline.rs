@@ -61,11 +61,6 @@ fn build_profiling_wasm(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
-pub fn prepare_dev(root: &Path) -> Result<(), String> {
-    build_wasm(root, true)?;
-    install_web_dependencies(root)
-}
-
 pub fn build_dev(root: &Path, game: Option<&str>) -> Result<(), String> {
     match game {
         Some(game) => build_clients(root, &of_game(game)?, true, false),

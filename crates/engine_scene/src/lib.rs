@@ -23,7 +23,6 @@ pub use document::{
     MAX_SOURCE_BYTES, MeshSource, SceneDocument, SceneMesh, SceneObject, ScenePrefab,
     SceneTransform, SceneVertex,
 };
-pub use engine_assets::{MeshStreams, encode_mesh_buffer_with};
 pub use engine_core::SceneEntity;
 pub use engine_settings::{parse_json, parse_value};
 pub use environment::SceneEnvironment;
@@ -31,7 +30,7 @@ pub use environment::SceneEnvironment;
 pub use environment::section_schemas;
 pub use files::{SceneFile, SceneFileKind, SceneFiles};
 pub use instance::{MeshOrigin, SceneInstance, TextureOrigin};
-pub use looks::{SCENE_LOOK, SceneLook, SceneLookControl, SceneLooks, show_look};
+pub use looks::{SCENE_LOOK, SceneLook, SceneLookControl, SceneLooks};
 pub use material::{
     SceneAlphaMode, SceneCull, SceneDepthBias, SceneFilter, SceneMap, SceneMaterial,
     SceneMaterialControl, SceneMipmapFilter, SceneSlot, SceneSlotFill, SceneTextureMap, SceneWrap,

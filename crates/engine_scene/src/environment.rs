@@ -85,10 +85,7 @@ impl SceneEnvironment {
         crate::loading::within(context.as_ref(), || {
             self.check_in(world.get_resource::<Registry>(), path)?;
             let skipped = self.unlisted(world, path);
-            let chose_left_out = world
-                .get_resource::<Registry>()
-                .is_some_and(|registry| !registry.left_out().is_empty());
-            if let Some(first) = skipped.first().filter(|_| !chose_left_out) {
+            if let Some(first) = skipped.first() {
                 return Err(first.clone());
             }
             let mut before = Vec::new();
