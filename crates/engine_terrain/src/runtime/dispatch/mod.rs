@@ -241,11 +241,18 @@ fn look_ahead(
         if work.spent() > 0 && work.expired() {
             break;
         }
-        let Some((input, _, look)) = looked.get_mut(&key) else {
+        let Some((input, _, slot)) = looked.get_mut(&key) else {
+            continue;
+        };
+        let Some(look) = slot.as_mut() else {
             continue;
         };
         let tile = match look.poll(asking.records) {
-            Landed::Waiting | Landed::Failed(_) => continue,
+            Landed::Waiting => continue,
+            Landed::Failed(_) => {
+                *slot = None;
+                continue;
+            }
             Landed::Ready(tile) => Arc::clone(tile),
         };
         let placed = *input == state.tile_job(recipe.hash(), key).identity()
@@ -269,7 +276,7 @@ fn look_ahead(
             continue;
         }
         let look = asking.jobs.look(&TILE_BUILD, &input, priority, decode_tile);
-        looked.insert(key, (input, priority, look));
+        looked.insert(key, (input, priority, Some(look)));
     }
     if let Some(bake) = state.bake.as_mut() {
         bake.looked = looked;
@@ -286,7 +293,7 @@ fn ask_tile(
         .bake
         .as_mut()
         .and_then(|bake| bake.looked.remove(&key));
-    let Some((asked, _, mut look)) = looked.filter(|(asked, _, _)| asked == input) else {
+    let Some((asked, _, Some(mut look))) = looked.filter(|(asked, _, _)| asked == input) else {
         return fetch_tile(asking.jobs, input, priority);
     };
     let landed = match look.poll(asking.records) {
