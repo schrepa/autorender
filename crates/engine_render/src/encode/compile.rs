@@ -1196,16 +1196,22 @@ impl Compiler<'_> {
         });
         let vertex_constants = constants.next().unwrap_or_default();
         let fragment_constants = constants.next().unwrap_or_default();
+        let vertex_stage = built.stages.first()?;
+        let indexed = ["@builtin(vertex_index)", "@builtin(instance_index)"]
+            .iter()
+            .any(|builtin| vertex_stage.composed.text.contains(builtin));
         let paired = fragment_stage.zip(shape.fragment).map(|(stage, entry)| {
             stage_key(
                 stage,
                 (entry.name(), &fragment_constants),
-                (&built.layout_key, None),
+                (&built.layout_key, Some(u64::from(indexed))),
             )
         });
-        let vertex_stage = built.stages.first()?;
+        let inputs = fragment_stage
+            .zip(shape.fragment)
+            .map(|(stage, entry)| fragment_inputs(&stage.composed.text, entry.name()));
         let mut partner = DefaultHasher::new();
-        (paired, desc.primitive.topology).hash(&mut partner);
+        inputs.hash(&mut partner);
         let stages = std::iter::once(stage_key(
             vertex_stage,
             (desc.vertex.name(), &vertex_constants),
@@ -1397,6 +1403,33 @@ fn fragment_outputs<'a>(text: &'a str, entry: &str) -> Option<&'a str> {
     let start = text.find(&format!("struct {name} {{"))?;
     let body = &text[start..];
     Some(&body[..body.find('}')?])
+}
+
+fn fragment_inputs(text: &str, entry: &str) -> Option<Vec<u32>> {
+    let open = text.find(&format!("fn {entry}("))? + entry.len() + 4;
+    let mut depth = 1_u32;
+    let close = text[open..].find(|character| {
+        match character {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ => {}
+        }
+        depth == 0
+    })?;
+    let parameters = &text[open..open + close];
+    let mut found = locations(parameters);
+    for part in parameters.split(',') {
+        let Some((_, ty)) = part.rsplit_once(':') else {
+            continue;
+        };
+        let name = ty.trim();
+        if let Some(start) = text.find(&format!("struct {name} {{")) {
+            let body = &text[start..];
+            found.extend(locations(&body[..body.find('}')?]));
+        }
+    }
+    found.sort_unstable();
+    Some(found)
 }
 
 fn fragment_locations(text: &str, entry: &str) -> Option<Vec<u32>> {
