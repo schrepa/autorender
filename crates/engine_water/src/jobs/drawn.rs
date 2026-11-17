@@ -274,10 +274,26 @@ fn drawn_output(water: &TileWater, painted: &Painted) -> Vec<u8> {
     output
 }
 
-pub(crate) fn landed(
-    bytes: &[u8],
-    record: RecordKey,
-) -> Result<Option<(TileWater, DrawnWater)>, Error> {
+pub(crate) struct DrawnParts {
+    water: TileWater,
+    errors: Arc<[u16]>,
+    texels: Arc<[u8]>,
+    changed: [u64; 4],
+}
+
+impl DrawnParts {
+    pub(crate) fn keyed(self, record: RecordKey) -> (TileWater, DrawnWater) {
+        let drawn = DrawnWater {
+            record,
+            errors: self.errors,
+            texels: self.texels,
+            changed: self.changed,
+        };
+        (self.water, drawn)
+    }
+}
+
+pub(crate) fn landed(bytes: &[u8]) -> Result<Option<DrawnParts>, Error> {
     let (head, mut rest) = headed::<Option<DrawnHead>>(bytes)?;
     let Some(head) = head else {
         return Ok(None);
@@ -291,13 +307,12 @@ pub(crate) fn landed(
         head.held,
         head.solids,
     );
-    let drawn = DrawnWater {
-        record,
+    Ok(Some(DrawnParts {
+        water,
         errors: Arc::from(errors),
         texels: Arc::from(rest),
         changed: head.changed,
-    };
-    Ok(Some((water, drawn)))
+    }))
 }
 
 pub(crate) fn start_drawn(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
