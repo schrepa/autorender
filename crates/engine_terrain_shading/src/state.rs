@@ -1243,6 +1243,7 @@ fn records_left(settings: &TerrainShading, tiles: &TerrainTiles, bakes: &Bakes) 
         left += u32::from(held.lighting_left(settings, entry));
         left += u32::from(held.bounce_left(settings, entry));
         left += u32::from(held.colors.left());
+        left += held.flow.waiting();
     }
     left
 }

@@ -105,7 +105,7 @@ pub(crate) struct Shadings {
     tiles: BTreeMap<TileKey, Shading>,
     sharing: BTreeSet<RecordKey>,
     attached: Vec<TileKey>,
-    attaching: bool,
+    waiting: u32,
     shaded: u32,
 }
 
@@ -125,6 +125,10 @@ impl Shadings {
 
     pub(crate) fn attached(&self) -> &[TileKey] {
         &self.attached
+    }
+
+    pub(crate) fn waiting(&self) -> u32 {
+        self.waiting
     }
 
     pub(crate) fn counts(&self) -> (u32, u32) {
@@ -355,7 +359,7 @@ impl Shadings {
     }
 
     fn attach(&mut self, entry: &TerrainEntry, budget: &mut FrameBudget) {
-        self.attaching = false;
+        self.waiting = 0;
         self.shaded = 0;
         let mut gave = false;
         for (&key, tile) in &mut self.tiles {
@@ -373,7 +377,7 @@ impl Shadings {
                 continue;
             }
             if (gave && budget.expired()) || !budget.spend(BUDGET, 2 * TILE_ARRAY_BYTES) {
-                self.attaching = true;
+                self.waiting += 1;
                 continue;
             }
             gave = true;
@@ -496,7 +500,7 @@ fn follow(
         flow.ask(cx, &wants, (entry, recipe));
         flow.release_shares(cx.released);
     }
-    if dirty || flow.attaching {
+    if dirty || flow.waiting > 0 {
         flow.attach(entry, cx.budget);
     }
 }

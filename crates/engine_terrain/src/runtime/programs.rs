@@ -15,14 +15,15 @@ gpu_struct! {
 
 #[derive(Resource, Default)]
 pub struct SurfacePrograms {
-    program: Vec<u32>,
+    words: usize,
     entries: Vec<SurfaceEntry>,
-    sources: Vec<Option<Arc<SurfaceData>>>,
+    sources: Vec<(Option<Arc<SurfaceData>>, bool)>,
+    pieces: Vec<(Arc<SurfaceData>, u32)>,
 }
 
 impl SurfacePrograms {
     pub fn program_bytes(&self) -> u64 {
-        (4 * self.program.len().max(1)) as u64
+        (4 * self.words.max(1)) as u64
     }
 
     pub fn materials(&self) -> &[SurfaceEntry] {
@@ -33,60 +34,55 @@ impl SurfacePrograms {
         (std::mem::size_of::<SurfaceEntry>() * self.entries.len().max(1)) as u64
     }
 
-    fn pieces(&self) -> impl Iterator<Item = (Option<&Arc<SurfaceData>>, u32)> + '_ {
-        self.sources
-            .iter()
-            .zip(&self.entries)
-            .map(|(data, entry)| (data.as_ref(), entry.base))
-    }
-
     pub(super) fn made_from(&self, terrains: &Terrains) -> bool {
-        drawn_surfaces(terrains)
-            .map(|data| data.map(Arc::as_ptr))
+        surfaces(terrains)
+            .map(|(data, drawn)| (data.map(Arc::as_ptr), drawn))
             .eq(self
                 .sources
                 .iter()
-                .map(|data| data.as_ref().map(Arc::as_ptr)))
+                .map(|(data, drawn)| (data.as_ref().map(Arc::as_ptr), *drawn)))
     }
 
     pub(super) fn of(terrains: &Terrains) -> Self {
         let mut programs = Self::default();
-        for data in drawn_surfaces(terrains) {
-            programs.sources.push(data.cloned());
-            let entry = match data {
-                Some(data) => {
-                    let base = programs.program.len() as u32;
-                    programs.program.extend_from_slice(&data.words);
-                    let (image_spacing, levels) = data.hydrology().unwrap_or((0.0, 0));
-                    SurfaceEntry {
-                        base,
-                        gpu: 1,
-                        levels: levels as u32,
-                        image_spacing,
-                        offset: data.offset(),
-                        held: [0; 2],
-                    }
+        for (data, drawn) in surfaces(terrains) {
+            programs.sources.push((data.cloned(), drawn));
+            let Some(data) = data else {
+                if drawn {
+                    programs.entries.push(SurfaceEntry::default());
                 }
-                None => SurfaceEntry::default(),
+                continue;
             };
-            programs.entries.push(entry);
+            let base = programs.words as u32;
+            programs.words += data.words.len();
+            programs.pieces.push((Arc::clone(data), base));
+            if drawn {
+                let (image_spacing, levels) = data.hydrology().unwrap_or((0.0, 0));
+                programs.entries.push(SurfaceEntry {
+                    base,
+                    gpu: 1,
+                    levels: levels as u32,
+                    image_spacing,
+                    offset: data.offset(),
+                    held: [0; 2],
+                });
+            }
         }
         programs
     }
 }
 
-fn drawn_surfaces(terrains: &Terrains) -> impl Iterator<Item = Option<&Arc<SurfaceData>>> {
+fn surfaces(terrains: &Terrains) -> impl Iterator<Item = (Option<&Arc<SurfaceData>>, bool)> {
     terrains
         .entries
         .iter()
-        .filter(|state| state.drawn)
-        .map(TerrainState::programmed)
+        .map(|state| (state.programmed(), state.drawn))
 }
 
 pub(crate) struct SurfaceProgramGpu {
     program: Buffer<Self>,
     materials: Buffer<Self>,
-    written: Vec<(Option<Arc<SurfaceData>>, u32)>,
+    written: Vec<(Arc<SurfaceData>, u32)>,
 }
 
 impl GpuPart for SurfaceProgramGpu {
@@ -117,21 +113,16 @@ impl GpuPart for SurfaceProgramGpu {
         if program == Allocation::Fresh {
             self.written.clear();
         }
-        for (index, (data, base)) in programs.pieces().enumerate() {
-            let Some(data) = data else {
-                continue;
-            };
-            let held = self.written.get(index).is_some_and(|(held, at)| {
-                *at == base && held.as_ref().is_some_and(|held| Arc::ptr_eq(held, data))
-            });
+        for (data, base) in &programs.pieces {
+            let held = self
+                .written
+                .iter()
+                .any(|(held, at)| at == base && Arc::ptr_eq(held, data));
             if !held {
-                cx.write(self.program, u64::from(base) * 4, &data.words);
+                cx.write(self.program, u64::from(*base) * 4, &data.words);
             }
         }
-        self.written = programs
-            .pieces()
-            .map(|(data, base)| (data.cloned(), base))
-            .collect();
+        self.written.clone_from(&programs.pieces);
         if programs.is_changed() || materials == Allocation::Fresh {
             cx.write(self.materials, 0, programs.materials());
         }
