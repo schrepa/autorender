@@ -300,8 +300,6 @@ pub(crate) struct InstallCore {
     pub(crate) passes: engine_core::ScenePasses,
     pub(crate) outputs: Vec<crate::machine::OutputDecl>,
     pub(crate) linker: Linker,
-    pub(crate) features: wgpu::Features,
-    pub(crate) limits: engine_core::DeviceLimits,
     pub(crate) problems: Vec<Error>,
 }
 
@@ -310,11 +308,7 @@ fn core_entry(entry: Entry) -> bool {
 }
 
 impl InstallCore {
-    pub(crate) fn new(
-        linker: Linker,
-        features: wgpu::Features,
-        limits: engine_core::DeviceLimits,
-    ) -> Self {
+    pub(crate) fn new(linker: Linker) -> Self {
         Self {
             part: 0,
             package: "",
@@ -324,8 +318,6 @@ impl InstallCore {
             passes: engine_core::ScenePasses::default(),
             outputs: Vec::new(),
             linker,
-            features,
-            limits,
             problems: Vec::new(),
         }
     }

@@ -80,8 +80,8 @@ pub use pyramid::{PYRAMID_GROUP, PyramidExtent};
 pub use render_bricks::RenderBricks;
 #[doc(hidden)]
 pub use renderer::{
-    DeviceHealth, FoldStep, GpuPassTimes, Installation, InstalledPart, InstalledPiece, PassTie,
-    Renderer, StartingRenderer, device_limits, install_noop,
+    Ahead, DeviceHealth, FoldStep, GpuPassTimes, Installation, InstalledPart, InstalledPiece,
+    PassTie, Renderer, StartingRenderer, device_limits, install_noop,
 };
 pub use shaders::FULLSCREEN;
 pub use surface::{
@@ -530,14 +530,6 @@ impl<P: GpuPart> Install<'_, P> {
         self.core.window(buffer.0, size);
     }
 
-    pub fn features(&self) -> wgpu::Features {
-        self.core.features
-    }
-
-    pub fn limits(&self) -> &engine_core::DeviceLimits {
-        &self.core.limits
-    }
-
     pub fn frame(&mut self, variable: Var, bound: Bind<P>) -> Result<(), Error> {
         let bound = bound_of(&bound, &self.core.outputs)?;
         self.core.frame(variable, bound)
@@ -856,6 +848,10 @@ impl<P: GpuPart> Prepare<'_, P> {
 
     pub fn warming(&self) -> u32 {
         self.core.pipelines.warming.left()
+    }
+
+    pub fn features(&self) -> wgpu::Features {
+        self.core.installs.features
     }
 
     pub fn view_index(&self) -> u32 {

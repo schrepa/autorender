@@ -30,7 +30,8 @@ pub(crate) use display::Display;
 use display::DisplayFrame;
 pub use health::DeviceHealth;
 pub use install::{
-    FoldStep, Installation, InstalledPart, InstalledPiece, PassTie, device_limits, install_noop,
+    Ahead, FoldStep, Installation, InstalledPart, InstalledPiece, PassTie, device_limits,
+    install_noop,
 };
 pub use startup::StartingRenderer;
 
