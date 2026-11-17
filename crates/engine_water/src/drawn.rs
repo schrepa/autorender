@@ -1,13 +1,15 @@
 use bevy_ecs::prelude::*;
-use engine_core::{Background, FrameBudget, FrameTime, JobKind, Jobs, RecordKey, Records, Taken};
+use engine_core::{
+    Background, Error, ErrorCode, FrameBudget, FrameTime, JobKind, Jobs, Records, Taken,
+};
 use engine_heightfield::TileKey;
 use engine_heightfield::tile::TileJob;
 
 use crate::TileWater;
-use crate::jobs::drawn::{DrawnWater, FloodHead, landed};
+use crate::jobs::drawn::{DrawnParts, FloodHead, landed};
 use crate::state::{HeldWater, WaterState, Work};
 
-pub(crate) type DrawnWork = Background<Option<(TileWater, DrawnWater)>>;
+pub(crate) type DrawnWork = Background<Option<DrawnParts>>;
 
 pub(crate) fn start_drawing(
     jobs: &mut Jobs<'_, '_>,
@@ -15,9 +17,8 @@ pub(crate) fn start_drawing(
     input: Vec<u8>,
     priority: u32,
 ) -> DrawnWork {
-    let record = RecordKey::of(kind, &input);
     jobs.start(kind, input, priority, move |bytes| {
-        landed(&bytes, record).map_err(|error| kind.undecoded(error))
+        landed(&bytes).map_err(|error| kind.undecoded(error))
     })
 }
 
@@ -84,6 +85,7 @@ pub(crate) fn draw(
                     continue;
                 }
             };
+            let record = work.asked_key().copied();
             let made = match work.take(&*records) {
                 Taken::Waiting(work) => {
                     held.work = Some(match flood {
@@ -92,7 +94,11 @@ pub(crate) fn draw(
                     });
                     continue;
                 }
-                Taken::Ready(made) => Ok(made),
+                Taken::Ready(made) => match (made, record) {
+                    (Some(parts), Some(record)) => Ok(Some(parts.keyed(record))),
+                    (Some(_), None) => Err(Error::new(ErrorCode::InvalidRecord, "$.record")),
+                    (None, _) => Ok(None),
+                },
                 Taken::Failed(error) => Err(error),
             };
             landed_any = true;
