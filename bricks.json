@@ -2430,7 +2430,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "fd6f7e20ffad1dead90c524f4df4acd1fb57483caac4173753f3194abeb268c8"
+      "version": "95c2574e6607775e410d59c9d6a2a6d9d6e326eca612b3ec421e04cd602b487f"
     },
     {
       "dependencies": [

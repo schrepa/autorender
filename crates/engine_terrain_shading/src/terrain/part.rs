@@ -1151,9 +1151,12 @@ impl TerrainGpu {
         let Some(holed) = holed else {
             return Vec::new();
         };
-        match (plain, self.surface.split_offsets(terrain.terrain)) {
-            (Some(plain), Some([whole, cut])) => vec![(plain, whole, false), (holed, cut, true)],
-            _ => vec![(holed, offset, true)],
+        match self.surface.split_offsets(terrain.terrain) {
+            Some([whole, cut]) => vec![
+                (plain.unwrap_or(holed), whole, plain.is_none()),
+                (holed, cut, true),
+            ],
+            None => vec![(holed, offset, true)],
         }
     }
 
@@ -1264,6 +1267,7 @@ impl TerrainGpu {
         let mut draws = 0;
         let mut unheld = None;
         let pipelines = [surfaces[0].ok(), surfaces[1].ok()];
+        let mut sped = None;
         let listed = scene.view.is_none() && self.listing.ready();
         for holes in [false, true] {
             for terrain in self
@@ -1278,6 +1282,16 @@ impl TerrainGpu {
                     unheld = Some(reason);
                     continue;
                 }
+                let pipelines = if holes {
+                    let plain = *sped.get_or_insert_with(|| {
+                        pipelines[0].and_then(|(plain, material)| {
+                            draw.speedup(plain).map(|plain| (plain, material))
+                        })
+                    });
+                    [plain, pipelines[1]]
+                } else {
+                    pipelines
+                };
                 let (args, split) = if listed {
                     (lists, self.listed_draws(terrain, pipelines))
                 } else {
