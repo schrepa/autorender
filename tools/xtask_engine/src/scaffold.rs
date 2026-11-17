@@ -104,7 +104,7 @@ impl BrickKind {
 
     const fn needs(self) -> &'static [&'static str] {
         match self {
-            Self::Gameplay => &["engine", "serde"],
+            Self::Gameplay => &["engine", "engine_core", "schemars", "serde"],
             Self::Drawn => &["engine_core", "engine_ecs", "engine_render"],
         }
     }

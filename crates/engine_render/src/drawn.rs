@@ -47,7 +47,7 @@ const VARS: &str = "struct DrawnPose {
 @group(0) @binding(0) var<storage, read> drawn_previous_poses: array<DrawnPose>;
 @group(0) @binding(0) var<storage, read> drawn_marks: array<u32>;
 @group(0) @binding(0) var<storage, read> drawn_occlusion: array<u32>;
-@group(0) @binding(0) var drawn_prepass_pyramid: texture_2d<f32>;
+@group(0) @binding(0) var drawn_early_pyramid: texture_2d<f32>;
 @group(0) @binding(0) var drawn_opaque_pyramid: texture_2d<f32>;
 
 fn drawn_value(record: DrawnRecord, index: u32) -> f32 {
@@ -585,8 +585,8 @@ struct Occlusion {
     running: bool,
     bytes: u64,
     room: u64,
-    prepass: Pass<DrawnGpu>,
-    prepass_levels: Pyramid,
+    early: Pass<DrawnGpu>,
+    early_levels: Pyramid,
 }
 
 pub(crate) struct DrawnGpu {
@@ -953,14 +953,14 @@ impl DrawnGpu {
         let occlusion = &mut self.occlusion;
         let count = match main {
             Some(main) => {
-                occlusion.prepass_levels.size(main, cx);
-                cx.run(occlusion.prepass);
+                occlusion.early_levels.size(main, cx);
+                cx.run(occlusion.early);
                 let count = occlusion.levels.size(main, cx);
                 cx.run(occlusion.opaque);
                 count
             }
             None => {
-                occlusion.prepass_levels.release(cx);
+                occlusion.early_levels.release(cx);
                 occlusion.levels.release(cx);
                 0
             }
@@ -1147,15 +1147,15 @@ fn install_occlusion(
             ),
         ],
     )?;
-    let prepass = cx
-        .pass("drawn_prepass_pyramid")
+    let early = cx
+        .pass("drawn_early_pyramid")
         .at(AttachPoint::Inputs)
         .views(PassViews::Main)
-        .label("engine/drawn-prepass-pyramid")
+        .label("engine/drawn-early-pyramid")
         .id();
-    let early = cx.texture("drawn_prepass_pyramid", PYRAMID_FORMAT, Lifetime::Frame);
-    cx.frame(var(DRAWN_MODULE, "drawn_prepass_pyramid"), Bind::Texture(early))?;
-    let prepass_levels = Pyramid::install(cx, prepass, early, "drawn_prepass_extent")?;
+    let early_depth = cx.texture("drawn_early_pyramid", PYRAMID_FORMAT, Lifetime::Frame);
+    cx.frame(var(DRAWN_MODULE, "drawn_early_pyramid"), Bind::Texture(early_depth))?;
+    let early_levels = Pyramid::install(cx, early, early_depth, "drawn_early_extent")?;
     Ok(Occlusion {
         pass,
         held,
@@ -1165,8 +1165,8 @@ fn install_occlusion(
         running: false,
         bytes: 0,
         room: 0,
-        prepass,
-        prepass_levels,
+        early,
+        early_levels,
     })
 }
 
@@ -1393,8 +1393,8 @@ impl GpuPart for DrawnGpu {
             self.encode_occlusion(cx);
             return 0;
         }
-        if pass == self.occlusion.prepass {
-            self.occlusion.prepass_levels.encode(cx);
+        if pass == self.occlusion.early {
+            self.occlusion.early_levels.encode(cx);
             return 0;
         }
         if pass == self.occlusion.opaque {

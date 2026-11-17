@@ -167,6 +167,7 @@ dependencies = [
  "engine_render",
  "engine_sources",
  "glam 0.30.9",
+ "schemars",
  "serde",
  "wasm-bindgen",
  "wasm-bindgen-futures",

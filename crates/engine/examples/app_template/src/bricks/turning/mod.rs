@@ -2,7 +2,9 @@ engine::brick!(turning);
 
 use engine::prelude::*;
 
-#[derive(Component, Clone, Copy, Default, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Component, Clone, Copy, Default, serde::Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
 #[serde(deny_unknown_fields)]
 pub struct Turning {}
 
@@ -13,7 +15,10 @@ impl Brick for TurningBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
-            .join::<SceneComponents>(ComponentKind::of::<Turning>("turning"), None)
+            .join::<SceneComponents>(
+                ComponentKind::of::<Turning>("turning").schema(engine_core::schema_of::<Turning>),
+                None,
+            )
             .moves::<Turning>(Pace::Tick)
             .systems(Schedule::FixedSimulation, turn);
     }
