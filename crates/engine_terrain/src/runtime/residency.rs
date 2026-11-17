@@ -136,7 +136,11 @@ pub(super) struct TerrainBake {
     pub(super) work: Background<Arc<Layers>>,
     pub(super) key: Option<RecordKey>,
     pub(super) drawn: Arc<[TerrainRiver]>,
+    pub(super) looked: HashMap<TileKey, Looked>,
+    pub(super) ahead: Option<(RecordKey, TileMaterials)>,
 }
+
+pub(super) type Looked = (Vec<u8>, u32, TileWork);
 
 pub(super) const TILE_ARRAY_BYTES: u64 = (TILE_STRIDE as u64) * (TILE_STRIDE as u64) * 4;
 
@@ -261,9 +265,10 @@ impl TerrainState {
     }
 
     pub(super) fn generation(&self) -> Generation {
+        let ahead = self.bake.as_ref().and_then(|bake| bake.ahead);
         Generation::of(
             &self.terrain.edits,
-            self.recipe.as_ref().map(|recipe| recipe.key),
+            (self.recipe.as_ref().map(|recipe| recipe.key)).or(ahead.map(|(key, _)| key)),
         )
     }
 
@@ -335,9 +340,23 @@ impl TerrainState {
                 .as_ref()
                 .is_none_or(|regions| regions.iter().any(|&bounds| covers(bounds, &pyramid, *key)))
         };
+        let ahead = self.bake.as_mut().and_then(|bake| bake.ahead.take());
         let generation = self.generation();
+        if ahead.is_some() {
+            self.looked_from(generation);
+        }
         self.store.invalidate(generation, under);
         self.ground_changed = true;
+    }
+
+    pub(super) fn looked_from(&mut self, generation: Generation) {
+        if self.store.generation() == generation {
+            return;
+        }
+        for key in self.store.keys_where(|_| true) {
+            self.store.leave(&key);
+        }
+        self.store.invalidate(generation, |_| true);
     }
 
     fn reaching_stamps(&self, key: TileKey) -> impl Iterator<Item = Stamp> + '_ {
@@ -396,7 +415,7 @@ impl TerrainState {
     }
 
     pub(super) fn sample(&self, local: Vec2) -> Option<(u32, TileSample)> {
-        if self.cut_out(local) {
+        if self.cut_out(local) || self.recipe.is_none() {
             return None;
         }
         let pyramid = &self.terrain.pyramid;

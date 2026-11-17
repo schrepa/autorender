@@ -164,7 +164,7 @@ impl Terrains {
                 &missing,
                 (&target, &keep, &named),
                 &work,
-                frame,
+                (frame, settings.gpu_materials),
                 asking,
             ) {
                 stats.baking += u32::from(state.baking());
@@ -186,7 +186,7 @@ impl Terrains {
             stats.cached_bytes += state.store.cached_bytes();
             stats.prefetching_tiles += state.prefetching() as u32;
             stats.loading_tiles += state.loading() as u32;
-            state.show(state.store.len() > 0);
+            state.show(state.store.len() > 0 && state.recipe.is_some());
             stats.fallback_tiles += fallback;
             if cutout.is_some() {
                 stats.surroundings_tiles += state.store.len() as u32;

@@ -327,7 +327,7 @@ pub(crate) fn sync_solids(
                 .iter()
                 .find(|state| state.entity == entity && state.around.is_some() == surrounding)
         };
-        let Some(state) = held(false) else {
+        let Some(state) = held(false).filter(|state| state.recipe.is_some()) else {
             if published.remove(&entity).is_some() {
                 source.field = Arc::default();
             }

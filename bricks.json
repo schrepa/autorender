@@ -2158,7 +2158,7 @@
         }
       ],
       "type": "engine_terrain::runtime::brick::TerrainBrick",
-      "version": "19e8f1b6e39a069237e43d620c16c948b151e18f4146e34e293e5333f4b374f1"
+      "version": "dd39281e143054e34b854772db850f5134962d5c933066456a2f90bd6ac14b1b"
     },
     {
       "dependencies": [
