@@ -1,7 +1,9 @@
 use bevy_ecs::prelude::*;
 use bevy_ecs::system::SystemParamItem;
 use engine_core::math::max;
-use engine_core::{Error, Filter, FrameBudget, FrameTime, StoreId, Switched, Views};
+use engine_core::{
+    Error, Filter, FrameBudget, FrameTime, Pause, PauseReason, StoreId, Switched, Views,
+};
 use engine_places_rendering::sky::EyeMedium;
 use engine_places_rendering::sun::{Sun, SunPath};
 use engine_render::{
@@ -241,13 +243,14 @@ type SkySteps<'w> = (
     ResMut<'w, CloudSteps>,
     ResMut<'w, EnvironmentSteps>,
     ResMut<'w, FrameBudget>,
+    Res<'w, Pause>,
 );
 
 pub(crate) fn plan_sky(
     (sky, (clouds, clouds_on), night): SkySections<'_>,
     (sun, path): SkyLights<'_>,
     (tables, medium, views, time): SkyFrame<'_>,
-    (mut cloud_steps, mut environment_steps, mut budget): SkySteps<'_>,
+    (mut cloud_steps, mut environment_steps, mut budget, pause): SkySteps<'_>,
     mut plan: ResMut<SkyPlan>,
 ) {
     let plan = &mut *plan;
@@ -282,7 +285,7 @@ pub(crate) fn plan_sky(
             seconds,
         ),
         (&*sun, &plan.piece),
-        &mut budget,
+        (&mut budget, pause.holds(PauseReason::Preparing)),
     );
     plan.clouds.prepare_view(
         (&clouds, eye, seconds),

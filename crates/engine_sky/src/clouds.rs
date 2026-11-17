@@ -1,6 +1,6 @@
 use bevy_ecs::prelude::Resource;
 use engine_core::math::min;
-use engine_core::{Error, Filter, FrameBudget, Readable, Readback, Wrap};
+use engine_core::{Error, Filter, FrameBudget, Readable, Readback, Settling, Wrap};
 use engine_places_rendering::sun::Sun;
 use engine_render::{
     Allocation, Attach, AttachPoint, Bind, Buffer, ComputePipeline, CopyRegion, Count, DepthUse,
@@ -95,6 +95,12 @@ struct LightMap {
     job: u32,
 }
 
+impl LightMap {
+    fn complete(&self) -> bool {
+        self.built >= LIGHT_TEXELS
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 struct LightKey {
     corner: [f32; 2],
@@ -106,6 +112,15 @@ struct Cycle {
     origin: Origins,
     seconds: f64,
     next_row: u32,
+    lit: bool,
+}
+
+struct March {
+    origin: Origins,
+    at: f64,
+    first: u32,
+    count: u32,
+    whole: bool,
 }
 
 #[derive(Clone, Copy, Default)]
@@ -232,6 +247,7 @@ pub(crate) struct CloudPlan {
     dome_size: Option<[u32; 2]>,
     roles: [usize; 3],
     origins: [Origins; 3],
+    lit: [bool; 3],
     blend: f32,
     dome_piece: [[f32; 4]; 6],
     generation: u64,
@@ -252,6 +268,7 @@ pub(crate) struct CloudPlan {
     pub(crate) view_pixels: u32,
     uniform: CloudUniform,
     view_clouds: CloudUniform,
+    settling: Settling,
 }
 
 impl Default for CloudPlan {
@@ -262,6 +279,7 @@ impl Default for CloudPlan {
             dome_size: None,
             roles: [0, 1, 2],
             origins: [Origins::default(); 3],
+            lit: [false; 3],
             blend: 1.0,
             dome_piece: [[0.0; 4]; 6],
             generation: 0,
@@ -285,6 +303,7 @@ impl Default for CloudPlan {
             view_pixels: 0,
             uniform: CloudUniform::default(),
             view_clouds: CloudUniform::default(),
+            settling: Settling::on_view(),
         }
     }
 }
@@ -335,7 +354,7 @@ impl CloudPlan {
                 held.corner[0],
                 held.corner[1],
                 LIGHT_EXTENT / LIGHT_TEXELS as f32,
-                f32::from(u8::from(self.light.built >= LIGHT_TEXELS)),
+                f32::from(u8::from(self.light.complete())),
             ]
         })
     }
@@ -346,7 +365,7 @@ impl CloudPlan {
                 1.0,
                 (self.recorded / ENVIRONMENT_EVERY) as f32,
                 self.generation as f32,
-                0.0,
+                f32::from(u8::from(self.shows_lit())),
             ]
         } else {
             [0.0; 4]
@@ -404,7 +423,7 @@ impl CloudPlan {
         &mut self,
         ((settings, wanted), noise, (eye, surface), seconds): CloudInputs<'_>,
         light: CloudLight<'_>,
-        budget: &mut FrameBudget,
+        (budget, preparing): (&mut FrameBudget, bool),
     ) {
         self.rows = 0;
         self.job = None;
@@ -421,6 +440,7 @@ impl CloudPlan {
             self.completes = false;
             self.release();
             self.write_domes(eye, settings);
+            self.settling.left(0);
             return;
         }
         let size = [settings.resolution, settings.resolution / 4];
@@ -436,46 +456,22 @@ impl CloudPlan {
             self.completes = false;
             self.rotate();
         }
-        let rows = size[1];
-        let changed = self.marched.is_none_or(|marched| marched != *settings);
         let target = self.roles[2];
-        let origins = Origins::of(eye, surface);
-        let (origin, at, first, count) = if fresh || changed || !self.ready {
-            let spare = (0..3).find(|&index| index != target).unwrap_or(0);
-            self.roles = [target, target, spare];
-            self.origins[target] = origins;
-            self.blend = 1.0;
-            self.marched = Some(*settings);
-            self.cycle = None;
-            self.ready = true;
-            self.completed += 1;
-            (origins, seconds, 0, rows)
-        } else {
-            let cycle = self.cycle.get_or_insert(Cycle {
-                origin: origins,
-                seconds,
-                next_row: 0,
-            });
-            let frames = settings.slices.max(1);
-            let first = cycle.next_row;
-            let count = rows.div_ceil(frames).min(rows - first);
-            cycle.next_row += count;
-            let (origin, at, done) = (cycle.origin, cycle.seconds, cycle.next_row >= rows);
-            self.blend = cycle.next_row as f32 / rows as f32;
-            if done {
-                self.origins[target] = origin;
-                self.cycle = None;
-                self.completes = true;
-            }
-            (origin, at, first, count)
-        };
-        self.job = Some((target, first, count));
-        self.rows = count;
-        let mut uniform = march_uniform(settings, (origin.eye, at), light);
-        uniform.mirror = origin.mirror.extend(0.0).to_array();
-        uniform.dome = [size[0], size[1], first, count];
+        let march = self.next_march(settings, Origins::of(eye, surface), (seconds, preparing));
+        let mut uniform = march_uniform(settings, (march.origin.eye, march.at), light);
+        uniform.mirror = march.origin.mirror.extend(0.0).to_array();
         uniform.light_rows = self.plan_light((&uniform, settings), budget);
         uniform.light = self.light_uniform();
+        let lit = self.light.complete();
+        let held = preparing && (!lit || self.light.job > 0);
+        let count = if held {
+            0
+        } else {
+            self.commit(&march, (settings, size[1], lit))
+        };
+        self.job = Some((target, march.first, count));
+        self.rows = count;
+        uniform.dome = [size[0], size[1], march.first, count];
         uniform.layers = [
             DOME_FIRST + target as u32 * DOME_LAYERS,
             (self.completed % 1024) as u32,
@@ -483,11 +479,87 @@ impl CloudPlan {
             0,
         ];
         self.uniform = uniform;
-        self.step = CloudStep {
-            completed: self.completed,
-            generation: self.generation,
-        };
+        if count > 0 {
+            self.step = CloudStep {
+                completed: self.completed,
+                generation: self.generation,
+            };
+        }
         self.write_domes(eye, settings);
+        self.settling.left(self.left());
+    }
+
+    fn shows_lit(&self) -> bool {
+        self.lit[self.roles[0]] && self.lit[self.roles[1]]
+    }
+
+    fn left(&self) -> u32 {
+        let light = LIGHT_TEXELS.saturating_sub(self.light.built);
+        let dome = u32::from(!self.ready || !self.shows_lit());
+        let told = u32::from(self.ready && self.recorded_generation != Some(self.generation));
+        light + dome + told
+    }
+
+    fn next_march(
+        &mut self,
+        settings: &Clouds,
+        origins: Origins,
+        (seconds, preparing): (f64, bool),
+    ) -> March {
+        let rows = self.dome_size.map_or(0, |[_, rows]| rows);
+        let changed = self.marched.is_none_or(|marched| marched != *settings);
+        if changed || !self.ready || (preparing && !self.shows_lit()) {
+            return March {
+                origin: origins,
+                at: seconds,
+                first: 0,
+                count: rows,
+                whole: true,
+            };
+        }
+        let cycle = self.cycle.get_or_insert(Cycle {
+            origin: origins,
+            seconds,
+            next_row: 0,
+            lit: true,
+        });
+        let first = cycle.next_row;
+        March {
+            origin: cycle.origin,
+            at: cycle.seconds,
+            first,
+            count: rows.div_ceil(settings.slices.max(1)).min(rows - first),
+            whole: false,
+        }
+    }
+
+    fn commit(&mut self, march: &March, (settings, rows, lit): (&Clouds, u32, bool)) -> u32 {
+        let target = self.roles[2];
+        if march.whole {
+            let spare = (0..3).find(|&index| index != target).unwrap_or(0);
+            self.roles = [target, target, spare];
+            self.origins[target] = march.origin;
+            self.lit[target] = lit;
+            self.blend = 1.0;
+            self.marched = Some(*settings);
+            self.cycle = None;
+            self.ready = true;
+            self.completed += 1;
+            return march.count;
+        }
+        let Some(cycle) = self.cycle.as_mut() else {
+            return 0;
+        };
+        cycle.next_row += march.count;
+        cycle.lit &= lit;
+        self.blend = cycle.next_row as f32 / rows as f32;
+        if cycle.next_row >= rows {
+            self.origins[target] = cycle.origin;
+            self.lit[target] = cycle.lit;
+            self.cycle = None;
+            self.completes = true;
+        }
+        march.count
     }
 
     fn release(&mut self) {
