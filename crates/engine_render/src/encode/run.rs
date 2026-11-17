@@ -284,6 +284,10 @@ pub(crate) struct Pipelines {
 }
 
 impl Pipelines {
+    pub(crate) fn warming_left(&self) -> u32 {
+        self.warming.left().saturating_add(self.making.later_left())
+    }
+
     pub(crate) fn made_in(&mut self, pass: &'static str, computed: bool) {
         let at = match self.per_pass.iter().position(|(known, _)| *known == pass) {
             Some(at) => at,

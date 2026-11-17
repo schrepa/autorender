@@ -21,6 +21,7 @@ pub(crate) struct Finished {
     pub(crate) key: u64,
     pub(crate) pass: &'static str,
     pub(crate) noted: Option<(Compiled, bool)>,
+    pub(crate) later: bool,
     pub(crate) made: Result<Created, wgpu::Error>,
 }
 
@@ -38,12 +39,21 @@ pub(crate) struct Making {
     #[cfg(target_arch = "wasm32")]
     flights: Option<Flights>,
     pending: Vec<(u64, u64)>,
+    later: Vec<(u64, u64)>,
     refused: Vec<(u64, u64)>,
 }
 
 impl Making {
     pub(crate) fn pending(&self) -> u32 {
         u32::try_from(self.pending.len()).unwrap_or(u32::MAX)
+    }
+
+    pub(crate) fn needed(&self) -> u32 {
+        self.pending().saturating_sub(self.later_left())
+    }
+
+    pub(crate) fn later_left(&self) -> u32 {
+        u32::try_from(self.later.len()).unwrap_or(u32::MAX)
     }
 
     pub(crate) fn first(&self) -> Option<(u64, u64)> {
@@ -72,11 +82,14 @@ impl Making {
 
     pub(crate) fn submit(
         &mut self,
-        made: (u64, u64),
+        (made, later): ((u64, u64), bool),
         (pass, noted, stages): (&'static str, Option<(Compiled, bool)>, Vec<u64>),
         job: impl FnOnce() -> Creating + wgpu::WasmNotSend + 'static,
     ) {
         self.pending.push(made);
+        if later {
+            self.later.push(made);
+        }
         #[cfg(not(target_arch = "wasm32"))]
         {
             drop(stages);
@@ -86,6 +99,7 @@ impl Making {
                 key,
                 pass,
                 noted,
+                later,
                 made: job(),
             };
             if !self.started {
@@ -93,7 +107,7 @@ impl Making {
                 self.threads = Threads::start();
             }
             match &self.threads {
-                Some(threads) => threads.hand(made, Box::new(job)),
+                Some(threads) => threads.hand((made, later), Box::new(job)),
                 None => self.inline.push(job()),
             }
         }
@@ -104,6 +118,7 @@ impl Making {
                 made,
                 pass,
                 noted,
+                later,
                 stages,
                 job: Box::new(job),
             });
@@ -128,6 +143,8 @@ impl Making {
                 .iter()
                 .any(|finished| (finished.program, finished.key) == *made)
         });
+        let pending = &self.pending;
+        self.later.retain(|made| pending.contains(made));
         taken
     }
 
@@ -170,6 +187,7 @@ struct Queued {
     made: (u64, u64),
     pass: &'static str,
     noted: Option<(Compiled, bool)>,
+    later: bool,
     stages: Vec<u64>,
     job: Box<dyn FnOnce() -> Creating>,
 }
@@ -189,11 +207,13 @@ impl Flight {
         if self.flying >= self.slots {
             return None;
         }
+        let needed = self.jobs.iter().any(|queued| !queued.later);
         let at = self.jobs.iter().position(|queued| {
-            !queued
-                .stages
-                .iter()
-                .any(|stage| self.compiling.contains(stage))
+            (!queued.later || !needed)
+                && !queued
+                    .stages
+                    .iter()
+                    .any(|stage| self.compiling.contains(stage))
         })?;
         let queued = self.jobs.remove(at)?;
         self.compiling.extend(queued.stages.iter().copied());
@@ -236,7 +256,13 @@ impl Flights {
     }
 
     fn hand(&self, queued: Queued) {
-        self.shared.borrow_mut().jobs.push_back(queued);
+        {
+            let jobs = &mut self.shared.borrow_mut().jobs;
+            match jobs.iter().position(|held| held.later && !queued.later) {
+                Some(at) => jobs.insert(at, queued),
+                None => jobs.push_back(queued),
+            }
+        }
         launch(&self.shared);
     }
 
@@ -269,6 +295,7 @@ async fn fly(shared: Rc<RefCell<Flight>>, queued: Queued) {
         made: (program, key),
         pass,
         noted,
+        later,
         stages,
         job,
     } = queued;
@@ -281,6 +308,7 @@ async fn fly(shared: Rc<RefCell<Flight>>, queued: Queued) {
             key,
             pass,
             noted,
+            later,
             made,
         });
     }
@@ -297,7 +325,7 @@ impl Drop for Flights {
 #[cfg(not(target_arch = "wasm32"))]
 #[derive(Default)]
 struct Queue {
-    jobs: VecDeque<((u64, u64), Job)>,
+    jobs: VecDeque<((u64, u64), bool, Job)>,
     stopped: bool,
 }
 
@@ -353,15 +381,21 @@ impl Threads {
         })
     }
 
-    fn hand(&self, made: (u64, u64), job: Job) {
-        self.shared.lock().jobs.push_back((made, job));
+    fn hand(&self, (made, later): ((u64, u64), bool), job: Job) {
+        {
+            let mut queue = self.shared.lock();
+            match queue.jobs.iter().position(|held| held.1 && !later) {
+                Some(at) => queue.jobs.insert(at, (made, later, job)),
+                None => queue.jobs.push_back((made, later, job)),
+            }
+        }
         self.shared.handed.notify_one();
     }
 
     fn claim(&self, made: (u64, u64)) -> Option<Job> {
         let mut queue = self.shared.lock();
-        let at = queue.jobs.iter().position(|(known, _)| *known == made)?;
-        queue.jobs.remove(at).map(|(_, job)| job)
+        let at = queue.jobs.iter().position(|held| held.0 == made)?;
+        queue.jobs.remove(at).map(|(_, _, job)| job)
     }
 }
 
@@ -374,7 +408,7 @@ fn work(shared: &Shared, done: &mpsc::Sender<Finished>) {
                 if queue.stopped {
                     return;
                 }
-                if let Some((_, job)) = queue.jobs.pop_front() {
+                if let Some((_, _, job)) = queue.jobs.pop_front() {
                     break job;
                 }
                 queue = shared

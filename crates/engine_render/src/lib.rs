@@ -1204,6 +1204,13 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
         self.issue(pipeline, shape, None)
     }
 
+    pub fn speedup(&mut self, pipeline: Pipeline<P, S>) -> Option<Pipeline<P, S>> {
+        let part = self.raw.part();
+        let run = self.raw.run();
+        let point = run.point;
+        run.speedup_made(part, point, pipeline.0).then_some(pipeline)
+    }
+
     pub fn draw_timed<'l>(
         &mut self,
         pipeline: &Pipeline<P, S>,

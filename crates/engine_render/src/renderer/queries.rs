@@ -90,7 +90,7 @@ impl Renderer {
     pub fn pipelines_warming(&self) -> u32 {
         self.run
             .as_ref()
-            .map_or(0, |run| run.pipelines.warming.left())
+            .map_or(0, |run| run.pipelines.warming_left())
     }
 
     pub fn pipelines_warmed(&self) -> u32 {

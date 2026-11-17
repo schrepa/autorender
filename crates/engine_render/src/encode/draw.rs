@@ -147,6 +147,39 @@ impl Run {
         }
     }
 
+    pub(crate) fn speedup_made(
+        &mut self,
+        part: u32,
+        point: Option<&'static str>,
+        handle: u32,
+    ) -> bool {
+        let Some((pipeline, None)) = self.pipeline_of(handle) else {
+            return true;
+        };
+        let Some(open) = self.recording.open().filter(|_| self.scoped(part, point, pipeline))
+        else {
+            return true;
+        };
+        let layout = open.layout;
+        let Some(built) = self.machine.pipelines.get(pipeline as usize) else {
+            return true;
+        };
+        if built.skipped
+            || built
+                .ready
+                .iter()
+                .any(|ready| ready.layout == layout && ready.bits.is_none())
+        {
+            return true;
+        }
+        let targets = (layout.formats(), layout.depth);
+        let shown = (layout.plain, layout.main);
+        self.split()
+            .0
+            .speedup_unmade(pipeline, targets, shown, None)
+            .is_ok()
+    }
+
     pub(crate) fn draw(
         &mut self,
         part: u32,

@@ -549,7 +549,7 @@ impl Run {
         self.split().0.collect(None);
         self.feed_warming();
         let warming = u32::from(self.pipelines.warming.fed.is_some());
-        self.pipelines.making.pending().saturating_sub(warming)
+        self.pipelines.making.needed().saturating_sub(warming)
     }
 
     pub(crate) fn wait_made(&mut self) {
@@ -768,7 +768,7 @@ impl Run {
             let pass = self.machine.pass_name(pipeline);
             self.pipelines
                 .making
-                .submit(made, (pass, noted, stages), move || job.make());
+                .submit((made, false), (pass, noted, stages), move || job.make());
             if asked == Asked::Warmed {
                 self.pipelines.warming.fed = Some(made);
             }
@@ -838,7 +838,7 @@ impl Compiler<'_> {
                 Created::Compute(made) => built.computed.push((finished.key, made)),
             }
             self.pipelines.made_in(finished.pass, computed);
-            if warmed {
+            if warmed || finished.later {
                 self.pipelines.warming.made += 1;
             } else {
                 crate::pipelines::count(finished.pass, 1);
@@ -893,7 +893,7 @@ impl Compiler<'_> {
         self.compile_with(pipeline, targets, shown, variant, Asked::Waited)
     }
 
-    fn speedup_unmade(
+    pub(super) fn speedup_unmade(
         &mut self,
         pipeline: u32,
         targets: (
@@ -1110,10 +1110,15 @@ impl Compiler<'_> {
                 )
             });
             let pass = self.machine.pass_name(pipeline);
+            let later = self
+                .machine
+                .pipelines
+                .get(pipeline as usize)
+                .is_some_and(|built| built.decl.speedup_only);
             self.pipelines
                 .making
-                .submit(made, (pass, noted, stages), move || job.make());
-            if asked == Asked::Warmed {
+                .submit((made, later), (pass, noted, stages), move || job.make());
+            if asked == Asked::Warmed && !later {
                 self.pipelines.warming.fed = Some(made);
             }
             self.collect(wait.then_some(made));

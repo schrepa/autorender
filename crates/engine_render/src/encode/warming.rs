@@ -84,7 +84,7 @@ impl Run {
         }
         while let Some(warm) = self.pipelines.warming.queue.pop_front() {
             self.make_warm(warm, Asked::Warmed);
-            if self.pipelines.warming.fed.is_some() {
+            if self.pipelines.making.pending() > 0 {
                 return;
             }
         }
@@ -353,7 +353,7 @@ impl Run {
         let Some(keys) = self.pipelines.listed.take() else {
             return;
         };
-        let mut first: Vec<(usize, Warm)> = keys
+        let mut first: Vec<(bool, usize, Warm)> = keys
             .iter()
             .filter_map(|key| {
                 let Needed::First(switches) = &key.needed else {
@@ -364,16 +364,18 @@ impl Run {
                     .pipelines
                     .iter()
                     .position(|built| built.program_key == key.program)?;
-                let text = self.machine.pipelines[pipeline]
+                let built = &self.machine.pipelines[pipeline];
+                let text = built
                     .stages
                     .iter()
                     .map(|stage| stage.composed.text.len())
                     .sum();
-                Some((text, self.listed_warm(pipeline, key, switches.clone())))
+                let warm = self.listed_warm(pipeline, key, switches.clone());
+                Some((built.decl.speedup_only, text, warm))
             })
             .collect();
-        first.sort_by_key(|&(text, _)| std::cmp::Reverse(text));
-        for (_, warm) in first {
+        first.sort_by_key(|&(later, text, _)| (later, std::cmp::Reverse(text)));
+        for (_, _, warm) in first {
             self.make_warm(warm, Asked::Drawn);
         }
         self.pipelines.listed = Some(keys);
