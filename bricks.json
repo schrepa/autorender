@@ -2622,7 +2622,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "efbd32a8aa801abc1ec324f9b007b10e3bd1a16146c1c9e3a50fb7e409ea9504"
+      "version": "e6387a68fc7e1645c997adac39554cf73ddadbad9524870f7d5e6cbeaf4c329b"
     },
     {
       "dependencies": [
