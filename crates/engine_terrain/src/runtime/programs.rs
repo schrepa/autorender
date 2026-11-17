@@ -21,10 +21,6 @@ pub struct SurfacePrograms {
 }
 
 impl SurfacePrograms {
-    pub fn program(&self) -> &[u32] {
-        &self.program
-    }
-
     pub fn program_bytes(&self) -> u64 {
         (4 * self.program.len().max(1)) as u64
     }
@@ -35,6 +31,13 @@ impl SurfacePrograms {
 
     pub fn material_bytes(&self) -> u64 {
         (std::mem::size_of::<SurfaceEntry>() * self.entries.len().max(1)) as u64
+    }
+
+    fn pieces(&self) -> impl Iterator<Item = (Option<&Arc<SurfaceData>>, u32)> + '_ {
+        self.sources
+            .iter()
+            .zip(&self.entries)
+            .map(|(data, entry)| (data.as_ref(), entry.base))
     }
 
     pub(super) fn made_from(&self, terrains: &Terrains) -> bool {
@@ -83,6 +86,7 @@ fn drawn_surfaces(terrains: &Terrains) -> impl Iterator<Item = Option<&Arc<Surfa
 pub(crate) struct SurfaceProgramGpu {
     program: Buffer<Self>,
     materials: Buffer<Self>,
+    written: Vec<(Option<Arc<SurfaceData>>, u32)>,
 }
 
 impl GpuPart for SurfaceProgramGpu {
@@ -96,7 +100,11 @@ impl GpuPart for SurfaceProgramGpu {
         );
         cx.frame(face::SURFACE_PROGRAM, Bind::Buffer(program))?;
         cx.frame(face::SURFACE_MATERIALS, Bind::Buffer(materials))?;
-        Ok(Self { program, materials })
+        Ok(Self {
+            program,
+            materials,
+            written: Vec::new(),
+        })
     }
 
     fn prepare(
@@ -106,8 +114,25 @@ impl GpuPart for SurfaceProgramGpu {
     ) {
         let program = cx.allocate_buffer(self.program, programs.program_bytes());
         let materials = cx.allocate_buffer(self.materials, programs.material_bytes());
-        if programs.is_changed() || program == Allocation::Fresh || materials == Allocation::Fresh {
-            cx.write(self.program, 0, programs.program());
+        if program == Allocation::Fresh {
+            self.written.clear();
+        }
+        for (index, (data, base)) in programs.pieces().enumerate() {
+            let Some(data) = data else {
+                continue;
+            };
+            let held = self.written.get(index).is_some_and(|(held, at)| {
+                *at == base && held.as_ref().is_some_and(|held| Arc::ptr_eq(held, data))
+            });
+            if !held {
+                cx.write(self.program, u64::from(base) * 4, &data.words);
+            }
+        }
+        self.written = programs
+            .pieces()
+            .map(|(data, base)| (data.cloned(), base))
+            .collect();
+        if programs.is_changed() || materials == Allocation::Fresh {
             cx.write(self.materials, 0, programs.materials());
         }
     }
