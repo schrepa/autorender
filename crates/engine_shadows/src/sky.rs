@@ -126,7 +126,7 @@ impl SkyMaps {
         &mut self,
         (settings, occludes): (&SkyOcclusion, bool),
         (eye, now): (Vec3, f64),
-        (changed, quiet): (bool, bool),
+        (changed, quiet, preparing): (bool, bool, bool),
         draws: &mut Vec<SkyDraw>,
     ) {
         draws.clear();
@@ -152,7 +152,7 @@ impl SkyMaps {
             }
         }
         let reaches = [near * SPAN, far * SPAN];
-        for layer in self.choose(count as usize, eye, reaches, quiet) {
+        for layer in self.choose(count as usize, eye, reaches, (quiet, preparing)) {
             draws.push(self.redraw(layer, count, (eye, now), reaches));
         }
         self.drawn = draws.len() as u32;
@@ -191,7 +191,13 @@ impl SkyMaps {
         *self.uniform = uniform;
     }
 
-    fn choose(&self, count: usize, eye: Vec3, reaches: [f32; 2], quiet: bool) -> Vec<usize> {
+    fn choose(
+        &self,
+        count: usize,
+        eye: Vec3,
+        reaches: [f32; 2],
+        (quiet, preparing): (bool, bool),
+    ) -> Vec<usize> {
         let missing: Vec<usize> = in_use(count)
             .filter(|&layer| quiet && self.layers[layer].drawn.is_none())
             .collect();
@@ -214,10 +220,12 @@ impl SkyMaps {
         if !quiet {
             return Vec::new();
         }
-        in_use(count)
-            .find(|&layer| self.layers[layer].stale)
-            .into_iter()
-            .collect()
+        let stale = in_use(count).filter(|&layer| self.layers[layer].stale);
+        if preparing {
+            stale.collect()
+        } else {
+            stale.take(1).collect()
+        }
     }
 
     fn redraw(

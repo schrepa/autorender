@@ -568,7 +568,7 @@
         }
       ],
       "type": "engine_shadows::ShadowsBrick",
-      "version": "e8033d7a068de63b2feb4b4aa2e6cf38f0515bb7a7d1a223b0dfcd2dadc412b3"
+      "version": "96a2d37f404758c62c59ae80036daba74a02156ebef803de84a43612ba08b849"
     },
     {
       "dependencies": [

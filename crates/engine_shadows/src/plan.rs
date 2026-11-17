@@ -6,8 +6,8 @@ use engine_core::glam::Vec3;
 use engine_core::math;
 use engine_core::{
     Camera, Cursor, Cut, DeviceLimits, FrameTime, Mobility, Mover, Moves, Node, OwnedView,
-    OwnedViews, Pace, PartDraws, PassName, Readable, Readback, Readiness, Settling, Since, Spawner,
-    Switched, Transform, ViewDetail, ViewFacts, Views, mover_of,
+    OwnedViews, Pace, PartDraws, PassName, Pause, PauseReason, Readable, Readback, Readiness,
+    Settling, Since, Spawner, Switched, Transform, ViewDetail, ViewFacts, Views, mover_of,
 };
 use engine_places_rendering::shadows::{
     CasterMap, Refresh, Region as MapView, ShadowMaps,
@@ -256,13 +256,8 @@ pub(crate) fn plan_shadows(
         Switched<SkyOcclusion>,
     ),
     (sun, light, views, limits): (Res<Sun>, Res<SkyLight>, Res<Views>, Res<DeviceLimits>),
-    (changes, shown, time, readiness): (
-        Res<ShadowChanges>,
-        Res<DebugShown>,
-        Res<FrameTime>,
-        Res<Readiness>,
-    ),
-    mut drawn: ResMut<ShadowDrawn>,
+    (changes, shown, time): (Res<ShadowChanges>, Res<DebugShown>, Res<FrameTime>),
+    (mut drawn, readiness, pause): (ResMut<ShadowDrawn>, Res<Readiness>, Res<Pause>),
     (mut plan, mut piece): (ResMut<ShadowPlan>, ResMut<ShadowPiece>),
     (mut maps, mut published, mut spawner): (
         ResMut<ShadowMaps>,
@@ -316,13 +311,15 @@ pub(crate) fn plan_shadows(
         }
     }
     let quiet = readiness.loading.total == 0 && readiness.compiling == 0;
-    plan.levels.plan(live_cameras(&plan.cameras, (&moves, &lenses)), !quiet);
+    plan.levels
+        .plan(live_cameras(&plan.cameras, (&moves, &lenses)), !quiet);
     plan.moving = if changes.moving > 0 { key.moving } else { 0 };
     let occludes = occluding.on();
+    let preparing = pause.holds(PauseReason::Preparing);
     plan.sky.prepare(
         (&sky, occludes),
         (eye, time.real_elapsed),
-        (casters_changed, quiet),
+        (casters_changed, quiet, preparing),
         &mut plan.sky_draws,
     );
     crate::regions::views(
