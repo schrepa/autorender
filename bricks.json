@@ -2430,7 +2430,7 @@
         }
       ],
       "type": "engine_terrain_shading::TerrainShadingBrick",
-      "version": "a52a1e729e9e116fe032449a0a01b276ba71f73b5c665ac4711d321eddc1b25e"
+      "version": "e8a9b6399b149224d5f0558d0af45097544d9afbdcba024a5ac24b838f9e0f58"
     },
     {
       "dependencies": [
@@ -2622,7 +2622,7 @@
         }
       ],
       "type": "engine_scatter::ScatterBrick",
-      "version": "7084e415de609d385b30f45f6d47e53a379d95ad4b3ad5c71920fba3fd0012c4"
+      "version": "793276d198420171c24e84639ab1cd650c4909cc93658df28aa3538b9232db9e"
     },
     {
       "dependencies": [
@@ -2983,7 +2983,7 @@
         }
       ],
       "type": "engine_water::WaterBrick",
-      "version": "e61cece344f7601626428e2ca1eb6140d424e929f045d136dc7fe0951297786d"
+      "version": "91d9dfb7a3d778c5a820e99a6b57f6d0bff4fa14e93fa798e2fb62d8683e3f7f"
     },
     {
       "dependencies": [

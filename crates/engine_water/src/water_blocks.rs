@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
 use engine_core::math::{max, min};
-use engine_core::{Cursor, DeviceLimits, FrameBudget, RecordKey, Since};
+use engine_core::{Cursor, DeviceLimits, FrameBudget, RecordKey, Settling, Since};
 use engine_heightfield::TileKey;
 use engine_heightfield::tile::{PATCH_QUADS, PATCHES_PER_TILE};
 use engine_open_world_kit::ground::{GroundTiles, HeldTile};
@@ -310,6 +310,7 @@ pub(crate) struct Blocks {
     layer_writes: Vec<(u32, Slot)>,
     whole_directory: bool,
     dirty: BTreeSet<Slot>,
+    deferred: Settling,
     frames: u64,
     cursors: BTreeMap<Entity, Cursor>,
     placed: Vec<Option<Placed>>,
@@ -711,12 +712,12 @@ pub(crate) fn place_blocks(
     } else {
         blocks.dirty.extend(touched);
     }
-    if blocks.dirty.is_empty() {
-        return;
-    }
-    if blocks.place(&ground, &state.terrains, limits.texture_layers, &mut budget) {
+    if !blocks.dirty.is_empty()
+        && blocks.place(&ground, &state.terrains, limits.texture_layers, &mut budget)
+    {
         state.watered = blocks.holding();
     }
+    blocks.deferred.left(blocks.dirty.len() as u32);
 }
 
 type Texels = fn(&DrawnWater, usize) -> &[u8];
