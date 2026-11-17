@@ -39,24 +39,25 @@ fn carried_look(packed: vec2<u32>) -> PlantLook {
     return PlantLook(first.x, first.y, second.x, second.y);
 }
 
-fn varied(color: vec3<f32>, plant: u32, look: PlantLook) -> vec3<f32> {
+fn varied(color: vec3<f32>, plant: u32, look: PlantLook, held: vec4<f32>) -> vec3<f32> {
     let rolls = vec2<f32>(f32(plant >> 24u), f32((plant >> 16u) & 255u)) / 127.5 - 1.0;
-    let share = foliage().y;
+    let share = held.y;
     let angle = look.hue * share * rolls.x * PI * 2.0;
     let turned = color * cos(angle) + cross(GREY, color) * sin(angle)
         + GREY * (dot(GREY, color) * (1.0 - cos(angle)));
     return max(turned, vec3<f32>(0.0)) * (1.0 + look.brightness * share * rolls.y);
 }
 
-fn light_through(look: PlantLook, crown: f32) -> f32 {
-    return look.through * foliage().x * crown;
+fn light_through(look: PlantLook, crown: f32, held: vec4<f32>) -> f32 {
+    return look.through * held.x * crown;
 }
 
 fn plant_color(input: SurfaceInput, color: vec3<f32>) -> vec3<f32> {
     if input.kind != KIND_PLACED {
         return color;
     }
-    return varied(color, placed_values_of(input.kind, input.object).tint, stated_look());
+    return varied(color, placed_values_of(input.kind, input.object).tint, stated_look(),
+        foliage());
 }
 
 fn base_color(input: SurfaceInput, point: SurfacePoint) -> vec3<f32> {
@@ -104,7 +105,7 @@ fn occlusion(input: SurfaceInput, point: SurfacePoint) -> f32 {
 }
 
 fn transmission(input: SurfaceInput, point: SurfacePoint) -> f32 {
-    return light_through(stated_look(), crown_light(input));
+    return light_through(stated_look(), crown_light(input), foliage());
 }
 
 fn cutoff(input: SurfaceInput, point: SurfacePoint) -> f32 {

@@ -91,7 +91,11 @@ fn impostor_grid(d: vec3<f32>, hemisphere: bool) -> vec2<f32> {
 }
 
 fn impostor_frame_direction(frame: u32, frames: u32, hemisphere: bool) -> vec3<f32> {
-    let p = frame_cell(frame, frames) / f32(frames - 1u) * 2.0 - 1.0;
+    return cell_direction(frame_cell(frame, frames), frames, hemisphere);
+}
+
+fn cell_direction(cell: vec2<f32>, frames: u32, hemisphere: bool) -> vec3<f32> {
+    let p = cell / f32(frames - 1u) * 2.0 - 1.0;
     if hemisphere {
         return hemi_direction(p);
     }
@@ -200,10 +204,11 @@ struct CardFrame {
 
 fn card_frame(shown: u32, frames: u32, hemisphere: bool, dir: vec3<f32>, across: vec3<f32>,
         radius: f32) -> CardFrame {
-    let d = impostor_frame_direction(shown, frames, hemisphere);
+    let cell = frame_cell(shown, frames);
+    let d = cell_direction(cell, frames, hemisphere);
     let frame_basis = impostor_basis(d);
     let image = vec2<f32>(dot(across, frame_basis.right), -dot(across, frame_basis.up)) / radius;
-    return CardFrame((frame_cell(shown, frames) + 0.5 + image * 0.5) / f32(frames),
+    return CardFrame((cell + 0.5 + image * 0.5) / f32(frames),
         vec2<f32>(dot(dir, frame_basis.right), -dot(dir, frame_basis.up)),
         dot(across, d) / radius);
 }
@@ -560,9 +565,10 @@ struct SunLook {
 }
 
 fn sun_reaching(look: SunLook, frame: u32) -> f32 {
-    let d = impostor_frame_direction(frame, look.frames, look.hemisphere);
+    let held = frame_cell(frame, look.frames);
+    let d = cell_direction(held, look.frames, look.hemisphere);
     let basis = impostor_basis(d);
-    let cell = frame_cell(frame, look.frames) * look.span;
+    let cell = held * look.span;
     let across = vec2<f32>(dot(look.at, basis.right), -dot(look.at, basis.up));
     let uv = clamp(cell + (0.5 + 0.5 * across) * look.span, cell + look.inset,
         cell + look.span - look.inset);
@@ -583,9 +589,10 @@ fn card_sun(input: CardVertex, record: ImpostorRecord, point: SurfacePoint, sun:
     let reach = length(axis);
     let meters = reach / sun.turned;
     let shown = card_frames_first(input.material.w);
-    let seen_from = impostor_frame_direction(shown, frames, hemisphere);
+    let cell = frame_cell(shown, frames);
+    let seen_from = cell_direction(cell, frames, hemisphere);
     let held = impostor_basis(seen_from);
-    let image = (input.frames_ab.xy * f32(frames) - frame_cell(shown, frames) - 0.5) * 2.0;
+    let image = (input.frames_ab.xy * f32(frames) - cell - 0.5) * 2.0;
     let at = held.right * image.x - held.up * image.y + seen_from * input.crossings.x
         + (axis * input.depth_axis.w + unposed(input, point.world - input.world)) / reach;
     let look = SunLook(at, frames, hemisphere, span, inset, record.layer, level, meters,
