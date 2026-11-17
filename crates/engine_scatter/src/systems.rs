@@ -485,7 +485,7 @@ fn write_slots(state: &mut ScatterState) {
     let held = u64::from(end).min(room) as u32;
     state.left_objects = end - held;
     state.released = state.refilled || held == 0;
-    if state.released {
+    if held == 0 {
         state.slot_bytes = SLOT_FIRST;
     }
     for (bytes, stride) in state.slot_bytes.iter_mut().zip(SLOT_STRIDES) {
@@ -519,13 +519,14 @@ fn derive_groups(
             layout.impostor = before.impostor;
         }
     }
+    let regrouped = refill.then(|| state.groups.regrouped(&groups));
     state.groups = groups;
     state.refilled = refill;
-    if refill {
+    if let Some(regrouped) = regrouped {
         state.impostor_generation += 1;
         state.impostors = vec![ImpostorRecord::default(); state.groups.groups.len()];
         state.retake = true;
-        state.pool.clear(state.groups.groups.len());
+        state.pool.regroup(&state.groups, &regrouped);
     }
 }
 

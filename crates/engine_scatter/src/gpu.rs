@@ -562,6 +562,18 @@ fn ids_start(ids_per_view: u32, (ids, count): (u32, u32), view: usize, level: u3
     view as u64 * u64::from(ids_per_view) + u64::from(ids) + u64::from(level) * u64::from(count)
 }
 
+fn write_column<T: bytemuck::Pod>(
+    cx: &mut Prepare<'_, ScatterGpu>,
+    (buffer, first, room): (Buffer<ScatterGpu>, u32, usize),
+    column: &[T],
+) -> u32 {
+    let count = column.len().min(room);
+    if count > 0 {
+        cx.write(buffer, u64::from(first) * size_of::<T>() as u64, &column[..count]);
+    }
+    count as u32
+}
+
 fn grow(held: &mut u64, bytes: u64, room: u64) {
     let size = bytes.next_power_of_two().min(room);
     if bytes > *held && size > *held {
@@ -736,32 +748,12 @@ impl ScatterGpu {
                 None
             }
             SlotWrite::Objects(first, (poses, colors, records, values)) => {
-                let count = objects.saturating_sub(*first).min(records.len() as u32) as usize;
-                if count == 0 {
-                    return None;
-                }
-                let start = u64::from(*first);
-                cx.write(
-                    self.poses,
-                    start * size_of::<PoseData>() as u64,
-                    &poses[..count],
-                );
-                cx.write(
-                    self.colors,
-                    start * size_of::<SlotColor>() as u64,
-                    &colors[..count],
-                );
-                cx.write(
-                    self.records,
-                    start * size_of::<PlacedRecord>() as u64,
-                    &records[..count],
-                );
-                cx.write(
-                    self.values,
-                    start * size_of::<PlacedValues>() as u64,
-                    &values[..count],
-                );
-                Some(*first..*first + count as u32)
+                let room = objects.saturating_sub(*first) as usize;
+                let count = write_column(cx, (self.poses, *first, room), poses)
+                    .max(write_column(cx, (self.colors, *first, room), colors))
+                    .max(write_column(cx, (self.records, *first, room), records))
+                    .max(write_column(cx, (self.values, *first, room), values));
+                (count > 0).then(|| *first..*first + count)
             }
         }
     }
@@ -923,7 +915,6 @@ impl ScatterGpu {
         held.views.extend(listed.iter().map(|(view, _)| *view));
         if state.released {
             held.sizes = Sizes::default();
-            held.view_peak = 0;
         }
         let view_count = listed.len() as u32;
         held.view_peak = held.view_peak.max(view_count);

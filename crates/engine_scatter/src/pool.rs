@@ -8,7 +8,7 @@ use engine_math::collections::HashMap;
 use engine_tiles::TileKey;
 use glam::{Vec2, Vec3};
 
-use crate::groups::Groups;
+use crate::groups::{Changed, Groups, Regrouped};
 use engine_core::GpuBits;
 
 use crate::layouts::{
@@ -88,13 +88,24 @@ pub(crate) struct ScatterPool {
 }
 
 impl ScatterPool {
-    pub(crate) fn clear(&mut self, groups: usize) {
-        *self = Self {
-            counts: vec![0; groups],
-            spreads: vec![Spread::NONE; groups],
-            revision: self.revision + 1,
-            ..Self::default()
-        };
+    pub(crate) fn regroup(&mut self, groups: &Groups, regrouped: &Regrouped) {
+        let mut tiles: Vec<_> = std::mem::take(&mut self.tiles).into_iter().collect();
+        tiles.sort_unstable_by_key(|(key, _)| *key);
+        self.counts = vec![0; groups.groups.len()];
+        self.spreads = vec![Spread::NONE; groups.groups.len()];
+        self.far = 0;
+        self.revision += 1;
+        for (key, pooled) in tiles {
+            let changed = regrouped.tile(key.0, &pooled.placed);
+            let objects = groups.tile_objects(key.0, pooled.origin, &pooled.placed);
+            let from = (pooled.placed, pooled.stamp, pooled.origin);
+            if objects.2.len() == pooled.slots.len() {
+                self.hold(key, from, pooled.slots, (objects, changed));
+            } else {
+                self.vacate(pooled.slots);
+                self.insert(key, from, objects);
+            }
+        }
     }
 
     pub(crate) fn revision(&self) -> u64 {
@@ -160,6 +171,16 @@ impl ScatterPool {
         }
         let slots = self.allocate(count);
         self.revision += 1;
+        self.hold((id, key), (placed, stamp, origin), slots, (objects, Changed::ALL));
+    }
+
+    fn hold(
+        &mut self,
+        (id, key): PoolKey,
+        (placed, stamp, origin): (Arc<[Placed]>, Stamp, Vec3),
+        slots: Range<u32>,
+        (mut objects, changed): (TileObjects, Changed),
+    ) {
         let mut groups: Vec<(u32, u32)> = Vec::new();
         let mut far = 0;
         for record in &objects.2 {
@@ -179,7 +200,21 @@ impl ScatterPool {
         let reach = bounds(&objects.2);
         let stands = stands(&objects.0);
         self.moved.extend(reach.map(|reach| (id, reach)));
-        self.writes.push(SlotWrite::Objects(slots.start, objects));
+        if !changed.set {
+            if !changed.records {
+                objects.0.clear();
+                objects.2.clear();
+            }
+            if !changed.colors {
+                objects.1.clear();
+            }
+            if !changed.values {
+                objects.3.clear();
+            }
+        }
+        if !(objects.0.is_empty() && objects.1.is_empty() && objects.3.is_empty()) {
+            self.writes.push(SlotWrite::Objects(slots.start, objects));
+        }
         self.tiles.insert(
             (id, key),
             Pooled {
