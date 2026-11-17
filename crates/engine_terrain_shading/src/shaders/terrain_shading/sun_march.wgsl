@@ -75,14 +75,18 @@ fn sun_ground(world: vec2<f32>, width: f32, count: u32) -> SunGround {
 }
 
 fn sun_stand(world: vec2<f32>, job: SunJob) -> SunGround {
-    var held = sun_ground(world, job.place.z, job.rows.w);
-    if !held.found {
-        return held;
-    }
-    for (var corner = 0u; corner < 4u; corner++) {
+    var held: SunGround;
+    for (var index = 0u; index < 5u; index++) {
+        let corner = (index + 3u) & 3u;
         let aside = vec2<f32>(f32(corner & 1u), f32(corner >> 1u)) - 0.5;
-        let edge = sun_ground(world + aside * job.place.z, job.place.z, job.rows.w);
-        if edge.found {
+        let edge = sun_ground(select(world + aside * job.place.z, world, index == 0u),
+            job.place.z, job.rows.w);
+        if index == 0u {
+            if !edge.found {
+                return edge;
+            }
+            held = edge;
+        } else if edge.found {
             held.height = max(held.height, edge.height);
         }
     }
@@ -273,8 +277,17 @@ fn sun_lean(world: vec2<f32>, job: SunJob, span: f32) -> f32 {
     let width = sun_width(job, span);
     let aside = vec2<f32>(-job.heading.y, job.heading.x) * width;
     let crest = world + job.heading.xy * span;
-    let left = sun_ground(crest - aside, width, job.rows.w);
-    let right = sun_ground(crest + aside, width, job.rows.w);
+    var left: SunGround;
+    var right: SunGround;
+    for (var side = 0u; side < 2u; side++) {
+        let righter = side == 1u;
+        let ground = sun_ground(select(crest - aside, crest + aside, righter), width, job.rows.w);
+        if righter {
+            right = ground;
+        } else {
+            left = ground;
+        }
+    }
     if !(left.found && right.found) {
         return 0.0;
     }
