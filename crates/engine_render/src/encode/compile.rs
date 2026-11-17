@@ -1004,7 +1004,7 @@ impl Compiler<'_> {
             return None;
         };
         let switches = stage_switches(&self.pipelines.switches, &built.stages);
-        let used = variant.map_or([false; 5], |variant| {
+        let used = variant.map_or([false; 3], |variant| {
             variant.constants().map(|offered| {
                 built
                     .stages

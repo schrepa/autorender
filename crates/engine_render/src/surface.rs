@@ -85,16 +85,12 @@ impl FaceCull {
     }
 }
 
-const SLOT_BITS: u32 = 4;
-const SLOTS_PER_WORD: usize = (u32::BITS / SLOT_BITS) as usize;
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct MaterialVariant {
     pub state: u32,
     pub bias: [i32; 2],
     pub maps: u32,
     pub model: u32,
-    pub slots: [u32; 2],
     pub cull: FaceCull,
 }
 
@@ -104,7 +100,6 @@ impl MaterialVariant {
         bias: [0, 0],
         maps: 0,
         model: 0,
-        slots: [0, 0],
         cull: FaceCull::Back,
     };
 
@@ -124,13 +119,11 @@ impl MaterialVariant {
         matches!(self.draw().alpha, Alpha::Blend | Alpha::Additive)
     }
 
-    pub(crate) fn constants(self) -> [(&'static str, f64); 5] {
+    pub(crate) fn constants(self) -> [(&'static str, f64); 3] {
         [
             ("DRAW_STATE", f64::from(self.state)),
             ("MATERIAL_MAPS", f64::from(self.maps)),
             ("MATERIAL_MODEL", f64::from(self.model)),
-            ("MATERIAL_SLOTS_LOW", f64::from(self.slots[0])),
-            ("MATERIAL_SLOTS_HIGH", f64::from(self.slots[1])),
         ]
     }
 
@@ -144,13 +137,12 @@ impl MaterialVariant {
             .pack(),
             maps: 0,
             model: 0,
-            slots: [0, 0],
             ..self
         })
     }
 
-    pub(crate) fn keyed(self, used: [bool; 5], styled: bool, faced: bool) -> Option<Self> {
-        let [stated, mapped, modeled, low, high] = used;
+    pub(crate) fn keyed(self, used: [bool; 3], styled: bool, faced: bool) -> Option<Self> {
+        let [stated, mapped, modeled] = used;
         if !used.contains(&true) && !styled && !faced {
             return None;
         }
@@ -171,10 +163,6 @@ impl MaterialVariant {
             bias: if styled { self.bias } else { [0, 0] },
             maps: if mapped { self.maps } else { 0 },
             model: if modeled { self.model } else { 0 },
-            slots: [
-                if low { self.slots[0] } else { 0 },
-                if high { self.slots[1] } else { 0 },
-            ],
             cull: if faced { self.cull } else { FaceCull::Back },
         })
     }
@@ -703,17 +691,9 @@ impl MaterialLayout {
             2 * self.maps.len(),
             self.value_vec4s()
         );
-        for name in [
-            "DRAW_STATE",
-            "MATERIAL_MAPS",
-            "MATERIAL_MODEL",
-            "MATERIAL_SLOTS_LOW",
-            "MATERIAL_SLOTS_HIGH",
-        ] {
+        for name in ["DRAW_STATE", "MATERIAL_MAPS", "MATERIAL_MODEL"] {
             let _ = writeln!(source, "override {name}: u32 = 0u;");
         }
-        let _ = writeln!(source, "const SLOT_BITS: u32 = {SLOT_BITS}u;");
-        let _ = writeln!(source, "const SLOTS_PER_WORD: u32 = {SLOTS_PER_WORD}u;");
         source.push_str(<DrawState as GpuBits>::WGSL);
         source.push_str(<Alpha as BitValue>::WGSL);
         source.push_str(<Lighting as BitValue>::WGSL);
@@ -1002,21 +982,12 @@ impl MaterialLayout {
     }
 
     pub(crate) fn variant(&self, material: Option<&Material>, words: &[u32]) -> MaterialVariant {
-        let modules: Vec<u32> = (0..self.slot_count()).map(|at| words[12 + at]).collect();
-        let fixed = self.maps.len() <= u32::BITS as usize
-            && modules.len() <= 2 * SLOTS_PER_WORD
-            && modules.iter().all(|&id| id < 1 << SLOT_BITS);
+        let fixed = self.maps.len() <= u32::BITS as usize;
         let maps_at = self.maps_at();
         let mut maps = 0_u32;
         for index in 0..self.maps.len().min(u32::BITS as usize) {
             if f32::from_bits(words[maps_at + index * 8 + 3]) != 0.0 {
                 maps |= 1 << index;
-            }
-        }
-        let mut slots = [0_u32; 2];
-        if fixed {
-            for (at, id) in modules.iter().enumerate() {
-                slots[at / SLOTS_PER_WORD] |= id << ((at % SLOTS_PER_WORD) as u32 * SLOT_BITS);
             }
         }
         let state = material.map_or_else(engine_core::RenderState::default, Material::render_state);
@@ -1029,7 +1000,6 @@ impl MaterialLayout {
             bias: [state.bias.constant, state.bias.slope.to_bits() as i32],
             maps: if fixed { maps } else { 0 },
             model: if fixed { words[8] } else { 0 },
-            slots,
             cull: FaceCull::of(state.cull),
         }
     }
@@ -1127,10 +1097,6 @@ fn material_value(index: u32) -> f32 {{
 }}
 
 fn material_module(slot: u32) -> u32 {{
-    if fixed_material() {{
-        let word = select(MATERIAL_SLOTS_LOW, MATERIAL_SLOTS_HIGH, slot >= SLOTS_PER_WORD);
-        return (word >> ((slot % SLOTS_PER_WORD) * SLOT_BITS)) & ((1u << SLOT_BITS) - 1u);
-    }}
     return {RECORD}.modules[slot / 4u][slot % 4u];
 }}
 
