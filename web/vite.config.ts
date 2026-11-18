@@ -66,12 +66,12 @@ export default defineConfig(({ command, mode }) => ({
       server.middlewares.use("/_engine/source", async (request, response) => {
         try {
           const file = resolve(workspace, `.${decodeURIComponent(request.url?.split("?")[0] ?? "")}`);
-          if (request.method !== "GET" || !file.endsWith(".scene.json") || !gameFolders.some(folder => file.startsWith(folder))) throw new Error("not a game's scene file");
-          const text = await readFile(file);
-          response.setHeader("Content-Type", "application/json; charset=utf-8");
+          if (request.method !== "GET" || !gameFolders.some(folder => file.startsWith(folder))) throw new Error("not a game's file");
+          const bytes = await readFile(file);
+          response.setHeader("Content-Type", file.endsWith(".json") ? "application/json; charset=utf-8" : file.endsWith(".png") ? "image/png" : file.endsWith(".jpg") ? "image/jpeg" : "application/octet-stream");
           response.setHeader("Cache-Control", "no-store");
-          response.end(text);
-        } catch { response.statusCode = 404; response.end("Scene source not found"); }
+          response.end(bytes);
+        } catch { response.statusCode = 404; response.end("Source file not found"); }
       });
       server.middlewares.use("/_engine/runs", async (request, response) => {
         const plain = /^[A-Za-z0-9_.-]+$/;
