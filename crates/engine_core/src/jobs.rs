@@ -160,10 +160,10 @@ impl JobCx<'_> {
 
 #[doc(hidden)]
 pub fn job_list(kinds: &[&'static JobKind]) -> Result<JobList, Error> {
-    let core: [&'static JobKind; 1] = [&MESH_LODS];
     JobList::new(
-        core.into_iter()
-            .chain(kinds.iter().copied())
+        kinds
+            .iter()
+            .copied()
             .map(|kind| (kind.name, kind.source.hash(), kind as JobKindRef)),
     )
 }
@@ -489,36 +489,6 @@ pub fn record_missing(error: &Error) -> bool {
             .as_ref()
             .and_then(serde_json::Value::as_str)
             == Some(MISSING_RECORD)
-}
-
-static LODBUILD: Source = Source::generated(
-    "engine_lodbuild",
-    false,
-    engine_lodbuild::SOURCE_DIGEST,
-    &[],
-);
-
-pub(crate) const MESH_LODS_NAME: &str = "engine::mesh_lods";
-
-#[doc(hidden)]
-pub static MESH_LODS: JobKind = JobKind::new(MESH_LODS_NAME, &LODBUILD, start_mesh_lods);
-
-struct Whole {
-    input: Vec<u8>,
-    run: fn(&[u8]) -> Result<Vec<u8>, Error>,
-}
-
-impl Job for Whole {
-    fn step(&mut self, _: u64, _: &mut JobCx<'_>) -> Result<Option<Vec<u8>>, Error> {
-        (self.run)(&self.input).map(Some)
-    }
-}
-
-fn start_mesh_lods(input: &[u8], _: &mut JobCx<'_>) -> Result<Box<dyn Job>, Error> {
-    Ok(Box::new(Whole {
-        input: input.to_vec(),
-        run: engine_lodbuild::run,
-    }))
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]

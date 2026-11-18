@@ -8,7 +8,7 @@ use std::sync::{
 use bevy_ecs::prelude::Resource;
 use engine_codec::{Error, ErrorCode, Expected};
 
-use crate::{Material, Mesh, MeshLods, Texture, takes_levels};
+use crate::{Material, Mesh, Texture};
 
 fn full(path: &str, limit: usize) -> Error {
     Error::new(ErrorCode::AssetBudgetExceeded, path).at_most(limit as u64)
@@ -437,42 +437,12 @@ impl<T> Storage<T> {
     }
 }
 
-enum Levels {
-    Awaiting,
-    Built(Arc<MeshLods>),
-    Without,
-}
-
-struct HeldMesh {
-    mesh: Arc<Mesh>,
-    lods: Levels,
-}
-
-impl HeldMesh {
-    fn new(mesh: Mesh) -> Self {
-        let lods = match mesh.lods() {
-            Some(lods) => Levels::Built(Arc::clone(lods)),
-            None if takes_levels(&mesh) => Levels::Awaiting,
-            None => Levels::Without,
-        };
-        Self {
-            mesh: Arc::new(mesh),
-            lods,
-        }
-    }
-
-    fn awaits(&self) -> bool {
-        matches!(self.lods, Levels::Awaiting)
-    }
-}
-
 #[derive(Resource)]
 pub struct AssetLibrary {
     id: u64,
     revision: u64,
     budget: AssetBudget,
-    meshes: Storage<HeldMesh>,
-    awaiting_lods: Vec<GeometryHandle>,
+    meshes: Storage<Arc<Mesh>>,
     materials: Storage<Material>,
     textures: Storage<Arc<Texture>>,
     resident_bytes: usize,
@@ -501,7 +471,6 @@ impl AssetLibrary {
             revision: 0,
             budget,
             meshes: Storage::default(),
-            awaiting_lods: Vec::new(),
             materials: Storage::default(),
             textures: Storage::default(),
             resident_bytes: 0,
@@ -514,14 +483,12 @@ impl AssetLibrary {
             return Err(full("$.meshes", self.budget.max_meshes));
         }
         self.reserve_bytes(mesh.byte_len())?;
-        let held = HeldMesh::new(mesh);
-        let awaits = held.awaits();
         let revision = self.bump();
-        let handle = GeometryHandle(self.meshes.insert(self.id, held, revision));
-        if awaits {
-            self.awaiting_lods.push(handle);
-        }
-        Ok(handle)
+        Ok(GeometryHandle(self.meshes.insert(
+            self.id,
+            Arc::new(mesh),
+            revision,
+        )))
     }
 
     pub fn reserve_mesh(&mut self) -> Result<GeometryHandle, Error> {
@@ -537,46 +504,10 @@ impl AssetLibrary {
             return Err(dead(ErrorCode::InvalidMesh, "$.mesh"));
         }
         self.reserve_bytes(mesh.byte_len())?;
-        let held = HeldMesh::new(mesh);
-        if held.awaits() {
-            self.awaiting_lods.push(handle);
-        }
         let revision = self.bump();
-        self.meshes.fill(self.id, handle.0, held, revision);
+        self.meshes
+            .fill(self.id, handle.0, Arc::new(mesh), revision);
         Ok(())
-    }
-
-    pub fn take_awaiting_lods(&mut self) -> Vec<GeometryHandle> {
-        std::mem::take(&mut self.awaiting_lods)
-    }
-
-    pub fn settle_lods(
-        &mut self,
-        handle: GeometryHandle,
-        lods: Option<Arc<MeshLods>>,
-    ) -> Result<(), Error> {
-        let held = self
-            .meshes
-            .get_mut(self.id, handle.0)
-            .filter(|held| !matches!(held.lods, Levels::Built(_)))
-            .ok_or_else(|| dead(ErrorCode::InvalidMesh, "$.mesh"))?;
-        if let Some(lods) = &lods {
-            lods.check(held.mesh.indices().len(), held.mesh.vertices().len())?;
-        }
-        let bytes = lods.as_deref().map_or(0, MeshLods::byte_len);
-        held.lods = lods.map_or(Levels::Without, Levels::Built);
-        self.resident_bytes += bytes;
-        let revision = self.bump();
-        self.meshes.touch(self.id, handle.0, revision);
-        Ok(())
-    }
-
-    pub fn mesh_lods(&self, handle: GeometryHandle) -> Option<Option<&Arc<MeshLods>>> {
-        match &self.meshes.get(self.id, handle.0)?.lods {
-            Levels::Awaiting => None,
-            Levels::Built(lods) => Some(Some(lods)),
-            Levels::Without => Some(None),
-        }
     }
 
     pub fn insert_material(&mut self, material: Material) -> Result<MaterialHandle, Error> {
@@ -653,7 +584,7 @@ impl AssetLibrary {
     }
 
     pub fn mesh(&self, handle: GeometryHandle) -> Option<&Arc<Mesh>> {
-        self.meshes.get(self.id, handle.0).map(|held| &held.mesh)
+        self.meshes.get(self.id, handle.0)
     }
 
     pub fn revision(&self) -> (u64, u64) {
@@ -680,13 +611,7 @@ impl AssetLibrary {
         let Some(mesh) = self.meshes.remove(self.id, handle.0) else {
             return false;
         };
-        self.resident_bytes -= mesh.map_or(0, |held| {
-            let settled = match &held.lods {
-                Levels::Built(lods) if held.mesh.lods().is_none() => lods.byte_len(),
-                Levels::Built(_) | Levels::Awaiting | Levels::Without => 0,
-            };
-            held.mesh.byte_len() + settled
-        });
+        self.resident_bytes -= mesh.map_or(0, |mesh| mesh.byte_len());
         self.bump();
         true
     }
@@ -724,7 +649,7 @@ impl AssetLibrary {
     }
 
     pub fn meshes(&self) -> impl Iterator<Item = (usize, &Arc<Mesh>)> {
-        self.meshes.values().map(|(slot, held)| (slot, &held.mesh))
+        self.meshes.values()
     }
 
     pub fn materials(&self) -> impl Iterator<Item = (usize, &Material)> {

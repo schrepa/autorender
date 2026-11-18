@@ -5,7 +5,6 @@
 
 mod attributes;
 mod library;
-mod lod;
 mod material;
 mod mesh;
 mod record;
@@ -15,12 +14,11 @@ pub use attributes::{
     Attribute, AttributeFormat, Attributes, FIRST_NAMED_LOCATION, GeometryStream, InstanceInput,
     StreamShape, attributes_wgsl,
 };
-pub use engine_lodbuild::{LodInput, LodLevel, MeshLods, MeshVertex};
+pub use engine_lodbuild::{LodLevel, MeshLods, MeshVertex};
 pub use library::{
     Asset, AssetBudget, AssetLibrary, GeometryHandle, MaterialHandle, SceneAssets, SceneTable,
     TextureHandle,
 };
-pub use lod::{lod_input, takes_levels};
 pub use material::{
     AlphaMode, BASE_COLOR_MAP, Compare, Cull, DepthBias, EMISSIVE_MAP, Filter, LightingModel,
     MAPPED, MAPPED_MAPS, MAPPED_SLOTS, Material, MaterialBinding, NORMAL_MAP, RenderState, Sampler,

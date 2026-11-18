@@ -16,7 +16,7 @@ use glam::Mat4;
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
 
-use crate::{Error, ErrorCode, Expected, List, settings};
+use crate::{Error, ErrorCode, Expected, List};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Placed {
@@ -599,33 +599,6 @@ impl SceneContext {
             .as_deref()
             .into_iter()
             .flat_map(JobList::members::<L>)
-    }
-}
-
-#[derive(
-    Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, serde::Deserialize, schemars::JsonSchema,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum Levels {
-    #[default]
-    ByPixelError,
-    Finest,
-}
-
-settings! {
-    #[section("detail")]
-    pub struct Detail {
-        pub levels: Levels = Levels::ByPixelError => any,
-        pub pixel_error: f32 = 1.0 => range(0.25, 64.0),
-    }
-}
-
-impl Detail {
-    pub fn chosen_error(&self) -> Option<f32> {
-        match self.levels {
-            Levels::ByPixelError => Some(self.pixel_error),
-            Levels::Finest => None,
-        }
     }
 }
 

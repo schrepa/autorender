@@ -20,7 +20,6 @@ mod hierarchy;
 mod input;
 mod jobs;
 pub mod math;
-mod mesh_lods;
 mod moves;
 pub use engine_math::collections;
 mod presentation;
@@ -55,10 +54,10 @@ pub use drawn::{
 pub use engine_assets::{
     Aabb, AlphaMode, Asset, AssetBudget, AssetLibrary, Attribute, AttributeFormat, Attributes,
     BASE_COLOR_MAP, ColorSpace, Compare, Cull, DepthBias, EMISSIVE_MAP, FIRST_NAMED_LOCATION,
-    Filter, GeometryStream, InstanceInput, LightingModel, LodInput, LodLevel, MAPPED, MAPPED_MAPS,
+    Filter, GeometryStream, InstanceInput, LightingModel, LodLevel, MAPPED, MAPPED_MAPS,
     MAPPED_SLOTS, Material, MaterialBinding, Mesh, MeshLods, MeshVertex, NORMAL_MAP, NamedStream,
     RenderState, Sampler, StreamShape, SurfaceSlot, Texture, TextureFormat, TextureRef,
-    UvTransform, Wrap, attributes_wgsl, lod_input,
+    UvTransform, Wrap, attributes_wgsl,
 };
 pub use engine_place::{
     AuthoredId, Named, OperationScene, SCENE_SCHEMA, SceneEntity, entity_removed, schema_of,
@@ -91,7 +90,6 @@ pub use glam;
 pub use hierarchy::*;
 pub use input::*;
 pub use jobs::*;
-pub use mesh_lods::MeshLevels;
 pub use moves::{Moves, Teleport, mover_of, send_ask, take_asks};
 pub use presentation::*;
 pub use provided::*;
@@ -103,9 +101,9 @@ pub use scene::*;
 pub use schedules::{RunPace, RunPoint};
 pub use section::{Cut, Section, Switch};
 pub use services::{
-    Authored, ComponentKind, ComponentKindOf, Detail, DeviceLimits, Levels, Placed,
-    Placement, Prepared, SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneForm,
-    scene_component, scene_components,
+    Authored, ComponentKind, ComponentKindOf, DeviceLimits, Placed, Placement, Prepared,
+    SceneBuffers, SceneComponents, SceneContext, SceneCx, SceneForm, scene_component,
+    scene_components,
 };
 pub use shared::FeedSettings;
 pub use source::{Entry, Module, ShaderText, Source, Var};
@@ -230,7 +228,6 @@ fn has_systems(world: &World, label: impl ScheduleLabel) -> bool {
 }
 
 fn core_entries(registry: &mut RegistryBuilder) {
-    registry.core_settings(bricks::settings_entry::<Detail>());
     registry.core_settings(bricks::settings_entry::<FeedSettings>());
     registry.core_settings(bricks::settings_entry::<DrawnSettings>());
     registry.core_settings(bricks::settings_entry::<FrameLimits>());
@@ -354,7 +351,6 @@ impl Engine {
             .init_resource::<Readiness>()
             .init_resource::<Refusals>()
             .init_resource::<Views>()
-            .init_resource::<Detail>()
             .init_resource::<FeedSettings>()
             .init_resource::<DrawnSettings>()
             .insert_resource(exchange)
@@ -364,7 +360,6 @@ impl Engine {
             .init_resource::<Files>()
             .init_resource::<RecordExchange>()
             .insert_resource(DeviceLimits::without_device(cores))
-            .init_resource::<MeshLevels>()
             .init_resource::<Devices>()
             .init_resource::<CursorMode>()
             .init_resource::<ProvidedAssets>()
@@ -730,7 +725,6 @@ impl Engine {
         let _profile = engine_profile::span("cpu", "extraction");
         self.scoped(|engine| {
             engine.finalize();
-            mesh_lods::settle(engine.app.world_mut());
             engine.refresh_transforms();
             presentation::gather(engine.app.world_mut());
             engine.sync_view();

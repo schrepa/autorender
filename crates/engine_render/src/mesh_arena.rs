@@ -436,7 +436,7 @@ impl GpuMeshes {
             let Some(class) = residency.class(resident.class()) else {
                 continue;
             };
-            let lods = library.mesh_lods(handle).flatten().map(|lods| &**lods);
+            let lods = source.lods().map(|lods| &**lods);
             bytes += self.upload(device, queue, (handle, resident, class), source, lods);
         }
         bytes

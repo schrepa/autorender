@@ -2,9 +2,9 @@ use bevy_ecs::component::ComponentId;
 use bevy_ecs::entity::Entity;
 use bevy_ecs::world::World;
 use engine_core::{
-    AssetLibrary, AssetResidency, Drawn, GeometryHandle, GlobalTransforms, Kind, Lands,
-    MaterialHandle, NameEntry, OperationScene, Parent, Reach, ReachMut, Transform,
-    scene_component, scene_components, unavailable,
+    AssetLibrary, Drawn, GeometryHandle, GlobalTransforms, Kind, Lands, MaterialHandle, NameEntry,
+    OperationScene, Parent, Reach, ReachMut, Transform, scene_component, scene_components,
+    unavailable,
 };
 use engine_scene::{SceneEntity, SceneInstance, SceneMaterial, TextureOrigin};
 use engine_settings::{Error, ErrorCode, Expected};
@@ -222,7 +222,6 @@ fn drawn_mesh(reach: &Reach<'_>, entity: Entity) -> Option<Value> {
     let held: Option<MaterialHandle> = drawn.material;
     let assets = world.get_resource::<AssetLibrary>()?;
     let scene = reach.part::<SceneInstance>();
-    let residency = world.get_resource::<AssetResidency>();
     let mesh = assets.mesh(handle).map(|mesh| {
         let origin = scene.and_then(|scene| scene.mesh_origin(handle));
         let bounds = mesh.bounds();
@@ -234,13 +233,6 @@ fn drawn_mesh(reach: &Reach<'_>, entity: Entity) -> Option<Value> {
             "local_bounds": { "min": bounds.min().to_array(), "max": bounds.max().to_array() },
             "colors": mesh.colors().is_some(),
             "uv1": mesh.uv1().is_some(),
-            "levels": residency.and_then(|residency| residency.mesh(handle)).map(|resident| {
-                resident
-                    .lods()
-                    .iter()
-                    .map(|&(_, indices, error)| json!({ "indices": indices, "error": error }))
-                    .collect::<Vec<_>>()
-            }),
         })
     });
     let material = held.and_then(|material| assets.material(material));

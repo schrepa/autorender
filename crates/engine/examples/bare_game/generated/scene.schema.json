@@ -37,22 +37,6 @@
       ],
       "type": "string"
     },
-    "Detail": {
-      "properties": {
-        "levels": {
-          "$ref": "#/$defs/Levels",
-          "default": "by_pixel_error"
-        },
-        "pixel_error": {
-          "default": 1.0,
-          "format": "float",
-          "maximum": 64.0,
-          "minimum": 0.25,
-          "type": "number"
-        }
-      },
-      "type": "object"
-    },
     "DrawnForm": {
       "additionalProperties": false,
       "properties": {
@@ -214,13 +198,6 @@
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
-    },
-    "Levels": {
-      "enum": [
-        "by_pixel_error",
-        "finest"
-      ],
-      "type": "string"
     },
     "MeshSource": {
       "oneOf": [
@@ -573,16 +550,6 @@
     "SceneEnvironment": {
       "additionalProperties": false,
       "properties": {
-        "detail": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/Detail"
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
         "drawn": {
           "anyOf": [
             {

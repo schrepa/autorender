@@ -3,7 +3,7 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::world::World;
 use engine_assets::{
     Asset, AssetLibrary, AttributeFormat, GeometryHandle, GeometryStream, MaterialHandle, Mesh,
-    MeshLods, TextureHandle,
+    TextureHandle,
 };
 
 use crate::{Census, Error, ErrorCode, Expected, Feed, Interest, Request, Requests};
@@ -255,8 +255,6 @@ pub struct ResidentMesh {
     extended: bool,
     index_count: u32,
     byte_len: u64,
-    lods: Vec<(u32, u32, f32)>,
-    without_levels: bool,
 }
 
 impl ResidentMesh {
@@ -295,39 +293,21 @@ impl ResidentMesh {
         self.byte_len
     }
 
-    pub fn lods(&self) -> &[(u32, u32, f32)] {
-        &self.lods
-    }
-
-    pub fn without_levels(&self) -> bool {
-        self.without_levels
-    }
-
     #[doc(hidden)]
     pub fn placement(&self) -> MeshResidence {
         self.placement
     }
 }
 
-fn resident_mesh(
-    (mesh, lods): (&Mesh, Option<&MeshLods>),
-    revision: u64,
-    arena: &mut Arena,
-) -> ResidentMesh {
+fn resident_mesh(mesh: &Mesh, revision: u64, arena: &mut Arena) -> ResidentMesh {
     let class = GeometryClass::of(mesh);
     let extended = class.extended();
     let class = arena.class_of(class);
-    let total = mesh.indices().len() + lods.map_or(0, |lods| lods.indices.len());
+    let total = mesh.indices().len() + mesh.lods().map_or(0, |lods| lods.indices.len());
     let placement = u32::try_from(total)
         .ok()
         .and_then(|count| arena.insert(class, mesh.vertices().len() as u32, count))
         .map_or(MeshResidence::Own, MeshResidence::Arena);
-    let levels: Vec<(u32, u32, f32)> = lods.map_or_else(Vec::new, |lods| {
-        lods.levels
-            .iter()
-            .map(|level| (level.first_index, level.index_count, level.error))
-            .collect()
-    });
     ResidentMesh {
         placement,
         revision,
@@ -335,8 +315,6 @@ fn resident_mesh(
         extended,
         index_count: mesh.indices().len() as u32,
         byte_len: mesh.byte_len() as u64,
-        lods: levels,
-        without_levels: lods.is_none(),
     }
 }
 
@@ -538,14 +516,10 @@ impl AssetResidency {
         };
         match asset {
             Asset::Mesh(handle) => {
-                let (Some(mesh), Some(lods), Some(arena)) = (
-                    library.mesh(handle),
-                    library.mesh_lods(handle),
-                    self.arena.as_mut(),
-                ) else {
+                let (Some(mesh), Some(arena)) = (library.mesh(handle), self.arena.as_mut()) else {
                     return Resolved::Waiting;
                 };
-                let resident = resident_mesh((mesh, lods.map(|lods| &**lods)), revision, arena);
+                let resident = resident_mesh(mesh, revision, arena);
                 self.placed.push(handle);
                 Resolved::Ready(Resident::Mesh(resident))
             }

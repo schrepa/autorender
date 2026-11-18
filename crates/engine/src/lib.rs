@@ -8,7 +8,7 @@ pub use engine_scene as scene;
 pub use engine_settings as settings;
 pub use glam;
 pub mod game;
-pub use engine_core::{Detail, Error};
+pub use engine_core::Error;
 pub use engine_settings::{Allowed, Expected, InvalidSetting, JS_ERROR_NAME};
 
 pub type Result<T, E = Error> = std::result::Result<T, E>;
