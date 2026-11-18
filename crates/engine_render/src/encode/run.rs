@@ -348,6 +348,7 @@ pub(crate) struct Canvas {
     pub(crate) load: bool,
     pub(crate) carried: bool,
     pub(crate) clear: [f64; 4],
+    pub(crate) fractions: Vec<(engine_core::TargetName, f32)>,
 }
 
 pub(crate) struct Uniforms {
@@ -748,6 +749,20 @@ impl Canvas {
             load: false,
             carried: false,
             clear: crate::graph::BLACK,
+            fractions: Vec::new(),
+        }
+    }
+
+    pub(crate) fn fraction(&self, name: engine_core::TargetName) -> f32 {
+        (self.fractions.iter())
+            .find(|(known, _)| *known == name)
+            .map_or(1.0, |&(_, fraction)| fraction)
+    }
+
+    pub(crate) fn scale(&mut self, name: engine_core::TargetName, fraction: f32) {
+        match self.fractions.iter_mut().find(|(known, _)| *known == name) {
+            Some(found) => found.1 = fraction,
+            None => self.fractions.push((name, fraction)),
         }
     }
 }

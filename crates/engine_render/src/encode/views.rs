@@ -352,10 +352,18 @@ impl Run {
             depth_or_array_layers: 1,
         };
         let split = self.canvas.rect.is_some();
+        let canvas = &self.canvas;
+        let sized = |name| scaled(extent, canvas.fraction(name));
+        let targets = &self.machine.declared.targets;
         let set = self.set();
         let held = (set.canvas.as_ref())
             .is_some_and(|made| made.texture.format() == self.canvas.format);
-        if split == held && set.first().is_some_and(|made| made.size == extent) {
+        let fits = set.first().is_some()
+            && set.canvas.as_ref().is_none_or(|made| made.size == extent)
+            && set.shared.len() == targets.len()
+            && (set.shared.iter().zip(targets))
+                .all(|(made, target)| made.size == sized(target.name));
+        if split == held && fits {
             return;
         }
         let usage = wgpu::TextureUsages::RENDER_ATTACHMENT
@@ -363,7 +371,7 @@ impl Run {
             | wgpu::TextureUsages::COPY_SRC
             | wgpu::TextureUsages::COPY_DST;
         let device = self.device.clone();
-        let made = |label: &'static str, format, samples| {
+        let made = |label: &'static str, format, samples, size| {
             let made = Made {
                 label,
                 format,
@@ -371,12 +379,15 @@ impl Run {
                 dimension: wgpu::TextureDimension::D2,
                 samples,
             };
-            Allocated::new(&device, &made, extent, 1)
+            Allocated::new(&device, &made, size, 1)
         };
         let shared: Vec<Allocated> = (self.machine.declared.targets.iter())
-            .map(|shared| made(shared.name.name(), shared.format, shared.samples))
+            .map(|shared| {
+                let size = scaled(extent, self.canvas.fraction(shared.name));
+                made(shared.name.name(), shared.format, shared.samples, size)
+            })
             .collect();
-        let canvas = split.then(|| made("engine/view-canvas", self.canvas.format, 1));
+        let canvas = split.then(|| made("engine/view-canvas", self.canvas.format, 1, extent));
         let set = self.set_mut();
         set.shared = shared;
         set.canvas = canvas;
@@ -967,4 +978,13 @@ fn placeholder_texture(
         dimension: Some(view),
         ..Default::default()
     }))
+}
+
+fn scaled(extent: wgpu::Extent3d, fraction: f32) -> wgpu::Extent3d {
+    let side = |pixels: u32| ((f64::from(pixels) * f64::from(fraction)).round() as u32).max(1);
+    wgpu::Extent3d {
+        width: side(extent.width),
+        height: side(extent.height),
+        depth_or_array_layers: extent.depth_or_array_layers,
+    }
 }

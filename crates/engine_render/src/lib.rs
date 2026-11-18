@@ -981,6 +981,21 @@ impl<P: GpuPart> Prepare<'_, P> {
         self.core.refuse(error);
     }
 
+    pub fn scale_target(&mut self, name: TargetName, fraction: f32) {
+        let path = format!("$.targets.{}", name.name());
+        if self.core.machine.declared.shared_target(name).is_none() {
+            let error = Error::new(engine_core::ErrorCode::UnknownVariable, path).got(name.name());
+            self.core.refuse(error);
+        } else if fraction.is_finite() && fraction > 0.0 && fraction <= 1.0 {
+            self.core.canvas.scale(name, fraction);
+        } else {
+            let error = Error::new(engine_core::ErrorCode::OutOfRange, format!("{path}.fraction"))
+                .allowed(engine_core::Allowed::Range { min: 0.0, max: 1.0 })
+                .got(fraction);
+            self.core.refuse(error);
+        }
+    }
+
     pub fn canvas(&self) -> Option<wgpu::TextureFormat> {
         self.core
             .canvas

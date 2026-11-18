@@ -755,12 +755,7 @@ pub(super) fn declared_names(world: &mut World) {
     use engine_registry::{Kind, NameEntry, register, unavailable};
 
     type Read = fn(&Run) -> serde_json::Value;
-    let names: [(&'static str, Read); 2] = [
-        ("gpu.targets", |run| {
-            run.machine.declared.target_facts(&run.installs.reinstalls)
-        }),
-        ("links", links),
-    ];
+    let names: [(&'static str, Read); 2] = [("gpu.targets", targets), ("links", links)];
     for (name, read) in names {
         register(
             world,
@@ -777,6 +772,24 @@ pub(super) fn declared_names(world: &mut World) {
             }),
         );
     }
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+fn targets(run: &Run) -> serde_json::Value {
+    let mut facts = run.machine.declared.target_facts(&run.installs.reinstalls);
+    let set = (run.sets.list.get(run.sets.at)).or_else(|| run.sets.list.first());
+    if let serde_json::Value::Object(listed) = &mut facts {
+        for (at, target) in run.machine.declared.targets.iter().enumerate() {
+            if let Some(serde_json::Value::Object(fields)) = listed.get_mut(target.name.name()) {
+                let size = (set.and_then(|set| set.shared.get(at)))
+                    .map(|made| [made.size.width, made.size.height]);
+                let fraction = run.canvas.fraction(target.name);
+                fields.insert("fraction".to_owned(), serde_json::json!(fraction));
+                fields.insert("size".to_owned(), serde_json::json!(size));
+            }
+        }
+    }
+    facts
 }
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
