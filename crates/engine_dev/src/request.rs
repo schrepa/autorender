@@ -139,20 +139,26 @@ pub fn apply(reach: &mut ReachMut<'_>, request: &Request) -> Result<Applied, Err
     }
     let entry = entry(reach.world, &request.name)?;
     let mut args = request.args.clone();
-    let page = match request.verb {
-        Verb::Read => {
-            let mut page = Page::take(&mut args)?;
-            if entry.pages {
-                for (key, count) in [("offset", page.offset.take()), ("limit", page.limit.take())] {
-                    if let Some(count) = count {
-                        args.insert(key.to_owned(), json!(count));
-                    }
-                }
-            }
-            Some(page)
-        }
+    let mut page = match request.verb {
+        Verb::Read => Some(Page::take(&mut args)?),
         Verb::Describe | Verb::Set | Verb::Call => None,
     };
+    if crate::table::shapeless(&entry)
+        && let Some(key) = args.keys().next()
+    {
+        return Err(Error::new(ErrorCode::UnknownField, format!("$.args.{key}"))
+            .expected(Expected::Absent)
+            .got(key));
+    }
+    if entry.pages
+        && let Some(page) = &mut page
+    {
+        for (key, count) in [("offset", page.offset.take()), ("limit", page.limit.take())] {
+            if let Some(count) = count {
+                args.insert(key.to_owned(), json!(count));
+            }
+        }
+    }
     let args = Value::Object(args);
     let unsupported = || {
         Error::new(ErrorCode::UnsupportedCommand, "$.verb")

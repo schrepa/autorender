@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use super::native::watch;
 use super::timed;
 use super::session::{
-    Event, Host, Run, Session, Settings, Source, accepted, panic_in, refusal,
+    Event, Host, NATIVE_REBUILD, Run, Session, Settings, Source, accepted, panic_in, refusal,
 };
 use super::socket::{self, Socket};
 use crate::pipeline;
@@ -273,10 +273,7 @@ impl Session {
         let (root, game, profiling) = match self.browser() {
             Ok(browser) => (browser.root.clone(), browser.game.clone(), browser.profiling),
             Err(_) => {
-                return refusal(
-                    "unavailable",
-                    json!("the native program cannot be swapped under a running game; close the session and start again"),
-                );
+                return refusal("unavailable", json!(NATIVE_REBUILD));
             }
         };
         let started = Instant::now();

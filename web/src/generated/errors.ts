@@ -23,7 +23,6 @@ export type ErrorCode =
   | "invalid_arguments"
   | "invalid_presentation_alpha"
   | "game_rule"
-  | "no_scene"
   | "unknown_entity"
   | "entity_removed"
   | "missing_component"

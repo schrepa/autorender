@@ -114,6 +114,7 @@ struct Sink {
     budget: usize,
     dropped: u64,
     events: Vec<Event>,
+    opened: Vec<Event>,
     #[cfg(feature = "profiling")]
     kept: Option<Kept>,
 }
@@ -129,6 +130,7 @@ static SINK: Mutex<Sink> = Mutex::new(Sink {
     budget: 0,
     dropped: 0,
     events: Vec::new(),
+    opened: Vec::new(),
     #[cfg(feature = "profiling")]
     kept: None,
 });
@@ -150,9 +152,12 @@ pub(crate) fn now() -> Option<f64> {
 
 fn push(event: Event) {
     let mut sink = sink();
-    if !RECORDING.load(Relaxed) {
-        return;
+    if RECORDING.load(Relaxed) {
+        held(&mut sink, event);
     }
+}
+
+fn held(sink: &mut Sink, event: Event) {
     if sink.events.len() >= sink.budget {
         sink.dropped = sink.dropped.saturating_add(1);
         return;
@@ -240,6 +245,9 @@ pub fn begin(budget: usize) -> Result<(), &'static str> {
     sink.budget = budget;
     sink.dropped = 0;
     sink.events = Vec::with_capacity(budget);
+    for event in std::mem::take(&mut sink.opened) {
+        held(&mut sink, event);
+    }
     RECORDING.store(true, Relaxed);
     Ok(())
 }
@@ -314,24 +322,40 @@ pub fn counter(name: &'static str, value: f64) {
     }
 }
 
+fn listed(kind: &'static str, name: &str, facts: &[(&'static str, Fact<'_>)]) -> Option<Event> {
+    Some(Event {
+        name: Cow::Owned(name.to_owned()),
+        frame: current_frame(),
+        at_ms: now()?,
+        cause: crate::cause().0,
+        facts: Facts::Listed {
+            kind,
+            facts: facts
+                .iter()
+                .map(|&(key, fact)| (key, Field::from(fact)))
+                .collect(),
+        },
+    })
+}
+
 pub fn event(kind: &'static str, name: &str, facts: &[(&'static str, Fact<'_>)]) {
     if !recording() {
         return;
     }
-    if let Some(at_ms) = now() {
-        push(Event {
-            name: Cow::Owned(name.to_owned()),
-            frame: current_frame(),
-            at_ms,
-            cause: crate::cause().0,
-            facts: Facts::Listed {
-                kind,
-                facts: facts
-                    .iter()
-                    .map(|&(key, fact)| (key, Field::from(fact)))
-                    .collect(),
-            },
-        });
+    if let Some(event) = listed(kind, name, facts) {
+        push(event);
+    }
+}
+
+pub(crate) fn opened(origin: &str, facts: &[(&'static str, Fact<'_>)]) {
+    let Some(event) = listed("cause", origin, facts) else {
+        return;
+    };
+    let mut sink = sink();
+    if RECORDING.load(Relaxed) {
+        held(&mut sink, event);
+    } else {
+        sink.opened.push(event);
     }
 }
 

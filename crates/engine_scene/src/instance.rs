@@ -589,6 +589,7 @@ pub(crate) fn spawn_entity(
                 prefab_instance: expanded.prefab_instance.clone(),
                 prefab_local_id: expanded.prefab_local_id.clone(),
             },
+            engine_core::caused_now(),
         ))
         .id()
 }

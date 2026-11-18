@@ -69,7 +69,7 @@ mod traced {
         let opened = Cause(NEXT.fetch_add(1, Relaxed));
         let facts: Vec<(&'static str, Fact<'_>)> =
             std::iter::once(("what", Fact::Text(what))).chain(noted.iter().copied()).collect();
-        caused(opened, || crate::event("cause", origin, &facts));
+        caused(opened, || crate::collector::opened(origin, &facts));
         opened
     }
 }

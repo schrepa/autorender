@@ -1065,11 +1065,11 @@ pub(super) mod names {
     fn declared(run: &Run, mut row: impl FnMut(Declared) -> Value) -> Map<String, Value> {
         let declared = &run.machine.declared;
         let mut map = Map::new();
-        for (at, buffer) in declared.buffers.iter().enumerate() {
-            keyed(&mut map, buffer.label, row(Declared::Buffer(at)));
-        }
         for (at, texture) in declared.textures.iter().enumerate() {
             keyed(&mut map, texture.label, row(Declared::Texture(at)));
+        }
+        for (at, buffer) in declared.buffers.iter().enumerate() {
+            keyed(&mut map, buffer.label, row(Declared::Buffer(at)));
         }
         map
     }
@@ -1102,7 +1102,7 @@ pub(super) mod names {
                 };
                 let size = facts.size();
                 json!({
-                    "camera": facts.camera.to_bits(),
+                    "camera": facts.camera.to_string(),
                     "target": target,
                     "size": [size.x, size.y],
                     "layers": facts.layers.0,

@@ -5,6 +5,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use engine_command_line::{Command, CommandOption};
 use serde_json::{Value, json};
 
 use crate::{
@@ -53,6 +54,19 @@ struct Notes {
 }
 
 type Segment<'a> = (&'a Run, Option<usize>, usize);
+
+pub fn command() -> Command {
+    let side = "RUN[,RUN...][@MARK|@MARK..MARK]";
+    Command::new(
+        "compare",
+        [
+            CommandOption::taking("A", side).required(),
+            CommandOption::taking("B", side).required(),
+            CommandOption::taking("--only", "NAME..."),
+            CommandOption::taking("--tolerance", "0..255").defaults_to(0),
+        ],
+    )
+}
 
 pub fn compare(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     let (a, b, options) = parse(root, arguments)?;
@@ -476,10 +490,9 @@ fn span_values<'a>(
             (Leaf::Unavailable(reason), _) | (_, Some(Some(Leaf::Unavailable(reason)))) => {
                 Leaf::Unavailable(reason.clone())
             }
-            (Leaf::Number(_), Some(None)) => Leaf::Unavailable(format!(
-                "not recorded at the span's start in run {}",
-                run.name
-            )),
+            (Leaf::Number(_), Some(None)) => {
+                Leaf::Unavailable("not_recorded_at_the_start".to_owned())
+            }
             (Leaf::Number(to), Some(Some(Leaf::Number(from)))) => Leaf::Number(to - from),
             (Leaf::Number(to), None) => Leaf::Number(*to),
         };
@@ -660,7 +673,7 @@ fn pictures(title: &str, a: &[Segment], b: &[Segment], options: &Options) {
         &target,
     ) {
         Ok(line) => println!("{line}"),
-        Err(reason) => println!("picture: unavailable: {reason}"),
+        Err((side, reason)) => println!("picture: unavailable in {side}: {reason}"),
     }
 }
 
@@ -677,9 +690,14 @@ fn taken<'a>(side: &str, segments: &[Segment<'a>]) -> Vec<(&'a Run, &'a Value)> 
     pictures
 }
 
-fn difference(a: &Path, b: &Path, tolerance: u8, target: &Path) -> Result<String, String> {
-    let (width, height, pixels_a) = decode(a)?;
-    let (width_b, height_b, pixels_b) = decode(b)?;
+fn difference(
+    a: &Path,
+    b: &Path,
+    tolerance: u8,
+    target: &Path,
+) -> Result<String, (&'static str, &'static str)> {
+    let (width, height, pixels_a) = decode(a).map_err(|reason| ("a", reason))?;
+    let (width_b, height_b, pixels_b) = decode(b).map_err(|reason| ("b", reason))?;
     if (width, height) != (width_b, height_b) {
         return Ok(format!(
             "flag: picture sizes differ: {width}x{height}, {width_b}x{height_b}"
@@ -720,7 +738,7 @@ fn difference(a: &Path, b: &Path, tolerance: u8, target: &Path) -> Result<String
             "picture: hashes differ, no pixel differs by more than {tolerance}"
         ));
     }
-    encode(target, width, height, &image)?;
+    encode(target, width, height, &image).map_err(|reason| ("the difference", reason))?;
     Ok(format!(
         "picture: {:.4}% of pixels changed ({changed} of {total}) beyond {tolerance}, box x {}..{} y {}..{}, difference {}",
         changed as f64 * 100.0 / total as f64,
@@ -732,13 +750,15 @@ fn difference(a: &Path, b: &Path, tolerance: u8, target: &Path) -> Result<String
     ))
 }
 
-fn decode(path: &Path) -> Result<(u32, u32, Vec<u8>), String> {
-    let file = File::open(path).map_err(failed(path))?;
+fn decode(path: &Path) -> Result<(u32, u32, Vec<u8>), &'static str> {
+    let file = File::open(path).map_err(|_| "picture_file_missing")?;
     let mut decoder = png::Decoder::new(BufReader::new(file));
     decoder.set_transformations(png::Transformations::normalize_to_color8());
-    let mut reader = decoder.read_info().map_err(failed(path))?;
+    let mut reader = decoder.read_info().map_err(|_| "picture_not_png")?;
     let mut buffer = vec![0; reader.output_buffer_size()];
-    let info = reader.next_frame(&mut buffer).map_err(failed(path))?;
+    let info = reader
+        .next_frame(&mut buffer)
+        .map_err(|_| "picture_not_png")?;
     buffer.truncate(info.buffer_size());
     let pixels = match reader.output_color_type().0 {
         png::ColorType::Rgba => buffer,
@@ -748,30 +768,21 @@ fn decode(path: &Path) -> Result<(u32, u32, Vec<u8>), String> {
             .iter()
             .flat_map(|[red, green, blue]| [*red, *green, *blue, 255])
             .collect(),
-        other => {
-            return Err(format!(
-                "{}: colour type {other:?} is not RGB or RGBA",
-                path.display()
-            ));
-        }
+        _ => return Err("picture_not_rgb_or_rgba"),
     };
     Ok((info.width, info.height, pixels))
 }
 
-fn failed<E: std::fmt::Display>(path: &Path) -> impl Fn(E) -> String {
-    move |error| format!("{}: {error}", path.display())
-}
-
-fn encode(path: &Path, width: u32, height: u32, pixels: &[u8]) -> Result<(), String> {
-    let folder = path.parent().unwrap_or(path);
-    fs::create_dir_all(folder).map_err(failed(folder))?;
-    let file = File::create(path).map_err(failed(path))?;
+fn encode(path: &Path, width: u32, height: u32, pixels: &[u8]) -> Result<(), &'static str> {
+    let unwritten = |_| "difference_not_written";
+    fs::create_dir_all(path.parent().unwrap_or(path)).map_err(|_| "difference_not_written")?;
+    let file = File::create(path).map_err(|_| "difference_not_written")?;
     let mut encoder = png::Encoder::new(BufWriter::new(file), width, height);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
-    let mut writer = encoder.write_header().map_err(failed(path))?;
-    writer.write_image_data(pixels).map_err(failed(path))?;
-    writer.finish().map_err(failed(path))
+    let mut writer = encoder.write_header().map_err(unwritten)?;
+    writer.write_image_data(pixels).map_err(unwritten)?;
+    writer.finish().map_err(unwritten)
 }
 
 fn print_notes(notes: &Notes) {

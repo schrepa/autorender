@@ -32,11 +32,32 @@ fn lod_record(input: &[u8]) -> RecordKey {
     )
 }
 
+fn idle(world: &World, awaiting: &[GeometryHandle], building: bool) -> bool {
+    let (Some(levels), Some(assets)) = (
+        world.get_resource::<MeshLevels>(),
+        world.get_resource::<AssetLibrary>(),
+    ) else {
+        return true;
+    };
+    let gone = |handle: GeometryHandle| assets.mesh(handle).is_none();
+    awaiting.is_empty()
+        && levels.waiting.is_empty()
+        && (!building || levels.skipped.is_empty())
+        && !levels.ended.iter().any(|&(handle, _)| gone(handle))
+        && !levels.skipped.iter().copied().any(gone)
+}
+
 pub(crate) fn settle(world: &mut World) {
-    let mut awaiting = world.resource_mut::<AssetLibrary>().take_awaiting_lods();
+    let mut awaiting = world
+        .resource_mut::<AssetLibrary>()
+        .bypass_change_detection()
+        .take_awaiting_lods();
     let building = world
         .get_resource::<Detail>()
         .is_none_or(|detail| detail.chosen_error().is_some());
+    if idle(world, &awaiting, building) {
+        return;
+    }
     let mut orders = Vec::new();
     world.resource_scope(|world, mut levels: Mut<MeshLevels>| {
         let levels = &mut *levels;
@@ -44,7 +65,7 @@ pub(crate) fn settle(world: &mut World) {
             awaiting.append(&mut levels.skipped);
         }
         let mut inputs = Vec::new();
-        {
+        if !awaiting.is_empty() {
             let mut assets = world.resource_mut::<AssetLibrary>();
             for handle in awaiting {
                 let Some(mesh) = assets.mesh(handle) else {
@@ -92,15 +113,18 @@ pub(crate) fn settle(world: &mut World) {
                 Some(Request::Asked(_)) | None => levels.waiting.push((handle, interest)),
             }
         }
-        let mut assets = world.resource_mut::<AssetLibrary>();
-        for (handle, lods) in landed {
-            if lods.is_some() && assets.settle_lods(handle, lods).is_ok() {
-                continue;
-            }
-            if assets.mesh(handle).is_some() && assets.mesh_lods(handle).is_none() {
-                let _ = assets.settle_lods(handle, None);
+        if !landed.is_empty() {
+            let mut assets = world.resource_mut::<AssetLibrary>();
+            for (handle, lods) in landed {
+                if lods.is_some() && assets.settle_lods(handle, lods).is_ok() {
+                    continue;
+                }
+                if assets.mesh(handle).is_some() && assets.mesh_lods(handle).is_none() {
+                    let _ = assets.settle_lods(handle, None);
+                }
             }
         }
+        let assets = world.resource::<AssetLibrary>();
         levels
             .ended
             .retain(|&(handle, _)| assets.mesh(handle).is_some());

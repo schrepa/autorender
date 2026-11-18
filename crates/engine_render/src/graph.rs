@@ -793,13 +793,17 @@ mod facts {
     }
 
     pub fn keyed(map: &mut Map<String, Value>, name: &str, value: Value) {
+        map.insert(free_key(map, name), value);
+    }
+
+    fn free_key(map: &Map<String, Value>, name: &str) -> String {
         let mut key = name.to_owned();
         let mut repeat = 1;
         while map.contains_key(&key) {
             repeat += 1;
             key = format!("{name}#{repeat}");
         }
-        map.insert(key, value);
+        key
     }
 
     pub(super) fn unread_of(resources: &[ResourceEntry], nodes: &[Node], order: &[usize]) -> Bits {
@@ -826,16 +830,32 @@ mod facts {
             self.resources.get(index)
         }
 
-        fn labels(&self, bits: &Bits) -> Vec<&'static str> {
-            bits.iter()
-                .filter_map(|index| self.resource(index))
-                .map(|resource| resource.label)
+        fn keys(&self) -> Vec<String> {
+            let mut seen = Map::new();
+            self.resources
+                .iter()
+                .map(|resource| {
+                    if resource.view {
+                        return resource.label.to_owned();
+                    }
+                    let key = free_key(&seen, resource.label);
+                    seen.insert(key.clone(), Value::Null);
+                    key
+                })
                 .collect()
         }
 
-        fn dropped(&self, pass: usize, node: &Node) -> Value {
+        fn labels<'a>(keys: &'a [String], bits: &Bits) -> Vec<&'a str> {
+            bits.iter()
+                .filter_map(|index| keys.get(index))
+                .map(String::as_str)
+                .collect()
+        }
+
+        fn dropped(&self, pass: usize, node: &Node, keys: &[String]) -> Value {
+            let labels = |bits: &Bits| Self::labels(keys, bits);
             if let Some(unmet) = self.unmet.get(pass).filter(|unmet| !unmet.is_empty()) {
-                return json!({"reason": "reads_unwritten", "resources": self.labels(unmet)});
+                return json!({"reason": "reads_unwritten", "resources": labels(unmet)});
             }
             if self.starved.contains(pass) {
                 let mut fed = Bits::of(self.resources.len());
@@ -854,10 +874,10 @@ mod facts {
                         fed.insert(resource);
                     }
                 }
-                return json!({"reason": "writer_dropped", "resources": self.labels(&fed)});
+                return json!({"reason": "writer_dropped", "resources": labels(&fed)});
             }
             if self.unread.contains(pass) {
-                return json!({"reason": "never_read", "resources": self.labels(&node.outputs())});
+                return json!({"reason": "never_read", "resources": labels(&node.outputs())});
             }
             Value::Null
         }
@@ -867,16 +887,17 @@ mod facts {
             let Some(node) = self.nodes.get(pass) else {
                 return facts;
             };
+            let keys = self.keys();
             let mut targets = Map::new();
             for (resource, access) in node.attachments() {
-                if let Some(attached) = self.resources.get(resource.index()) {
+                if let Some(key) = keys.get(resource.index()) {
                     let access = match access {
                         Access::Clear(_) => "clear",
                         Access::Draw(_) => "draw",
                         Access::Load => "load",
                         Access::ReadOnly => "read_only",
                     };
-                    keyed(&mut targets, attached.label, json!(access));
+                    targets.insert(key.clone(), json!(access));
                 }
             }
             let after: Vec<&'static str> = self
@@ -890,10 +911,10 @@ mod facts {
             let order = self.order.iter().position(|&placed| placed == pass);
             facts.insert("order".to_owned(), json!(order));
             facts.insert("targets".to_owned(), Value::Object(targets));
-            facts.insert("reads".to_owned(), json!(self.labels(&node.reads)));
-            facts.insert("writes".to_owned(), json!(self.labels(&node.writes)));
+            facts.insert("reads".to_owned(), json!(Self::labels(&keys, &node.reads)));
+            facts.insert("writes".to_owned(), json!(Self::labels(&keys, &node.writes)));
             facts.insert("after".to_owned(), json!(after));
-            facts.insert("dropped".to_owned(), self.dropped(pass, node));
+            facts.insert("dropped".to_owned(), self.dropped(pass, node, &keys));
             facts
         }
 

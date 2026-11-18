@@ -1,5 +1,5 @@
 use bevy_ecs::entity::Entity;
-use bevy_ecs::prelude::{Resource, World};
+use bevy_ecs::prelude::{Mut, QueryState, Resource, World};
 use glam::{Mat4, UVec2, Vec3};
 
 use crate::{
@@ -10,6 +10,7 @@ use crate::{
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ViewFacts {
     pub view: Entity,
+    pub slot: u32,
     pub camera: Entity,
     pub target: Target,
     pub pixels: [u32; 4],
@@ -63,12 +64,20 @@ pub struct Views {
     listed: Vec<ViewFacts>,
     refused: Vec<(Entity, Error)>,
     held: Vec<Held>,
+    before: Vec<Held>,
+    found: Vec<(Entity, View)>,
+    slotted: Vec<Option<Entity>>,
+    query: Option<QueryState<(Entity, &'static View)>>,
     frame: FrameFacts,
 }
 
 impl Views {
     pub fn listed(&self) -> &[ViewFacts] {
         &self.listed
+    }
+
+    pub fn slots(&self) -> usize {
+        self.slotted.len()
     }
 
     pub fn frame(&self) -> FrameFacts {
@@ -135,18 +144,49 @@ fn history_of(
     }
 }
 
-fn found(world: &World) -> Vec<(Entity, View)> {
-    let mut found: Vec<(Entity, View)> = world
-        .try_query::<(Entity, &View)>()
-        .map(|mut views| {
-            views
-                .iter(world)
-                .map(|(entity, view)| (entity, *view))
-                .collect()
-        })
-        .unwrap_or_default();
-    found.sort_by_key(|(entity, view)| (!view.target.surface(), view.order, *entity));
-    found
+impl Views {
+    fn find(&mut self, world: &World) {
+        self.found.clear();
+        let Some(query) = self.query.as_mut() else {
+            return;
+        };
+        query.update_archetypes(world);
+        self.found.extend(
+            query
+                .iter_manual(world)
+                .map(|(entity, view)| (entity, *view)),
+        );
+        self.found
+            .sort_by_key(|(entity, view)| (!view.target.surface(), view.order, *entity));
+    }
+
+    fn slot_views(&mut self) {
+        let found = &self.found;
+        for slot in &mut self.slotted {
+            if slot.is_some_and(|view| !found.iter().any(|(entity, _)| *entity == view)) {
+                *slot = None;
+            }
+        }
+        for &(entity, _) in found {
+            if self.slotted.contains(&Some(entity)) {
+                continue;
+            }
+            match self.slotted.iter_mut().find(|slot| slot.is_none()) {
+                Some(free) => *free = Some(entity),
+                None => self.slotted.push(Some(entity)),
+            }
+        }
+        while self.slotted.last().is_some_and(Option::is_none) {
+            self.slotted.pop();
+        }
+    }
+
+    fn slot_of(&self, view: Entity) -> u32 {
+        self.slotted
+            .iter()
+            .position(|slot| *slot == Some(view))
+            .map_or(u32::MAX, |slot| slot as u32)
+    }
 }
 
 type Placed = (Camera, (Vec3, Vec3, Vec3), UVec2);
@@ -159,7 +199,8 @@ fn placed(world: &World, entity: Entity, view: &View, facts: FrameFacts) -> Resu
     lens.check()
         .map_err(|error| error.within(&format!("$.views.{}.lens", entity.to_bits())))?;
     view.viewport
-        .check(&format!("$.views.{}.viewport", entity.to_bits()))?;
+        .check("$")
+        .map_err(|error| error.within(&format!("$.views.{}.viewport", entity.to_bits())))?;
     let pose = world
         .get_resource::<GlobalTransforms>()
         .zip(world.get_resource::<DrawnPoses>())
@@ -186,76 +227,81 @@ pub(crate) fn settle(world: &mut World, facts: FrameFacts) {
             .get_resource::<FrameTime>()
             .map_or(0, |time| time.frame),
     );
-    let found = found(world);
-    let held = world
-        .get_resource::<Views>()
-        .map(|views| views.held.clone())
-        .unwrap_or_default();
-    let (globals, poses) = (
-        world.get_resource::<GlobalTransforms>(),
-        world.get_resource::<DrawnPoses>(),
-    );
-    let mut listed = Vec::with_capacity(found.len());
-    let mut refused = Vec::new();
-    let mut kept = Vec::with_capacity(found.len());
-    for (entity, view) in found {
-        let (lens, (eye, forward, up), size) = match placed(world, entity, &view, facts) {
-            Ok(placed) => placed,
-            Err(error) => {
-                refused.push((entity, error));
+    world.resource_scope(|world, mut views: Mut<Views>| {
+        let views = &mut *views;
+        if views.query.is_none() {
+            views.query = Some(world.query());
+        }
+        let world: &World = world;
+        views.find(world);
+        views.slot_views();
+        std::mem::swap(&mut views.held, &mut views.before);
+        views.held.clear();
+        views.listed.clear();
+        views.refused.clear();
+        views.frame = facts;
+        let (globals, poses) = (
+            world.get_resource::<GlobalTransforms>(),
+            world.get_resource::<DrawnPoses>(),
+        );
+        for at in 0..views.found.len() {
+            let (entity, view) = views.found[at];
+            let (lens, (eye, forward, up), size) = match placed(world, entity, &view, facts) {
+                Ok(placed) => placed,
+                Err(error) => {
+                    views.refused.push((entity, error));
+                    continue;
+                }
+            };
+            let pixels = view.viewport.pixels((size.x, size.y));
+            let aspect = pixels[2].max(1) as f32 / pixels[3].max(1) as f32;
+            let view_projection = lens.clip(aspect) * Mat4::look_to_rh(eye, forward, up);
+            if !view_projection.is_finite() {
+                views
+                    .refused
+                    .push((entity, refuse(entity, "camera", ErrorCode::InvalidCamera)));
                 continue;
             }
-        };
-        let pixels = view.viewport.pixels((size.x, size.y));
-        let aspect = pixels[2].max(1) as f32 / pixels[3].max(1) as f32;
-        let view_projection = lens.clip(aspect) * Mat4::look_to_rh(eye, forward, up);
-        if !view_projection.is_finite() {
-            refused.push((entity, refuse(entity, "camera", ErrorCode::InvalidCamera)));
-            continue;
+            let cut = globals
+                .zip(poses)
+                .and_then(|(globals, poses)| poses.fresh_at(globals, view.camera));
+            let key = Key {
+                target: view.target,
+                pixels,
+                camera: view.camera,
+                cut,
+            };
+            let before = views.before.iter().find(|held| held.view == entity);
+            let reset = cuts.contains(&entity) || before.is_none_or(|held| held.key != key);
+            let (started, previous, previous_eye, history) =
+                history_of(before, reset, (frame, view_projection, eye));
+            views.held.push(Held {
+                view: entity,
+                key,
+                started,
+                view_projection,
+                eye,
+            });
+            let slot = views.slot_of(entity);
+            views.listed.push(ViewFacts {
+                view: entity,
+                slot,
+                camera: view.camera,
+                target: view.target,
+                pixels,
+                layers: view.layers,
+                clear: view.clear,
+                clear_color: view.clear_color,
+                order: view.order,
+                lens,
+                eye,
+                forward,
+                view_projection,
+                previous_view_projection: previous,
+                previous_eye,
+                history,
+                frame,
+            });
         }
-        let cut = globals
-            .zip(poses)
-            .and_then(|(globals, poses)| poses.fresh_at(globals, view.camera));
-        let key = Key {
-            target: view.target,
-            pixels,
-            camera: view.camera,
-            cut,
-        };
-        let before = held.iter().find(|held| held.view == entity);
-        let reset = cuts.contains(&entity) || before.is_none_or(|held| held.key != key);
-        let (started, previous, previous_eye, history) =
-            history_of(before, reset, (frame, view_projection, eye));
-        kept.push(Held {
-            view: entity,
-            key,
-            started,
-            view_projection,
-            eye,
-        });
-        listed.push(ViewFacts {
-            view: entity,
-            camera: view.camera,
-            target: view.target,
-            pixels,
-            layers: view.layers,
-            clear: view.clear,
-            clear_color: view.clear_color,
-            order: view.order,
-            lens,
-            eye,
-            forward,
-            view_projection,
-            previous_view_projection: previous,
-            previous_eye,
-            history,
-            frame,
-        });
-    }
-    world.insert_resource(Views {
-        listed,
-        refused,
-        held: kept,
-        frame: facts,
     });
 }

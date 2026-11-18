@@ -204,12 +204,9 @@ fn reference<H: Copy>(name: &str, names: &SceneTable<H>) -> Result<H, Error> {
             .got(name));
     }
     names.get(name).copied().ok_or_else(|| {
-        let known: Vec<String> = names.keys().cloned().collect();
-        let error = Error::new(ErrorCode::UnknownReference, "$").got(name);
-        match engine_settings::closest(name, &known) {
-            Some(nearest) => error.nearest(nearest),
-            None => error,
-        }
+        Error::new(ErrorCode::UnknownReference, "$")
+            .got(name)
+            .variants(names.keys().cloned())
     })
 }
 

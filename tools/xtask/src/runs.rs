@@ -4,6 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
+use engine_command_line::{Command, CommandOption};
 use serde_json::{Value, json};
 
 use crate::Failure;
@@ -13,6 +14,15 @@ pub struct Run {
     pub folder: PathBuf,
     pub header: Value,
     pub entries: Vec<Value>,
+}
+
+pub fn commands() -> Vec<Command> {
+    let name = || CommandOption::taking("NAME", "NAME").required();
+    vec![
+        Command::new("runs", []),
+        Command::new("runs delete", [name()]),
+        Command::new("runs causes", [name()]),
+    ]
 }
 
 pub fn runs(root: &Path, arguments: &[String]) -> Result<(), Failure> {
@@ -198,7 +208,10 @@ fn list(root: &Path) -> Result<(), Failure> {
                     "build": run.header["build"],
                 })
             }
-            Err(failure) => json!({ "unavailable": failure.message }),
+            Err(_) if !base.join(&name).join("record.jsonl").is_file() => {
+                json!({ "unavailable": "no_record" })
+            }
+            Err(_) => json!({ "unavailable": "unreadable_record" }),
         };
         let open = base.join(&name).join("session.json").is_file();
         println!(

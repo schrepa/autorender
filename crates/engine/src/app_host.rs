@@ -91,6 +91,8 @@ impl AppHost {
         bricks: impl FnOnce(BrickList) -> BrickList,
         build: impl FnOnce(&mut Engine) -> Result<()>,
     ) -> Result<Self> {
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        engine_profile::install_clock(now_ms);
         let install = engine_profile::open("launch", "install");
         let mut engine = engine_profile::caused(install, || {
             built(|| {
@@ -117,8 +119,6 @@ impl AppHost {
     }
 
     fn with(mut engine: Engine, renderer: Box<Renderer>) -> Self {
-        #[cfg(any(feature = "dev", feature = "profiling"))]
-        engine_profile::install_clock(now_ms);
         wire(&mut engine, &renderer, (0, false));
         let gpu_ms = if renderer
             .features()
@@ -447,12 +447,27 @@ impl AppHost {
             render: rendered,
         };
         *self.engine.app.world_mut().resource_mut::<FrameStats>() = summary;
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        self.add_stage_times([simulation_ms, extraction_ms, acquire_ms + draw_ms]);
         if acquired && picture == Picture::Shown && self.engine.readiness().settled() {
             self.renderer.settle_pipelines();
         }
         self.pipeline_list
             .after_frame(&mut self.engine, &self.renderer);
         Ok(acquired)
+    }
+
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    fn add_stage_times(&mut self, [simulation, extraction, render]: [f64; 3]) {
+        use bevy_ecs::change_detection::DetectChangesMut;
+        let ns = |ms: f64| (ms * 1.0e6) as u64;
+        let world = self.engine.app.world_mut();
+        if let Some(mut times) = world.get_resource_mut::<engine_core::StageTimes>() {
+            let times = times.bypass_change_detection();
+            times.simulation += ns(simulation);
+            times.extraction += ns(extraction);
+            times.render += ns(render);
+        }
     }
 
     fn draw_frame(
