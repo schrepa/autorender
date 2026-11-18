@@ -182,10 +182,18 @@ impl Worker {
         self.stepped.retain(|(stepped, _)| *stepped != id);
     }
 
-    pub fn slice(&mut self) -> Option<Report> {
-        let at = (0..self.held.len())
+    fn next_at(&self) -> Option<usize> {
+        (0..self.held.len())
             .filter(|&at| !self.held[at].parked)
-            .min_by_key(|&at| (self.held[at].priority, self.held[at].id))?;
+            .min_by_key(|&at| (self.held[at].priority, self.held[at].id))
+    }
+
+    pub fn next(&self) -> Option<u64> {
+        self.next_at().map(|at| self.held[at].id)
+    }
+
+    pub fn slice(&mut self) -> Option<Report> {
+        let at = self.next_at()?;
         let id = self.held[at].id;
         let stepped = {
             let mut cx = JobCx::new(&self.list, &self.shares, &mut self.memo);

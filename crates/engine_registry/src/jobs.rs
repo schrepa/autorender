@@ -5,6 +5,7 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{SystemBuffer, SystemMeta};
 use bevy_ecs::world::{DeferredWorld, FromWorld, World};
 use engine_place::{Error, ErrorCode, JobRef, List};
+use engine_profile::Carried;
 use sha2::{Digest, Sha256};
 
 pub type JobKindRef = &'static (dyn Any + Send + Sync);
@@ -140,17 +141,20 @@ pub enum JobOrder {
         input: Vec<u8>,
         priority: u32,
         admitted: bool,
+        cause: Carried,
     },
     Run {
         key: [u8; 32],
         kind: JobRef,
         input: Vec<u8>,
         priority: u32,
+        cause: Carried,
     },
     Look {
         key: [u8; 32],
         kind: Option<JobRef>,
         priority: u32,
+        cause: Carried,
     },
     Share {
         key: [u8; 32],

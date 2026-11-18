@@ -8,10 +8,10 @@ use bevy_ecs::change_detection::Mut;
 use bevy_ecs::resource::Resource;
 use bevy_ecs::system::{Deferred, Res, SystemParam};
 use bevy_ecs::world::World;
+use engine_profile::{Carried, Fact};
 use engine_registry::{
     JobBatch, JobKindRef, JobList, JobListed, JobMember, JobOrder, JobOrders, RecordParity, Shares,
 };
-use engine_profile::Fact;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
@@ -317,6 +317,7 @@ impl Jobs<'_, '_> {
             input,
             priority,
             admitted,
+            cause: engine_profile::carry(),
         });
         Background::asked(interest, decode)
     }
@@ -336,6 +337,7 @@ impl Jobs<'_, '_> {
             kind: JobRef::from(kind),
             input,
             priority,
+            cause: engine_profile::carry(),
         });
         Background::asked(interest, decode)
     }
@@ -353,6 +355,7 @@ impl Jobs<'_, '_> {
             key: key.0,
             kind: Some(JobRef::from(kind)),
             priority,
+            cause: engine_profile::carry(),
         });
         Background::asked(interest, decode)
     }
@@ -405,6 +408,7 @@ pub(crate) enum Work {
         admitted: bool,
         message: JobMessage,
         asked: f64,
+        cause: Carried,
     },
     Sent {
         kind: Option<JobRef>,
@@ -413,6 +417,7 @@ pub(crate) enum Work {
         looking: bool,
         looked: bool,
         then: Option<JobRequest>,
+        cause: Carried,
     },
 }
 
@@ -465,6 +470,7 @@ pub fn look_record<T>(
                 key: key.0,
                 kind,
                 priority,
+                cause: engine_profile::carry(),
             },
         ));
     Background::asked(interest, decode)
@@ -842,7 +848,8 @@ impl JobExchange {
                     input,
                     priority,
                     admitted,
-                } => self.want(records, RecordKey(key), (batch, admitted), |id| {
+                    cause,
+                } => self.want(records, RecordKey(key), (batch, admitted, cause), |id| {
                     JobMessage::Run(JobRequest {
                         id,
                         kind,
@@ -856,7 +863,8 @@ impl JobExchange {
                     kind,
                     input,
                     priority,
-                } => self.want(records, RecordKey(key), (batch, false), |id| {
+                    cause,
+                } => self.want(records, RecordKey(key), (batch, false, cause), |id| {
                     JobMessage::Run(JobRequest {
                         id,
                         kind,
@@ -869,7 +877,8 @@ impl JobExchange {
                     key,
                     kind,
                     priority,
-                } => self.want(records, RecordKey(key), (batch, false), |id| {
+                    cause,
+                } => self.want(records, RecordKey(key), (batch, false, cause), |id| {
                     JobMessage::Fetch(RecordFetch {
                         id,
                         kind,
@@ -893,19 +902,20 @@ impl JobExchange {
                                 asked,
                                 sent,
                                 looking,
+                                cause,
                                 ..
                             }) => Some((
                                 kind_name(kind.as_ref()).to_owned(),
                                 (*asked, Some(*sent)),
-                                *looking,
+                                (*looking, *cause),
                             )),
                             Some(Work::Waiting { .. }) | None => None,
                         };
                         records.ready(&key, ticket, Arc::from(bytes.as_slice()));
                         self.queue.retain(|queued| *queued != key);
-                        if let Some((name, times, looking)) = sent {
+                        if let Some((name, times, (looking, cause))) = sent {
                             self.cancel(JobId(ticket.number()), !looking);
-                            self.cancelled(&name, times);
+                            self.cancelled(&name, times, (cause, Some(ticket.number())));
                         }
                     }
                     self.keep_with(key, kind, bytes, parity);
@@ -919,7 +929,7 @@ impl JobExchange {
         &mut self,
         records: &mut RecordSet,
         key: RecordKey,
-        (batch, admitted): (JobBatch, bool),
+        (batch, admitted, cause): (JobBatch, bool, Carried),
         message: impl FnOnce(JobId) -> JobMessage,
     ) {
         let Some(ticket) = records.ticket(&key) else {
@@ -938,6 +948,7 @@ impl JobExchange {
                         admitted,
                         message,
                         asked: self.now,
+                        cause,
                     },
                 );
                 self.queue.push(key);
@@ -1016,11 +1027,17 @@ impl JobExchange {
         let Some(work) = records.work_mut(&key) else {
             return;
         };
-        let (kind, looking, asked) = match &*work {
-            Work::Waiting { message, asked, .. } => (
+        let (kind, looking, asked, cause) = match &*work {
+            Work::Waiting {
+                message,
+                asked,
+                cause,
+                ..
+            } => (
                 message.asked().and_then(|(_, kind, _)| kind.cloned()),
                 matches!(message, JobMessage::Fetch(_)),
                 *asked,
+                *cause,
             ),
             Work::Sent { .. } => return,
         };
@@ -1031,6 +1048,7 @@ impl JobExchange {
             looking,
             looked: false,
             then: None,
+            cause,
         };
         let Work::Waiting { message, .. } = std::mem::replace(work, sent) else {
             return;
@@ -1075,15 +1093,17 @@ impl JobExchange {
             looking,
             looked,
             then,
+            cause,
         }) = records.work_mut(&key)
         else {
             return;
         };
-        let (name, times, (looking, looked), then) = (
+        let (name, times, (looking, looked), then, cause) = (
             kind_name(kind.as_ref()).to_owned(),
             (*asked, *sent),
             (*looking, *looked),
             then.take(),
+            *cause,
         );
         if !looking {
             self.running = self.running.saturating_sub(1);
@@ -1111,7 +1131,9 @@ impl JobExchange {
             (true, _, Err(_)) | (false, true, _) => "miss",
             (false, false, _) => "not_looked",
         };
-        self.landed(&name, times, cache, (&output, missing));
+        engine_profile::caused(cause.cause(), || {
+            self.landed((&name, id), times, cache, (&output, missing));
+        });
         match output {
             Ok(bytes) => {
                 self.stats.completed += 1;
@@ -1149,7 +1171,7 @@ impl JobExchange {
 
     fn landed(
         &mut self,
-        name: &str,
+        (name, id): (&str, JobId),
         (asked, sent): (f64, f64),
         cache: &str,
         (output, missing): (&Result<Arc<[u8]>, String>, bool),
@@ -1168,6 +1190,7 @@ impl JobExchange {
             }
         };
         let facts = [
+            ("id", Fact::Number(id.0 as f64)),
             ("asked_s", Fact::Number(asked)),
             ("sent_s", Fact::Number(sent)),
             ("landed_s", Fact::Number(landed)),
@@ -1176,32 +1199,55 @@ impl JobExchange {
             ("outcome", Fact::Text(outcome)),
             ("error", Fact::Text(error.unwrap_or_default())),
         ];
-        let shown = if error.is_some() { 7 } else { 6 };
+        let shown = if error.is_some() { 8 } else { 7 };
         engine_profile::event("job", name, &facts[..shown]);
     }
 
-    fn cancelled(&mut self, name: &str, (asked, sent): (f64, Option<f64>)) {
+    fn cancelled(
+        &mut self,
+        name: &str,
+        (asked, sent): (f64, Option<f64>),
+        (cause, id): (Carried, Option<u64>),
+    ) {
         self.counted(name).cancelled += 1;
-        engine_profile::event(
-            "job",
-            name,
-            &[
-                ("asked_s", Fact::Number(asked)),
-                (
-                    "sent_s",
-                    sent.map_or(Fact::Unavailable("never_sent"), Fact::Number),
-                ),
-                ("outcome", Fact::Text("cancelled")),
-            ],
-        );
+        engine_profile::caused(cause.cause(), || {
+            engine_profile::event(
+                "job",
+                name,
+                &[
+                    (
+                        "id",
+                        id.map_or(Fact::Unavailable("never_asked"), |id| Fact::Number(id as f64)),
+                    ),
+                    ("asked_s", Fact::Number(asked)),
+                    (
+                        "sent_s",
+                        sent.map_or(Fact::Unavailable("never_sent"), Fact::Number),
+                    ),
+                    ("outcome", Fact::Text("cancelled")),
+                ],
+            );
+        });
     }
 
     fn abandon(&mut self, key: RecordKey, released: &Request<Arc<[u8]>>, work: Option<Work>) {
         match (work, released.asked()) {
-            (Some(Work::Waiting { message, asked, .. }), _) => {
+            (
+                Some(Work::Waiting {
+                    message,
+                    asked,
+                    cause,
+                    ..
+                }),
+                _,
+            ) => {
                 self.queue.retain(|queued| *queued != key);
                 let kind = message.asked().and_then(|(_, kind, _)| kind);
-                self.cancelled(kind_name(kind), (asked, None));
+                self.cancelled(
+                    kind_name(kind),
+                    (asked, None),
+                    (cause, released.asked().map(|ticket| ticket.number())),
+                );
             }
             (
                 Some(Work::Sent {
@@ -1209,12 +1255,17 @@ impl JobExchange {
                     asked,
                     sent,
                     looking,
+                    cause,
                     ..
                 }),
                 Some(ticket),
             ) => {
                 self.cancel(JobId(ticket.number()), !looking);
-                self.cancelled(kind_name(kind.as_ref()), (asked, Some(sent)));
+                self.cancelled(
+                    kind_name(kind.as_ref()),
+                    (asked, Some(sent)),
+                    (cause, Some(ticket.number())),
+                );
             }
             (Some(Work::Sent { .. }) | None, _) => {}
         }

@@ -33,6 +33,11 @@ pub(crate) enum Reader {
         expect(dead_code, reason = "only dev and profiling builds read GPU spans")
     )]
     Profiler(u32),
+    #[cfg_attr(
+        not(any(feature = "dev", feature = "profiling")),
+        expect(dead_code, reason = "only dev and profiling builds count shader work")
+    )]
+    Work,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -146,7 +151,7 @@ impl Readbacks {
         let at = found.unwrap_or_else(|| {
             let capacity = bytes.max(4);
             self.slots.push(Slot {
-                buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                buffer: crate::gpu_calls::create_buffer(device, &wgpu::BufferDescriptor {
                     label: Some("engine/readback"),
                     size: capacity,
                     usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,

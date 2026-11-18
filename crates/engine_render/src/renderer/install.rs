@@ -571,6 +571,8 @@ impl Renderer {
                 .as_ref()
                 .map(|kept| kept.cache.clone());
         }
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        crate::whatif::install(world, &run.machine);
         self.run = Some(run);
     }
 
@@ -813,4 +815,88 @@ fn noop_device() -> Result<(wgpu::Device, wgpu::Queue), Error> {
 #[cfg(target_arch = "wasm32")]
 fn noop_device() -> Result<(wgpu::Device, wgpu::Queue), Error> {
     Err(failed("$.device").expected(Expected::Supported))
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub(super) fn declared_names(world: &mut World) {
+    use engine_registry::{Kind, NameEntry, register, unavailable};
+
+    type Read = fn(&Run) -> serde_json::Value;
+    let names: [(&'static str, Read); 2] = [
+        ("gpu.targets", |run| {
+            run.machine.declared.target_facts(&run.installs.reinstalls)
+        }),
+        ("links", links),
+    ];
+    for (name, read) in names {
+        register(
+            world,
+            NameEntry::read(name, Kind::State, move |reach, _| {
+                Ok(reach.part::<Renderer>().map_or_else(
+                    || unavailable("no_renderer"),
+                    |renderer| {
+                        renderer
+                            .run
+                            .as_ref()
+                            .map_or_else(|| unavailable("renderer_not_installed"), read)
+                    },
+                ))
+            }),
+        );
+    }
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+fn links(run: &Run) -> serde_json::Value {
+    use serde_json::{Map, Value, json};
+
+    use crate::graph::keyed;
+    use crate::install::Program;
+
+    let machine = &run.machine;
+    let declared = &machine.declared;
+    let part_name = |part: u32| {
+        declared
+            .parts
+            .get(part as usize)
+            .map_or("", |info| info.name)
+    };
+    let mut passes = Map::new();
+    for (index, pass) in declared.passes.iter().enumerate() {
+        let mut parts = Map::new();
+        parts.insert(part_name(pass.part).to_owned(), json!({}));
+        let pipelines = machine
+            .pipelines
+            .iter()
+            .filter(|built| crate::machine::in_pass(built, index as u32, pass));
+        for built in pipelines {
+            let mut entries = Map::new();
+            for stage in &built.stages {
+                keyed(
+                    &mut entries,
+                    stage.entry.name(),
+                    json!(stage.composed.module),
+                );
+            }
+            let entry = match &built.decl.program {
+                Program::Render(render) => render.vertex.name(),
+                Program::Compute(entry) => entry.name(),
+            };
+            let held = parts
+                .entry(part_name(built.decl.part))
+                .or_insert_with(|| json!({}));
+            if let Value::Object(held) = held {
+                let key = format!("{entry}/{:x}", built.program_key);
+                keyed(held, &key, Value::Object(entries));
+            }
+        }
+        keyed(&mut passes, pass.name, Value::Object(parts));
+    }
+    let mut links = machine.graph.links();
+    links.insert("passes".to_owned(), Value::Object(passes));
+    links.insert(
+        "kinds".to_owned(),
+        crate::registration::kind_passes(declared, &run.installs.draw_entries),
+    );
+    Value::Object(links)
 }

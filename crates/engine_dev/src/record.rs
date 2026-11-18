@@ -90,6 +90,7 @@ struct Entry {
     events: Value,
     events_dropped: u64,
     picture: Option<Value>,
+    stop: bool,
 }
 
 #[derive(Serialize)]
@@ -103,6 +104,8 @@ struct Line<'a> {
     dropped: Dropped,
     #[serde(skip_serializing_if = "Option::is_none")]
     picture: Option<&'a Value>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    stop: bool,
 }
 
 struct Values<'a> {
@@ -149,6 +152,7 @@ impl Recording {
             events,
             events_dropped,
             picture: None,
+            stop: false,
         }
     }
 
@@ -168,6 +172,7 @@ impl Recording {
                 events: self.unsent.events + entry.events_dropped,
             },
             picture: entry.picture.as_ref(),
+            stop: entry.stop,
         };
         let sent = serde_json::to_string(&line).is_ok_and(|line| self.sink.line(line));
         if sent {
@@ -290,8 +295,23 @@ fn start(reach: &mut ReachMut<'_>, start: Start) -> Result<Value, Error> {
     }
     let links = match links {
         Some(links) => reach.read(|reach| read(reach, &links)),
-        None => unavailable("unregistered"),
+        None => unavailable("links_not_registered"),
     };
+    let changes = reach.read(|reach| {
+        reach
+            .world
+            .get_resource::<Registry>()
+            .map_or_else(Vec::new, |registry| {
+                registry
+                    .table()
+                    .filter_map(|entry| {
+                        entry.changes_frame.map(|changes| {
+                            json!({"name": entry.name, "changes": changes, "value": read(reach, entry)})
+                        })
+                    })
+                    .collect()
+            })
+    });
     header.insert("name".into(), start.name.clone().into());
     header.insert(
         "every".into(),
@@ -304,6 +324,7 @@ fn start(reach: &mut ReachMut<'_>, start: Start) -> Result<Value, Error> {
     header.insert("instruments".into(), Value::Array(instruments));
     header.insert("facts".into(), facts);
     header.insert("links".into(), links);
+    header.insert("changes".into(), Value::Array(changes));
     header.insert("queue".into(), start.queue.into());
     header.insert("events".into(), start.events.into());
     let mut recording = Recording {
@@ -338,15 +359,28 @@ fn stop(reach: &mut ReachMut<'_>) -> Result<Value, Error> {
         entry.picture = Some(unavailable("record_stopped"));
         recording.send(entry);
     }
+    let unwritten = match reach.world.get_resource::<Moment>().copied() {
+        Some(at) => {
+            let mut closing = recording.entry(reach, at, None);
+            closing.stop = true;
+            recording.send(closing);
+            0
+        }
+        None => {
+            recording.lost.events += engine_profile::drain(&mut recording.events);
+            recording.events.len() as u64
+        }
+    };
     let refused = switch_off(reach, recording.switch, &recording.instruments);
-    let dropped = engine_profile::drain(&mut recording.events);
     engine_profile::end();
-    recording.lost.events += dropped + recording.events.len() as u64;
     let mut reply = json!({
         "name": recording.name,
         "entries": recording.written,
         "dropped": {"entries": recording.lost.entries, "events": recording.lost.events},
     });
+    if unwritten > 0 {
+        reply["unwritten_events_before_first_frame"] = unwritten.into();
+    }
     if !refused.is_empty() {
         reply["refused"] = Value::Array(refused);
     }

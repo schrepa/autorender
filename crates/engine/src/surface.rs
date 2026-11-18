@@ -46,6 +46,7 @@ macro_rules! __game_surface {
                 fn dev_pixels() -> Vec<u8>;
                 fn dev_reloaded(source: &str, files: Option<SceneFileSet>);
                 fn dev_reload_failed(error: &str);
+                fn dev_packs(packs: &str);
             }
         }
     };

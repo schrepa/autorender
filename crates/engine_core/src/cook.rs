@@ -198,6 +198,7 @@ fn order(ask: &Ask, place: usize) -> JobOrder {
         input: ask.input.clone(),
         priority: job_priority(VIEW_JOBS, u32::try_from(place).unwrap_or(u32::MAX)),
         admitted: false,
+        cause: engine_profile::carry(),
     }
 }
 

@@ -12,28 +12,93 @@ pub(crate) const INSTRUMENT: &str = "gpu.pipelines.work";
 pub(crate) const GROUP: u32 = 3;
 pub(crate) const CHANGES: &str = "fragment and compute entries run a counted copy that adds one to an atomic counter in group 3 at the start of every path; a counted fragment entry loses early depth tests, so it also runs for fragments the depth test then rejects; vertex entries run uncounted";
 const COUNTED: &str = "counted_work";
-const NOT_BUILT: &str = "counter_runtime_not_built";
+const RUNS: &str = "gpu.pipelines.work.runs";
+const OPERATIONS: &str = "gpu.pipelines.work.operations";
+const SAMPLES: &str = "gpu.pipelines.work.samples";
+const LIMITS: [&str; 4] = [
+    "a counted fragment entry loses the early depth test: in depth-tested passes its runs include fragments the depth test then rejects; pixels are unchanged",
+    "the right side of && and || is counted as if it always ran",
+    "vertex entries are not counted: a vertex stage cannot write storage",
+    "a for loop left by break counts its update once more than it ran",
+];
 
 pub(crate) fn names(world: &mut bevy_ecs::world::World) {
     use engine_registry::{Kind, NameEntry, register, unavailable};
     let names = [
         (INSTRUMENT, Kind::State, None),
-        ("gpu.pipelines.work.runs", Kind::Count, Some("runs")),
-        ("gpu.pipelines.work.operations", Kind::Count, Some("operations")),
-        ("gpu.pipelines.work.samples", Kind::Count, Some("samples")),
+        (RUNS, Kind::Count, Some("runs")),
+        (OPERATIONS, Kind::Count, Some("operations")),
+        (SAMPLES, Kind::Count, Some("samples")),
     ];
     for (name, kind, unit) in names {
-        let entry = NameEntry::read(name, kind, |_, _| Ok(unavailable(NOT_BUILT)));
+        let entry = NameEntry::read(name, kind, move |reach, _| {
+            Ok(reach.part::<crate::Renderer>().map_or_else(
+                || unavailable("no_renderer"),
+                |renderer| {
+                    renderer
+                        .counter()
+                        .map_or_else(|| unavailable("never_switched_on"), |counter| counter.read(name))
+                },
+            ))
+        });
         let entry = match unit {
             Some(unit) => entry.unit(unit),
-            None => entry,
+            None => entry.changes_frame(CHANGES),
         };
-        register(world, entry.unavailable(NOT_BUILT));
+        register(world, entry);
+    }
+}
+
+pub(crate) struct Counter {
+    counting: Counting,
+    words: Vec<u32>,
+    through_frame: Option<u64>,
+}
+
+impl Counter {
+    pub(crate) fn new(counting: Counting) -> Self {
+        Self {
+            counting,
+            words: Vec::new(),
+            through_frame: None,
+        }
+    }
+
+    pub(crate) fn counting(&self) -> &Counting {
+        &self.counting
+    }
+
+    pub(crate) fn landed(&mut self, frame: u64, bytes: &[u8]) {
+        if (bytes.len() as u64) < self.counting.bytes() {
+            return;
+        }
+        self.words = (bytes.as_chunks::<4>().0.iter())
+            .map(|word| u32::from_le_bytes(*word))
+            .collect();
+        self.through_frame = Some(frame);
+    }
+
+    fn read(&self, name: &str) -> Value {
+        let Some(frame) = self.through_frame else {
+            return json!({"unavailable": "not_yet_read"});
+        };
+        let measure = match name {
+            RUNS => Measure::Runs,
+            OPERATIONS => Measure::Operations,
+            SAMPLES => Measure::Samples,
+            _ => {
+                let mut state = self.counting.entries();
+                state["through_frame"] = json!(frame);
+                state["limits"] = json!(LIMITS);
+                return state;
+            }
+        };
+        self.counting.read(&self.words, measure)
     }
 }
 
 #[derive(Clone, Copy)]
-pub(crate) enum Measure {
+enum Measure {
     Runs,
     Operations,
     Samples,
@@ -162,7 +227,7 @@ impl Counting {
         }
     }
 
-    pub(crate) fn entries(&self) -> Value {
+    fn entries(&self) -> Value {
         let mut entries = Map::new();
         for copy in &self.copies {
             let mut about = json!({
@@ -183,7 +248,7 @@ impl Counting {
         json!({"words": self.words, "entries": entries})
     }
 
-    pub(crate) fn read(&self, words: &[u32], measure: Measure) -> Value {
+    fn read(&self, words: &[u32], measure: Measure) -> Value {
         if words.len() < self.words as usize {
             return json!({"unavailable": "not_yet_read"});
         }

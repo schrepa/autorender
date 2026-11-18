@@ -11,7 +11,7 @@ use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::channel;
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use engine_command_line::{Command, CommandOption, commands_text};
 use serde_json::{Value, json};
@@ -158,7 +158,7 @@ fn start(root: &Path, arguments: &[String]) -> Result<u8, Failure> {
     let start = options(arguments)?;
     #[cfg(windows)]
     job::contain()?;
-    let natives = native_projects(root)?;
+    let natives = timed("games", || native_projects(root))?;
     let native = natives.iter().find(|(project, game)| {
         [Some(&project.package), Some(&project.native), game.as_ref()].contains(&Some(&start.game))
     });
@@ -285,11 +285,13 @@ fn native_session(
     run: Run,
     settings: Settings,
 ) -> Result<Session, String> {
-    let program = if start.profiling {
-        pipeline::build_profiling(root, project)?
-    } else {
-        pipeline::build_native(root, project)?
-    };
+    let program = timed("build", || {
+        if start.profiling {
+            pipeline::build_profiling(root, project)
+        } else {
+            pipeline::build_native(root, project)
+        }
+    })?;
     let mut arguments = start.arguments.clone();
     arguments.extend(["--dev".to_owned(), "--run".to_owned(), name.to_owned()]);
     if !start.window {
@@ -302,9 +304,12 @@ fn native_session(
         arguments.extend(["--record".to_owned(), record.clone()]);
     }
     let channel = channel();
+    let started = Instant::now();
     let (child, stdin) = native::spawn(root, &program, &arguments, &channel.0)?;
     let mut session = Session::new(channel, child, Host::Native(Some(stdin)), run, settings);
-    session.wait_ready()?;
+    let ready = session.wait_ready();
+    println!("{}", json!({"event": "step", "step": "game", "seconds": started.elapsed().as_secs_f64()}));
+    ready?;
     session.facts = json!({"program": program, "arguments": arguments, "identity": session.identity});
     Ok(session)
 }
@@ -340,6 +345,13 @@ fn browser_session(root: &Path, client: &Client, start: &Start, run: Run, settin
         run,
         settings,
     )
+}
+
+pub fn timed<T>(step: &str, work: impl FnOnce() -> T) -> T {
+    let started = Instant::now();
+    let done = work();
+    println!("{}", json!({"event": "step", "step": step, "seconds": started.elapsed().as_secs_f64()}));
+    done
 }
 
 fn encoded(text: &str) -> String {

@@ -21,6 +21,9 @@ disallowed-methods = [
     { path = "wgpu::Queue::write_buffer", reason = "use engine_render's gpu_calls::Queue::write_buffer or write_declared_buffer: the write door counts bytes per resource" },
     { path = "wgpu::Queue::write_buffer_with", reason = "use engine_render's gpu_calls::Queue::write_buffer or write_declared_buffer: the write door counts bytes per resource" },
     { path = "wgpu::Queue::write_texture", reason = "use engine_render's gpu_calls::Queue::write_texture or write_declared_texture: the write door counts bytes per resource" },
+    { path = "wgpu::Device::create_buffer", reason = "use engine_render's gpu_calls::create_buffer: the creation door counts what is made" },
+    { path = "wgpu::Device::create_texture", reason = "use engine_render's gpu_calls::create_texture: the creation door counts what is made" },
+    { path = "wgpu::util::DeviceExt::create_buffer_init", reason = "use engine_render's gpu_calls::create_buffer_init: the creation door counts what is made and the bytes placed" },
     { path = "wgpu::Device::push_error_scope", reason = "use engine_render's gpu_calls::validation_scope: scopes cover creation, never a frame's work" },
 ]
 

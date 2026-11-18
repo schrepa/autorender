@@ -385,13 +385,19 @@ impl<G: Game> GameHost<G> {
         files: &SceneFiles,
         arrival: Arrival,
     ) -> crate::Result<()> {
-        let instance = G::load_scene(self.app.engine_mut(), document, files, arrival)?;
-        self.scene
-            .replace(self.app.engine_mut().app.world_mut(), instance);
-        self.app.replay_settings()?;
-        self.app.reloaded();
-        self.suspend();
-        Ok(())
+        let cause = match arrival {
+            Arrival::Opening => engine_profile::open("launch", "scene"),
+            Arrival::Reload => engine_profile::open("reload", &document.id),
+        };
+        engine_profile::caused(cause, || {
+            let instance = G::load_scene(self.app.engine_mut(), document, files, arrival)?;
+            self.scene
+                .replace(self.app.engine_mut().app.world_mut(), instance);
+            self.app.replay_settings()?;
+            self.app.reloaded();
+            self.suspend();
+            Ok(())
+        })
     }
 
     pub fn change_settings<S: engine_core::Section>(

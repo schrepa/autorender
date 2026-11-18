@@ -98,6 +98,8 @@ impl<G: Game> PageHost<G> {
         scene: Option<(String, SceneFiles)>,
     ) -> Result<Self, JsValue> {
         let bricks = (game.bricks)(BrickList::default());
+        #[cfg(feature = "dev")]
+        CANVAS.set(Some(canvas.clone()));
         let target = engine_render::RenderTarget::Canvas(canvas);
         let mut host = GameHost::launch(target, move |_| bricks, game.build)
             .await
@@ -345,12 +347,20 @@ impl<G: Game> PageHost<G> {
             .unwrap_or_else(|error| error.within("$.error"));
         self.host.dev_reload_failed(error);
     }
+
+    pub fn dev_packs(&mut self, packs: &str) {
+        let packs = serde_json::from_str(packs)
+            .unwrap_or_else(|_| engine_registry::unavailable("unreadable_pack_list"));
+        PACKS.set(Some(packs));
+    }
 }
 
 #[cfg(feature = "dev")]
 thread_local! {
     static DECLARED: std::cell::Cell<Option<&'static str>> = const { std::cell::Cell::new(None) };
     static ADDRESSED: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+    static CANVAS: std::cell::RefCell<Option<HtmlCanvasElement>> = const { std::cell::RefCell::new(None) };
+    static PACKS: std::cell::RefCell<Option<serde_json::Value>> = const { std::cell::RefCell::new(None) };
 }
 
 #[cfg(feature = "dev")]
@@ -386,6 +396,16 @@ fn about(_: &bevy_ecs::world::World) -> serde_json::Map<String, serde_json::Valu
         .with_borrow(Clone::clone)
         .or_else(|| DECLARED.get().map(str::to_owned))
         .map_or_else(|| unavailable("no_scene"), serde_json::Value::from);
+    let picture = CANVAS
+        .with_borrow(|canvas| {
+            canvas
+                .as_ref()
+                .map(|canvas| serde_json::json!([canvas.width(), canvas.height()]))
+        })
+        .unwrap_or_else(|| unavailable("no_canvas"));
+    let pack = PACKS
+        .with_borrow(Clone::clone)
+        .unwrap_or_else(|| unavailable("no_pack_loaded"));
     let features: Vec<&str> = [
         cfg!(feature = "dev").then_some("dev"),
         cfg!(feature = "profiling").then_some("profiling"),
@@ -401,8 +421,8 @@ fn about(_: &bevy_ecs::world::World) -> serde_json::Map<String, serde_json::Valu
             serde_json::json!({"version": env!("CARGO_PKG_VERSION"), "features": features}),
         ),
         ("scene".to_owned(), scene),
-        ("picture".to_owned(), unavailable("given_by_each_capture")),
-        ("pack".to_owned(), unavailable("not_known_to_the_page")),
+        ("picture".to_owned(), picture),
+        ("pack".to_owned(), pack),
     ])
 }
 

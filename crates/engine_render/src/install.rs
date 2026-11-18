@@ -542,3 +542,132 @@ impl InstallCore {
         }
     }
 }
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub(crate) fn pipeline_facts(decl: &PipelineDecl) -> serde_json::Value {
+    use serde_json::{Map, Value, json};
+
+    let constants: Map<String, Value> = decl
+        .constants
+        .iter()
+        .map(|&(name, value)| (name.to_owned(), json!(value)))
+        .collect();
+    let Program::Render(render) = &decl.program else {
+        let compute = engine_registry::unavailable("compute_pipeline");
+        return json!({
+            "program": "compute",
+            "samples": compute,
+            "stencil": compute,
+            "blend": compute,
+            "depth": compute,
+            "constants": constants,
+        });
+    };
+    let named = |value: &dyn std::fmt::Debug| format!("{value:?}");
+    let face = |face: wgpu::StencilFaceState| {
+        json!([
+            named(&face.compare),
+            named(&face.fail_op),
+            named(&face.depth_fail_op),
+            named(&face.pass_op)
+        ])
+    };
+    let stencil = if render.stencil.is_enabled() {
+        json!({
+            "front": face(render.stencil.front),
+            "back": face(render.stencil.back),
+            "read_mask": render.stencil.read_mask,
+            "write_mask": render.stencil.write_mask,
+        })
+    } else {
+        json!("off")
+    };
+    let component = |component: wgpu::BlendComponent| {
+        json!([
+            named(&component.src_factor),
+            named(&component.dst_factor),
+            named(&component.operation)
+        ])
+    };
+    let channels = [
+        (wgpu::ColorWrites::RED, "red"),
+        (wgpu::ColorWrites::GREEN, "green"),
+        (wgpu::ColorWrites::BLUE, "blue"),
+        (wgpu::ColorWrites::ALPHA, "alpha"),
+    ];
+    let blend: Vec<Value> = render
+        .targets
+        .iter()
+        .map(|(blend, writes)| {
+            let written: Vec<&str> = channels
+                .iter()
+                .filter(|(channel, _)| writes.contains(*channel))
+                .map(|(_, name)| *name)
+                .collect();
+            let blend = blend.map_or_else(
+                || json!("off"),
+                |blend| json!({"color": component(blend.color), "alpha": component(blend.alpha)}),
+            );
+            json!({"blend": blend, "writes": written})
+        })
+        .collect();
+    let depth = match render.depth {
+        DepthUse::None => json!("off"),
+        DepthUse::Compare {
+            compare,
+            write,
+            bias,
+        } => json!({
+            "compare": named(&compare),
+            "write": write,
+            "bias": {
+                "constant": bias.constant,
+                "slope_scale": bias.slope_scale,
+                "clamp": bias.clamp,
+            },
+        }),
+    };
+    json!({
+        "program": "render",
+        "samples": render.samples,
+        "stencil": stencil,
+        "blend": blend,
+        "depth": depth,
+        "constants": constants,
+    })
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+impl Declared {
+    pub(crate) fn target_facts(&self, reinstalls: &[Reinstall]) -> serde_json::Value {
+        let mut targets = serde_json::Map::new();
+        for (at, target) in self.targets.iter().enumerate() {
+            let declaring = reinstalls
+                .iter()
+                .position(|again| (again.from.targets..again.to.targets).contains(&at))
+                .and_then(|part| self.parts.get(part));
+            let (part, brick) = declaring.map_or_else(
+                || {
+                    let reason = engine_registry::unavailable("declared_outside_a_part");
+                    (reason.clone(), reason)
+                },
+                |part| {
+                    (
+                        serde_json::json!(part.name),
+                        serde_json::json!(part.package),
+                    )
+                },
+            );
+            targets.insert(
+                target.name.name().to_owned(),
+                serde_json::json!({
+                    "format": format!("{:?}", target.format),
+                    "samples": target.samples,
+                    "part": part,
+                    "brick": brick,
+                }),
+            );
+        }
+        serde_json::Value::Object(targets)
+    }
+}

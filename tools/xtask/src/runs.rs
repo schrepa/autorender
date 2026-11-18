@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
 };
@@ -18,15 +19,106 @@ pub fn runs(root: &Path, arguments: &[String]) -> Result<(), Failure> {
     match arguments {
         [] => list(root),
         [verb, name] if verb == "delete" => delete(root, name),
+        [verb, name] if verb == "causes" => causes(root, name),
         _ => Err(json!({
             "code": "invalid_arguments",
             "path": "runs",
             "got": arguments.join(" "),
-            "expected": "runs | runs delete <name>",
+            "expected": "runs | runs delete <name> | runs causes <name>",
         })
         .to_string()
         .into()),
     }
+}
+
+#[derive(Default)]
+struct Totals {
+    opened: Option<(String, String, u64)>,
+    jobs: u64,
+    ran_s: f64,
+    bytes: u64,
+    pipelines: u64,
+    first_drawn: Option<u64>,
+}
+
+fn causes(root: &Path, name: &str) -> Result<(), Failure> {
+    let run = read(root, name)?;
+    let traced = run.header["instruments"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .any(|instrument| instrument["name"] == "causes");
+    let mut totals: BTreeMap<u64, Totals> = BTreeMap::new();
+    totals.entry(0).or_default();
+    let mut dropped = 0;
+    for entry in &run.entries {
+        dropped += entry["dropped"]["events"].as_u64().unwrap_or(0);
+        for event in entry["events"].as_array().into_iter().flatten() {
+            let total = totals
+                .entry(event["cause"].as_u64().unwrap_or(0))
+                .or_default();
+            let frame = event["frame"].as_u64().unwrap_or(0);
+            match event["kind"].as_str().unwrap_or_default() {
+                "cause" => {
+                    let text = |key: &str| event[key].as_str().unwrap_or_default().to_owned();
+                    total.opened = Some((text("name"), text("what"), frame));
+                }
+                "job" => {
+                    total.jobs += 1;
+                    total.ran_s += event["ran_s"].as_f64().unwrap_or(0.0);
+                }
+                "write" => total.bytes += event["bytes"].as_u64().unwrap_or(0),
+                "pipeline" if event["state"] == "asked" => total.pipelines += 1,
+                "drawn" => {
+                    total.first_drawn =
+                        Some(total.first_drawn.map_or(frame, |first| first.min(frame)));
+                }
+                _ => {}
+            }
+        }
+    }
+    println!(
+        "{}",
+        json!({ "run": run.name, "causes": traced, "dropped_events": dropped })
+    );
+    for (cause, total) in totals {
+        let (origin, what, frame) = match (cause, total.opened) {
+            (0, _) => (
+                json!("steady"),
+                json!("work with no origin"),
+                json!({ "unavailable": "steady_is_never_opened" }),
+            ),
+            (_, Some((origin, what, frame))) => (json!(origin), json!(what), json!(frame)),
+            (_, None) => {
+                let unknown = json!({ "unavailable": "opened_before_the_record" });
+                (unknown.clone(), unknown.clone(), unknown)
+            }
+        };
+        let bytes = if cause == 0 {
+            json!({ "unavailable": "writes_with_no_cause_are_not_events" })
+        } else {
+            json!(total.bytes)
+        };
+        let first_drawn = total.first_drawn.map_or_else(
+            || json!({ "unavailable": "no_first_draw_in_the_record" }),
+            |frame| json!(frame),
+        );
+        println!(
+            "{}",
+            json!({
+                "cause": cause,
+                "origin": origin,
+                "what": what,
+                "frame": frame,
+                "jobs": total.jobs,
+                "ran_s": total.ran_s,
+                "bytes_written": bytes,
+                "pipelines": total.pipelines,
+                "first_drawn_frame": first_drawn,
+            })
+        );
+    }
+    Ok(())
 }
 
 pub fn folder(root: &Path, name: &str) -> Result<PathBuf, Failure> {

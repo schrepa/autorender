@@ -5,7 +5,7 @@ import { type Coder, type IndexBindings, JobStore, jobCacheSettings } from "./jo
 import { fatal, type PanicReport } from "./panic";
 
 export type JobRuntime = Pick<Runtime, "set_job_workers" | "set_job_cache" | "take_jobs" | "complete_job" | "fail_job"
-  | "job_kept" | "lose_job_worker" | "job_task" | "job_task_done" | "report_job_cache" | "job_hash">;
+  | "job_kept" | "lose_job_worker" | "job_task" | "job_task_done" | "report_job_cache" | "job_hash" | "dev_packs">;
 
 export type JobOrder =
   | { clear: true }
@@ -76,6 +76,7 @@ export class JobPool {
   private nextTask = 1;
   private restarts = 0;
   private reported = "";
+  private packsReported = false;
   private readonly store: Promise<JobStore | undefined>;
 
   constructor(private readonly count: number, private readonly game: JobGame) {
@@ -91,6 +92,7 @@ export class JobPool {
     this.runtime = runtime;
     this.failed = failed;
     this.ready = false;
+    this.packsReported = false;
     this.hash = this.call(runtime => runtime.job_hash());
     if (this.hash) {
       for (const slot of this.slots) if (slot.state === "live") slot.shared.clear();
@@ -217,6 +219,10 @@ export class JobPool {
     const runtime = this.runtime;
     const store = await this.store;
     if (!store || this.runtime !== runtime) return;
+    if (!this.packsReported && store.loaded.length > 0) {
+      this.packsReported = true;
+      this.call(runtime => runtime.dev_packs?.(JSON.stringify(store.loaded.map(({ name, bytes }) => ({ name, bytes })))));
+    }
     const [hits, misses, bytes, mismatches] = store.counters();
     const text = `${hits} ${misses} ${bytes} ${mismatches}`;
     if (text === this.reported) return;

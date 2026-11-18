@@ -10,6 +10,7 @@ use bevy_ecs::resource::Resource;
 use bevy_ecs::schedule::IntoScheduleConfigs;
 use bevy_ecs::system::{Commands, Query, ReadOnlySystemParam, Res, ScheduleSystem, SystemParam};
 use bevy_ecs::world::World;
+use engine_profile::Carried;
 use engine_registry::{
     BrickRecord, BrickStates, JobList, MembersOf, Registry, SettingsEntry, SpawnedBy,
     StatsEntry,
@@ -378,8 +379,9 @@ pub struct Spawner<'w, 's, B: Brick> {
 impl<B: Brick> Spawner<'_, '_, B> {
     pub fn spawn(&mut self, bundle: impl Bundle) -> Entity {
         let entity = self.commands.spawn_empty().id();
+        let cause = engine_profile::carry();
         self.commands
-            .queue(move |world: &mut World| spawned::<B, _>(world, entity, bundle));
+            .queue(move |world: &mut World| spawned::<B, _>(world, entity, bundle, cause));
         entity
     }
 
@@ -412,12 +414,25 @@ impl<B: Brick> Spawner<'_, '_, B> {
     }
 }
 
-fn spawned<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T) {
+#[cfg(any(feature = "dev", feature = "profiling"))]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Caused(pub u32);
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+fn stamp(cause: Carried) -> Caused {
+    Caused(cause.cause().0)
+}
+
+#[cfg(not(any(feature = "dev", feature = "profiling")))]
+fn stamp(_: Carried) {}
+
+fn spawned<B: Brick, T: Bundle>(world: &mut World, entity: Entity, bundle: T, cause: Carried) {
     let Ok(mut spawned) = world.get_entity_mut(entity) else {
         return;
     };
-    spawned.insert((bundle, SpawnedBy::<B>::new()));
-    if let Err(error) = crate::admit(world, entity, None, "$") {
+    spawned.insert((bundle, SpawnedBy::<B>::new(), stamp(cause)));
+    let admitted = engine_profile::caused(cause.cause(), || crate::admit(world, entity, None, "$"));
+    if let Err(error) = admitted {
         let _ = world.try_despawn(entity);
         refused::<B>(world, "spawn", error);
     }

@@ -268,7 +268,7 @@ pub(crate) struct Made {
 
 impl Allocated {
     fn new(device: &wgpu::Device, made: &Made, size: wgpu::Extent3d, mips: u32) -> Self {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = crate::gpu_calls::create_texture(device, &wgpu::TextureDescriptor {
             label: Some(made.label),
             size,
             mip_level_count: mips.max(1),
@@ -526,7 +526,7 @@ fn texture_dimension(machine: &Machine, texture: u32) -> wgpu::TextureDimension 
 }
 
 fn uniform_buffer(device: &wgpu::Device, label: &'static str, size: u64) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
+    crate::gpu_calls::create_buffer(device, &wgpu::BufferDescriptor {
         label: Some(label),
         size,
         usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -1076,7 +1076,7 @@ impl Run {
         } else {
             "first"
         };
-        let made = self.device.create_buffer(&wgpu::BufferDescriptor {
+        let made = crate::gpu_calls::create_buffer(&self.device, &wgpu::BufferDescriptor {
             label: Some(label),
             size: bytes,
             usage,
@@ -1099,8 +1099,9 @@ impl Run {
             self.fault(error);
             return;
         }
+        let label = self.machine.declared.buffers[buffer as usize].label;
         self.queue
-            .write_declared_buffer(buffer, made, offset, bytes);
+            .write_declared_buffer((buffer, label), made, offset, bytes);
     }
 
     fn written_texture(&self, texture: u32) -> Option<&Allocated> {
@@ -1129,8 +1130,9 @@ impl Run {
             self.fault(error);
             return;
         }
+        let label = self.machine.declared.textures[texture as usize].label;
         self.queue.write_declared_texture(
-            texture,
+            (texture, label),
             wgpu::TexelCopyTextureInfo {
                 texture: &made.texture,
                 mip_level: level,

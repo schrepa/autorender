@@ -28,7 +28,12 @@ pub struct DrawKey {
 pub const FEATURES: wgpu::Features = wgpu::Features::PIPELINE_STATISTICS_QUERY;
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
-pub const INSTRUMENTS: [&str; 3] = ["gpu.passes", "gpu.passes.split", "gpu.draws.shaders"];
+pub const INSTRUMENTS: [&str; 4] = [
+    "gpu.passes",
+    "gpu.passes.split",
+    "gpu.draws.shaders",
+    crate::linker::counting::INSTRUMENT,
+];
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
 const MARKS: &str = "adds an empty compute pass with two time stamps at each group and batch boundary";
@@ -169,7 +174,7 @@ mod timer {
                         count: sizes.draws,
                     })
                 }),
-                resolve: device.create_buffer(&wgpu::BufferDescriptor {
+                resolve: crate::gpu_calls::create_buffer(device, &wgpu::BufferDescriptor {
                     label: Some("engine/profile-resolve"),
                     size: sizes.bytes(),
                     usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,

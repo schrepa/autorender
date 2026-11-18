@@ -71,10 +71,10 @@ pub fn install(world: &mut World) {
     let mut rows: Vec<NameEntry> = registry.sections().map(setting).collect();
     rows.extend(registry.stats().map(stats));
     rows.extend([
-        NameEntry::read("status", Kind::State, |reach, _| Ok(status(reach))),
-        NameEntry::read("assets", Kind::State, |reach, _| assets(reach)),
-        NameEntry::read("bricks", Kind::State, |reach, _| Ok(bricks(reach.world))),
-        NameEntry::read("records", Kind::State, |reach, _| {
+        bare("status", |reach| Ok(status(reach))),
+        bare("assets", assets),
+        bare("bricks", |reach| Ok(bricks(reach.world))),
+        bare("records", |reach| {
             Ok(json!(reach.world.get_resource::<engine_core::Records>()))
         }),
         camera(),
@@ -99,9 +99,25 @@ pub fn install(world: &mut World) {
     }
 }
 
+fn none(given: &Value) -> Result<(), Error> {
+    args::<NoArgs>(given).map(drop)
+}
+
+fn bare(
+    name: &'static str,
+    read: impl Fn(&Reach<'_>) -> Result<Value, Error> + Send + Sync + 'static,
+) -> NameEntry {
+    NameEntry::read(name, Kind::State, move |reach, given| {
+        none(given)?;
+        read(reach)
+    })
+    .args(engine_core::schema_of::<NoArgs>(), json!({}))
+}
+
 fn setting(section: &SettingsEntry) -> NameEntry {
     let section = *section;
-    NameEntry::read(format!("settings.{}", section.key), Kind::Setting, move |reach, _| {
+    NameEntry::read(format!("settings.{}", section.key), Kind::Setting, move |reach, given| {
+        none(given)?;
         in_scene(reach.world, || section.current(reach.world))
     })
     .args(
@@ -133,9 +149,11 @@ fn setting(section: &SettingsEntry) -> NameEntry {
 
 fn stats(stats: &StatsEntry) -> NameEntry {
     let stats = *stats;
-    NameEntry::read(format!("stats.{}", stats.key), Kind::State, move |reach, _| {
+    NameEntry::read(format!("stats.{}", stats.key), Kind::State, move |reach, given| {
+        none(given)?;
         Ok(stats.read(reach.world))
     })
+    .args(engine_core::schema_of::<NoArgs>(), json!({}))
     .owned_by(stats.brick)
 }
 
@@ -270,7 +288,8 @@ fn missing_of(
 }
 
 fn camera() -> NameEntry {
-    NameEntry::read("camera", Kind::State, |reach, _| {
+    NameEntry::read("camera", Kind::State, |reach, given| {
+        none(given)?;
         let world = reach.world;
         let held = world.get_resource::<Held>().and_then(Held::camera).is_some();
         Ok(match main_camera(world) {
@@ -337,7 +356,8 @@ fn set_camera(reach: &mut ReachMut<'_>, given: &Value) -> Result<Value, Error> {
 }
 
 fn pause() -> NameEntry {
-    NameEntry::read("pause", Kind::State, |reach, _| {
+    NameEntry::read("pause", Kind::State, |reach, given| {
+        none(given)?;
         let world = reach.world;
         Ok(json!({
             "paused": world.resource::<Held>().paused,
@@ -415,6 +435,9 @@ fn listed(entry: &NameEntry) -> Value {
     }
     if let Some(missing) = &entry.missing {
         row["unavailable"] = json!(missing);
+    }
+    if let Some(changes) = entry.changes_frame {
+        row["changes_frame"] = json!(changes);
     }
     row
 }

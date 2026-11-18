@@ -316,6 +316,7 @@ fn step(
                     key: key.hash(),
                     kind,
                     priority: job_priority(URGENT_JOBS, place),
+                    cause: engine_profile::carry(),
                 });
                 request.stage = Stage::Fetching(stored.requests.ask_later(key));
                 return Step::Waiting(request);

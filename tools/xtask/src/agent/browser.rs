@@ -11,6 +11,7 @@ use base64::Engine as _;
 use serde_json::{Value, json};
 
 use super::native::watch;
+use super::timed;
 use super::session::{
     Event, Host, Run, Session, Settings, Source, accepted, panic_in, refusal,
 };
@@ -85,11 +86,13 @@ impl Browser {
 
 pub fn start(page: Page<'_>, run: Run, settings: Settings) -> Result<Session, String> {
     let chrome = find(page.chrome.clone())?;
-    build(page.root, page.game, page.profiling)?;
+    timed("build", || build(page.root, page.game, page.profiling))?;
     let mode: &[&str] = if page.profiling { &["--mode", "profiling"] } else { &[] };
-    let server = Server::vite(page.root, free_port()?, &run.folder.join("vite.log"), mode)?;
+    let server = timed("vite", || {
+        Server::vite(page.root, free_port()?, &run.folder.join("vite.log"), mode)
+    })?;
     let address = format!("{}/{}?engine_dev=1{}", server.url, page.page, page.query);
-    let (profile, lock) = claim_profile()?;
+    let (profile, lock) = timed("profile", claim_profile)?;
     let mut flags = vec![
         format!("--user-data-dir={}", profile.display()),
         "--remote-debugging-port=0".to_owned(),
@@ -108,6 +111,7 @@ pub fn start(page: Page<'_>, run: Run, settings: Settings) -> Result<Session, St
     }
     flags.push("about:blank".to_owned());
     let channel = channel();
+    let started = Instant::now();
     let mut child = Command::new(&chrome)
         .args(&flags)
         .stdin(Stdio::null())
@@ -133,6 +137,7 @@ pub fn start(page: Page<'_>, run: Run, settings: Settings) -> Result<Session, St
     let mut session = Session::new(channel, child, Host::Browser(Box::new(browser)), run, settings);
     session.facts = json!({"chrome": session.browser()?.chrome, "flags": flags, "page": address});
     session.attach()?;
+    println!("{}", json!({"event": "step", "step": "chrome", "seconds": started.elapsed().as_secs_f64()}));
     session.open(&address)?;
     Ok(session)
 }
@@ -183,6 +188,7 @@ impl Session {
     }
 
     fn open(&mut self, address: &str) -> Result<(), String> {
+        let started = Instant::now();
         let targets = self.call("Target.getTargets", json!({}), false)?;
         let target = targets["targetInfos"]
             .as_array()
@@ -206,12 +212,16 @@ impl Session {
         }
         let version = self.call("Browser.getVersion", json!({}), false)?;
         self.facts["version"] = version["product"].clone();
+        println!("{}", json!({"event": "step", "step": "devtools", "seconds": started.elapsed().as_secs_f64()}));
+        let started = Instant::now();
         let navigations = self.browser()?.navigations;
         let navigated = self.call("Page.navigate", json!({"url": address}), true)?;
         if let Some(error) = navigated["errorText"].as_str() {
             return Err(format!("cannot load {address}: {error}"));
         }
-        self.wait_page(navigations)?;
+        let waited = self.wait_page(navigations);
+        println!("{}", json!({"event": "step", "step": "page", "seconds": started.elapsed().as_secs_f64()}));
+        waited?;
         self.browser()?.loaded = true;
         Ok(())
     }
@@ -243,7 +253,7 @@ impl Session {
                 "chrome": session.facts,
                 "errors": session.since(Source::Errors),
                 "console": session.since(Source::Console),
-                "fetches": session.since(Source::Fetches),
+                "failed_fetches": session.since(Source::FailedFetches),
             }})
             .to_string()
         };
@@ -319,11 +329,11 @@ impl Session {
             "Network.loadingFailed" => {
                 let url = browser.urls.remove(params["requestId"].as_str().unwrap_or_default());
                 let entry = json!({"url": url, "error": params["errorText"], "canceled": params["canceled"]});
-                self.note(Source::Fetches, entry);
+                self.note(Source::FailedFetches, entry);
             }
             "Network.responseReceived" if params["response"]["status"].as_u64() >= Some(400) => {
                 let entry = json!({"url": params["response"]["url"], "status": params["response"]["status"]});
-                self.note(Source::Fetches, entry);
+                self.note(Source::FailedFetches, entry);
             }
             "Page.frameNavigated" if params["frame"]["parentId"].is_null() => {
                 browser.navigations += 1;

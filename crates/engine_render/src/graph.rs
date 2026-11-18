@@ -230,6 +230,12 @@ pub struct StaticGraph {
     order: Vec<usize>,
     batches: Vec<u8>,
     starved: Bits,
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    after: Vec<Vec<PassId>>,
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    unmet: Vec<Bits>,
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    unread: Bits,
 }
 
 fn refused(code: ErrorCode, path: String) -> Error {
@@ -548,12 +554,20 @@ impl StaticGraph {
         let unmet = unmet_of(&resources, &nodes, &reach);
         let starved = starved_of(&resources, &nodes, &unmet);
         let batches = batches_of(&nodes, &order, &views);
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        let unread = facts::unread_of(&resources, &nodes, &order);
         Ok(Self {
             resources,
             nodes,
             order,
             batches,
             starved,
+            #[cfg(any(feature = "dev", feature = "profiling"))]
+            after,
+            #[cfg(any(feature = "dev", feature = "profiling"))]
+            unmet,
+            #[cfg(any(feature = "dev", feature = "profiling"))]
+            unread,
         })
     }
 
@@ -761,3 +775,161 @@ fn load_op(access: Access, written: bool) -> Load {
         Access::Draw(_) | Access::Load | Access::ReadOnly => Load::Load,
     }
 }
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+mod facts {
+    use serde_json::{Map, Value, json};
+
+    use super::{Access, Bits, Life, Node, ResourceEntry, StaticGraph};
+
+    impl Life {
+        pub fn name(self) -> &'static str {
+            match self {
+                Self::Frame => "frame",
+                Self::Kept => "kept",
+                Self::Output => "output",
+            }
+        }
+    }
+
+    pub fn keyed(map: &mut Map<String, Value>, name: &str, value: Value) {
+        let mut key = name.to_owned();
+        let mut repeat = 1;
+        while map.contains_key(&key) {
+            repeat += 1;
+            key = format!("{name}#{repeat}");
+        }
+        map.insert(key, value);
+    }
+
+    pub(super) fn unread_of(resources: &[ResourceEntry], nodes: &[Node], order: &[usize]) -> Bits {
+        let mut needed = Bits::of(resources.len());
+        for (index, resource) in resources.iter().enumerate() {
+            if matches!(resource.life, Life::Kept | Life::Output) {
+                needed.insert(index);
+            }
+        }
+        let mut unread = Bits::of(nodes.len());
+        for &index in order.iter().rev() {
+            let node = &nodes[index];
+            if node.outputs().intersect(&needed).is_empty() {
+                unread.insert(index);
+            } else {
+                needed = needed.union(&node.inputs());
+            }
+        }
+        unread
+    }
+
+    impl StaticGraph {
+        pub fn resource(&self, index: usize) -> Option<&ResourceEntry> {
+            self.resources.get(index)
+        }
+
+        fn labels(&self, bits: &Bits) -> Vec<&'static str> {
+            bits.iter()
+                .filter_map(|index| self.resource(index))
+                .map(|resource| resource.label)
+                .collect()
+        }
+
+        fn dropped(&self, pass: usize, node: &Node) -> Value {
+            if let Some(unmet) = self.unmet.get(pass).filter(|unmet| !unmet.is_empty()) {
+                return json!({"reason": "reads_unwritten", "resources": self.labels(unmet)});
+            }
+            if self.starved.contains(pass) {
+                let mut fed = Bits::of(self.resources.len());
+                for resource in node.required().iter() {
+                    let mut writers = self
+                        .nodes
+                        .iter()
+                        .enumerate()
+                        .filter(|(early, writer)| {
+                            *early != pass && writer.outputs().contains(resource)
+                        })
+                        .peekable();
+                    if writers.peek().is_some()
+                        && writers.all(|(early, _)| self.starved.contains(early))
+                    {
+                        fed.insert(resource);
+                    }
+                }
+                return json!({"reason": "writer_dropped", "resources": self.labels(&fed)});
+            }
+            if self.unread.contains(pass) {
+                return json!({"reason": "never_read", "resources": self.labels(&node.outputs())});
+            }
+            Value::Null
+        }
+
+        pub fn pass_facts(&self, pass: usize) -> Map<String, Value> {
+            let mut facts = Map::new();
+            let Some(node) = self.nodes.get(pass) else {
+                return facts;
+            };
+            let mut targets = Map::new();
+            for (resource, access) in node.attachments() {
+                if let Some(attached) = self.resources.get(resource.index()) {
+                    let access = match access {
+                        Access::Clear(_) => "clear",
+                        Access::Draw(_) => "draw",
+                        Access::Load => "load",
+                        Access::ReadOnly => "read_only",
+                    };
+                    keyed(&mut targets, attached.label, json!(access));
+                }
+            }
+            let after: Vec<&'static str> = self
+                .after
+                .get(pass)
+                .into_iter()
+                .flatten()
+                .filter_map(|after| self.nodes.get(after.index()))
+                .map(|after| after.entry.label)
+                .collect();
+            let order = self.order.iter().position(|&placed| placed == pass);
+            facts.insert("order".to_owned(), json!(order));
+            facts.insert("targets".to_owned(), Value::Object(targets));
+            facts.insert("reads".to_owned(), json!(self.labels(&node.reads)));
+            facts.insert("writes".to_owned(), json!(self.labels(&node.writes)));
+            facts.insert("after".to_owned(), json!(after));
+            facts.insert("dropped".to_owned(), self.dropped(pass, node));
+            facts
+        }
+
+        pub fn links(&self) -> Map<String, Value> {
+            let mut resources = Map::new();
+            let mut targets = Map::new();
+            for (index, resource) in self.resources.iter().enumerate() {
+                let passes = |touches: &dyn Fn(&Node) -> bool| -> Vec<&'static str> {
+                    self.nodes
+                        .iter()
+                        .filter(|node| touches(node))
+                        .map(|node| node.entry.label)
+                        .collect()
+                };
+                let writers = passes(&|node| node.outputs().contains(index));
+                let readers = passes(&|node| node.inputs().contains(index));
+                keyed(
+                    &mut resources,
+                    resource.label,
+                    json!({"writers": writers, "readers": readers}),
+                );
+                if resource.view {
+                    let attaching = passes(&|node| {
+                        node.attachments()
+                            .any(|(attached, _)| attached.index() == index)
+                    });
+                    keyed(&mut targets, resource.label, json!(attaching));
+                }
+            }
+            let mut links = Map::new();
+            links.insert("resources".to_owned(), Value::Object(resources));
+            links.insert("targets".to_owned(), Value::Object(targets));
+            links
+        }
+    }
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub use facts::keyed;

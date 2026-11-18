@@ -54,7 +54,7 @@ impl Run {
         }
         if self.arena.held.as_ref().is_none_or(|(_, bytes)| *bytes < end) {
             let bytes = end.next_power_of_two();
-            let made = self.device.create_buffer(&wgpu::BufferDescriptor {
+            let made = crate::gpu_calls::create_buffer(&self.device, &wgpu::BufferDescriptor {
                 label: Some("engine/indirect-args"),
                 size: bytes,
                 usage: wgpu::BufferUsages::INDIRECT | wgpu::BufferUsages::COPY_DST,

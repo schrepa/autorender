@@ -368,6 +368,8 @@ pub mod names {
         pub example: Value,
         pub lands: Option<Lands>,
         pub missing: Option<String>,
+        pub changes_frame: Option<&'static str>,
+        pub pages: bool,
         read: Option<ReadFn>,
         set: Option<SetFn>,
         call: Option<CallFn>,
@@ -384,6 +386,8 @@ pub mod names {
                 example: Value::Object(serde_json::Map::new()),
                 lands: None,
                 missing: None,
+                changes_frame: None,
+                pages: false,
                 read: None,
                 set: None,
                 call: None,
@@ -438,6 +442,18 @@ pub mod names {
         #[must_use]
         pub fn unavailable(mut self, reason: impl Into<String>) -> Self {
             self.missing = Some(reason.into());
+            self
+        }
+
+        #[must_use]
+        pub fn changes_frame(mut self, text: &'static str) -> Self {
+            self.changes_frame = Some(text);
+            self
+        }
+
+        #[must_use]
+        pub fn pages(mut self) -> Self {
+            self.pages = true;
             self
         }
 

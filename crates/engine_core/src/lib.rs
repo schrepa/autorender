@@ -97,7 +97,7 @@ pub use presentation::*;
 pub use provided::*;
 pub use records::*;
 pub use refusals::{Refusals, Refused};
-pub use render_stats::{DrawReports, KindRefusal};
+pub use render_stats::DrawReports;
 pub use render_stats::{DropReason, DroppedDraws, KindPass, KindPassState, Names, RenderStats};
 pub use scene::*;
 pub use schedules::{RunPace, RunPoint};
@@ -406,6 +406,8 @@ impl Engine {
         twice.extend(authoring::keys_taken(world));
         #[cfg(any(feature = "dev", feature = "profiling"))]
         job_names(world);
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        drawn::object_names(world);
         let mut registry = world.resource_mut::<Registry>();
         for error in twice {
             registry.report(error);

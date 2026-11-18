@@ -163,14 +163,23 @@ fn plain(text: &str) -> String {
 }
 
 fn flag(key: &str, a: &Side, b: &Side) {
-    let values: BTreeMap<&str, String> = a
+    let headers: BTreeMap<&str, &Value> = a
         .runs
         .iter()
         .chain(&b.runs)
-        .map(|run| (run.name.as_str(), shown(&run.header[key])))
+        .map(|run| (run.name.as_str(), &run.header[key]))
         .collect();
-    if values.values().collect::<BTreeSet<_>>().len() > 1 {
-        let listed: Vec<String> = values
+    let mut known = BTreeMap::new();
+    for (run, value) in headers {
+        match value["unavailable"].as_str() {
+            Some(reason) => println!("header {key}: unavailable in {run}: {reason}"),
+            None => {
+                known.insert(run, shown(value));
+            }
+        }
+    }
+    if known.values().collect::<BTreeSet<_>>().len() > 1 {
+        let listed: Vec<String> = known
             .iter()
             .map(|(run, value)| format!("{run} {value}"))
             .collect();
@@ -280,24 +289,28 @@ fn mark_segments<'a>(side: &'a Side, label: &str, notes: &mut Notes) -> Vec<Segm
 }
 
 fn section(title: &str, a: &[Segment], b: &[Segment], options: &Options, notes: &mut Notes) {
-    let span = |segments: &[Segment]| {
-        segments
-            .first()
-            .map_or_else(String::new, |(run, start, end)| {
-                let point = |at: Option<usize>| {
-                    at.map_or("launch".to_owned(), |at| {
-                        format!("frame {}", shown(&run.entries[at]["frame"]))
-                    })
-                };
-                format!("{} to {}", point(*start), point(Some(*end)))
-            })
-    };
+    let (span_a, frames_a) = covered(a);
+    let (span_b, frames_b) = covered(b);
     println!();
-    println!("== {title} (a: {}; b: {})", span(a), span(b));
+    println!("== {title}");
+    println!("a: {span_a}");
+    println!("b: {span_b}");
+    if frames_a != frames_b {
+        let launch = a.iter().chain(b).any(|(_, start, _)| start.is_none());
+        println!(
+            "flag: the sides ran different numbers of frames{}; a count that grows each frame differs for that reason, not for the engine",
+            if launch {
+                " (a span from launch holds every frame before the mark, loading and free-running included)"
+            } else {
+                ""
+            }
+        );
+    }
     let columns_a = gather(a, "a", options, notes);
     let columns_b = gather(b, "b", options, notes);
     let mut counts = Vec::new();
     let mut times = Vec::new();
+    let mut zeros = 0;
     for (name, column_a) in &columns_a {
         let Some(column_b) = columns_b.get(name) else {
             notes.only_a.insert(name.clone());
@@ -308,6 +321,10 @@ fn section(title: &str, a: &[Segment], b: &[Segment], options: &Options, notes: 
                 "{name}: unit {} in a, {} in b",
                 column_a.unit, column_b.unit
             ));
+            continue;
+        }
+        if options.only.is_empty() && zero(column_a) && zero(column_b) {
+            zeros += 1;
             continue;
         }
         let row = [
@@ -330,7 +347,51 @@ fn section(title: &str, a: &[Segment], b: &[Segment], options: &Options, notes: 
     }
     table("counts", &counts);
     table("times", &times);
+    if zeros > 0 {
+        println!("{zeros} facts are 0 on both sides and left out; --only <name> shows them");
+    }
     pictures(title, a, b, options);
+}
+
+fn zero(column: &Column) -> bool {
+    column.reasons.is_empty()
+        && !column.numbers.is_empty()
+        && column.numbers.iter().all(|number| *number == 0.0)
+}
+
+fn reach(run: &Run, at: Option<usize>, key: &str) -> u64 {
+    at.and_then(|at| run.entries[at][key].as_u64()).unwrap_or(0)
+}
+
+fn covered(segments: &[Segment]) -> (String, BTreeSet<u64>) {
+    let lengths: BTreeSet<(u64, u64)> = segments
+        .iter()
+        .map(|(run, start, end)| {
+            let length =
+                |key: &str| reach(run, Some(*end), key).saturating_sub(reach(run, *start, key));
+            (length("frame"), length("tick"))
+        })
+        .collect();
+    let text = segments
+        .first()
+        .map_or_else(String::new, |(run, start, end)| {
+            let point = |at: Option<usize>| {
+                at.map_or("launch".to_owned(), |at| {
+                    format!("frame {}", reach(run, Some(at), "frame"))
+                })
+            };
+            let lengths: Vec<String> = lengths
+                .iter()
+                .map(|(frames, ticks)| format!("{frames} frames, {ticks} ticks"))
+                .collect();
+            format!(
+                "{} to {} ({})",
+                point(*start),
+                point(Some(*end)),
+                lengths.join("; ")
+            )
+        });
+    (text, lengths.iter().map(|(frames, _)| *frames).collect())
 }
 
 fn gather(

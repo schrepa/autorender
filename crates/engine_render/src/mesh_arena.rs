@@ -6,7 +6,6 @@ use engine_core::{
     GeometryClass, GeometryHandle, GeometryStream, Mesh, MeshLods, MeshPlacement, MeshResidence,
     ResidentMesh, Since, math::clamp,
 };
-use wgpu::util::DeviceExt as _;
 
 use crate::gpu_calls::Queue;
 
@@ -178,7 +177,7 @@ fn buffer(
     size: u64,
     usage: wgpu::BufferUsages,
 ) -> wgpu::Buffer {
-    device.create_buffer(&wgpu::BufferDescriptor {
+    crate::gpu_calls::create_buffer(device, &wgpu::BufferDescriptor {
         label: Some(label),
         size: size.max(4).next_multiple_of(4),
         usage,
@@ -461,7 +460,7 @@ impl GpuMeshes {
             }
             MeshResidence::Own => {
                 let buffer = |label, contents: &[u8], usage| {
-                    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+                    crate::gpu_calls::create_buffer_init(device, &wgpu::util::BufferInitDescriptor {
                         label: Some(label),
                         contents,
                         usage,

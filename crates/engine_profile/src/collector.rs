@@ -65,6 +65,7 @@ pub struct Event {
     pub name: Cow<'static, str>,
     pub frame: u64,
     pub at_ms: f64,
+    pub cause: u32,
     pub facts: Facts,
 }
 
@@ -85,6 +86,9 @@ impl Serialize for Event {
         map.serialize_entry("name", &self.name)?;
         map.serialize_entry("frame", &self.frame)?;
         map.serialize_entry("at_ms", &self.at_ms)?;
+        if self.cause != 0 {
+            map.serialize_entry("cause", &self.cause)?;
+        }
         match &self.facts {
             Facts::Span {
                 category,
@@ -189,11 +193,15 @@ fn leave() {
     DEPTH.with(|depth| depth.set(depth.get().saturating_sub(1)));
 }
 
-fn spanned(category: &'static str, name: &'static str, frame: u64, (start, end): (f64, f64)) {
+type Named = (&'static str, Cow<'static, str>);
+type Stamped = (u64, u32);
+
+fn spanned((category, name): Named, (frame, cause): Stamped, (start, end): (f64, f64)) {
     push(Event {
-        name: Cow::Borrowed(name),
+        name,
         frame,
         at_ms: start,
+        cause,
         facts: Facts::Span {
             category,
             ms: (end - start).max(0.0),
@@ -254,15 +262,23 @@ pub fn end() {
 }
 
 pub struct Span {
-    started: Option<(&'static str, &'static str, u64, f64)>,
+    started: Option<(Named, Stamped, f64)>,
     thread_bound: PhantomData<Rc<()>>,
 }
 
 pub fn span(category: &'static str, name: &'static str) -> Span {
+    named_span(category, || Cow::Borrowed(name))
+}
+
+pub fn span_of(category: &'static str, name: impl std::fmt::Display) -> Span {
+    named_span(category, || Cow::Owned(name.to_string()))
+}
+
+fn named_span(category: &'static str, name: impl FnOnce() -> Cow<'static, str>) -> Span {
     let started = recording()
         .then(now)
         .flatten()
-        .map(|start| (category, name, current_frame(), start));
+        .map(|start| ((category, name()), (current_frame(), crate::cause().0), start));
     if started.is_some() {
         enter();
     }
@@ -274,10 +290,10 @@ pub fn span(category: &'static str, name: &'static str) -> Span {
 
 impl Drop for Span {
     fn drop(&mut self) {
-        if let Some((category, name, frame, start)) = self.started {
+        if let Some((named, stamped, start)) = self.started.take() {
             leave();
             if let Some(end) = now() {
-                spanned(category, name, frame, (start, end));
+                spanned(named, stamped, (start, end));
             }
         }
     }
@@ -292,6 +308,7 @@ pub fn counter(name: &'static str, value: f64) {
             name: Cow::Borrowed(name),
             frame: current_frame(),
             at_ms,
+            cause: crate::cause().0,
             facts: Facts::Counter(value),
         });
     }
@@ -306,6 +323,7 @@ pub fn event(kind: &'static str, name: &str, facts: &[(&'static str, Fact<'_>)])
             name: Cow::Owned(name.to_owned()),
             frame: current_frame(),
             at_ms,
+            cause: crate::cause().0,
             facts: Facts::Listed {
                 kind,
                 facts: facts
@@ -374,7 +392,7 @@ pub fn run<T>(
     if spanned_here {
         enter();
     }
-    let frame = current_frame();
+    let stamped = (current_frame(), crate::cause().0);
     #[cfg(feature = "profiling")]
     let heap = crate::allocator::thread_heap();
     let start = clock();
@@ -391,7 +409,7 @@ pub fn run<T>(
         .fetch_add(((end - start).max(0.0) * 1e6) as u64, Relaxed);
     if spanned_here {
         leave();
-        spanned(category, name, frame, (start, end));
+        spanned((category, Cow::Borrowed(name)), stamped, (start, end));
     }
     done
 }

@@ -13,6 +13,7 @@ pub enum Fact<'a> {
 
 #[cfg(feature = "profiling")]
 mod allocator;
+mod cause;
 #[cfg(feature = "dev")]
 mod collector;
 #[cfg(target_arch = "wasm32")]
@@ -21,6 +22,7 @@ mod heap;
 mod threads;
 #[cfg(feature = "profiling")]
 pub use allocator::{ALWAYS_SAMPLED_BYTES, SAMPLE_EVERY, TrackingAllocator, sample_allocations};
+pub use cause::{Carried, Cause, adopt, carry, cause, caused, open, open_noting, trace, tracing};
 #[cfg(feature = "dev")]
 pub use collector::*;
 #[cfg(target_arch = "wasm32")]
@@ -43,6 +45,10 @@ mod disabled {
     }
     #[inline(always)]
     pub fn span(_: &'static str, _: &'static str) -> Span {
+        Span
+    }
+    #[inline(always)]
+    pub fn span_of(_: &'static str, _: impl std::fmt::Display) -> Span {
         Span
     }
     #[inline(always)]

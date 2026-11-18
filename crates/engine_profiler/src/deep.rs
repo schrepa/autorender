@@ -13,7 +13,7 @@ use engine_registry::{Kind, Lands, NameEntry};
 use fxprof_processed_profile::{
     CategoryColor, CategoryHandle, CpuDelta, Frame, FrameFlags, FrameInfo, MarkerFieldFlags,
     MarkerFieldFormat, MarkerTiming, Profile, ReferenceTimestamp, SamplingInterval,
-    StaticSchemaMarker, StaticSchemaMarkerField, StringHandle, Timestamp,
+    StaticSchemaMarker, StaticSchemaMarkerField, StringHandle, ThreadHandle, Timestamp,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
@@ -320,6 +320,7 @@ fn functions(stack: &[u64], symbols: &Symbols) -> Vec<String> {
 struct SpanMarker {
     name: StringHandle,
     kind: StringHandle,
+    cause: StringHandle,
     category: CategoryHandle,
 }
 
@@ -327,12 +328,20 @@ impl StaticSchemaMarker for SpanMarker {
     const UNIQUE_MARKER_TYPE_NAME: &'static str = "EngineSpan";
     const CHART_LABEL: Option<&'static str> = Some("{marker.name}");
     const TABLE_LABEL: Option<&'static str> = Some("{marker.name} ({marker.data.kind})");
-    const FIELDS: &'static [StaticSchemaMarkerField] = &[StaticSchemaMarkerField {
-        key: "kind",
-        label: "Kind",
-        format: MarkerFieldFormat::String,
-        flags: MarkerFieldFlags::SEARCHABLE,
-    }];
+    const FIELDS: &'static [StaticSchemaMarkerField] = &[
+        StaticSchemaMarkerField {
+            key: "kind",
+            label: "Kind",
+            format: MarkerFieldFormat::String,
+            flags: MarkerFieldFlags::SEARCHABLE,
+        },
+        StaticSchemaMarkerField {
+            key: "cause",
+            label: "Cause",
+            format: MarkerFieldFormat::String,
+            flags: MarkerFieldFlags::SEARCHABLE,
+        },
+    ];
 
     fn name(&self, _: &mut Profile) -> StringHandle {
         self.name
@@ -342,8 +351,11 @@ impl StaticSchemaMarker for SpanMarker {
         self.category
     }
 
-    fn string_field_value(&self, _: u32) -> StringHandle {
-        self.kind
+    fn string_field_value(&self, field: u32) -> StringHandle {
+        match field {
+            1 => self.cause,
+            _ => self.kind,
+        }
     }
 
     fn number_field_value(&self, _: u32) -> f64 {
@@ -359,6 +371,7 @@ struct Spanned<'a> {
     start: f64,
     end: f64,
     depth: u32,
+    cause: u32,
     category: &'static str,
     name: &'a str,
 }
@@ -375,6 +388,7 @@ fn spans(events: &[Event]) -> Vec<Spanned<'_>> {
                 start: event.at_ms,
                 end: event.at_ms + ms,
                 depth,
+                cause: event.cause,
                 category,
                 name: &event.name,
             }),
@@ -400,6 +414,35 @@ fn bounds(spans: &[Spanned<'_>], samples: Option<&Samples>) -> (f64, f64) {
     })
 }
 
+fn markers(
+    profile: &mut Profile,
+    spans: &[Spanned<'_>],
+    (threads, main): (&[(&str, ThreadHandle)], ThreadHandle),
+    category: CategoryHandle,
+) {
+    for span in spans {
+        let on = threads
+            .iter()
+            .find(|(name, _)| *name == span.category)
+            .map_or(main, |&(_, handle)| handle);
+        let cause = match span.cause {
+            0 => String::new(),
+            cause => cause.to_string(),
+        };
+        let marker = SpanMarker {
+            name: profile.intern_string(span.name),
+            kind: profile.intern_string(span.category),
+            cause: profile.intern_string(&cause),
+            category,
+        };
+        profile.add_marker(
+            on,
+            MarkerTiming::Interval(at(span.start), at(span.end)),
+            marker,
+        );
+    }
+}
+
 fn firefox_profile(events: &[Event], samples: Option<&Samples>, symbols: &Symbols) -> Profile {
     let now = engine::host::now_ms();
     let epoch = SystemTime::now()
@@ -422,6 +465,7 @@ fn firefox_profile(events: &[Event], samples: Option<&Samples>, symbols: &Symbol
     let native = profile.add_category("Native code", CategoryColor::Blue);
     let engine_category = profile.add_category("Engine spans", CategoryColor::Green);
     let mut main = None;
+    let mut threads: Vec<(&str, ThreadHandle)> = Vec::new();
     for (index, thread) in samples
         .into_iter()
         .flat_map(|samples| &samples.threads)
@@ -429,6 +473,7 @@ fn firefox_profile(events: &[Event], samples: Option<&Samples>, symbols: &Symbol
     {
         let handle = profile.add_thread(process, index as u32 + 1, at(start), index == 0);
         profile.set_thread_name(handle, &thread.name);
+        threads.push((&thread.name, handle));
         if index == 0 {
             profile.add_initial_selected_thread(handle);
             main = Some(handle);
@@ -454,25 +499,23 @@ fn firefox_profile(events: &[Event], samples: Option<&Samples>, symbols: &Symbol
     let track = profile.add_thread(process, 0, at(start), false);
     profile.set_thread_name(track, "Engine spans");
     profile.add_initial_visible_thread(track);
-    for span in &spans {
-        let marker = SpanMarker {
-            name: profile.intern_string(span.name),
-            kind: profile.intern_string(span.category),
-            category: engine_category,
-        };
-        profile.add_marker(
-            main.unwrap_or(track),
-            MarkerTiming::Interval(at(span.start), at(span.end)),
-            marker,
-        );
-    }
+    markers(
+        &mut profile,
+        &spans,
+        (&threads, main.unwrap_or(track)),
+        engine_category,
+    );
+    let stacked: Vec<&Spanned<'_>> = spans
+        .iter()
+        .filter(|span| !threads.iter().any(|(name, _)| *name == span.category))
+        .collect();
     let step = interval.as_secs_f64() * 1000.0;
     let mut active: Vec<&Spanned<'_>> = Vec::new();
     let mut next = 0;
     let mut time = start;
     while time < end {
-        while next < spans.len() && spans[next].start <= time {
-            active.push(&spans[next]);
+        while next < stacked.len() && stacked[next].start <= time {
+            active.push(stacked[next]);
             next += 1;
         }
         active.retain(|span| span.end > time);

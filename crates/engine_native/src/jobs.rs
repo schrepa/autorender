@@ -135,8 +135,10 @@ impl JobPool {
                 let thread = std::thread::Builder::new()
                     .name(format!("engine-jobs-{index}"))
                     .spawn(move || {
-                        engine_profile::announce_thread(format_args!("Job worker {index}"));
-                        work(index as u32, list, &inbox, &report);
+                        let lane: &'static str =
+                            Box::leak(format!("Job worker {index}").into_boxed_str());
+                        engine_profile::announce_thread(format_args!("{lane}"));
+                        work((index as u32, lane), list, &inbox, &report);
                     })
                     .expect("thread_starts");
                 Slot {
@@ -285,6 +287,10 @@ impl JobPool {
         self.store.as_ref().map_or(0, JobStore::packed)
     }
 
+    pub fn packs(&self) -> impl Iterator<Item = (&Path, u64)> {
+        self.store.iter().flat_map(JobStore::packs)
+    }
+
     pub fn mismatched(&self) -> &[(Option<JobRef>, String)] {
         &self.mismatched
     }
@@ -332,7 +338,12 @@ impl Drop for JobPool {
     }
 }
 
-fn work(index: u32, list: Arc<JobList>, inbox: &Receiver<Order>, report: &Sender<Reported>) {
+fn work(
+    (index, lane): (u32, &'static str),
+    list: Arc<JobList>,
+    inbox: &Receiver<Order>,
+    report: &Sender<Reported>,
+) {
     let mut worker = engine_worker::Worker::new(list, engine_worker::now_ms);
     loop {
         let mut next = if worker.busy() {
@@ -375,7 +386,13 @@ fn work(index: u32, list: Arc<JobList>, inbox: &Receiver<Order>, report: &Sender
             }
             next = inbox.try_recv().ok();
         }
-        if let Some(sliced) = worker.slice() {
+        let Some(id) = worker.next() else {
+            continue;
+        };
+        let span = engine_profile::span_of(lane, format_args!("job {id}"));
+        let sliced = worker.slice();
+        drop(span);
+        if let Some(sliced) = sliced {
             let _ = report.send(Reported::Job(sliced));
         }
     }

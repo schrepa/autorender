@@ -1,12 +1,75 @@
 use std::cell::{Cell, RefCell};
 use std::hash::BuildHasher;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use engine_core::collections::{FixedState, HashMap};
 
 mod submission;
 
 pub use submission::Handover;
+
+static CREATED_BUFFERS: AtomicU64 = AtomicU64::new(0);
+static CREATED_TEXTURES: AtomicU64 = AtomicU64::new(0);
+static CREATED_BUFFER_BYTES: AtomicU64 = AtomicU64::new(0);
+static PLACED_BYTES: AtomicU64 = AtomicU64::new(0);
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the renderer's one buffer creation"
+)]
+pub(crate) fn create_buffer(
+    device: &wgpu::Device,
+    descriptor: &wgpu::BufferDescriptor<'_>,
+) -> wgpu::Buffer {
+    CREATED_BUFFERS.fetch_add(1, Ordering::Relaxed);
+    CREATED_BUFFER_BYTES.fetch_add(descriptor.size, Ordering::Relaxed);
+    device.create_buffer(descriptor)
+}
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the renderer's one buffer creation with data"
+)]
+pub(crate) fn create_buffer_init(
+    device: &wgpu::Device,
+    descriptor: &wgpu::util::BufferInitDescriptor<'_>,
+) -> wgpu::Buffer {
+    use wgpu::util::DeviceExt;
+    let made = device.create_buffer_init(descriptor);
+    CREATED_BUFFERS.fetch_add(1, Ordering::Relaxed);
+    CREATED_BUFFER_BYTES.fetch_add(made.size(), Ordering::Relaxed);
+    PLACED_BYTES.fetch_add(descriptor.contents.len() as u64, Ordering::Relaxed);
+    made
+}
+
+#[expect(
+    clippy::disallowed_methods,
+    reason = "the renderer's one texture creation"
+)]
+pub(crate) fn create_texture(
+    device: &wgpu::Device,
+    descriptor: &wgpu::TextureDescriptor<'_>,
+) -> wgpu::Texture {
+    CREATED_TEXTURES.fetch_add(1, Ordering::Relaxed);
+    device.create_texture(descriptor)
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub(crate) fn created() -> serde_json::Value {
+    serde_json::json!({
+        "buffers": CREATED_BUFFERS.load(Ordering::Relaxed),
+        "textures": CREATED_TEXTURES.load(Ordering::Relaxed),
+    })
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub(crate) fn created_bytes() -> serde_json::Value {
+    serde_json::json!({
+        "buffers": CREATED_BUFFER_BYTES.load(Ordering::Relaxed),
+        "placed": PLACED_BYTES.load(Ordering::Relaxed),
+    })
+}
 
 #[derive(Clone)]
 pub struct Queue(Rc<Shared>);
@@ -120,8 +183,8 @@ pub fn unchanged_writes(
 #[derive(Clone, Copy)]
 enum Owner {
     Engine,
-    Buffer(u32),
-    Texture(u32),
+    Buffer(u32, &'static str),
+    Texture(u32, &'static str),
 }
 
 fn slot(slots: &mut Vec<Written>, at: u32) -> &mut Written {
@@ -169,12 +232,12 @@ impl Queue {
 
     pub fn write_declared_buffer(
         &self,
-        declared: u32,
+        (declared, label): (u32, &'static str),
         buffer: &wgpu::Buffer,
         offset: u64,
         data: &[u8],
     ) {
-        self.write_buffer_of(Owner::Buffer(declared), buffer, offset, data);
+        self.write_buffer_of(Owner::Buffer(declared, label), buffer, offset, data);
     }
 
     pub fn write_texture(
@@ -189,13 +252,13 @@ impl Queue {
 
     pub fn write_declared_texture(
         &self,
-        declared: u32,
+        (declared, label): (u32, &'static str),
         texture: wgpu::TexelCopyTextureInfo<'_>,
         data: &[u8],
         layout: wgpu::TexelCopyBufferLayout,
         size: wgpu::Extent3d,
     ) {
-        self.write_texture_of(Owner::Texture(declared), texture, data, layout, size);
+        self.write_texture_of(Owner::Texture(declared, label), texture, data, layout, size);
     }
 
     #[expect(clippy::disallowed_methods, reason = "the renderer's one buffer write")]
@@ -245,10 +308,26 @@ impl Queue {
             None => 0,
         };
         writes.total.add(bytes, unchanged);
-        match owner {
-            Owner::Engine => writes.engine.add(bytes, unchanged),
-            Owner::Buffer(at) => slot(&mut writes.buffers, at).add(bytes, unchanged),
-            Owner::Texture(at) => slot(&mut writes.textures, at).add(bytes, unchanged),
+        let label = match owner {
+            Owner::Engine => {
+                writes.engine.add(bytes, unchanged);
+                "engine"
+            }
+            Owner::Buffer(at, label) => {
+                slot(&mut writes.buffers, at).add(bytes, unchanged);
+                label
+            }
+            Owner::Texture(at, label) => {
+                slot(&mut writes.textures, at).add(bytes, unchanged);
+                label
+            }
+        };
+        if engine_profile::tracing() && engine_profile::cause().0 != 0 {
+            engine_profile::event(
+                "write",
+                label,
+                &[("bytes", engine_profile::Fact::Count(bytes))],
+            );
         }
     }
 

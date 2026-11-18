@@ -44,6 +44,10 @@ impl Delivers<String> for Files {
     fn landed(&self, held: &Interest<String>) -> Option<Result<Arc<[u8]>, Error>> {
         self.requests.landed(held)
     }
+
+    fn cause(&self, held: &Interest<String>) -> engine_profile::Cause {
+        self.requests.cause(held.key())
+    }
 }
 
 fn lock<T>(held: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {

@@ -2,17 +2,24 @@ use std::fmt;
 use std::hash::Hash;
 use std::sync::Arc;
 
+use engine_profile::Cause;
+
 use crate::{
     Error, ErrorCode, Interest, MISSING_RECORD, RecordKey, Records, Request, Requests, Settling,
 };
 
 pub trait Delivers<K: Clone> {
     fn landed(&self, held: &Interest<K>) -> Option<Result<Arc<[u8]>, Error>>;
+    fn cause(&self, held: &Interest<K>) -> Cause;
 }
 
 impl Delivers<RecordKey> for Records {
     fn landed(&self, held: &Interest<RecordKey>) -> Option<Result<Arc<[u8]>, Error>> {
         self.get(held)
+    }
+
+    fn cause(&self, held: &Interest<RecordKey>) -> Cause {
+        self.requests.cause(held.key())
     }
 }
 
@@ -26,6 +33,10 @@ impl<K: Clone + Eq + Hash, A> Delivers<K> for Requests<K, Arc<[u8]>, A> {
                 Error::new(ErrorCode::InvalidRecord, "$").got(MISSING_RECORD)
             )),
         }
+    }
+
+    fn cause(&self, held: &Interest<K>) -> Cause {
+        Requests::cause(self, held.key())
     }
 }
 
@@ -81,6 +92,9 @@ impl<T, K: Clone> Background<T, K> {
         if let Stage::Asked(held, _) = &self.stage
             && let Some(landed) = from.landed(held)
         {
+            if engine_profile::tracing() {
+                engine_profile::adopt(from.cause(held));
+            }
             let placeholder = Stage::Failed(Error::new(ErrorCode::InvalidRecord, "$"));
             if let Stage::Asked(_, decode) = std::mem::replace(&mut self.stage, placeholder) {
                 self.stage = match landed.and_then(decode) {

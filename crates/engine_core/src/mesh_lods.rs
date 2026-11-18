@@ -76,6 +76,7 @@ pub(crate) fn settle(world: &mut World) {
                 input,
                 priority: job_priority(VIEW_JOBS, place),
                 admitted: true,
+                cause: engine_profile::carry(),
             });
         }
         let mut landed = Vec::new();

@@ -91,22 +91,25 @@ impl AppHost {
         bricks: impl FnOnce(BrickList) -> BrickList,
         build: impl FnOnce(&mut Engine) -> Result<()>,
     ) -> Result<Self> {
-        let mut engine = built(|| {
-            let mut engine = crate::engine(bricks)?;
-            build(&mut engine)?;
-            Ok(engine)
+        let install = engine_profile::open("launch", "install");
+        let mut engine = engine_profile::caused(install, || {
+            built(|| {
+                let mut engine = crate::engine(bricks)?;
+                build(&mut engine)?;
+                Ok(engine)
+            })
         })?;
         let mut start = std::pin::pin!(Renderer::start(target));
         let started =
             std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(start.as_mut(), cx))).await;
-        let ahead = Renderer::ahead(engine.app.world_mut());
+        let ahead = engine_profile::caused(install, || Renderer::ahead(engine.app.world_mut()));
         let starting = match started {
             std::task::Poll::Ready(starting) => starting,
             std::task::Poll::Pending => start.await,
         }?;
         let renderer = Box::new(starting.finish());
         let mut host = Self::with(engine, renderer);
-        host.claim_passes(ahead)?;
+        engine_profile::caused(install, || host.claim_passes(ahead))?;
         for error in host.engine.notices() {
             log_notice(error);
         }

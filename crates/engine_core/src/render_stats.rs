@@ -1,8 +1,6 @@
 use bevy_ecs::resource::Resource;
 use serde::{Serialize, Serializer};
 
-use crate::{Error, Readiness};
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum DropReason {
@@ -67,8 +65,6 @@ pub struct DroppedDraws {
 pub enum KindPassState {
     Drew { draws: u32 },
     Dropped { reason: DropReason, draws: u32 },
-    Waiting { on: &'static str },
-    Refused { on: &'static str },
     Skipped { reason: &'static str },
     Silent,
 }
@@ -81,37 +77,11 @@ pub struct KindPass {
     pub state: KindPassState,
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct KindRefusal {
-    pub brick: &'static str,
-    pub error: Error,
-}
-
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 #[component(immutable)]
 pub struct DrawReports {
     pub kinds: Vec<KindPass>,
-    pub refused: Vec<KindRefusal>,
     pub dropped: Vec<DroppedDraws>,
-}
-
-impl DrawReports {
-    pub fn add_to(&self, readiness: &mut Readiness) {
-        for pass in &self.kinds {
-            if matches!(pass.state, KindPassState::Waiting { .. }) {
-                readiness.settle(pass.brick, 1);
-            }
-        }
-        for refused in &self.refused {
-            let known = readiness
-                .failed
-                .iter()
-                .any(|(by, error)| by == refused.brick && *error == refused.error);
-            if !known {
-                readiness.fail(refused.brick, refused.error.clone());
-            }
-        }
-    }
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]

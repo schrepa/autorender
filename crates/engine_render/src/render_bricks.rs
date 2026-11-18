@@ -165,7 +165,7 @@ impl GpuPart for Composite {
         cx.run(self.pass);
     }
 
-    fn encode(&mut self, _pass: crate::Pass<Self>, cx: &mut crate::Encode<'_, Self>) -> u32 {
+    fn encode(&mut self, _pass: crate::Pass<Self>, cx: &mut crate::Encode<'_, Self>) {
         cx.render(crate::Attach::Declared).draw(
             &self.pipeline,
             crate::Shape::Pulled {
@@ -174,6 +174,5 @@ impl GpuPart for Composite {
                 material: None,
             },
         );
-        0
     }
 }

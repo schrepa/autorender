@@ -195,6 +195,8 @@ pub(crate) struct BuiltPipeline {
     pub(crate) decl: PipelineDecl,
     pub(crate) stages: Vec<Stage>,
     pub(crate) layout: wgpu::PipelineLayout,
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    pub(crate) group_layouts: Vec<wgpu::BindGroupLayout>,
     pub(crate) groups: Vec<OwnGroup>,
     pub(crate) variant: u32,
     pub(crate) reads: Vec<Bound>,
@@ -745,6 +747,8 @@ impl Machine {
                     .collect::<Vec<_>>(),
                 immediate_size: 0,
             });
+            #[cfg(any(feature = "dev", feature = "profiling"))]
+            let group_layouts = layouts.iter().map(|&layout| layout.clone()).collect();
             let mut hasher = DefaultHasher::new();
             format!("{:?} {:?}", decl.program, decl.constants).hash(&mut hasher);
             for stage in &stages {
@@ -776,6 +780,8 @@ impl Machine {
                 decl,
                 stages,
                 layout,
+                #[cfg(any(feature = "dev", feature = "profiling"))]
+                group_layouts,
                 groups,
                 variant,
                 reads,

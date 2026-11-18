@@ -46,6 +46,8 @@ mod profiling;
 mod readback;
 mod renderer;
 mod targets;
+#[cfg(any(feature = "dev", feature = "profiling"))]
+mod whatif;
 
 pub use engine_place::{PointInput, PointSet};
 pub use gpu_data::{mip_levels, pack_color, pack_surface};
@@ -98,9 +100,7 @@ pub trait GpuPart: Sized + Send + Sync + 'static {
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error>;
     fn prepare(&mut self, reads: SystemParamItem<'_, '_, Self::Reads>, cx: &mut Prepare<'_, Self>);
     fn view(&mut self, _view: &engine_core::ViewFacts, _cx: &mut Prepare<'_, Self>) {}
-    fn encode(&mut self, _pass: Pass<Self>, _cx: &mut Encode<'_, Self>) -> u32 {
-        0
-    }
+    fn encode(&mut self, _pass: Pass<Self>, _cx: &mut Encode<'_, Self>) {}
 }
 
 macro_rules! handle {
@@ -961,8 +961,8 @@ impl<P: GpuPart> Encode<'_, P> {
         }
     }
 
-    pub fn dispatch(&mut self, pipeline: &ComputePipeline<P>, count: Count<P>) -> u32 {
-        self.dispatch_at(pipeline, count, &[])
+    pub fn dispatch(&mut self, pipeline: &ComputePipeline<P>, count: Count<P>) {
+        self.dispatch_at(pipeline, count, &[]);
     }
 
     pub fn dispatch_at(
@@ -970,14 +970,14 @@ impl<P: GpuPart> Encode<'_, P> {
         pipeline: &ComputePipeline<P>,
         count: Count<P>,
         offsets: &[u32],
-    ) -> u32 {
+    ) {
         let count = match count {
             Count::Groups(groups) => encode::CountRaw::Groups(groups),
             Count::Indirect(input, offset) => encode::CountRaw::Indirect(input.0, offset),
         };
         self.core.open_encode_span(self.timer);
         let part = self.core.part;
-        self.core.dispatch(part, pipeline.0, count, offsets)
+        self.core.dispatch(part, pipeline.0, count, offsets);
     }
 }
 
@@ -1130,16 +1130,15 @@ fn raw_attach<P>(attach: &Attach<P>) -> encode::AttachRaw {
 }
 
 impl<P: GpuPart> Draw<'_, P, Own> {
-    pub fn scene(&mut self, own: &P) -> u32 {
+    pub fn scene(&mut self, own: &P) {
         let run = self.raw.run();
         run.reset_scissor();
         let Some(scene) = run.scene_draw() else {
-            return 0;
+            return;
         };
         let members = run.scene_members();
         run.tallies.kinds.scened(scene.pass.0);
         let encoding = self.raw.part();
-        let mut drawn = 0;
         for member in members.iter() {
             let batches = (&member.batches, scene.bit);
             let run = self.raw.run();
@@ -1159,27 +1158,16 @@ impl<P: GpuPart> Draw<'_, P, Own> {
             };
             run.point = Some(scene.pass.0);
             run.tallies.kinds.begin(member.kind.kind, scene.pass.0);
-            let before = reached(run);
             let part = held.as_ref().map_or(own as &dyn std::any::Any, |held| held.part());
             (member.call)(part, &mut self.raw.member(member.part, batches));
             let run = self.raw.run();
-            drawn += reached(run) - before;
             run.tallies.kinds.end();
             run.point = None;
             if let Some(held) = held {
                 run.give_member(member.part, held);
             }
         }
-        drawn
     }
-}
-
-fn reached(run: &encode::EncodeCore) -> u32 {
-    let kinds = &run.tallies.kinds;
-    kinds
-        .drawing
-        .and_then(|at| kinds.listed.get(at))
-        .map_or(0, |tally| tally.reached)
 }
 
 gpu_struct! {

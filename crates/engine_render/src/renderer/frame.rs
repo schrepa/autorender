@@ -103,7 +103,7 @@ fn copy_picture(
     }
     let (width, height) = (texture.width(), texture.height());
     let row = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
-    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+    let buffer = crate::gpu_calls::create_buffer(device, &wgpu::BufferDescriptor {
         label: Some("engine/picture-readback"),
         size: u64::from(row) * u64::from(height),
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
@@ -201,6 +201,7 @@ impl Renderer {
                 }
                 (Reader::FrameTimer, arrival) => display.timed(written, arrival),
                 (Reader::Profiler(slot), arrival) => profiler.arrived(slot, arrival),
+                (Reader::Work, arrival) => run.pipelines.work_landed(written, arrival),
             },
         );
         for (asked, read, deliver) in parts {
@@ -580,6 +581,8 @@ impl Renderer {
             run.forget_viewed();
             run.lay_arena();
             keep_eligible(run, &facts, (first, index == 0));
+            #[cfg(any(feature = "dev", feature = "profiling"))]
+            crate::whatif::skip(world, run.frames.asked, &mut run.planning.runs);
             let mut outputs = asked.clone();
             if order.len() > 1 {
                 for pass in run
@@ -975,12 +978,18 @@ pub(super) mod names {
 
     use super::super::Renderer;
     use crate::encode::Run;
+    use crate::graph::keyed;
     use crate::gpu_calls::{Count, Written};
 
     type Reader = fn(&Renderer, &Run, &World) -> Value;
 
     pub fn gpu_names(world: &mut World) {
-        let names: [(&'static str, Kind, Option<&'static str>, Reader); 15] = [
+        let names: [(&'static str, Kind, Option<&'static str>, Reader); 18] = [
+            ("gpu.created", Kind::Count, None, |_, _, _| crate::gpu_calls::created()),
+            ("gpu.created.bytes", Kind::Bytes, Some("bytes"), |_, _, _| {
+                crate::gpu_calls::created_bytes()
+            }),
+            ("gpu.views", Kind::State, None, views),
             ("gpu.resources", Kind::State, None, resources),
             ("gpu.resources.written", Kind::Bytes, Some("bytes"), |renderer, run, _| {
                 written(renderer, run, |written| written.bytes)
@@ -1034,16 +1043,8 @@ pub(super) mod names {
             );
         }
         Renderer::timer_names(world);
-    }
-
-    fn keyed(map: &mut Map<String, Value>, name: &str, value: Value) {
-        let mut key = name.to_owned();
-        let mut repeat = 1;
-        while map.contains_key(&key) {
-            repeat += 1;
-            key = format!("{name}#{repeat}");
-        }
-        map.insert(key, value);
+        crate::whatif::names(world);
+        super::super::install::declared_names(world);
     }
 
     fn part_of(run: &Run, part: u32) -> (&'static str, &'static str) {
@@ -1073,19 +1074,60 @@ pub(super) mod names {
         map
     }
 
+    fn views(_: &Renderer, run: &Run, world: &World) -> Value {
+        let listed = world
+            .get_resource::<engine_core::Views>()
+            .map_or(&[][..], engine_core::Views::listed);
+        let declared = &run.machine.declared.passes;
+        let views: Vec<Value> = super::drawn_order(listed)
+            .into_iter()
+            .map(|index| {
+                let facts = &listed[index];
+                let passes: Vec<&'static str> = run
+                    .sets
+                    .list
+                    .iter()
+                    .find(|set| set.view == facts.view)
+                    .map(|set| {
+                        set.ran
+                            .iter()
+                            .filter(|&pass| run.sets.passes.contains(pass))
+                            .filter_map(|pass| declared.get(pass).map(|pass| pass.name))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let target = match facts.target {
+                    engine_core::Target::Surface => json!("surface"),
+                    engine_core::Target::Texture(handle) => json!({"texture": handle.slot()}),
+                };
+                let size = facts.size();
+                json!({
+                    "camera": facts.camera.to_bits(),
+                    "target": target,
+                    "size": [size.x, size.y],
+                    "layers": facts.layers.0,
+                    "passes": passes,
+                })
+            })
+            .collect();
+        Value::Array(views)
+    }
+
     fn resources(_: &Renderer, run: &Run, _: &World) -> Value {
         let declared_of = &run.machine.declared;
         Value::Object(declared(run, |resource| {
-            let (kind, part, size) = match resource {
+            let (kind, part, lifetime, size) = match resource {
                 Declared::Buffer(at) => (
                     "buffer",
                     declared_of.buffers[at].part,
+                    declared_of.buffers[at].lifetime,
                     run.buffer_held(at as u32)
                         .map_or_else(|| unavailable("not_allocated"), |(_, bytes)| json!(bytes)),
                 ),
                 Declared::Texture(at) => (
                     "texture",
                     declared_of.textures[at].part,
+                    declared_of.textures[at].lifetime,
                     run.texture_tables(at as u32)
                         .sizes
                         .get(at)
@@ -1100,7 +1142,14 @@ pub(super) mod names {
                 ),
             };
             let (part, brick) = part_of(run, part);
-            json!({"kind": kind, "part": part, "brick": brick, "size": size})
+            let lifetime = crate::graph::Life::from(lifetime).name();
+            json!({
+                "kind": kind,
+                "part": part,
+                "brick": brick,
+                "lifetime": lifetime,
+                "size": size,
+            })
         }))
     }
 
@@ -1150,14 +1199,21 @@ pub(super) mod names {
             "passes": run.tallies.kinds.passes,
             "problems": run.tallies.kinds.problems,
             "dropped": super::super::kind_passes::dropped_draws(run),
+            "joins": crate::registration::kind_passes(
+                &run.machine.declared,
+                &run.installs.draw_entries,
+            ),
         })
     }
 
     fn passes(_: &Renderer, run: &Run, _: &World) -> Value {
         let mut map = Map::new();
-        for pass in &run.machine.declared.passes {
+        for (index, pass) in run.machine.declared.passes.iter().enumerate() {
             let (part, brick) = part_of(run, pass.part);
-            keyed(&mut map, pass.name, json!({"part": part, "brick": brick}));
+            let mut facts = run.machine.graph.pass_facts(index);
+            facts.insert("part".to_owned(), json!(part));
+            facts.insert("brick".to_owned(), json!(brick));
+            keyed(&mut map, pass.name, Value::Object(facts));
         }
         Value::Object(map)
     }

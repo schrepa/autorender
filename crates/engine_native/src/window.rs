@@ -104,8 +104,10 @@ impl<'a, G: Game> App<'a, G> {
         let mut jobs = options.jobs.pool(false);
         jobs.attach(&mut host);
         #[cfg(feature = "dev")]
-        let session =
-            options.session(&mut host, size, &self.options.scene, ("window", jobs.packed()))?;
+        let session = {
+            let pack = crate::options::pack_header(&jobs);
+            options.session(&mut host, size, &self.options.scene, ("window", pack))?
+        };
         self.input.connect_pads();
         Ok(Running {
             window,

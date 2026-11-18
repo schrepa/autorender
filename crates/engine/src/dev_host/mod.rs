@@ -74,10 +74,13 @@ pub(crate) fn install(world: &mut World) {
 const UNCHANGED_WRITES: &str = "unchanged_writes";
 const UNCHANGED_WRITES_CHANGES: &str =
     "hashes every byte written to the GPU on the CPU, so CPU render time grows with bytes written";
+const CAUSES: &str = "causes";
+const CAUSES_CHANGES: &str = "adds a cause event per origin and a cause field to events";
 
 pub fn instruments() -> &'static [&'static str] {
     static NAMES: std::sync::LazyLock<Vec<&'static str>> = std::sync::LazyLock::new(|| {
-        std::iter::once(UNCHANGED_WRITES)
+        [UNCHANGED_WRITES, CAUSES]
+            .into_iter()
             .chain(engine_render::GPU_INSTRUMENTS)
             .collect()
     });
@@ -89,6 +92,10 @@ pub fn instrument(
     name: &str,
     on: bool,
 ) -> Result<&'static str, &'static str> {
+    if name == CAUSES {
+        engine_profile::trace(on);
+        return Ok(CAUSES_CHANGES);
+    }
     if name == UNCHANGED_WRITES {
         return engine_render::unchanged_writes(reach.world, on)
             .map(|()| UNCHANGED_WRITES_CHANGES)
@@ -122,19 +129,21 @@ impl<G: Game> GameHost<G> {
             self.development.running = Some(running);
             return;
         };
-        let outcome = crate::game_host::reload_checked(
-            self.scene.instance(),
-            self.app.engine(),
-            source,
-            (&reload.expected_revision, &reload.revision),
-        )
-        .and_then(|document| self.arrive(&document, files, crate::game::Arrival::Reload))
-        .map(|()| {
-            let skipped = self.scene.instance().map(|scene| scene.skipped().to_vec());
-            match skipped.filter(|skipped| !skipped.is_empty()) {
-                Some(skipped) => json!({"reloaded": true, "skipped": skipped}),
-                None => json!({"reloaded": true}),
-            }
+        let outcome = engine_profile::caused(running.cause, || {
+            crate::game_host::reload_checked(
+                self.scene.instance(),
+                self.app.engine(),
+                source,
+                (&reload.expected_revision, &reload.revision),
+            )
+            .and_then(|document| self.arrive(&document, files, crate::game::Arrival::Reload))
+            .map(|()| {
+                let skipped = self.scene.instance().map(|scene| scene.skipped().to_vec());
+                match skipped.filter(|skipped| !skipped.is_empty()) {
+                    Some(skipped) => json!({"reloaded": true, "skipped": skipped}),
+                    None => json!({"reloaded": true}),
+                }
+            })
         });
         self.answer(&running, outcome);
     }
@@ -160,7 +169,14 @@ impl<G: Game> GameHost<G> {
                     continue;
                 }
             };
-            let applied = self.reach(|reach| engine_dev::apply(reach, &request));
+            let cause = if engine_profile::tracing() {
+                engine_profile::open("request", &format!("{} {}", request.verb.name(), request.name))
+            } else {
+                engine_profile::Cause::default()
+            };
+            let applied = engine_profile::caused(cause, || {
+                self.reach(|reach| engine_dev::apply(reach, &request))
+            });
             match applied {
                 Ok(Applied::Value(value)) => self.reply(ticket, request.id.as_ref(), Ok(value)),
                 Err(error) => self.reply(ticket, request.id.as_ref(), Err(error)),
@@ -169,6 +185,7 @@ impl<G: Game> GameHost<G> {
                         self.development.running = Some(Running {
                             ticket,
                             id: request.id,
+                            cause,
                             order,
                         });
                     }

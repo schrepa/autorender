@@ -23,8 +23,9 @@ pub fn row(world: &mut World) -> NameEntry {
     ]);
     let listed = covered.clone();
     NameEntry::read("entities", Kind::State, move |reach, given| {
-        match crate::table::args::<EntitiesArgs>(given)?.entity {
-            None => Ok(listing(reach, &listed)),
+        let given: EntitiesArgs = crate::table::args(given)?;
+        match given.entity {
+            None => Ok(listing(reach, &listed, (given.offset, given.limit))),
             Some(id) => {
                 let entity = find(reach, &id, "$.args.entity")?;
                 Ok(one(reach, entity, &covered))
@@ -36,6 +37,7 @@ pub fn row(world: &mut World) -> NameEntry {
         json!({ "entity": "0v0", "detach": true }),
     )
     .set(Lands::ThisFrame, set)
+    .pages()
 }
 
 #[derive(Deserialize, schemars::JsonSchema)]
@@ -43,6 +45,10 @@ pub fn row(world: &mut World) -> NameEntry {
 struct EntitiesArgs {
     #[serde(default)]
     entity: Option<String>,
+    #[serde(default)]
+    offset: Option<usize>,
+    #[serde(default)]
+    limit: Option<usize>,
     #[serde(default)]
     parent: Option<String>,
     #[serde(default)]
@@ -101,12 +107,20 @@ fn spawned_by(world: &World, entity: Entity) -> Option<String> {
     })
 }
 
-fn listing(reach: &Reach<'_>, covered: &[ComponentId]) -> Value {
+fn listing(
+    reach: &Reach<'_>,
+    covered: &[ComponentId],
+    (offset, limit): (Option<usize>, Option<usize>),
+) -> Value {
     let world = reach.world;
     let mut entities: Vec<Entity> = world.iter_entities().map(|entity| entity.id()).collect();
     entities.sort_unstable();
-    entities
+    let total = entities.len();
+    let first = offset.unwrap_or(0);
+    let rows: Vec<Value> = entities
         .into_iter()
+        .skip(first)
+        .take(limit.unwrap_or(usize::MAX))
         .map(|entity| {
             let mut row = header(world, entity);
             let names: Vec<String> = values(reach, entity, covered)
@@ -116,7 +130,11 @@ fn listing(reach: &Reach<'_>, covered: &[ComponentId]) -> Value {
             row.insert("components".to_owned(), json!(names));
             Value::Object(row)
         })
-        .collect()
+        .collect();
+    if offset.is_none() && limit.is_none() {
+        return Value::Array(rows);
+    }
+    json!({ "total": total, "offset": first, "page": rows })
 }
 
 fn one(reach: &Reach<'_>, entity: Entity, covered: &[ComponentId]) -> Value {

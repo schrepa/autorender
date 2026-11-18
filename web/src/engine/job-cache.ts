@@ -44,7 +44,7 @@ export interface Coder {
 
 export interface JobCacheSettings { outputs: number; records: number; verify: boolean }
 
-interface Pack { url: string; directory: PackDirectory }
+interface Pack { url: string; name: string; bytes: number | { unavailable: string }; directory: PackDirectory }
 
 interface Wanted { key: string; url: string; offset: number; stored: number; raw: number }
 
@@ -174,6 +174,7 @@ class Shelf {
 export class JobStore {
   private packs: Promise<Pack[]> | undefined;
   private packHits = 0;
+  loaded: Pack[] = [];
 
   private constructor(private readonly bindings: IndexBindings, private readonly outputs: Shelf, private readonly records: Shelf,
     private readonly coder: Coder) {}
@@ -233,7 +234,7 @@ export class JobStore {
   }
 
   private opened(): Promise<Pack[]> {
-    return this.packs ??= openPacks(this.bindings);
+    return this.packs ??= openPacks(this.bindings).then(packs => this.loaded = packs);
   }
 
   private size(key: string): number {
@@ -277,7 +278,7 @@ export class JobStore {
     for (const span of spans(wanted)) {
       const start = span[0].offset;
       const last = span[span.length - 1];
-      const read = fetchRange(last.url, start, last.offset + last.stored - start);
+      const read = fetchRange(last.url, start, last.offset + last.stored - start).then(([bytes]) => bytes);
       for (const record of span) {
         answers.set(record.key, read.then(bytes => this.answer(record, bytes.subarray(record.offset - start, record.offset - start + record.stored)),
           (error: unknown) => {
@@ -336,10 +337,11 @@ async function openPacks(bindings: IndexBindings): Promise<Pack[]> {
   for (const name of names) {
     const url = `${PACKS}${name}`;
     try {
-      const header = await fetchRange(url, 0, PACK_HEADER);
+      const [header, bytes] = await fetchRange(url, 0, PACK_HEADER);
       const [offset, stored] = bindings.PackDirectory.locate(header);
-      const directory = new bindings.PackDirectory(header, await fetchRange(url, offset, stored));
-      packs.push({ url, directory });
+      const [listed] = await fetchRange(url, offset, stored);
+      const directory = new bindings.PackDirectory(header, listed);
+      packs.push({ url, name: name.replace(/\.pack$/, ""), bytes: bytes ?? { unavailable: "content_range_without_size" }, directory });
     } catch (error) {
       console.warn(`The pack ${url} is left out: ${String(error)}`);
     }
@@ -347,7 +349,7 @@ async function openPacks(bindings: IndexBindings): Promise<Pack[]> {
   return packs;
 }
 
-async function fetchRange(url: string, offset: number, length: number, again = true): Promise<Uint8Array> {
+async function fetchRange(url: string, offset: number, length: number, again = true): Promise<[Uint8Array, number | undefined]> {
   let response: Response;
   try {
     response = await fetch(url, { cache: "no-store", headers: { Range: `bytes=${offset}-${offset + length - 1}` } });
@@ -370,5 +372,6 @@ async function fetchRange(url: string, offset: number, length: number, again = t
   if (bytes.length !== length) {
     throw engineFailure({ code: "source_io", path: "$", allowed: { kind: "range", min: length, max: length }, got: bytes.length });
   }
-  return bytes;
+  const total = response.headers.get("Content-Range")?.match(/\/(\d+)$/)?.[1];
+  return [bytes, total === undefined ? undefined : Number(total)];
 }

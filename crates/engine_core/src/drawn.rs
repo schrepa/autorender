@@ -86,6 +86,8 @@ pub struct DrawnBatch {
     pub passes: Option<PassMask>,
     pub layers: Layers,
     pub instances: Range<u32>,
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    pub cause: u32,
 }
 
 type BatchKey = (
@@ -304,7 +306,7 @@ impl DrawnTable {
         };
         for &entity in &touched {
             match world.get::<Drawn>(entity) {
-                Some(drawn) => self.refresh(entity, drawn, &cx),
+                Some(drawn) => under(world, entity, || self.refresh(entity, drawn, &cx)),
                 None => self.forget(entity),
             }
         }
@@ -628,6 +630,8 @@ impl DrawnTable {
             passes: passes.map(PassMask),
             layers: Layers(layers),
             instances: start..start,
+            #[cfg(any(feature = "dev", feature = "profiling"))]
+            cause: engine_profile::cause().0,
         };
         let batch = match self.spare_batches.pop() {
             Some(batch) => {
@@ -709,6 +713,17 @@ fn stale(drawn: &Drawn, library: &AssetLibrary, before: u64) -> bool {
                         .any(|texture| moved(library.revision_of(texture)))
                 })
         })
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+fn under<R>(world: &World, entity: Entity, work: impl FnOnce() -> R) -> R {
+    let cause = world.get::<crate::Caused>(entity).map_or(0, |caused| caused.0);
+    engine_profile::caused(engine_profile::Cause(cause), work)
+}
+
+#[cfg(not(any(feature = "dev", feature = "profiling")))]
+fn under<R>(_: &World, _: Entity, work: impl FnOnce() -> R) -> R {
+    work()
 }
 
 fn refused_of(state: &DrawnState) -> Option<&Error> {
@@ -793,7 +808,7 @@ pub(crate) fn ask(world: &mut World) {
         let touched = std::mem::take(&mut table.touched);
         for &entity in &touched {
             if let Some(drawn) = world.get::<Drawn>(entity) {
-                let kept = table.take_held(entity, drawn, residency);
+                let kept = under(world, entity, || table.take_held(entity, drawn, residency));
                 table.held.insert(entity, kept);
             }
         }
@@ -819,4 +834,119 @@ pub(crate) fn resolve(world: &mut World) {
         }
     }
     crate::refusals::prune(world);
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+#[derive(serde::Deserialize, schemars::JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct NoArgs {}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+fn table_of<'w>(
+    reach: &crate::Reach<'w>,
+    given: &serde_json::Value,
+) -> Result<Option<&'w DrawnTable>, Error> {
+    let NoArgs {} = crate::parse_value_at(given.clone(), "$.args")?;
+    Ok(reach.world.get_resource::<DrawnTable>())
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+impl DrawnTable {
+    fn objects(&self) -> serde_json::Value {
+        let mut rows: Vec<(u32, serde_json::Value)> = self
+            .held
+            .iter()
+            .filter_map(|(entity, kept)| match kept.state {
+                DrawnState::Drawn { slot } => Some((slot, *entity)),
+                DrawnState::Hidden
+                | DrawnState::Unplaced
+                | DrawnState::Waiting
+                | DrawnState::Refused(_) => None,
+            })
+            .map(|(slot, entity)| {
+                let record = self.records[slot as usize];
+                let batch = self.homes[slot as usize].batch;
+                let first = record.values as usize + VALUE_HEAD;
+                let row = serde_json::json!({
+                    "slot": slot,
+                    "entity": entity.to_string(),
+                    "node": (record.node != u32::MAX).then_some(record.node),
+                    "kind": self.batches.get(batch as usize).map(|batch| batch.kind.name()),
+                    "batch": (batch != NO_BATCH).then_some(batch),
+                    "values": [record.values as usize, record.values as usize + self.stride],
+                    "floats": [first, first + record.floats.div_ceil(4) as usize],
+                });
+                (slot, row)
+            })
+            .collect();
+        rows.sort_unstable_by_key(|&(slot, _)| slot);
+        serde_json::Value::Array(rows.into_iter().map(|(_, row)| row).collect())
+    }
+
+    fn batch_listing(&self, passes: Option<&crate::ScenePasses>) -> serde_json::Value {
+        let named = |mask: PassMask| -> Vec<&'static str> {
+            passes
+                .into_iter()
+                .flat_map(crate::ScenePasses::listed)
+                .filter(|listed| listed.bit.is_some_and(|bit| mask.has(bit)))
+                .map(|listed| listed.name)
+                .collect()
+        };
+        let mut kinds = serde_json::Map::new();
+        for (decl, sorted) in self.kinds.iter().zip(&self.sorted) {
+            let batches = sorted
+                .iter()
+                .map(|&batch| {
+                    let made = &self.batches[batch as usize];
+                    serde_json::json!({
+                        "batch": batch,
+                        "order": made.order,
+                        "geometry": made.geometry.map(GeometryHandle::slot),
+                        "material": made.material.map(MaterialHandle::slot),
+                        "passes": made.passes.map(named),
+                        "layers": made.layers.0,
+                        "instances": [made.instances.start, made.instances.end],
+                        "room": self.rooms[batch as usize],
+                        "cause": made.cause,
+                    })
+                })
+                .collect();
+            kinds.insert(decl.kind.name().to_owned(), serde_json::Value::Array(batches));
+        }
+        serde_json::Value::Object(kinds)
+    }
+
+    fn slot_counts(&self) -> serde_json::Value {
+        serde_json::json!({
+            "used": self.records.len() - self.free.len(),
+            "capacity": self.records.len(),
+            "free": self.free.len(),
+            "batches": self.keyed.len(),
+            "order": self.order.len(),
+            "value_vec4s": self.stride,
+        })
+    }
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub(crate) fn object_names(world: &mut World) {
+    use crate::{Kind, NameEntry, register};
+    let shape = engine_place::schema_of::<NoArgs>();
+    let entries = [
+        NameEntry::read("objects", Kind::State, |reach, given| {
+            Ok(table_of(reach, given)?.map_or(serde_json::json!([]), DrawnTable::objects))
+        }),
+        NameEntry::read("objects.batches", Kind::State, |reach, given| {
+            let passes = reach.world.get_resource::<crate::ScenePasses>();
+            Ok(table_of(reach, given)?
+                .map_or(serde_json::json!({}), |table| table.batch_listing(passes)))
+        }),
+        NameEntry::read("objects.slots", Kind::State, |reach, given| {
+            Ok(table_of(reach, given)?
+                .map_or_else(|| DrawnTable::default().slot_counts(), DrawnTable::slot_counts))
+        }),
+    ];
+    for entry in entries {
+        register(world, entry.args(shape.clone(), serde_json::json!({})));
+    }
 }

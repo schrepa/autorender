@@ -533,7 +533,7 @@ impl<P: GpuPart> Draw<'_, P, Scene> {
 
     pub fn batches(&mut self, pipeline: &Pipeline<P, Scene>, vertices: Range<u32>) {
         for batch in self.raw.batches() {
-            self.draw(
+            let recorded = self.draw(
                 pipeline,
                 Shape::Pulled {
                     vertices: vertices.clone(),
@@ -541,6 +541,15 @@ impl<P: GpuPart> Draw<'_, P, Scene> {
                     material: batch.material,
                 },
             );
+            #[cfg(any(feature = "dev", feature = "profiling"))]
+            if engine_profile::tracing()
+                && matches!(recorded, crate::Recorded::Exact | crate::Recorded::StandIn)
+                && !batch.drawn.swap(true, std::sync::atomic::Ordering::Relaxed)
+            {
+                self.raw.run().first_drawn(pipeline.0, batch.cause);
+            }
+            #[cfg(not(any(feature = "dev", feature = "profiling")))]
+            let _ = recorded;
         }
     }
 

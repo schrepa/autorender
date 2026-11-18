@@ -142,6 +142,25 @@ fn offsets_of<'o>(
 }
 
 impl Run {
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    pub(crate) fn first_drawn(&self, handle: u32, cause: u32) {
+        let kinds = &self.tallies.kinds;
+        let kind = kinds
+            .drawing
+            .and_then(|at| kinds.listed.get(at))
+            .map_or("", |tally| tally.kind.name());
+        let pipeline = self.pipeline_of(handle).map_or("", |(pipeline, _)| {
+            self.machine.draw_key(self.pass, pipeline).pipeline
+        });
+        engine_profile::caused(engine_profile::Cause(cause), || {
+            engine_profile::event(
+                "drawn",
+                kind,
+                &[("pipeline", engine_profile::Fact::Text(pipeline))],
+            );
+        });
+    }
+
     pub(super) fn scoped(&self, part: u32, point: Option<&'static str>, pipeline: u32) -> bool {
         let Some(built) = self.machine.pipelines.get(pipeline as usize) else {
             return false;
@@ -563,26 +582,26 @@ impl Run {
         handle: u32,
         count: CountRaw,
         offsets: &[u32],
-    ) -> u32 {
+    ) {
         self.end_open();
         let Some(built) = self.machine.pipelines.get(handle as usize) else {
-            return 0;
+            return;
         };
         if built.decl.part != part || built.decl.scope != Scoped::Pass(self.pass) {
             let error = fault(self.path("dispatch.pipeline"), ErrorCode::PassMismatch);
             self.fault(error);
-            return 0;
+            return;
         }
         if built.compute_ready.is_none() {
             let Some(made) = self.compute_pipeline(handle, true) else {
-                return 0;
+                return;
             };
             self.machine.pipelines[handle as usize].compute_ready = Some(made);
         }
         if let CountRaw::Indirect(input, _) = count
             && input_of(&self.machine, (&self.tables, self.set()), part, input).is_none()
         {
-            return 0;
+            return;
         }
         let current = self.pass;
         if self.recording.computing(current).is_none() {
@@ -590,7 +609,7 @@ impl Run {
             self.group(current);
             let label = self.label_of(current).unwrap_or("engine/part-dispatch");
             let Some(encoder) = self.recording.encoder() else {
-                return 0;
+                return;
             };
             let begun = encoder
                 .begin_compute_pass(&wgpu::ComputePassDescriptor {
@@ -621,11 +640,11 @@ impl Run {
         let parity = frames.parity;
         let set = &sets.list[sets.at];
         let Some(pass) = recording.computing(current) else {
-            return 0;
+            return;
         };
         let built = &machine.pipelines[handle as usize];
         let Some(compute) = built.compute_ready.as_ref() else {
-            return 0;
+            return;
         };
         bound.dispatch_pipeline(pass, compute);
         if let Some(group) = frame_groups
@@ -657,7 +676,6 @@ impl Run {
             }
             CountRaw::Groups([x, y, z]) => pass.dispatch_workgroups(x, y, z),
         }
-        1
     }
 }
 

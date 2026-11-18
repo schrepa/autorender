@@ -164,6 +164,7 @@ mod book {
     struct Booked {
         made: (u64, u64),
         asker: Asker,
+        cause: engine_profile::Cause,
         asked: u64,
         ready: Option<u64>,
         used: Option<u64>,
@@ -176,7 +177,7 @@ mod book {
         booked: Vec<Booked>,
     }
 
-    fn emit(state: &'static str, asker: &Asker, error: Option<&str>) {
+    fn emit(state: &'static str, (asker, cause): (&Asker, engine_profile::Cause), error: Option<&str>) {
         if !engine_profile::recording() {
             return;
         }
@@ -190,7 +191,7 @@ mod book {
         if let Some(error) = error {
             facts.push(("error", Fact::Text(error)));
         }
-        engine_profile::event("pipeline", asker.entry, &facts);
+        engine_profile::caused(cause, || engine_profile::event("pipeline", asker.entry, &facts));
     }
 
     impl Book {
@@ -199,11 +200,12 @@ mod book {
         }
 
         pub(crate) fn asked(&mut self, made: (u64, u64), frame: u64, asker: impl FnOnce() -> Asker) {
-            let asker = asker();
-            emit("asked", &asker, None);
+            let (asker, cause) = (asker(), engine_profile::cause());
+            emit("asked", (&asker, cause), None);
             let booked = Booked {
                 made,
                 asker,
+                cause,
                 asked: frame,
                 ready: None,
                 used: None,
@@ -220,13 +222,13 @@ mod book {
             if let Some(booked) = self.find(made) {
                 booked.ready = Some(frame);
                 booked.list = Some(list);
-                emit("ready", &booked.asker, None);
+                emit("ready", (&booked.asker, booked.cause), None);
             }
         }
 
         pub(crate) fn refused(&mut self, made: (u64, u64), frame: u64, error: &str) {
             if let Some(booked) = self.find(made) {
-                emit("refused", &booked.asker, Some(error));
+                emit("refused", (&booked.asker, booked.cause), Some(error));
                 booked.refused = Some((frame, error.to_owned()));
             }
         }
@@ -234,11 +236,11 @@ mod book {
         pub(crate) fn used(&mut self, made: (u64, u64), frame: u64) {
             if let Some(booked) = self.find(made).filter(|booked| booked.used.is_none()) {
                 booked.used = Some(frame);
-                emit("used", &booked.asker, None);
+                emit("used", (&booked.asker, booked.cause), None);
             }
         }
 
-        pub(crate) fn state(&self) -> Value {
+        pub(crate) fn state(&self, declared: impl Fn(u64) -> Value) -> Value {
             let listed = |list: Listing| match list {
                 Listing::FromList => json!("from_list"),
                 Listing::Listed => json!("listed"),
@@ -262,7 +264,11 @@ mod book {
                         facts.insert("brick".to_owned(), json!(brick));
                         facts.insert("pass".to_owned(), json!(pass));
                         facts.insert("asked_by".to_owned(), json!(by));
+                        facts.insert("declared".to_owned(), declared(booked.made.0));
                         facts.insert("asked".to_owned(), json!(booked.asked));
+                        if booked.cause.0 != 0 {
+                            facts.insert("cause".to_owned(), json!(booked.cause.0));
+                        }
                         if let Some(ready) = booked.ready {
                             facts.insert("ready".to_owned(), json!(ready));
                         }

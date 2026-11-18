@@ -241,6 +241,8 @@ pub(crate) struct Compiler<'r> {
     parts: &'r [Option<Box<dyn Installed>>],
     pipelines: &'r mut Pipelines,
     frame: u64,
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    bound: &'r mut super::run::Bound,
 }
 
 struct Shape<'f> {
@@ -431,6 +433,26 @@ struct Keyed {
     faces: Option<crate::surface::FaceCull>,
 }
 
+impl Keyed {
+    fn shape<'f>(
+        &self,
+        formats: &'f [Option<wgpu::TextureFormat>],
+        depth: Option<wgpu::TextureFormat>,
+    ) -> Shape<'f> {
+        Shape {
+            formats,
+            depth,
+            material: self
+                .bits
+                .filter(|_| self.specialized)
+                .map_or_else(Vec::new, |bits| bits.constants().to_vec()),
+            styling: self.bits.filter(|_| self.styled),
+            fragment: self.fragment,
+            faces: self.faces,
+        }
+    }
+}
+
 impl Run {
     pub(crate) fn split(&mut self) -> (Compiler<'_>, &mut Assets) {
         (
@@ -440,6 +462,8 @@ impl Run {
                 parts: &self.parts,
                 pipelines: &mut self.pipelines,
                 frame: self.frames.asked,
+                #[cfg(any(feature = "dev", feature = "profiling"))]
+                bound: &mut self.bound,
             },
             &mut self.assets,
         )
@@ -494,6 +518,10 @@ impl Run {
         let making = &pipelines.making;
         pipelines.standing.retain(|&made| making.waits(made));
         self.pipelines = pipelines;
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        if self.pipelines.work.as_ref().is_some_and(|work| work.live.is_some()) {
+            let _ = self.count_work(true);
+        }
     }
 
     pub(crate) fn compile(
@@ -668,6 +696,10 @@ impl Run {
         {
             built.computed.push((key, found.clone()));
         }
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        if asked != Asked::Warmed {
+            self.split().0.count_compute(pipeline, made);
+        }
         Some(found)
     }
 }
@@ -692,6 +724,10 @@ impl Compiler<'_> {
 
     pub(crate) fn collect(&mut self, waited: Option<(u64, u64)>) {
         for finished in self.pipelines.making.take(waited) {
+            #[cfg(any(feature = "dev", feature = "profiling"))]
+            let Some(finished) = self.counted_arrived(finished) else {
+                continue;
+            };
             let done = (finished.program, finished.key);
             let warmed = self.pipelines.warming.fed == Some(done);
             if warmed {
@@ -939,17 +975,7 @@ impl Compiler<'_> {
             } else {
                 Needed::First
             };
-            let shape = Shape {
-                formats,
-                depth,
-                material: bits
-                    .filter(|_| keyed.specialized)
-                    .map_or_else(Vec::new, |bits| bits.constants().to_vec()),
-                styling: bits.filter(|_| keyed.styled),
-                fragment: keyed.fragment,
-                faces: keyed.faces,
-            };
-            let Some(mut job) = self.render_job(pipeline, shape) else {
+            let Some(mut job) = self.render_job(pipeline, keyed.shape(formats, depth)) else {
                 self.pipelines.standing.retain(|known| *known != made);
                 return None;
             };
@@ -994,7 +1020,12 @@ impl Compiler<'_> {
                 self.collect(Some(made));
             }
         }
-        self.made(pipeline, made).map(|found| (key, found))
+        let found = self.made(pipeline, made)?;
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        if asked != Asked::Warmed {
+            self.count_render(pipeline, made, keyed.shape(formats, depth));
+        }
+        Some((key, found))
     }
 
     fn render_job(&mut self, pipeline: u32, shape: Shape<'_>) -> Option<RenderJob> {
@@ -1324,3 +1355,6 @@ fn faced(
         None => primitive,
     }
 }
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+mod counted;

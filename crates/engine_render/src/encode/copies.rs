@@ -244,5 +244,7 @@ impl Run {
                 request.deliver,
             );
         }
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        self.read_work();
     }
 }

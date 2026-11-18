@@ -61,6 +61,48 @@ pub(crate) struct Bound {
     compute: Option<wgpu::ComputePipeline>,
     viewport: Option<[u32; 4]>,
     scissor: Option<[u32; 4]>,
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    pub(crate) swap: Option<Swap>,
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub(crate) struct Swap {
+    pub(crate) group: wgpu::BindGroup,
+    pub(crate) empty: wgpu::BindGroup,
+    pub(crate) render: Vec<(wgpu::RenderPipeline, wgpu::RenderPipeline, u32)>,
+    pub(crate) compute: Vec<(wgpu::ComputePipeline, wgpu::ComputePipeline, u32)>,
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+impl Swap {
+    fn groups(&self, from: u32) -> impl Iterator<Item = (u32, &wgpu::BindGroup)> {
+        let group = crate::linker::counting::GROUP;
+        (from..group)
+            .map(|index| (index, &self.empty))
+            .chain(std::iter::once((group, &self.group)))
+    }
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub(crate) struct Work {
+    pub(crate) counter: crate::linker::counting::Counter,
+    pub(crate) generation: u64,
+    pub(crate) asked: Vec<CountedAsk>,
+    pub(crate) live: Option<Live>,
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub(crate) struct CountedAsk {
+    pub(crate) counted: (u64, u64),
+    pub(crate) plain: (u64, u64),
+    pub(crate) generation: u64,
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub(crate) struct Live {
+    pub(crate) buffer: wgpu::Buffer,
+    pub(crate) layout: wgpu::BindGroupLayout,
+    pub(crate) empty: wgpu::BindGroupLayout,
 }
 
 impl Bound {
@@ -123,8 +165,23 @@ impl Bound {
         if self.render.as_ref() == Some(pipeline) {
             return;
         }
-        render.set_pipeline(pipeline);
         self.render = Some(pipeline.clone());
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        if let Some(swap) = self.swap.take() {
+            let found = swap.render.iter().find(|(plain, ..)| plain == pipeline);
+            if let Some((_, counted, from)) = found {
+                render.set_pipeline(counted);
+                for (index, group) in swap.groups(*from) {
+                    self.draw_group(render, index, group, &[]);
+                }
+            }
+            let counted = found.is_some();
+            self.swap = Some(swap);
+            if counted {
+                return;
+            }
+        }
+        render.set_pipeline(pipeline);
     }
 
     pub(crate) fn dispatch_pipeline(
@@ -135,8 +192,23 @@ impl Bound {
         if self.compute.as_ref() == Some(pipeline) {
             return;
         }
-        pass.set_pipeline(pipeline);
         self.compute = Some(pipeline.clone());
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        if let Some(swap) = self.swap.take() {
+            let found = swap.compute.iter().find(|(plain, ..)| plain == pipeline);
+            if let Some((_, counted, from)) = found {
+                pass.set_pipeline(counted);
+                for (index, group) in swap.groups(*from) {
+                    self.dispatch_group(pass, index, group, &[]);
+                }
+            }
+            let counted = found.is_some();
+            self.swap = Some(swap);
+            if counted {
+                return;
+            }
+        }
+        pass.set_pipeline(pipeline);
     }
 
     pub(crate) fn viewport(&mut self, render: &mut wgpu::RenderPass<'static>, rect: [u32; 4]) {
@@ -273,9 +345,30 @@ pub(crate) struct Pipelines {
     pub(crate) warming: super::warming::Warming,
     pub(crate) settled: bool,
     pub(crate) standing: Vec<(u64, u64)>,
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    pub(crate) work: Option<Work>,
 }
 
 impl Pipelines {
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    pub(crate) fn work_landed(
+        &mut self,
+        written: engine_core::FrameId,
+        arrival: crate::readback::Arrival<'_>,
+    ) {
+        if let (Some(work), crate::readback::Arrival::Read(bytes)) = (self.work.as_mut(), arrival) {
+            work.counter.landed(written.0, bytes);
+        }
+    }
+
+    #[cfg(not(any(feature = "dev", feature = "profiling")))]
+    pub(crate) fn work_landed(
+        &mut self,
+        _written: engine_core::FrameId,
+        _arrival: crate::readback::Arrival<'_>,
+    ) {
+    }
+
     pub(crate) fn warming_left(&self) -> u32 {
         self.warming.left().saturating_add(self.making.later_left())
     }

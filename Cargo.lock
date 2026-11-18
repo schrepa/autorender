@@ -1065,6 +1065,7 @@ dependencies = [
  "engine_codec",
  "engine_gpu_bits",
  "engine_math",
+ "engine_profile",
  "engine_settings",
  "schemars",
  "serde",

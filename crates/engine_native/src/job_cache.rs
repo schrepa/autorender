@@ -19,6 +19,7 @@ pub const DEFAULT_BUDGET: u64 = engine::host::policy::JOB_CACHE_MIB * 1024 * 102
 
 struct Pack {
     path: PathBuf,
+    bytes: u64,
     index: PackIndex,
 }
 
@@ -115,6 +116,10 @@ impl JobStore {
 
     pub fn packed(&self) -> usize {
         self.packs.iter().map(|pack| pack.index.len()).sum()
+    }
+
+    pub fn packs(&self) -> impl Iterator<Item = (&Path, u64)> {
+        self.packs.iter().map(|pack| (pack.path.as_path(), pack.bytes))
     }
 
     pub fn sources(&mut self, key: &str) -> Vec<Source> {
@@ -333,6 +338,7 @@ fn open_pack(path: &Path) -> Result<Pack, Error> {
     let index = PackIndex::open(&header, &directory)?;
     Ok(Pack {
         path: path.to_owned(),
+        bytes: file.metadata().map_err(io)?.len(),
         index,
     })
 }

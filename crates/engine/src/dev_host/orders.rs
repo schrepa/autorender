@@ -4,7 +4,7 @@ use bevy_ecs::world::World;
 use engine_core::{Error, ErrorCode, Expected};
 use engine_dev::record::MarkPicture;
 use engine_registry::{Answer, NameEntry, register, unavailable};
-use engine_render::Picture;
+use engine_render::{DeviceHealth, Picture};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
@@ -17,6 +17,7 @@ use crate::{Game, GameHost};
 pub(super) struct Running {
     pub(super) ticket: u32,
     pub(super) id: Option<Value>,
+    pub(super) cause: engine_profile::Cause,
     pub(super) order: Order,
 }
 
@@ -327,11 +328,11 @@ impl<G: Game> GameHost<G> {
             self.framed(Advance::Clock(timestamp), size, Picture::Shown)?;
             return Ok(FramePhase::Playing);
         };
-        let played = match &mut running.order {
+        let played = engine_profile::caused(running.cause, || match &mut running.order {
             Order::Step(step) => self.step(step, timestamp, size),
             Order::Shoot(shoot) => self.shoot(shoot, timestamp, size, held),
             Order::Reload(reload) => self.wait_reload(reload, timestamp, size, held),
-        };
+        });
         match played {
             Ok((phase, None)) => {
                 self.development.running = Some(running);
@@ -473,7 +474,12 @@ impl<G: Game> GameHost<G> {
             Some(_) => self.idle(timestamp, size, held)?,
         };
         let Some(read) = self.app.renderer.take_picture() else {
-            return Ok((phase, None));
+            let reason = match self.app.renderer.device_health() {
+                DeviceHealth::Live | DeviceHealth::Recovered => return Ok((phase, None)),
+                DeviceHealth::Failed => "device_failed",
+                DeviceHealth::Lost | DeviceHealth::Recovering => "device_lost",
+            };
+            return Ok((phase, Some(Ok(self.pictured(shoot, unavailable(reason))))));
         };
         let picture = match read {
             Ok((width, height, rgba)) => {

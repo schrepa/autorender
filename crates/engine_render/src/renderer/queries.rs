@@ -35,7 +35,18 @@ impl Renderer {
 
     #[cfg(any(feature = "dev", feature = "profiling"))]
     pub fn gpu_instrument(&mut self, name: &str, on: bool) -> Result<&'static str, &'static str> {
+        if name == crate::linker::counting::INSTRUMENT {
+            return match self.run.as_mut() {
+                Some(run) => run.count_work(on),
+                None => Err("not_installed"),
+            };
+        }
         self.core.profiler.switch(name, on)
+    }
+
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    pub(crate) fn counter(&self) -> Option<&crate::linker::counting::Counter> {
+        Some(&self.run.as_ref()?.pipelines.work.as_ref()?.counter)
     }
 
     #[cfg(any(feature = "dev", feature = "profiling"))]
@@ -79,7 +90,14 @@ impl Renderer {
         };
         let pipelines = &run.pipelines;
         match name {
-            "gpu.pipelines" => pipelines.making.book.state(),
+            "gpu.pipelines" => pipelines.making.book.state(|program| {
+                (run.machine.pipelines.iter())
+                    .find(|built| built.program_key == program)
+                    .map_or_else(
+                        || engine_registry::unavailable("unknown_program"),
+                        |built| crate::install::pipeline_facts(&built.decl),
+                    )
+            }),
             "gpu.pipelines.counts" => pipelines
                 .making
                 .book
@@ -157,11 +175,12 @@ impl Renderer {
         let Some(run) = self.run.as_mut() else {
             return Ok(());
         };
+        let cause = engine_profile::open("launch", "pipeline_list");
         if run.reached.generation.is_some() {
-            return run.create_listed(record);
+            return engine_profile::caused(cause, || run.create_listed(record));
         }
         let scope = crate::gpu_calls::validation_scope(&self.core.device);
-        let created = run.create_listed(record);
+        let created = engine_profile::caused(cause, || run.create_listed(record));
         validate_also(&mut self.installing, Box::pin(scope.pop()));
         created
     }

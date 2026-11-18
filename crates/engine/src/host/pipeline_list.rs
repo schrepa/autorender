@@ -23,6 +23,7 @@ enum State {
     Asked {
         key: RecordKey,
         fetch: Background<Arc<[u8]>>,
+        cause: engine_profile::Cause,
     },
     Making {
         key: RecordKey,
@@ -80,9 +81,13 @@ impl PipelineList {
         let key = key_of(&identity);
         let world = engine.app.world_mut();
         self.state = if world.contains_resource::<JobExchange>() {
+            let cause = engine_profile::open("launch", "pipeline_list");
             State::Asked {
                 key,
-                fetch: look_record(world, None, (key, job_priority(URGENT_JOBS, 0)), Ok),
+                fetch: engine_profile::caused(cause, || {
+                    look_record(world, None, (key, job_priority(URGENT_JOBS, 0)), Ok)
+                }),
+                cause,
             }
         } else {
             State::Done
@@ -90,15 +95,17 @@ impl PipelineList {
     }
 
     pub(crate) fn take(&mut self, engine: &mut Engine, renderer: &mut Renderer) {
-        let State::Asked { key, fetch } = &mut self.state else {
+        let State::Asked { key, fetch, cause } = &mut self.state else {
             return;
         };
-        let key = *key;
+        let (key, cause) = (*key, *cause);
         let Some(records) = engine.app.world().get_resource::<Records>() else {
             return;
         };
         self.state = match fetch.poll(records) {
-            Landed::Ready(record) => match renderer.create_listed_pipelines(record) {
+            Landed::Ready(record) => match engine_profile::caused(cause, || {
+                renderer.create_listed_pipelines(record)
+            }) {
                 Ok(()) => State::Making {
                     key,
                     kept: compiled(renderer),

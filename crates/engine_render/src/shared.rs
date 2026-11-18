@@ -56,8 +56,8 @@ impl GpuPart for ScenePart {
         }
     }
 
-    fn encode(&mut self, _pass: Pass<Self>, cx: &mut crate::Encode<'_, Self>) -> u32 {
-        cx.render(crate::Attach::Declared).scene(self)
+    fn encode(&mut self, _pass: Pass<Self>, cx: &mut crate::Encode<'_, Self>) {
+        cx.render(crate::Attach::Declared).scene(self);
     }
 }
 

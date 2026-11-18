@@ -88,7 +88,7 @@ impl<V> Request<V> {
 }
 
 enum Change<K> {
-    Ask(K),
+    Ask(K, engine_profile::Carried),
     Release(K),
 }
 
@@ -112,7 +112,7 @@ impl<K: Clone> Interest<K> {
 
 impl<K: Clone> Clone for Interest<K> {
     fn clone(&self) -> Self {
-        lock(&self.changes).push(Change::Ask(self.key.clone()));
+        lock(&self.changes).push(Change::Ask(self.key.clone(), engine_profile::carry()));
         Self {
             key: self.key.clone(),
             changes: Arc::clone(&self.changes),
@@ -292,6 +292,7 @@ struct Held<V, A> {
     since: f64,
     serial: u64,
     work: Option<A>,
+    asker: engine_profile::Carried,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
@@ -346,7 +347,7 @@ fn left_asked<V, A>(tally: &mut Tally, held: &Held<V, A>) {
 
 impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
     pub fn ask(&mut self, key: K) -> Interest<K> {
-        self.count(key.clone());
+        self.count(key.clone(), engine_profile::carry());
         Interest {
             key,
             changes: Arc::clone(&self.changes),
@@ -354,7 +355,7 @@ impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
     }
 
     pub fn ask_later(&self, key: K) -> Interest<K> {
-        lock(&self.changes).push(Change::Ask(key.clone()));
+        lock(&self.changes).push(Change::Ask(key.clone(), engine_profile::carry()));
         Interest {
             key,
             changes: Arc::clone(&self.changes),
@@ -377,7 +378,13 @@ impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
         Some(ticket)
     }
 
-    fn count(&mut self, key: K) {
+    pub fn cause(&self, key: &K) -> engine_profile::Cause {
+        self.entries
+            .get(key)
+            .map_or(engine_profile::Cause(0), |held| held.asker.cause())
+    }
+
+    fn count(&mut self, key: K, asker: engine_profile::Carried) {
         match self.entries.entry(key) {
             Entry::Occupied(mut held) => {
                 held.get_mut().interests = held.get().interests.saturating_add(1);
@@ -394,6 +401,7 @@ impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
                     since: self.now,
                     serial: self.serials,
                     work: None,
+                    asker,
                 });
             }
         }
@@ -413,7 +421,7 @@ impl<K: Clone + Eq + Hash, V, A> Requests<K, V, A> {
         let mut released = Vec::new();
         for change in queued {
             match change {
-                Change::Ask(key) => self.count(key),
+                Change::Ask(key, asker) => self.count(key, asker),
                 Change::Release(key) => {
                     let Some(held) = self.entries.get_mut(&key) else {
                         continue;

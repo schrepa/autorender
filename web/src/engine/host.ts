@@ -261,6 +261,7 @@ function halt() {
   request = 0;
   pace.stop();
   hud.reset();
+  if (dev?.pending()) wake();
 }
 
 function stopClock() {
@@ -270,6 +271,10 @@ function stopClock() {
 
 function wake() {
   if (request || !live()) return;
+  if (!document.hidden) {
+    request = requestAnimationFrame(frame);
+    return;
+  }
   request = -++tickCount;
   ticks.port2.postMessage(request);
 }
@@ -305,7 +310,8 @@ function starting(current: Live<T>) {
   void queue.onSubmittedWorkDone().then(() => {
     if (live() !== current || current.shown) return;
     started(current);
-    if (!request && !halted(current)) request = requestAnimationFrame(frame);
+    if (halted(current)) { if (dev?.pending()) wake(); }
+    else if (!request) request = requestAnimationFrame(frame);
   }, () => undefined);
 }
 

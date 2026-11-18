@@ -440,6 +440,10 @@ impl HostOptions {
         }
         let scene = options.start_scene(&game);
         let build = game.build;
+        #[cfg(feature = "dev")]
+        if options.records("causes") {
+            engine_profile::trace(true);
+        }
         crate::job_cache::keep_pipeline_cache();
         if let Some(pack) = &options.cook {
             return options.run_cook(pack, move |_| bricks, build, &scene);
@@ -484,6 +488,18 @@ impl HostOptions {
         }
     }
 
+    #[cfg(feature = "dev")]
+    fn records(&self, instrument: &str) -> bool {
+        self.record
+            .as_deref()
+            .and_then(|args| serde_json::from_str::<serde_json::Value>(args).ok())
+            .is_some_and(|args| {
+                args["instruments"]
+                    .as_array()
+                    .is_some_and(|names| names.iter().any(|name| name == instrument))
+            })
+    }
+
     fn size(&self) -> engine::Result<(u32, u32)> {
         self.size
             .ok_or_else(|| Error::new(ErrorCode::MissingField, "--size").expected(Expected::Present))
@@ -495,7 +511,7 @@ impl HostOptions {
         host: &mut GameHost<G>,
         size: (u32, u32),
         scene: &StartScene,
-        (shell, packed): (&str, usize),
+        (shell, pack): (&str, serde_json::Value),
     ) -> engine::Result<crate::dev::Session> {
         let features: &[&str] = if cfg!(feature = "profiling") {
             &["dev", "profiling"]
@@ -511,32 +527,6 @@ impl HostOptions {
                 json!(parts.join("/"))
             }
             StartScene::Declared { scene, .. } => json!(scene.name),
-        };
-        let pack = match (&self.jobs.packs, packed) {
-            (_, 0) => json!({"unavailable": "no_pack_loaded"}),
-            (None, _) => json!({"unavailable": "no_pack_folder"}),
-            (Some(folder), _) => {
-                let mut packs: Vec<(String, u64)> = std::fs::read_dir(folder)
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-                    .filter(|entry| {
-                        entry
-                            .path()
-                            .extension()
-                            .is_some_and(|extension| extension == "pack")
-                    })
-                    .filter_map(|entry| {
-                        let name = entry.path().file_stem()?.to_string_lossy().into_owned();
-                        Some((name, entry.metadata().ok()?.len()))
-                    })
-                    .collect();
-                packs.sort();
-                packs
-                    .into_iter()
-                    .map(|(name, bytes)| json!({"name": name, "bytes": bytes}))
-                    .collect()
-            }
         };
         let about = json!({
             "machine": {
@@ -660,8 +650,8 @@ impl HostOptions {
         self.settings.apply(game.host_mut())?;
         #[cfg(feature = "dev")]
         let played = {
-            let packed = game.jobs_mut().packed();
-            let mut session = self.session(game.host_mut(), size, scene, ("offscreen", packed))?;
+            let pack = pack_header(game.jobs_mut());
+            let mut session = self.session(game.host_mut(), size, scene, ("offscreen", pack))?;
             game.play(self.frames, |host, phase| {
                 crate::dev::follow_source(host);
                 session.after(host)?;
@@ -692,6 +682,24 @@ impl HostOptions {
         println!("{report:#}");
         Ok(())
     }
+}
+
+#[cfg(feature = "dev")]
+pub(crate) fn pack_header(jobs: &crate::JobPool) -> serde_json::Value {
+    let mut packs: Vec<(String, u64)> = jobs
+        .packs()
+        .filter_map(|(path, bytes)| {
+            Some((path.file_stem()?.to_string_lossy().into_owned(), bytes))
+        })
+        .collect();
+    if packs.is_empty() {
+        return json!({"unavailable": "no_pack_loaded"});
+    }
+    packs.sort();
+    packs
+        .into_iter()
+        .map(|(name, bytes)| json!({"name": name, "bytes": bytes}))
+        .collect()
 }
 
 fn default_assets(folder: &str) -> PathBuf {

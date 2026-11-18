@@ -298,7 +298,7 @@ impl FrameTimer {
                 ty: wgpu::QueryType::Timestamp,
                 count: 2,
             }),
-            resolved: device.create_buffer(&wgpu::BufferDescriptor {
+            resolved: crate::gpu_calls::create_buffer(device, &wgpu::BufferDescriptor {
                 label: Some("engine/frame-timer-resolve"),
                 size: FRAME_STAMP_BYTES,
                 usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,

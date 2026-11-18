@@ -51,5 +51,6 @@ export interface Runtime {
   dev_pixels?(): Uint8Array;
   dev_reloaded?(source: string, files?: unknown): void;
   dev_reload_failed?(error: string): void;
+  dev_packs?(packs: string): void;
   free(): void;
 }

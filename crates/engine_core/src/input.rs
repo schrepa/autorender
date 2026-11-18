@@ -218,10 +218,68 @@ impl Devices {
         }
         held
     }
+
+    fn edges(&self) -> Option<String> {
+        let mut edges: Vec<String> = Vec::new();
+        edges.extend(self.keyboard.pressed.iter().map(|key| format!("+{key}")));
+        edges.extend(self.keyboard.released.iter().map(|key| format!("-{key}")));
+        edges.extend(
+            self.mouse
+                .buttons
+                .pressed
+                .iter()
+                .map(|button| format!("+{button:?}")),
+        );
+        edges.extend(
+            self.mouse
+                .buttons
+                .released
+                .iter()
+                .map(|button| format!("-{button:?}")),
+        );
+        if self.mouse.wheel_notches != Vec2::ZERO {
+            edges.push("wheel".to_owned());
+        }
+        if self.mouse.motion_pixels != Vec2::ZERO {
+            edges.push("motion".to_owned());
+        }
+        for pad in &self.pads {
+            edges.extend(
+                pad.buttons
+                    .pressed
+                    .iter()
+                    .map(|button| format!("+pad{} {button:?}", pad.index)),
+            );
+            edges.extend(
+                pad.buttons
+                    .released
+                    .iter()
+                    .map(|button| format!("-pad{} {button:?}", pad.index)),
+            );
+        }
+        edges.extend(
+            self.touches
+                .iter()
+                .filter(|touch| {
+                    touch.phase != TouchPhase::Moved || touch.motion_pixels != Vec2::ZERO
+                })
+                .map(|touch| format!("touch{} {:?}", touch.id, touch.phase)),
+        );
+        (!edges.is_empty()).then(|| edges.join(" "))
+    }
 }
 
 #[doc(hidden)]
 pub fn accept_input(world: &mut World, devices: Devices) {
+    if engine_profile::tracing()
+        && let Some(edges) = devices.edges()
+    {
+        engine_profile::open_noting(
+            "input",
+            &edges,
+            &[("systems", engine_profile::Fact::Unavailable("unattributed"))],
+        );
+    }
     world.insert_resource(devices);
 }
 

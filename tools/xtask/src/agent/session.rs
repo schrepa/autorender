@@ -28,14 +28,14 @@ pub enum Event {
 pub enum Source {
     Console,
     Errors,
-    Fetches,
+    FailedFetches,
     Stderr,
 }
 
 const SOURCES: [Source; 4] = [
     Source::Console,
     Source::Errors,
-    Source::Fetches,
+    Source::FailedFetches,
     Source::Stderr,
 ];
 
@@ -44,7 +44,7 @@ impl Source {
         match self {
             Self::Console => "console",
             Self::Errors => "errors",
-            Self::Fetches => "fetches",
+            Self::FailedFetches => "failed_fetches",
             Self::Stderr => "stderr",
         }
     }
@@ -711,44 +711,50 @@ impl Session {
     }
 
     fn host_names(&self) -> Vec<Value> {
-        let reading = json!({"offset": "integer", "limit": "integer", "pointer": "string"});
-        let mut names = vec![json!({
-            "name": "host",
-            "kind": "state",
-            "args": {"pointer": "string"},
-            "example": {"verb": "read", "name": "host"},
-        })];
-        for source in SOURCES {
-            let name = format!("host.{}", source.name());
-            let mut entry = json!({
+        let row = |name: &str, kind: &str, verb: &str, args: Value, example: Value| {
+            json!({
                 "name": name,
-                "kind": "state",
-                "args": reading,
-                "example": {"verb": "read", "name": name, "args": {"offset": 0, "limit": 20}},
-            });
+                "kind": kind,
+                "owner": "driver",
+                "verbs": [verb],
+                "args": args,
+                "examples": [{"verb": verb, "name": name, "args": example}],
+            })
+        };
+        let integer = json!({"type": "integer", "minimum": 0});
+        let pointer = json!({"type": "string"});
+        let mut names = vec![row(
+            "host",
+            "state",
+            "read",
+            json!({"type": "object", "properties": {"pointer": pointer}, "additionalProperties": false}),
+            json!({}),
+        )];
+        for source in SOURCES {
+            let mut entry = row(
+                &format!("host.{}", source.name()),
+                "state",
+                "read",
+                json!({"type": "object", "properties": {"offset": integer, "limit": integer, "pointer": pointer}, "additionalProperties": false}),
+                json!({"offset": 0, "limit": 20}),
+            );
             if let Some(reason) = self.unavailable(source) {
                 entry["unavailable"] = json!(reason);
             }
             names.push(entry);
         }
-        names.push(json!({
-            "name": "host.rebuild",
-            "kind": "call",
-            "args": {},
-            "example": {"verb": "call", "name": "host.rebuild"},
-            "unavailable": self.native().then_some("the native program cannot be swapped under a running game; close the session and start again"),
-        }));
-        names.push(json!({
-            "name": "host.close",
-            "kind": "call",
-            "args": {},
-            "example": {"verb": "call", "name": "host.close"},
-        }));
+        let none = json!({"type": "object", "additionalProperties": false});
+        let mut rebuild = row("host.rebuild", "call", "call", none.clone(), json!({}));
+        if self.native() {
+            rebuild["unavailable"] = json!("the native program cannot be swapped under a running game; close the session and start again");
+        }
+        names.push(rebuild);
+        names.push(row("host.close", "call", "call", none, json!({})));
         names
     }
 
     fn unavailable(&self, source: Source) -> Option<&'static str> {
-        (self.native() && source == Source::Fetches)
+        (self.native() && source == Source::FailedFetches)
             .then_some("the native host reads files itself and fetches nothing")
     }
 

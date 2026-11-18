@@ -97,7 +97,7 @@ pub(crate) trait Installed: Send + Sync {
 
     fn view(&mut self, view: &engine_core::ViewFacts, core: &mut FrameCore);
 
-    fn encode(&mut self, pass: u32, core: &mut EncodeCore, timer: &GpuProfiler) -> u32;
+    fn encode(&mut self, pass: u32, core: &mut EncodeCore, timer: &GpuProfiler);
 
     fn rebind(&mut self, world: &mut World);
 }
@@ -151,7 +151,7 @@ impl<P: GpuPart> Installed for Held<P> {
         );
     }
 
-    fn encode(&mut self, pass: u32, core: &mut EncodeCore, timer: &GpuProfiler) -> u32 {
+    fn encode(&mut self, pass: u32, core: &mut EncodeCore, timer: &GpuProfiler) {
         self.part.encode(
             Pass(pass, PhantomData),
             &mut Encode {
@@ -159,10 +159,36 @@ impl<P: GpuPart> Installed for Held<P> {
                 timer,
                 part: PhantomData,
             },
-        )
+        );
     }
 
     fn rebind(&mut self, world: &mut World) {
         self.reads = SystemState::new(world);
     }
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+pub(crate) fn kind_passes(
+    declared: &crate::install::Declared,
+    members: &[KindMember],
+) -> serde_json::Value {
+    let mut kinds = serde_json::Map::new();
+    for member in members {
+        let listed = kinds
+            .entry(member.kind.kind.name())
+            .or_insert_with(|| serde_json::json!([]));
+        let serde_json::Value::Array(passes) = listed else {
+            continue;
+        };
+        for pass in &declared.passes {
+            let joins = pass.members.contains(&member.part)
+                && pass
+                    .scene
+                    .is_some_and(|scene| member.kind.joins(scene.name));
+            if joins && !passes.iter().any(|known| known == pass.name) {
+                passes.push(serde_json::json!(pass.name));
+            }
+        }
+    }
+    serde_json::Value::Object(kinds)
 }

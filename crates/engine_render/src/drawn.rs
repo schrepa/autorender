@@ -192,12 +192,15 @@ pub(crate) fn pose_source() -> String {
     source
 }
 
-#[derive(Clone)]
 pub(crate) struct KindBatch {
     pub(crate) instances: Range<u32>,
     pub(crate) material: Option<MaterialHandle>,
     passes: Option<PassMask>,
     layers: Layers,
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    pub(crate) cause: u32,
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    pub(crate) drawn: std::sync::atomic::AtomicBool,
 }
 
 #[derive(Clone, Default)]
@@ -219,6 +222,8 @@ impl Batches {
     }
 
     fn fill(&mut self, table: &DrawnTable, kind: engine_core::DrawKind) {
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        let held = std::mem::take(&mut self.listed);
         self.listed = table
             .batches(kind)
             .map(|batch| KindBatch {
@@ -226,6 +231,19 @@ impl Batches {
                 material: batch.material,
                 passes: batch.passes,
                 layers: batch.layers,
+                #[cfg(any(feature = "dev", feature = "profiling"))]
+                cause: batch.cause,
+                #[cfg(any(feature = "dev", feature = "profiling"))]
+                drawn: held
+                    .iter()
+                    .any(|known| {
+                        known.cause == batch.cause
+                            && known.material == batch.material
+                            && known.passes == batch.passes
+                            && known.layers == batch.layers
+                            && known.drawn.load(std::sync::atomic::Ordering::Relaxed)
+                    })
+                    .into(),
             })
             .collect();
         self.filled = true;
@@ -319,19 +337,15 @@ fn write_ranges<T: bytemuck::Pod>(
     (buffer, base): (Buffer<DrawnGpu>, u64),
     (data, per): (&[T], usize),
     ranges: &[UploadRange],
-) -> (u64, u32) {
+) {
     let size = per * size_of::<T>();
-    let (mut bytes, mut writes) = (0, 0);
     for range in merged(ranges, size) {
         cx.write(
             buffer,
             base + (range.start * size) as u64,
             &data[range.start * per..range.end * per],
         );
-        bytes += ((range.end - range.start) * size) as u64;
-        writes += 1;
     }
-    (bytes, writes)
 }
 
 impl DrawnGpu {
@@ -418,31 +432,23 @@ impl DrawnGpu {
         poses: &DrawnPoses,
         streams: &NodeStreams<'_>,
         cx: &mut Prepare<'_, Self>,
-    ) -> Option<(bool, u64, u32)> {
+    ) {
         let count = streams.info.len();
         self.ensure_nodes(count, streams.parents.len(), cx);
         let changes = poses.node_changes();
         let read = changes.read();
         let whole = std::mem::take(&mut self.nodes.whole);
         if !whole && !read.all && read.listed.is_empty() {
-            return None;
+            return;
         }
         self.scratch.changed(&read, whole, count);
-        let full = whole || read.all;
         let held = &mut self.nodes;
         let previous = (held.capacity * size_of::<NodePose>()) as u64;
         let ranges = &self.scratch.ranges;
-        let sent = [
-            write_ranges(cx, (held.locals, 0), (streams.current, 1), ranges),
-            write_ranges(cx, (held.locals, previous), (streams.previous, 1), ranges),
-            write_ranges(cx, (held.info, 0), (streams.info, 1), ranges),
-            write_ranges(cx, (held.authority, 0), (streams.authority, 1), ranges),
-        ];
-        let (mut bytes, mut writes) = (0, 0);
-        for (more, calls) in sent {
-            bytes += more;
-            writes += calls;
-        }
+        write_ranges(cx, (held.locals, 0), (streams.current, 1), ranges);
+        write_ranges(cx, (held.locals, previous), (streams.previous, 1), ranges);
+        write_ranges(cx, (held.info, 0), (streams.info, 1), ranges);
+        write_ranges(cx, (held.authority, 0), (streams.authority, 1), ranges);
         if whole {
             held.parents_sent.clear();
             held.level_ranges.clear();
@@ -451,7 +457,6 @@ impl DrawnGpu {
             cx.write(held.parents, 0, streams.parents);
             held.parents_sent.clear();
             held.parents_sent.extend_from_slice(streams.parents);
-            writes += 1;
         }
         let mut start = 0;
         for (level, &end) in streams.levels.iter().enumerate() {
@@ -462,7 +467,6 @@ impl DrawnGpu {
             }
             if level < NODE_LEVELS {
                 cx.write(held.levels[level], 0, &[range.0, range.1, 0, 0]);
-                writes += 1;
             }
             match held.level_ranges.get_mut(level) {
                 Some(known) => *known = range,
@@ -471,7 +475,6 @@ impl DrawnGpu {
         }
         held.level_ranges.truncate(streams.levels.len());
         changes.take(0, read.upto);
-        Some((full, bytes, writes))
     }
 }
 
@@ -599,9 +602,9 @@ impl GpuPart for DrawnGpu {
         }
     }
 
-    fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) -> u32 {
+    fn encode(&mut self, pass: Pass<Self>, cx: &mut Encode<'_, Self>) {
         if pass != self.pass {
-            return 0;
+            return;
         }
         for (level, &(start, end)) in self.nodes.level_ranges.iter().enumerate() {
             if end > start
@@ -616,6 +619,6 @@ impl GpuPart for DrawnGpu {
         cx.dispatch(
             &self.pose,
             Count::Groups([self.slots.div_ceil(POSE_GROUP), 1, 1]),
-        )
+        );
     }
 }

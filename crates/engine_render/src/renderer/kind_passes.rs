@@ -106,8 +106,6 @@ fn kind_fault(pair: &KindPass) -> Option<Error> {
         KindPassState::Dropped { reason, .. } if reason.faults() => Some(error().got(reason)),
         KindPassState::Dropped { .. }
         | KindPassState::Drew { .. }
-        | KindPassState::Waiting { .. }
-        | KindPassState::Refused { .. }
         | KindPassState::Skipped { .. } => None,
     }
 }
@@ -189,17 +187,13 @@ fn draw_reports(run: &Run, listed: &[KindPass]) -> DrawReports {
     let kinds = listed
         .iter()
         .filter(|pair| match pair.state {
-            KindPassState::Waiting { .. }
-            | KindPassState::Refused { .. }
-            | KindPassState::Dropped { .. }
-            | KindPassState::Silent => true,
+            KindPassState::Dropped { .. } | KindPassState::Silent => true,
             KindPassState::Drew { .. } | KindPassState::Skipped { .. } => false,
         })
         .copied()
         .collect();
     DrawReports {
         kinds,
-        refused: Vec::new(),
         dropped: dropped_draws(run),
     }
 }

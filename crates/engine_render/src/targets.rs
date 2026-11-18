@@ -7,7 +7,7 @@ pub fn texture_2d(
     format: wgpu::TextureFormat,
     usage: wgpu::TextureUsages,
 ) -> wgpu::Texture {
-    device.create_texture(&wgpu::TextureDescriptor {
+    crate::gpu_calls::create_texture(device, &wgpu::TextureDescriptor {
         label: Some(label),
         size: wgpu::Extent3d {
             width,

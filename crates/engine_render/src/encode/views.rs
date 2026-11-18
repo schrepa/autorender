@@ -8,7 +8,7 @@ impl Run {
     pub(crate) fn write_cameras(&mut self) {
         let bytes = self.uniforms.cameras.len() as u64 * CAMERA_STRIDE;
         if self.uniforms.camera.size() < bytes {
-            self.uniforms.camera = self.device.create_buffer(&wgpu::BufferDescriptor {
+            self.uniforms.camera = crate::gpu_calls::create_buffer(&self.device, &wgpu::BufferDescriptor {
                 label: Some("engine/cameras"),
                 size: bytes.next_power_of_two(),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -664,7 +664,7 @@ pub(super) fn view_passes(machine: &Machine) -> (Bits, Bits) {
 fn placeholder(device: &wgpu::Device, (ty, bytes): (Ty, u64)) -> Placeholder {
     use crate::linker::Sample;
     let buffer = |usage| {
-        Placeholder::Buffer(device.create_buffer(&wgpu::BufferDescriptor {
+        Placeholder::Buffer(crate::gpu_calls::create_buffer(device, &wgpu::BufferDescriptor {
             label: Some("engine/placeholder"),
             size: bytes.max(PLACEHOLDER_BYTES),
             usage,
@@ -723,7 +723,7 @@ fn placeholder_texture(
         | wgpu::TextureViewDimension::Cube
         | wgpu::TextureViewDimension::CubeArray => wgpu::TextureDimension::D2,
     };
-    let texture = device.create_texture(&wgpu::TextureDescriptor {
+    let texture = crate::gpu_calls::create_texture(device, &wgpu::TextureDescriptor {
         label: Some("engine/placeholder"),
         size: wgpu::Extent3d {
             width: 1,
