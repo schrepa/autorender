@@ -278,6 +278,7 @@ pub(crate) struct DrawnGpu {
     scratch: Scratch,
     frame_sent: DrawnFrame,
     slots: u32,
+    owed: bool,
 }
 
 fn var(module: &str, name: &'static str) -> Var {
@@ -349,7 +350,7 @@ fn write_ranges<T: bytemuck::Pod>(
 }
 
 impl DrawnGpu {
-    fn upload_slots(&mut self, table: &DrawnTable, cx: &mut Prepare<'_, Self>) {
+    fn upload_slots(&mut self, table: &DrawnTable, cx: &mut Prepare<'_, Self>) -> bool {
         let count = table.slots();
         let room = (count as u64).next_power_of_two().max(FIRST_SLOTS);
         let stride = table.value_vec4s();
@@ -358,8 +359,7 @@ impl DrawnGpu {
         let mut whole =
             cx.allocate_buffer(self.records, storage_bytes(record_bytes)) == Allocation::Fresh;
         whole |= cx.allocate_buffer(self.values, storage_bytes(value_bytes)) == Allocation::Fresh;
-        let (Allocation::Fresh | Allocation::Kept) =
-            cx.allocate_buffer(self.poses, room * POSE_BYTES);
+        let fresh = cx.allocate_buffer(self.poses, room * POSE_BYTES) == Allocation::Fresh;
         let changes = table.slot_changes();
         let read = changes.read();
         self.scratch.changed(&read, whole, count);
@@ -367,7 +367,9 @@ impl DrawnGpu {
         write_ranges(cx, (self.records, 0), (table.records(), 1), ranges);
         write_ranges(cx, (self.values, 0), (table.values(), stride), ranges);
         changes.take(0, read.upto);
+        let moved = fresh || !ranges.is_empty() || self.slots != count as u32;
         self.slots = count as u32;
+        moved
     }
 
     fn upload_order(&mut self, table: &DrawnTable, cx: &mut Prepare<'_, Self>) -> bool {
@@ -432,14 +434,14 @@ impl DrawnGpu {
         poses: &DrawnPoses,
         streams: &NodeStreams<'_>,
         cx: &mut Prepare<'_, Self>,
-    ) {
+    ) -> bool {
         let count = streams.info.len();
         self.ensure_nodes(count, streams.parents.len(), cx);
         let changes = poses.node_changes();
         let read = changes.read();
         let whole = std::mem::take(&mut self.nodes.whole);
         if !whole && !read.all && read.listed.is_empty() {
-            return;
+            return false;
         }
         self.scratch.changed(&read, whole, count);
         let held = &mut self.nodes;
@@ -475,6 +477,7 @@ impl DrawnGpu {
         }
         held.level_ranges.truncate(streams.levels.len());
         changes.take(0, read.upto);
+        true
     }
 }
 
@@ -562,6 +565,7 @@ impl GpuPart for DrawnGpu {
             },
             frame_sent: DrawnFrame::default(),
             slots: 0,
+            owed: true,
         })
     }
 
@@ -570,7 +574,10 @@ impl GpuPart for DrawnGpu {
         (table, poses, hierarchy): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
-        self.upload_slots(&table, cx);
+        if self.owed && cx.ran(self.pass) {
+            self.owed = false;
+        }
+        self.owed |= self.upload_slots(&table, cx);
         let moved = self.upload_order(&table, cx);
         for member in &mut cx.core.installs.draw_entries {
             if moved || !member.batches.filled {
@@ -578,11 +585,15 @@ impl GpuPart for DrawnGpu {
             }
         }
         let streams = poses.streams(&hierarchy);
-        self.upload_nodes(&poses, &streams, cx);
+        self.owed |= self.upload_nodes(&poses, &streams, cx);
         let fresh =
             cx.allocate_buffer(self.frame, size_of::<DrawnFrame>() as u64) == Allocation::Fresh;
         let frame = DrawnFrame {
-            alpha: streams.alpha,
+            alpha: if streams.blended > 0 {
+                streams.alpha
+            } else {
+                self.frame_sent.alpha
+            },
             capacity: self.nodes.capacity as u32,
             nodes: streams.info.len() as u32,
             slots: self.slots,
@@ -590,8 +601,9 @@ impl GpuPart for DrawnGpu {
         if fresh || bytemuck::bytes_of(&frame) != bytemuck::bytes_of(&self.frame_sent) {
             cx.write(self.frame, 0, &[frame]);
             self.frame_sent = frame;
+            self.owed = true;
         }
-        if self.slots != 0 {
+        if self.owed && self.slots != 0 {
             cx.run(self.pass);
         }
     }
