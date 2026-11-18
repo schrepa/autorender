@@ -131,7 +131,11 @@ pub fn record(texture: &Texture) -> Vec<u8> {
         TextureFormat::Astc4x4 => 3,
         TextureFormat::Bc5 => 4,
     });
-    out.push(texture.levels().len() as u8);
+    out.push(if texture.makes_levels() {
+        0
+    } else {
+        texture.levels().len() as u8
+    });
     out.push(texture.color_space().tag());
     out.extend_from_slice(&texture.width().to_le_bytes());
     out.extend_from_slice(&texture.height().to_le_bytes());
@@ -159,7 +163,8 @@ pub fn decode(bytes: &[u8]) -> Result<Texture, String> {
         4 => TextureFormat::Bc5,
         other => return Err(format!("a texture record names format {other}")),
     };
-    let count = usize::from(header[5]);
+    let stated = usize::from(header[5]);
+    let count = stated.max(1);
     let space = ColorSpace::of_tag(header[6])
         .ok_or_else(|| format!("a texture record names colour space {}", header[6]))?;
     let word = |at: usize| {
@@ -184,7 +189,12 @@ pub fn decode(bytes: &[u8]) -> Result<Texture, String> {
     if at != bytes.len() {
         return Err("a texture record holds bytes past its levels".into());
     }
-    Texture::from_levels(format, width, height, levels)
+    let texture = if stated == 0 {
+        Texture::from_rgba(width, height, levels.concat())
+    } else {
+        Texture::from_levels(format, width, height, levels)
+    };
+    texture
         .map(|texture| texture.with_summary(summary).with_color_space(space))
         .map_err(|error| error.to_string())
 }

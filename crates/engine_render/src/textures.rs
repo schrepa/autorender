@@ -480,13 +480,12 @@ fn create_texture(
         return Err(unsupported(Some(feature)));
     }
     let (width, height) = (source.width(), source.height());
-    let single = !source.format().is_compressed() && source.levels().len() == 1;
-    let levels = if single {
+    let levels = if source.makes_levels() {
         mip_levels(width, height)
     } else {
         source.levels().len() as u32
     };
-    let generates = single && levels > 1;
+    let generates = source.makes_levels() && levels > 1;
     let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
     if generates {
         usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;

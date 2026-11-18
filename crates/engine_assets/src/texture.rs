@@ -88,6 +88,7 @@ impl PartialEq for Level {
 #[derive(Debug)]
 enum Contents {
     Levels(Box<[Level]>),
+    Base(Box<[Level]>),
     Drawn,
 }
 
@@ -158,7 +159,13 @@ impl Texture {
     }
 
     pub fn from_rgba(width: u32, height: u32, rgba8: Vec<u8>) -> Result<Self, Error> {
-        Self::from_levels(TextureFormat::Rgba8, width, height, vec![rgba8])
+        let levels = [Level(Bytes::Owned(rgba8.into_boxed_slice()))];
+        check_levels(TextureFormat::Rgba8, width, height, &levels)?;
+        Ok(Self::of_contents(
+            TextureFormat::Rgba8,
+            (width, height),
+            Contents::Base(Box::new(levels)),
+        ))
     }
 
     pub fn target(width: u32, height: u32, space: ColorSpace) -> Result<Self, Error> {
@@ -185,7 +192,11 @@ impl Texture {
             .into_iter()
             .map(|bytes| Level(Bytes::Owned(bytes.into_boxed_slice())))
             .collect();
-        Ok(Self::of_levels(format, width, height, levels))
+        Ok(Self::of_contents(
+            format,
+            (width, height),
+            Contents::Levels(levels),
+        ))
     }
 
     pub fn from_shared_rgba(
@@ -197,16 +208,20 @@ impl Texture {
         let start = start.min(bytes.len());
         let levels = [Level(Bytes::Shared(bytes, start))];
         check_levels(TextureFormat::Rgba8, width, height, &levels)?;
-        Ok(Self::of_levels(TextureFormat::Rgba8, width, height, Box::new(levels)))
+        Ok(Self::of_contents(
+            TextureFormat::Rgba8,
+            (width, height),
+            Contents::Base(Box::new(levels)),
+        ))
     }
 
-    fn of_levels(format: TextureFormat, width: u32, height: u32, levels: Box<[Level]>) -> Self {
+    fn of_contents(format: TextureFormat, (width, height): (u32, u32), contents: Contents) -> Self {
         Self {
             width,
             height,
             format,
             space: ColorSpace::Srgb,
-            contents: Contents::Levels(levels),
+            contents,
             summary: OnceLock::new(),
             identity: OnceLock::new(),
         }
@@ -220,6 +235,7 @@ impl Texture {
             }
             bytes.push(self.space.tag());
             bytes.push(u8::from(self.is_target()));
+            bytes.push(u8::from(self.makes_levels()));
             for level in self.levels() {
                 bytes.extend_from_slice(level);
             }
@@ -242,6 +258,10 @@ impl Texture {
 
     pub fn is_target(&self) -> bool {
         matches!(self.contents, Contents::Drawn)
+    }
+
+    pub fn makes_levels(&self) -> bool {
+        matches!(self.contents, Contents::Base(_))
     }
 
     #[must_use]
@@ -276,13 +296,9 @@ impl Texture {
 
     pub fn levels(&self) -> &[Level] {
         match &self.contents {
-            Contents::Levels(levels) => levels,
+            Contents::Levels(levels) | Contents::Base(levels) => levels,
             Contents::Drawn => &[],
         }
-    }
-
-    pub fn has_mips(&self) -> bool {
-        self.levels().len() == full_chain(self.width, self.height) as usize
     }
 
     pub fn summary(&self) -> Option<TextureSummary> {

@@ -103,10 +103,11 @@ fn read_ktx2(uri: &str, bytes: &[u8]) -> Result<Texture, Error> {
             return Err(invalid(Expected::Supported, field, value.into()));
         }
     }
-    let count = word(bytes, 40) as usize;
+    let stated = word(bytes, 40) as usize;
+    let count = stated.max(1);
     let chain = (u32::BITS - width.max(height).max(1).leading_zeros()) as usize;
-    if count == 0 || count > chain || bytes.len() < 80 + 24 * count {
-        return Err(invalid(Expected::Supported, "levelCount", count.into()));
+    if (stated == 0 && format.is_compressed()) || count > chain || bytes.len() < 80 + 24 * count {
+        return Err(invalid(Expected::Supported, "levelCount", stated.into()));
     }
     let mut levels = Vec::with_capacity(count);
     for level in 0..count {
@@ -122,8 +123,12 @@ fn read_ktx2(uri: &str, bytes: &[u8]) -> Result<Texture, Error> {
             .ok_or_else(|| invalid(Expected::Image, &field, offset.into()))?;
         levels.push(held.to_vec());
     }
-    Texture::from_levels(format, width, height, levels)
-        .map(|texture| texture.with_color_space(space))
+    let texture = if stated == 0 {
+        Texture::from_rgba(width, height, levels.concat())
+    } else {
+        Texture::from_levels(format, width, height, levels)
+    };
+    texture.map(|texture| texture.with_color_space(space))
 }
 
 fn decode_png(bytes: &[u8]) -> Result<Image, String> {
