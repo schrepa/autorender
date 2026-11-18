@@ -262,11 +262,35 @@ fn install_passes(world: &mut World) {
 }
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
-fn job_names(world: &mut World) {
+#[derive(Resource, Clone, Copy, Default)]
+pub struct StageTimes {
+    pub simulation: u64,
+    pub extraction: u64,
+    pub render: u64,
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+fn stages_time(world: &World) -> serde_json::Value {
+    world.get_resource::<StageTimes>().map_or_else(
+        || engine_registry::unavailable("stages_not_timed"),
+        |times| {
+            serde_json::json!({
+                "simulation": times.simulation,
+                "extraction": times.extraction,
+                "render": times.render,
+            })
+        },
+    )
+}
+
+#[cfg(any(feature = "dev", feature = "profiling"))]
+fn core_names(world: &mut World) {
+    world.init_resource::<StageTimes>();
     let named = |name: &'static str, kind: Kind, read: fn(&World) -> serde_json::Value| {
         NameEntry::read(name, kind, move |reach, _| Ok(read(reach.world)))
     };
     for entry in [
+        named("stages.time", Kind::Time, stages_time).unit("ns"),
         named("jobs.asked", Kind::Count, jobs::jobs_asked),
         named("jobs.landed", Kind::Count, jobs::jobs_landed),
         named("jobs.failed", Kind::Count, jobs::jobs_failed),
@@ -405,7 +429,7 @@ impl Engine {
             .unwrap_or_default();
         twice.extend(authoring::keys_taken(world));
         #[cfg(any(feature = "dev", feature = "profiling"))]
-        job_names(world);
+        core_names(world);
         #[cfg(any(feature = "dev", feature = "profiling"))]
         drawn::object_names(world);
         let mut registry = world.resource_mut::<Registry>();

@@ -447,12 +447,27 @@ impl AppHost {
             render: rendered,
         };
         *self.engine.app.world_mut().resource_mut::<FrameStats>() = summary;
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        self.add_stage_times([simulation_ms, extraction_ms, acquire_ms + draw_ms]);
         if acquired && picture == Picture::Shown && self.engine.readiness().settled() {
             self.renderer.settle_pipelines();
         }
         self.pipeline_list
             .after_frame(&mut self.engine, &self.renderer);
         Ok(acquired)
+    }
+
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    fn add_stage_times(&mut self, [simulation, extraction, render]: [f64; 3]) {
+        use bevy_ecs::change_detection::DetectChangesMut;
+        let ns = |ms: f64| (ms * 1.0e6) as u64;
+        let world = self.engine.app.world_mut();
+        if let Some(mut times) = world.get_resource_mut::<engine_core::StageTimes>() {
+            let times = times.bypass_change_detection();
+            times.simulation += ns(simulation);
+            times.extraction += ns(extraction);
+            times.render += ns(render);
+        }
     }
 
     fn draw_frame(

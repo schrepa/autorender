@@ -256,6 +256,7 @@ pub struct NodeStreams<'a> {
     pub authority: &'a [PoseRows],
     pub parents: &'a [u32],
     pub levels: &'a [u32],
+    pub blended: usize,
 }
 
 #[derive(Clone, Copy)]
@@ -398,6 +399,7 @@ impl DrawnPoses {
             authority: &globals.global_rows()[..nodes],
             parents: if aligned { &self.parents } else { &[] },
             levels: if aligned { &self.levels } else { &[] },
+            blended: if aligned { self.blended.0 } else { 0 },
         }
     }
 
