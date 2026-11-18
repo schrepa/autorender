@@ -121,6 +121,7 @@ impl<G: Game> PageHost<G> {
         let mut host = GameHost::launch(target, move |_| bricks, game.build)
             .await
             .map_err(js)?;
+        host.keep_in(game.name);
         match scene {
             Some((source, files)) => host.open_scene(&source, &files).map_err(js)?,
             None => {

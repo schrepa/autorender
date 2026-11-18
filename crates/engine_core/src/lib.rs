@@ -19,6 +19,7 @@ mod files;
 mod hierarchy;
 mod input;
 mod jobs;
+mod kept;
 pub mod math;
 mod moves;
 pub use engine_math::collections;
@@ -89,6 +90,7 @@ pub use engine_textures::{
     IMAGE_FORMATS, Image, ImageFormat, decode_image, decode_texture, image_format,
 };
 pub use files::Files;
+pub use kept::Kept;
 pub use glam;
 pub use hierarchy::*;
 pub use input::*;
@@ -365,6 +367,7 @@ impl Engine {
             .init_resource::<engine_registry::JobQueue>()
             .init_resource::<Records>()
             .init_resource::<Files>()
+            .init_resource::<Kept>()
             .init_resource::<RecordExchange>()
             .insert_resource(DeviceLimits::without_device(cores))
             .init_resource::<Devices>()
@@ -754,6 +757,7 @@ impl Engine {
         let world = self.app.world_mut();
         records::exchange(world);
         files::read_files(world);
+        kept::exchange_kept(world);
         jobs::exchange_orders(world);
     }
 

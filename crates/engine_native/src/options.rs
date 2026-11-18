@@ -183,6 +183,23 @@ pub fn open_scene<G: Game>(host: &mut GameHost<G>, scene: &StartScene) -> engine
     Ok(())
 }
 
+fn keep_folder(name: &str) -> Option<String> {
+    let absolute = |variable: &str| {
+        std::env::var_os(variable)
+            .map(PathBuf::from)
+            .filter(|path| path.is_absolute())
+    };
+    let data = if cfg!(target_os = "windows") {
+        absolute("APPDATA")
+    } else if cfg!(target_os = "macos") {
+        absolute("HOME").map(|home| home.join("Library").join("Application Support"))
+    } else {
+        absolute("XDG_DATA_HOME")
+            .or_else(|| absolute("HOME").map(|home| home.join(".local").join("share")))
+    };
+    data.map(|data| data.join(name).to_string_lossy().into_owned())
+}
+
 fn folder_of(path: &Path) -> String {
     path.parent()
         .map(|folder| folder.to_string_lossy().into_owned())
@@ -454,6 +471,7 @@ impl HostOptions {
         crate::run(
             Window {
                 title: game.title.to_owned(),
+                keep: keep_folder(game.name),
                 options: options.clone(),
                 scene,
             },

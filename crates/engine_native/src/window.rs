@@ -19,6 +19,7 @@ use crate::options::{HostOptions, StartScene};
 #[derive(Clone, Debug)]
 pub struct Window {
     pub title: String,
+    pub keep: Option<String>,
     pub options: HostOptions,
     pub scene: StartScene,
 }
@@ -100,6 +101,9 @@ impl<'a, G: Game> App<'a, G> {
         )))?);
         host.set_pixel_ratio(window.scale_factor());
         host.set_refresh_interval(refresh_interval(&window));
+        if let Some(place) = &self.options.keep {
+            host.keep_in(place);
+        }
         crate::open_scene(&mut host, &self.options.scene)?;
         options.settings.apply(&mut host)?;
         let mut jobs = options.jobs.pool(false);

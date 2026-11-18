@@ -83,6 +83,7 @@ macro_rules! game {
         }
 
         pub const GAME: $crate::GameEntry<$game> = $crate::GameEntry {
+            name: env!("CARGO_PKG_NAME"),
             title: $title,
             folder: env!("CARGO_MANIFEST_DIR"),
             bricks: __game_bricks,

@@ -106,6 +106,7 @@ pub struct DefaultScene {
 }
 
 pub struct GameEntry<G> {
+    pub name: &'static str,
     pub title: &'static str,
     pub folder: &'static str,
     pub bricks: fn(BrickList) -> BrickList,

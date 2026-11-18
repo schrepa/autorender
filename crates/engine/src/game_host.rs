@@ -404,6 +404,13 @@ impl<G: Game> GameHost<G> {
         self.suspend();
     }
 
+    pub fn keep_in(&mut self, place: &str) {
+        let world = self.app.engine_mut().app.world_mut();
+        if let Some(mut kept) = world.get_resource_mut::<engine_core::Kept>() {
+            kept.keep_in(place);
+        }
+    }
+
     pub fn set_file_root(&mut self, root: &str) {
         let world = self.app.engine_mut().app.world_mut();
         if let Some(mut files) = world.get_resource_mut::<engine_core::Files>() {

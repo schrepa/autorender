@@ -75,6 +75,7 @@ pub fn install(world: &mut World) {
         bare("assets", assets),
         bare("bricks", |reach| Ok(bricks(reach.world))),
         bare("entities.refused", |reach| Ok(crate::entities::refused(reach))),
+        bare("kept", kept),
         bare("records", |reach| {
             Ok(json!(reach.world.get_resource::<engine_core::Records>()))
         }),
@@ -186,6 +187,20 @@ fn status(reach: &Reach<'_>) -> Value {
         "notices": registry.map(Registry::notices),
         "fixed_delta_seconds": world.resource::<FixedTime>().delta_seconds,
     })
+}
+
+fn kept(reach: &Reach<'_>) -> Result<Value, Error> {
+    let kept = reach.world.get_resource::<engine_core::Kept>().ok_or_else(|| {
+        Error::new(ErrorCode::MissingResource, "$.kept").expected(Expected::Present)
+    })?;
+    let listed = kept.listing()?;
+    Ok(json!({
+        "place": kept.place(),
+        "kept": listed
+            .into_iter()
+            .map(|(name, bytes)| json!({ "name": name, "bytes": bytes }))
+            .collect::<Vec<_>>(),
+    }))
 }
 
 fn bricks(world: &World) -> Value {
