@@ -61,8 +61,8 @@ impl Speaker {
 
     fn order<G: Game>(&mut self, host: &mut GameHost<G>, order: SoundOrder) {
         match order {
-            SoundOrder::Open { .. } if self.silent => host.hear_sound(SoundReply::OpenFailed {
-                error: "offscreen_no_output".to_owned(),
+            SoundOrder::Open { .. } if self.silent => host.hear_sound(SoundReply::Absent {
+                reason: "offscreen_no_output".to_owned(),
             }),
             SoundOrder::Open { latency_seconds } => match open(latency_seconds) {
                 Ok(device) => self.device = Some(device),

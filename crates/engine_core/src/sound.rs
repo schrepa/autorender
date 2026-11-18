@@ -73,6 +73,7 @@ pub enum Output {
         latency_seconds: f32,
     },
     Failed(String),
+    Absent(String),
 }
 
 #[derive(Clone, Debug)]
@@ -95,6 +96,9 @@ pub enum SoundReply {
     },
     OpenFailed {
         error: String,
+    },
+    Absent {
+        reason: String,
     },
     Decoded {
         sound: SoundId,
@@ -240,7 +244,8 @@ impl Sounds {
                     Output::Open { running: false, .. }
                     | Output::Closed
                     | Output::Asked
-                    | Output::Failed(_) => Some(Refusal::NotRunning),
+                    | Output::Failed(_)
+                    | Output::Absent(_) => Some(Refusal::NotRunning),
                 },
             }
         };
@@ -339,6 +344,7 @@ impl Sounds {
                 };
             }
             SoundReply::OpenFailed { error } => self.output = Output::Failed(error),
+            SoundReply::Absent { reason } => self.output = Output::Absent(reason),
             SoundReply::Decoded { sound, length } => {
                 if length.rate == 0 || length.channels == 0 {
                     self.set(sound, Loaded::Failed("empty_format".to_owned()));
@@ -392,6 +398,7 @@ impl Sounds {
                 None,
             ),
             Output::Failed(error) => ("failed", None, None, None, Some(error.clone())),
+            Output::Absent(reason) => ("absent", None, None, None, Some(reason.clone())),
         };
         SoundReport {
             output,
