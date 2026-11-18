@@ -1,6 +1,7 @@
 import package::engine::view::{camera, stable_normalize, view_clip};
 import package::effects::items::{EFFECT_TAU, EffectItem, effect_axes, effect_box_corner,
     effect_items, effect_lit, effect_noise, effect_seconds};
+import package::effects::field::effect_field;
 
 @group(0) @binding(1) var effects_depth: texture_depth_2d;
 
@@ -10,6 +11,7 @@ struct VolumeCorner {
     @builtin(position) clip: vec4<f32>,
     @location(0) world: vec3<f32>,
     @location(1) @interpolate(flat) index: u32,
+    @location(2) @interpolate(flat) field: vec4<f32>,
 }
 
 struct Seen {
@@ -28,6 +30,7 @@ struct Seen {
     out.clip = view_clip(world);
     out.world = world;
     out.index = instance;
+    out.field = effect_field(item.p0.xyz);
     return out;
 }
 
@@ -95,7 +98,7 @@ fn seen_from(corner: VolumeCorner, pixel: vec2<f32>) -> Seen {
     let surface = seen.eye + seen.toward * entry - centre;
     let normal = select(-seen.toward, surface / max(length(surface), 1.0e-3), closest - half_chord > 0.0);
     let shade = 0.85 + 0.3 * noise;
-    let color = effect_lit(item.p2.rgb * shade, normal);
+    let color = effect_lit(item.p2.rgb * shade, normal, corner.field);
     return vec4<f32>(color * alpha, alpha);
 }
 
@@ -140,6 +143,14 @@ fn marked(item: EffectItem, local: vec3<f32>, seen: Seen) -> f32 {
     if seen.scene >= VOLUME_FAR || any(abs(local) > item.p1.xyz) {
         return 0.0;
     }
+    if kind == 6u {
+        return ring(length(local.xz), radius, rim) * (1.0 - abs(local.y) / item.p1.y);
+    }
+    if kind == 7u {
+        let inside = item.p1.xyz - vec3<f32>(rim) - abs(local);
+        let edge = min(abs(inside.x), abs(inside.z));
+        return (1.0 - smoothstep(0.0, rim, edge)) * select(1.0, 0.0, inside.x < -rim || inside.z < -rim);
+    }
     if kind == 5u {
         let spread = length(local.xz) / radius;
         let soft = 1.0 - smoothstep(0.25, 1.0, spread);
@@ -183,7 +194,7 @@ fn marked(item: EffectItem, local: vec3<f32>, seen: Seen) -> f32 {
     let local = (point - item.p0.xyz) * effect_axes(item);
     let kind = u32(item.p3.x);
     var wall = 0.0;
-    if kind == 1u || kind == 2u {
+    if kind == 1u || kind == 2u || kind == 6u {
         wall = wall_glow(item, seen, item.p0.w) * 0.85;
     } else if kind == 3u {
         wall = wall_glow(item, seen, max(item.p0.w * item.p6.x, 1.0e-3)) * (1.0 - item.p6.x);

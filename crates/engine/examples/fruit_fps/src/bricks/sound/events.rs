@@ -1,12 +1,11 @@
 use glam::Vec3;
 
 use crate::abilities::{CueKind, Event as PowerEvent, Slot};
-use crate::play::events::arms::{ArmsEvents, Handling, Target, Weapon};
+use crate::play::events::arms::{ArmsEvents, Handling, Weapon};
 use crate::play::events::body::BodyEvents;
 use crate::play::events::powers::PowerEvents;
 use crate::play::sound::{Anchor, Cue};
 use crate::rules::{CreditReason, Event, Phase, Team};
-use crate::solids::Surface;
 use crate::weapons::BodyPart;
 
 use super::table::Table;
@@ -18,15 +17,6 @@ fn cue(event: impl Into<String>, anchor: Anchor, source: Option<u32>) -> Cue {
         source,
         gain: 1.0,
         hold_ticks: None,
-    }
-}
-
-fn surface(surface: Surface) -> &'static str {
-    match surface {
-        Surface::Stone => "stone",
-        Surface::Metal => "metal",
-        Surface::Wood => "wood",
-        Surface::Dirt => "dirt",
     }
 }
 
@@ -46,17 +36,19 @@ impl Human {
     }
 }
 
-pub(super) fn arms(events: &ArmsEvents, human: Human, out: &mut Vec<Cue>) {
+pub(super) fn arms(events: &ArmsEvents, human: Human, table: &Table, out: &mut Vec<Cue>) {
     for shot in &events.shots {
         out.push(cue(
             format!("shot.{}", shot.weapon.key()),
             Anchor::Actor(shot.shooter),
             Some(shot.shooter),
         ));
-        if let Target::World { surface: hit } = shot.target {
+        let entry = shot.pierced.zip(shot.pierced_kind);
+        let end = shot.kind.map(|kind| (shot.end, kind));
+        for (at, kind) in entry.into_iter().chain(end) {
             out.push(cue(
-                format!("impact.{}", surface(hit)),
-                Anchor::Point(shot.end),
+                format!("impact.{}", table.kind(kind)),
+                Anchor::Point(at),
                 Some(shot.shooter),
             ));
         }
@@ -274,7 +266,7 @@ pub(super) fn bodies(
             continue;
         }
         let mut heard = cue(
-            format!("step.{}", surface(step.surface)),
+            format!("step.{}", table.kind(step.kind)),
             Anchor::Point(step.position),
             Some(step.slot),
         );
@@ -287,13 +279,9 @@ pub(super) fn bodies(
         out.push(cue("jump", Anchor::Point(jump.position), Some(jump.slot)));
     }
     for landing in &events.landings {
-        let event = if landing.hard {
-            "land.hard"
-        } else {
-            "land.soft"
-        };
+        let weight = if landing.hard { "hard" } else { "soft" };
         out.push(cue(
-            event,
+            format!("land.{weight}.{}", table.kind(landing.kind)),
             Anchor::Point(landing.position),
             Some(landing.slot),
         ));

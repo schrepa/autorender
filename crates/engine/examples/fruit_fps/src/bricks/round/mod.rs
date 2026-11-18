@@ -3,6 +3,7 @@ engine::brick!(round);
 mod apply;
 mod facts;
 mod start;
+mod test;
 
 use engine::prelude::*;
 
@@ -40,6 +41,10 @@ stats! {
         pub waiting: Option<String>,
         pub unplaced: u32,
         pub seated: u32,
+        pub overtime: bool,
+        pub decider: bool,
+        pub credits: Vec<u32>,
+        pub carried: Vec<Option<String>>,
     }
 }
 
@@ -62,10 +67,12 @@ impl Brick for RoundBrick {
     fn register(bricks: &mut Bricks<'_>) {
         bricks
             .settings::<MatchSetup>()
+            .settings::<test::MatchTest>()
             .stats::<RoundStats>()
             .resource::<Round>()
             .resource::<RoundEvents>()
             .resource::<RoundBook>()
+            .systems(Schedule::FixedSimulation, test::door)
             .systems(Schedule::FixedSimulation, (facts::advance, apply::apply))
             .systems(Schedule::Presentation, report);
     }
@@ -155,6 +162,18 @@ fn report(round: Res<Round>, book: Res<RoundBook>, mut stats: ResMut<RoundStats>
         next.ticks_left = view.ticks_left;
         next.round = view.round;
         next.score = view.score;
+        next.overtime = view.overtime;
+        next.decider = view.decider;
+        next.credits = view.players.iter().map(|p| p.credits).collect();
+        next.carried = view
+            .players
+            .iter()
+            .map(|p| {
+                p.primary
+                    .and_then(|weapon| view.catalog.weapon(weapon))
+                    .map(|entry| entry.key.clone())
+            })
+            .collect();
         next.sides = view.sides.iter().map(|side| side_name(*side)).collect();
         next.human_credits = view
             .players

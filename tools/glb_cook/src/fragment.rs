@@ -14,7 +14,7 @@ use engine_textures::Image;
 use crate::config::MaterialNames;
 use crate::fault::Fault;
 use crate::geometry::Built;
-use crate::maps::{Map, Sampling};
+use crate::maps::{Map, MapKind, Sampling};
 use crate::source::Source;
 
 #[derive(Serialize)]
@@ -22,11 +22,28 @@ pub struct Fragment {
     pub textures: Vec<SceneTexture>,
     pub materials: Vec<SceneMaterial>,
     pub meshes: Vec<SceneMesh>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub entities: Vec<FragmentEntity>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct FragmentEntity {
+    pub id: String,
+    pub drawn: FragmentDrawn,
+    pub transform: BTreeMap<String, f32>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct FragmentDrawn {
+    pub kind: String,
+    pub mesh: String,
+    pub material: String,
 }
 
 pub struct CookedMaterial {
     pub stem: String,
     pub maps: Vec<Map>,
+    pub borrowed: Vec<(MapKind, String, Sampling)>,
 }
 
 fn wrap(mode: WrappingMode) -> SceneWrap {
@@ -99,12 +116,14 @@ pub fn material(
     let maps = cooked
         .maps
         .iter()
-        .map(|map| {
-            (
-                map.kind.name().to_owned(),
-                scene_map(map.stem.clone(), &map.sampling),
-            )
-        })
+        .map(|map| (map.kind, &map.stem, &map.sampling))
+        .chain(
+            cooked
+                .borrowed
+                .iter()
+                .map(|(kind, stem, sampling)| (*kind, stem, sampling)),
+        )
+        .map(|(kind, stem, sampling)| (kind.name().to_owned(), scene_map(stem.clone(), sampling)))
         .collect();
     let slots = BTreeMap::from([(
         names.slot.clone(),
@@ -141,22 +160,29 @@ pub fn assemble(
     (prefix, ending): (&str, &str),
     meshes: &[Built],
     materials: &[CookedMaterial],
-    scene_materials: Vec<SceneMaterial>,
+    (scene_materials, pictures, entities): (
+        Vec<SceneMaterial>,
+        &[(String, String)],
+        Vec<FragmentEntity>,
+    ),
 ) -> Fragment {
+    let texture = |id: &str, uri: String| SceneTexture {
+        id: id.to_owned(),
+        width: None,
+        height: None,
+        rgba8: None,
+        uri: Some(uri),
+        provided: None,
+    };
     Fragment {
         textures: materials
             .iter()
             .flat_map(|material| &material.maps)
-            .map(|map| SceneTexture {
-                id: map.stem.clone(),
-                width: None,
-                height: None,
-                rgba8: None,
-                uri: Some(format!("{prefix}{}{ending}", map.stem)),
-                provided: None,
-            })
+            .map(|map| texture(&map.stem, format!("{prefix}{}{ending}", map.stem)))
+            .chain(pictures.iter().map(|(id, uri)| texture(id, uri.clone())))
             .collect(),
         materials: scene_materials,
+        entities,
         meshes: meshes
             .iter()
             .map(|mesh| SceneMesh {
@@ -172,9 +198,9 @@ pub fn assemble(
 pub fn validate(
     (file, name): (&str, &str),
     fragment: &Fragment,
-    (prefix, ending): (&str, &str),
+    prefix: &str,
     meshes: &[Built],
-    images: &[(&str, &Image)],
+    images: &[(String, &Image)],
 ) -> Result<String, Fault> {
     let fault = |detail: &dyn std::fmt::Display| {
         Fault::new("FragmentInvalid", file, format!("{name} fragment"), detail)
@@ -191,13 +217,8 @@ pub fn validate(
     for mesh in meshes {
         files.add_buffer(&format!("{prefix}{}.emb", mesh.stem), mesh.bytes.clone());
     }
-    for (stem, image) in images {
-        files.add_image(
-            &format!("{prefix}{stem}{ending}"),
-            image.width,
-            image.height,
-            image.pixels.clone(),
-        );
+    for (uri, image) in images {
+        files.add_image(uri, image.width, image.height, image.pixels.clone());
     }
     document
         .validate_with(&SceneKinds::default(), &files)

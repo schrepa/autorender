@@ -22,6 +22,8 @@ pub struct Mover {
     best: f32,
     progress_tick: u64,
     stuck_count: u32,
+    lane: f32,
+    lift: Vec3,
 }
 
 impl Mover {
@@ -34,7 +36,14 @@ impl Mover {
             best: f32::INFINITY,
             progress_tick: 0,
             stuck_count: 0,
+            lane: 0.0,
+            lift: Vec3::ZERO,
         }
+    }
+
+    pub fn set_lane(&mut self, lane: f32, lift: Vec3) {
+        self.lane = lane;
+        self.lift = lift;
     }
 
     pub fn clear(&mut self) {
@@ -47,13 +56,45 @@ impl Mover {
     }
 
     fn plan(&mut self, from: Vec3, to: Vec3, world: &dyn World, tick: u64) {
-        if !world.path(from, to, &mut self.corners) {
+        if world.path(from, to, &mut self.corners) {
+            self.keep_lane(from, world);
+        } else {
             self.corners.clear();
             self.corners.push(to);
         }
         self.next = 0;
         self.best = f32::INFINITY;
         self.progress_tick = tick;
+    }
+
+    fn keep_lane(&mut self, from: Vec3, world: &dyn World) {
+        if self.lane <= 0.0 || self.corners.len() < 2 {
+            return;
+        }
+        let lift = self.lift;
+        for index in 0..self.corners.len() - 1 {
+            let before = if index == 0 {
+                from
+            } else {
+                self.corners[index - 1]
+            };
+            let corner = self.corners[index];
+            let after = self.corners[index + 1];
+            let turn = flat(after - corner).normalize_or_zero()
+                - flat(corner - before).normalize_or_zero();
+            let outward = -turn.normalize_or_zero();
+            if outward == Vec3::ZERO {
+                continue;
+            }
+            for share in [1.0, 0.5] {
+                let moved = corner + outward * (self.lane * share);
+                if world.sees(before + lift, moved + lift) && world.sees(moved + lift, after + lift)
+                {
+                    self.corners[index] = moved;
+                    break;
+                }
+            }
+        }
     }
 
     fn remaining(&self, from: Vec3) -> f32 {

@@ -20,7 +20,7 @@ use crate::play::figures::{
 use crate::play::numbers::{GameNumbers, Numbers};
 use crate::play::powers::Powers;
 use crate::play::puppet::{
-    BaseClip, CrouchClips, OneShot, PuppetBook, PuppetFile, PuppetTable, weapon_key,
+    BaseClip, CrouchClips, DEVICE, OneShot, PuppetBook, PuppetFile, PuppetTable, Task, weapon_key,
 };
 use crate::play::view::{ViewOffsets, Watched};
 use crate::rules::{AbilitySlot, Event};
@@ -89,6 +89,26 @@ pub(super) struct Memory {
     defusing: bool,
     pub(super) carry: Option<Carry>,
     pub(super) stats: ActorStats,
+}
+
+impl Memory {
+    pub(super) fn task(&self) -> Option<Task> {
+        if self.defusing {
+            Some(Task::Defusing)
+        } else if self.planting {
+            Some(Task::Planting)
+        } else {
+            None
+        }
+    }
+}
+
+fn tasked(memory: &Memory, book: &PuppetBook, arms: Option<&Arms>) -> Option<&'static str> {
+    match memory.task() {
+        Some(Task::Planting) => book.weapons.contains_key(DEVICE).then_some(DEVICE),
+        Some(Task::Defusing) => None,
+        None => arms.map(|arms| weapon_key(&arms.loadout)),
+    }
 }
 
 impl Default for Memory {
@@ -455,7 +475,12 @@ fn upper_from_events(
     }
     for fired in &facts.arms.shots {
         if fired.shooter == actor.slot && fired.weapon == Weapon::Melee {
-            wanted = Some(shot(&table.melee, false));
+            let swing = if wish.scope {
+                &table.melee_heavy
+            } else {
+                &table.melee
+            };
+            wanted = Some(shot(swing, false));
         }
     }
     if let Some((part, from)) = reaction {
@@ -614,7 +639,7 @@ fn rate_of(
 
 pub(super) struct Posed {
     pub(super) hold: Option<Hold>,
-    pub(super) carry: Option<(&'static str, Offset, Vec3, Vec3)>,
+    pub(super) carry: Option<(&'static str, Offset, Option<Vec3>, Vec3)>,
 }
 
 struct Pose {
@@ -682,8 +707,7 @@ fn held_pose(book: &PuppetBook, weapon: &'static str, given: &Pose) -> Option<Po
             translation: (back * -right_wrist).to_array(),
             rotation: back.normalize().to_array(),
         };
-        let muzzle = markers.muzzle.unwrap_or(Vec3::ZERO);
-        (weapon, offset, placed(muzzle), turn * Vec3::Z)
+        (weapon, offset, markers.muzzle.map(placed), turn * Vec3::Z)
     });
     Some(Posed {
         hold: Some(Hold {
@@ -771,8 +795,9 @@ fn carried(
             },
             |(_, offset, ..)| offset,
         ),
-        muzzle: held
-            .map(|(_, _, muzzle, direction)| (body.feet + facing * muzzle, facing * direction)),
+        muzzle: held.and_then(|(_, _, muzzle, direction)| {
+            muzzle.map(|muzzle| (body.feet + facing * muzzle, facing * direction))
+        }),
         shown: may_show && held.is_some(),
     }
 }
@@ -986,8 +1011,9 @@ pub(super) fn animate(
         let rate = rate_of(table, base, &clip, body, joints);
         let pitch = wish.pitch_radians + offsets.map_or(0.0, |offsets| offsets.pitch_radians());
         let (crouch, aim) = stance(table, base, (alive, body), pitch);
-        let weapon = arms.filter(|_| alive).map(|arms| weapon_key(&arms.loadout));
-        let goal = if memory.upper.is_some() { 0.0 } else { 1.0 };
+        let weapon = tasked(memory, &book, arms.filter(|_| alive));
+        let free = memory.upper.is_none() && memory.task().is_none();
+        let goal = f32::from(u8::from(free));
         let blend = facts.delta / max(table.hold_blend_seconds, facts.delta);
         memory.hold = toward(memory.hold, goal, blend);
         let pose = Pose {

@@ -8,6 +8,7 @@ pub trait World {
     fn path(&self, from: Vec3, to: Vec3, corners: &mut Vec<Vec3>) -> bool;
     fn cover_from(&self, threat: Vec3, near: Vec3, max_distance: f32) -> Option<Vec3>;
     fn places(&self) -> &Places;
+    fn throw(&self, slot: usize, origin: Vec3, yaw: f32, pitch: f32) -> Option<Vec3>;
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -42,6 +43,7 @@ pub struct GunSense {
     pub range_m: f32,
     pub has_primary: bool,
     pub holding: WeaponChoice,
+    pub has_scope: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -81,6 +83,7 @@ pub struct AbilitySense {
     pub charges: u32,
     pub range_m: f32,
     pub radius_m: f32,
+    pub thrown: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -194,6 +197,7 @@ pub struct Sense<'a> {
     pub yaw: f32,
     pub pitch: f32,
     pub crouched: bool,
+    pub grounded: bool,
     pub health: f32,
     pub armor: f32,
     pub gun: GunSense,
@@ -238,6 +242,7 @@ pub struct Intent {
     pub plant: bool,
     pub defuse: bool,
     pub ability: Option<AbilityUse>,
+    pub drop_device: bool,
     pub buy: bool,
     pub call: Option<Call>,
     pub goal: Vec3,
@@ -259,6 +264,7 @@ impl Intent {
             plant: false,
             defuse: false,
             ability: None,
+            drop_device: false,
             buy: false,
             call: None,
             goal: sense.position,

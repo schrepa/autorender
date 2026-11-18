@@ -27,6 +27,8 @@ pub(super) struct Who {
     pub velocity: Vec3,
     pub eye: Vec3,
     pub crouched: bool,
+    pub grounded: bool,
+    pub pickable: Option<u32>,
     pub yaw: f32,
     pub pitch: f32,
     pub recoil_yaw: f32,
@@ -34,6 +36,7 @@ pub(super) struct Who {
     pub health: f32,
     pub armour: f32,
     pub gun: GunSense,
+    pub character: Option<usize>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -109,6 +112,7 @@ pub(super) fn gun_sense(
             range_m: sidearm.range_m(),
             has_primary: false,
             holding: WeaponChoice::Sidearm,
+            has_scope: sidearm.scope.is_some(),
         };
     };
     let loadout = &arms.loadout;
@@ -131,6 +135,7 @@ pub(super) fn gun_sense(
         range_m: gun.map_or(weapons.melee.range_m, |gun| gun.range_m()),
         has_primary: loadout.primary.is_some(),
         holding: holding(loadout.active),
+        has_scope: gun.is_some_and(|gun| gun.scope.is_some()),
     }
 }
 
@@ -148,6 +153,7 @@ pub(super) fn abilities_of(
                 charges: 0,
                 range_m: reach[index].range_m,
                 radius_m: reach[index].radius_m,
+                thrown: reach[index].thrown,
             };
         };
         let ultimate = index == 3;
@@ -162,6 +168,7 @@ pub(super) fn abilities_of(
             charges,
             range_m: reach[index].range_m,
             radius_m: reach[index].radius_m,
+            thrown: reach[index].thrown,
         }
     })
 }

@@ -1,7 +1,7 @@
 use super::{
-    Ability, AbilitySlot, AbilityUse, Catalog, CreditReason, Death, Device, Event, Ledger, Match,
-    Phase, Player, PlayerId, RoundEndReason, RulesError, RulesNumbers, Side, Slot, Team, TickInput,
-    Ultimate,
+    Ability, AbilitySlot, AbilityUse, Catalog, Cause, CreditReason, Death, Device, Event, Ledger,
+    Match, Phase, Player, PlayerId, RoundEndReason, RulesError, RulesNumbers, Side, Slot, Team,
+    TickInput, Ultimate,
 };
 
 fn fresh_player(catalog: &Catalog, slot: &Slot) -> Result<Player, RulesError> {
@@ -91,6 +91,8 @@ impl Match {
             tick: 0,
             random: seed,
             pending: Vec::new(),
+            dropped_by: None,
+            overtime_rounds: 0,
         };
         let mut events = Vec::new();
         game.reset_for_half(CreditReason::Start, &mut events);
@@ -206,6 +208,7 @@ impl Match {
             player,
             planting: None,
         };
+        self.dropped_by = None;
         events.push(Event::DeviceGiven { player });
     }
 
@@ -269,10 +272,21 @@ impl Match {
             return;
         }
         let to_win = self.catalog.rounds_to_win;
-        if let Some(winner) = Team::BOTH
-            .into_iter()
-            .find(|t| self.score[t.index()] >= to_win)
-        {
+        let score = self.score;
+        let overtime = score.iter().all(|&s| s + 1 >= to_win);
+        if overtime {
+            self.overtime_rounds += 1;
+        }
+        let win_by = if self.overtime_rounds > self.catalog.overtime_rounds_before_decider {
+            1
+        } else {
+            self.catalog.overtime_win_by
+        };
+        let won = |t: Team| {
+            let (own, other) = (score[t.index()], score[t.other().index()]);
+            own >= to_win && (other + 1 < to_win || own >= other + win_by)
+        };
+        if let Some(winner) = Team::BOTH.into_iter().find(|&t| won(t)) {
             events.push(Event::MatchEnd {
                 winner,
                 score: self.score,
@@ -284,9 +298,48 @@ impl Match {
             self.sides = [self.sides[0].other(), self.sides[1].other()];
             events.push(Event::SideSwap { sides: self.sides });
             self.reset_for_half(CreditReason::SideSwap, events);
+        } else if overtime {
+            self.sides = [self.sides[0].other(), self.sides[1].other()];
+            events.push(Event::SideSwap { sides: self.sides });
+            let credits = self.catalog.overtime_credits;
+            for player in 0..self.players.len() {
+                self.set_credits(player, credits, CreditReason::Overtime, events);
+            }
         }
         self.round += 1;
         self.begin_round(events);
+    }
+
+    pub fn end_round_now(&mut self, winning_side: Side, reason: RoundEndReason) -> bool {
+        let fits = match reason {
+            RoundEndReason::Elimination => true,
+            RoundEndReason::Time | RoundEndReason::Defused => winning_side == Side::Defend,
+            RoundEndReason::Exploded => winning_side == Side::Attack,
+        };
+        if !fits || !matches!(self.phase, Phase::Buy | Phase::Live | Phase::Planted) {
+            return false;
+        }
+        let mut events = std::mem::take(&mut self.pending);
+        if reason == RoundEndReason::Elimination {
+            let input = TickInput::default();
+            for victim in 0..self.players.len() {
+                if self.players[victim].alive
+                    && self.side_of_player(victim) == Some(winning_side.other())
+                {
+                    let death = Death {
+                        victim,
+                        killer: None,
+                        assistants: Vec::new(),
+                        headshot: false,
+                        cause: Cause::World,
+                    };
+                    self.apply_death(&death, &input, &mut events);
+                }
+            }
+        }
+        self.end_round(winning_side, reason, &mut events);
+        self.pending = events;
+        true
     }
 
     fn end_round(&mut self, winning_side: Side, reason: RoundEndReason, events: &mut Vec<Event>) {

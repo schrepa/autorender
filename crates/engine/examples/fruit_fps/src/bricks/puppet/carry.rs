@@ -6,7 +6,7 @@ use engine_core::{Error, ErrorCode, Mobility, Refusals, SceneContext};
 use super::{CarriedWeapon, Memories, PuppetBrick, PuppetStats};
 use crate::names::RIGHT_HAND;
 use crate::play::figures::{GROUND, Held};
-use crate::play::puppet::{ActorMuzzle, Muzzles, PuppetFile};
+use crate::play::puppet::{ActorMuzzle, Muzzles, PuppetFile, Tasks};
 
 const HELD_PART: &str = "puppet_held";
 
@@ -30,7 +30,7 @@ type Carried<'w, 's> = Query<
 >;
 
 type Writes<'w, 's> = (
-    ResMut<'w, Muzzles>,
+    (ResMut<'w, Muzzles>, ResMut<'w, Tasks>),
     ResMut<'w, PuppetStats>,
     ResMut<'w, Refusals>,
     Spawner<'w, 's, PuppetBrick>,
@@ -47,8 +47,18 @@ fn moving(visible: bool) -> Node {
 pub(super) fn carry(
     (fixed, scene, files, memories): Reads,
     carried: Carried,
-    (mut muzzles, mut stats, mut refusals, mut spawner): Writes,
+    ((mut muzzles, mut tasks), mut stats, mut refusals, mut spawner): Writes,
 ) {
+    let mut busy: Vec<_> = memories
+        .held
+        .values()
+        .filter_map(|memory| Some((memory.carry?.slot, memory.task()?)))
+        .collect();
+    busy.sort_unstable_by_key(|(slot, _)| *slot);
+    tasks.set_if_neq(Tasks {
+        tick: fixed.tick,
+        actors: busy,
+    });
     let Some(book) = files.iter().find_map(PuppetFile::book) else {
         return;
     };

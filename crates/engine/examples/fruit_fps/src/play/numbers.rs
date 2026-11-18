@@ -24,6 +24,7 @@ pub struct PlayerNumbers {
     pub stride_crouch_m: f32,
     pub hard_landing_mps: f32,
     pub walk_is_silent: bool,
+    pub push_apart_mps: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -73,6 +74,7 @@ pub struct KeyMap {
     pub fire: Binding,
     pub scope: Binding,
     pub reload: Binding,
+    pub drop: Binding,
     pub primary: Binding,
     pub sidearm: Binding,
     pub melee: Binding,

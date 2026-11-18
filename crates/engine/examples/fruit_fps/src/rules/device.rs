@@ -40,9 +40,12 @@ impl Match {
         if !matches!(self.device, Device::Dropped { .. }) {
             return;
         }
-        let carrier = (0..self.players.len()).find(|&p| {
-            self.can_act(p, Side::Attack) && facts(input, p).is_some_and(|f| f.near_device)
-        });
+        let near = |p: PlayerId| facts(input, p).is_some_and(|f| f.near_device);
+        if self.dropped_by.is_some_and(|p| !near(p)) {
+            self.dropped_by = None;
+        }
+        let carrier = (0..self.players.len())
+            .find(|&p| self.can_act(p, Side::Attack) && near(p) && self.dropped_by != Some(p));
         if let Some(player) = carrier {
             self.device = Device::Carried {
                 player,

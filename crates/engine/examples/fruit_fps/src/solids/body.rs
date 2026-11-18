@@ -3,9 +3,10 @@ use std::cell::Cell;
 use glam::Vec3;
 use serde::Deserialize;
 
+use super::peers;
 use super::shapes::{least, most, within};
 use super::world::{Footing, Support, Work};
-use super::{Capsule, Hit, Solids, Surface};
+use super::{Capsule, Ground, Hit, Kind, Solids, Surface};
 
 const SKIN: f32 = 0.003;
 const PROBE: f32 = 0.006;
@@ -23,7 +24,12 @@ pub struct Player {
     pub jump_apex_seconds: f32,
     pub ground_accel_mps2: f32,
     pub ground_friction: f32,
-    pub air_accel_mps2: f32,
+    pub braking_friction: f32,
+    pub braking_decel_mps2: f32,
+    pub air_accel_per_s: f32,
+    pub air_wish_cap_mps: f32,
+    pub jump_speed_cap_mps: f32,
+    pub crouch_jump_lift_m: f32,
     pub step_height_m: f32,
     pub slope_limit_deg: f32,
 }
@@ -48,21 +54,31 @@ pub struct Wish {
 pub struct Landed {
     pub speed: f32,
     pub surface: Surface,
+    pub kind: Kind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Moved {
     pub body: Body,
     pub landed: Option<Landed>,
-    pub ground: Option<Surface>,
+    pub ground: Option<Ground>,
     pub wall: Option<Hit>,
     pub stand_refused: bool,
+    pub shift: f32,
     pub work: Work,
 }
 
 struct Tally<'a> {
     solids: &'a Solids,
+    peers: &'a [Capsule],
     work: Cell<Work>,
+}
+
+#[derive(Clone, Copy)]
+struct Contact {
+    distance: f32,
+    normal: Vec3,
+    hit: Option<Hit>,
 }
 
 impl Tally<'_> {
@@ -73,8 +89,24 @@ impl Tally<'_> {
         result
     }
 
-    fn capsule_sweep(&self, capsule: Capsule, motion: Vec3) -> Option<Hit> {
-        self.count(|work| self.solids.capsule_sweep_counted(capsule, motion, work))
+    fn capsule_sweep(&self, capsule: Capsule, motion: Vec3) -> Option<Contact> {
+        let map = self
+            .count(|work| self.solids.capsule_sweep_counted(capsule, motion, work))
+            .map(|hit| Contact {
+                distance: hit.distance,
+                normal: hit.normal,
+                hit: Some(hit),
+            });
+        let peer = peers::sweep(capsule, motion, self.peers).map(|(fraction, normal)| Contact {
+            distance: fraction * motion.length(),
+            normal,
+            hit: None,
+        });
+        match (map, peer) {
+            (Some(map), Some(peer)) if peer.distance < map.distance => Some(peer),
+            (Some(map), _) => Some(map),
+            (None, peer) => peer,
+        }
     }
 
     fn capsule_overlaps(&self, capsule: Capsule) -> bool {
@@ -241,7 +273,7 @@ fn slide(solids: &Tally, rules: &Rules, start: Vec3, motion: Vec3, grounded: boo
         remaining *= 1.0 - fraction;
         let walkable = rules.walkable(hit.normal);
         if !walkable && slid.wall.is_none() {
-            slid.wall = Some(hit);
+            slid.wall = hit.hit;
         }
         if grounded && walkable {
             remaining = follow_ground(remaining, hit.normal);
@@ -326,50 +358,98 @@ fn settle_ground(
     }
 }
 
-fn ground_velocity(current: Vec3, target: Vec3, numbers: &Player, dt: f32) -> Vec3 {
-    let mut velocity = current;
-    if target.length_squared() == 0.0 {
-        velocity *= most(1.0 - numbers.ground_friction * dt, 0.0);
-    }
-    let change = target - velocity;
-    let limit = numbers.ground_accel_mps2 * dt;
-    let length = change.length();
-    if length <= limit {
-        target
-    } else {
-        velocity + change * (limit / length)
-    }
-}
-
-fn air_velocity(current: Vec3, target: Vec3, numbers: &Player, dt: f32) -> Vec3 {
-    let speed = target.length();
-    if speed == 0.0 {
+fn accelerate(current: Vec3, target: Vec3, (rate, cap): (f32, f32), dt: f32) -> Vec3 {
+    let wished = target.length();
+    if wished == 0.0 {
         return current;
     }
-    let direction = target / speed;
-    let missing = speed - current.dot(direction);
+    let direction = target / wished;
+    let missing = least(wished, cap) - current.dot(direction);
     if missing <= 0.0 {
         return current;
     }
-    current + direction * least(missing, numbers.air_accel_mps2 * dt)
+    current + direction * least(missing, rate * wished * dt)
 }
 
-fn settle_crouch(solids: &Tally, body: &Body, wants: bool, numbers: &Player) -> (bool, bool) {
+fn braked(velocity: Vec3, numbers: &Player, dt: f32) -> Vec3 {
+    let slowed = velocity
+        - (velocity * numbers.braking_friction
+            + velocity.normalize_or_zero() * numbers.braking_decel_mps2)
+            * dt;
+    if slowed.dot(velocity) <= 0.0 {
+        Vec3::ZERO
+    } else {
+        slowed
+    }
+}
+
+fn ground_velocity(current: Vec3, target: Vec3, numbers: &Player, dt: f32) -> Vec3 {
+    let wished = target.length();
+    let over = current.length() > wished;
+    let mut velocity = current;
+    if wished == 0.0 || over {
+        velocity = braked(current, numbers, dt);
+        if wished > 0.0 && velocity.length() < wished && target.dot(current) > 0.0 {
+            velocity = current.normalize_or_zero() * wished;
+        }
+    } else {
+        let direction = target / wished;
+        let turned = direction * velocity.length();
+        velocity -= (velocity - turned) * least(dt * numbers.ground_friction, 1.0);
+    }
+    if wished == 0.0 {
+        return velocity;
+    }
+    let limit = if over { velocity.length() } else { wished };
+    capped(
+        velocity + target / wished * numbers.ground_accel_mps2 * dt,
+        limit,
+    )
+}
+
+fn air_velocity(current: Vec3, target: Vec3, numbers: &Player, dt: f32) -> Vec3 {
+    accelerate(
+        current,
+        target,
+        (numbers.air_accel_per_s, numbers.air_wish_cap_mps),
+        dt,
+    )
+}
+
+fn capped(velocity: Vec3, cap: f32) -> Vec3 {
+    let speed = velocity.length();
+    if speed > cap && speed > 0.0 {
+        velocity * (cap / speed)
+    } else {
+        velocity
+    }
+}
+
+fn settle_crouch(solids: &Tally, body: &Body, wants: bool, numbers: &Player) -> (bool, bool, f32) {
+    let gap = least(
+        numbers.crouch_jump_lift_m,
+        most(numbers.height_m - numbers.crouch_height_m, 0.0),
+    );
+    let airborne = !body.grounded;
     if wants {
-        return (true, false);
+        let shift = if airborne && !body.crouched { gap } else { 0.0 };
+        return (true, false, shift);
     }
     if !body.crouched {
-        return (false, false);
+        return (false, false, 0.0);
     }
-    let standing = Capsule {
-        feet: body.position,
+    let standing = |feet: Vec3| Capsule {
+        feet,
         height: numbers.height_m,
         radius: numbers.radius_m,
     };
-    if solids.capsule_overlaps(standing) {
-        (true, true)
+    if airborne && !solids.capsule_overlaps(standing(body.position - Vec3::Y * gap)) {
+        return (false, false, -gap);
+    }
+    if solids.capsule_overlaps(standing(body.position)) {
+        (true, true, 0.0)
     } else {
-        (false, false)
+        (false, false, 0.0)
     }
 }
 
@@ -381,13 +461,25 @@ fn wish_target(wish: &Wish) -> Vec3 {
     direction * wish.speed
 }
 
-pub fn step(world: &Solids, body: Body, wish: Wish, numbers: &Player, dt: f32) -> Moved {
+pub fn step(
+    (world, peers): (&Solids, &[Capsule]),
+    body: Body,
+    wish: Wish,
+    numbers: &Player,
+    dt: f32,
+) -> Moved {
+    let start = capsule_of(&body, numbers);
+    let clear: Vec<Capsule> = (peers.iter().copied())
+        .filter(|peer| peers::overlap(start, *peer).is_none())
+        .collect();
     let tally = Tally {
         solids: world,
+        peers: &clear,
         work: Cell::new(Work::default()),
     };
     let solids = &tally;
-    let (crouched, stand_refused) = settle_crouch(solids, &body, wish.crouch, numbers);
+    let (crouched, stand_refused, shift) = settle_crouch(solids, &body, wish.crouch, numbers);
+    let from = body.position + Vec3::Y * shift;
     let height = if crouched {
         numbers.crouch_height_m
     } else {
@@ -406,6 +498,9 @@ pub fn step(world: &Solids, body: Body, wish: Wish, numbers: &Player, dt: f32) -
         None => air_velocity(current, target, numbers, dt),
     };
     let jumped = start_support.is_some() && wish.jump;
+    if jumped {
+        velocity = capped(velocity, numbers.jump_speed_cap_mps);
+    }
     let grounded = start_support.is_some() && !jumped;
     let upward = if jumped {
         rules.takeoff
@@ -429,15 +524,15 @@ pub fn step(world: &Solids, body: Body, wish: Wish, numbers: &Player, dt: f32) -
     {
         motion = follow_ground(motion, support.normal);
     }
-    let moved = travel(solids, &rules, body.position, motion, grounded);
+    let moved = travel(solids, &rules, from, motion, grounded);
     velocity = constrain(velocity, &moved.planes[..moved.count]);
     let (settled, support) =
         settle_ground(solids, &rules, moved.position, velocity.y > 0.0, grounded);
     let mut position = settled + solids.capsule_push_out(rules.capsule(settled));
     if solids.capsule_overlaps(rules.capsule(position))
-        && !solids.capsule_overlaps(rules.capsule(body.position))
+        && !solids.capsule_overlaps(rules.capsule(from))
     {
-        position = body.position;
+        position = from;
         velocity = Vec3::ZERO;
     }
     if support.is_some() {
@@ -445,7 +540,8 @@ pub fn step(world: &Solids, body: Body, wish: Wish, numbers: &Player, dt: f32) -
     }
     let landed = support.filter(|_| !body.grounded).map(|support| Landed {
         speed: most(-fall, 0.0),
-        surface: support.surface,
+        surface: support.ground.surface,
+        kind: support.ground.kind,
     });
     Moved {
         body: Body {
@@ -455,9 +551,10 @@ pub fn step(world: &Solids, body: Body, wish: Wish, numbers: &Player, dt: f32) -
             crouched,
         },
         landed,
-        ground: support.map(|support| support.surface),
+        ground: support.map(|support| support.ground),
         wall: moved.wall,
         stand_refused,
+        shift,
         work: tally.work.get(),
     }
 }

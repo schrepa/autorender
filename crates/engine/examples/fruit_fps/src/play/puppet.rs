@@ -221,6 +221,37 @@ pub struct ViewPlace {
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ViewMelee {
+    pub light: String,
+    pub heavy: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ViewDevice {
+    pub plant: String,
+    pub defuse: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Throw {
+    pub seconds: f32,
+    pub lift_m: f32,
+    pub hand_m: f32,
+    pub reach_m: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PropsLook {
+    pub spin_radians_per_second: f32,
+    pub tile_m: f32,
+    pub wall_height_m: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ViewTable {
     pub scale: f32,
     pub scope_seconds: f32,
@@ -232,6 +263,8 @@ pub struct ViewTable {
     pub reload: String,
     #[serde(default)]
     pub equip: Option<String>,
+    pub melee: ViewMelee,
+    pub device: ViewDevice,
     pub weapons: BTreeMap<String, ViewPlace>,
 }
 
@@ -252,6 +285,7 @@ pub struct PuppetTable {
     pub hits: Hits,
     pub casts: Casts,
     pub melee: OneShot,
+    pub melee_heavy: OneShot,
     pub victory: OneShot,
     pub death: Death,
     pub plant: Plant,
@@ -261,6 +295,8 @@ pub struct PuppetTable {
     pub switch: Switch,
     pub aiming: Aiming,
     pub dropped: DroppedLook,
+    pub throw: Throw,
+    pub props: PropsLook,
     pub pin_feet: PinFeet,
     pub hold_blend_seconds: f32,
     pub hand_axes: HandAxes,
@@ -288,6 +324,8 @@ pub struct Markers {
     pub sight: Option<Vec3>,
     pub eject: Option<Vec3>,
     pub mag_socket: Option<Vec3>,
+    pub light: Option<Vec3>,
+    pub tip: Option<Vec3>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -296,10 +334,25 @@ pub struct WeaponLook {
     pub markers: Markers,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PlantedFiles {
+    pub mesh: String,
+    pub material: String,
+    pub markers: String,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PlantedLook {
+    pub files: PlantedFiles,
+    pub markers: Markers,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PuppetBook {
     pub table: PuppetTable,
     pub weapons: BTreeMap<String, WeaponLook>,
+    pub planted: Option<PlantedLook>,
 }
 
 #[derive(Deserialize)]
@@ -318,6 +371,8 @@ struct MarkerFile {
 pub struct PuppetFile {
     pub file: String,
     pub weapons: BTreeMap<String, WeaponFiles>,
+    #[serde(default)]
+    pub planted: Option<PlantedFiles>,
     #[serde(skip)]
     book: Option<Arc<PuppetBook>>,
 }
@@ -346,6 +401,8 @@ fn markers_of(text: &str, at: &str) -> Result<Markers, Error> {
         sight: find("sight"),
         eject: find("eject"),
         mag_socket: find("mag_socket"),
+        light: find("light"),
+        tip: find("tip"),
     })
 }
 
@@ -356,6 +413,7 @@ impl PuppetFile {
             files.extend(weapon.figure.files());
             files.push(weapon.markers.clone());
         }
+        files.extend(self.planted.iter().map(|planted| planted.markers.clone()));
         files
     }
 
@@ -384,7 +442,22 @@ impl PuppetFile {
             self.weapons.insert(key.clone(), files.clone());
             weapons.insert(key, WeaponLook { files, markers });
         }
-        self.book = Some(Arc::new(PuppetBook { table, weapons }));
+        let planted = match self.planted.clone() {
+            Some(files) => {
+                let at = format!("{path}.planted.markers");
+                let markers = match text_of(cx, &files.markers, &at)? {
+                    Some(text) => markers_of(&text, &at)?,
+                    None => Markers::default(),
+                };
+                Some(PlantedLook { files, markers })
+            }
+            None => None,
+        };
+        self.book = Some(Arc::new(PuppetBook {
+            table,
+            weapons,
+            planted,
+        }));
         Ok(self)
     }
 }
@@ -420,6 +493,34 @@ pub fn weapon_key(loadout: &Loadout) -> &'static str {
         (Slot::Primary | Slot::Sidearm, Some(gun)) => Weapon::Gun(gun.kind()).key(),
         (Slot::Melee, _) | (Slot::Primary | Slot::Sidearm, None) => Weapon::Melee.key(),
     }
+}
+
+pub const DEVICE: &str = "device";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Task {
+    Planting,
+    Defusing,
+}
+
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct Tasks {
+    pub tick: u64,
+    pub actors: Vec<(u32, Task)>,
+}
+
+impl Tasks {
+    pub fn of(&self, slot: u32) -> Option<Task> {
+        self.actors
+            .iter()
+            .find(|(actor, _)| *actor == slot)
+            .map(|(_, task)| *task)
+    }
+}
+
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct DeviceLamp {
+    pub position: Option<Vec3>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

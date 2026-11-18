@@ -68,6 +68,7 @@ pub(super) struct Latched {
     fire: bool,
     jump: bool,
     reload: bool,
+    drop: bool,
     scope: bool,
     equip: Option<Equip>,
     cast: Option<AbilitySlot>,
@@ -159,6 +160,7 @@ pub(super) fn latch(
         jump: latched.jump || pressed(&keys.jump),
         buy_menu: latched.buy_menu || pressed(&keys.buy_menu),
         reload: latched.reload || pressed(&keys.reload),
+        drop: latched.drop || pressed(&keys.drop),
         scope: latched.scope || pressed(&keys.scope),
         equip: equips
             .iter()
@@ -187,7 +189,10 @@ pub(super) fn wish(
         return;
     };
     let keys = &numbers.keys;
-    let bought = buys.as_deref_mut().map(|buys| std::mem::take(&mut buys.requests)).unwrap_or_default();
+    let bought = buys
+        .as_deref_mut()
+        .map(|buys| std::mem::take(&mut buys.requests))
+        .unwrap_or_default();
     let playing = !menu_open(screen.as_deref());
     let held = |binding: &[Input]| KeyMap::held(&devices, binding);
     let played = |binding: &[Input]| playing && held(binding);
@@ -210,6 +215,7 @@ pub(super) fn wish(
         wish.fire_held = played(&keys.fire) && !swallow.0;
         wish.fire_pressed = playing && spent.fire;
         wish.reload = playing && spent.reload;
+        wish.drop = playing && spent.drop;
         wish.scope = playing && spent.scope;
         wish.equip = spent.equip.filter(|_| playing);
         wish.interact_held = played(&keys.interact);

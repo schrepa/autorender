@@ -1,8 +1,13 @@
 use engine::prelude::{Component, Resource};
 use glam::Vec3;
 
-use crate::abilities::{ActorId, Danger, Drawable, EffectId, Effects, Modifiers, Preview};
+use crate::abilities::{
+    self, AbilityId, AbilitySpec, ActorId, Aim, Danger, Drawable, EffectId, Effects, Modifiers,
+    Preview, WorldHit,
+};
+use crate::play::world::Arena;
 use crate::rules::{AbilitySlot, Team};
+use crate::solids::{Hit, Kind};
 
 pub const SOLID_ID_BASE: u32 = 0;
 
@@ -53,6 +58,54 @@ pub struct Powers {
     pub actors: Vec<PowerActor>,
     pub struck: Vec<EffectHit>,
     pub held: Vec<Held>,
+    pub surfaces: Vec<(Kind, f32)>,
+}
+
+pub fn bounce_of(surfaces: &[(Kind, f32)], kind: Kind) -> f32 {
+    surfaces
+        .iter()
+        .find(|(held, _)| *held == kind)
+        .map_or(1.0, |(_, bounce)| *bounce)
+}
+
+pub fn world_hit(surfaces: &[(Kind, f32)], hit: &Hit) -> WorldHit {
+    WorldHit {
+        distance: hit.distance,
+        normal: hit.normal,
+        bounce: bounce_of(surfaces, hit.kind),
+    }
+}
+
+pub struct ArenaView<'a> {
+    pub arena: &'a Arena,
+    pub surfaces: &'a [(Kind, f32)],
+}
+
+impl abilities::World for ArenaView<'_> {
+    fn ray(&self, origin: Vec3, direction: Vec3, max: f32) -> Option<WorldHit> {
+        self.arena
+            .ray(origin, direction, max)
+            .map(|hit| world_hit(self.surfaces, &hit))
+    }
+
+    fn sphere_sweep(&self, centre: Vec3, radius: f32, motion: Vec3) -> Option<WorldHit> {
+        self.arena
+            .solids()
+            .sphere_sweep(centre, radius, motion)
+            .map(|hit| world_hit(self.surfaces, &hit))
+    }
+
+    fn add_box(
+        &mut self,
+        _id: u32,
+        _ability: AbilityId,
+        _centre: Vec3,
+        _half_extents: Vec3,
+        _axes: glam::Mat3,
+    ) {
+    }
+
+    fn remove_box(&mut self, _id: u32) {}
 }
 
 impl Default for Powers {
@@ -62,6 +115,7 @@ impl Default for Powers {
             actors: Vec::new(),
             struck: Vec::new(),
             held: Vec::new(),
+            surfaces: Vec::new(),
         }
     }
 }
@@ -73,6 +127,20 @@ impl Powers {
 
     pub fn actor(&self, slot: u32) -> Option<&PowerActor> {
         self.actors.iter().find(|actor| actor.slot == slot)
+    }
+
+    pub fn landing(
+        &self,
+        arena: &Arena,
+        caster: &abilities::Actor,
+        spec: &AbilitySpec,
+        aim: Aim,
+    ) -> Option<Preview> {
+        let view = ArenaView {
+            arena,
+            surfaces: &self.surfaces,
+        };
+        abilities::preview(&view, caster, spec, aim)
     }
 
     pub fn held(&self, slot: u32) -> Option<&Held> {

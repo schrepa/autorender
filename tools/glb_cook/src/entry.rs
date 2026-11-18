@@ -5,13 +5,17 @@ use engine_rig::{Clip, Skeleton};
 use glam::{Mat4, Vec3};
 use serde_json::{Value, json};
 
-use engine_scene::SceneMaterial;
+use engine_scene::{SceneMap, SceneMaterial, SceneSlot};
 use engine_textures::Image;
 
-use crate::config::{Character, ClipEntry, Cook, Entry, MapEntry, MaterialNames, TextureVariant};
+use crate::config::{
+    BakedPlan, Character, ClipEntry, Cook, Entry, MapEntry, MaterialNames, TextureVariant,
+};
 use crate::encode;
 use crate::fault::Fault;
-use crate::fragment::{CookedMaterial, assemble, material, validate};
+use crate::fragment::{
+    CookedMaterial, FragmentDrawn, FragmentEntity, assemble, material, validate,
+};
 use crate::geometry::{self, Built};
 use crate::maps::{self, MapKind};
 use crate::markers;
@@ -108,8 +112,21 @@ fn mesh_counts(file: &str, report: &mut Report, meshes: &[Built], budgets: (usiz
     report.counts.insert("vertices", json!(vertices));
     report.counts.insert("triangles", json!(triangles));
     report.counts.insert("max_influences", json!(influences));
+    let colored: BTreeMap<&str, usize> = meshes
+        .iter()
+        .filter(|mesh| mesh.colored)
+        .map(|mesh| (mesh.stem.as_str(), mesh.vertices))
+        .collect();
+    report
+        .counts
+        .insert("color_stream_vertices", json!(colored));
     report.budget(file, "BudgetTriangles", triangles, budgets.0);
     report.budget(file, "BudgetVertices", vertices, budgets.1);
+}
+
+pub struct Baked<'a> {
+    pub plans: &'a BTreeMap<String, BakedPlan>,
+    pub pictures: Vec<(String, String, Image)>,
 }
 
 pub struct MaterialPlan<'a> {
@@ -118,6 +135,8 @@ pub struct MaterialPlan<'a> {
     pub sizes: &'a BTreeMap<String, u32>,
     pub kinds: Vec<MapKind>,
     pub textures: &'a [TextureVariant],
+    pub material_sizes: Option<&'a BTreeMap<String, BTreeMap<String, u32>>>,
+    pub baked: Option<Baked<'a>>,
 }
 
 impl<'a> MaterialPlan<'a> {
@@ -140,12 +159,195 @@ impl<'a> MaterialPlan<'a> {
             sizes,
             kinds,
             textures,
+            material_sizes: None,
+            baked: None,
         }
     }
 
-    fn size(&self, kind: MapKind) -> u32 {
-        self.sizes.get(kind.name()).copied().unwrap_or(self.size)
+    fn size(&self, material: Option<&str>, kind: MapKind) -> u32 {
+        material
+            .and_then(|name| self.material_sizes?.get(name)?.get(kind.name()).copied())
+            .or_else(|| self.sizes.get(kind.name()).copied())
+            .unwrap_or(self.size)
     }
+}
+
+fn extras_values(source: &Source, index: usize) -> Result<BTreeMap<String, f32>, Fault> {
+    let item = format!("materials[{index}].extras");
+    match source.extras("materials", index) {
+        Value::Null => Ok(BTreeMap::new()),
+        Value::Object(extras) => extras
+            .into_iter()
+            .map(|(key, value)| match value.as_f64() {
+                Some(number) if number.is_finite() => Ok((key, number as f32)),
+                Some(_) | None => Err(source.fault(
+                    "MaterialExtras",
+                    item.clone(),
+                    format!("`{key}` is {value}; material extras become numeric values"),
+                )),
+            })
+            .collect(),
+        other => Err(source.fault("MaterialExtras", item, format!("{other} is not an object"))),
+    }
+}
+
+fn bake(
+    source: &Source,
+    (index, meshes): (usize, &[Built]),
+    (material, slot): (&mut SceneMaterial, &str),
+    plans: &BTreeMap<String, BakedPlan>,
+) -> Result<(), Fault> {
+    let item = format!("materials[{index}]");
+    let held = |flag: fn(&Built) -> bool| {
+        meshes
+            .iter()
+            .any(|mesh| mesh.material == index && flag(mesh))
+    };
+    let streams = [
+        ("uv1", held(|mesh| mesh.uv1)),
+        ("color", held(|mesh| mesh.colored)),
+    ];
+    for (stream, carried) in streams {
+        let Some(plan) = plans.get(stream).filter(|_| carried) else {
+            continue;
+        };
+        let values = material.values.get_or_insert_with(BTreeMap::new);
+        for (key, value) in &plan.values {
+            if values
+                .insert(key.clone(), *value)
+                .is_some_and(|held| held != *value)
+            {
+                return Err(source.fault(
+                    "BakedValue",
+                    item,
+                    format!("`{key}` is set twice (material extras and `baked.{stream}`)"),
+                ));
+            }
+        }
+        let Some(SceneSlot::Filled(fill)) = material
+            .slots
+            .as_mut()
+            .and_then(|slots| slots.get_mut(slot))
+        else {
+            return Err(source.fault("BakedMap", item, "the material has no filled slot"));
+        };
+        for (name, baked) in &plan.maps {
+            let mut sampling = baked.sampling.clone();
+            sampling.insert("id".into(), json!(baked.picture));
+            let map: SceneMap = serde_json::from_value(Value::Object(sampling))
+                .map_err(|error| source.fault("BakedMap", item.clone(), error))?;
+            if fill.maps.insert(name.clone(), map).is_some() {
+                return Err(source.fault("BakedMap", item, format!("map `{name}` is set twice")));
+            }
+        }
+    }
+    Ok(())
+}
+
+type MapKey = (usize, MapKind, u32, [u32; 2]);
+
+pub struct Made<'a> {
+    pub cooked: Vec<CookedMaterial>,
+    pub scene: Vec<SceneMaterial>,
+    pub pictures: Vec<(String, String)>,
+    pub picture_images: Vec<(String, &'a Image)>,
+    pub entities: Vec<FragmentEntity>,
+}
+
+fn entities(
+    source: &Source,
+    meshes: &[Built],
+    mapping: &BTreeMap<&str, String>,
+    plans: &BTreeMap<String, BakedPlan>,
+) -> Result<Vec<FragmentEntity>, Fault> {
+    meshes
+        .iter()
+        .map(|mesh| {
+            let stream = if mesh.colored { "color" } else { "uv1" };
+            let plan = plans.get(stream).ok_or_else(|| {
+                source.fault(
+                    "BakedKind",
+                    format!("mesh {}", mesh.stem),
+                    format!(
+                        "the mesh carries {stream} but `baked.{stream}` names no kind to draw it"
+                    ),
+                )
+            })?;
+            Ok(FragmentEntity {
+                id: mesh.stem.clone(),
+                drawn: FragmentDrawn {
+                    kind: plan.kind.clone(),
+                    mesh: mesh.stem.clone(),
+                    material: mapping[mesh.stem.as_str()].clone(),
+                },
+                transform: BTreeMap::new(),
+            })
+        })
+        .collect()
+}
+
+fn cook_one(
+    (source, report): (&Source, &mut Report),
+    (index, stem): (usize, &dyn Fn(usize) -> String),
+    (meshes, plan): (&[Built], &MaterialPlan<'_>),
+    shared: &mut BTreeMap<MapKey, String>,
+) -> Option<(CookedMaterial, SceneMaterial)> {
+    let held = source
+        .gltf
+        .materials()
+        .nth(index)
+        .expect("material_index_from_document");
+    let item = format!("materials[{index}]");
+    if held.occlusion_texture().is_some() {
+        report.notes.push(json!({"note": "OcclusionIgnored", "file": source.file, "item": item, "detail": "ORM red is written as 1"}));
+    }
+    if held.double_sided() {
+        report.notes.push(json!({"warning": "DoubleSided", "file": source.file, "item": item, "detail": "doubleSided true: cull none"}));
+    }
+    let mut maps = Vec::new();
+    let mut borrowed = Vec::new();
+    for &kind in &plan.kinds {
+        let size = plan.size(held.name(), kind);
+        let key = maps::key(&held, kind, size);
+        if let Some(owner) = key.and_then(|key| shared.get(&key)) {
+            let (texture, tex_coord) =
+                maps::texture_of(&held, kind).expect("keyed_maps_have_textures");
+            borrowed.push((
+                kind,
+                format!("{owner}_{}", kind.name()),
+                maps::sampling(&texture, tex_coord),
+            ));
+            continue;
+        }
+        if let Some(map) = report.take(maps::map(source, &held, kind, &stem(index), size)) {
+            if let Some(key) = key {
+                shared.insert(key, stem(index));
+            }
+            maps.push(map);
+        }
+    }
+    if maps.len() + borrowed.len() != plan.kinds.len() {
+        return None;
+    }
+    let made = CookedMaterial {
+        stem: stem(index),
+        maps,
+        borrowed,
+    };
+    let mut material = report.take(material(source, &held, &made, plan.names))?;
+    let values = report.take(extras_values(source, index))?;
+    if !values.is_empty() {
+        material.values = Some(values);
+    }
+    if let Some(baked) = &plan.baked {
+        report.take(bake(
+            source,
+            (index, meshes),
+            (&mut material, &plan.names.slot),
+            baked.plans,
+        ))?;
+    }
+    Some((made, material))
 }
 
 fn cook_materials(
@@ -166,38 +368,31 @@ fn cook_materials(
             format!("{name}_{index}")
         }
     };
-    let mut cooked = Vec::new();
+    let mut cooked: Vec<CookedMaterial> = Vec::new();
     let mut scene = Vec::new();
+    let mut shared = BTreeMap::new();
     for &index in &used {
-        let held = source
-            .gltf
-            .materials()
-            .nth(index)
-            .expect("material_index_from_document");
-        let item = format!("materials[{index}]");
-        if held.occlusion_texture().is_some() {
-            report.notes.push(json!({"note": "OcclusionIgnored", "file": source.file, "item": item, "detail": "ORM red is written as 1"}));
-        }
-        if held.double_sided() {
-            report.notes.push(json!({"warning": "DoubleSided", "file": source.file, "item": item, "detail": "doubleSided true: cull none"}));
-        }
-        let maps: Vec<_> = plan
-            .kinds
-            .iter()
-            .filter_map(|&kind| {
-                report.take(maps::map(source, &held, kind, &stem(index), plan.size(kind)))
-            })
-            .collect();
-        if maps.len() != plan.kinds.len() {
-            continue;
-        }
-        let made = CookedMaterial {
-            stem: stem(index),
-            maps,
-        };
-        if let Some(material) = report.take(material(source, &held, &made, plan.names)) {
+        if let Some((made, material)) = cook_one(
+            (source, report),
+            (index, &stem),
+            (meshes, plan),
+            &mut shared,
+        ) {
             scene.push(material);
             cooked.push(made);
+        }
+    }
+    let named: Vec<&str> = used
+        .iter()
+        .filter_map(|&index| source.gltf.materials().nth(index)?.name())
+        .collect();
+    for wanted in plan.material_sizes.into_iter().flat_map(BTreeMap::keys) {
+        if !named.contains(&wanted.as_str()) {
+            report.faults.push(source.fault(
+                "MaterialSizes",
+                format!("material_sizes.{wanted}"),
+                "no drawn material has this name",
+            ));
         }
     }
     let mapping: BTreeMap<&str, String> = meshes
@@ -206,41 +401,78 @@ fn cook_materials(
         .collect();
     report.counts.insert("mesh_materials", json!(mapping));
     report.counts.insert("materials", json!(used.len()));
+    let borrowed: usize = cooked.iter().map(|material| material.borrowed.len()).sum();
+    report.counts.insert("shared_maps", json!(borrowed));
     if !report.faults.is_empty() {
         return;
     }
-    if plan.textures.is_empty() {
-        let fragment = assemble((&cook.uri_prefix, ".png"), meshes, &cooked, scene);
-        let images: Vec<(&str, &Image)> = cooked
-            .iter()
-            .flat_map(|material| &material.maps)
-            .map(|map| (map.stem.as_str(), &map.decoded))
-            .collect();
-        if let Some(text) = report.take(validate(
-            (&source.file, name),
-            &fragment,
-            (&cook.uri_prefix, ".png"),
-            meshes,
-            &images,
-        )) {
-            push_meshes(report, meshes);
-            for map in cooked.into_iter().flat_map(|material| material.maps) {
-                report.files.push((format!("{}.png", map.stem), map.png));
+    let pictures = plan.baked.iter().flat_map(|baked| &baked.pictures);
+    let drawn = match &plan.baked {
+        Some(baked) => match entities(source, meshes, &mapping, baked.plans) {
+            Ok(drawn) => drawn,
+            Err(fault) => {
+                report.faults.push(fault);
+                return;
             }
+        },
+        None => Vec::new(),
+    };
+    let made = Made {
+        cooked,
+        scene,
+        entities: drawn,
+        pictures: pictures
+            .clone()
+            .map(|(id, uri, _)| (id.clone(), uri.clone()))
+            .collect(),
+        picture_images: pictures
+            .map(|(_, uri, image)| (uri.clone(), image))
+            .collect(),
+    };
+    if plan.textures.is_empty() {
+        write_png(cook, source, report, (name, meshes), made);
+    } else {
+        write_variants(cook, source, report, (name, meshes), &made, plan.textures);
+    }
+}
+
+fn write_png(
+    cook: &Cook,
+    source: &Source,
+    report: &mut Report,
+    (name, meshes): (&str, &[Built]),
+    made: Made<'_>,
+) {
+    let fragment = assemble(
+        (&cook.uri_prefix, ".png"),
+        meshes,
+        &made.cooked,
+        (made.scene, &made.pictures, made.entities),
+    );
+    let images: Vec<(String, &Image)> = made
+        .cooked
+        .iter()
+        .flat_map(|material| &material.maps)
+        .map(|map| (format!("{}{}.png", cook.uri_prefix, map.stem), &map.decoded))
+        .chain(made.picture_images)
+        .collect();
+    if let Some(text) = report.take(validate(
+        (&source.file, name),
+        &fragment,
+        &cook.uri_prefix,
+        meshes,
+        &images,
+    )) {
+        push_meshes(report, meshes);
+        for map in made.cooked.iter().flat_map(|material| &material.maps) {
             report
                 .files
-                .push((format!("{name}.fragment.json"), text.into_bytes()));
+                .push((format!("{}.png", map.stem), map.png.clone()));
         }
-        return;
+        report
+            .files
+            .push((format!("{name}.fragment.json"), text.into_bytes()));
     }
-    write_variants(
-        cook,
-        source,
-        report,
-        (name, meshes),
-        (&cooked, &scene),
-        plan.textures,
-    );
 }
 
 fn write_variants(
@@ -248,9 +480,15 @@ fn write_variants(
     source: &Source,
     report: &mut Report,
     (name, meshes): (&str, &[Built]),
-    (cooked, scene): (&[CookedMaterial], &[SceneMaterial]),
+    made: &Made<'_>,
     textures: &[TextureVariant],
 ) {
+    let (cooked, scene, pictures, picture_images) = (
+        &made.cooked,
+        &made.scene,
+        &made.pictures,
+        &made.picture_images,
+    );
     let mut variants = Vec::new();
     let mut written = Vec::new();
     for variant in textures {
@@ -286,20 +524,33 @@ fn write_variants(
             seconds += encoded.seconds;
             rows.push(json!({"map": map.stem, "encoding": encoding.name(), "levels": chain.len(), "file_bytes": encoded.file.len(), "gpu_bytes": encoded.gpu_bytes, "encode_seconds": encoded.seconds, "quality": encoded.quality}));
             written.push((format!("{}{ending}", map.stem), encoded.file));
-            images.push((map.stem.clone(), encoded.level_zero));
+            images.push((
+                format!("{}{}{ending}", cook.uri_prefix, map.stem),
+                encoded.level_zero,
+            ));
         }
         if !report.faults.is_empty() {
             return;
         }
-        let fragment = assemble((&cook.uri_prefix, &ending), meshes, cooked, scene.to_vec());
-        let held: Vec<(&str, &Image)> = images
+        let fragment = assemble(
+            (&cook.uri_prefix, &ending),
+            meshes,
+            cooked,
+            (scene.to_vec(), pictures, made.entities.clone()),
+        );
+        let held: Vec<(String, &Image)> = images
             .iter()
-            .map(|(stem, image)| (stem.as_str(), image))
+            .map(|(uri, image)| (uri.clone(), image))
+            .chain(
+                picture_images
+                    .iter()
+                    .map(|(uri, image)| (uri.clone(), *image)),
+            )
             .collect();
         let Some(text) = report.take(validate(
             (&source.file, name),
             &fragment,
-            (&cook.uri_prefix, &ending),
+            &cook.uri_prefix,
             meshes,
             &held,
         )) else {
@@ -481,7 +732,47 @@ fn run_character(cook: &Cook, source: &Source, report: &mut Report, character: &
     );
 }
 
-fn run_map(cook: &Cook, source: &Source, report: &mut Report, map: &MapEntry) {
+fn baked_pictures(
+    cook: &Cook,
+    base: &Path,
+    map: &MapEntry,
+) -> Result<Vec<(String, String, Image)>, Fault> {
+    let mut pictures: Vec<(String, String, Image)> = Vec::new();
+    for baked in map.baked.values().flat_map(|plan| plan.maps.values()) {
+        if pictures.iter().any(|(id, _, _)| *id == baked.picture) {
+            continue;
+        }
+        let picture = cook
+            .entries
+            .iter()
+            .find_map(|entry| match entry {
+                Entry::Picture(picture) if picture.name == baked.picture => Some(picture),
+                Entry::Character(_)
+                | Entry::Clip(_)
+                | Entry::Static(_)
+                | Entry::Map(_)
+                | Entry::Picture(_) => None,
+            })
+            .expect("baked_pictures_validated");
+        let path = base.join(&picture.source);
+        let file = path.display().to_string();
+        let bytes = std::fs::read(&path)
+            .map_err(|error| Fault::new("PictureUnreadable", &file, "file", error))?;
+        let image = engine_textures::decode_image(&file, &bytes)
+            .map_err(|error| Fault::new("PictureUndecodable", &file, "file", error))?;
+        pictures.push((
+            baked.picture.clone(),
+            format!(
+                "{}{}.{}.ktx2",
+                cook.uri_prefix, baked.picture, baked.variant
+            ),
+            image,
+        ));
+    }
+    Ok(pictures)
+}
+
+fn run_map(cook: &Cook, base: &Path, source: &Source, report: &mut Report, map: &MapEntry) {
     let prefixes: Vec<&str> = map.merge.iter().map(|rule| rule.prefix.as_str()).collect();
     if let Some(drawn) = report.take(geometry::map_drawn(
         source,
@@ -513,12 +804,22 @@ fn run_map(cook: &Cook, source: &Source, report: &mut Report, map: &MapEntry) {
             drawn.built.len(),
             map.budgets.materials,
         );
-        let plan = MaterialPlan::new(
+        let mut plan = MaterialPlan::new(
             &map.material,
             (map.texture_size, &map.map_sizes),
             map.maps.as_deref(),
             &map.textures,
         );
+        plan.material_sizes = Some(&map.material_sizes);
+        if !map.baked.is_empty() {
+            let Some(pictures) = report.take(baked_pictures(cook, base, map)) else {
+                return;
+            };
+            plan.baked = Some(Baked {
+                plans: &map.baked,
+                pictures,
+            });
+        }
         cook_materials(cook, source, report, &map.name, &drawn.built, &plan);
     }
     let mut merged_counts = Vec::new();
@@ -637,9 +938,14 @@ pub fn run(cook: &Cook, base: &Path, entry: &Entry, path: &Path) -> Report {
                     &fixed.textures,
                 );
                 cook_materials(cook, &source, &mut report, &fixed.name, &meshes, &plan);
+                let found =
+                    markers::markers(&source, Mat4::from_scale(Vec3::splat(fixed.scale)), |_| {
+                        None
+                    });
+                push_markers(&mut report, &fixed.name, &found);
             }
         }
-        Entry::Map(map) => run_map(cook, &source, &mut report, map),
+        Entry::Map(map) => run_map(cook, base, &source, &mut report, map),
         Entry::Picture(_) => {}
     }
     report

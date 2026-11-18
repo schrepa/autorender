@@ -179,7 +179,8 @@ impl Aim {
 }
 
 pub fn error_radians(level: &LevelNumbers, seen_seconds: f32, speed_share: f32, blind: f32) -> f32 {
-    let settle = 1.0 + level.first_error / (1.0 + max(seen_seconds, 0.0) / level.settle_seconds);
+    let extra = max(level.first_shot_error_deg - level.tracking_error_deg, 0.0);
+    let settled = extra / (1.0 + max(seen_seconds, 0.0) / level.settle_seconds);
     let moving = 1.0 + level.move_error * clamp(speed_share, 0.0, 1.0);
-    radians(level.aim_error_deg) * settle * moving * (1.0 + blind)
+    radians(level.tracking_error_deg + settled) * moving * (1.0 + blind)
 }

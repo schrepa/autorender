@@ -3,14 +3,17 @@ use engine::prelude::*;
 use super::start::{SeatNumbers, StartNumbers, seats, start_numbers};
 use super::{MatchSetup, RoundBook};
 use crate::play::actors::{Actor, Body, Health, Human, Wish};
-use crate::play::events::arms::ArmsEvents;
+use crate::play::arms::{Arms, Held};
+use crate::play::events::arms::{ArmsEvents, Weapon};
 use crate::play::events::powers::PowerEvents;
 use crate::play::events::round::RoundEvents;
 use crate::play::flow::{Flow, Stage};
 use crate::play::numbers::{GameNumbers, Numbers};
 use crate::play::round::{DeviceSpot, Round, Seat};
 use crate::play::world::{Arena, Zone};
-use crate::rules::{Device, Event, Match, Phase, PlayerFacts, Side, TickInput, ticks};
+use crate::rules::{
+    Catalog, Device, Event, Holding, Match, Phase, PlayerFacts, Side, TickInput, WeaponId, ticks,
+};
 
 pub(super) fn ticks_per_second(time: &FixedTime) -> u32 {
     if time.delta_seconds > 0.0 {
@@ -27,6 +30,7 @@ type ActorRow<'a> = (
     &'a Wish,
     &'a Health,
     Has<Human>,
+    Option<&'a Arms>,
 );
 
 fn fresh_match(
@@ -128,15 +132,16 @@ fn prepare(
 }
 
 fn facts_of(
-    row: Option<(&Body, &Wish, &Health)>,
+    row: Option<(&Body, &Wish, &Health, Option<&Arms>)>,
     side: Option<Side>,
     arena: &Arena,
     device: Option<Vec3>,
     reach: f32,
 ) -> PlayerFacts {
-    let Some((body, wish, health)) = row else {
+    let Some((body, wish, health, arms)) = row else {
         return PlayerFacts::default();
     };
+    let device_out = arms.is_some_and(|arms| arms.device_out);
     let feet = body.feet;
     let buy_zone = match side {
         Some(Side::Attack) => Some(Zone::BuyAttack),
@@ -148,7 +153,7 @@ fn facts_of(
         site: arena.site(feet),
         in_buy_zone: buy_zone.is_some_and(|zone| arena.zone(zone, feet)),
         near_device: device.is_some_and(|at| at.distance(feet) <= reach),
-        plant: wish.interact_held,
+        plant: wish.interact_held || (device_out && wish.fire_held),
         defuse: wish.interact_held,
         armor_left: Some(health.armour.ceil() as u32),
     }
@@ -201,14 +206,18 @@ fn input_of(
         let row = seat.entity.and_then(|entity| actors.get(entity).ok());
         let side = round.side_of_slot(slot);
         input.players.push(facts_of(
-            row.map(|r| (r.2, r.3, r.4)),
+            row.map(|r| (r.2, r.3, r.4, r.6)),
             side,
             arena,
             device,
             reach,
         ));
-        if let Some((_, _, _, wish, _, _)) = row {
+        if let Some((_, _, _, wish, _, _, arms)) = row {
             input.buys.extend(wish.buys.iter().map(|buy| (slot, *buy)));
+            let device_held = arms.is_some_and(|arms| arms.hand.held == Held::Device && !arms.busy);
+            if wish.drop && device_held {
+                input.device_drops.push(slot);
+            }
         }
     }
     let catalog = game.catalog();
@@ -220,7 +229,28 @@ fn input_of(
     if let Some(powers) = powers {
         input.abilities.clone_from(&powers.accepted);
     }
+    let mut changed: Vec<u32> = (arms.pickups.iter().map(|pickup| pickup.slot))
+        .chain(arms.drops.iter().map(|drop| drop.slot))
+        .collect();
+    changed.sort_unstable();
+    changed.dedup();
+    input.holdings = changed
+        .into_iter()
+        .filter_map(|slot| {
+            let player = slot as usize;
+            let held = actors.get(round.seats.get(player)?.entity?).ok()?.6?;
+            Some(Holding {
+                player,
+                primary: weapon_id(catalog, held.loadout.primary.as_ref()),
+                sidearm: weapon_id(catalog, Some(&held.loadout.sidearm)),
+            })
+        })
+        .collect();
     input
+}
+
+fn weapon_id(catalog: &Catalog, gun: Option<&crate::weapons::Gun>) -> Option<WeaponId> {
+    catalog.weapon_id(Weapon::Gun(gun?.kind()).key())
 }
 
 fn remember(book: &mut RoundBook, events: &[Event]) {

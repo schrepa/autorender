@@ -10,26 +10,19 @@ pub enum Level {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 pub struct LevelNumbers {
     pub reaction_seconds: f32,
-    pub aim_error_deg: f32,
-    pub turn_deg_per_second: f32,
-    pub burst_shots: [u32; 2],
-    pub first_error: f32,
+    pub first_shot_error_deg: f32,
+    pub tracking_error_deg: f32,
     pub settle_seconds: f32,
+    pub spray_settle_seconds: f32,
+    pub turn_deg_per_second: f32,
     pub move_error: f32,
     pub head_share: f32,
-    pub recoil_control: f32,
     pub fire_tolerance: f32,
-    pub stop_to_shoot: f32,
-    pub burst_pause_seconds: f32,
     pub hearing_loudness: f32,
     pub hearing_error_m: f32,
     pub memory_seconds: f32,
-    pub ability_use: f32,
-    pub corner_check: f32,
-    pub over_peek: f32,
-    pub hesitate_seconds: [f32; 2],
-    pub peek_wait_seconds: [f32; 2],
-    pub shoot_through_smoke: bool,
+    pub ability_skill: f32,
+    pub checks_corners: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -50,7 +43,26 @@ pub struct PlayNumbers {
     pub error_wander_seconds: f32,
     pub blind_turn: f32,
     pub spray_m: f32,
-    pub stop_speed_share: f32,
+    pub sweep_quiet_seconds: f32,
+    pub pickup_detour_m: f32,
+    pub burst_shots: [u32; 2],
+    pub stop_to_shoot: f32,
+    pub burst_pause_seconds: f32,
+    pub over_peek: f32,
+    pub hesitate_seconds: [f32; 2],
+    pub peek_wait_seconds: [f32; 2],
+    pub shoot_through_smoke: bool,
+    pub safe_margin_m: f32,
+    pub crossfire_deg: f32,
+    pub retake_group: u32,
+    pub line_up_m: f32,
+    pub throw_pitch_deg: [f32; 2],
+    pub throw_steps: u32,
+    pub throw_yaw_deg: f32,
+    pub throw_work_per_tick: u32,
+    pub throw_aim_deg: f32,
+    pub throw_error_deg: f32,
+    pub throw_moved_m: f32,
     pub strafe_seconds: [f32; 2],
     pub head_radius_m: f32,
     pub body_radius_m: f32,
@@ -104,7 +116,6 @@ pub struct PlayNumbers {
     pub gate_step_m: f32,
     pub spacing_m: f32,
     pub idle_turn_share: f32,
-    pub sidearm_switch_control: f32,
     pub burst_pause_stretch: f32,
     pub burst_hold_share: f32,
     pub preaim_front: f32,
@@ -140,12 +151,18 @@ pub struct BotsTable {
     pub play: PlayNumbers,
 }
 
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+pub struct BotCombat {
+    pub deadzone_share: f32,
+}
+
 #[derive(Deserialize)]
 struct NumbersFile {
     bots: BotsTable,
     player: BotPlayer,
     #[serde(rename = "match")]
     round: BotRound,
+    combat: BotCombat,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -154,6 +171,7 @@ pub struct BotNumbers {
     pub play: PlayNumbers,
     pub player: BotPlayer,
     pub round: BotRound,
+    pub combat: BotCombat,
     pub ticks_per_second: u32,
 }
 
@@ -168,6 +186,7 @@ impl BotNumbers {
             play: file.bots.play,
             player: file.player,
             round: file.round,
+            combat: file.combat,
             ticks_per_second,
         })
     }

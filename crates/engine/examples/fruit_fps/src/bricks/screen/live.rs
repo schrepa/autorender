@@ -121,6 +121,18 @@ pub(super) fn character_name<'a>(catalog: &'a Catalog, player: &Player) -> &'a s
         .map_or("", |entry| entry.name.as_str())
 }
 
+pub(super) fn device_part(facts: &mut HudFacts, view: &View<'_>, human: usize) {
+    let state = match view.device {
+        Device::Carried { player, .. } if *player == human => "carried",
+        Device::Dropped { .. } => "dropped",
+        Device::Carried { .. }
+        | Device::Planted { .. }
+        | Device::Exploded { .. }
+        | Device::Defused { .. } => "",
+    };
+    set(&mut facts.round.device, state);
+}
+
 pub(super) fn round_part(
     facts: &mut HudFacts,
     view: &View<'_>,
@@ -153,6 +165,10 @@ pub(super) fn round_part(
     set(&mut round.site, site);
     round.time_low = view.phase == Phase::Live && round.time <= lows.time_seconds;
     round.fuse_low = planted && round.fuse <= lows.fuse_seconds;
+    round.overtime = view.overtime;
+    round.decider = view.decider;
+    round.first_of_half = view.first_round_of_half;
+    round.last_of_half = view.last_round_of_half;
     facts.phase = Some(view.phase);
     for (index, team) in [team, team.other()].into_iter().enumerate() {
         facts.score[index] = view.score[team.index()];

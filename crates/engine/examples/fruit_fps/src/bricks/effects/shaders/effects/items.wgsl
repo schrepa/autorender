@@ -91,12 +91,12 @@ fn effect_seconds() -> f32 {
     return effects_frame.clock.x;
 }
 
-fn effect_lit(color: vec3<f32>, normal: vec3<f32>) -> vec3<f32> {
+fn effect_lit(color: vec3<f32>, normal: vec3<f32>, field: vec4<f32>) -> vec3<f32> {
     let sun = effects_frame.sun;
     if sun.w == 0.0 {
         return color;
     }
     let toward = saturate(dot(normal, sun.xyz) * 0.5 + 0.5);
     let sky = mix(0.6, 1.0, saturate(normal.y * 0.5 + 0.5));
-    return color * (effects_frame.sky_color.rgb * sky + effects_frame.sun_color.rgb * toward * 0.5);
+    return color * (field.rgb * sky + effects_frame.sun_color.rgb * toward * 0.5 * field.a);
 }

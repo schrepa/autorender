@@ -240,6 +240,21 @@ pub struct AbilitySpec {
     pub block: String,
     pub delivery: Delivery,
     pub action: Action,
+    pub prop: Option<String>,
+    pub solid_kind: Option<String>,
+    pub drop: Option<DropSpec>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DropSpec {
+    pub height_m: f32,
+    pub ticks: u32,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ThrowSurface {
+    pub kind: String,
+    pub bounce: f32,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -252,6 +267,7 @@ pub struct CharacterAbilities {
 #[derive(Clone, Debug, PartialEq)]
 pub struct AbilityBook {
     pub characters: Vec<CharacterAbilities>,
+    pub throw_surfaces: Vec<ThrowSurface>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -290,7 +306,18 @@ impl AbilityBook {
                 abilities,
             });
         }
-        Ok(AbilityBook { characters })
+        let throw_surfaces = root
+            .throw_surfaces
+            .into_iter()
+            .map(|(kind, raw)| ThrowSurface {
+                kind,
+                bounce: raw.bounce,
+            })
+            .collect();
+        Ok(AbilityBook {
+            characters,
+            throw_surfaces,
+        })
     }
 
     pub fn ability(&self, id: AbilityId) -> &AbilitySpec {
@@ -305,6 +332,14 @@ impl AbilityBook {
 #[derive(Deserialize)]
 struct Root {
     characters: BTreeMap<String, RawCharacter>,
+    #[serde(default)]
+    throw_surfaces: BTreeMap<String, RawThrowSurface>,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawThrowSurface {
+    bounce: f32,
 }
 
 #[derive(Deserialize)]
@@ -386,6 +421,10 @@ impl RawDelivery {
 struct Head {
     name: String,
     block: String,
+    prop: Option<String>,
+    kind: Option<String>,
+    drop_height_m: Option<f32>,
+    drop_seconds: Option<f32>,
 }
 
 #[derive(Deserialize)]
@@ -620,6 +659,11 @@ fn unknown(block: &str) -> Built {
 fn spec(id: AbilityId, value: &Value, rate: Rate) -> Result<AbilitySpec, String> {
     let head: Head = fields(value)?;
     let block = head.block.as_str();
+    if block == "wall_solid" && head.kind.is_none() {
+        return Err(
+            "a solid wall needs `kind` (the surface it adds to the collision world)".to_owned(),
+        );
+    }
     let (delivery, action) = match block {
         "trap" | "trap_tripwire" | "trap_reveal" => traps(block, value, rate),
         "flash" | "flash_cone" | "grenade" | "airstrike" => bursts(block, value, rate),
@@ -628,12 +672,19 @@ fn spec(id: AbilityId, value: &Value, rate: Rate) -> Result<AbilitySpec, String>
         "wall_vision" | "wall_solid" => walls(block, value, rate),
         _ => personal(block, value, rate),
     }?;
+    let drop = head.drop_height_m.map(|height_m| DropSpec {
+        height_m,
+        ticks: head.drop_seconds.map_or(0, |seconds| rate.ticks(seconds)),
+    });
     Ok(AbilitySpec {
         id,
         name: head.name,
         block: head.block,
         delivery,
         action,
+        prop: head.prop,
+        solid_kind: head.kind,
+        drop,
     })
 }
 

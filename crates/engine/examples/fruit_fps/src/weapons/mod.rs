@@ -11,11 +11,13 @@ pub use hits::{
     Vitals, Wound, gun_damage, hit_shapes, melee, melee_damage, trace, wound,
 };
 pub use ledger::{DamageLedger, joints_from_body};
-pub use loadout::{Fired, Loadout, LoadoutInput, LoadoutTick, LoadoutView, Slot, actor_rng};
+pub use loadout::{
+    Fired, HandMotion, HandMoving, Loadout, LoadoutInput, LoadoutTick, LoadoutView, Slot, actor_rng,
+};
 pub use numbers::{
-    Absorb, ArmsNumbers, CombatNumbers, DamageBand, GunKind, GunNumbers, HitShapeNumbers,
-    MeleeNumbers, PlayerShape, RecoilNumbers, ScopeNumbers, SpreadDeg, StandJoints, WeaponNumbers,
-    ticks,
+    Absorb, ArmsNumbers, ClassMeters, CombatNumbers, DEFAULT_SURFACE, DamageBand, DeviceHand,
+    GunKind, GunNumbers, HitShapeNumbers, MeleeNumbers, PlayerShape, RecoilNumbers, ScopeNumbers,
+    SpreadDeg, StandJoints, SurfaceNumbers, WeaponNumbers, ticks,
 };
 pub use recoil::{
     Aim, Footing, Kick, Recoil, Shot, ShotRng, Stance, fire, forward, pattern_deg, recover,

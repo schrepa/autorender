@@ -43,13 +43,12 @@ pub struct GunNumbers {
     pub reserve: u32,
     pub reload_seconds: f32,
     pub equip_seconds: f32,
-    pub speed_factor: f32,
+    pub run_speed_factor: f32,
     pub damage: Vec<DamageBand>,
     pub spread_deg: SpreadDeg,
     pub scope: Option<ScopeNumbers>,
     pub recoil: RecoilNumbers,
     pub tag_slow: f32,
-    pub pierce_m: f32,
 }
 
 impl GunNumbers {
@@ -83,7 +82,7 @@ pub struct SpreadDeg {
 #[serde(deny_unknown_fields)]
 pub struct ScopeNumbers {
     pub zoom: Vec<f32>,
-    pub speed_factor: f32,
+    pub aim_speed_factor: f32,
     pub spread_deg: SpreadDeg,
     pub fire_rate_factor: f32,
     pub scope_in_seconds: f32,
@@ -109,7 +108,7 @@ pub struct MeleeNumbers {
     pub damage_front: f32,
     pub damage_back: f32,
     pub range_m: f32,
-    pub speed_factor: f32,
+    pub run_speed_factor: f32,
     pub swing_seconds: f32,
     pub equip_seconds: f32,
     pub heavy_front: f32,
@@ -148,10 +147,63 @@ pub struct CombatNumbers {
     pub land_seconds: f32,
     pub tag_seconds: f32,
     pub pierce_tag_slow: f32,
-    pub pierce_damage: f32,
-    pub pierce_hardness: BTreeMap<String, f32>,
+    pub surfaces: BTreeMap<String, SurfaceNumbers>,
     pub pickup_reach_m: f32,
     pub pickup_aim_m: f32,
+    pub device_hand: DeviceHand,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DeviceHand {
+    pub equip_seconds: f32,
+    pub run_speed_factor: f32,
+    pub busy_run_speed_factor: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SurfaceNumbers {
+    pub pierce_m: ClassMeters,
+    pub damage_kept: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClassMeters {
+    pub sidearm: f32,
+    pub smg: f32,
+    pub rifle: f32,
+    pub sniper: f32,
+}
+
+impl ClassMeters {
+    pub fn of(&self, kind: GunKind) -> f32 {
+        match kind {
+            GunKind::Sidearm => self.sidearm,
+            GunKind::Smg => self.smg,
+            GunKind::Rifle => self.rifle,
+            GunKind::Sniper => self.sniper,
+        }
+    }
+}
+
+pub const DEFAULT_SURFACE: &str = "stone";
+
+impl CombatNumbers {
+    pub fn surface(&self, kind: &str) -> Option<&SurfaceNumbers> {
+        self.surfaces
+            .get(kind)
+            .or_else(|| self.surfaces.get(DEFAULT_SURFACE))
+    }
+
+    pub fn surface_by(&self, same: impl Fn(&str) -> bool) -> Option<&SurfaceNumbers> {
+        self.surfaces
+            .iter()
+            .find(|(name, _)| same(name))
+            .map(|(_, table)| table)
+            .or_else(|| self.surfaces.get(DEFAULT_SURFACE))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]

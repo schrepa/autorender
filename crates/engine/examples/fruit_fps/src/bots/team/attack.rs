@@ -1,7 +1,9 @@
 use glam::Vec3;
 
 use super::tactics::{self, Hold};
-use super::{Approach, Duty, Order, Plan, Role, Slot, Squad, Step, Utility, spaced};
+use super::{
+    Approach, Duty, Line, LineKind, Order, Plan, Role, Slot, Squad, Step, Utility, spaced,
+};
 use crate::bots::aim::flat_distance;
 use crate::bots::debug::Why;
 use crate::bots::sense::{Block, DeviceSense};
@@ -53,7 +55,11 @@ impl Squad {
         let members = plan.sense.members;
         let mut taken = vec![false; members.len()];
         let mut duties = vec![Duty::Follow; members.len()];
-        if let Some(carrier) = alive.iter().copied().find(|&m| members[m].carrying_device) {
+        if let Some(carrier) = alive
+            .iter()
+            .copied()
+            .find(|&m| members[m].carrying_device && members[m].bot)
+        {
             duties[carrier] = Duty::Carrier;
             taken[carrier] = true;
         }
@@ -178,9 +184,17 @@ impl Squad {
         plan.seconds_left() > need
     }
 
+    fn stagger(&mut self, plan: &Plan<'_, '_>, member: usize, rank: usize) {
+        let stagger = plan.numbers.ticks(plan.numbers.play.go_stagger_seconds);
+        self.orders[member].go_tick = self.since + stagger * rank as u64;
+    }
+
     fn carrier_at(&self, plan: &Plan<'_, '_>, alive: &[usize]) -> Vec3 {
         let members = plan.sense.members;
-        if let Some(&m) = alive.iter().find(|&&m| members[m].carrying_device) {
+        if let Some(&m) = alive
+            .iter()
+            .find(|&&m| members[m].carrying_device && members[m].bot)
+        {
             return members[m].position;
         }
         if let DeviceSense::Dropped { at } = plan.sense.game.device {
@@ -292,6 +306,7 @@ impl Squad {
                 },
                 true,
             );
+            self.stagger(plan, m, k);
         }
         let mut best: Option<(usize, u32)> = None;
         let mut seen = false;
@@ -344,6 +359,7 @@ impl Squad {
                 },
                 true,
             );
+            self.stagger(plan, m, slot.rank + slot.group);
             need += 1;
             if flat_distance(members[m].position, at) <= spacing * 2.0 {
                 arrived += 1;
@@ -369,7 +385,6 @@ impl Squad {
         let stagger = numbers.ticks(play.go_stagger_seconds);
         let lead = numbers.ticks(play.utility_lead_seconds);
         let members = plan.sense.members;
-        let eye = plan.eye();
         let go = if self.go_tick == u64::MAX {
             plan.tick
         } else {
@@ -379,27 +394,35 @@ impl Squad {
         for &m in alive {
             let slot = self.slots[m];
             let way = &st.ways[slot.group.min(st.ways.len() - 1)];
-            let duty = if members[m].carrying_device {
+            let duty = if members[m].carrying_device && members[m].bot {
                 Duty::Carrier
             } else {
                 slot.duty
             };
             let (goal, face, go_tick, utility, careful) = match duty {
                 Duty::Entry => {
-                    let target = way.mid + way.inward * play.flash_inside_m + eye;
                     let flash = Utility {
                         block: Block::Flash,
-                        target,
+                        target: way.flash_at,
                         after_tick: go.saturating_sub(lead / 2),
+                        line: Line {
+                            kind: LineKind::FlashCorner,
+                            site: Some(site),
+                            choke: Some(way.choke),
+                        },
                     };
                     (deep.post.at, deep.post.face, go, Some(flash), false)
                 }
                 Duty::Smoke => {
-                    let target = way.mid + way.inward * play.smoke_inside_m;
                     let smoke = Utility {
                         block: Block::Smoke,
-                        target,
+                        target: way.smoke_at,
                         after_tick: go.saturating_sub(lead),
+                        line: Line {
+                            kind: LineKind::SmokeHold,
+                            site: Some(site),
+                            choke: Some(way.choke),
+                        },
                     };
                     (
                         way.post.at,
@@ -432,6 +455,11 @@ impl Squad {
                         block: Block::Reveal,
                         target: st.plant,
                         after_tick: go.saturating_sub(lead),
+                        line: Line {
+                            kind: LineKind::RevealSite,
+                            site: Some(site),
+                            choke: None,
+                        },
                     });
                     (
                         at,

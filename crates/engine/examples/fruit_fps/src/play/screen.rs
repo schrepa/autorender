@@ -105,6 +105,11 @@ pub struct RoundFacts {
     pub site: String,
     pub time_low: bool,
     pub fuse_low: bool,
+    pub overtime: bool,
+    pub decider: bool,
+    pub first_of_half: bool,
+    pub last_of_half: bool,
+    pub device: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -263,6 +268,7 @@ pub struct ResultFacts {
     pub mvp_name: String,
     pub mvp_stats: String,
     pub mvp_char: String,
+    pub next_seconds: f32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -473,14 +479,12 @@ pub struct Plate {
     pub radius: f32,
     pub stroke: Option<Stroke>,
     pub angle_radians: f32,
+    pub soft: f32,
+    pub sweep: f32,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Weight {
-    #[default]
-    Regular,
-    Bold,
-}
+pub struct Weight(pub usize);
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Align {
@@ -496,6 +500,8 @@ pub struct TextStyle {
     pub weight: Weight,
     pub align: Align,
     pub color: Rgba,
+    pub grow: f32,
+    pub soft: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -534,16 +540,13 @@ impl Face {
 pub struct Font {
     pub em_px: f32,
     pub spread_px: f32,
-    pub regular: Face,
-    pub bold: Face,
+    pub faces: Vec<Option<Face>>,
+    pub thin: Vec<bool>,
 }
 
 impl Font {
-    pub fn face(&self, weight: Weight) -> &Face {
-        match weight {
-            Weight::Regular => &self.regular,
-            Weight::Bold => &self.bold,
-        }
+    pub fn face(&self, weight: Weight) -> Option<&Face> {
+        self.faces.get(weight.0)?.as_ref()
     }
 }
 
@@ -672,14 +675,14 @@ impl ScreenDraw {
         let half = math::min(rect.w, rect.h) * 0.5;
         self.quads.push(Quad {
             rect: [rect.x, rect.y, rect.w, rect.h],
-            uv: [0.0; 4],
+            uv: [1.0 - math::clamp(plate.sweep, 0.0, 1.0), 0.0, 0.0, 0.0],
             fill: fill.map_or(0, Rgba::packed),
             edge: stroke.map_or(0, |stroke| stroke.color.packed()),
             mode: PLATE,
             radius: math::clamp(plate.radius, 0.0, half),
             stroke_width: stroke.map_or(0.0, |stroke| stroke.width),
             stroke_inset: stroke.map_or(0.0, |stroke| stroke.inset),
-            scale: 1.0,
+            scale: plate.soft,
             angle: plate.angle_radians,
         });
     }
@@ -693,7 +696,7 @@ impl ScreenDraw {
 
     pub fn image(
         &mut self,
-        (name, cell, fit): (&str, Option<&str>, Cover),
+        (name, cell, fit, grey): (&str, Option<&str>, Cover, f32),
         rect: Area,
         color: Rgba,
     ) {
@@ -745,6 +748,7 @@ impl ScreenDraw {
             fill: color.packed(),
             edge: index as u32,
             mode: IMAGE,
+            stroke_width: grey,
             scale: k,
             ..Quad::default()
         });
@@ -813,7 +817,9 @@ impl ScreenDraw {
         let Some(font) = &self.font else {
             return 0.0;
         };
-        let face = font.face(weight);
+        let Some(face) = font.face(weight) else {
+            return 0.0;
+        };
         let advance: f32 = text
             .chars()
             .filter_map(|character| face.glyph(character))
@@ -836,8 +842,10 @@ impl ScreenDraw {
         let Some(font) = &self.font else {
             return;
         };
+        let Some(face) = font.face(style.weight) else {
+            return;
+        };
         self.texts += 1;
-        let face = font.face(style.weight);
         let k = style.px / font.em_px;
         let baseline = (rect.y + rect.h * 0.5 + face.cap * k * 0.5).round();
         let mut pen = match style.align {
@@ -847,11 +855,10 @@ impl ScreenDraw {
         }
         .round();
         let fill = style.color.packed();
-        let boost = match style.weight {
-            Weight::Regular => {
-                THIN_BOOST * math::clamp((THIN_BELOW_PX - style.px) / THIN_SPAN_PX, 0.0, 1.0)
-            }
-            Weight::Bold => 0.0,
+        let boost = if font.thin.get(style.weight.0).copied().unwrap_or(false) {
+            THIN_BOOST * math::clamp((THIN_BELOW_PX - style.px) / THIN_SPAN_PX, 0.0, 1.0)
+        } else {
+            0.0
         };
         for character in text.chars() {
             let Some(glyph) = face.glyph(character) else {
@@ -872,8 +879,8 @@ impl ScreenDraw {
                     edge: 0,
                     mode: GLYPH,
                     radius: font.spread_px,
-                    stroke_width: boost,
-                    stroke_inset: 0.0,
+                    stroke_width: boost + style.grow,
+                    stroke_inset: style.soft,
                     scale: k,
                     angle: 0.0,
                 });

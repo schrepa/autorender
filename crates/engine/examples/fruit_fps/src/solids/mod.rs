@@ -1,4 +1,5 @@
 mod body;
+mod peers;
 mod shapes;
 mod tree;
 mod world;
@@ -7,6 +8,7 @@ use glam::{Mat3, Vec3};
 use serde::{Deserialize, Serialize};
 
 pub use body::{Body, Landed, Moved, Player, Wish, capsule_of, step};
+pub use peers::apart;
 pub use world::Solids;
 pub use world::Work;
 
@@ -17,6 +19,42 @@ pub enum Surface {
     Metal,
     Wood,
     Dirt,
+}
+
+impl Surface {
+    pub fn of_kind(name: &str) -> Surface {
+        match name {
+            "metal" => Surface::Metal,
+            "wood" => Surface::Wood,
+            "dirt" => Surface::Dirt,
+            _ => Surface::Stone,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub struct Kind(pub u32);
+
+impl Kind {
+    pub const STONE: Kind = Kind::named("stone");
+
+    pub const fn named(name: &str) -> Kind {
+        let bytes = name.as_bytes();
+        let mut hash: u32 = 0x811c_9dc5;
+        let mut at = 0;
+        while at < bytes.len() {
+            hash ^= bytes[at] as u32;
+            hash = hash.wrapping_mul(0x0100_0193);
+            at += 1;
+        }
+        Kind(hash)
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Ground {
+    pub surface: Surface,
+    pub kind: Kind,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -32,6 +70,7 @@ pub struct Hit {
     pub normal: Vec3,
     pub face_normal: Vec3,
     pub surface: Surface,
+    pub kind: Kind,
     pub solid: Solid,
 }
 
@@ -49,6 +88,7 @@ pub struct Block {
     pub half_extents: Vec3,
     pub axes: Mat3,
     pub surface: Surface,
+    pub kind: Kind,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]

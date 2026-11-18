@@ -44,6 +44,8 @@ if (!window.isSecureContext) {
 } else {
   watchStart();
   interruptions();
-  adapterFeatures().catch(() => refuseGpu("This browser has WebGPU but gave no graphics adapter: hardware acceleration may be off, or the GPU or its driver is blocked. chrome://gpu (Chrome, Edge) or about:support (Firefox) shows why."));
-  playGame({ wasm: "fruit_fps", scene: "fruit_fps.scene.json", load: () => import("../../pkg/fruit_fps"), worker: JobWorker, game: bindings => bindings.FruitFpsGame });
+  adapterFeatures().then(
+    features => playGame({ wasm: "fruit_fps", scene: features.includes("texture-compression-bc") ? "fruit_fps.scene.json" : "fruit_fps.rgba8.scene.json", load: () => import("../../pkg/fruit_fps"), worker: JobWorker, game: bindings => bindings.FruitFpsGame }),
+    () => refuseGpu("This browser has WebGPU but gave no graphics adapter: hardware acceleration may be off, or the GPU or its driver is blocked. chrome://gpu (Chrome, Edge) or about:support (Firefox) shows why."),
+  );
 }

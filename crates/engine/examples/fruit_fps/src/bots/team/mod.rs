@@ -71,11 +71,63 @@ pub enum Approach {
     Hold,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum LineKind {
+    SmokeHold,
+    FlashCorner,
+    RevealSite,
+    DamagePlant,
+    RetakeFlash,
+    RetakeSmoke,
+    StallChoke,
+}
+
+impl LineKind {
+    pub fn key(self) -> &'static str {
+        match self {
+            LineKind::SmokeHold => "smoke_hold",
+            LineKind::FlashCorner => "flash_corner",
+            LineKind::RevealSite => "reveal_site",
+            LineKind::DamagePlant => "damage_plant",
+            LineKind::RetakeFlash => "retake_flash",
+            LineKind::RetakeSmoke => "retake_smoke",
+            LineKind::StallChoke => "stall_choke",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Line {
+    pub kind: LineKind,
+    pub site: Option<usize>,
+    pub choke: Option<usize>,
+}
+
+impl Line {
+    pub fn name(self, places: &Places) -> String {
+        let site = self
+            .site
+            .and_then(|s| places.sites.get(s))
+            .map_or("", |s| s.name.as_str());
+        let choke = self
+            .choke
+            .and_then(|c| places.chokes.get(c))
+            .map_or("", |c| c.name.as_str());
+        [self.kind.key(), site, choke]
+            .iter()
+            .filter(|part| !part.is_empty())
+            .copied()
+            .collect::<Vec<&str>>()
+            .join(" ")
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Utility {
     pub block: Block,
     pub target: Vec3,
     pub after_tick: u64,
+    pub line: Line,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -128,6 +180,7 @@ pub struct SquadSense<'a> {
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Intel {
     site: Option<usize>,
+    strict: Option<usize>,
     tick: u64,
     kind: CallKind,
     count: u8,
@@ -175,6 +228,9 @@ pub struct Squad {
     rotated: Option<usize>,
     defuser: Option<usize>,
     entry_way: Vec<Option<usize>>,
+    last_contact: u64,
+    sweep: Vec<Vec3>,
+    sweep_at: Vec<usize>,
 }
 
 pub struct Plan<'a, 'b> {
@@ -241,6 +297,9 @@ impl Squad {
             rotated: None,
             defuser: None,
             entry_way: vec![None; members],
+            last_contact: 0,
+            sweep: Vec::new(),
+            sweep_at: vec![0; members],
         }
     }
 
@@ -301,6 +360,7 @@ impl Squad {
                 self.enter(&plan);
             }
             self.revise(&plan);
+            self.spread(&plan);
         }
         self.tactics = Some(built);
     }
@@ -319,10 +379,12 @@ impl Squad {
             let site = site_near(world.places(), tactics, call.at, numbers.play.site_near_m);
             self.intel.push(Intel {
                 site,
+                strict: strict_site(world.places(), tactics, call.at),
                 tick: call.tick,
                 kind: call.kind,
                 count: call.count.max(1),
             });
+            self.heard_from(call.kind, call.tick);
         }
     }
 
@@ -335,6 +397,18 @@ impl Squad {
                 CallKind::Spotted | CallKind::Down => u32::from(i.count),
                 CallKind::Heard => 1,
                 CallKind::Hurt => 0,
+            })
+            .sum()
+    }
+
+    fn contact(&self, site: usize, numbers: &BotNumbers) -> u32 {
+        self.intel
+            .iter()
+            .filter(|i| i.strict == Some(site))
+            .map(|i| match i.kind {
+                CallKind::Device => numbers.play.rotate_seen,
+                CallKind::Spotted | CallKind::Down => u32::from(i.count),
+                CallKind::Heard | CallKind::Hurt => 0,
             })
             .sum()
     }
@@ -365,8 +439,10 @@ impl Squad {
             self.defuser = None;
             self.approach = Approach::Hold;
             self.why = Why::RoundStart;
+            self.sweep.clear();
         }
         self.phase = game.phase;
+        self.last_contact = plan.tick;
         match (game.side, game.phase) {
             (_, GamePhase::Buy) => self.set_step(Step::Buy, Why::RoundStart, plan.tick),
             (Side::Attack, GamePhase::Live) => self.start_attack(plan),
@@ -392,11 +468,44 @@ impl Squad {
         let game = plan.sense.game;
         match (game.side, game.phase) {
             (_, GamePhase::Buy) => self.buy_orders(plan),
+            (_, GamePhase::Live) if self.sweep_due(plan) => self.sweep_step(plan),
             (Side::Attack, GamePhase::Live) => self.attack(plan),
             (Side::Defend, GamePhase::Live) => self.defend(plan),
             (Side::Attack, GamePhase::Planted) => self.post_plant(plan),
             (Side::Defend, GamePhase::Planted) => self.retake(plan),
             (_, GamePhase::Ended) => self.ended(plan),
+        }
+    }
+
+    fn spread(&mut self, plan: &Plan<'_, '_>) {
+        let spacing = plan.numbers.play.spacing_m;
+        let lift = plan.eye() * 0.5;
+        let mut alive = plan.alive();
+        alive.sort_by_key(|&member| {
+            !matches!(
+                self.orders[member].duty,
+                Duty::Defuser | Duty::Carrier
+            )
+        });
+        for (index, &member) in alive.iter().enumerate() {
+            let order = self.orders[member];
+            let earlier = &alive[..index];
+            let clashes = |goal: Vec3, orders: &[Order]| {
+                earlier
+                    .iter()
+                    .any(|&other| flat_distance(orders[other].goal, goal) < spacing * 0.5)
+            };
+            if !clashes(order.goal, &self.orders) {
+                continue;
+            }
+            let free = [0usize, 2, 1, 3].into_iter().find_map(|rank| {
+                let spot = spaced(order.goal, order.face, rank, spacing);
+                (!clashes(spot, &self.orders) && plan.world.sees(order.goal + lift, spot + lift))
+                    .then_some(spot)
+            });
+            if let Some(goal) = free {
+                self.put(plan, member, Order { goal, ..order });
+            }
         }
     }
 
@@ -480,6 +589,20 @@ impl Squad {
     }
 }
 
+fn strict_site(places: &Places, tactics: &Tactics, at: Vec3) -> Option<usize> {
+    if let Some(site) = places.site_zone_at(at) {
+        return Some(site);
+    }
+    let zone = places.zone_at(at)?;
+    let mut found = tactics.sites.iter().enumerate().filter(|(_, site)| {
+        site.ways
+            .iter()
+            .any(|way| places.zone_at(way.outside) == Some(zone))
+    });
+    let first = found.next().map(|(index, _)| index);
+    if found.next().is_some() { None } else { first }
+}
+
 fn site_near(places: &Places, tactics: &Tactics, at: Vec3, near: f32) -> Option<usize> {
     if let Some(site) = places.site_zone_at(at) {
         return Some(site);
@@ -501,4 +624,5 @@ fn site_near(places: &Places, tactics: &Tactics, at: Vec3, near: f32) -> Option<
 
 mod attack;
 mod defend;
+mod sweep;
 mod tactics;

@@ -16,6 +16,8 @@ pub struct Built {
     pub vertices: usize,
     pub triangles: usize,
     pub influences: usize,
+    pub colored: bool,
+    pub uv1: bool,
 }
 
 struct Part {
@@ -23,6 +25,7 @@ struct Part {
     vertices: Vec<MeshVertex>,
     indices: Vec<u32>,
     uv1: Option<Vec<[f32; 2]>>,
+    colors: Option<Vec<[f32; 4]>>,
     skin: Option<(Vec<u8>, Vec<u8>)>,
     influences: usize,
     normals: &'static str,
@@ -199,9 +202,13 @@ fn read_part(
     let uv1: Option<Vec<[f32; 2]>> = reader
         .read_tex_coords(1)
         .map(|uvs| uvs.into_f32().collect());
+    let colors: Option<Vec<[f32; 4]>> = reader
+        .read_colors(0)
+        .map(|colors| colors.into_rgba_f32().collect());
     if normals.len() != count
         || uvs.len() != count
         || uv1.as_ref().is_some_and(|uv1| uv1.len() != count)
+        || colors.as_ref().is_some_and(|colors| colors.len() != count)
     {
         return Err(source.fault("AttributeCount", item, "attributes differ in vertex count"));
     }
@@ -227,6 +234,11 @@ fn read_part(
         vertices,
         indices,
         uv1: if reading == Reading::Drawn { uv1 } else { None },
+        colors: if reading == Reading::Drawn {
+            colors
+        } else {
+            None
+        },
         skin,
         influences,
         normals: normals_from,
@@ -268,11 +280,13 @@ fn read_back(
 fn encode(source: &Source, item: &str, parts: &[Part]) -> Result<Built, Fault> {
     let with_uv1 = parts.iter().filter(|part| part.uv1.is_some()).count();
     let with_skin = parts.iter().filter(|part| part.skin.is_some()).count();
-    if (with_uv1 != 0 && with_uv1 != parts.len()) || (with_skin != 0 && with_skin != parts.len()) {
+    let with_colors = parts.iter().filter(|part| part.colors.is_some()).count();
+    let mixed = |held: usize| held != 0 && held != parts.len();
+    if mixed(with_uv1) || mixed(with_skin) || mixed(with_colors) {
         return Err(source.fault(
             "MixedAttributes",
             item,
-            "merged primitives differ in TEXCOORD_1 or skin",
+            "merged primitives differ in TEXCOORD_1, COLOR_0 or skin",
         ));
     }
     let mut vertices = Vec::new();
@@ -280,11 +294,25 @@ fn encode(source: &Source, item: &str, parts: &[Part]) -> Result<Built, Fault> {
     let mut uv1: Vec<[f32; 2]> = Vec::new();
     let mut joints = Vec::new();
     let mut weights = Vec::new();
+    let mut colors = Vec::new();
     for part in parts {
         let base = u32::try_from(vertices.len()).expect("vertex_count_fits_u32");
         indices.extend(part.indices.iter().map(|index| index + base));
         vertices.extend_from_slice(&part.vertices);
         uv1.extend(part.uv1.iter().flatten().copied());
+        for (vertex, color) in part.colors.iter().flatten().enumerate() {
+            if color.iter().any(|lane| !(0.0..=1.0).contains(lane)) {
+                return Err(source.fault(
+                    "Colors",
+                    format!("{item} vertex {vertex}"),
+                    format!("COLOR_0 {color:?} is outside 0..1"),
+                ));
+            }
+            for lane in color {
+                let value = (lane * 65535.0).round() as u16;
+                colors.extend_from_slice(&value.to_le_bytes());
+            }
+        }
         if let Some((joint_bytes, weight_bytes)) = &part.skin {
             joints.extend_from_slice(joint_bytes);
             weights.extend_from_slice(weight_bytes);
@@ -301,6 +329,13 @@ fn encode(source: &Source, item: &str, parts: &[Part]) -> Result<Built, Fault> {
             "weights",
             AttributeFormat::Unorm16x4,
             weights,
+        ));
+    }
+    if with_colors != 0 {
+        named.push(NamedStream::new(
+            "color",
+            AttributeFormat::Unorm16x4,
+            colors,
         ));
     }
     let bytes = encode_mesh_buffer_with(
@@ -333,6 +368,8 @@ fn encode(source: &Source, item: &str, parts: &[Part]) -> Result<Built, Fault> {
             .map(|part| part.influences)
             .max()
             .unwrap_or_default(),
+        colored: with_colors != 0,
+        uv1: with_uv1 != 0,
     })
 }
 
@@ -462,6 +499,13 @@ pub fn map_drawn(
                 None,
                 Reading::Drawn,
             )?;
+            if part.uv1.is_some() == part.colors.is_some() {
+                return Err(source.fault(
+                    "MapMeshLight",
+                    primitive_item(&node, &held),
+                    "a drawn map mesh carries exactly one of TEXCOORD_1 (lightmapped) and COLOR_0 (vertex light)",
+                ));
+            }
             object += part.vertices.len();
             parts.push(part);
         }
@@ -469,19 +513,29 @@ pub fn map_drawn(
             widest = (node_label(&node), object);
         }
     }
-    let mut materials: Vec<usize> = parts.iter().filter_map(|part| part.material).collect();
-    materials.sort_unstable();
-    materials.dedup();
+    let mut groups: Vec<(usize, bool)> = parts
+        .iter()
+        .filter_map(|part| Some((part.material?, part.colors.is_some())))
+        .collect();
+    groups.sort_unstable();
+    groups.dedup();
     let mut built = Vec::new();
-    for &material in &materials {
+    for &(material, colored) in &groups {
         let group: Vec<Part> = parts
-            .extract_if(.., |part| part.material == Some(material))
+            .extract_if(.., |part| {
+                part.material == Some(material) && part.colors.is_some() == colored
+            })
             .collect();
         let mut mesh = encode(source, &format!("materials[{material}] group"), &group)?;
-        mesh.stem = if materials.len() == 1 {
+        let stem = if groups.len() == 1 {
             name.to_owned()
         } else {
             format!("{name}_{material}")
+        };
+        mesh.stem = if colored {
+            format!("{stem}_detail")
+        } else {
+            stem
         };
         built.push(mesh);
     }

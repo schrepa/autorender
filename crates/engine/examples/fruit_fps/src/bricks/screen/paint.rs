@@ -24,6 +24,16 @@ pub(super) struct Painter<'a> {
     pub map: &'a MapFrame,
     pub scratch: &'a mut String,
     pub spare: &'a mut String,
+    pub pulses: &'a mut [PulseState],
+    pub now: f64,
+    pub zoom: f32,
+}
+
+#[derive(Clone, Debug, Default)]
+pub(super) struct PulseState {
+    last: String,
+    primed: bool,
+    since: f64,
 }
 
 struct Look<'a> {
@@ -31,6 +41,7 @@ struct Look<'a> {
     color: Option<&'a Paint>,
     stroke: Option<&'a StrokeRef>,
     icon: Option<&'a Template>,
+    grey: f32,
 }
 
 fn whole_number(value: f32, out: &mut String) {
@@ -100,6 +111,36 @@ fn number_of(facts: &HudFacts, number: &Number) -> Option<f32> {
 }
 
 impl Painter<'_> {
+    fn px(&self, size: f32, unscaled: bool) -> f32 {
+        self.draw.text_px(size, unscaled) * self.zoom
+    }
+
+    fn pulse<'e>(&mut self, element: &'e Element) -> (f32, Option<&'e Paint>) {
+        let Some(pulse) = &element.pulse else {
+            return (1.0, None);
+        };
+        let Some(state) = self.pulses.get_mut(element.serial) else {
+            return (1.0, None);
+        };
+        let mut now = std::mem::take(self.spare);
+        now.clear();
+        formatted(self.facts.value(&pulse.watch), Format::Plain, &mut now);
+        if state.last != now {
+            if state.primed {
+                state.since = self.now;
+            }
+            state.primed = true;
+            std::mem::swap(&mut state.last, &mut now);
+        }
+        *self.spare = now;
+        let t = ((self.now - state.since) / f64::from(pulse.seconds)) as f32;
+        if !(0.0..1.0).contains(&t) {
+            return (1.0, None);
+        }
+        let left = (1.0 - t) * (1.0 - t);
+        (1.0 + (pulse.scale - 1.0) * left, pulse.color.as_ref())
+    }
+
     pub(super) fn holds(&self, cond: Option<&Cond>) -> bool {
         cond.is_none_or(|cond| self.facts.value(&cond.path).truthy() != cond.negated)
     }
@@ -122,6 +163,7 @@ impl Painter<'_> {
             color: element.look.color.as_ref(),
             stroke: element.look.stroke.as_ref(),
             icon: element.look.icon.as_ref(),
+            grey: element.look.grey.unwrap_or(0.0),
         };
         for (cond, set) in &element.styles {
             if self.holds(Some(cond)) {
@@ -158,8 +200,64 @@ impl Painter<'_> {
                 radius,
                 stroke,
                 angle_radians: 0.0,
+                soft: 1.0,
+                sweep: 1.0,
             },
         );
+    }
+
+    fn shadows(&mut self, element: &Element, area: Area, (radius, s): (f32, f32)) {
+        for shadow in &element.shadows {
+            let Some(color) = self.color(Some(&shadow.color)) else {
+                continue;
+            };
+            let grow = shadow.grow * s;
+            let moved = Area {
+                x: area.x + shadow.offset[0] * s - grow,
+                y: area.y + shadow.offset[1] * s - grow,
+                w: area.w + 2.0 * grow,
+                h: area.h + 2.0 * grow,
+            };
+            match &element.kind {
+                Kind::Plate => self.draw.plate(
+                    moved,
+                    Plate {
+                        fill: Some(color),
+                        radius: radius + grow,
+                        stroke: None,
+                        angle_radians: 0.0,
+                        soft: 1.0 + shadow.soft * s,
+                        sweep: 1.0,
+                    },
+                ),
+                Kind::Text(text) => {
+                    let px = self.px(text.size, element.unscaled);
+                    let mut out = std::mem::take(self.scratch);
+                    self.render(&text.text, &mut out);
+                    let placed = Area {
+                        x: area.x + shadow.offset[0] * s,
+                        y: area.y + shadow.offset[1] * s,
+                        ..area
+                    };
+                    let style = TextStyle {
+                        px,
+                        weight: text.weight,
+                        align: text.align,
+                        color,
+                        grow,
+                        soft: shadow.soft * s,
+                    };
+                    self.draw.text(&out, placed, style);
+                    *self.scratch = out;
+                }
+                Kind::Icon(_)
+                | Kind::Image(_)
+                | Kind::Markers(_)
+                | Kind::Bar { .. }
+                | Kind::Pips { .. }
+                | Kind::Flow { .. } => {}
+            }
+        }
     }
 
     pub(super) fn screen(&mut self, shown: Shown, spread_px: f32) {
@@ -189,36 +287,71 @@ impl Painter<'_> {
         Vec2::new(step(delta.x), step(delta.y))
     }
 
-    fn element(&mut self, element: &Element, spread_px: f32) {
-        if !self.holds(element.when.as_ref()) {
-            return;
+    fn framed<'e>(&mut self, element: &'e Element, spread_px: f32) -> (Look<'e>, Area, f32, f32) {
+        let mut look = self.look(element);
+        let (zoom, flash) = self.pulse(element);
+        if let Some(flash) = flash {
+            look.fill = look.fill.map(|_| flash);
+            look.color = look.color.map(|_| flash);
         }
-        let look = self.look(element);
+        self.zoom = zoom;
         let mut area = self
             .draw
             .place(element.rect, element.anchor, element.unscaled);
+        if zoom != 1.0 {
+            let center = area.center();
+            area.w *= zoom;
+            area.h *= zoom;
+            area.x = center.x - area.w * 0.5;
+            area.y = center.y - area.h * 0.5;
+        }
         if element.unscaled {
             let shift = self.crosshair_shift(area) * spread_px;
             area.x += shift.x;
             area.y += shift.y;
         }
-        let s = if element.unscaled {
-            1.0
-        } else {
-            self.draw.scale()
-        };
+        let s = zoom
+            * if element.unscaled {
+                1.0
+            } else {
+                self.draw.scale()
+            };
+        let sweep = element
+            .sweep
+            .as_ref()
+            .and_then(|sweep| number_of(self.facts, sweep))
+            .unwrap_or(1.0);
+        (look, area, s, sweep)
+    }
+
+    fn element(&mut self, element: &Element, spread_px: f32) {
+        if !self.holds(element.when.as_ref()) {
+            return;
+        }
+        let (look, area, s, sweep) = self.framed(element, spread_px);
         let radius = element.radius * s;
+        self.shadows(element, area, (radius, s));
         match &element.kind {
             Kind::Plate => {
                 let fill = self.color(look.fill);
                 let stroke = self.stroke(look.stroke, s);
-                self.plate(area, fill, radius, stroke);
+                self.draw.plate(
+                    area,
+                    Plate {
+                        fill,
+                        radius,
+                        stroke,
+                        angle_radians: 0.0,
+                        soft: 1.0,
+                        sweep,
+                    },
+                );
             }
             Kind::Text(text) => {
                 let Some(color) = self.color(look.color) else {
                     return;
                 };
-                let px = self.draw.text_px(text.size, element.unscaled);
+                let px = self.px(text.size, element.unscaled);
                 let mut out = std::mem::take(self.scratch);
                 self.render(&text.text, &mut out);
                 self.draw.text(
@@ -229,6 +362,8 @@ impl Painter<'_> {
                         weight: text.weight,
                         align: text.align,
                         color,
+                        grow: 0.0,
+                        soft: 0.0,
                     },
                 );
                 *self.scratch = out;
@@ -270,10 +405,13 @@ impl Painter<'_> {
                     Some((_, key)) => {
                         self.render(key, &mut out);
                         if !out.is_empty() {
-                            self.draw.image((&name, Some(&out), fit), area, color);
+                            self.draw
+                                .image((&name, Some(&out), fit, look.grey), area, color);
                         }
                     }
-                    None if !name.is_empty() => self.draw.image((&name, None, fit), area, color),
+                    None if !name.is_empty() => {
+                        self.draw.image((&name, None, fit, look.grey), area, color);
+                    }
                     None => {}
                 }
                 *self.scratch = out;
@@ -429,7 +567,7 @@ impl Painter<'_> {
                 FlowKind::Text { text, .. } => {
                     self.render(&text.text, &mut out);
                     self.draw
-                        .measure(&out, self.draw.text_px(text.size, false), text.weight)
+                        .measure(&out, self.px(text.size, false), text.weight)
                 }
                 FlowKind::Icon { w, .. } => w * s,
             };
@@ -462,7 +600,7 @@ impl Painter<'_> {
             match &item.kind {
                 FlowKind::Text { text, color } => {
                     self.render(&text.text, &mut out);
-                    let px = self.draw.text_px(text.size, false);
+                    let px = self.px(text.size, false);
                     let wide = self.draw.measure(&out, px, text.weight);
                     if let Some(color) = self.color(Some(color)) {
                         let style = TextStyle {
@@ -470,6 +608,8 @@ impl Painter<'_> {
                             weight: text.weight,
                             align: Align::Left,
                             color,
+                            grow: 0.0,
+                            soft: 0.0,
                         };
                         self.draw.text(
                             &out,
@@ -654,6 +794,8 @@ impl Painter<'_> {
                 radius: h * 0.5,
                 stroke: None,
                 angle_radians: angle,
+                soft: 1.0,
+                sweep: 1.0,
             },
         );
     }
@@ -671,6 +813,9 @@ fn apply<'e>(look: &mut Look<'e>, set: &'e Set) {
     }
     if let Some(icon) = &set.icon {
         look.icon = Some(icon);
+    }
+    if let Some(grey) = set.grey {
+        look.grey = grey;
     }
 }
 

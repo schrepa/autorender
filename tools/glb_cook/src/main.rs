@@ -14,6 +14,7 @@ mod motion;
 mod picture;
 mod probe;
 mod rig;
+mod scene;
 mod source;
 
 use std::collections::BTreeMap;
@@ -43,6 +44,11 @@ fn cook_all(cook_path: &Path) -> ExitCode {
         }
     };
     let base = folder(cook_path);
+    let missing = config::missing_baked_pictures(&cook, &base);
+    if !missing.is_empty() {
+        print_faults(&missing);
+        return ExitCode::FAILURE;
+    }
     let mut written: BTreeMap<String, String> = BTreeMap::new();
     let mut ready = Vec::new();
     let mut failed = false;
@@ -98,6 +104,18 @@ fn cook_all(cook_path: &Path) -> ExitCode {
         }
         let names: Vec<&String> = files.iter().map(|(file, _)| file).collect();
         println!("{}", json!({"entry": name, "written": names}));
+    }
+    for variant in &cook.scenes {
+        match scene::write(&base, variant) {
+            Ok(swapped) => println!(
+                "{}",
+                json!({"scene": variant.to, "from": variant.from, "textures_swapped": swapped})
+            ),
+            Err(fault) => {
+                print_faults(&[fault]);
+                return ExitCode::FAILURE;
+            }
+        }
     }
     ExitCode::SUCCESS
 }

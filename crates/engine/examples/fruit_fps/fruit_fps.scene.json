@@ -69,99 +69,99 @@
     },
     {
       "id": "rifle_base_color",
-      "uri": "assets/cooked/rifle_base_color.png"
+      "uri": "assets/cooked/rifle_base_color.bc.ktx2"
     },
     {
       "id": "rifle_normal",
-      "uri": "assets/cooked/rifle_normal.png"
+      "uri": "assets/cooked/rifle_normal.bc.ktx2"
     },
     {
       "id": "rifle_orm",
-      "uri": "assets/cooked/rifle_orm.png"
+      "uri": "assets/cooked/rifle_orm.bc.ktx2"
     },
     {
       "id": "sidearm_base_color",
-      "uri": "assets/cooked/sidearm_base_color.png"
+      "uri": "assets/cooked/sidearm_base_color.bc.ktx2"
     },
     {
       "id": "sidearm_normal",
-      "uri": "assets/cooked/sidearm_normal.png"
+      "uri": "assets/cooked/sidearm_normal.bc.ktx2"
     },
     {
       "id": "sidearm_orm",
-      "uri": "assets/cooked/sidearm_orm.png"
+      "uri": "assets/cooked/sidearm_orm.bc.ktx2"
     },
     {
       "id": "smg_base_color",
-      "uri": "assets/cooked/smg_base_color.png"
+      "uri": "assets/cooked/smg_base_color.bc.ktx2"
     },
     {
       "id": "smg_normal",
-      "uri": "assets/cooked/smg_normal.png"
+      "uri": "assets/cooked/smg_normal.bc.ktx2"
     },
     {
       "id": "smg_orm",
-      "uri": "assets/cooked/smg_orm.png"
+      "uri": "assets/cooked/smg_orm.bc.ktx2"
     },
     {
       "id": "sniper_base_color",
-      "uri": "assets/cooked/sniper_base_color.png"
+      "uri": "assets/cooked/sniper_base_color.bc.ktx2"
     },
     {
       "id": "sniper_normal",
-      "uri": "assets/cooked/sniper_normal.png"
+      "uri": "assets/cooked/sniper_normal.bc.ktx2"
     },
     {
       "id": "sniper_orm",
-      "uri": "assets/cooked/sniper_orm.png"
+      "uri": "assets/cooked/sniper_orm.bc.ktx2"
     },
     {
       "id": "tp_rifle_base_color",
-      "uri": "assets/cooked/tp_rifle_base_color.png"
+      "uri": "assets/cooked/tp_rifle_base_color.bc.ktx2"
     },
     {
       "id": "tp_rifle_normal",
-      "uri": "assets/cooked/tp_rifle_normal.png"
+      "uri": "assets/cooked/tp_rifle_normal.bc.ktx2"
     },
     {
       "id": "tp_rifle_orm",
-      "uri": "assets/cooked/tp_rifle_orm.png"
+      "uri": "assets/cooked/tp_rifle_orm.bc.ktx2"
     },
     {
       "id": "tp_sidearm_base_color",
-      "uri": "assets/cooked/tp_sidearm_base_color.png"
+      "uri": "assets/cooked/tp_sidearm_base_color.bc.ktx2"
     },
     {
       "id": "tp_sidearm_normal",
-      "uri": "assets/cooked/tp_sidearm_normal.png"
+      "uri": "assets/cooked/tp_sidearm_normal.bc.ktx2"
     },
     {
       "id": "tp_sidearm_orm",
-      "uri": "assets/cooked/tp_sidearm_orm.png"
+      "uri": "assets/cooked/tp_sidearm_orm.bc.ktx2"
     },
     {
       "id": "tp_smg_base_color",
-      "uri": "assets/cooked/tp_smg_base_color.png"
+      "uri": "assets/cooked/tp_smg_base_color.bc.ktx2"
     },
     {
       "id": "tp_smg_normal",
-      "uri": "assets/cooked/tp_smg_normal.png"
+      "uri": "assets/cooked/tp_smg_normal.bc.ktx2"
     },
     {
       "id": "tp_smg_orm",
-      "uri": "assets/cooked/tp_smg_orm.png"
+      "uri": "assets/cooked/tp_smg_orm.bc.ktx2"
     },
     {
       "id": "tp_sniper_base_color",
-      "uri": "assets/cooked/tp_sniper_base_color.png"
+      "uri": "assets/cooked/tp_sniper_base_color.bc.ktx2"
     },
     {
       "id": "tp_sniper_normal",
-      "uri": "assets/cooked/tp_sniper_normal.png"
+      "uri": "assets/cooked/tp_sniper_normal.bc.ktx2"
     },
     {
       "id": "tp_sniper_orm",
-      "uri": "assets/cooked/tp_sniper_orm.png"
+      "uri": "assets/cooked/tp_sniper_orm.bc.ktx2"
     },
     {
       "id": "mercato_0_base_color",
@@ -261,51 +261,259 @@
     },
     {
       "id": "icons_atlas",
-      "uri": "assets/cooked/icons_atlas.ktx2"
+      "uri": "assets/cooked/icons_atlas.bc.ktx2"
     },
     {
       "id": "font_atlas",
-      "uri": "assets/cooked/font_atlas.ktx2"
+      "uri": "assets/cooked/font_atlas.rgba8.ktx2"
     },
     {
       "id": "minimap",
-      "uri": "assets/cooked/minimap.ktx2"
+      "uri": "assets/cooked/minimap.bc.ktx2"
     },
     {
       "id": "portraits",
-      "uri": "assets/cooked/portraits.ktx2"
+      "uri": "assets/cooked/portraits.bc.ktx2"
     },
     {
       "id": "select_banana",
-      "uri": "assets/cooked/select_banana.ktx2"
+      "uri": "assets/cooked/select_banana.bc.ktx2"
     },
     {
       "id": "select_strawberry",
-      "uri": "assets/cooked/select_strawberry.ktx2"
+      "uri": "assets/cooked/select_strawberry.bc.ktx2"
     },
     {
       "id": "select_orange",
-      "uri": "assets/cooked/select_orange.ktx2"
+      "uri": "assets/cooked/select_orange.bc.ktx2"
     },
     {
       "id": "select_watermelon",
-      "uri": "assets/cooked/select_watermelon.ktx2"
+      "uri": "assets/cooked/select_watermelon.bc.ktx2"
     },
     {
       "id": "select_eggplant",
-      "uri": "assets/cooked/select_eggplant.ktx2"
+      "uri": "assets/cooked/select_eggplant.bc.ktx2"
     },
     {
       "id": "mercato_light",
-      "uri": "assets/source/map_mercato_light.png"
+      "uri": "assets/cooked/mercato_light.rgba8.ktx2"
     },
     {
       "id": "title",
-      "uri": "assets/ui/title.png"
+      "uri": "assets/cooked/title.bc.ktx2"
     },
     {
       "id": "title_small",
-      "uri": "assets/ui/title_1280x720.png"
+      "uri": "assets/cooked/title_small.bc.ktx2"
+    },
+    {
+      "id": "device_base_color",
+      "uri": "assets/cooked/device_base_color.bc.ktx2"
+    },
+    {
+      "id": "device_normal",
+      "uri": "assets/cooked/device_normal.bc.ktx2"
+    },
+    {
+      "id": "device_orm",
+      "uri": "assets/cooked/device_orm.bc.ktx2"
+    },
+    {
+      "id": "melee_base_color",
+      "uri": "assets/cooked/melee_base_color.bc.ktx2"
+    },
+    {
+      "id": "melee_normal",
+      "uri": "assets/cooked/melee_normal.bc.ktx2"
+    },
+    {
+      "id": "melee_orm",
+      "uri": "assets/cooked/melee_orm.bc.ktx2"
+    },
+    {
+      "id": "tp_device_base_color",
+      "uri": "assets/cooked/tp_device_base_color.bc.ktx2"
+    },
+    {
+      "id": "tp_device_normal",
+      "uri": "assets/cooked/tp_device_normal.bc.ktx2"
+    },
+    {
+      "id": "tp_device_orm",
+      "uri": "assets/cooked/tp_device_orm.bc.ktx2"
+    },
+    {
+      "id": "device_planted_base_color",
+      "uri": "assets/cooked/device_planted_base_color.bc.ktx2"
+    },
+    {
+      "id": "device_planted_normal",
+      "uri": "assets/cooked/device_planted_normal.bc.ktx2"
+    },
+    {
+      "id": "device_planted_orm",
+      "uri": "assets/cooked/device_planted_orm.bc.ktx2"
+    },
+    {
+      "id": "tp_melee_base_color",
+      "uri": "assets/cooked/tp_melee_base_color.bc.ktx2"
+    },
+    {
+      "id": "tp_melee_normal",
+      "uri": "assets/cooked/tp_melee_normal.bc.ktx2"
+    },
+    {
+      "id": "tp_melee_orm",
+      "uri": "assets/cooked/tp_melee_orm.bc.ktx2"
+    },
+    {
+      "id": "prop_peel_base_color",
+      "uri": "assets/cooked/prop_peel_base_color.bc.ktx2"
+    },
+    {
+      "id": "prop_peel_normal",
+      "uri": "assets/cooked/prop_peel_normal.bc.ktx2"
+    },
+    {
+      "id": "prop_peel_orm",
+      "uri": "assets/cooked/prop_peel_orm.bc.ktx2"
+    },
+    {
+      "id": "prop_ripe_flash_base_color",
+      "uri": "assets/cooked/prop_ripe_flash_base_color.bc.ktx2"
+    },
+    {
+      "id": "prop_ripe_flash_normal",
+      "uri": "assets/cooked/prop_ripe_flash_normal.bc.ktx2"
+    },
+    {
+      "id": "prop_ripe_flash_orm",
+      "uri": "assets/cooked/prop_ripe_flash_orm.bc.ktx2"
+    },
+    {
+      "id": "prop_jam_pool_base_color",
+      "uri": "assets/cooked/prop_jam_pool_base_color.bc.ktx2"
+    },
+    {
+      "id": "prop_jam_pool_normal",
+      "uri": "assets/cooked/prop_jam_pool_normal.bc.ktx2"
+    },
+    {
+      "id": "prop_jam_pool_orm",
+      "uri": "assets/cooked/prop_jam_pool_orm.bc.ktx2"
+    },
+    {
+      "id": "prop_seed_sensor_base_color",
+      "uri": "assets/cooked/prop_seed_sensor_base_color.bc.ktx2"
+    },
+    {
+      "id": "prop_seed_sensor_normal",
+      "uri": "assets/cooked/prop_seed_sensor_normal.bc.ktx2"
+    },
+    {
+      "id": "prop_seed_sensor_orm",
+      "uri": "assets/cooked/prop_seed_sensor_orm.bc.ktx2"
+    },
+    {
+      "id": "prop_sweet_spot_base_color",
+      "uri": "assets/cooked/prop_sweet_spot_base_color.bc.ktx2"
+    },
+    {
+      "id": "prop_sweet_spot_normal",
+      "uri": "assets/cooked/prop_sweet_spot_normal.bc.ktx2"
+    },
+    {
+      "id": "prop_sweet_spot_orm",
+      "uri": "assets/cooked/prop_sweet_spot_orm.bc.ktx2"
+    },
+    {
+      "id": "prop_zest_bomb_base_color",
+      "uri": "assets/cooked/prop_zest_bomb_base_color.bc.ktx2"
+    },
+    {
+      "id": "prop_zest_bomb_normal",
+      "uri": "assets/cooked/prop_zest_bomb_normal.bc.ktx2"
+    },
+    {
+      "id": "prop_zest_bomb_orm",
+      "uri": "assets/cooked/prop_zest_bomb_orm.bc.ktx2"
+    },
+    {
+      "id": "prop_pulp_cloud_base_color",
+      "uri": "assets/cooked/prop_pulp_cloud_base_color.bc.ktx2"
+    },
+    {
+      "id": "prop_pulp_cloud_normal",
+      "uri": "assets/cooked/prop_pulp_cloud_normal.bc.ktx2"
+    },
+    {
+      "id": "prop_pulp_cloud_orm",
+      "uri": "assets/cooked/prop_pulp_cloud_orm.bc.ktx2"
+    },
+    {
+      "id": "prop_seed_grenade_base_color",
+      "uri": "assets/cooked/prop_seed_grenade_base_color.bc.ktx2"
+    },
+    {
+      "id": "prop_seed_grenade_normal",
+      "uri": "assets/cooked/prop_seed_grenade_normal.bc.ktx2"
+    },
+    {
+      "id": "prop_seed_grenade_orm",
+      "uri": "assets/cooked/prop_seed_grenade_orm.bc.ktx2"
+    },
+    {
+      "id": "prop_rind_wall_base_color",
+      "uri": "assets/cooked/prop_rind_wall_base_color.bc.ktx2"
+    },
+    {
+      "id": "prop_rind_wall_normal",
+      "uri": "assets/cooked/prop_rind_wall_normal.bc.ktx2"
+    },
+    {
+      "id": "prop_rind_wall_orm",
+      "uri": "assets/cooked/prop_rind_wall_orm.bc.ktx2"
+    },
+    {
+      "id": "prop_melon_drop_base_color",
+      "uri": "assets/cooked/prop_melon_drop_base_color.bc.ktx2"
+    },
+    {
+      "id": "prop_melon_drop_normal",
+      "uri": "assets/cooked/prop_melon_drop_normal.bc.ktx2"
+    },
+    {
+      "id": "prop_melon_drop_orm",
+      "uri": "assets/cooked/prop_melon_drop_orm.bc.ktx2"
+    },
+    {
+      "id": "prop_nightshade_base_color",
+      "uri": "assets/cooked/prop_nightshade_base_color.bc.ktx2"
+    },
+    {
+      "id": "prop_nightshade_normal",
+      "uri": "assets/cooked/prop_nightshade_normal.bc.ktx2"
+    },
+    {
+      "id": "prop_nightshade_orm",
+      "uri": "assets/cooked/prop_nightshade_orm.bc.ktx2"
+    },
+    {
+      "id": "prop_vine_wire_base_color",
+      "uri": "assets/cooked/prop_vine_wire_base_color.bc.ktx2"
+    },
+    {
+      "id": "prop_vine_wire_normal",
+      "uri": "assets/cooked/prop_vine_wire_normal.bc.ktx2"
+    },
+    {
+      "id": "prop_vine_wire_orm",
+      "uri": "assets/cooked/prop_vine_wire_orm.bc.ktx2"
+    },
+    {
+      "id": "sky_panorama",
+      "uri": "assets/cooked/sky_panorama.bc.ktx2"
     }
   ],
   "materials": [
@@ -1347,6 +1555,818 @@
       "values": {
         "lightmap_scale": 4.0
       }
+    },
+    {
+      "id": "device",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "none",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "device_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "device_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "device_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "melee",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "none",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "melee_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "melee_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "melee_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "tp_device",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "none",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "tp_device_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "tp_device_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "tp_device_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "device_planted",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "none",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "device_planted_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "device_planted_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "device_planted_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "tp_melee",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "none",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "tp_melee_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "tp_melee_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "tp_melee_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "prop_peel",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "none",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "prop_peel_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "prop_peel_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "prop_peel_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "prop_ripe_flash",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "none",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "prop_ripe_flash_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "prop_ripe_flash_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "prop_ripe_flash_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "prop_jam_pool",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "none",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "prop_jam_pool_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "prop_jam_pool_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "prop_jam_pool_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "prop_seed_sensor",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "none",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "prop_seed_sensor_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "prop_seed_sensor_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "prop_seed_sensor_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "prop_sweet_spot",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "none",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "prop_sweet_spot_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "prop_sweet_spot_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "prop_sweet_spot_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "prop_zest_bomb",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "none",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "prop_zest_bomb_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "prop_zest_bomb_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "prop_zest_bomb_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "prop_pulp_cloud",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "none",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "prop_pulp_cloud_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "prop_pulp_cloud_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "prop_pulp_cloud_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "prop_seed_grenade",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "none",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "prop_seed_grenade_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "prop_seed_grenade_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "prop_seed_grenade_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "prop_rind_wall",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "none",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "prop_rind_wall_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "prop_rind_wall_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "prop_rind_wall_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "prop_melon_drop",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "none",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "prop_melon_drop_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "prop_melon_drop_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "prop_melon_drop_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "prop_nightshade",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "none",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "prop_nightshade_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "prop_nightshade_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "prop_nightshade_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "prop_vine_wire",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "none",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "prop_vine_wire_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "prop_vine_wire_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "prop_vine_wire_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "sky",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "slots": {
+        "sky": {
+          "module": "sky",
+          "maps": {
+            "base_color": {
+              "id": "sky_panorama",
+              "wrap_u": "repeat",
+              "wrap_v": "clamp_to_edge",
+              "mag_filter": "linear",
+              "min_filter": "linear"
+            }
+          }
+        }
+      },
+      "values": {
+        "below_deg": -5.0,
+        "above_deg": 40.0,
+        "fade_deg": 4.0,
+        "haze": 0.3,
+        "turns": 3.0
+      }
     }
   ],
   "meshes": [
@@ -1496,6 +2516,125 @@
         "kind": "buffer",
         "uri": "assets/cooked/mercato_7.emb"
       }
+    },
+    {
+      "id": "device",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/device.emb"
+      }
+    },
+    {
+      "id": "melee",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/melee.emb"
+      }
+    },
+    {
+      "id": "tp_device",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/tp_device.emb"
+      }
+    },
+    {
+      "id": "device_planted",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/device_planted.emb"
+      }
+    },
+    {
+      "id": "tp_melee",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/tp_melee.emb"
+      }
+    },
+    {
+      "id": "prop_peel",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/prop_peel.emb"
+      }
+    },
+    {
+      "id": "prop_ripe_flash",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/prop_ripe_flash.emb"
+      }
+    },
+    {
+      "id": "prop_jam_pool",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/prop_jam_pool.emb"
+      }
+    },
+    {
+      "id": "prop_seed_sensor",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/prop_seed_sensor.emb"
+      }
+    },
+    {
+      "id": "prop_sweet_spot",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/prop_sweet_spot.emb"
+      }
+    },
+    {
+      "id": "prop_zest_bomb",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/prop_zest_bomb.emb"
+      }
+    },
+    {
+      "id": "prop_pulp_cloud",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/prop_pulp_cloud.emb"
+      }
+    },
+    {
+      "id": "prop_seed_grenade",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/prop_seed_grenade.emb"
+      }
+    },
+    {
+      "id": "prop_rind_wall",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/prop_rind_wall.emb"
+      }
+    },
+    {
+      "id": "prop_melon_drop",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/prop_melon_drop.emb"
+      }
+    },
+    {
+      "id": "prop_nightshade",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/prop_nightshade.emb"
+      }
+    },
+    {
+      "id": "prop_vine_wire",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/prop_vine_wire.emb"
+      }
     }
   ],
   "entities": [
@@ -1566,8 +2705,46 @@
             "material": "sidearm",
             "held_mesh": "tp_sidearm",
             "held_material": "tp_sidearm"
+          },
+          "melee": {
+            "figure": {
+              "skeleton": "assets/cooked/melee.skel",
+              "clips": {
+                "equip": "assets/cooked/melee_equip.clip",
+                "slash_light": "assets/cooked/melee_slash_light.clip",
+                "slash_heavy": "assets/cooked/melee_slash_heavy.clip"
+              }
+            },
+            "markers": "assets/cooked/melee.markers.json",
+            "mesh": "melee",
+            "material": "melee",
+            "held_mesh": "tp_melee",
+            "held_material": "tp_melee"
+          },
+          "device": {
+            "figure": {
+              "skeleton": "assets/cooked/device.skel",
+              "clips": {
+                "equip": "assets/cooked/device_equip.clip",
+                "plant": "assets/cooked/device_plant.clip",
+                "defuse": "assets/cooked/device_defuse.clip"
+              }
+            },
+            "markers": "assets/cooked/device.markers.json",
+            "mesh": "device",
+            "material": "device",
+            "held_mesh": "tp_device",
+            "held_material": "tp_device"
           }
+        },
+        "planted": {
+          "mesh": "device_planted",
+          "material": "device_planted",
+          "markers": "assets/cooked/device_planted.markers.json"
         }
+      },
+      "sound": {
+        "table": "data/sound.json"
       }
     },
     {
@@ -1576,7 +2753,8 @@
         "cooked": {
           "collision": "assets/cooked/mercato_col.emb",
           "ranges": "assets/cooked/mercato_col.json",
-          "markers": "assets/cooked/mercato.markers.json"
+          "markers": "assets/cooked/mercato.markers.json",
+          "records": "data/mercato.json"
         }
       },
       "paths": {
@@ -1659,15 +2837,11 @@
           "jump": "assets/cooked/jump.clip",
           "fall": "assets/cooked/fall.clip",
           "turn": "assets/cooked/turn.clip",
-          "shoot": "assets/cooked/shoot.clip",
           "fire": "assets/cooked/fire.clip",
-          "hurt": "assets/cooked/hurt.clip",
           "hit_to_head": "assets/cooked/hit_to_head.clip",
           "hit_to_body": "assets/cooked/hit_to_body.clip",
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
-          "defeat_a": "assets/cooked/defeat_a.clip",
-          "defeat_b": "assets/cooked/defeat_b.clip",
           "cast": "assets/cooked/cast.clip",
           "dig": "assets/cooked/dig.clip",
           "throw": "assets/cooked/throw.clip",
@@ -1727,15 +2901,11 @@
           "jump": "assets/cooked/jump.clip",
           "fall": "assets/cooked/fall.clip",
           "turn": "assets/cooked/turn.clip",
-          "shoot": "assets/cooked/shoot.clip",
           "fire": "assets/cooked/fire.clip",
-          "hurt": "assets/cooked/hurt.clip",
           "hit_to_head": "assets/cooked/hit_to_head.clip",
           "hit_to_body": "assets/cooked/hit_to_body.clip",
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
-          "defeat_a": "assets/cooked/defeat_a.clip",
-          "defeat_b": "assets/cooked/defeat_b.clip",
           "cast": "assets/cooked/cast.clip",
           "dig": "assets/cooked/dig.clip",
           "throw": "assets/cooked/throw.clip",
@@ -1794,15 +2964,11 @@
           "jump": "assets/cooked/jump.clip",
           "fall": "assets/cooked/fall.clip",
           "turn": "assets/cooked/turn.clip",
-          "shoot": "assets/cooked/shoot.clip",
           "fire": "assets/cooked/fire.clip",
-          "hurt": "assets/cooked/hurt.clip",
           "hit_to_head": "assets/cooked/hit_to_head.clip",
           "hit_to_body": "assets/cooked/hit_to_body.clip",
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
-          "defeat_a": "assets/cooked/defeat_a.clip",
-          "defeat_b": "assets/cooked/defeat_b.clip",
           "cast": "assets/cooked/cast.clip",
           "dig": "assets/cooked/dig.clip",
           "throw": "assets/cooked/throw.clip",
@@ -1861,15 +3027,11 @@
           "jump": "assets/cooked/jump.clip",
           "fall": "assets/cooked/fall.clip",
           "turn": "assets/cooked/turn.clip",
-          "shoot": "assets/cooked/shoot.clip",
           "fire": "assets/cooked/fire.clip",
-          "hurt": "assets/cooked/hurt.clip",
           "hit_to_head": "assets/cooked/hit_to_head.clip",
           "hit_to_body": "assets/cooked/hit_to_body.clip",
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
-          "defeat_a": "assets/cooked/defeat_a.clip",
-          "defeat_b": "assets/cooked/defeat_b.clip",
           "cast": "assets/cooked/cast.clip",
           "dig": "assets/cooked/dig.clip",
           "throw": "assets/cooked/throw.clip",
@@ -1928,15 +3090,11 @@
           "jump": "assets/cooked/jump.clip",
           "fall": "assets/cooked/fall.clip",
           "turn": "assets/cooked/turn.clip",
-          "shoot": "assets/cooked/shoot.clip",
           "fire": "assets/cooked/fire.clip",
-          "hurt": "assets/cooked/hurt.clip",
           "hit_to_head": "assets/cooked/hit_to_head.clip",
           "hit_to_body": "assets/cooked/hit_to_body.clip",
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
-          "defeat_a": "assets/cooked/defeat_a.clip",
-          "defeat_b": "assets/cooked/defeat_b.clip",
           "cast": "assets/cooked/cast.clip",
           "dig": "assets/cooked/dig.clip",
           "throw": "assets/cooked/throw.clip",
@@ -1995,15 +3153,11 @@
           "jump": "assets/cooked/jump.clip",
           "fall": "assets/cooked/fall.clip",
           "turn": "assets/cooked/turn.clip",
-          "shoot": "assets/cooked/shoot.clip",
           "fire": "assets/cooked/fire.clip",
-          "hurt": "assets/cooked/hurt.clip",
           "hit_to_head": "assets/cooked/hit_to_head.clip",
           "hit_to_body": "assets/cooked/hit_to_body.clip",
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
-          "defeat_a": "assets/cooked/defeat_a.clip",
-          "defeat_b": "assets/cooked/defeat_b.clip",
           "cast": "assets/cooked/cast.clip",
           "dig": "assets/cooked/dig.clip",
           "throw": "assets/cooked/throw.clip",
@@ -2062,15 +3216,11 @@
           "jump": "assets/cooked/jump.clip",
           "fall": "assets/cooked/fall.clip",
           "turn": "assets/cooked/turn.clip",
-          "shoot": "assets/cooked/shoot.clip",
           "fire": "assets/cooked/fire.clip",
-          "hurt": "assets/cooked/hurt.clip",
           "hit_to_head": "assets/cooked/hit_to_head.clip",
           "hit_to_body": "assets/cooked/hit_to_body.clip",
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
-          "defeat_a": "assets/cooked/defeat_a.clip",
-          "defeat_b": "assets/cooked/defeat_b.clip",
           "cast": "assets/cooked/cast.clip",
           "dig": "assets/cooked/dig.clip",
           "throw": "assets/cooked/throw.clip",
@@ -2129,15 +3279,11 @@
           "jump": "assets/cooked/jump.clip",
           "fall": "assets/cooked/fall.clip",
           "turn": "assets/cooked/turn.clip",
-          "shoot": "assets/cooked/shoot.clip",
           "fire": "assets/cooked/fire.clip",
-          "hurt": "assets/cooked/hurt.clip",
           "hit_to_head": "assets/cooked/hit_to_head.clip",
           "hit_to_body": "assets/cooked/hit_to_body.clip",
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
-          "defeat_a": "assets/cooked/defeat_a.clip",
-          "defeat_b": "assets/cooked/defeat_b.clip",
           "cast": "assets/cooked/cast.clip",
           "dig": "assets/cooked/dig.clip",
           "throw": "assets/cooked/throw.clip",
@@ -2196,15 +3342,11 @@
           "jump": "assets/cooked/jump.clip",
           "fall": "assets/cooked/fall.clip",
           "turn": "assets/cooked/turn.clip",
-          "shoot": "assets/cooked/shoot.clip",
           "fire": "assets/cooked/fire.clip",
-          "hurt": "assets/cooked/hurt.clip",
           "hit_to_head": "assets/cooked/hit_to_head.clip",
           "hit_to_body": "assets/cooked/hit_to_body.clip",
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
-          "defeat_a": "assets/cooked/defeat_a.clip",
-          "defeat_b": "assets/cooked/defeat_b.clip",
           "cast": "assets/cooked/cast.clip",
           "dig": "assets/cooked/dig.clip",
           "throw": "assets/cooked/throw.clip",
@@ -2263,15 +3405,11 @@
           "jump": "assets/cooked/jump.clip",
           "fall": "assets/cooked/fall.clip",
           "turn": "assets/cooked/turn.clip",
-          "shoot": "assets/cooked/shoot.clip",
           "fire": "assets/cooked/fire.clip",
-          "hurt": "assets/cooked/hurt.clip",
           "hit_to_head": "assets/cooked/hit_to_head.clip",
           "hit_to_body": "assets/cooked/hit_to_body.clip",
           "hit_to_side": "assets/cooked/hit_to_side.clip",
           "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
-          "defeat_a": "assets/cooked/defeat_a.clip",
-          "defeat_b": "assets/cooked/defeat_b.clip",
           "cast": "assets/cooked/cast.clip",
           "dig": "assets/cooked/dig.clip",
           "throw": "assets/cooked/throw.clip",
@@ -2373,7 +3511,8 @@
     {
       "id": "sky",
       "drawn": {
-        "kind": "sky"
+        "kind": "sky",
+        "material": "sky"
       },
       "transform": {}
     },
@@ -2496,6 +3635,10 @@
             720.0
           ]
         },
+        "thin_faces": [
+          "regular"
+        ],
+        "atlases": [],
         "menu": {
           "keys": {
             "confirm": [

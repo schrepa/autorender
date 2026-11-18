@@ -2,7 +2,7 @@ use engine::prelude::Resource;
 use glam::Vec3;
 
 use crate::rules::{AbilitySlot, Catalog, Cause, Death};
-use crate::solids::Surface;
+use crate::solids::{Kind, Surface};
 use crate::weapons::{BodyPart, GunKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -39,6 +39,8 @@ pub struct ShotEvent {
     pub end: Vec3,
     pub normal: Vec3,
     pub pierced: Option<Vec3>,
+    pub pierced_kind: Option<Kind>,
+    pub kind: Option<Kind>,
     pub target: Target,
 }
 
@@ -113,6 +115,12 @@ pub struct PickupEvent {
     pub left: Option<GunKind>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DropEvent {
+    pub slot: u32,
+    pub weapon: GunKind,
+}
+
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct ArmsEvents {
     pub tick: u64,
@@ -121,4 +129,5 @@ pub struct ArmsEvents {
     pub deaths: Vec<DeathEvent>,
     pub handling: Vec<HandlingEvent>,
     pub pickups: Vec<PickupEvent>,
+    pub drops: Vec<DropEvent>,
 }

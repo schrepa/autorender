@@ -47,7 +47,8 @@ pub(super) fn record(
         events.jumps.push(Jump {
             slot,
             position: before.feet,
-            surface: before.ground,
+            surface: before.ground.map(|ground| ground.surface),
+            kind: before.ground.map(|ground| ground.kind),
         });
     }
     if let Some(landed) = moved.landed {
@@ -55,12 +56,13 @@ pub(super) fn record(
             slot,
             position: next.feet,
             surface: landed.surface,
+            kind: landed.kind,
             fall_speed: landed.speed,
             hard: landed.speed >= player.hard_landing_mps,
         });
     }
     let across = (next.feet - before.feet).with_y(0.0).length();
-    let Some(surface) = next.ground.filter(|_| next.grounded && across > 0.0) else {
+    let Some(ground) = next.ground.filter(|_| next.grounded && across > 0.0) else {
         *travel = 0.0;
         return;
     };
@@ -72,7 +74,8 @@ pub(super) fn record(
         events.footsteps.push(Footstep {
             slot,
             position: next.feet,
-            surface,
+            surface: ground.surface,
+            kind: ground.kind,
             stride,
             loud: stride == Stride::Run || !player.walk_is_silent,
         });

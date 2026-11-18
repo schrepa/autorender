@@ -7,7 +7,6 @@ pub mod figures;
 pub mod flow;
 pub mod light;
 pub mod numbers;
-pub mod order;
 pub mod paths;
 pub mod powers;
 pub mod puppet;

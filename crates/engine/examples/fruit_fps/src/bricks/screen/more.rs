@@ -207,6 +207,7 @@ pub(super) fn fill_menu((flow, numbers, sources): MenuReads, mut facts: ResMut<H
     let Some(loaded) = source.loaded() else {
         return;
     };
+    facts.result.next_seconds = flow.as_deref().map_or(0.0, |flow| flow.next_match_left);
     let menu = &mut facts.menu;
     if let Some(game) = numbers.as_deref().and_then(Numbers::get) {
         let characters = &game.rules.characters;

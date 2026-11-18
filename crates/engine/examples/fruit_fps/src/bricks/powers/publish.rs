@@ -1,11 +1,14 @@
 use super::cast::{Asked, SLOTS, slot_key};
 use super::{
-    ActorPowers, Book, CastStat, Count, CueStat, HeldStat, PowerSetup, PowerStats, SlotStat,
+    ActorPowers, Book, CastStat, Count, CueStat, HeldStat, PowerSetup, PowerStats, PropStat,
+    SlotStat,
 };
 use crate::abilities::{
-    AbilityId, Action, CueKind, DangerKind, DrawKind, DrawShape, Drawable, Event,
+    AbilityId, Action, CueKind, DangerKind, DrawKind, DrawShape, Drawable, Event, PropPose,
 };
-use crate::play::effects::{Cue, CueLook, EffectsFeed, Form, HumanScreen, Look, Shown};
+use crate::play::effects::{
+    Cue, CueLook, EffectsFeed, Form, HumanScreen, Look, PropPlace, PropShown, Shown,
+};
 use crate::play::events::powers::PowerEvents;
 use crate::play::paths::{Hazard, HazardKind, Hazards, SmokeCloud};
 use crate::play::powers::{Held, PowerActor, Powers};
@@ -163,6 +166,7 @@ impl Sheet<'_> {
             DrawKind::StrikeMark => Look::StrikeMark,
         };
         Shown {
+            effect: drawable.effect.0,
             look,
             form: form_of(drawable.shape),
             team: team_of(drawable.team),
@@ -227,7 +231,83 @@ impl Sheet<'_> {
                 .collect(),
             cues,
             human,
+            props: self.props(),
         }
+    }
+
+    pub(super) fn props(&self) -> Vec<PropShown> {
+        let Some(book) = self.book.abilities.as_ref() else {
+            return Vec::new();
+        };
+        let tps = self.book.ticks_per_second as f32;
+        self.powers
+            .effects
+            .props()
+            .into_iter()
+            .filter_map(|state| {
+                let spec = book.ability(state.ability);
+                let prop = spec.prop.clone()?;
+                let place = match state.pose {
+                    PropPose::Flying {
+                        centre,
+                        velocity_per_tick,
+                        resting,
+                    } => PropPlace::Thrown {
+                        centre,
+                        velocity_mps: velocity_per_tick * tps,
+                        resting,
+                    },
+                    PropPose::Placed {
+                        contact,
+                        normal,
+                        facing,
+                    } => PropPlace::Placed {
+                        contact,
+                        normal,
+                        facing,
+                    },
+                    PropPose::Wall {
+                        base,
+                        axes,
+                        half_extents,
+                    } => PropPlace::Wall {
+                        base,
+                        axes,
+                        half_extents,
+                    },
+                    PropPose::Wire {
+                        a,
+                        b,
+                        normal_a,
+                        normal_b,
+                    } => PropPlace::Wire {
+                        a,
+                        b,
+                        normal_a,
+                        normal_b,
+                    },
+                    PropPose::Falling {
+                        target,
+                        impact_tick,
+                    } => {
+                        let drop = spec.drop?;
+                        PropPlace::Drop {
+                            target,
+                            height_m: drop.height_m,
+                            fall_starts_tick: impact_tick.saturating_sub(u64::from(drop.ticks)),
+                            impact_tick,
+                        }
+                    }
+                };
+                Some(PropShown {
+                    effect: state.effect.0,
+                    prop,
+                    team: team_of(state.team),
+                    born_tick: state.born,
+                    place,
+                })
+            })
+            .collect()
     }
 
     pub(super) fn hazards(&self) -> Hazards {
@@ -338,6 +418,29 @@ pub(super) fn write_stats(
     stats.last_cast = book.last_cast.clone();
     stats.last_refusal = book.last_refusal.clone();
     stats.recent_cues.clone_from(&book.recent_cues);
+}
+
+pub(super) fn prop_stats(props: &[PropShown]) -> Vec<PropStat> {
+    props
+        .iter()
+        .map(|shown| {
+            let (place, at) = match shown.place {
+                PropPlace::Thrown {
+                    centre, resting, ..
+                } => (if resting { "resting" } else { "thrown" }, centre),
+                PropPlace::Placed { contact, .. } => ("placed", contact),
+                PropPlace::Wall { base, .. } => ("wall", base),
+                PropPlace::Wire { a, .. } => ("wire", a),
+                PropPlace::Drop { target, .. } => ("drop", target),
+            };
+            PropStat {
+                effect: shown.effect,
+                prop: shown.prop.clone(),
+                place: place.to_owned(),
+                at: at.to_array(),
+            }
+        })
+        .collect()
 }
 
 fn shape_key(shape: &DrawShape) -> &'static str {

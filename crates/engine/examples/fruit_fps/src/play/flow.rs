@@ -65,6 +65,7 @@ pub struct Flow {
     pub progress: f32,
     pub pause_asked: bool,
     pub restored: bool,
+    pub next_match_left: f32,
 }
 
 impl Flow {

@@ -12,7 +12,8 @@ use crate::play::flow::{Flow, Stage};
 use crate::play::numbers::Numbers;
 use crate::play::powers::Powers;
 use crate::play::puppet::{
-    PuppetBook, PuppetFile, PuppetTable, ViewModel, ViewPlace, ViewTable, WeaponLook, weapon_key,
+    DEVICE, PuppetBook, PuppetFile, PuppetTable, Task, Tasks, ViewModel, ViewPlace, ViewTable,
+    WeaponLook, weapon_key,
 };
 use crate::play::view::{ViewOffsets, Watched};
 use crate::weapons::{Loadout, Stance};
@@ -33,6 +34,7 @@ pub(super) struct Held {
     cue: u32,
     fired: bool,
     reloading: bool,
+    swing: Option<bool>,
     look: Option<(f32, f32)>,
 }
 
@@ -142,6 +144,7 @@ type Reads<'w, 's> = (
         Res<'w, ArmsEvents>,
         Option<Res<'w, Flow>>,
         Option<Res<'w, Powers>>,
+        Option<Res<'w, Tasks>>,
     ),
 );
 
@@ -204,6 +207,7 @@ fn equipped(held: &mut Held, weapon: Option<&'static str>, equip_seconds: f32, d
         held.equip_left = equip_seconds;
         held.fired = false;
         held.reloading = false;
+        held.swing = None;
         held.cue = held.cue.wrapping_add(1);
     }
     held.equip_left = max(held.equip_left - delta, 0.0);
@@ -257,19 +261,26 @@ fn bobbing(held: &mut Held, table: &PuppetTable, body: &Body, delta: f32) -> Vec
     Vec3::new(bob.side_m * side, bob.up_m * (twice - 1.0) * 0.5, 0.0) * amount
 }
 
-fn kicked(held: &mut Held, table: &PuppetTable, (events, slot): (&ArmsEvents, u32), delta: f32) {
+fn kicked(
+    held: &mut Held,
+    table: &PuppetTable,
+    (events, slot, heavy): (&ArmsEvents, u32, bool),
+    delta: f32,
+) {
     let kick = &table.view.kick;
     let decay = max(1.0 - kick.return_per_second * delta, 0.0);
     held.kick_back *= decay;
     held.kick_angle *= decay;
-    for fired in &events.shots {
-        if fired.shooter == slot && fired.weapon != Weapon::Melee {
+    for fired in events.shots.iter().filter(|fired| fired.shooter == slot) {
+        if fired.weapon == Weapon::Melee {
+            held.swing = Some(heavy);
+        } else {
             held.kick_back += kick.back_m;
             held.kick_angle += kick.up_radians;
-            held.fired = true;
-            held.reloading = false;
-            held.cue = held.cue.wrapping_add(1);
         }
+        held.fired = true;
+        held.reloading = false;
+        held.cue = held.cue.wrapping_add(1);
     }
 }
 
@@ -294,51 +305,84 @@ fn reloads(held: &mut Held, reloading: bool) {
     held.reloading = reloading;
 }
 
-fn played(
-    held: &Held,
-    view_table: &ViewTable,
-    reload_seconds: Option<f32>,
-) -> (String, FigurePlay) {
-    let equipping = view_table
+struct Timing {
+    equip: f32,
+    reload: Option<f32>,
+    swing: (f32, f32),
+    melee: bool,
+    task: Option<(Task, f32)>,
+}
+
+fn chosen(
+    numbers: &Numbers,
+    loadout: Option<&Loadout>,
+    (tasks, slot): (Option<&Tasks>, u32),
+) -> (Option<&'static str>, Timing) {
+    let task = tasks
+        .and_then(|tasks| tasks.of(slot))
+        .filter(|_| loadout.is_some());
+    let game = numbers.get();
+    let swing = game.map_or((0.0, 0.0), |game| {
+        let melee = &game.weapons.melee;
+        (melee.swing_seconds, melee.heavy_swing_seconds)
+    });
+    if let Some(task) = task {
+        let seconds = game.map_or(0.0, |game| match task {
+            Task::Planting => game.rules.round.plant_seconds,
+            Task::Defusing => game.rules.round.defuse_seconds,
+        });
+        let timing = Timing {
+            equip: 0.0,
+            reload: None,
+            swing,
+            melee: false,
+            task: Some((task, seconds as f32)),
+        };
+        return (Some(DEVICE), timing);
+    }
+    let weapon = loadout.map(weapon_key);
+    let (equip, reload) = loadout.map_or((0.0, None), |loadout| seconds_of(numbers, loadout));
+    let timing = Timing {
+        equip,
+        reload,
+        swing,
+        melee: weapon == Some(Weapon::Melee.key()),
+        task: None,
+    };
+    (weapon, timing)
+}
+
+fn played(held: &Held, view: &ViewTable, timing: &Timing) -> (String, FigurePlay) {
+    let equipping = view
         .equip
         .as_ref()
         .filter(|_| held.equip_left > 0.0 && !held.fired);
-    let (clip, base) = if let Some(equip) = equipping {
-        (
-            equip.clone(),
-            BaseLayer {
-                clip: equip.clone(),
-                speed: 1.0,
-                looping: false,
-                fade_seconds: 0.0,
-                cue: held.cue,
-                fit_seconds: Some(held.equip_total),
-            },
-        )
+    let (clip, speed, looping, fit_seconds) = if let Some(equip) = equipping {
+        (equip.clone(), 1.0, false, Some(held.equip_total))
+    } else if let Some((task, seconds)) = timing.task {
+        match task {
+            Task::Planting => (view.device.plant.clone(), 1.0, false, Some(seconds)),
+            Task::Defusing => (view.device.defuse.clone(), 1.0, true, None),
+        }
     } else if held.reloading {
-        (
-            view_table.reload.clone(),
-            BaseLayer {
-                clip: view_table.reload.clone(),
-                speed: 1.0,
-                looping: false,
-                fade_seconds: 0.0,
-                cue: held.cue,
-                fit_seconds: reload_seconds,
-            },
-        )
+        (view.reload.clone(), 1.0, false, timing.reload)
+    } else if timing.melee {
+        match held.swing {
+            Some(true) => (view.melee.heavy.clone(), 1.0, false, Some(timing.swing.1)),
+            Some(false) => (view.melee.light.clone(), 1.0, false, Some(timing.swing.0)),
+            None => (view.melee.light.clone(), 0.0, false, None),
+        }
     } else {
-        (
-            view_table.fire.clone(),
-            BaseLayer {
-                clip: view_table.fire.clone(),
-                speed: if held.fired { 1.0 } else { 0.0 },
-                looping: false,
-                fade_seconds: 0.0,
-                cue: held.cue,
-                fit_seconds: None,
-            },
-        )
+        let speed = f32::from(u8::from(held.fired));
+        (view.fire.clone(), speed, false, None)
+    };
+    let base = BaseLayer {
+        clip: clip.clone(),
+        speed,
+        looping,
+        fade_seconds: 0.0,
+        cue: held.cue,
+        fit_seconds,
     };
     let wanted = FigurePlay {
         base,
@@ -550,7 +594,7 @@ fn camera_of(scene: &SceneContext) -> Option<Entity> {
 }
 
 pub(super) fn place(
-    (fixed, numbers, scene, files, (arms_events, flow, powers)): Reads,
+    (fixed, numbers, scene, files, (arms_events, flow, powers, tasks)): Reads,
     (humans, watched): (Humans, Option<Res<Watched>>),
     mut parts: Parts,
     (mut held, mut view, mut stats, mut moves, mut spawner): Writes,
@@ -589,10 +633,8 @@ pub(super) fn place(
     let table = &book.table;
     let delta = fixed.delta_seconds;
     let loadout = arms.filter(|_| alive).map(|arms| &arms.loadout);
-    let weapon = loadout.map(weapon_key);
-    let (equip_seconds, reload_seconds) =
-        loadout.map_or((0.0, None), |loadout| seconds_of(&numbers, loadout));
-    let raised = equipped(&mut held, weapon, equip_seconds, delta);
+    let (weapon, timing) = chosen(&numbers, loadout, (tasks.as_deref(), actor.slot));
+    let raised = equipped(&mut held, weapon, timing.equip, delta);
     let raise = table.view.equip.as_ref().map_or(raised, |_| 1.0);
     let look = weapon.and_then(|weapon| book.weapons.get(weapon).map(|look| (weapon, look)));
     let place = weapon.and_then(|weapon| table.view.weapons.get(weapon));
@@ -605,9 +647,14 @@ pub(super) fn place(
     let pitch = wish.pitch_radians + offsets.map_or(0.0, ViewOffsets::pitch_radians);
     swayed(&mut held, table, (yaw, pitch), delta);
     let bobbed = bobbing(&mut held, table, body, delta);
-    kicked(&mut held, table, (&arms_events, actor.slot), delta);
+    kicked(
+        &mut held,
+        table,
+        (&arms_events, actor.slot, wish.scope),
+        delta,
+    );
     reloads(&mut held, reloading(loadout, &numbers));
-    let (clip, wanted) = played(&held, &table.view, reload_seconds);
+    let (clip, wanted) = played(&held, &table.view, &timing);
     let scale = table.view.scale;
     let (Some((weapon, look)), Some(place)) = (look, place) else {
         refused(&mut stats, (&held, &parts), &mut spawner, None);

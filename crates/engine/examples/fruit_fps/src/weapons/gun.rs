@@ -133,6 +133,13 @@ impl Gun {
         self.scope_level
     }
 
+    pub fn equip_left(&self) -> Option<u32> {
+        match self.phase {
+            Phase::Equipping { left } => Some(left),
+            Phase::Holstered | Phase::Ready | Phase::Reloading { .. } => None,
+        }
+    }
+
     pub fn is_ready(&self) -> bool {
         self.phase == Phase::Ready
     }
@@ -164,8 +171,8 @@ impl Gun {
     pub fn speed_factor(&self, numbers: &WeaponNumbers) -> f32 {
         let gun = numbers.gun(self.kind);
         match &gun.scope {
-            Some(scope) if self.scope_level > 0 => scope.speed_factor,
-            Some(_) | None => gun.speed_factor,
+            Some(scope) if self.scope_level > 0 => gun.run_speed_factor * scope.aim_speed_factor,
+            Some(_) | None => gun.run_speed_factor,
         }
     }
 

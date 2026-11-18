@@ -5,6 +5,7 @@ mod foes;
 mod gather;
 mod gpu;
 mod numbers;
+mod previews;
 
 use std::ops::Range;
 
@@ -33,6 +34,8 @@ gpu_struct! {
         pub sun: [f32; 4],
         pub sun_color: [f32; 4],
         pub sky_color: [f32; 4],
+        pub field: [f32; 4],
+        pub field_shape: [f32; 4],
     }
 }
 
@@ -53,6 +56,7 @@ pub(crate) struct EffectsDrawing {
     pub glow_vertices: u32,
     pub frame: EffectsFrame,
     pub screen: bool,
+    pub field: Option<engine_core::TextureRef>,
 }
 
 impl EffectsDrawing {
@@ -114,6 +118,7 @@ stats! {
         pub sprays: u32,
         pub decals: u32,
         pub rings: u32,
+        pub previews: u32,
         pub smokes: u32,
         pub zones: u32,
         pub panels: u32,

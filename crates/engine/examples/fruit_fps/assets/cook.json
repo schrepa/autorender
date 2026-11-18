@@ -18,13 +18,9 @@
         "jump": "jump",
         "fall": "fall",
         "turn": "turn",
-        "shoot": "shoot",
         "fire": "fire",
-        "hurt": "hurt",
         "hit_to_head": "hit_to_head",
         "hit_to_body_01": "hit_to_body",
-        "defeat_02": "defeat_a",
-        "defeat_03": "defeat_b",
         "cast_a_spell": "cast",
         "dig": "dig",
         "pitch_baseball": "throw",
@@ -60,7 +56,10 @@
           "normal": "rgba8",
           "orm": "rgba8"
         }
-      ]
+      ],
+      "map_sizes": {
+        "orm": 512
+      }
     },
     {
       "kind": "character",
@@ -94,7 +93,10 @@
           "normal": "rgba8",
           "orm": "rgba8"
         }
-      ]
+      ],
+      "map_sizes": {
+        "orm": 512
+      }
     },
     {
       "kind": "character",
@@ -128,7 +130,10 @@
           "normal": "rgba8",
           "orm": "rgba8"
         }
-      ]
+      ],
+      "map_sizes": {
+        "orm": 512
+      }
     },
     {
       "kind": "character",
@@ -162,7 +167,10 @@
           "normal": "rgba8",
           "orm": "rgba8"
         }
-      ]
+      ],
+      "map_sizes": {
+        "orm": 512
+      }
     },
     {
       "kind": "character",
@@ -196,7 +204,10 @@
           "normal": "rgba8",
           "orm": "rgba8"
         }
-      ]
+      ],
+      "map_sizes": {
+        "orm": 512
+      }
     },
     {
       "kind": "static",
@@ -249,7 +260,21 @@
         "vertices": 16000,
         "joints": 16,
         "influences": 4
-      }
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
     },
     {
       "kind": "character",
@@ -272,7 +297,21 @@
         "vertices": 16000,
         "joints": 16,
         "influences": 4
-      }
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
     },
     {
       "kind": "character",
@@ -295,7 +334,21 @@
         "vertices": 16000,
         "joints": 16,
         "influences": 4
-      }
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
     },
     {
       "kind": "character",
@@ -318,7 +371,21 @@
         "vertices": 16000,
         "joints": 16,
         "influences": 4
-      }
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
     },
     {
       "kind": "static",
@@ -334,7 +401,21 @@
       "budgets": {
         "triangles": 2500,
         "vertices": 6000
-      }
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
     },
     {
       "kind": "static",
@@ -350,7 +431,21 @@
       "budgets": {
         "triangles": 2500,
         "vertices": 6000
-      }
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
     },
     {
       "kind": "static",
@@ -366,7 +461,21 @@
       "budgets": {
         "triangles": 2500,
         "vertices": 6000
-      }
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
     },
     {
       "kind": "static",
@@ -382,7 +491,21 @@
       "budgets": {
         "triangles": 2500,
         "vertices": 6000
-      }
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
     },
     {
       "kind": "map",
@@ -408,10 +531,10 @@
         }
       ],
       "budgets": {
-        "triangles": 150000,
-        "vertices": 150000,
-        "materials": 8,
-        "object_vertices": 65535
+        "triangles": 300000,
+        "vertices": 300000,
+        "materials": 16,
+        "object_vertices": 131072
       },
       "textures": [
         {
@@ -426,7 +549,37 @@
           "normal": "rgba8",
           "orm": "rgba8"
         }
-      ]
+      ],
+      "map_sizes": {
+        "orm": 512
+      },
+      "baked": {
+        "uv1": {
+          "kind": "level",
+          "maps": {
+            "lightmap": {
+              "picture": "mercato_light",
+              "variant": "rgba8",
+              "sampling": {
+                "tex_coord": 1,
+                "wrap_u": "clamp_to_edge",
+                "wrap_v": "clamp_to_edge",
+                "mag_filter": "linear",
+                "min_filter": "linear"
+              }
+            }
+          },
+          "values": {
+            "lightmap_scale": 4.0
+          }
+        },
+        "color": {
+          "kind": "level_detail",
+          "values": {
+            "lightmap_scale": 4.0
+          }
+        }
+      }
     },
     {
       "kind": "clip",
@@ -450,67 +603,716 @@
       }
     },
     {
+      "kind": "character",
+      "name": "device",
+      "source": "source/fp_device.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "clips": {
+        "equip": "device_equip",
+        "plant": "device_plant",
+        "defuse": "device_defuse"
+      },
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 8000,
+        "vertices": 8000,
+        "joints": 16,
+        "influences": 4
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "character",
+      "name": "melee",
+      "source": "source/fp_melee.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "clips": {
+        "equip": "melee_equip",
+        "slash_light": "melee_slash_light",
+        "slash_heavy": "melee_slash_heavy"
+      },
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 4000,
+        "vertices": 4000,
+        "joints": 16,
+        "influences": 4
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "static",
+      "name": "tp_device",
+      "source": "source/tp_device.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 2500,
+        "vertices": 3000
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "static",
+      "name": "device_planted",
+      "source": "source/device_planted.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 5500,
+        "vertices": 5500
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "static",
+      "name": "tp_melee",
+      "source": "source/tp_melee.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 800,
+        "vertices": 1000
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "static",
+      "name": "prop_peel",
+      "source": "source/prop_peel.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 800,
+        "vertices": 1000
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "static",
+      "name": "prop_ripe_flash",
+      "source": "source/prop_ripe_flash.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 800,
+        "vertices": 1000
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "static",
+      "name": "prop_jam_pool",
+      "source": "source/prop_jam_pool.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 800,
+        "vertices": 1000
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "static",
+      "name": "prop_seed_sensor",
+      "source": "source/prop_seed_sensor.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 800,
+        "vertices": 1000
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "static",
+      "name": "prop_sweet_spot",
+      "source": "source/prop_sweet_spot.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 800,
+        "vertices": 1000
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "static",
+      "name": "prop_zest_bomb",
+      "source": "source/prop_zest_bomb.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 800,
+        "vertices": 1000
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "static",
+      "name": "prop_pulp_cloud",
+      "source": "source/prop_pulp_cloud.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 800,
+        "vertices": 1000
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "static",
+      "name": "prop_seed_grenade",
+      "source": "source/prop_seed_grenade.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 800,
+        "vertices": 1000
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "static",
+      "name": "prop_rind_wall",
+      "source": "source/prop_rind_wall.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 800,
+        "vertices": 1000
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "static",
+      "name": "prop_melon_drop",
+      "source": "source/prop_melon_drop.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 800,
+        "vertices": 1000
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "static",
+      "name": "prop_nightshade",
+      "source": "source/prop_nightshade.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 800,
+        "vertices": 1000
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "static",
+      "name": "prop_vine_wire",
+      "source": "source/prop_vine_wire.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 800,
+        "vertices": 1000
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
       "kind": "picture",
       "name": "font_atlas",
       "source": "ui/font_atlas.png",
-      "encoding": "rgba8",
-      "mips": true
+      "encodings": {
+        "rgba8": "rgba8"
+      },
+      "mips": true,
+      "wrap": [
+        "clamp_to_edge",
+        "clamp_to_edge"
+      ]
     },
     {
       "kind": "picture",
       "name": "icons_atlas",
       "source": "ui/icons_atlas.png",
-      "encoding": "bc7",
-      "mips": true
+      "encodings": {
+        "bc": "bc7",
+        "rgba8": "rgba8"
+      },
+      "mips": true,
+      "wrap": [
+        "clamp_to_edge",
+        "clamp_to_edge"
+      ]
     },
     {
       "kind": "picture",
       "name": "portraits",
       "source": "ui/portraits.png",
-      "encoding": "bc7_srgb",
-      "mips": true
+      "encodings": {
+        "bc": "bc7_srgb",
+        "rgba8": "rgba8_srgb"
+      },
+      "mips": true,
+      "wrap": [
+        "clamp_to_edge",
+        "clamp_to_edge"
+      ]
     },
     {
       "kind": "picture",
       "name": "minimap",
       "source": "ui/minimap.png",
-      "encoding": "bc7_srgb",
-      "mips": true
+      "encodings": {
+        "bc": "bc7_srgb",
+        "rgba8": "rgba8_srgb"
+      },
+      "mips": true,
+      "wrap": [
+        "clamp_to_edge",
+        "clamp_to_edge"
+      ]
     },
     {
       "kind": "picture",
       "name": "select_banana",
       "source": "ui/select_banana.png",
-      "encoding": "bc7_srgb",
-      "mips": true
+      "encodings": {
+        "bc": "bc7_srgb",
+        "rgba8": "rgba8_srgb"
+      },
+      "mips": true,
+      "wrap": [
+        "clamp_to_edge",
+        "clamp_to_edge"
+      ]
     },
     {
       "kind": "picture",
       "name": "select_strawberry",
       "source": "ui/select_strawberry.png",
-      "encoding": "bc7_srgb",
-      "mips": true
+      "encodings": {
+        "bc": "bc7_srgb",
+        "rgba8": "rgba8_srgb"
+      },
+      "mips": true,
+      "wrap": [
+        "clamp_to_edge",
+        "clamp_to_edge"
+      ]
     },
     {
       "kind": "picture",
       "name": "select_orange",
       "source": "ui/select_orange.png",
-      "encoding": "bc7_srgb",
-      "mips": true
+      "encodings": {
+        "bc": "bc7_srgb",
+        "rgba8": "rgba8_srgb"
+      },
+      "mips": true,
+      "wrap": [
+        "clamp_to_edge",
+        "clamp_to_edge"
+      ]
     },
     {
       "kind": "picture",
       "name": "select_eggplant",
       "source": "ui/select_eggplant.png",
-      "encoding": "bc7_srgb",
-      "mips": true
+      "encodings": {
+        "bc": "bc7_srgb",
+        "rgba8": "rgba8_srgb"
+      },
+      "mips": true,
+      "wrap": [
+        "clamp_to_edge",
+        "clamp_to_edge"
+      ]
     },
     {
       "kind": "picture",
       "name": "select_watermelon",
       "source": "ui/select_watermelon.png",
-      "encoding": "bc7_srgb",
-      "mips": true
+      "encodings": {
+        "bc": "bc7_srgb",
+        "rgba8": "rgba8_srgb"
+      },
+      "mips": true,
+      "wrap": [
+        "clamp_to_edge",
+        "clamp_to_edge"
+      ]
+    },
+    {
+      "kind": "picture",
+      "name": "title",
+      "source": "ui/title.png",
+      "encodings": {
+        "bc": "bc7_srgb",
+        "rgba8": "rgba8_srgb"
+      },
+      "mips": true,
+      "wrap": [
+        "clamp_to_edge",
+        "clamp_to_edge"
+      ]
+    },
+    {
+      "kind": "picture",
+      "name": "title_small",
+      "source": "ui/title_1280x720.png",
+      "encodings": {
+        "bc": "bc7_srgb",
+        "rgba8": "rgba8_srgb"
+      },
+      "mips": true,
+      "wrap": [
+        "clamp_to_edge",
+        "clamp_to_edge"
+      ]
+    },
+    {
+      "kind": "picture",
+      "name": "mercato_light",
+      "source": "source/map_mercato_light.png",
+      "encodings": {
+        "rgba8": "rgba8"
+      },
+      "mips": false,
+      "wrap": [
+        "clamp_to_edge",
+        "clamp_to_edge"
+      ]
+    },
+    {
+      "kind": "picture",
+      "name": "sky_panorama",
+      "source": "source/sky_pano.png",
+      "encodings": {
+        "bc": "bc7_srgb",
+        "rgba8": "rgba8_srgb"
+      },
+      "mips": false,
+      "wrap": [
+        "repeat",
+        "clamp_to_edge"
+      ]
+    }
+  ],
+  "scenes": [
+    {
+      "from": "../fruit_fps.scene.json",
+      "to": "../fruit_fps.rgba8.scene.json",
+      "replaces": "bc",
+      "variant": "rgba8"
     }
   ]
 }

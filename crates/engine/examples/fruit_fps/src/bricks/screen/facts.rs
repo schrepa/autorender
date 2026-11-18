@@ -597,6 +597,7 @@ pub(super) fn fill(
     live::plates_part(facts, &view, player.team, &recent.healths);
     live::abilities_part(facts, &view, player);
     live::action_part(facts, &view, slot, words);
+    live::device_part(facts, &view, slot);
     let weapons = numbers
         .as_deref()
         .and_then(Numbers::get)

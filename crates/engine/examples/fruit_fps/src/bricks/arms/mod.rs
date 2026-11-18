@@ -9,7 +9,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::play::actors::{Actor, Alive, Health, Human, SpeedFactor};
-use crate::play::arms::{Arms, Drops};
+use crate::play::arms::{Arms, Drops, HandAction};
 use crate::play::events::arms::{ArmsEvents, Weapon};
 use crate::play::numbers::Numbers;
 use crate::play::round::Round;
@@ -25,6 +25,10 @@ pub struct WeaponStats {
     pub spread_deg: f32,
     pub scope_level: u32,
     pub ready: bool,
+    pub held: String,
+    pub action: Option<String>,
+    pub action_progress: f32,
+    pub run_factor: f32,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -36,6 +40,9 @@ pub struct ActorArms {
     pub magazine: Option<u32>,
     pub stance: String,
     pub speed_factor: f32,
+    pub run_factor: f32,
+    pub held: String,
+    pub action: Option<String>,
     pub pickable: Option<u32>,
 }
 
@@ -65,6 +72,7 @@ stats! {
         pub actors: Vec<ActorArms>,
         pub drops: Vec<DropStats>,
         pub pickups_tick: u32,
+        pub drops_tick: u32,
     }
 }
 
@@ -147,7 +155,7 @@ fn arm(
     for (entity, actor, has_speed) in &actors {
         let loadout = Loadout::new(&numbers.weapons, primary, actor_rng(seed, actor.slot), tps);
         let speed = loadout.speed_factor(&numbers.weapons);
-        spawner.insert(entity, Arms::new(loadout));
+        spawner.insert(entity, Arms::new(loadout, speed));
         if !has_speed {
             spawner.insert(entity, SpeedFactor(speed));
         }
@@ -169,6 +177,17 @@ fn drop_weapon(
 
 fn ticks_per_second(time: &FixedTime) -> Option<u32> {
     (time.delta_seconds > 0.0).then(|| (1.0 / time.delta_seconds).round() as u32)
+}
+
+fn action_name(action: HandAction) -> String {
+    match action {
+        HandAction::Equip => "equip",
+        HandAction::Swing { heavy: false } => "swing_light",
+        HandAction::Swing { heavy: true } => "swing_heavy",
+        HandAction::Plant => "plant",
+        HandAction::Defuse => "defuse",
+    }
+    .to_owned()
 }
 
 fn slot_name(slot: Slot) -> &'static str {
@@ -202,6 +221,7 @@ fn report(
         hits_tick: events.hits.len() as u32,
         heads_tick: events.hits.iter().filter(|hit| hit.headshot).count() as u32,
         pickups_tick: events.pickups.len() as u32,
+        drops_tick: events.drops.len() as u32,
         drops: drops
             .items
             .iter()
@@ -231,6 +251,9 @@ fn report(
             magazine,
             stance: format!("{:?}", arms.stance),
             speed_factor: speed.0,
+            run_factor: arms.run_factor,
+            held: arms.hand.held.key().to_owned(),
+            action: arms.hand.action.map(action_name),
             pickable: arms.pickable,
         });
         if !human {
@@ -252,6 +275,10 @@ fn report(
             spread_deg: view.spread_deg,
             scope_level: view.scope_level as u32,
             ready: view.ready,
+            held: arms.hand.held.key().to_owned(),
+            action: arms.hand.action.map(action_name),
+            action_progress: arms.hand.progress,
+            run_factor: arms.run_factor,
         });
     }
     stats.set_if_neq(next);

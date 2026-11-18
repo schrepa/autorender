@@ -18,6 +18,19 @@ pub struct LoadoutInput {
     pub pace: Pace,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum HandMotion {
+    Equip,
+    Swing { heavy: bool },
+}
+
+#[derive(Clone, Copy, PartialEq, Debug)]
+pub struct HandMoving {
+    pub motion: HandMotion,
+    pub progress: f32,
+    pub seconds: f32,
+}
+
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Fired {
     Shot { gun: GunKind, shot: Shot },
@@ -50,6 +63,8 @@ pub struct Loadout {
     pub sidearm: Gun,
     pub active: Slot,
     melee_wait: u32,
+    melee_total: u32,
+    melee_swing: Option<bool>,
     melee_armed: bool,
     rng: ShotRng,
     pace: Pace,
@@ -67,6 +82,8 @@ impl Loadout {
             sidearm: Gun::new(GunKind::Sidearm, numbers),
             active: Slot::Sidearm,
             melee_wait: 0,
+            melee_total: 0,
+            melee_swing: None,
             melee_armed: false,
             rng,
             pace: Pace::SAME,
@@ -105,7 +122,40 @@ impl Loadout {
 
     pub fn speed_factor(&self, numbers: &WeaponNumbers) -> f32 {
         self.active_gun()
-            .map_or(numbers.melee.speed_factor, |gun| gun.speed_factor(numbers))
+            .map_or(numbers.melee.run_speed_factor, |gun| {
+                gun.speed_factor(numbers)
+            })
+    }
+
+    pub fn hand_moving(
+        &self,
+        numbers: &WeaponNumbers,
+        ticks_per_second: u32,
+    ) -> Option<HandMoving> {
+        let (motion, left, total) = match self.active_gun() {
+            Some(gun) => {
+                let left = gun.equip_left()?;
+                let total = ticks(numbers.gun(gun.kind()).equip_seconds, ticks_per_second);
+                (HandMotion::Equip, left, total)
+            }
+            None if self.active == Slot::Melee && self.melee_wait > 0 => {
+                let motion = self
+                    .melee_swing
+                    .map_or(HandMotion::Equip, |heavy| HandMotion::Swing { heavy });
+                (motion, self.melee_wait, self.melee_total)
+            }
+            None => return None,
+        };
+        let total = total.max(left).max(1);
+        Some(HandMoving {
+            motion,
+            progress: 1.0 - left as f32 / total as f32,
+            seconds: total as f32 / ticks_per_second.max(1) as f32,
+        })
+    }
+
+    pub fn draw(&mut self, numbers: &WeaponNumbers, ticks_per_second: u32) {
+        self.switch(numbers, self.active, ticks_per_second);
     }
 
     pub fn view_zoom(&self, numbers: &WeaponNumbers) -> f32 {
@@ -250,6 +300,8 @@ impl Loadout {
         };
         self.melee_armed = false;
         self.melee_wait = ticks(seconds, ticks_per_second);
+        self.melee_total = self.melee_wait;
+        self.melee_swing = Some(heavy);
         Some(Fired::Swing { aim, heavy })
     }
 
@@ -259,6 +311,13 @@ impl Loadout {
             self.switch(numbers, Slot::Sidearm, ticks_per_second);
         }
         Some(dropped)
+    }
+
+    pub fn drop_active(&mut self, numbers: &WeaponNumbers, ticks_per_second: u32) -> Option<Gun> {
+        if self.active != Slot::Primary {
+            return None;
+        }
+        self.drop_primary(numbers, ticks_per_second)
     }
 
     pub fn pick_up(
@@ -295,6 +354,8 @@ impl Loadout {
             Slot::Sidearm => self.sidearm.take_out(numbers, ticks_per_second),
             Slot::Melee => {
                 self.melee_wait = ticks(numbers.melee.equip_seconds, ticks_per_second);
+                self.melee_total = self.melee_wait;
+                self.melee_swing = None;
             }
         }
     }

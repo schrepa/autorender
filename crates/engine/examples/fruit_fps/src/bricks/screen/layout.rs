@@ -73,6 +73,15 @@ pub(super) struct Set {
     pub color: Option<Paint>,
     pub stroke: Option<StrokeRef>,
     pub icon: Option<Template>,
+    pub grey: Option<f32>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Shadow {
+    pub offset: [f32; 2],
+    pub grow: f32,
+    pub soft: f32,
+    pub color: Paint,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +95,7 @@ pub(super) enum Dir {
 pub(super) struct TextKind {
     pub text: Template,
     pub size: f32,
+    pub face: String,
     pub weight: Weight,
     pub align: Align,
 }
@@ -185,8 +195,20 @@ pub(super) struct Element {
     pub styles: Vec<(Cond, Set)>,
     pub look: Set,
     pub radius: f32,
+    pub shadows: Vec<Shadow>,
+    pub sweep: Option<Number>,
+    pub pulse: Option<Pulse>,
+    pub serial: usize,
     pub kind: Kind,
     pub card: Option<(CardList, usize)>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Pulse {
+    pub watch: Path,
+    pub seconds: f32,
+    pub scale: f32,
+    pub color: Option<Paint>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -218,6 +240,56 @@ impl Layout {
             .values()
             .map(|screen| screen.elements.len())
             .sum()
+    }
+
+    pub(super) fn faces(&mut self, names: &[String]) {
+        let skipped = &mut self.skipped;
+        let settle = |text: &mut TextKind| match names.iter().position(|name| *name == text.face) {
+            Some(index) => {
+                text.weight = Weight(index);
+                Ok(())
+            }
+            None => Err(format!(
+                "weight `{}` is no face of the font atlas",
+                text.face
+            )),
+        };
+        for screen in self.screens.values_mut() {
+            screen.elements.retain_mut(|element| {
+                let settled = match &mut element.kind {
+                    Kind::Text(text) => settle(text),
+                    Kind::Flow { items, .. } => {
+                        items.iter_mut().try_for_each(|item| match &mut item.kind {
+                            FlowKind::Text { text, .. } => settle(text),
+                            FlowKind::Icon { .. } => Ok(()),
+                        })
+                    }
+                    Kind::Plate
+                    | Kind::Icon(_)
+                    | Kind::Image(_)
+                    | Kind::Markers(_)
+                    | Kind::Bar { .. }
+                    | Kind::Pips { .. } => Ok(()),
+                };
+                match settled {
+                    Ok(()) => true,
+                    Err(problem) => {
+                        skipped.push(format!("element `{}`: {problem}; skipped", element.id));
+                        false
+                    }
+                }
+            });
+        }
+    }
+
+    pub(super) fn number(&mut self) {
+        let mut serial = 0;
+        for screen in self.screens.values_mut() {
+            for element in &mut screen.elements {
+                element.serial = serial;
+                serial += 1;
+            }
+        }
     }
 
     pub(super) fn retain(&mut self, mut kept: impl FnMut(&Element) -> Result<(), String>) {
@@ -412,14 +484,6 @@ pub(super) fn template(text: &str, at: &str) -> Result<Template, String> {
     Ok(Template { pieces })
 }
 
-fn weight(text: &str, at: &str) -> Result<Weight, String> {
-    match text {
-        "regular" => Ok(Weight::Regular),
-        "bold" => Ok(Weight::Bold),
-        _ => Err(format!("{at}: unknown weight `{text}`")),
-    }
-}
-
 fn align(text: &str, at: &str) -> Result<Align, String> {
     match text {
         "left" => Ok(Align::Left),
@@ -460,6 +524,7 @@ fn set_of(value: &Value, palette: &BTreeMap<String, Rgba>, at: String) -> Result
                     .ok_or_else(|| format!("{at}: expected a string"))?;
                 set.icon = Some(template(text, &at)?);
             }
+            "grey" => set.grey = Some(unit(given, &at)?),
             _ => return Err(format!("{at}: style_if cannot set `{key}`")),
         }
     }
@@ -470,7 +535,8 @@ fn text_kind(read: &Reader<'_>) -> Result<TextKind, String> {
     Ok(TextKind {
         text: template(read.text("text")?, &read.within("text"))?,
         size: read.number("size")?,
-        weight: weight(read.text("weight")?, &read.within("weight"))?,
+        face: read.text("weight")?.to_owned(),
+        weight: Weight::default(),
         align: match read.get("align") {
             None => Align::Left,
             Some(_) => align(read.text("align")?, &read.within("align"))?,
@@ -751,8 +817,34 @@ fn element(value: &Value, cx: &Context<'_>, at: String) -> Result<Element, Strin
             None => None,
             Some(_) => Some(template(read.text("icon")?, &read.within("icon"))?),
         },
+        grey: match read.get("grey") {
+            None => None,
+            Some(given) => Some(unit(given, &read.within("grey"))?),
+        },
     };
     let card = card_of(&styles);
+    let kind = kind_of(&read, cx.palette)?;
+    let shadows = shadows_of(&read, cx.palette)?;
+    let sweep = match read.get("sweep") {
+        None => None,
+        Some(given) => Some(number_of(given, &read.within("sweep"))?),
+    };
+    if sweep.is_some() && !matches!(kind, Kind::Plate) {
+        return Err(format!(
+            "{}: sweep draws on plate elements only",
+            read.within("sweep")
+        ));
+    }
+    let pulse = match read.get("pulse") {
+        None => None,
+        Some(given) => Some(pulse_of(given, cx.palette, read.within("pulse"))?),
+    };
+    if !shadows.is_empty() && !matches!(kind, Kind::Plate | Kind::Text(_)) {
+        return Err(format!(
+            "{}: shadows draw under plate and text elements only",
+            read.within("shadows")
+        ));
+    }
     Ok(Element {
         id: read.text("id")?.to_owned(),
         rect,
@@ -762,7 +854,11 @@ fn element(value: &Value, cx: &Context<'_>, at: String) -> Result<Element, Strin
         styles,
         look,
         radius: read.number_or("radius", 0.0)?,
-        kind: kind_of(&read, cx.palette)?,
+        shadows,
+        sweep,
+        pulse,
+        serial: 0,
+        kind,
         card,
     })
 }
@@ -911,6 +1007,61 @@ fn set_paths(set: &Set, found: &mut Vec<Path>) {
     }
 }
 
+fn unit(value: &Value, at: &str) -> Result<f32, String> {
+    value
+        .as_f64()
+        .map(|value| value as f32)
+        .filter(|value| (0.0..=1.0).contains(value))
+        .ok_or_else(|| format!("{at}: expected a number from 0 to 1"))
+}
+
+fn pulse_of(value: &Value, palette: &BTreeMap<String, Rgba>, at: String) -> Result<Pulse, String> {
+    let read = Reader::of(value, at)?;
+    let seconds = read.number("seconds")?;
+    if seconds <= 0.0 {
+        return Err(format!(
+            "{}: expected seconds above 0",
+            read.within("seconds")
+        ));
+    }
+    Ok(Pulse {
+        watch: path(read.text("watch")?),
+        seconds,
+        scale: read.number_or("scale", 1.0)?,
+        color: match read.get("color") {
+            None => None,
+            Some(given) => Some(paint(given, palette, &read.within("color"))?),
+        },
+    })
+}
+
+fn shadows_of(read: &Reader<'_>, palette: &BTreeMap<String, Rgba>) -> Result<Vec<Shadow>, String> {
+    let Some(listed) = read.get("shadows") else {
+        return Ok(Vec::new());
+    };
+    let listed = listed
+        .as_array()
+        .ok_or_else(|| format!("{}: expected a list", read.within("shadows")))?;
+    let mut shadows = Vec::new();
+    for (index, value) in listed.iter().enumerate() {
+        let one = Reader::of(value, format!("{}.shadows[{index}]", read.at))?;
+        shadows.push(Shadow {
+            offset: match one.get("offset") {
+                None => [0.0, 0.0],
+                Some(_) => one.pair("offset")?,
+            },
+            grow: one.number_or("grow", 0.0)?,
+            soft: one.number_or("soft", 0.0)?,
+            color: paint(
+                one.get("color").unwrap_or(&Value::Null),
+                palette,
+                &one.within("color"),
+            )?,
+        });
+    }
+    Ok(shadows)
+}
+
 fn kind_paths(kind: &Kind, found: &mut Vec<Path>) {
     match kind {
         Kind::Plate | Kind::Icon(_) => {}
@@ -997,6 +1148,18 @@ impl Element {
             listed.push(when.path.clone());
         }
         set_paths(&self.look, &mut listed);
+        for shadow in &self.shadows {
+            paint_paths(&shadow.color, &mut listed);
+        }
+        if let Some(sweep) = &self.sweep {
+            number_paths(sweep, &mut listed);
+        }
+        if let Some(pulse) = &self.pulse {
+            listed.push(pulse.watch.clone());
+            if let Some(color) = &pulse.color {
+                paint_paths(color, &mut listed);
+            }
+        }
         for (cond, given) in &self.styles {
             listed.push(cond.path.clone());
             set_paths(given, &mut listed);

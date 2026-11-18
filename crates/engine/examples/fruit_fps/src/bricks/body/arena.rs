@@ -8,10 +8,9 @@ use engine_core::SceneCx;
 use glam::{Mat3, Quat, Vec3};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::play::world::{Markers, Spawn, Zone, ZoneBox};
-use crate::solids::{Block, Solids, Surface};
+use crate::solids::{Block, Ground, Kind, Solids, Surface};
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -36,6 +35,7 @@ pub struct Cooked {
     pub collision: String,
     pub ranges: String,
     pub markers: String,
+    pub records: String,
 }
 
 #[derive(Component, Clone, Serialize, Deserialize, JsonSchema)]
@@ -56,11 +56,20 @@ struct Ranges {
 
 #[derive(Deserialize)]
 struct RangeEntry {
+    node: String,
     triangles: [u32; 2],
+}
+
+#[derive(Deserialize)]
+struct Layout {
+    collision: Vec<Record>,
+}
+
+#[derive(Deserialize)]
+struct Record {
+    name: String,
     #[serde(default)]
-    extras: Value,
-    #[serde(default)]
-    mesh_extras: Value,
+    surface: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -76,12 +85,17 @@ struct Marker {
     scale: [f32; 3],
 }
 
-fn surface_named(name: &str, path: &str) -> Result<Surface, Error> {
-    serde_json::from_value(Value::String(name.to_owned())).map_err(|_| {
-        Error::new(ErrorCode::InvalidValue, path.to_owned())
-            .got(name)
-            .variants(["stone", "metal", "wood", "dirt"])
-    })
+const DEFAULT_KIND: &str = "stone";
+
+fn ground(name: &str, kinds: &mut Vec<(Kind, String)>) -> Ground {
+    let kind = Kind::named(name);
+    if !kinds.iter().any(|(known, _)| *known == kind) {
+        kinds.push((kind, name.to_owned()));
+    }
+    Ground {
+        surface: Surface::of_kind(name),
+        kind,
+    }
 }
 
 fn json<T: serde::de::DeserializeOwned>(bytes: &[u8], path: &str) -> Result<T, Error> {
@@ -91,8 +105,9 @@ fn json<T: serde::de::DeserializeOwned>(bytes: &[u8], path: &str) -> Result<T, E
     engine::bricks::parse_json(text).map_err(|error| error.within(path))
 }
 
-fn floor(floor: &Floor, path: &str) -> Result<(Solids, Markers), Error> {
-    let surface = surface_named(&floor.surface, &format!("{path}.floor.surface"))?;
+fn floor(floor: &Floor) -> (Solids, Markers) {
+    let mut kinds = Vec::new();
+    let surface = ground(&floor.surface, &mut kinds);
     let h = floor.half_size_m;
     let positions = [
         Vec3::new(-h, 0.0, -h),
@@ -103,36 +118,39 @@ fn floor(floor: &Floor, path: &str) -> Result<(Solids, Markers), Error> {
     let indices = [0, 1, 2, 0, 2, 3];
     let mut solids = Solids::build(&positions, &indices, &[(0..2, surface)]);
     for (index, block) in floor.blocks.iter().enumerate() {
-        let at = format!("{path}.floor.blocks[{index}].surface");
+        let made = ground(&block.surface, &mut kinds);
         solids.add_block(Block {
             id: u32::MAX - index as u32,
             centre: Vec3::from_array(block.centre),
             half_extents: Vec3::from_array(block.half_extents),
             axes: Mat3::IDENTITY,
-            surface: surface_named(&block.surface, &at)?,
+            surface: made.surface,
+            kind: made.kind,
         });
     }
-    Ok((solids, Markers::default()))
+    let markers = Markers {
+        kinds,
+        ..Markers::default()
+    };
+    (solids, markers)
 }
 
-fn labelled(entry: &RangeEntry) -> Option<&str> {
-    [&entry.extras, &entry.mesh_extras]
-        .into_iter()
-        .find_map(|extras| extras.get("surface").and_then(Value::as_str))
-}
-
-fn surfaces(ranges: &Ranges, path: &str) -> Result<Vec<(Range<u32>, Surface)>, Error> {
-    let mut found = Vec::new();
-    for (index, entry) in ranges.meshes.iter().enumerate() {
-        if let Some(name) = labelled(entry) {
-            let at = format!("{path}.meshes[{index}].extras.surface");
-            found.push((
-                entry.triangles[0]..entry.triangles[1],
-                surface_named(name, &at)?,
-            ));
-        }
-    }
-    Ok(found)
+fn grounds(
+    ranges: &Ranges,
+    layout: &Layout,
+    kinds: &mut Vec<(Kind, String)>,
+) -> Vec<(Range<u32>, Ground)> {
+    ranges
+        .meshes
+        .iter()
+        .map(|entry| {
+            let name = (layout.collision.iter())
+                .find(|record| record.name == entry.node)
+                .and_then(|record| record.surface.as_deref())
+                .unwrap_or(DEFAULT_KIND);
+            (entry.triangles[0]..entry.triangles[1], ground(name, kinds))
+        })
+        .collect()
 }
 
 fn spawn(marker: &Marker) -> Spawn {
@@ -179,6 +197,7 @@ fn markers(file: &MarkerFile) -> Markers {
         attack: attack.into_iter().map(|(_, spawn)| spawn).collect(),
         defend: defend.into_iter().map(|(_, spawn)| spawn).collect(),
         zones,
+        kinds: Vec::new(),
     }
 }
 
@@ -188,10 +207,11 @@ fn cooked(
     path: &str,
 ) -> Result<Option<(Solids, Markers)>, Error> {
     let at = |field: &str| format!("{path}.cooked.{field}");
-    let (Some(mesh), Some(ranges), Some(marked)) = (
+    let (Some(mesh), Some(ranges), Some(marked), Some(records)) = (
         cx.buffer(&files.collision, &at("collision"))?,
         cx.buffer(&files.ranges, &at("ranges"))?,
         cx.buffer(&files.markers, &at("markers"))?,
+        cx.buffer(&files.records, &at("records"))?,
     ) else {
         return Ok(None);
     };
@@ -202,11 +222,17 @@ fn cooked(
         .map(|vertex| Vec3::from_array(vertex.position))
         .collect();
     let ranges: Ranges = json(&ranges, &at("ranges"))?;
-    let labels = surfaces(&ranges, &at("ranges"))?;
+    let layout: Layout = json(&records, &at("records"))?;
+    let mut kinds = Vec::new();
+    let labels = grounds(&ranges, &layout, &mut kinds);
     let marked: MarkerFile = json(&marked, &at("markers"))?;
+    let markers = Markers {
+        kinds,
+        ..markers(&marked)
+    };
     Ok(Some((
         Solids::build(&positions, &mesh.indices, &labels),
-        markers(&marked),
+        markers,
     )))
 }
 
@@ -229,6 +255,7 @@ impl ArenaFile {
                     files.collision.clone(),
                     files.ranges.clone(),
                     files.markers.clone(),
+                    files.records.clone(),
                 ]
             })
             .collect()
@@ -236,7 +263,7 @@ impl ArenaFile {
 
     pub(super) fn prepared(mut self, cx: &SceneCx<'_>, path: &str) -> Result<Self, Error> {
         let built = match (&self.floor, &self.cooked) {
-            (Some(plain), _) => Some(floor(plain, path)?),
+            (Some(plain), _) => Some(floor(plain)),
             (None, Some(files)) => cooked(files, cx, path)?,
             (None, None) => None,
         };

@@ -75,6 +75,13 @@
     "weight": 1.0,
     "speed": 1.0
   },
+  "melee_heavy": {
+    "clip": "slash",
+    "from": "Spine01",
+    "feather": 2,
+    "weight": 1.0,
+    "speed": 0.6
+  },
   "casts": {
     "caster": {
       "clip": "cast",
@@ -158,6 +165,17 @@
     "lift_m": 0.03,
     "roll_radians": 1.5708,
     "turn_radians_per_id": 2.4
+  },
+  "throw": {
+    "seconds": 0.45,
+    "lift_m": 0.35,
+    "hand_m": 1.2,
+    "reach_m": 2.0
+  },
+  "props": {
+    "spin_radians_per_second": 9.0,
+    "tile_m": 1.0,
+    "wall_height_m": 3.0
   },
   "pin_feet": {
     "contact_m": 0.03,
@@ -327,6 +345,37 @@
         ],
         "wrist_m": 0.07
       }
+    },
+    "device": {
+      "pivot": [
+        0.0,
+        1.2,
+        0.25
+      ],
+      "grip": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "pitch_share": 0.0,
+      "right": {
+        "fingers": [
+          0.0,
+          -0.6,
+          0.8
+        ],
+        "palm": [
+          1,
+          0,
+          0
+        ],
+        "pole": [
+          -0.6,
+          -0.8,
+          0.0
+        ],
+        "wrist_m": 0.07
+      }
     }
   },
   "weapons": {
@@ -334,7 +383,8 @@
     "smg": "long",
     "sniper": "long",
     "sidearm": "pistol",
-    "melee": "low"
+    "melee": "low",
+    "device": "device"
   },
   "view": {
     "scale": 0.25,
@@ -359,6 +409,14 @@
     "fire": "fire",
     "reload": "reload_parts",
     "equip": "equip",
+    "melee": {
+      "light": "slash_light",
+      "heavy": "slash_heavy"
+    },
+    "device": {
+      "plant": "plant",
+      "defuse": "defuse"
+    },
     "weapons": {
       "rifle": {
         "rest": [
@@ -429,6 +487,42 @@
           0.14,
           -0.32,
           -0.19
+        ],
+        "lower_running": false
+      },
+      "melee": {
+        "rest": [
+          0.14,
+          -0.15,
+          -0.3
+        ],
+        "scoped": [
+          0.14,
+          -0.15,
+          -0.3
+        ],
+        "lowered": [
+          0.16,
+          -0.34,
+          -0.19
+        ],
+        "lower_running": false
+      },
+      "device": {
+        "rest": [
+          0.155,
+          -0.22,
+          -0.36
+        ],
+        "scoped": [
+          0.155,
+          -0.22,
+          -0.36
+        ],
+        "lowered": [
+          0.155,
+          -0.4,
+          -0.25
         ],
         "lower_running": false
       }

@@ -9,12 +9,13 @@ mod places;
 mod rng;
 mod sense;
 mod team;
+mod throws;
 
 use glam::Vec3;
 
 pub use debug::{Activity, BotDebug, SquadDebug, Why};
 pub use numbers::{
-    BotNumbers, BotPlayer, BotRound, BotsTable, Level, LevelNumbers, Levels, PlayNumbers,
+    BotCombat, BotNumbers, BotPlayer, BotRound, BotsTable, Level, LevelNumbers, Levels, PlayNumbers,
 };
 pub use places::{
     Angle, CoverBox, Gate, LayoutCallout, LayoutChoke, LayoutCover, LayoutPlant, LayoutPortal,
@@ -25,7 +26,10 @@ pub use sense::{
     GunSense, Heard, Intent, MatchSense, Mate, Seen, Sense, Side, Smoke, SoundKind, WeaponChoice,
     World,
 };
-pub use team::{Approach, Duty, Member, Order, Role, Squad, SquadSense, Step, Utility};
+pub use abilities::{ThrowCounts, ThrowState};
+pub use team::{
+    Approach, Duty, Line, LineKind, Member, Order, Role, Squad, SquadSense, Step, Utility,
+};
 
 use abilities::Utilities;
 use aim::Aim;
@@ -107,7 +111,9 @@ impl Brain {
         self.mover.clear();
         self.fight = Fight::new();
         self.glance = Glance::new();
+        let counts = self.utilities.counts;
         self.utilities = Utilities::new();
+        self.utilities.counts = counts;
         self.aim.synced = false;
         self.buy_tick = None;
         self.hesitate_until = 0;
@@ -115,8 +121,20 @@ impl Brain {
         self.debug.why = Why::RoundStart;
     }
 
+    pub fn resync(&mut self) {
+        self.aim.synced = false;
+    }
+
     pub fn debug(&self) -> BotDebug {
         self.debug
+    }
+
+    pub fn throws(&self) -> ThrowCounts {
+        self.utilities.counts
+    }
+
+    pub fn last_throw(&self) -> Option<(Line, ThrowState)> {
+        self.utilities.last
     }
 
     pub(crate) fn mind(&mut self, activity: Activity, why: Why, tick: u64) {
@@ -131,7 +149,7 @@ impl Brain {
         let order = ctx.sense.order;
         let moved = (order.goal - self.order.goal).length() > ctx.numbers.play.repath_m;
         if order.step != self.order.step || order.duty != self.order.duty || moved {
-            let pause = self.rng.range(ctx.level.hesitate_seconds);
+            let pause = self.rng.range(ctx.numbers.play.hesitate_seconds);
             self.hesitate_until = ctx.tick + ctx.numbers.ticks(pause);
             self.debug.why = Why::Order;
             self.debug.since_tick = ctx.tick;
@@ -260,6 +278,8 @@ pub fn think(
         speed_share: aim::flat(sense.velocity).length() / player.run_speed_mps,
     };
     brain.take_order(&ctx);
+    let lane = ctx.sense.me as f32 * numbers.play.spacing_m * 0.5;
+    brain.mover.set_lane(lane, ctx.up * 0.5);
     let look = Look {
         eye: ctx.eye,
         yaw: brain.aim.yaw,
@@ -271,7 +291,11 @@ pub fn think(
     if sense.game.phase == GamePhase::Buy {
         fighter::buy(brain, &ctx, &mut intent);
     } else {
+        let view = (brain.aim.yaw, brain.aim.pitch);
         fighter::act(brain, &ctx, &mut intent);
+        if brain.utilities.owns_view() {
+            (brain.aim.yaw, brain.aim.pitch) = view;
+        }
         abilities::consider(brain, &ctx, &mut intent);
     }
     brain.call(&ctx, &mut intent);

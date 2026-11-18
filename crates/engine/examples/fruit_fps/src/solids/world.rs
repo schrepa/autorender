@@ -4,7 +4,7 @@ use glam::Vec3;
 
 use super::shapes::{self, Boxed, Swept, Triangle};
 use super::tree::{self, Node, Probe};
-use super::{Block, Capsule, Dropped, Hit, Solid, Surface};
+use super::{Block, Capsule, Dropped, Ground, Hit, Solid};
 
 const SWEEP_TOLERANCE: f32 = 1e-5;
 const BOUNDS_MARGIN: f32 = 1e-4;
@@ -30,7 +30,7 @@ enum Owner {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Support {
     pub normal: Vec3,
-    pub surface: Surface,
+    pub ground: Ground,
 }
 
 pub(super) struct Footing {
@@ -51,7 +51,7 @@ pub struct Work {
 pub struct Solids {
     triangles: Vec<Triangle>,
     sources: Vec<u32>,
-    surfaces: Vec<Surface>,
+    surfaces: Vec<Ground>,
     nodes: Vec<Node>,
     blocks: Vec<Block>,
     placed: Vec<Placed>,
@@ -100,13 +100,9 @@ fn place(block: &Block) -> Placed {
 }
 
 impl Solids {
-    pub fn build(
-        positions: &[Vec3],
-        indices: &[u32],
-        surfaces: &[(Range<u32>, Surface)],
-    ) -> Solids {
+    pub fn build(positions: &[Vec3], indices: &[u32], surfaces: &[(Range<u32>, Ground)]) -> Solids {
         let total = indices.len() / 3;
-        let mut labels: Vec<Option<Surface>> = vec![None; total];
+        let mut labels: Vec<Option<Ground>> = vec![None; total];
         for (range, surface) in surfaces {
             let end = (range.end as usize).min(total);
             let start = (range.start as usize).min(end);
@@ -199,12 +195,18 @@ impl Solids {
         }
     }
 
-    fn label(&self, owner: Owner) -> (Surface, Solid) {
+    fn label(&self, owner: Owner) -> (Ground, Solid) {
         match owner {
             Owner::Static(slot) => (self.surfaces[slot], Solid::Triangle(self.sources[slot])),
             Owner::Block(index, _) => {
                 let block = &self.blocks[index];
-                (block.surface, Solid::Block(block.id))
+                (
+                    Ground {
+                        surface: block.surface,
+                        kind: block.kind,
+                    },
+                    Solid::Block(block.id),
+                )
             }
         }
     }
@@ -288,13 +290,14 @@ impl Solids {
     pub fn ray(&self, origin: Vec3, direction: Vec3, max: f32) -> Option<Hit> {
         let (t, along, owner) = self.cast(origin, direction, max, false)?;
         let normal = shapes::facing(self.triangle(owner).normal, -along);
-        let (surface, solid) = self.label(owner);
+        let (ground, solid) = self.label(owner);
         Some(Hit {
             distance: t,
             point: origin + along * t,
             normal,
             face_normal: normal,
-            surface,
+            surface: ground.surface,
+            kind: ground.kind,
             solid,
         })
     }
@@ -329,13 +332,14 @@ impl Solids {
         let at = shape.bottom + motion * fraction;
         let triangle = self.triangle(owner);
         let (_, point) = shapes::segment_triangle(at, at + Vec3::Y * shape.lift, triangle);
-        let (surface, solid) = self.label(owner);
+        let (ground, solid) = self.label(owner);
         Some(Hit {
             distance: fraction * length,
             point,
             normal,
             face_normal: shapes::facing(triangle.normal, normal),
-            surface,
+            surface: ground.surface,
+            kind: ground.kind,
             solid,
         })
     }
@@ -453,7 +457,7 @@ impl Solids {
                 if stands && best.is_none_or(|held| normal.y > held.normal.y) {
                     best = Some(Support {
                         normal,
-                        surface: self.label(owner).0,
+                        ground: self.label(owner).0,
                     });
                 }
             },

@@ -4,18 +4,19 @@ use glam::Vec3;
 use super::{ArmsBrick, Book, Setup, drop_weapon, ticks_per_second};
 use crate::names::{HEAD, HIP, SPINE};
 use crate::play::actors::{Actor, Alive, Body, Equip, Health, SpeedFactor, Wish};
-use crate::play::arms::{Arms, Drops};
+use crate::play::arms::{Arms, Drops, Hand, HandAction, Held};
 use crate::play::events::arms::{
-    ArmsEvents, DeathEvent, Handling, HandlingEvent, HitEvent, ShotEvent, Target, Weapon,
+    ArmsEvents, DeathEvent, DropEvent, Handling, HandlingEvent, HitEvent, ShotEvent, Target, Weapon,
 };
 use crate::play::figures::{FigureJoints, LEFT_LEG, RIGHT_LEG};
 use crate::play::powers::{EffectHit, Powers};
+use crate::play::round::Round;
 use crate::play::view::ViewOffsets;
 use crate::play::world::Arena;
-use crate::rules::Team;
-use crate::solids::{Hit, Solid, Surface};
+use crate::rules::{Device, Team};
+use crate::solids::{Hit, Kind, Solid};
 use crate::weapons::{
-    Aim, ArmsNumbers, Blocker, BodyPart, CharacterId, Fired, Footing, GunKind, GunNumbers,
+    Aim, ArmsNumbers, Blocker, BodyPart, CharacterId, Fired, Footing, GunKind, HandMotion,
     HitJoints, HitShapes, LoadoutInput, LoadoutTick, Pace, Slot, Struck, Vitals, WeaponNumbers,
     forward, gun_damage, hit_shapes, joints_from_body, melee, melee_damage, stance_of, ticks,
     trace, wound,
@@ -68,6 +69,7 @@ pub(super) fn act(
     time: Res<FixedTime>,
     setup: Res<Setup>,
     arena: Res<Arena>,
+    round: Option<Res<Round>>,
     mut powers: Option<ResMut<Powers>>,
     mut events: ResMut<ArmsEvents>,
     mut book: ResMut<Book>,
@@ -81,6 +83,7 @@ pub(super) fn act(
     events.deaths.clear();
     events.handling.clear();
     events.pickups.clear();
+    events.drops.clear();
     let Some(numbers) = setup.numbers.as_ref() else {
         return;
     };
@@ -117,12 +120,26 @@ pub(super) fn act(
         let holding = powers
             .as_deref()
             .is_some_and(|powers| powers.held(actor.slot).is_some());
-        let ticked = advance(numbers, tps, (pace, holding), wish, body, &mut arms);
+        let role = role_of(round.as_deref(), actor.slot);
+        let ticked = Turn {
+            slot: actor.slot,
+            numbers,
+            tps,
+            role,
+            pace,
+            holding,
+        }
+        .take(wish, body, &mut arms, &mut drops, &mut events);
         let recoil = arms.loadout.recoil();
         offsets.recoil_pitch_radians = recoil.pitch_radians;
         offsets.recoil_yaw_radians = recoil.yaw_radians;
         offsets.zoom = arms.loadout.view_zoom(&numbers.weapons);
-        speed.0 = arms.loadout.speed_factor(&numbers.weapons) * arms.tag_factor();
+        let applied = if arms.busy {
+            numbers.combat.device_hand.busy_run_speed_factor
+        } else {
+            arms.run_factor
+        };
+        speed.0 = applied * arms.tag_factor();
         handled(&mut events, actor.slot, &arms, &ticked);
         let Some(fired) = ticked.fired else {
             continue;
@@ -174,10 +191,178 @@ pub(super) fn act(
     );
 }
 
+struct Turn<'a> {
+    slot: u32,
+    numbers: &'a ArmsNumbers,
+    tps: u32,
+    role: Role,
+    pace: Pace,
+    holding: bool,
+}
+
+impl Turn<'_> {
+    fn take(
+        &self,
+        wish: &Wish,
+        body: &Body,
+        arms: &mut Arms,
+        drops: &mut Drops,
+        events: &mut ArmsEvents,
+    ) -> LoadoutTick {
+        let (numbers, tps) = (self.numbers, self.tps);
+        let mut redrawn = device_hand(numbers, tps, wish, self.role, arms);
+        let in_hand = arms.device_out || arms.busy;
+        if wish.drop
+            && !in_hand
+            && let Some(gun) = arms.loadout.drop_active(&numbers.weapons, tps)
+        {
+            redrawn = true;
+            drops.push(body.feet, &gun);
+            events.drops.push(DropEvent {
+                slot: self.slot,
+                weapon: gun.kind(),
+            });
+        }
+        let blocked = Blocked {
+            holding: self.holding || in_hand,
+            device: in_hand,
+            busy: arms.busy,
+        };
+        let mut ticked = advance(numbers, tps, (self.pace, blocked), wish, body, arms);
+        ticked.switched |= redrawn;
+        arms.hand = hand_of(numbers, tps, self.role, arms);
+        arms.run_factor = if in_hand {
+            numbers.combat.device_hand.run_speed_factor
+        } else {
+            arms.loadout.speed_factor(&numbers.weapons)
+        };
+        ticked
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Role {
+    Free,
+    Carrying,
+    Planting { progress: u32, needed: u32 },
+    Defusing { progress: u32, needed: u32 },
+}
+
+#[derive(Clone, Copy)]
+struct Blocked {
+    holding: bool,
+    device: bool,
+    busy: bool,
+}
+
+fn role_of(round: Option<&Round>, slot: u32) -> Role {
+    let Some(view) = round.and_then(Round::view) else {
+        return Role::Free;
+    };
+    let slot = slot as usize;
+    match *view.device {
+        Device::Carried { player, planting } if player == slot => match planting {
+            Some(planting) => Role::Planting {
+                progress: planting.progress,
+                needed: planting.needed,
+            },
+            None => Role::Carrying,
+        },
+        Device::Planted { defusing, .. } if defusing.player == Some(slot) => Role::Defusing {
+            progress: defusing.progress,
+            needed: defusing.needed,
+        },
+        Device::Carried { .. }
+        | Device::Dropped { .. }
+        | Device::Planted { .. }
+        | Device::Exploded { .. }
+        | Device::Defused { .. } => Role::Free,
+    }
+}
+
+fn device_hand(numbers: &ArmsNumbers, tps: u32, wish: &Wish, role: Role, arms: &mut Arms) -> bool {
+    let was_in_hand = arms.device_out || arms.busy;
+    let carrying = matches!(role, Role::Carrying | Role::Planting { .. });
+    arms.busy = matches!(role, Role::Planting { .. } | Role::Defusing { .. });
+    let asked = wish.equip.map(slot_of);
+    if !carrying {
+        arms.device_out = false;
+    } else if asked == Some(None) && !arms.device_out {
+        arms.device_out = true;
+        arms.device_equip_left = ticks(numbers.combat.device_hand.equip_seconds, tps);
+    } else if matches!(asked, Some(Some(_))) && !arms.busy {
+        arms.device_out = false;
+    } else {
+        arms.device_equip_left = arms.device_equip_left.saturating_sub(1);
+    }
+    if !arms.device_out {
+        arms.device_equip_left = 0;
+    }
+    let in_hand = arms.device_out || arms.busy;
+    let switching = asked
+        .flatten()
+        .is_some_and(|slot| slot != arms.loadout.active);
+    if !was_in_hand && in_hand {
+        arms.loadout.draw(&numbers.weapons, tps);
+    }
+    if was_in_hand && !in_hand && !switching {
+        arms.loadout.draw(&numbers.weapons, tps);
+        return true;
+    }
+    false
+}
+
+fn hand_of(numbers: &ArmsNumbers, tps: u32, role: Role, arms: &Arms) -> Hand {
+    let share = |progress: u32, needed: u32| progress as f32 / needed.max(1) as f32;
+    let seconds = |needed: u32| needed as f32 / tps.max(1) as f32;
+    match role {
+        Role::Planting { progress, needed } => {
+            return Hand {
+                held: Held::Device,
+                action: Some(HandAction::Plant),
+                progress: share(progress, needed),
+                seconds: seconds(needed),
+            };
+        }
+        Role::Defusing { progress, needed } => {
+            return Hand {
+                held: Held::Device,
+                action: Some(HandAction::Defuse),
+                progress: share(progress, needed),
+                seconds: seconds(needed),
+            };
+        }
+        Role::Free | Role::Carrying => {}
+    }
+    if arms.device_out {
+        let total = ticks(numbers.combat.device_hand.equip_seconds, tps);
+        return Hand {
+            held: Held::Device,
+            action: (arms.device_equip_left > 0).then_some(HandAction::Equip),
+            progress: 1.0 - share(arms.device_equip_left, total),
+            seconds: seconds(total),
+        };
+    }
+    let held = arms
+        .loadout
+        .active_gun()
+        .map_or(Held::Melee, |gun| Held::Gun(gun.kind()));
+    let moving = arms.loadout.hand_moving(&numbers.weapons, tps);
+    Hand {
+        held,
+        action: moving.map(|moving| match moving.motion {
+            HandMotion::Equip => HandAction::Equip,
+            HandMotion::Swing { heavy } => HandAction::Swing { heavy },
+        }),
+        progress: moving.map_or(0.0, |moving| moving.progress),
+        seconds: moving.map_or(0.0, |moving| moving.seconds),
+    }
+}
+
 fn advance(
     numbers: &ArmsNumbers,
     tps: u32,
-    (pace, holding): (Pace, bool),
+    (pace, blocked): (Pace, Blocked),
     wish: &Wish,
     body: &Body,
     arms: &mut Arms,
@@ -195,11 +380,12 @@ fn advance(
         landing: arms.landing_ticks > 0,
     };
     arms.stance = stance_of(&numbers.combat, numbers.player.run_speed_mps, footing);
+    let holding = blocked.holding;
     let input = LoadoutInput {
         fire_held: !holding && (wish.fire_held || wish.fire_pressed),
-        reload_pressed: wish.reload,
+        reload_pressed: !blocked.device && wish.reload,
         scope_pressed: !holding && wish.scope,
-        switch_to: wish.equip.and_then(slot_of),
+        switch_to: wish.equip.and_then(slot_of).filter(|_| !blocked.busy),
         pace,
     };
     let aim = crate::weapons::Aim {
@@ -337,6 +523,8 @@ struct Shooter<'a> {
 
 struct Through {
     entry: Vec3,
+    kind: Kind,
+    kept: f32,
     wall: Option<Hit>,
 }
 
@@ -368,7 +556,7 @@ impl Shooter<'_> {
             let event = shot_event(self.slot, weapon, ray, range, struck, wall);
             return (event, Some(pending));
         }
-        let through = wall.and_then(|hit| self.pierce(numbers, ray, range, hit));
+        let through = wall.and_then(|hit| self.pierce(gun, ray, range, hit));
         let Some(through) = through else {
             let event = shot_event(self.slot, weapon, ray, range, struck, wall);
             return (event, None);
@@ -386,38 +574,36 @@ impl Shooter<'_> {
                 weapon,
                 part,
                 distance,
-                gun_damage(numbers, part, distance) * combat.pierce_damage,
+                gun_damage(numbers, part, distance) * through.kept,
                 combat.pierce_tag_slow,
             )),
             Struck::World { .. } | Struck::Nothing => None,
         };
         let mut event = shot_event(self.slot, weapon, ray, range, beyond, through.wall);
         event.pierced = Some(through.entry);
+        event.pierced_kind = Some(through.kind);
         (event, pending)
     }
 
     fn pierce(
         &self,
-        gun: &GunNumbers,
+        gun: GunKind,
         (origin, direction): (Vec3, Vec3),
         range: f32,
         wall: Hit,
     ) -> Option<Through> {
-        let hardness = *self
+        let table = self
             .numbers
             .combat
-            .pierce_hardness
-            .get(surface_key(wall.surface))?;
-        let reach = gun.pierce_m / hardness;
+            .surface_by(|name| Kind::named(name) == wall.kind)?;
+        let reach = table.pierce_m.of(gun);
         let probe = wall.distance + reach;
         if reach <= 0.0 || probe >= range {
             return None;
         }
         let beyond = origin + direction * probe;
-        let back = self.arena.ray(beyond, -direction, reach)?;
-        if back.solid == wall.solid {
-            return None;
-        }
+        let skin = (probe + 1.0) * 16.0 * f32::EPSILON;
+        self.arena.ray(beyond, -direction, reach - skin)?;
         let onward = self
             .arena
             .ray(beyond, direction, range - probe)
@@ -427,6 +613,8 @@ impl Shooter<'_> {
             });
         Some(Through {
             entry: origin + direction * wall.distance,
+            kind: wall.kind,
+            kept: table.damage_kept,
             wall: onward,
         })
     }
@@ -488,15 +676,6 @@ impl Shooter<'_> {
     }
 }
 
-fn surface_key(surface: Surface) -> &'static str {
-    match surface {
-        Surface::Stone => "stone",
-        Surface::Metal => "metal",
-        Surface::Wood => "wood",
-        Surface::Dirt => "dirt",
-    }
-}
-
 fn shot_event(
     shooter: u32,
     weapon: Weapon,
@@ -505,6 +684,10 @@ fn shot_event(
     struck: Struck,
     wall: Option<Hit>,
 ) -> ShotEvent {
+    let kind = match (struck, wall) {
+        (Struck::Character { .. }, _) | (_, None) => None,
+        (Struck::World { .. } | Struck::Nothing, Some(hit)) => Some(hit.kind),
+    };
     let (distance, target, normal) = match (struck, wall) {
         (
             Struck::Character {
@@ -538,6 +721,8 @@ fn shot_event(
         end: origin + direction * distance,
         normal,
         pierced: None,
+        pierced_kind: None,
+        kind,
         target,
     }
 }

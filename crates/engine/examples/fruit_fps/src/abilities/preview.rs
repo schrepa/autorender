@@ -27,7 +27,15 @@ impl<W: World> World for Sandbox<'_, W> {
         self.0.sphere_sweep(centre, radius, motion)
     }
 
-    fn add_box(&mut self, _id: u32, _centre: Vec3, _half_extents: Vec3, _axes: Mat3) {}
+    fn add_box(
+        &mut self,
+        _id: u32,
+        _ability: AbilityId,
+        _centre: Vec3,
+        _half_extents: Vec3,
+        _axes: Mat3,
+    ) {
+    }
 
     fn remove_box(&mut self, _id: u32) {}
 }

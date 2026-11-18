@@ -1,8 +1,8 @@
 use glam::Vec3;
 
-use crate::bots::aim::{flat, flat_distance, max};
+use crate::bots::aim::{flat, flat_distance, max, radians, sin_cos};
 use crate::bots::numbers::BotNumbers;
-use crate::bots::places::{Places, Site};
+use crate::bots::places::{Places, Site, ZoneId};
 use crate::bots::sense::World;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -23,7 +23,10 @@ pub struct Way {
     pub attack_length: f32,
     pub defend_length: f32,
     pub hold: Hold,
+    pub cross: Hold,
     pub post: Hold,
+    pub smoke_at: Vec3,
+    pub flash_at: Vec3,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -31,6 +34,7 @@ pub struct SiteTactics {
     pub ways: Vec<Way>,
     pub plant: Vec3,
     pub defend_order: Vec<usize>,
+    pub back: Option<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -40,6 +44,7 @@ pub struct Tactics {
     pub mid_spot: Hold,
     pub attack_home: Vec3,
     pub defend_home: Vec3,
+    pub safe: Vec<bool>,
 }
 
 pub fn path_length(world: &dyn World, from: Vec3, to: Vec3, buffer: &mut Vec<Vec3>) -> f32 {
@@ -89,6 +94,37 @@ fn stage_on_path(
     (along(from, buffer, length - back), length)
 }
 
+pub fn safe_path(
+    world: &dyn World,
+    safe: &[bool],
+    from: Vec3,
+    to: Vec3,
+    allowed: [Option<ZoneId>; 2],
+    step: f32,
+    buffer: &mut Vec<Vec3>,
+) -> bool {
+    if !world.path(from, to, buffer) {
+        return false;
+    }
+    let places = world.places();
+    let mut at = from;
+    for &corner in buffer.iter() {
+        let length = flat_distance(at, corner);
+        let samples = (length / max(step, 0.1)).ceil() as usize;
+        for k in 0..=samples {
+            let point = at + (corner - at) * (k as f32 / samples.max(1) as f32);
+            if let Some(zone) = places.zone_at(point)
+                && !safe.get(zone as usize).copied().unwrap_or(true)
+                && !allowed.contains(&Some(zone))
+            {
+                return false;
+            }
+        }
+        at = corner;
+    }
+    true
+}
+
 fn cover_or(world: &dyn World, threat: Vec3, near: Vec3, search: f32) -> Vec3 {
     world.cover_from(threat, near, search).unwrap_or(near)
 }
@@ -108,6 +144,38 @@ fn watch_spot(
         }
     }
     cover_or(world, far, nears[0], search)
+}
+
+fn cross_spot(
+    world: &dyn World,
+    numbers: &BotNumbers,
+    far: Vec3,
+    hold: Vec3,
+    sides: [Vec3; 3],
+) -> Vec3 {
+    let [inside, center, inward] = sides;
+    let play = &numbers.play;
+    let up = Vec3::new(0.0, numbers.player.eye_height_m, 0.0);
+    let watch = inside + up;
+    let lateral = Vec3::new(-inward.z, 0.0, inward.x);
+    let first = flat(hold - inside).normalize_or_zero();
+    let apart = sin_cos(radians(play.crossfire_deg)).1;
+    for side in [1.0, -1.0] {
+        for share in [0.5, 0.3, 0.75] {
+            let near = inside.lerp(center, share) + lateral * (side * play.gate_step_m * 2.0);
+            let Some(spot) = world.cover_from(far, near, play.cover_search_m) else {
+                continue;
+            };
+            let angle = flat(spot - inside).normalize_or_zero().dot(first);
+            if angle <= apart
+                && flat_distance(spot, hold) >= play.spacing_m * 2.0
+                && world.sees(spot + up, watch)
+            {
+                return spot;
+            }
+        }
+    }
+    hold
 }
 
 struct WayInput<'a> {
@@ -151,6 +219,8 @@ fn build_way(
         inside.lerp(center, 0.3),
         inside.lerp(center, 0.75),
     ];
+    let hold = watch_spot(world, far, watch, hold_nears, search, up);
+    let cross = cross_spot(world, numbers, far, hold, [inside, center, inward]);
     let post_nears = [
         input.plant.lerp(inside, 0.35),
         input.plant,
@@ -166,15 +236,51 @@ fn build_way(
         defend_stage,
         attack_length,
         defend_length,
-        hold: Hold {
-            at: watch_spot(world, far, watch, hold_nears, search, up),
-            face,
-        },
+        hold: Hold { at: hold, face },
+        cross: Hold { at: cross, face },
         post: Hold {
             at: watch_spot(world, far, watch, post_nears, search, up),
             face,
         },
+        smoke_at: hold.lerp(inside, 0.5),
+        flash_at: inside + inward * play.flash_inside_m + up,
     }
+}
+
+fn back_way(places: &Places, ways: &[Way], safe: &[bool]) -> Option<usize> {
+    (0..ways.len())
+        .filter(|&w| {
+            places
+                .zone_at(ways[w].outside)
+                .is_some_and(|zone| safe.get(zone as usize).copied().unwrap_or(false))
+        })
+        .min_by(|&a, &b| {
+            ways[a]
+                .defend_length
+                .total_cmp(&ways[b].defend_length)
+                .then(a.cmp(&b))
+        })
+}
+
+fn zone_sides(
+    world: &dyn World,
+    numbers: &BotNumbers,
+    homes: [Vec3; 2],
+    buffer: &mut Vec<Vec3>,
+) -> Vec<bool> {
+    let places = world.places();
+    places
+        .zones
+        .iter()
+        .enumerate()
+        .map(|(index, zone)| {
+            let centre = (zone.min + zone.max) * 0.5;
+            let site = places.sites.iter().any(|s| s.zone as usize == index);
+            let attack = path_length(world, homes[0], centre, buffer);
+            let defend = path_length(world, homes[1], centre, buffer);
+            !site && defend + numbers.play.safe_margin_m < attack
+        })
+        .collect()
 }
 
 fn build_site(
@@ -182,6 +288,7 @@ fn build_site(
     numbers: &BotNumbers,
     site_index: usize,
     homes: [Vec3; 2],
+    safe: &[bool],
     buffer: &mut Vec<Vec3>,
 ) -> SiteTactics {
     let places: &Places = world.places();
@@ -230,9 +337,47 @@ fn build_site(
         None => site.center,
     };
     SiteTactics {
+        back: back_way(places, &ways, safe),
         ways,
         plant,
         defend_order,
+    }
+}
+
+fn mid_hold(
+    world: &dyn World,
+    numbers: &BotNumbers,
+    homes: [Vec3; 2],
+    safe: &[bool],
+    buffer: &mut Vec<Vec3>,
+) -> Hold {
+    let play = &numbers.play;
+    let places = world.places();
+    let length = path_length(world, homes[1], homes[0], buffer);
+    let step = max(play.gate_step_m, 0.1);
+    let mut edge = 0.0;
+    let mut distance = 0.0;
+    while distance <= length {
+        let point = along(homes[1], buffer, distance);
+        if let Some(zone) = places.zone_at(point)
+            && !safe.get(zone as usize).copied().unwrap_or(true)
+        {
+            break;
+        }
+        edge = distance;
+        distance += step;
+    }
+    let up = Vec3::new(0.0, numbers.player.eye_height_m, 0.0);
+    let watch = along(homes[1], buffer, edge + step) + up * 0.75;
+    let far = along(homes[1], buffer, edge + play.stage_back_m) + up;
+    let nears = [
+        along(homes[1], buffer, edge - step),
+        along(homes[1], buffer, edge - 2.0 * step),
+        along(homes[1], buffer, edge),
+    ];
+    Hold {
+        at: watch_spot(world, far, watch, nears, play.cover_search_m, up),
+        face: watch,
     }
 }
 
@@ -240,28 +385,27 @@ pub fn build(world: &dyn World, numbers: &BotNumbers, buffer: &mut Vec<Vec3>) ->
     let places = world.places();
     let attack_home = mean(&places.attack_spawns);
     let defend_home = mean(&places.defend_spawns);
+    let homes = [attack_home, defend_home];
+    let safe = zone_sides(world, numbers, homes, buffer);
     let sites = (0..places.sites.len())
-        .map(|s| build_site(world, numbers, s, [attack_home, defend_home], buffer))
+        .map(|s| build_site(world, numbers, s, homes, &safe, buffer))
         .collect();
     let play = &numbers.play;
+    let mid_hold = mid_hold(world, numbers, homes, &safe, buffer);
     let length = path_length(world, attack_home, defend_home, buffer);
     let middle = length * play.mid_share;
     let up = Vec3::new(0.0, numbers.player.eye_height_m, 0.0);
-    let threat = along(attack_home, buffer, middle - play.stage_back_m);
-    let near = along(attack_home, buffer, middle + play.gate_step_m);
     let middle_point = along(attack_home, buffer, middle);
     let spot = along(attack_home, buffer, middle - 2.0 * play.stage_back_m);
     Tactics {
         sites,
-        mid_hold: Hold {
-            at: cover_or(world, threat + up, near, play.cover_search_m),
-            face: threat + up,
-        },
+        mid_hold,
         mid_spot: Hold {
             at: spot,
             face: middle_point + up,
         },
         attack_home,
         defend_home,
+        safe,
     }
 }

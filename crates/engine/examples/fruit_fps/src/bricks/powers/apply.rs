@@ -4,54 +4,69 @@ use glam::{Mat3, Vec3};
 use super::cast::{Asked, rules_slot, slot_key};
 use super::hold::Casting;
 use super::publish::{self, Sheet};
-use super::{Book, CastStat, Parts, PowerSetup, PowerStats, PowersBrick, ShieldHeld};
-use crate::abilities::{self, ActorId, Event, World, WorldHit};
+use super::{Book, CastStat, Parts, PowerSetup, PowerStats, PowersBrick, ShieldHeld, SolidKind};
+use crate::abilities::{self, AbilityId, ActorId, Event, World, WorldHit};
 use crate::play::actors::{Actor, Alive, Body, Health, Human, SpeedFactor, Wish};
 use crate::play::effects::EffectsFeed;
 use crate::play::events::arms::{AbilityKill, ArmsEvents, DeathEvent};
 use crate::play::events::powers::PowerEvents;
 use crate::play::events::round::RoundEvents;
 use crate::play::paths::Hazards;
-use crate::play::powers::{Powers, Push};
+use crate::play::powers::{Powers, Push, world_hit};
 use crate::play::round::Round;
 use crate::play::view::ViewOffsets;
 use crate::play::world::Arena;
 use crate::rules::{Phase, Team};
-use crate::solids::{Block, Surface};
+use crate::solids::{Block, Kind, Surface};
 use crate::weapons::{BodyPart, Vitals, forward, wound};
 
-struct ArenaWorld<'a>(&'a mut Arena);
+struct ArenaWorld<'a> {
+    arena: &'a mut Arena,
+    surfaces: &'a [(Kind, f32)],
+    kinds: &'a [SolidKind],
+}
 
 impl World for ArenaWorld<'_> {
     fn ray(&self, origin: Vec3, direction: Vec3, max: f32) -> Option<WorldHit> {
-        self.0.ray(origin, direction, max).map(|hit| WorldHit {
-            distance: hit.distance,
-            normal: hit.normal,
-        })
+        self.arena
+            .ray(origin, direction, max)
+            .map(|hit| world_hit(self.surfaces, &hit))
     }
 
     fn sphere_sweep(&self, centre: Vec3, radius: f32, motion: Vec3) -> Option<WorldHit> {
-        self.0
+        self.arena
             .solids()
             .sphere_sweep(centre, radius, motion)
-            .map(|hit| WorldHit {
-                distance: hit.distance,
-                normal: hit.normal,
-            })
+            .map(|hit| world_hit(self.surfaces, &hit))
     }
 
-    fn add_box(&mut self, id: u32, centre: Vec3, half_extents: Vec3, axes: Mat3) {
-        self.0.solids_mut().add_block(Block {
+    fn add_box(
+        &mut self,
+        id: u32,
+        ability: AbilityId,
+        centre: Vec3,
+        half_extents: Vec3,
+        axes: Mat3,
+    ) {
+        let (surface, kind) = self
+            .kinds
+            .iter()
+            .find(|held| held.ability == ability)
+            .map_or((Surface::Stone, Kind::STONE), |held| {
+                (held.surface, held.kind)
+            });
+        self.arena.solids_mut().add_block(Block {
             id,
             centre,
             half_extents,
             axes,
-            surface: Surface::Wood,
+            surface,
+            kind,
         });
     }
 
     fn remove_box(&mut self, id: u32) {
-        self.0.solids_mut().remove_block(id);
+        self.arena.solids_mut().remove_block(id);
     }
 }
 
@@ -377,6 +392,41 @@ fn faces(rows: &Query<Row<'_>>, order: &[(u32, Entity)]) -> Vec<(u32, Team, Stri
         .collect()
 }
 
+fn opening(
+    world: &mut ArenaWorld<'_>,
+    powers: &mut Powers,
+    book: &mut Book,
+    restarted: bool,
+) -> Vec<Event> {
+    let mut ticked = Vec::new();
+    if restarted {
+        ticked.extend(powers.effects.end_round(world));
+        book.shields.clear();
+        powers.struck.clear();
+        powers.held.clear();
+        book.ledger = Default::default();
+    }
+    for hit in std::mem::take(&mut powers.struck) {
+        ticked.extend(powers.effects.damage_effect(
+            world,
+            hit.effect,
+            hit.damage,
+            ActorId(hit.shooter),
+        ));
+    }
+    ticked
+}
+
+fn speed_up(rows: &mut Query<Row<'_>>, order: &[(u32, Entity)], powers: &Powers) {
+    for (_, entity) in order {
+        if let Ok(mut row) = rows.get_mut(*entity)
+            && let Some(speed) = row.5.as_mut()
+        {
+            speed.0 *= powers.modifiers(row.1.slot).speed;
+        }
+    }
+}
+
 pub(super) fn act(
     facts: Facts<'_>,
     mut out: Out<'_>,
@@ -404,23 +454,15 @@ pub(super) fn act(
         ..PowerEvents::default()
     };
     let order = ordered(&rows, &mut spawner);
-    let mut world = ArenaWorld(arena);
-    let mut ticked = Vec::new();
-    if round_restarted(book, facts.round.as_deref(), facts.round_events.as_deref()) {
-        ticked.extend(powers.effects.end_round(&mut world));
-        book.shields.clear();
-        powers.struck.clear();
-        powers.held.clear();
-        book.ledger = Default::default();
-    }
-    for hit in std::mem::take(&mut powers.struck) {
-        ticked.extend(powers.effects.damage_effect(
-            &mut world,
-            hit.effect,
-            hit.damage,
-            ActorId(hit.shooter),
-        ));
-    }
+    let surfaces = powers.surfaces.clone();
+    let kinds = book.solid_kinds.clone();
+    let mut world = ArenaWorld {
+        arena,
+        surfaces: &surfaces,
+        kinds: &kinds,
+    };
+    let restarted = round_restarted(book, facts.round.as_deref(), facts.round_events.as_deref());
+    let mut ticked = opening(&mut world, powers, book, restarted);
     let Some(parts) = book.parts else {
         publish::write_stats(stats, book, &facts.setup, &[], tick);
         return;
@@ -442,13 +484,7 @@ pub(super) fn act(
         &mut spawner,
     );
     expire_shields(book, &mut rows, &order, tick);
-    for (_, entity) in &order {
-        if let Ok(mut row) = rows.get_mut(*entity)
-            && let Some(speed) = row.5.as_mut()
-        {
-            speed.0 *= powers.modifiers(row.1.slot).speed;
-        }
-    }
+    speed_up(&mut rows, &order, powers);
     let asked = Asked {
         book: book.abilities.as_ref(),
         view: facts.round.as_deref().and_then(Round::view),
@@ -464,7 +500,7 @@ pub(super) fn act(
         tick,
     };
     casting.run(&rows, &order, (&mut *powers, &mut *events, &mut ticked));
-    casting.previews(&world, &rows, &order, powers);
+    casting.previews(world.arena, &rows, &order, powers);
     tally(
         (&mut book.casts_total, &mut book.last_cast),
         (&mut book.refused_total, &mut book.last_refusal),
@@ -494,6 +530,7 @@ pub(super) fn act(
     }
     let human_slots = sheet.human_slots();
     let live = sheet.live();
+    let props = publish::prop_stats(&sheet.props());
     if let Some(arms) = arms.as_deref_mut() {
         arms.deaths.extend(applied.deaths);
     }
@@ -502,4 +539,5 @@ pub(super) fn act(
     publish::write_stats(stats, book, &facts.setup, &live, tick);
     publish::write_tick_stats(stats, events, powers, human_slots);
     stats.hidden_from_human = hidden_from_human(&rows, &order, powers);
+    stats.props = props;
 }

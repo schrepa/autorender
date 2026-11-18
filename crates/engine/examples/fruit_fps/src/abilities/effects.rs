@@ -52,12 +52,20 @@ pub struct Aim {
 pub struct WorldHit {
     pub distance: f32,
     pub normal: Vec3,
+    pub bounce: f32,
 }
 
 pub trait World {
     fn ray(&self, origin: Vec3, direction: Vec3, max: f32) -> Option<WorldHit>;
     fn sphere_sweep(&self, centre: Vec3, radius: f32, motion: Vec3) -> Option<WorldHit>;
-    fn add_box(&mut self, id: u32, centre: Vec3, half_extents: Vec3, axes: Mat3);
+    fn add_box(
+        &mut self,
+        id: u32,
+        ability: AbilityId,
+        centre: Vec3,
+        half_extents: Vec3,
+        axes: Mat3,
+    );
     fn remove_box(&mut self, id: u32);
 }
 
@@ -208,6 +216,8 @@ pub(super) struct WallState {
 pub(super) struct TrapState {
     pub(super) a: Vec3,
     pub(super) b: Vec3,
+    pub(super) normal_a: Vec3,
+    pub(super) normal_b: Vec3,
     pub(super) spec: TrapSpec,
     pub(super) health: f32,
     pub(super) armed: bool,
@@ -216,6 +226,7 @@ pub(super) struct TrapState {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct SensorState {
     pub(super) at: Vec3,
+    pub(super) normal: Vec3,
     pub(super) spec: SensorSpec,
     pub(super) health: f32,
     pub(super) armed: bool,
@@ -863,10 +874,11 @@ impl<W: World> Run<'_, W> {
         flight.position = contact;
         let share = if full > 0.0 { hit.distance / full } else { 0.0 };
         let velocity = flight.velocity + Vec3::NEG_Y * (throw.gravity * share);
-        if flight.bounces_left > 0 {
+        if flight.bounces_left > 0 && hit.bounce > 0.0 {
             flight.bounces_left -= 1;
-            flight.velocity =
-                (velocity - hit.normal * (2.0 * velocity.dot(hit.normal))) * throw.bounce_keep;
+            flight.velocity = (velocity - hit.normal * (2.0 * velocity.dot(hit.normal)))
+                * throw.bounce_keep
+                * hit.bounce;
             self.cue(CueKind::Bounce, ability, contact, throw.radius_m, 0);
             None
         } else if throw.fuse_ticks.is_some() {
@@ -1190,7 +1202,7 @@ impl<W: World> Run<'_, W> {
             }
             Action::Wall(spec) => self.wall(living, point, spec),
             Action::Trap(spec) => self.trap(living, point, normal, spec),
-            Action::Sensor(spec) => self.sensor(living, point, spec),
+            Action::Sensor(spec) => self.sensor(living, point, normal, spec),
             Action::Pulse {
                 radius_m,
                 reveal_ticks,
@@ -1217,7 +1229,7 @@ impl<W: World> Run<'_, W> {
         }
     }
 
-    fn sensor(&mut self, living: &Living, point: Vec3, spec: SensorSpec) -> State {
+    fn sensor(&mut self, living: &Living, point: Vec3, normal: Vec3, spec: SensorSpec) -> State {
         self.cue(
             CueKind::SensorPlaced,
             living.ability,
@@ -1227,6 +1239,7 @@ impl<W: World> Run<'_, W> {
         );
         State::Sensor(SensorState {
             at: point,
+            normal,
             spec,
             health: spec.health,
             armed: false,
@@ -1253,15 +1266,15 @@ impl<W: World> Run<'_, W> {
     }
 
     fn trap(&mut self, living: &Living, point: Vec3, normal: Vec3, spec: TrapSpec) -> State {
-        let b = match spec.shape {
-            TrapShape::Radius(_) => point,
+        let (b, normal_b) = match spec.shape {
+            TrapShape::Radius(_) => (point, normal),
             TrapShape::Wire { max_length_m } => {
                 match flat(normal).or_else(|| flat(-living.aim.direction)) {
                     Some(across) => match self.world.ray(point, across, max_length_m) {
-                        Some(hit) => point + across * hit.distance,
-                        None => point + across * max_length_m,
+                        Some(hit) => (point + across * hit.distance, hit.normal),
+                        None => (point + across * max_length_m, -across),
                     },
-                    None => point,
+                    None => (point, normal),
                 }
             }
         };
@@ -1275,6 +1288,8 @@ impl<W: World> Run<'_, W> {
         State::Trap(TrapState {
             a: point,
             b,
+            normal_a: normal,
+            normal_b,
             spec,
             health: spec.health,
             armed: false,
@@ -1395,7 +1410,8 @@ impl<W: World> Run<'_, W> {
         };
         let solid_id = spec.solid.then(|| self.solid_id_base + living.id.0);
         if let Some(id) = solid_id {
-            self.world.add_box(id, centre, half_extents, axes);
+            self.world
+                .add_box(id, living.ability, centre, half_extents, axes);
             self.events.push(Event::SolidAdded {
                 effect: living.id,
                 id,

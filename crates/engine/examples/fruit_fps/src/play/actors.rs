@@ -4,7 +4,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::rules::{AbilitySlot, BuyRequest, Team};
-use crate::solids::{Landed, Surface};
+use crate::solids::{Ground, Landed};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -92,6 +92,7 @@ pub struct Wish {
     pub fire_held: bool,
     pub fire_pressed: bool,
     pub reload: bool,
+    pub drop: bool,
     pub scope: bool,
     pub equip: Option<Equip>,
     pub interact_held: bool,
@@ -121,6 +122,6 @@ pub struct Body {
     pub eye: Vec3,
     pub eye_before: Vec3,
     pub motion: Motion,
-    pub ground: Option<Surface>,
+    pub ground: Option<Ground>,
     pub landed: Option<Landed>,
 }

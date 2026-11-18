@@ -55,7 +55,7 @@ fn vs_screen(@builtin(vertex_index) vertex: u32, @builtin(instance_index) index:
     let size = quad.rect.zw;
     var pad = 0.0;
     if quad.mode == PLATE {
-        pad = PLATE_PAD;
+        pad = PLATE_PAD * quad.scale;
     }
     let local = (corner - vec2<f32>(0.5)) * (size + vec2<f32>(2.0 * pad));
     let turn = vec2<f32>(cos(quad.angle), sin(quad.angle));
@@ -91,7 +91,7 @@ fn premultiplied(color: vec4<f32>, amount: f32) -> vec4<f32> {
 
 fn plate(quad: Quad, local: vec2<f32>) -> vec4<f32> {
     let half = quad.rect.zw * 0.5;
-    let inside = coverage(rounded_box(local, half, quad.radius));
+    let inside = coverage(rounded_box(local, half, quad.radius) / quad.scale);
     var shown = premultiplied(unpack4x8unorm(quad.fill), inside);
     if quad.stroke_width > 0.0 {
         let inset = quad.stroke_inset;
@@ -99,6 +99,10 @@ fn plate(quad: Quad, local: vec2<f32>) -> vec4<f32> {
         let deep = inset + quad.stroke_width;
         let inner = coverage(rounded_box(local, half - vec2<f32>(deep), quad.radius - deep));
         shown = over(premultiplied(unpack4x8unorm(quad.edge), max(outer - inner, 0.0)), shown);
+    }
+    if quad.uv.x > 0.0 {
+        let turn = fract(atan2(local.x, -local.y) / 6.2831853 + 1.0);
+        shown = shown * select(0.0, 1.0, turn <= 1.0 - quad.uv.x);
     }
     return shown;
 }
@@ -142,7 +146,9 @@ fn fs_screen(corner: Corner) -> @location(0) vec4<f32> {
     let lod = lod_of(quad.scale);
     if quad.mode == IMAGE {
         let picture = picture_of(quad.edge, corner.uv, lod);
-        let tinted = vec4<f32>(encoded(picture.rgb), picture.a) * tint;
+        let shown = encoded(picture.rgb);
+        let grey = dot(shown, vec3<f32>(0.2126, 0.7152, 0.0722));
+        let tinted = vec4<f32>(mix(shown, vec3<f32>(grey), quad.stroke_width), picture.a) * tint;
         return premultiplied(tinted, 1.0);
     }
     if quad.mode == ICON {
@@ -154,5 +160,5 @@ fn fs_screen(corner: Corner) -> @location(0) vec4<f32> {
     let distance = textureSampleLevel(screen_glyphs, screen_sampler, corner.uv / texels, lod).r;
     let spread = quad.radius;
     let pixels = (distance - 0.5) * 2.0 * spread * quad.scale + quad.stroke_width;
-    return premultiplied(tint, clamp(pixels + 0.5, 0.0, 1.0));
+    return premultiplied(tint, clamp(pixels / (1.0 + quad.stroke_inset) + 0.5, 0.0, 1.0));
 }

@@ -1,7 +1,7 @@
 use engine::prelude::Resource;
 use glam::Vec3;
 
-use crate::bots::{BotDebug, SquadDebug};
+use crate::bots::{BotDebug, Line, SquadDebug, ThrowCounts, ThrowState};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct WishSummary {
@@ -16,6 +16,8 @@ pub struct WishSummary {
 pub struct BotMind {
     pub slot: u32,
     pub mind: BotDebug,
+    pub throws: ThrowCounts,
+    pub line_up: Option<(Line, ThrowState)>,
     pub goal: Vec3,
     pub wish: WishSummary,
 }
@@ -29,4 +31,5 @@ pub struct BotMinds {
     pub squads: [Option<SquadDebug>; 2],
     pub queries: u32,
     pub expanded: u32,
+    pub drops: u32,
 }

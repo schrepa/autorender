@@ -1,5 +1,5 @@
 use engine::prelude::{Component, Resource};
-use engine_core::{Error, ErrorCode, Expected};
+use engine_core::{Error, ErrorCode, Expected, TextureRef};
 use glam::Vec3;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -68,6 +68,7 @@ pub struct SkyLook {
     pub disc_strength: f32,
     pub glow_power: f32,
     pub glow_strength: f32,
+    pub mirror_roughness: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -110,6 +111,14 @@ impl Default for Ambient {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LightField {
+    pub map: TextureRef,
+    pub rect: [f32; 4],
+    pub height_m: f32,
+    pub scale: f32,
+}
+
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Lighting {
     pub lit: bool,
@@ -123,4 +132,5 @@ pub struct Lighting {
     pub grade: Grade,
     pub ambient: Ambient,
     pub antialias: bool,
+    pub field: Option<LightField>,
 }

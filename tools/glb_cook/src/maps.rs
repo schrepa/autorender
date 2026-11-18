@@ -5,7 +5,7 @@ use gltf::texture::{MagFilter, MinFilter, WrappingMode};
 use crate::fault::Fault;
 use crate::source::Source;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum MapKind {
     BaseColor,
     Normal,
@@ -24,6 +24,7 @@ impl MapKind {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct Sampling {
     pub wrap_u: WrappingMode,
     pub wrap_v: WrappingMode,
@@ -201,6 +202,35 @@ pub fn texture_of<'a>(
     }
 }
 
+pub fn sampling(texture: &gltf::Texture<'_>, tex_coord: u32) -> Sampling {
+    let sampler = texture.sampler();
+    Sampling {
+        wrap_u: sampler.wrap_s(),
+        wrap_v: sampler.wrap_t(),
+        mag: sampler.mag_filter(),
+        min: sampler.min_filter(),
+        tex_coord,
+    }
+}
+
+pub fn key(
+    material: &gltf::Material<'_>,
+    kind: MapKind,
+    size: u32,
+) -> Option<(usize, MapKind, u32, [u32; 2])> {
+    let (texture, _) = texture_of(material, kind)?;
+    let pbr = material.pbr_metallic_roughness();
+    let factors = if kind == MapKind::Orm {
+        [
+            pbr.roughness_factor().to_bits(),
+            pbr.metallic_factor().to_bits(),
+        ]
+    } else {
+        [0, 0]
+    };
+    Some((texture.source()?.index(), kind, size, factors))
+}
+
 pub fn map(
     source: &Source,
     material: &gltf::Material<'_>,
@@ -255,18 +285,11 @@ pub fn map(
         .map_err(|error| source.fault("PngEncode", item.clone(), error))?;
     let written = decode_image(&item, &png)
         .map_err(|error| source.fault("PngReadBack", item.clone(), error))?;
-    let sampler = texture.sampler();
     Ok(Map {
         kind,
         stem: format!("{stem}_{}", kind.name()),
         png,
         decoded: written,
-        sampling: Sampling {
-            wrap_u: sampler.wrap_s(),
-            wrap_v: sampler.wrap_t(),
-            mag: sampler.mag_filter(),
-            min: sampler.min_filter(),
-            tex_coord,
-        },
+        sampling: sampling(&texture, tex_coord),
     })
 }

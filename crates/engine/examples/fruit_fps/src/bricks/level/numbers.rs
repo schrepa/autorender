@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SkyNumbers {
-    pub zenith_scale: f32,
+    pub zenith: [f32; 3],
     pub horizon: [f32; 3],
     pub below: [f32; 3],
     pub haze_height: f32,
@@ -13,6 +13,7 @@ pub struct SkyNumbers {
     pub disc_strength: f32,
     pub glow_power: f32,
     pub glow_strength: f32,
+    pub mirror_roughness: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]

@@ -14,6 +14,7 @@ use engine_render::{
 
 use crate::names::{COLOR, COLOR_PASS, COMPOSITE_PASS, DEPTH};
 use crate::play::light::{Grade, Lighting};
+use crate::play::view::Controls;
 
 gpu_struct! {
     pub struct FrameGrade {
@@ -65,7 +66,7 @@ fn graded(grade: Grade, antialias: bool) -> FrameGrade {
 }
 
 impl GpuPart for Composite {
-    type Reads = Option<Res<'static, Lighting>>;
+    type Reads = (Option<Res<'static, Lighting>>, Option<Res<'static, Controls>>);
     const NAME: &'static str = "frame";
 
     fn install(cx: &mut Install<'_, Self>) -> Result<Self, Error> {
@@ -120,9 +121,12 @@ impl GpuPart for Composite {
 
     fn prepare(
         &mut self,
-        lighting: SystemParamItem<'_, '_, Self::Reads>,
+        (lighting, controls): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
+        let scale = controls.map_or(1.0, |controls| controls.render_scale);
+        cx.scale_target(COLOR, scale);
+        cx.scale_target(DEPTH, scale);
         let shown = lighting.map_or_else(
             || graded(Grade::default(), false),
             |lighting| graded(lighting.grade, lighting.antialias),

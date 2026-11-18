@@ -4,6 +4,9 @@
     "team_size": 5,
     "rounds_to_win": 13,
     "swap_sides_after_round": 12,
+    "overtime_win_by": 2,
+    "overtime_credits": 5000,
+    "overtime_rounds_before_decider": 4,
     "buy_seconds": 20,
     "buy_seconds_first_round_of_half": 30,
     "round_seconds": 100,
@@ -113,9 +116,14 @@
     "walk_factor": 0.5,
     "crouch_factor": 0.4,
     "jump_height_m": 0.9,
-    "ground_accel_mps2": 60,
-    "ground_friction": 9,
-    "air_accel_mps2": 8,
+    "ground_accel_mps2": 11.1,
+    "ground_friction": 6,
+    "braking_friction": 6,
+    "braking_decel_mps2": 18.3,
+    "air_accel_per_s": 12,
+    "air_wish_cap_mps": 0.65,
+    "jump_speed_cap_mps": 6.75,
+    "crouch_jump_lift_m": 0.275,
     "step_height_m": 0.35,
     "footstep_heard_m": 28,
     "walk_is_silent": true,
@@ -126,7 +134,8 @@
     "stride_run_m": 1.5,
     "stride_walk_m": 1.2,
     "stride_crouch_m": 1.0,
-    "hard_landing_mps": 7.5
+    "hard_landing_mps": 7.5,
+    "push_apart_mps": 1.5
   },
   "weapons": {
     "sidearm": {
@@ -138,7 +147,7 @@
       "reserve": 36,
       "reload_seconds": 1.75,
       "equip_seconds": 0.75,
-      "speed_factor": 1.06,
+      "run_speed_factor": 1.061,
       "damage": [
         {
           "to_m": 30,
@@ -156,10 +165,10 @@
       "spread_deg": {
         "stand": 0.4,
         "crouch": 0.3,
-        "walk": 1.0,
-        "run": 2.2,
+        "walk": 1.1,
+        "run": 2.3,
         "air": 5.0,
-        "crouch_move": 0.6,
+        "crouch_move": 0.5,
         "land": 7.0
       },
       "recoil": {
@@ -171,8 +180,7 @@
         "side_jitter_deg": 0.1,
         "recover_seconds": 0.35
       },
-      "tag_slow": 0.725,
-      "pierce_m": 0.1
+      "tag_slow": 0.725
     },
     "smg": {
       "name": "Zest",
@@ -183,7 +191,7 @@
       "reserve": 90,
       "reload_seconds": 2.25,
       "equip_seconds": 0.75,
-      "speed_factor": 1.06,
+      "run_speed_factor": 1.061,
       "damage": [
         {
           "to_m": 20,
@@ -217,12 +225,11 @@
         "recover_seconds": 0.35
       },
       "tag_slow": 0.725,
-      "pierce_m": 0.2,
       "scope": {
         "zoom": [
           1.15
         ],
-        "speed_factor": 0.8,
+        "aim_speed_factor": 0.76,
         "spread_deg": {
           "stand": 0.4,
           "crouch": 0.32,
@@ -246,7 +253,7 @@
       "reserve": 75,
       "reload_seconds": 2.5,
       "equip_seconds": 1.0,
-      "speed_factor": 1.0,
+      "run_speed_factor": 1.0,
       "damage": [
         {
           "to_m": 999,
@@ -258,8 +265,8 @@
       "spread_deg": {
         "stand": 0.25,
         "crouch": 0.16,
-        "walk": 2.0,
-        "run": 5.0,
+        "walk": 3.0,
+        "run": 6.0,
         "air": 8.0,
         "crouch_move": 0.8,
         "land": 7.0
@@ -274,12 +281,11 @@
         "recover_seconds": 0.4
       },
       "tag_slow": 0.725,
-      "pierce_m": 0.2,
       "scope": {
         "zoom": [
           1.25
         ],
-        "speed_factor": 0.8,
+        "aim_speed_factor": 0.76,
         "spread_deg": {
           "stand": 0.2,
           "crouch": 0.13,
@@ -302,8 +308,8 @@
       "magazine": 5,
       "reserve": 10,
       "reload_seconds": 3.7,
-      "equip_seconds": 1.25,
-      "speed_factor": 0.95,
+      "equip_seconds": 1.5,
+      "run_speed_factor": 0.95,
       "damage": [
         {
           "to_m": 999,
@@ -335,7 +341,7 @@
           2.5,
           5.0
         ],
-        "speed_factor": 0.76,
+        "aim_speed_factor": 0.72,
         "spread_deg": {
           "stand": 0.0,
           "crouch": 0.0,
@@ -349,17 +355,16 @@
         "scope_in_seconds": 0.25,
         "breaks_on_shot": true
       },
-      "tag_slow": 0.725,
-      "pierce_m": 0.4
+      "tag_slow": 0.725
     },
     "melee": {
       "name": "Peeler",
       "damage_front": 50,
       "damage_back": 100,
       "range_m": 1.6,
-      "speed_factor": 1.25,
+      "run_speed_factor": 1.25,
       "swing_seconds": 0.6,
-      "equip_seconds": 0.5,
+      "equip_seconds": 0.6,
       "heavy_front": 75.0,
       "heavy_back": 150.0,
       "heavy_swing_seconds": 1.0
@@ -395,7 +400,8 @@
           }
         },
         "health": 20,
-        "hit_radius_m": 0.3
+        "hit_radius_m": 0.3,
+        "prop": "prop_peel"
       },
       "q": {
         "name": "Ripe Flash",
@@ -415,7 +421,8 @@
           }
         },
         "away_factor": 0.3,
-        "fade_seconds": 0.5
+        "fade_seconds": 0.5,
+        "prop": "prop_ripe_flash"
       },
       "e": {
         "name": "Split",
@@ -454,7 +461,8 @@
             "bounces": 0,
             "bounce_keep": 0.0
           }
-        }
+        },
+        "prop": "prop_jam_pool"
       },
       "q": {
         "name": "Seed Sensor",
@@ -473,7 +481,8 @@
         },
         "arm_seconds": 1.0,
         "health": 40,
-        "hit_radius_m": 0.2
+        "hit_radius_m": 0.2,
+        "prop": "prop_seed_sensor"
       },
       "e": {
         "name": "Sweet Spot",
@@ -491,7 +500,8 @@
             "bounces": 0,
             "bounce_keep": 0.0
           }
-        }
+        },
+        "prop": "prop_sweet_spot"
       },
       "x": {
         "name": "Sugar Rush",
@@ -523,7 +533,8 @@
             "bounce_keep": 0.4
           }
         },
-        "hurts_team": true
+        "hurts_team": true,
+        "prop": "prop_zest_bomb"
       },
       "q": {
         "name": "Citrus Curtain",
@@ -553,7 +564,8 @@
           }
         },
         "grow_seconds": 0.5,
-        "fade_seconds": 1.0
+        "fade_seconds": 1.0,
+        "prop": "prop_pulp_cloud"
       },
       "x": {
         "name": "Juice Flood",
@@ -586,7 +598,8 @@
             "bounce_keep": 0.45
           }
         },
-        "hurts_team": true
+        "hurts_team": true,
+        "prop": "prop_seed_grenade"
       },
       "q": {
         "name": "Rind Wall",
@@ -604,7 +617,9 @@
             "lift_m": 0.0
           }
         },
-        "thickness_m": 0.4
+        "thickness_m": 0.4,
+        "prop": "prop_rind_wall",
+        "kind": "wood"
       },
       "e": {
         "name": "Thump",
@@ -629,7 +644,10 @@
             "lift_m": 0.0
           }
         },
-        "hurts_team": true
+        "hurts_team": true,
+        "prop": "prop_melon_drop",
+        "drop_height_m": 30.0,
+        "drop_seconds": 0.8
       }
     },
     "eggplant": {
@@ -651,7 +669,8 @@
             "bounces": 0,
             "bounce_keep": 0.0
           }
-        }
+        },
+        "prop": "prop_nightshade"
       },
       "q": {
         "name": "Vine Wire",
@@ -672,7 +691,8 @@
         },
         "arm_seconds": 1.0,
         "health": 30,
-        "hit_radius_m": 0.15
+        "hit_radius_m": 0.15,
+        "prop": "prop_vine_wire"
       },
       "e": {
         "name": "Glare",
@@ -696,10 +716,23 @@
       }
     }
   },
+  "throw_surfaces": {
+    "cloth": {
+      "bounce": 0.25
+    },
+    "plant": {
+      "bounce": 0.4
+    }
+  },
   "bots": {
     "levels": {
       "easy": {
         "reaction_seconds": 0.45,
+        "first_shot_error_deg": 6.0,
+        "tracking_error_deg": 2.4,
+        "spray_settle_seconds": 0.3,
+        "ability_skill": 0.5,
+        "checks_corners": false,
         "aim_error_deg": 2.4,
         "turn_deg_per_second": 220,
         "burst_shots": [
@@ -732,6 +765,11 @@
       },
       "normal": {
         "reaction_seconds": 0.3,
+        "first_shot_error_deg": 3.1,
+        "tracking_error_deg": 1.4,
+        "spray_settle_seconds": 0.12,
+        "ability_skill": 0.8,
+        "checks_corners": true,
         "aim_error_deg": 1.4,
         "turn_deg_per_second": 320,
         "burst_shots": [
@@ -764,6 +802,11 @@
       },
       "hard": {
         "reaction_seconds": 0.2,
+        "first_shot_error_deg": 1.6,
+        "tracking_error_deg": 0.8,
+        "spray_settle_seconds": 0.05,
+        "ability_skill": 0.95,
+        "checks_corners": true,
         "aim_error_deg": 0.8,
         "turn_deg_per_second": 480,
         "burst_shots": [
@@ -805,7 +848,38 @@
       "error_wander_seconds": 0.3,
       "blind_turn": 0.7,
       "spray_m": 8,
-      "stop_speed_share": 0.3,
+      "sweep_quiet_seconds": 8,
+      "pickup_detour_m": 8,
+      "burst_shots": [
+        3,
+        5
+      ],
+      "stop_to_shoot": 0.8,
+      "burst_pause_seconds": 0.35,
+      "over_peek": 0.15,
+      "hesitate_seconds": [
+        0.2,
+        0.7
+      ],
+      "peek_wait_seconds": [
+        0.3,
+        1.2
+      ],
+      "shoot_through_smoke": false,
+      "safe_margin_m": 10,
+      "crossfire_deg": 35,
+      "retake_group": 2,
+      "line_up_m": 2.0,
+      "throw_pitch_deg": [
+        -20,
+        60
+      ],
+      "throw_steps": 12,
+      "throw_yaw_deg": 8,
+      "throw_work_per_tick": 6,
+      "throw_aim_deg": 0.3,
+      "throw_error_deg": 3.0,
+      "throw_moved_m": 0.5,
       "strafe_seconds": [
         0.25,
         0.6
@@ -936,15 +1010,87 @@
     "land_seconds": 0.225,
     "tag_seconds": 0.5,
     "pierce_tag_slow": 0.25,
-    "pierce_damage": 0.5,
-    "pierce_hardness": {
-      "wood": 1.0,
-      "dirt": 1.5,
-      "stone": 2.0,
-      "metal": 4.0
-    },
     "pickup_reach_m": 1.8,
-    "pickup_aim_m": 0.5
+    "pickup_aim_m": 0.5,
+    "device_hand": {
+      "equip_seconds": 0.6,
+      "run_speed_factor": 1.0,
+      "busy_run_speed_factor": 0.0
+    },
+    "surfaces": {
+      "stone": {
+        "pierce_m": {
+          "sidearm": 0.05,
+          "smg": 0.1,
+          "rifle": 0.1,
+          "sniper": 0.2
+        },
+        "damage_kept": 0.5
+      },
+      "metal": {
+        "pierce_m": {
+          "sidearm": 0.025,
+          "smg": 0.05,
+          "rifle": 0.05,
+          "sniper": 0.1
+        },
+        "damage_kept": 0.5
+      },
+      "wood": {
+        "pierce_m": {
+          "sidearm": 0.1,
+          "smg": 0.2,
+          "rifle": 0.2,
+          "sniper": 0.4
+        },
+        "damage_kept": 0.5
+      },
+      "dirt": {
+        "pierce_m": {
+          "sidearm": 0.0667,
+          "smg": 0.1333,
+          "rifle": 0.1333,
+          "sniper": 0.2667
+        },
+        "damage_kept": 0.5
+      },
+      "plaster": {
+        "pierce_m": {
+          "sidearm": 0.08,
+          "smg": 0.16,
+          "rifle": 0.16,
+          "sniper": 0.32
+        },
+        "damage_kept": 0.55
+      },
+      "glass": {
+        "pierce_m": {
+          "sidearm": 0.1,
+          "smg": 0.2,
+          "rifle": 0.2,
+          "sniper": 0.4
+        },
+        "damage_kept": 0.8
+      },
+      "plant": {
+        "pierce_m": {
+          "sidearm": 0.6,
+          "smg": 0.8,
+          "rifle": 1.0,
+          "sniper": 1.5
+        },
+        "damage_kept": 0.8
+      },
+      "cloth": {
+        "pierce_m": {
+          "sidearm": 1.0,
+          "smg": 1.0,
+          "rifle": 1.0,
+          "sniper": 1.0
+        },
+        "damage_kept": 0.9
+      }
+    }
   },
   "keys": {
     "forward": [
@@ -979,6 +1125,9 @@
     ],
     "reload": [
       "KeyR"
+    ],
+    "drop": [
+      "KeyG"
     ],
     "primary": [
       "Digit1"
@@ -1364,6 +1513,22 @@
         0.35,
         0.25
       ]
+    },
+    "preview": {
+      "valid": [
+        0.85,
+        0.95,
+        1.0
+      ],
+      "invalid": [
+        1.0,
+        0.15,
+        0.1
+      ],
+      "width_m": 0.025,
+      "rim_m": 0.08,
+      "height_m": 1.5,
+      "every_points": 3
     }
   },
   "spectate": {
@@ -1374,23 +1539,28 @@
   "lighting": {
     "sun_wrap": 0.2,
     "sky": {
-      "zenith_scale": 1.8,
+      "zenith": [
+        0.0011,
+        0.1142,
+        0.6255
+      ],
       "horizon": [
-        0.78,
-        0.84,
-        0.9
+        0.379,
+        0.67,
+        0.93
       ],
       "below": [
-        0.3,
-        0.27,
-        0.24
+        0.046,
+        0.257,
+        0.478
       ],
-      "haze_height": 0.22,
+      "haze_height": 0.121,
       "disc_degrees": 0.55,
       "disc_soft_degrees": 0.2,
       "disc_strength": 40.0,
       "glow_power": 32.0,
-      "glow_strength": 0.8
+      "glow_strength": 0.8,
+      "mirror_roughness": 0.3
     },
     "fog": {
       "start_m": 20.0,

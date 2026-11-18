@@ -1,6 +1,4 @@
 {
- "folder": "assets/sfx/",
- "extension": ".ogg",
  "seed": 7,
  "voices": 32,
  "master_gain": 0.6,
@@ -14,6 +12,18 @@
  "occlusion_pullback_m": 0.2,
  "pan_width": 0.8,
  "quiet_step_gain": 0.5,
+ "kinds": [
+  "stone",
+  "plaster",
+  "wood",
+  "metal",
+  "cloth",
+  "plant",
+  "glass",
+  "water",
+  "dirt"
+ ],
+ "default_kind": "stone",
  "countdown_seconds": 3,
  "device": {
   "plant_repeat_seconds": 0.45,
@@ -99,7 +109,7 @@
   "airstrike_impact": {
    "files": [
     {
-     "file": "airstrike_impact",
+     "file": "assets/sfx/airstrike_impact.ogg",
      "seconds": 1.419375
     }
    ],
@@ -114,7 +124,7 @@
   "airstrike_whistle": {
    "files": [
     {
-     "file": "airstrike_whistle",
+     "file": "assets/sfx/airstrike_whistle.ogg",
      "seconds": 2.205333
     }
    ],
@@ -129,7 +139,7 @@
   "bounce": {
    "files": [
     {
-     "file": "bounce",
+     "file": "assets/sfx/bounce.ogg",
      "seconds": 0.148792
     }
    ],
@@ -144,7 +154,7 @@
   "buff_on": {
    "files": [
     {
-     "file": "buff_on",
+     "file": "assets/sfx/buff_on.ogg",
      "seconds": 0.625917
     }
    ],
@@ -159,7 +169,7 @@
   "countdown_tick": {
    "files": [
     {
-     "file": "countdown_tick",
+     "file": "assets/sfx/countdown_tick.ogg",
      "seconds": 0.102625
     }
    ],
@@ -174,7 +184,7 @@
   "dash": {
    "files": [
     {
-     "file": "dash",
+     "file": "assets/sfx/dash.ogg",
      "seconds": 0.341875
     }
    ],
@@ -189,7 +199,7 @@
   "device_beep": {
    "files": [
     {
-     "file": "device_beep",
+     "file": "assets/sfx/device_beep.ogg",
      "seconds": 0.092021
     }
    ],
@@ -204,7 +214,7 @@
   "device_defuse_tick": {
    "files": [
     {
-     "file": "device_defuse_tick",
+     "file": "assets/sfx/device_defuse_tick.ogg",
      "seconds": 0.061687
     }
    ],
@@ -219,7 +229,7 @@
   "device_defused": {
    "files": [
     {
-     "file": "device_defused",
+     "file": "assets/sfx/device_defused.ogg",
      "seconds": 0.850333
     }
    ],
@@ -234,7 +244,7 @@
   "device_explode": {
    "files": [
     {
-     "file": "device_explode",
+     "file": "assets/sfx/device_explode.ogg",
      "seconds": 2.652854
     }
    ],
@@ -249,7 +259,7 @@
   "device_plant_tick": {
    "files": [
     {
-     "file": "device_plant_tick",
+     "file": "assets/sfx/device_plant_tick.ogg",
      "seconds": 0.04875
     }
    ],
@@ -264,7 +274,7 @@
   "device_planted": {
    "files": [
     {
-     "file": "device_planted",
+     "file": "assets/sfx/device_planted.ogg",
      "seconds": 0.788
     }
    ],
@@ -279,7 +289,7 @@
   "flash_pop": {
    "files": [
     {
-     "file": "flash_pop",
+     "file": "assets/sfx/flash_pop.ogg",
      "seconds": 0.429854
     }
    ],
@@ -294,7 +304,7 @@
   "flash_ring": {
    "files": [
     {
-     "file": "flash_ring",
+     "file": "assets/sfx/flash_ring.ogg",
      "seconds": 1.5
     }
    ],
@@ -309,7 +319,7 @@
   "heal_loop": {
    "files": [
     {
-     "file": "heal_loop",
+     "file": "assets/sfx/heal_loop.ogg",
      "seconds": 2.0
     }
    ],
@@ -324,7 +334,7 @@
   "heal_start": {
    "files": [
     {
-     "file": "heal_start",
+     "file": "assets/sfx/heal_start.ogg",
      "seconds": 1.117646
     }
    ],
@@ -339,15 +349,15 @@
   "hit_body": {
    "files": [
     {
-     "file": "hit_body_1",
+     "file": "assets/sfx/hit_body_1.ogg",
      "seconds": 0.116687
     },
     {
-     "file": "hit_body_2",
+     "file": "assets/sfx/hit_body_2.ogg",
      "seconds": 0.123729
     },
     {
-     "file": "hit_body_3",
+     "file": "assets/sfx/hit_body_3.ogg",
      "seconds": 0.111687
     }
    ],
@@ -362,11 +372,11 @@
   "hit_head": {
    "files": [
     {
-     "file": "hit_head_1",
+     "file": "assets/sfx/hit_head_1.ogg",
      "seconds": 0.237
     },
     {
-     "file": "hit_head_2",
+     "file": "assets/sfx/hit_head_2.ogg",
      "seconds": 0.227229
     }
    ],
@@ -378,19 +388,88 @@
    "own_gain": 1.0,
    "group": "effects"
   },
+  "impact_dirt": {
+   "files": [
+    {
+     "file": "assets/sfx/impact_dirt_1.ogg",
+     "seconds": 0.224917
+    },
+    {
+     "file": "assets/sfx/impact_dirt_2.ogg",
+     "seconds": 0.225917
+    },
+    {
+     "file": "assets/sfx/impact_dirt_3.ogg",
+     "seconds": 0.242479
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.05,
+   "priority": 50,
+   "curve": "impact",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "impact_glass": {
+   "files": [
+    {
+     "file": "assets/sfx/impact_glass_1.ogg",
+     "seconds": 0.299167
+    },
+    {
+     "file": "assets/sfx/impact_glass_2.ogg",
+     "seconds": 0.304063
+    },
+    {
+     "file": "assets/sfx/impact_glass_3.ogg",
+     "seconds": 0.310979
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.05,
+   "priority": 50,
+   "curve": "impact",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
   "impact_metal": {
    "files": [
     {
-     "file": "impact_metal_1",
+     "file": "assets/sfx/impact_metal_1.ogg",
      "seconds": 0.619125
     },
     {
-     "file": "impact_metal_2",
+     "file": "assets/sfx/impact_metal_2.ogg",
      "seconds": 0.572708
     },
     {
-     "file": "impact_metal_3",
+     "file": "assets/sfx/impact_metal_3.ogg",
      "seconds": 0.621083
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.05,
+   "priority": 50,
+   "curve": "impact",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "impact_plaster": {
+   "files": [
+    {
+     "file": "assets/sfx/impact_plaster_1.ogg",
+     "seconds": 0.327083
+    },
+    {
+     "file": "assets/sfx/impact_plaster_2.ogg",
+     "seconds": 0.335792
+    },
+    {
+     "file": "assets/sfx/impact_plaster_3.ogg",
+     "seconds": 0.312688
     }
    ],
    "loops": false,
@@ -404,15 +483,15 @@
   "impact_stone": {
    "files": [
     {
-     "file": "impact_stone_1",
+     "file": "assets/sfx/impact_stone_1.ogg",
      "seconds": 0.33325
     },
     {
-     "file": "impact_stone_2",
+     "file": "assets/sfx/impact_stone_2.ogg",
      "seconds": 0.318167
     },
     {
-     "file": "impact_stone_3",
+     "file": "assets/sfx/impact_stone_3.ogg",
      "seconds": 0.282125
     }
    ],
@@ -427,15 +506,15 @@
   "impact_wood": {
    "files": [
     {
-     "file": "impact_wood_1",
+     "file": "assets/sfx/impact_wood_1.ogg",
      "seconds": 0.221333
     },
     {
-     "file": "impact_wood_2",
+     "file": "assets/sfx/impact_wood_2.ogg",
      "seconds": 0.224167
     },
     {
-     "file": "impact_wood_3",
+     "file": "assets/sfx/impact_wood_3.ogg",
      "seconds": 0.201292
     }
    ],
@@ -450,7 +529,7 @@
   "jump": {
    "files": [
     {
-     "file": "jump",
+     "file": "assets/sfx/jump.ogg",
      "seconds": 0.226208
     }
    ],
@@ -465,7 +544,7 @@
   "kill_confirm": {
    "files": [
     {
-     "file": "kill_confirm",
+     "file": "assets/sfx/kill_confirm.ogg",
      "seconds": 0.605979
     }
    ],
@@ -480,8 +559,53 @@
   "land_hard": {
    "files": [
     {
-     "file": "land_hard",
+     "file": "assets/sfx/land_hard.ogg",
      "seconds": 0.311479
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.03,
+   "priority": 45,
+   "curve": "step",
+   "own_gain": 0.5,
+   "group": "footsteps"
+  },
+  "land_hard_dirt": {
+   "files": [
+    {
+     "file": "assets/sfx/land_hard_dirt.ogg",
+     "seconds": 0.303125
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.03,
+   "priority": 45,
+   "curve": "step",
+   "own_gain": 0.5,
+   "group": "footsteps"
+  },
+  "land_hard_metal": {
+   "files": [
+    {
+     "file": "assets/sfx/land_hard_metal.ogg",
+     "seconds": 0.303938
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.03,
+   "priority": 45,
+   "curve": "step",
+   "own_gain": 0.5,
+   "group": "footsteps"
+  },
+  "land_hard_wood": {
+   "files": [
+    {
+     "file": "assets/sfx/land_hard_wood.ogg",
+     "seconds": 0.302667
     }
    ],
    "loops": false,
@@ -495,8 +619,53 @@
   "land_soft": {
    "files": [
     {
-     "file": "land_soft",
+     "file": "assets/sfx/land_soft.ogg",
      "seconds": 0.201437
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.03,
+   "priority": 45,
+   "curve": "step",
+   "own_gain": 0.5,
+   "group": "footsteps"
+  },
+  "land_soft_dirt": {
+   "files": [
+    {
+     "file": "assets/sfx/land_soft_dirt.ogg",
+     "seconds": 0.204604
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.03,
+   "priority": 45,
+   "curve": "step",
+   "own_gain": 0.5,
+   "group": "footsteps"
+  },
+  "land_soft_metal": {
+   "files": [
+    {
+     "file": "assets/sfx/land_soft_metal.ogg",
+     "seconds": 0.229437
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.03,
+   "priority": 45,
+   "curve": "step",
+   "own_gain": 0.5,
+   "group": "footsteps"
+  },
+  "land_soft_wood": {
+   "files": [
+    {
+     "file": "assets/sfx/land_soft_wood.ogg",
+     "seconds": 0.216771
     }
    ],
    "loops": false,
@@ -510,7 +679,7 @@
   "match_loss": {
    "files": [
     {
-     "file": "match_loss",
+     "file": "assets/sfx/match_loss.ogg",
      "seconds": 3.465063
     }
    ],
@@ -525,7 +694,7 @@
   "match_win": {
    "files": [
     {
-     "file": "match_win",
+     "file": "assets/sfx/match_win.ogg",
      "seconds": 3.10775
     }
    ],
@@ -540,7 +709,7 @@
   "melee_hit": {
    "files": [
     {
-     "file": "melee_hit",
+     "file": "assets/sfx/melee_hit.ogg",
      "seconds": 0.248229
     }
    ],
@@ -555,11 +724,11 @@
   "melee_swing": {
    "files": [
     {
-     "file": "melee_swing_1",
+     "file": "assets/sfx/melee_swing_1.ogg",
      "seconds": 0.321583
     },
     {
-     "file": "melee_swing_2",
+     "file": "assets/sfx/melee_swing_2.ogg",
      "seconds": 0.248792
     }
    ],
@@ -574,7 +743,7 @@
   "reveal_ping": {
    "files": [
     {
-     "file": "reveal_ping",
+     "file": "assets/sfx/reveal_ping.ogg",
      "seconds": 1.491521
     }
    ],
@@ -589,7 +758,7 @@
   "rifle_bolt": {
    "files": [
     {
-     "file": "rifle_bolt",
+     "file": "assets/sfx/rifle_bolt.ogg",
      "seconds": 0.296604
     }
    ],
@@ -604,7 +773,7 @@
   "rifle_dry": {
    "files": [
     {
-     "file": "rifle_dry",
+     "file": "assets/sfx/rifle_dry.ogg",
      "seconds": 0.041396
     }
    ],
@@ -619,7 +788,7 @@
   "rifle_equip": {
    "files": [
     {
-     "file": "rifle_equip",
+     "file": "assets/sfx/rifle_equip.ogg",
      "seconds": 0.267542
     }
    ],
@@ -634,15 +803,15 @@
   "rifle_fire": {
    "files": [
     {
-     "file": "rifle_fire_1",
+     "file": "assets/sfx/rifle_fire_1.ogg",
      "seconds": 0.635583
     },
     {
-     "file": "rifle_fire_2",
+     "file": "assets/sfx/rifle_fire_2.ogg",
      "seconds": 0.703646
     },
     {
-     "file": "rifle_fire_3",
+     "file": "assets/sfx/rifle_fire_3.ogg",
      "seconds": 0.656625
     }
    ],
@@ -657,7 +826,7 @@
   "rifle_mag_in": {
    "files": [
     {
-     "file": "rifle_mag_in",
+     "file": "assets/sfx/rifle_mag_in.ogg",
      "seconds": 0.171667
     }
    ],
@@ -672,7 +841,7 @@
   "rifle_mag_out": {
    "files": [
     {
-     "file": "rifle_mag_out",
+     "file": "assets/sfx/rifle_mag_out.ogg",
      "seconds": 0.160708
     }
    ],
@@ -687,7 +856,7 @@
   "round_loss": {
    "files": [
     {
-     "file": "round_loss",
+     "file": "assets/sfx/round_loss.ogg",
      "seconds": 1.837771
     }
    ],
@@ -702,7 +871,7 @@
   "round_start": {
    "files": [
     {
-     "file": "round_start",
+     "file": "assets/sfx/round_start.ogg",
      "seconds": 1.842688
     }
    ],
@@ -717,7 +886,7 @@
   "round_win": {
    "files": [
     {
-     "file": "round_win",
+     "file": "assets/sfx/round_win.ogg",
      "seconds": 1.783542
     }
    ],
@@ -732,7 +901,7 @@
   "sidearm_bolt": {
    "files": [
     {
-     "file": "sidearm_bolt",
+     "file": "assets/sfx/sidearm_bolt.ogg",
      "seconds": 0.206021
     }
    ],
@@ -747,7 +916,7 @@
   "sidearm_dry": {
    "files": [
     {
-     "file": "sidearm_dry",
+     "file": "assets/sfx/sidearm_dry.ogg",
      "seconds": 0.047
     }
    ],
@@ -762,7 +931,7 @@
   "sidearm_equip": {
    "files": [
     {
-     "file": "sidearm_equip",
+     "file": "assets/sfx/sidearm_equip.ogg",
      "seconds": 0.227542
     }
    ],
@@ -777,15 +946,15 @@
   "sidearm_fire": {
    "files": [
     {
-     "file": "sidearm_fire_1",
+     "file": "assets/sfx/sidearm_fire_1.ogg",
      "seconds": 0.394229
     },
     {
-     "file": "sidearm_fire_2",
+     "file": "assets/sfx/sidearm_fire_2.ogg",
      "seconds": 0.412354
     },
     {
-     "file": "sidearm_fire_3",
+     "file": "assets/sfx/sidearm_fire_3.ogg",
      "seconds": 0.357354
     }
    ],
@@ -800,7 +969,7 @@
   "sidearm_mag_in": {
    "files": [
     {
-     "file": "sidearm_mag_in",
+     "file": "assets/sfx/sidearm_mag_in.ogg",
      "seconds": 0.144375
     }
    ],
@@ -815,7 +984,7 @@
   "sidearm_mag_out": {
    "files": [
     {
-     "file": "sidearm_mag_out",
+     "file": "assets/sfx/sidearm_mag_out.ogg",
      "seconds": 0.130042
     }
    ],
@@ -830,7 +999,7 @@
   "smg_bolt": {
    "files": [
     {
-     "file": "smg_bolt",
+     "file": "assets/sfx/smg_bolt.ogg",
      "seconds": 0.151354
     }
    ],
@@ -845,7 +1014,7 @@
   "smg_dry": {
    "files": [
     {
-     "file": "smg_dry",
+     "file": "assets/sfx/smg_dry.ogg",
      "seconds": 0.044312
     }
    ],
@@ -860,7 +1029,7 @@
   "smg_equip": {
    "files": [
     {
-     "file": "smg_equip",
+     "file": "assets/sfx/smg_equip.ogg",
      "seconds": 0.24325
     }
    ],
@@ -875,15 +1044,15 @@
   "smg_fire": {
    "files": [
     {
-     "file": "smg_fire_1",
+     "file": "assets/sfx/smg_fire_1.ogg",
      "seconds": 0.154875
     },
     {
-     "file": "smg_fire_2",
+     "file": "assets/sfx/smg_fire_2.ogg",
      "seconds": 0.154146
     },
     {
-     "file": "smg_fire_3",
+     "file": "assets/sfx/smg_fire_3.ogg",
      "seconds": 0.144313
     }
    ],
@@ -898,7 +1067,7 @@
   "smg_mag_in": {
    "files": [
     {
-     "file": "smg_mag_in",
+     "file": "assets/sfx/smg_mag_in.ogg",
      "seconds": 0.154417
     }
    ],
@@ -913,7 +1082,7 @@
   "smg_mag_out": {
    "files": [
     {
-     "file": "smg_mag_out",
+     "file": "assets/sfx/smg_mag_out.ogg",
      "seconds": 0.141083
     }
    ],
@@ -928,7 +1097,7 @@
   "smoke_hiss": {
    "files": [
     {
-     "file": "smoke_hiss",
+     "file": "assets/sfx/smoke_hiss.ogg",
      "seconds": 2.779479
     }
    ],
@@ -943,7 +1112,7 @@
   "sniper_bolt": {
    "files": [
     {
-     "file": "sniper_bolt",
+     "file": "assets/sfx/sniper_bolt.ogg",
      "seconds": 0.646938
     }
    ],
@@ -958,7 +1127,7 @@
   "sniper_dry": {
    "files": [
     {
-     "file": "sniper_dry",
+     "file": "assets/sfx/sniper_dry.ogg",
      "seconds": 0.042688
     }
    ],
@@ -973,7 +1142,7 @@
   "sniper_equip": {
    "files": [
     {
-     "file": "sniper_equip",
+     "file": "assets/sfx/sniper_equip.ogg",
      "seconds": 0.307208
     }
    ],
@@ -988,15 +1157,15 @@
   "sniper_fire": {
    "files": [
     {
-     "file": "sniper_fire_1",
+     "file": "assets/sfx/sniper_fire_1.ogg",
      "seconds": 1.970875
     },
     {
-     "file": "sniper_fire_2",
+     "file": "assets/sfx/sniper_fire_2.ogg",
      "seconds": 2.041812
     },
     {
-     "file": "sniper_fire_3",
+     "file": "assets/sfx/sniper_fire_3.ogg",
      "seconds": 1.90425
     }
    ],
@@ -1011,7 +1180,7 @@
   "sniper_mag_in": {
    "files": [
     {
-     "file": "sniper_mag_in",
+     "file": "assets/sfx/sniper_mag_in.ogg",
      "seconds": 0.192062
     }
    ],
@@ -1026,7 +1195,7 @@
   "sniper_mag_out": {
    "files": [
     {
-     "file": "sniper_mag_out",
+     "file": "assets/sfx/sniper_mag_out.ogg",
      "seconds": 0.178604
     }
    ],
@@ -1041,7 +1210,7 @@
   "spike_alert": {
    "files": [
     {
-     "file": "spike_alert",
+     "file": "assets/sfx/spike_alert.ogg",
      "seconds": 0.547479
     }
    ],
@@ -1053,23 +1222,77 @@
    "own_gain": 1.0,
    "group": "interface"
   },
+  "step_dirt": {
+   "files": [
+    {
+     "file": "assets/sfx/step_dirt_1.ogg",
+     "seconds": 0.161458
+    },
+    {
+     "file": "assets/sfx/step_dirt_2.ogg",
+     "seconds": 0.177167
+    },
+    {
+     "file": "assets/sfx/step_dirt_3.ogg",
+     "seconds": 0.154188
+    },
+    {
+     "file": "assets/sfx/step_dirt_4.ogg",
+     "seconds": 0.174
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.05,
+   "priority": 45,
+   "curve": "step",
+   "own_gain": 0.45,
+   "group": "footsteps"
+  },
   "step_metal": {
    "files": [
     {
-     "file": "step_metal_1",
+     "file": "assets/sfx/step_metal_1.ogg",
      "seconds": 0.273333
     },
     {
-     "file": "step_metal_2",
+     "file": "assets/sfx/step_metal_2.ogg",
      "seconds": 0.292604
     },
     {
-     "file": "step_metal_3",
+     "file": "assets/sfx/step_metal_3.ogg",
      "seconds": 0.260875
     },
     {
-     "file": "step_metal_4",
+     "file": "assets/sfx/step_metal_4.ogg",
      "seconds": 0.280896
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.05,
+   "priority": 45,
+   "curve": "step",
+   "own_gain": 0.45,
+   "group": "footsteps"
+  },
+  "step_planks": {
+   "files": [
+    {
+     "file": "assets/sfx/step_planks_1.ogg",
+     "seconds": 0.239083
+    },
+    {
+     "file": "assets/sfx/step_planks_2.ogg",
+     "seconds": 0.246396
+    },
+    {
+     "file": "assets/sfx/step_planks_3.ogg",
+     "seconds": 0.210042
+    },
+    {
+     "file": "assets/sfx/step_planks_4.ogg",
+     "seconds": 0.220604
     }
    ],
    "loops": false,
@@ -1083,20 +1306,47 @@
   "step_stone": {
    "files": [
     {
-     "file": "step_stone_1",
+     "file": "assets/sfx/step_stone_1.ogg",
      "seconds": 0.178313
     },
     {
-     "file": "step_stone_2",
+     "file": "assets/sfx/step_stone_2.ogg",
      "seconds": 0.169479
     },
     {
-     "file": "step_stone_3",
+     "file": "assets/sfx/step_stone_3.ogg",
      "seconds": 0.157104
     },
     {
-     "file": "step_stone_4",
+     "file": "assets/sfx/step_stone_4.ogg",
      "seconds": 0.171104
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.05,
+   "priority": 45,
+   "curve": "step",
+   "own_gain": 0.45,
+   "group": "footsteps"
+  },
+  "step_water": {
+   "files": [
+    {
+     "file": "assets/sfx/step_water_1.ogg",
+     "seconds": 0.287396
+    },
+    {
+     "file": "assets/sfx/step_water_2.ogg",
+     "seconds": 0.306375
+    },
+    {
+     "file": "assets/sfx/step_water_3.ogg",
+     "seconds": 0.294104
+    },
+    {
+     "file": "assets/sfx/step_water_4.ogg",
+     "seconds": 0.281354
     }
    ],
    "loops": false,
@@ -1110,19 +1360,19 @@
   "step_wood": {
    "files": [
     {
-     "file": "step_wood_1",
+     "file": "assets/sfx/step_wood_1.ogg",
      "seconds": 0.183021
     },
     {
-     "file": "step_wood_2",
+     "file": "assets/sfx/step_wood_2.ogg",
      "seconds": 0.203208
     },
     {
-     "file": "step_wood_3",
+     "file": "assets/sfx/step_wood_3.ogg",
      "seconds": 0.189667
     },
     {
-     "file": "step_wood_4",
+     "file": "assets/sfx/step_wood_4.ogg",
      "seconds": 0.190542
     }
    ],
@@ -1137,7 +1387,7 @@
   "throw": {
    "files": [
     {
-     "file": "throw",
+     "file": "assets/sfx/throw.ogg",
      "seconds": 0.225917
     }
    ],
@@ -1152,7 +1402,7 @@
   "trap_arm": {
    "files": [
     {
-     "file": "trap_arm",
+     "file": "assets/sfx/trap_arm.ogg",
      "seconds": 0.326896
     }
    ],
@@ -1167,7 +1417,7 @@
   "trap_trigger": {
    "files": [
     {
-     "file": "trap_trigger",
+     "file": "assets/sfx/trap_trigger.ogg",
      "seconds": 0.383188
     }
    ],
@@ -1182,7 +1432,7 @@
   "ui_buy": {
    "files": [
     {
-     "file": "ui_buy",
+     "file": "assets/sfx/ui_buy.ogg",
      "seconds": 0.451167
     }
    ],
@@ -1197,7 +1447,7 @@
   "ui_click": {
    "files": [
     {
-     "file": "ui_click",
+     "file": "assets/sfx/ui_click.ogg",
      "seconds": 0.065021
     }
    ],
@@ -1212,7 +1462,7 @@
   "ui_deny": {
    "files": [
     {
-     "file": "ui_deny",
+     "file": "assets/sfx/ui_deny.ogg",
      "seconds": 0.190104
     }
    ],
@@ -1227,7 +1477,7 @@
   "ui_hover": {
    "files": [
     {
-     "file": "ui_hover",
+     "file": "assets/sfx/ui_hover.ogg",
      "seconds": 0.045333
     }
    ],
@@ -1242,7 +1492,7 @@
   "ult_cast": {
    "files": [
     {
-     "file": "ult_cast",
+     "file": "assets/sfx/ult_cast.ogg",
      "seconds": 1.714604
     }
    ],
@@ -1257,7 +1507,7 @@
   "ult_ready": {
    "files": [
     {
-     "file": "ult_ready",
+     "file": "assets/sfx/ult_ready.ogg",
      "seconds": 1.407729
     }
    ],
@@ -1272,7 +1522,7 @@
   "wall_break": {
    "files": [
     {
-     "file": "wall_break",
+     "file": "assets/sfx/wall_break.ogg",
      "seconds": 0.826
     }
    ],
@@ -1287,7 +1537,7 @@
   "wall_rise": {
    "files": [
     {
-     "file": "wall_rise",
+     "file": "assets/sfx/wall_rise.ogg",
      "seconds": 1.450937
     }
    ],
@@ -1302,7 +1552,7 @@
   "zone_sizzle": {
    "files": [
     {
-     "file": "zone_sizzle",
+     "file": "assets/sfx/zone_sizzle.ogg",
      "seconds": 2.0
     }
    ],
@@ -1340,14 +1590,35 @@
   "hit.head": "hit_head",
   "hit.leg": "hit_body",
   "hit.melee": "melee_hit",
-  "impact.dirt": "impact_stone",
+  "impact.cloth": "impact_wood",
+  "impact.dirt": "impact_dirt",
+  "impact.glass": "impact_glass",
   "impact.metal": "impact_metal",
+  "impact.plant": "impact_wood",
+  "impact.plaster": "impact_plaster",
   "impact.stone": "impact_stone",
+  "impact.water": "impact_stone",
   "impact.wood": "impact_wood",
   "jump": "jump",
   "kill.confirm": "kill_confirm",
-  "land.hard": "land_hard",
-  "land.soft": "land_soft",
+  "land.hard.cloth": "land_hard",
+  "land.hard.dirt": "land_hard_dirt",
+  "land.hard.glass": "land_hard",
+  "land.hard.metal": "land_hard_metal",
+  "land.hard.plant": "land_hard_dirt",
+  "land.hard.plaster": "land_hard",
+  "land.hard.stone": "land_hard",
+  "land.hard.water": "land_hard",
+  "land.hard.wood": "land_hard_wood",
+  "land.soft.cloth": "land_soft",
+  "land.soft.dirt": "land_soft_dirt",
+  "land.soft.glass": "land_soft",
+  "land.soft.metal": "land_soft_metal",
+  "land.soft.plant": "land_soft_dirt",
+  "land.soft.plaster": "land_soft",
+  "land.soft.stone": "land_soft",
+  "land.soft.water": "land_soft",
+  "land.soft.wood": "land_soft_wood",
   "mag_in.rifle": "rifle_mag_in",
   "mag_in.sidearm": "sidearm_mag_in",
   "mag_in.smg": "smg_mag_in",
@@ -1392,10 +1663,15 @@
   "shot.sidearm": "sidearm_fire",
   "shot.smg": "smg_fire",
   "shot.sniper": "sniper_fire",
-  "step.dirt": "step_stone",
+  "step.cloth": "step_wood",
+  "step.dirt": "step_dirt",
+  "step.glass": "step_stone",
   "step.metal": "step_metal",
+  "step.plant": "step_dirt",
+  "step.plaster": "step_stone",
   "step.stone": "step_stone",
-  "step.wood": "step_wood",
+  "step.water": "step_water",
+  "step.wood": "step_planks",
   "ui.buy": "ui_buy",
   "ui.click": "ui_click",
   "ui.deny": "ui_deny",

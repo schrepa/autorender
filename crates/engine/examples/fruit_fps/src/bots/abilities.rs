@@ -1,9 +1,10 @@
 use glam::Vec3;
 
-use super::aim::{angle_between, flat, flat_distance, look_angles, max, radians};
+use super::aim::{angle_between, flat, flat_distance, look_angles, max, radians, sin_cos, wrap};
 use super::debug::{Activity, Why};
-use super::sense::{AbilityUse, Block, DeviceSense, Intent, Side, SoundKind};
-use super::team::{Duty, Step};
+use super::sense::{AbilityUse, Block, DeviceSense, Gait, Intent, Side, SoundKind};
+use super::team::{Duty, Line, LineKind, Step};
+use super::throws::{Progress, Search, Shot};
 use super::{Brain, Ctx};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -12,6 +13,37 @@ struct Pending {
     target: Vec3,
     aimed: bool,
     start: u64,
+    line: Option<Line>,
+    ordered: bool,
+    search: Option<Search>,
+    shot: Option<Shot>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ThrowCounts {
+    pub solved: u32,
+    pub refused: u32,
+    pub thrown: u32,
+    pub abandoned: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThrowState {
+    Solving,
+    Aiming,
+    Thrown,
+    Refused,
+}
+
+impl ThrowState {
+    pub fn key(self) -> &'static str {
+        match self {
+            ThrowState::Solving => "solving",
+            ThrowState::Aiming => "aiming",
+            ThrowState::Thrown => "thrown",
+            ThrowState::Refused => "refused",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -21,9 +53,15 @@ pub struct Utilities {
     next_check: u64,
     quiet_until: [u64; 4],
     avert: Option<(Vec3, u64)>,
+    pub counts: ThrowCounts,
+    pub last: Option<(Line, ThrowState)>,
 }
 
 impl Utilities {
+    pub fn owns_view(&self) -> bool {
+        self.pending.is_some_and(|pending| pending.shot.is_some())
+    }
+
     pub fn new() -> Utilities {
         Utilities {
             pending: None,
@@ -31,9 +69,13 @@ impl Utilities {
             next_check: 0,
             quiet_until: [0; 4],
             avert: None,
+            counts: ThrowCounts::default(),
+            last: None,
         }
     }
 }
+
+type Choice = (usize, Vec3, Option<Line>);
 
 fn slot_with(ctx: &Ctx<'_, '_>, brain: &Brain, block: Block) -> Option<usize> {
     ctx.sense
@@ -85,7 +127,7 @@ fn flash_spot(ctx: &Ctx<'_, '_>, slot: usize, target: Vec3) -> Option<Vec3> {
         })
 }
 
-fn from_order(brain: &mut Brain, ctx: &Ctx<'_, '_>) -> Option<(usize, Vec3)> {
+fn from_order(brain: &mut Brain, ctx: &Ctx<'_, '_>) -> Option<Choice> {
     let utility = brain.order.utility?;
     if ctx.tick < utility.after_tick
         || brain.utilities.done_order == Some((utility.block, utility.after_tick))
@@ -94,10 +136,11 @@ fn from_order(brain: &mut Brain, ctx: &Ctx<'_, '_>) -> Option<(usize, Vec3)> {
     }
     brain.utilities.done_order = Some((utility.block, utility.after_tick));
     let slot = slot_with(ctx, brain, utility.block)?;
+    let line = Some(utility.line);
     if utility.block == Block::Flash {
-        return flash_spot(ctx, slot, utility.target).map(|spot| (slot, spot));
+        return flash_spot(ctx, slot, utility.target).map(|spot| (slot, spot, line));
     }
-    Some((slot, utility.target))
+    Some((slot, utility.target, line))
 }
 
 fn heal(brain: &Brain, ctx: &Ctx<'_, '_>) -> Option<(usize, Vec3)> {
@@ -251,14 +294,42 @@ fn hold_tools(brain: &Brain, ctx: &Ctx<'_, '_>) -> Option<(usize, Vec3)> {
     None
 }
 
-fn choose(brain: &mut Brain, ctx: &Ctx<'_, '_>) -> Option<(usize, Vec3)> {
+fn line_of(ctx: &Ctx<'_, '_>, slot: usize, target: Vec3) -> Option<Line> {
+    let block = ctx.sense.abilities[slot].block?;
+    let places = ctx.world.places();
+    let kind = match (block, ctx.sense.game.side, ctx.sense.order.step) {
+        (Block::DamageZone, Side::Attack, Step::PostPlant) => LineKind::DamagePlant,
+        (Block::Smoke | Block::Wall | Block::DamageZone, Side::Defend, _) => LineKind::StallChoke,
+        (Block::Flash, Side::Defend, Step::Retake) => LineKind::RetakeFlash,
+        (Block::Flash, _, _) => LineKind::FlashCorner,
+        (Block::Reveal, _, _) => LineKind::RevealSite,
+        (Block::Smoke, _, _) => LineKind::SmokeHold,
+        _ => return None,
+    };
+    let choke = places
+        .chokes
+        .iter()
+        .enumerate()
+        .map(|(index, gate)| (index, flat_distance(gate.middle(), target)))
+        .filter(|(_, d)| *d <= ctx.numbers.play.walk_near_m * 0.5)
+        .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
+        .map(|(index, _)| index);
+    Some(Line {
+        kind,
+        site: places.site_at(target),
+        choke,
+    })
+}
+
+fn choose(brain: &mut Brain, ctx: &Ctx<'_, '_>) -> Option<(Choice, bool)> {
     if let Some(choice) = from_order(brain, ctx) {
-        return Some(choice);
+        return Some((choice, true));
     }
-    heal(brain, ctx)
+    let (slot, target) = heal(brain, ctx)
         .or_else(|| fight_tools(brain, ctx))
         .or_else(|| push_tools(brain, ctx))
-        .or_else(|| hold_tools(brain, ctx))
+        .or_else(|| hold_tools(brain, ctx))?;
+    Some(((slot, target, line_of(ctx, slot, target)), false))
 }
 
 pub fn consider(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
@@ -282,23 +353,113 @@ pub fn consider(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
         return;
     }
     brain.utilities.next_check = ctx.tick + ctx.numbers.ticks(play.utility_seconds).max(1);
-    let Some((slot, target)) = choose(brain, ctx) else {
+    let Some(((slot, target, line), ordered)) = choose(brain, ctx) else {
         return;
     };
     let quiet = ctx.tick + ctx.numbers.ticks(play.utility_repeat_seconds);
     brain.utilities.quiet_until[slot] = quiet;
-    if !brain.rng.chance(ctx.level.ability_use) {
-        return;
-    }
-    let block = ctx.sense.abilities[slot].block;
-    let aimed =
-        block.is_some_and(self_cast) || block == Some(Block::Heal) && target == ctx.sense.position;
+    let sense = ctx.sense.abilities[slot];
+    let aimed = !sense.thrown
+        && (sense.block.is_some_and(self_cast)
+            || sense.block == Some(Block::Heal) && target == ctx.sense.position);
     brain.utilities.pending = Some(Pending {
         slot,
         target,
         aimed,
         start: ctx.tick,
+        line,
+        ordered,
+        search: None,
+        shot: None,
     });
+}
+
+fn refuse(brain: &mut Brain, pending: Pending) {
+    brain.utilities.pending = None;
+    brain.utilities.counts.refused += 1;
+    if pending.ordered {
+        brain.utilities.quiet_until[pending.slot] = 0;
+        brain.utilities.done_order = None;
+    }
+    if let Some(line) = pending.line {
+        brain.utilities.last = Some((line, ThrowState::Refused));
+    }
+}
+
+fn solve(brain: &mut Brain, ctx: &Ctx<'_, '_>, mut pending: Pending) -> Option<Shot> {
+    let play = &ctx.numbers.play;
+    let moved = pending
+        .search
+        .is_some_and(|search| (search.origin() - ctx.eye).length() > play.throw_moved_m);
+    if moved {
+        pending.search = None;
+        pending.shot = None;
+    }
+    if let Some(shot) = pending.shot {
+        return Some(shot);
+    }
+    let search = pending
+        .search
+        .get_or_insert_with(|| Search::new(pending.slot, pending.target, ctx.eye));
+    let progress = search.step(ctx.world, play);
+    if let Some(line) = pending.line {
+        brain.utilities.last = Some((line, ThrowState::Solving));
+    }
+    match progress {
+        Progress::Working => {
+            brain.utilities.pending = Some(pending);
+            None
+        }
+        Progress::Refused => {
+            refuse(brain, pending);
+            None
+        }
+        Progress::Solved(shot) => {
+            brain.utilities.counts.solved += 1;
+            pending.shot = Some(shot);
+            brain.utilities.pending = Some(pending);
+            Some(shot)
+        }
+    }
+}
+
+fn throw(brain: &mut Brain, ctx: &Ctx<'_, '_>, pending: Pending, intent: &mut Intent) {
+    intent.wish = Vec3::ZERO;
+    intent.gait = Gait::Still;
+    let Some(shot) = solve(brain, ctx, pending) else {
+        return;
+    };
+    let play = &ctx.numbers.play;
+    brain
+        .aim
+        .turn_toward(shot.yaw, shot.pitch, ctx.level.turn_deg_per_second, play, ctx.dt);
+    let on = angle_between(brain.aim.yaw, brain.aim.pitch, shot.yaw, shot.pitch)
+        <= radians(play.throw_aim_deg);
+    let still = ctx.speed_share < ctx.numbers.combat.deadzone_share;
+    if let Some(line) = pending.line {
+        brain.utilities.last = Some((line, ThrowState::Aiming));
+    }
+    brain.mind(Activity::Utility, Why::Utility, ctx.tick);
+    if !(on && still) {
+        return;
+    }
+    let slip = radians(play.throw_error_deg * (1.0 - ctx.level.ability_skill)) * brain.rng.unit();
+    let (sin, cos) = sin_cos(brain.rng.unit() * std::f32::consts::TAU);
+    brain.aim.yaw = wrap(shot.yaw + cos * slip);
+    brain.aim.pitch = shot.pitch + sin * slip;
+    intent.ability = Some(AbilityUse {
+        slot: pending.slot,
+        target: pending.target,
+    });
+    brain.utilities.pending = None;
+    brain.utilities.counts.thrown += 1;
+    if let Some(line) = pending.line {
+        brain.utilities.last = Some((line, ThrowState::Thrown));
+    }
+    if ctx.sense.abilities[pending.slot].block == Some(Block::Flash) {
+        let until = ctx.tick + ctx.numbers.ticks(play.flash_avert_seconds);
+        brain.utilities.avert = Some((pending.target, until));
+    }
 }
 
 fn release(brain: &mut Brain, ctx: &Ctx<'_, '_>, pending: Pending, intent: &mut Intent) {
@@ -310,6 +471,13 @@ fn release(brain: &mut Brain, ctx: &Ctx<'_, '_>, pending: Pending, intent: &mut 
             .ticks(play.utility_seconds * play.utility_patience);
     if stale || (fighting && !pending.aimed) {
         brain.utilities.pending = None;
+        if pending.shot.is_some() {
+            brain.utilities.counts.abandoned += 1;
+        }
+        return;
+    }
+    if ctx.sense.abilities[pending.slot].thrown {
+        throw(brain, ctx, pending, intent);
         return;
     }
     let ready = if pending.aimed {

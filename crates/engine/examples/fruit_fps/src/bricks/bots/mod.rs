@@ -1,5 +1,6 @@
 engine::brick!(bots);
 
+mod pickup;
 mod report;
 mod senses;
 mod think;
@@ -15,7 +16,6 @@ use crate::abilities::{AbilityBook, AbilitySpec, Action, Delivery, TrapShape};
 use crate::bots::{BotNumbers, Level, MapLayout, Places};
 use crate::play::bots::BotMinds;
 use crate::play::numbers::Numbers;
-use crate::play::order::Step;
 use crate::play::paths::Paths;
 use crate::weapons::{StandJoints, WeaponNumbers};
 
@@ -71,6 +71,15 @@ pub struct BotStat {
     pub why: String,
     pub since_tick: u64,
     pub wish: WishStat,
+    pub line_up: Option<String>,
+    pub line_up_state: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct ThrowStat {
+    pub solved: u32,
+    pub refused: u32,
+    pub thrown: u32,
 }
 
 stats! {
@@ -81,6 +90,8 @@ stats! {
         pub frozen: bool,
         pub queries: u32,
         pub expanded: u32,
+        pub throws: ThrowStat,
+        pub drops: u32,
         pub squads: Vec<SquadStat>,
         pub bots: Vec<BotStat>,
     }
@@ -111,6 +122,7 @@ struct SensesRoot {
 struct Reach {
     range_m: f32,
     radius_m: f32,
+    thrown: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -122,7 +134,11 @@ struct Loaded {
     joints: StandJoints,
     leg_radius_m: f32,
     eye_height_m: f32,
+    radius_m: f32,
+    height_m: f32,
+    crouch_height_m: f32,
     reaches: Vec<(String, [Reach; 4])>,
+    book: AbilityBook,
 }
 
 impl Loaded {
@@ -131,6 +147,13 @@ impl Loaded {
             .iter()
             .find(|(key, _)| key == character)
             .map_or([Reach::default(); 4], |(_, reach)| *reach)
+    }
+
+    fn specs(&self, character: usize) -> Option<&[AbilitySpec; 4]> {
+        self.book
+            .characters
+            .get(character)
+            .map(|character| &character.abilities)
     }
 }
 
@@ -153,10 +176,6 @@ impl Book {
 }
 
 pub struct BotsBrick;
-
-impl BotsBrick {
-    pub const STEP: Step = Step::Think;
-}
 
 impl Brick for BotsBrick {
     const SOURCE: &'static Source = &SOURCE;
@@ -223,7 +242,11 @@ fn reach_of(spec: &AbilitySpec) -> Reach {
             .unwrap_or_else(|| thrown_range(throw.speed, throw.gravity)),
         Delivery::Place(place) => place.range_m,
     };
-    Reach { range_m, radius_m }
+    Reach {
+        range_m,
+        radius_m,
+        thrown: matches!(spec.delivery, Delivery::Throw(_)),
+    }
 }
 
 fn load(text: &str, tps: u32, game: &crate::play::numbers::GameNumbers) -> Result<Loaded, String> {
@@ -252,7 +275,11 @@ fn load(text: &str, tps: u32, game: &crate::play::numbers::GameNumbers) -> Resul
         joints: game.hit_shapes.stand_joints_m,
         leg_radius_m: game.hit_shapes.leg_radius_m,
         eye_height_m: game.player.eye_height_m,
+        radius_m: game.player.moving.radius_m,
+        height_m: game.player.moving.height_m,
+        crouch_height_m: game.player.moving.crouch_height_m,
         reaches,
+        book,
     })
 }
 

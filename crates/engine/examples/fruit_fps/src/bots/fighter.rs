@@ -25,6 +25,8 @@ pub struct Fight {
     peek_until: u64,
     hunt_done: bool,
     scope_tick: u64,
+    spray_yaw: f32,
+    spray_pitch: f32,
 }
 
 impl Fight {
@@ -43,6 +45,8 @@ impl Fight {
             peek_until: 0,
             hunt_done: false,
             scope_tick: 0,
+            spray_yaw: 0.0,
+            spray_pitch: 0.0,
         }
     }
 }
@@ -84,7 +88,7 @@ fn calm_turn(brain: &mut Brain, ctx: &Ctx<'_, '_>, point: Vec3) {
 
 pub fn buy(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
     let tick = ctx.tick;
-    let delay = brain.rng.range(ctx.level.hesitate_seconds);
+    let delay = brain.rng.range(ctx.numbers.play.hesitate_seconds);
     let due = *brain
         .buy_tick
         .get_or_insert(tick + ctx.numbers.ticks(delay));
@@ -156,11 +160,11 @@ fn acquire(brain: &mut Brain, ctx: &Ctx<'_, '_>, target: &Track) {
     if brain.fight.target == target.id {
         return;
     }
-    let level = ctx.level;
+    let play = &ctx.numbers.play;
     brain.fight.target = target.id;
-    brain.fight.head = brain.rng.chance(level.head_share);
-    brain.fight.stop = brain.rng.chance(level.stop_to_shoot);
-    brain.fight.over_peek = brain.rng.chance(level.over_peek);
+    brain.fight.head = brain.rng.chance(ctx.level.head_share);
+    brain.fight.stop = brain.rng.chance(play.stop_to_shoot);
+    brain.fight.over_peek = brain.rng.chance(play.over_peek);
     brain.fight.burst_left = 0;
     brain.fight.cover = None;
     brain.fight.hunt_at = None;
@@ -209,7 +213,7 @@ fn engage(brain: &mut Brain, ctx: &Ctx<'_, '_>, target: &Track, intent: &mut Int
     let gun = ctx.sense.gun;
     if gun.magazine == 0 && !gun.reloading {
         let close = distance <= play.spray_m && gun.holding == WeaponChoice::Primary;
-        if close && level.recoil_control >= play.sidearm_switch_control {
+        if close {
             intent.switch = Some(WeaponChoice::Sidearm);
         } else if gun.reserve > 0 {
             intent.reload = true;
@@ -282,7 +286,8 @@ fn fight_moves(
         gun.class,
         GunClass::Rifle | GunClass::Sniper | GunClass::Sidearm
     );
-    let stopping = brain.fight.stop && steady_gun && distance > play.spray_m;
+    let at_range = distance > play.spray_m;
+    let stopping = at_range || (brain.fight.stop && steady_gun);
     let pausing = brain.fight.burst_left == 0 && ctx.tick < brain.fight.pause_until;
     let objective = matches!(brain.order.step, Step::Plant | Step::Defuse)
         && matches!(brain.order.duty, Duty::Carrier | Duty::Defuser);
@@ -290,7 +295,7 @@ fn fight_moves(
         return;
     }
     let to_target = flat(target.at - ctx.sense.position).normalize_or_zero();
-    if brain.fight.over_peek && distance > play.spray_m {
+    if brain.fight.over_peek && at_range {
         intent.wish = to_target;
         intent.gait = Gait::Run;
         return;
@@ -313,10 +318,9 @@ fn fight_moves(
 
 fn shot_line_blocked(brain: &Brain, ctx: &Ctx<'_, '_>, point: Vec3, distance: f32) -> bool {
     let gun = ctx.sense.gun;
-    let drift = 1.0 - ctx.level.recoil_control;
     let shot = direction(
-        brain.aim.yaw + drift * gun.recoil_yaw,
-        brain.aim.pitch + drift * gun.recoil_pitch,
+        brain.aim.yaw + gun.recoil_yaw - brain.fight.spray_yaw,
+        brain.aim.pitch + gun.recoil_pitch - brain.fight.spray_pitch,
     );
     let toward = (point - ctx.eye).normalize_or_zero();
     let reach = max(distance, gun.range_m);
@@ -325,7 +329,6 @@ fn shot_line_blocked(brain: &Brain, ctx: &Ctx<'_, '_>, point: Vec3, distance: f3
 
 fn trigger(brain: &mut Brain, ctx: &Ctx<'_, '_>, point: Vec3, off: f32, intent: &mut Intent) {
     let play = &ctx.numbers.play;
-    let level = ctx.level;
     let gun = ctx.sense.gun;
     let distance = max((point - ctx.eye).length(), play.near_m);
     let fired = if brain.last_fire {
@@ -337,15 +340,13 @@ fn trigger(brain: &mut Brain, ctx: &Ctx<'_, '_>, point: Vec3, off: f32, intent: 
         brain.fight.burst_left = brain.fight.burst_left.saturating_sub(fired);
         if brain.fight.burst_left == 0 {
             let stretch = clamp(distance / play.spray_m, 1.0, play.burst_pause_stretch);
-            let pause = level.burst_pause_seconds * stretch;
+            let pause = play.burst_pause_seconds * stretch;
             brain.fight.pause_until = ctx.tick + ctx.numbers.ticks(pause);
         }
     }
-    if gun.class == GunClass::Sniper
-        && gun.scope_level == 0
-        && distance > play.spray_m
-        && ctx.tick >= brain.fight.scope_tick
-    {
+    let at_range = distance > play.spray_m;
+    let scoped = gun.scope_level > 0;
+    if gun.has_scope && scoped != at_range && ctx.tick >= brain.fight.scope_tick {
         intent.scope = true;
         brain.fight.scope_tick = ctx.tick + ctx.numbers.ticks(play.utility_seconds);
     }
@@ -354,7 +355,7 @@ fn trigger(brain: &mut Brain, ctx: &Ctx<'_, '_>, point: Vec3, off: f32, intent: 
     } else {
         play.body_radius_m
     };
-    let tolerance = size / distance * level.fire_tolerance;
+    let tolerance = size / distance * ctx.level.fire_tolerance;
     let bursting = brain.fight.burst_left > 0;
     let on = off
         <= if bursting {
@@ -362,12 +363,8 @@ fn trigger(brain: &mut Brain, ctx: &Ctx<'_, '_>, point: Vec3, off: f32, intent: 
         } else {
             tolerance
         };
-    let still = ctx.speed_share <= play.stop_speed_share;
-    let steady_gun = matches!(
-        gun.class,
-        GunClass::Rifle | GunClass::Sniper | GunClass::Sidearm
-    );
-    let moving_ok = !(brain.fight.stop && steady_gun && distance > play.spray_m) || still;
+    let still = ctx.speed_share < ctx.numbers.combat.deadzone_share;
+    let moving_ok = (!at_range || still) && ctx.sense.grounded;
     let ready = gun.ready && gun.magazine > 0 && !gun.reloading;
     if shot_line_blocked(brain, ctx, point, distance) {
         brain.mind(Activity::Fight, Why::MateInLine, ctx.tick);
@@ -380,7 +377,7 @@ fn trigger(brain: &mut Brain, ctx: &Ctx<'_, '_>, point: Vec3, off: f32, intent: 
         brain.fight.burst_left = if distance <= play.spray_m {
             gun.magazine
         } else {
-            brain.rng.between(level.burst_shots)
+            brain.rng.between(play.burst_shots)
         };
     }
     if brain.fight.burst_left > 0 {
@@ -404,7 +401,7 @@ fn through_smoke(brain: &mut Brain, ctx: &Ctx<'_, '_>, track: &Track, intent: &m
     let play = &ctx.numbers.play;
     let fresh =
         ctx.tick.saturating_sub(track.seen_tick) <= ctx.numbers.ticks(play.smoke_spray_seconds);
-    if !ctx.level.shoot_through_smoke
+    if !play.shoot_through_smoke
         || track.source != Source::Seen
         || !fresh
         || !smoke_between(ctx, track.chest)
@@ -459,8 +456,8 @@ fn hunt(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) -> bool {
         brain.fight.hunt_at = Some(track.at);
         brain.fight.hunt_done = false;
         brain.fight.peek_until =
-            ctx.tick + ctx.numbers.ticks(brain.rng.range(level.peek_wait_seconds));
-        brain.fight.over_peek = brain.rng.chance(level.over_peek);
+            ctx.tick + ctx.numbers.ticks(brain.rng.range(play.peek_wait_seconds));
+        brain.fight.over_peek = brain.rng.chance(play.over_peek);
         let why = if track.source == Source::Called {
             Why::Called
         } else {
@@ -581,7 +578,7 @@ fn preaim(brain: &mut Brain, ctx: &Ctx<'_, '_>, heading: Vec3) -> Option<Vec3> {
         if !ctx.world.sees(ctx.eye, point) {
             continue;
         }
-        if brain.rng.chance(ctx.level.corner_check) {
+        if ctx.level.checks_corners {
             brain.glance.current = Some((index, tick));
             return Some(point);
         }
@@ -753,11 +750,16 @@ fn arrived(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
 
 pub fn finish(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
     let gun = ctx.sense.gun;
-    let control = ctx.level.recoil_control;
-    intent.yaw = wrap(brain.aim.yaw - control * gun.recoil_yaw);
-    intent.pitch = brain.aim.pitch - control * gun.recoil_pitch;
+    let follow = clamp(ctx.dt / max(ctx.level.spray_settle_seconds, ctx.dt), 0.0, 1.0);
+    brain.fight.spray_yaw += (gun.recoil_yaw - brain.fight.spray_yaw) * follow;
+    brain.fight.spray_pitch += (gun.recoil_pitch - brain.fight.spray_pitch) * follow;
+    intent.yaw = wrap(brain.aim.yaw - brain.fight.spray_yaw);
+    intent.pitch = brain.aim.pitch - brain.fight.spray_pitch;
     if intent.wish == Vec3::ZERO {
         intent.gait = Gait::Still;
+    }
+    if intent.fire {
+        intent.jump = false;
     }
     brain.last_fire = intent.fire;
     brain.last_magazine = gun.magazine;

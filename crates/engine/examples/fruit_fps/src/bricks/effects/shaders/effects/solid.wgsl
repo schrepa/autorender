@@ -1,6 +1,7 @@
 import package::engine::view::{camera, stable_normalize, view_clip};
 import package::effects::items::{EFFECT_TAU, effect_axes, effect_box_corner, effect_items,
     effect_lit, effect_seconds};
+import package::effects::field::effect_field;
 
 struct SolidCorner {
     @builtin(position) clip: vec4<f32>,
@@ -8,6 +9,7 @@ struct SolidCorner {
     @location(1) normal: vec3<f32>,
     @location(2) @interpolate(flat) index: u32,
     @location(3) local: vec3<f32>,
+    @location(4) @interpolate(flat) field: vec4<f32>,
 }
 
 @vertex fn vs_solid(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance: u32)
@@ -22,6 +24,7 @@ struct SolidCorner {
     out.normal = axes * corner.normal;
     out.index = instance;
     out.local = corner.local;
+    out.field = effect_field(item.p0.xyz);
     return out;
 }
 
@@ -38,7 +41,7 @@ struct SolidCorner {
         let frame = 1.0 - smoothstep(0.03, 0.09, inner);
         let band = 1.0 - smoothstep(0.0, 0.06, fract(corner.world.y * 1.5 - effect_seconds() * 0.4));
         let glow = max(max(fresnel, frame), band * 0.35) * item.p7.x * item.p3.w;
-        return vec4<f32>(effect_lit(item.p2.rgb, normal) + item.p6.rgb * glow, 1.0);
+        return vec4<f32>(effect_lit(item.p2.rgb, normal, corner.field) + item.p6.rgb * glow, 1.0);
     }
     if kind == 1u {
         let wave = 0.5 + 0.5 * sin(effect_seconds() * item.p1.w * EFFECT_TAU);

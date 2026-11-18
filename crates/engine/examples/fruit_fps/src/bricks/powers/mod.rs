@@ -9,10 +9,11 @@ use engine::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::abilities::AbilityBook;
+use crate::abilities::{AbilityBook, AbilityId};
 use crate::play::events::powers::PowerEvents;
 use crate::play::numbers::Numbers;
 use crate::play::powers::Powers;
+use crate::solids::{Kind, Surface};
 use crate::weapons::{Absorb, DamageLedger};
 
 const RECENT_CUES: usize = 12;
@@ -70,6 +71,14 @@ pub struct CueStat {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct PropStat {
+    pub effect: u32,
+    pub prop: String,
+    pub place: String,
+    pub at: [f32; 3],
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct HeldStat {
     pub slot: u32,
     pub ability: String,
@@ -112,6 +121,7 @@ stats! {
         pub recent_cues: Vec<CueStat>,
         pub hidden_from_human: Vec<u32>,
         pub held: Vec<HeldStat>,
+        pub props: Vec<PropStat>,
         pub holds: Vec<CastStat>,
         pub human_slots: Vec<SlotStat>,
         pub actors: Vec<ActorPowers>,
@@ -146,6 +156,13 @@ struct ShieldHeld {
     armour_before: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct SolidKind {
+    ability: AbilityId,
+    surface: Surface,
+    kind: Kind,
+}
+
 #[derive(Resource, Default)]
 struct Book {
     revision: Option<u64>,
@@ -161,6 +178,8 @@ struct Book {
     last_cast: Option<CastStat>,
     last_refusal: Option<CastStat>,
     recent_cues: Vec<CueStat>,
+    solid_kinds: Vec<SolidKind>,
+    ticks_per_second: u32,
 }
 
 pub struct PowersBrick;
@@ -184,7 +203,12 @@ fn ticks_per_second(time: &FixedTime) -> Option<u32> {
     (time.delta_seconds > 0.0).then(|| (1.0 / time.delta_seconds).round() as u32)
 }
 
-fn setup(time: Res<FixedTime>, numbers: Res<Numbers>, mut book: ResMut<Book>) {
+fn setup(
+    time: Res<FixedTime>,
+    numbers: Res<Numbers>,
+    mut book: ResMut<Book>,
+    mut powers: ResMut<Powers>,
+) {
     let Some(game) = numbers.get() else {
         return;
     };
@@ -216,6 +240,25 @@ fn setup(time: Res<FixedTime>, numbers: Res<Numbers>, mut book: ResMut<Book>) {
                 height_m: player.moving.height_m,
                 crouch_height_m: player.moving.crouch_height_m,
             });
+            book.solid_kinds = abilities
+                .characters
+                .iter()
+                .flat_map(|character| character.abilities.iter())
+                .filter_map(|spec| {
+                    let name = spec.solid_kind.as_deref()?;
+                    Some(SolidKind {
+                        ability: spec.id,
+                        surface: Surface::of_kind(name),
+                        kind: Kind::named(name),
+                    })
+                })
+                .collect();
+            powers.surfaces = abilities
+                .throw_surfaces
+                .iter()
+                .map(|surface| (Kind::named(&surface.kind), surface.bounce))
+                .collect();
+            book.ticks_per_second = tps;
             book.abilities = Some(abilities);
             book.refusal = None;
         }

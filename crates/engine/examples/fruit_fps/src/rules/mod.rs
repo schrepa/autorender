@@ -163,6 +163,8 @@ pub enum CreditReason {
     Bought,
     Refunded,
     SideSwap,
+    Granted,
+    Overtime,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -205,6 +207,7 @@ pub struct TickInput {
     pub deaths: Vec<Death>,
     pub abilities: Vec<AbilityUse>,
     pub holdings: Vec<Holding>,
+    pub device_drops: Vec<PlayerId>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -422,6 +425,8 @@ pub struct View<'a> {
     pub score: [u32; 2],
     pub sides: [Side; 2],
     pub loss_streak: [u32; 2],
+    pub overtime: bool,
+    pub decider: bool,
     pub players: &'a [Player],
     pub device: &'a Device,
     pub catalog: &'a Catalog,
@@ -467,6 +472,8 @@ pub struct Match {
     tick: u64,
     random: u64,
     pending: Vec<Event>,
+    dropped_by: Option<PlayerId>,
+    overtime_rounds: u32,
 }
 
 impl Match {
@@ -479,6 +486,12 @@ impl Match {
         self.apply_armor_facts(input, &mut events);
         for holding in &input.holdings {
             self.apply_holding(*holding);
+        }
+        for &player in &input.device_drops {
+            if self.players.get(player).is_some_and(|p| p.alive) {
+                self.drop_device_of(player, input, &mut events);
+                self.dropped_by = Some(player);
+            }
         }
         for death in &input.deaths {
             self.apply_death(death, input, &mut events);
@@ -498,6 +511,12 @@ impl Match {
             Phase::Over => {}
         }
         events
+    }
+
+    pub fn grant_credits(&mut self, player: PlayerId, credits: u32) {
+        let mut events = std::mem::take(&mut self.pending);
+        self.set_credits(player, credits, CreditReason::Granted, &mut events);
+        self.pending = events;
     }
 
     fn apply_holding(&mut self, holding: Holding) {
@@ -525,6 +544,8 @@ impl Match {
             score: self.score,
             sides: self.sides,
             loss_streak: self.loss_streak,
+            overtime: self.overtime_rounds > 0,
+            decider: self.overtime_rounds > self.catalog.overtime_rounds_before_decider,
             players: &self.players,
             device: &self.device,
             catalog: &self.catalog,

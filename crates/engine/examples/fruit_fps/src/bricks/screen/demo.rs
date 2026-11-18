@@ -389,6 +389,7 @@ pub(super) fn demo(words: &Words) -> HudFacts {
             mvp_name: LEFT[0].to_owned(),
             mvp_stats: "24 kills   12 deaths   5 assists   ADR 168".to_owned(),
             mvp_char: "Bananito  entry".to_owned(),
+            next_seconds: 9.0,
         },
         menu: MenuFacts::default(),
         spectate: SpectateFacts::default(),

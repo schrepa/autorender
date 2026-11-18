@@ -1,12 +1,20 @@
 use glam::Vec3;
 
-use super::tactics::{self, Hold};
-use super::{Duty, Plan, Role, Slot, Squad, Step, spaced};
+use super::tactics::{self, Hold, SiteTactics};
+use super::{Duty, Line, LineKind, Order, Plan, Role, Slot, Squad, Step, Utility, spaced};
 use crate::bots::aim::flat_distance;
 use crate::bots::debug::Why;
-use crate::bots::sense::DeviceSense;
+use crate::bots::sense::{Block, DeviceSense};
 
 const MID: usize = usize::MAX;
+
+fn post_of(st: &SiteTactics, rank: usize) -> Hold {
+    match rank {
+        0 => st.ways[0].hold,
+        1 => st.ways[0].cross,
+        _ => st.ways[(rank - 1).min(st.ways.len() - 1)].hold,
+    }
+}
 
 impl Squad {
     pub(super) fn start_defense(&mut self, plan: &Plan<'_, '_>) {
@@ -17,11 +25,12 @@ impl Squad {
         let mut depth = 0usize;
         while wanted.len() < alive.len() && sites > 0 {
             for site in 0..sites {
-                if wanted.len() < alive.len() && depth < plan.site(site).ways.len() {
+                let ways = plan.site(site).ways.len();
+                if wanted.len() < alive.len() && ways > 0 && depth <= ways {
                     wanted.push((site, depth));
                 }
             }
-            if depth == 0 && wanted.len() < alive.len() {
+            if depth == 1 && wanted.len() < alive.len() {
                 wanted.push((MID, 0));
             }
             depth += 1;
@@ -43,7 +52,7 @@ impl Squad {
             let (duty, hold) = if site == MID {
                 (Duty::Mid, plan.tactics.mid_hold)
             } else {
-                (Duty::Anchor, plan.site(site).ways[rank].hold)
+                (Duty::Anchor, post_of(plan.site(site), rank))
             };
             self.slots[m] = Slot {
                 duty,
@@ -56,14 +65,61 @@ impl Squad {
         self.set_step(Step::Setup, Why::RoundStart, plan.tick);
     }
 
+    fn routed(&mut self, plan: &Plan<'_, '_>, member: usize, site: Option<usize>, hold: Hold) -> Hold {
+        let places = plan.places();
+        let play = &plan.numbers.play;
+        let from = plan.sense.members[member].position;
+        let site_zone = site.and_then(|s| places.sites.get(s)).map(|s| s.zone);
+        let here = places.zone_at(from);
+        if (site_zone.is_some() && here == site_zone)
+            || flat_distance(from, hold.at) <= play.arrive_m * 2.0
+        {
+            return hold;
+        }
+        let safe = &plan.tactics.safe;
+        let allowed = [site_zone, places.zone_at(hold.at)];
+        let step = play.gate_step_m;
+        if tactics::safe_path(plan.world, safe, from, hold.at, allowed, step, &mut self.buffer) {
+            return hold;
+        }
+        let gate = site
+            .and_then(|s| plan.site(s).back.map(|back| plan.site(s).ways[back].inside));
+        let home = plan.tactics.defend_home;
+        let at_home = flat_distance(from, home) <= play.site_near_m;
+        match gate {
+            Some(gate)
+                if at_home
+                    || tactics::safe_path(
+                        plan.world,
+                        safe,
+                        from,
+                        gate,
+                        [site_zone, None],
+                        step,
+                        &mut self.buffer,
+                    ) =>
+            {
+                Hold {
+                    at: gate,
+                    face: hold.face,
+                }
+            }
+            Some(_) | None if at_home => hold,
+            Some(_) | None => Hold {
+                at: home,
+                face: hold.face,
+            },
+        }
+    }
+
     pub(super) fn defend(&mut self, plan: &Plan<'_, '_>) {
         let alive = plan.alive();
         let numbers = plan.numbers;
         let mut hottest: Option<(usize, u32)> = None;
         for site in 0..plan.tactics.sites.len() {
-            let pressure = self.pressure(site, numbers);
-            if pressure >= numbers.play.rotate_seen && hottest.is_none_or(|(_, p)| pressure > p) {
-                hottest = Some((site, pressure));
+            let contact = self.contact(site, numbers);
+            if contact > 0 && hottest.is_none_or(|(_, c)| contact > c) {
+                hottest = Some((site, contact));
             }
         }
         if let Some((site, _)) = hottest
@@ -73,39 +129,85 @@ impl Squad {
             self.site = Some(site);
             self.set_step(Step::Rotate, Why::Called, plan.tick);
         }
-        for (k, &m) in alive.iter().enumerate() {
+        if let &[last] = alive.as_slice()
+            && plan.sense.enemies_alive >= numbers.play.retake_group
+        {
+            self.play_time(plan, last);
+            return;
+        }
+        let mut rotating = 0usize;
+        let held = self.rotated.map_or(0, |site| {
+            alive.iter().filter(|&&m| self.slots[m].group == site).count() as u32
+        });
+        let heavy = self
+            .rotated
+            .is_some_and(|site| self.contact(site, numbers) > held + numbers.play.rotate_seen);
+        for &m in &alive {
             let slot = self.slots[m];
             match self.rotated {
                 Some(site)
-                    if slot.group != site && !(slot.duty == Duty::Anchor && slot.rank == 0) =>
+                    if heavy
+                        || (slot.group != site
+                            && !(slot.duty == Duty::Anchor && slot.rank == 0)) =>
                 {
-                    let st = plan.site(site);
-                    if st.ways.is_empty() {
-                        continue;
-                    }
-                    let way = st.defend_order[k % st.defend_order.len()];
-                    let hold = st.ways[way].hold;
-                    let at = spaced(
-                        hold.at,
-                        hold.face,
-                        k / st.defend_order.len(),
-                        plan.numbers.play.spacing_m,
-                    );
-                    self.simple(
-                        plan,
-                        m,
-                        Duty::Retaker,
-                        Step::Rotate,
-                        Hold {
-                            at,
-                            face: hold.face,
-                        },
-                        true,
-                    );
+                    self.rotate_to(plan, m, site, rotating, heavy);
+                    rotating += 1;
                 }
-                _ => self.simple(plan, m, slot.duty, Step::Setup, slot.hold, true),
+                _ => {
+                    let site = (slot.group != MID).then_some(slot.group);
+                    let hold = self.routed(plan, m, site, slot.hold);
+                    self.simple(plan, m, slot.duty, Step::Setup, hold, true);
+                }
             }
         }
+    }
+
+    fn rotate_to(&mut self, plan: &Plan<'_, '_>, member: usize, site: usize, k: usize, heavy: bool) {
+        let st = plan.site(site);
+        if st.ways.is_empty() {
+            return;
+        }
+        let taken = heavy || self.contact(site, plan.numbers) >= plan.numbers.play.rotate_seen;
+        let spacing = plan.numbers.play.spacing_m;
+        let hold = match st.back {
+            Some(back) if taken => {
+                let way = &st.ways[back];
+                Hold {
+                    at: spaced(way.defend_stage, way.mid, k, spacing),
+                    face: way.inside + plan.eye(),
+                }
+            }
+            Some(_) | None => post_of(st, 1 + k % (st.ways.len() + 1)),
+        };
+        let hold = self.routed(plan, member, Some(site), hold);
+        self.simple(plan, member, Duty::Retaker, Step::Rotate, hold, true);
+    }
+
+    fn play_time(&mut self, plan: &Plan<'_, '_>, member: usize) {
+        let from = plan.sense.members[member].position;
+        let site = self.rotated.unwrap_or_else(|| {
+            (0..plan.tactics.sites.len())
+                .min_by(|&a, &b| {
+                    flat_distance(from, plan.site(a).plant)
+                        .total_cmp(&flat_distance(from, plan.site(b).plant))
+                        .then(a.cmp(&b))
+                })
+                .unwrap_or(0)
+        });
+        let st = plan.site(site);
+        if st.ways.is_empty() {
+            return;
+        }
+        let hold = match st.back {
+            Some(back) => Hold {
+                at: st.ways[back].defend_stage,
+                face: st.ways[back].inside + plan.eye(),
+            },
+            None => post_of(st, 0),
+        };
+        let hold = self.routed(plan, member, Some(site), hold);
+        self.simple(plan, member, Duty::Anchor, Step::Setup, hold, true);
+        self.set_step(Step::Setup, Why::Saving, plan.tick);
     }
 
     pub(super) fn retake(&mut self, plan: &Plan<'_, '_>) {
@@ -172,6 +274,10 @@ impl Squad {
             return Some(way);
         }
         let st = plan.site(self.site.unwrap_or(0));
+        if let Some(back) = st.back {
+            self.entry_way[member] = Some(back);
+            return Some(back);
+        }
         let from = plan.sense.members[member].position;
         let mut best: Option<(usize, f32)> = None;
         for &way in st.defend_order.iter().take(2) {
@@ -211,17 +317,12 @@ impl Squad {
             .world
             .cover_from(at + eye, near, plan.numbers.play.cover_search_m)
             .unwrap_or(near);
-        self.simple(
-            plan,
-            member,
-            Duty::Retaker,
-            Step::Retake,
-            Hold {
-                at: spot,
-                face: at + eye,
-            },
-            true,
-        );
+        let hold = Hold {
+            at: spot,
+            face: at + eye,
+        };
+        let hold = self.routed(plan, member, self.site, hold);
+        self.simple(plan, member, Duty::Retaker, Step::Retake, hold, true);
     }
 
     fn retake_gather(
@@ -262,22 +363,19 @@ impl Squad {
             let st = plan.site(self.site.unwrap_or(0));
             let way = &st.ways[index];
             let at = spaced(way.defend_stage, way.mid, k, spacing);
-            self.simple(
-                plan,
-                m,
-                Duty::Retaker,
-                Step::Retake,
-                Hold {
-                    at,
-                    face: way.hold.face,
-                },
-                true,
-            );
+            let hold = Hold {
+                at,
+                face: way.hold.face,
+            };
+            let hold = self.routed(plan, m, self.site, hold);
+            self.simple(plan, m, Duty::Retaker, Step::Retake, hold, true);
             if flat_distance(members[m].position, at) <= spacing * 2.0 {
                 arrived += 1;
             }
         }
-        if arrived + 1 >= alive.len() || plan.tick >= self.deadline || critical {
+        let group = (plan.numbers.play.retake_group as usize).min(alive.len());
+        let ready = arrived >= group && (arrived + 1 >= alive.len() || plan.tick >= self.deadline);
+        if ready || critical {
             self.go_tick = plan.tick;
             self.set_step(
                 Step::Retake,
@@ -288,6 +386,48 @@ impl Squad {
                 },
                 plan.tick,
             );
+        }
+    }
+
+    fn retake_utility(&self, plan: &Plan<'_, '_>, entry: usize, rank: usize) -> Option<Utility> {
+        let st = plan.site(self.site.unwrap_or(0));
+        let way = &st.ways[entry];
+        let after_tick = self.go_tick;
+        let site = self.site;
+        match rank {
+            0 => Some(Utility {
+                block: Block::Flash,
+                target: way.flash_at,
+                after_tick,
+                line: Line {
+                    kind: LineKind::RetakeFlash,
+                    site,
+                    choke: Some(way.choke),
+                },
+            }),
+            1 => {
+                let far = (0..st.ways.len()).find(|&w| w != entry)?;
+                Some(Utility {
+                    block: Block::Smoke,
+                    target: st.ways[far].post.at,
+                    after_tick,
+                    line: Line {
+                        kind: LineKind::RetakeSmoke,
+                        site,
+                        choke: Some(st.ways[far].choke),
+                    },
+                })
+            }
+            _ => Some(Utility {
+                block: Block::Reveal,
+                target: st.plant,
+                after_tick,
+                line: Line {
+                    kind: LineKind::RevealSite,
+                    site,
+                    choke: None,
+                },
+            }),
         }
     }
 
@@ -337,41 +477,35 @@ impl Squad {
                 );
                 continue;
             }
-            let way =
-                &st.ways[self.entry_way[m].unwrap_or(st.defend_order[k % st.defend_order.len()])];
-            let (duty, step) = if self.defuser.is_some() {
+            let st = plan.site(site);
+            let entry = self.entry_way[m].unwrap_or(st.defend_order[k % st.defend_order.len()]);
+            let way = &st.ways[entry];
+            let defusing = self.defuser.is_some();
+            let (duty, step) = if defusing {
                 (Duty::Cover, Step::Defuse)
             } else {
                 (Duty::Retaker, Step::Retake)
             };
-            let face = if self.defuser.is_some() {
-                way.post.face
-            } else {
-                at + eye
-            };
+            let face = if defusing { way.post.face } else { at + eye };
             let goal = spaced(
                 way.post.at,
                 way.post.face,
                 k / st.defend_order.len(),
                 numbers.play.spacing_m,
             );
-            let mut order = super::Order {
+            let mut order = Order {
                 duty,
                 step,
                 goal,
                 zone: None,
                 face,
-                go_tick: if self.defuser.is_some() {
-                    0
-                } else {
-                    self.go_tick
-                },
+                go_tick: if defusing { 0 } else { self.go_tick },
                 careful: false,
-                utility: None,
+                utility: (!defusing)
+                    .then(|| self.retake_utility(plan, entry, k))
+                    .flatten(),
             };
-            if flat_distance(members[m].position, at) <= numbers.play.site_near_m
-                && self.defuser.is_none()
-            {
+            if flat_distance(members[m].position, at) <= numbers.play.site_near_m && !defusing {
                 order.goal = self.orders[m].goal;
             }
             self.put(plan, m, order);

@@ -9,7 +9,13 @@ use super::{
 };
 use crate::play::actors::{Body, Human, Wish};
 use crate::play::effects::{EffectsFeed, Form, GroundMarks, Look, Shown};
+use bevy_ecs::system::SystemParam;
+
+use super::previews::preview_items;
+use crate::play::actors::Actor;
+use crate::play::flow::{Flow, Stage};
 use crate::play::light::Lighting;
+use crate::play::powers::Powers;
 use crate::play::round::Round;
 use crate::play::view::Watched;
 use crate::rules::Team;
@@ -468,6 +474,7 @@ fn showcase_shown(
     let cycle = (now / f64::from(case.every_seconds * 4.0)).fract() as f32;
     let life = 1000;
     let shown = |look: Look, form: Form, team: Team| Shown {
+        effect: u32::MAX,
         look,
         form,
         team,
@@ -641,6 +648,8 @@ fn screen_frame(
         sun: [0.0; 4],
         sun_color: [0.0; 4],
         sky_color: [0.0; 4],
+        field: [0.0; 4],
+        field_shape: [0.0; 4],
     };
     let stats = ScreenStats {
         flash: frame.flash[3],
@@ -696,6 +705,39 @@ fn span(items: &[Item], start: usize) -> std::ops::Range<u32> {
     start as u32..items.len() as u32
 }
 
+#[derive(SystemParam)]
+pub(super) struct Seen<'w, 's> {
+    lighting: Option<Res<'w, Lighting>>,
+    watched: Option<Res<'w, Watched>>,
+    powers: Option<Res<'w, Powers>>,
+    flow: Option<Res<'w, Flow>>,
+    bodies: Query<'w, 's, &'static Body>,
+    humans: Query<'w, 's, &'static Actor, With<Human>>,
+}
+
+impl Seen<'_, '_> {
+    fn viewer<'a>(&'a self, human: Option<&'a Body>) -> Option<&'a Body> {
+        self.watched
+            .as_deref()
+            .and_then(|watched| watched.entity)
+            .and_then(|entity| self.bodies.get(entity).ok())
+            .or(human)
+    }
+
+    fn slot(&self) -> Option<u32> {
+        self.watched
+            .as_deref()
+            .and_then(|watched| watched.slot)
+            .or_else(|| self.humans.iter().next().map(|actor| actor.slot))
+    }
+
+    fn playing(&self) -> bool {
+        self.flow
+            .as_deref()
+            .is_none_or(|flow| flow.stage == Stage::Playing)
+    }
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "one frame's drawing reads every effect source"
@@ -708,11 +750,9 @@ pub(super) fn assemble(
     spawns: Res<Spawns>,
     feed: Res<EffectsFeed>,
     ground: Option<Res<GroundMarks>>,
-    lighting: Option<Res<Lighting>>,
     round: Option<Res<Round>>,
     humans: Query<(&Body, &Wish), With<Human>>,
-    bodies: Query<&Body>,
-    watched: Option<Res<Watched>>,
+    seen: Seen,
     devices: Query<&Device>,
     mut drawing: ResMut<EffectsDrawing>,
     mut stats: ResMut<EffectsStats>,
@@ -731,20 +771,25 @@ pub(super) fn assemble(
     let look = &parsed.look;
     let now = time.elapsed;
     let human = humans.iter().next();
-    let viewer = watched
-        .and_then(|watched| watched.entity)
-        .and_then(|entity| bodies.get(entity).ok())
-        .or(human.map(|(body, _)| body));
-    let eye = viewer.map(|body| body.eye_before.lerp(body.eye, time.alpha));
+    let eye = seen
+        .viewer(human.map(|(body, _)| body))
+        .map(|body| body.eye_before.lerp(body.eye, time.alpha));
     let mut next = EffectsStats::default();
     let mut items = Vec::new();
+    let mut sorted = Sorted::default();
     glow_items(look, &spawns, now, &mut items, &mut next);
+    next.previews = preview_items(
+        look,
+        seen.powers.as_deref(),
+        seen.slot(),
+        &mut items,
+        &mut sorted.marks,
+    );
     let glow = span(&items, 0);
     let mut shown = feed.shown.clone();
     if show.show != Show::Off {
         shown.extend(showcase_shown(look, show.show, human, now));
     }
-    let mut sorted = Sorted::default();
     if let Some(ground) = ground.as_deref() {
         blob_marks(ground, &mut sorted, &mut next);
     }
@@ -768,19 +813,36 @@ pub(super) fn assemble(
     items.extend(sorted.smokes);
     let smoke = span(&items, start);
     let (mut frame, mut screen) = screen_frame(look, &feed, show.show, &spawns, now, sorted.cover);
-    if let Some(lighting) = lighting.as_deref().filter(|lighting| lighting.lit) {
+    if let Some(lighting) = seen.lighting.as_deref().filter(|lighting| lighting.lit) {
         frame.sun = row(lighting.to_sun, 1.0);
         frame.sun_color = rgb(lighting.sun, 0.0);
         frame.sky_color = rgb(lighting.sky, 0.0);
+        if let Some(field) = lighting.field {
+            let [min_x, min_z, max_x, max_z] = field.rect;
+            frame.field = [min_x, min_z, 1.0 / (max_x - min_x), 1.0 / (max_z - min_z)];
+            frame.field_shape = [field.height_m, field.scale, 1.0, 0.0];
+        }
     }
+    let field = seen
+        .lighting
+        .as_deref()
+        .filter(|lighting| lighting.lit)
+        .and_then(|lighting| lighting.field)
+        .map(|field| field.map);
     let limit = if show.show == Show::NearSight {
         Some(look.showcase.radius_m)
     } else {
         feed.human.sight_limit_m
     };
-    if let (Some(limit), Some(eye)) = (limit, eye) {
+    let playing = seen.playing();
+    if let (Some(limit), Some(eye), true) = (limit, eye, playing) {
         sorted.marks.push(near_sight(look, eye, limit));
         screen.near_sight = 1.0;
+    }
+    if !playing {
+        frame.flash[3] = 0.0;
+        frame.damage[3] = 0.0;
+        screen = ScreenStats::default();
     }
     let start = items.len();
     items.extend(sorted.marks);
@@ -803,6 +865,7 @@ pub(super) fn assemble(
         glow_vertices: QUAD_VERTICES * look.most_sprites(),
         frame,
         screen: screened,
+        field,
     };
     stats.set_if_neq(next);
 }

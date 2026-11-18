@@ -110,6 +110,11 @@ impl RoundFacts {
             "site" => Val::Text(&self.site),
             "time_low" => Val::Bool(self.time_low),
             "fuse_low" => Val::Bool(self.fuse_low),
+            "overtime" => Val::Bool(self.overtime),
+            "decider" => Val::Bool(self.decider),
+            "first_of_half" => Val::Bool(self.first_of_half),
+            "last_of_half" => Val::Bool(self.last_of_half),
+            "device" => Val::Text(&self.device),
             _ => Val::Unknown,
         })
     }
@@ -338,6 +343,7 @@ impl ResultFacts {
             "mvp_name" => Val::Text(&self.mvp_name),
             "mvp_stats" => Val::Text(&self.mvp_stats),
             "mvp_char" => Val::Text(&self.mvp_char),
+            "next_seconds" => Val::Num(self.next_seconds),
             _ => Val::Unknown,
         })
     }

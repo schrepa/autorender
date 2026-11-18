@@ -45,6 +45,7 @@ pub struct HumanStats {
     pub crouch: f32,
     pub motion: String,
     pub surface: Option<String>,
+    pub floor: Option<String>,
     pub yaw: f32,
     pub pitch: f32,
     pub apex: f32,
@@ -245,11 +246,13 @@ fn motion_of(moved: &Moved, wish: &Wish) -> Motion {
 fn moved_body(player: &PlayerNumbers, body: &Body, wish: &Wish, moved: &Moved, dt: f32) -> Body {
     let target = f32::from(u8::from(moved.body.crouched));
     let ease = dt / player.crouch_seconds;
-    let crouch = math::clamp(
-        body.crouch + math::clamp(target - body.crouch, -ease, ease),
-        0.0,
-        1.0,
-    );
+    let drop = player.eye_height_m - player.crouch_eye_height_m;
+    let kept = if drop > 0.0 {
+        math::clamp(body.crouch + moved.shift / drop, 0.0, 1.0)
+    } else {
+        body.crouch
+    };
+    let crouch = math::clamp(kept + math::clamp(target - kept, -ease, ease), 0.0, 1.0);
     let feet = moved.body.position;
     Body {
         feet,
@@ -301,20 +304,34 @@ fn pushed(arena: &Arena, player: &PlayerNumbers, body: &solids::Body, shove: Vec
     }
 }
 
+fn solid(body: &Body) -> solids::Body {
+    solids::Body {
+        position: body.feet,
+        velocity: body.velocity,
+        grounded: body.grounded,
+        crouched: body.crouched,
+    }
+}
+
+type Peer = (u32, solids::Capsule, Entity);
+
+fn others(peers: &[Peer], own: usize) -> Vec<(u32, solids::Capsule)> {
+    (peers.iter().enumerate())
+        .filter(|&(at, _)| at != own)
+        .map(|(_, &(slot, capsule, _))| (slot, capsule))
+        .collect()
+}
+
 fn step_once(
-    arena: &Arena,
+    (arena, peers): (&Arena, &[(u32, solids::Capsule)]),
     player: &PlayerNumbers,
     (wish, body, factor): (&Wish, &Body, f32),
     dt: f32,
 ) -> Moved {
+    let capsules: Vec<solids::Capsule> = peers.iter().map(|&(_, capsule)| capsule).collect();
     solids::step(
-        arena.solids(),
-        solids::Body {
-            position: body.feet,
-            velocity: body.velocity,
-            grounded: body.grounded,
-            crouched: body.crouched,
-        },
+        (arena.solids(), &capsules),
+        solid(body),
         solids::Wish {
             direction: wish.direction,
             speed: wished_speed(player, wish, body.crouched, factor),
@@ -354,15 +371,33 @@ fn advance(
     }
     let player = &numbers.player;
     let dt = world.time.delta_seconds;
-    for (entity, actor, wish, mut body, mut tally, factor, push) in &mut actors {
+    let mut peers: Vec<Peer> = (actors.iter())
+        .map(|(entity, actor, _, body, ..)| {
+            let capsule = solids::capsule_of(&solid(body), &player.moving);
+            (actor.slot, capsule, entity)
+        })
+        .collect();
+    peers.sort_unstable_by_key(|&(slot, _, entity)| (slot, entity));
+    for own in 0..peers.len() {
+        let Ok((entity, actor, wish, mut body, mut tally, factor, push)) =
+            actors.get_mut(peers[own].2)
+        else {
+            continue;
+        };
+        let around = others(&peers, own);
         let jumped = body.feet != tally.placed;
         let factor = factor.map_or(1.0, |held| held.0);
-        let mut moved = step_once(arena, player, (wish, &body, factor), dt);
+        let mut moved = step_once((arena, &around), player, (wish, &body, factor), dt);
         if let Some(mut push) = push
             && push.0 != Vec3::ZERO
         {
             let shove = std::mem::take(&mut push.0);
             moved.body.position = pushed(arena, player, &moved.body, shove);
+        }
+        let capsule = solids::capsule_of(&moved.body, &player.moving);
+        let apart = solids::apart((actor.slot, capsule), &around, player.push_apart_mps * dt);
+        if apart != Vec3::ZERO {
+            moved.body.position = pushed(arena, player, &moved.body, apart);
         }
         moved.body.position = held_in_buy_zone(
             arena,
@@ -393,6 +428,7 @@ fn advance(
             &mut events,
         );
         *body = next;
+        peers[own].1 = solids::capsule_of(&solid(&next), &player.moving);
         let rotation = Quat::from_rotation_y(wish.yaw_radians + std::f32::consts::PI);
         if jumped {
             let scale = moves.local(entity).map_or(Vec3::ONE, |placed| placed.scale);
@@ -470,7 +506,10 @@ fn report(
                 grounded: body.grounded,
                 crouch: body.crouch,
                 motion: named(&body.motion),
-                surface: body.ground.as_ref().map(named),
+                surface: body.ground.map(|ground| named(&ground.surface)),
+                floor: (body.ground)
+                    .and_then(|ground| arena.kind_name(ground.kind))
+                    .map(str::to_owned),
                 yaw: wish.yaw_radians,
                 pitch: wish.pitch_radians,
                 apex: tally.apex,

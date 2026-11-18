@@ -39,6 +39,8 @@ struct FlowBook {
     loading_since: f64,
     saw_live: bool,
     waited: f64,
+    match_end_since: f64,
+    next_match_seconds: f64,
     waiting: Vec<String>,
     problem: Option<String>,
 }
@@ -249,6 +251,28 @@ fn steer(
         }
         if book.saw_live && phase == Some(Phase::Over) {
             flow.stage = Stage::MatchEnd;
+            book.match_end_since = now;
+            book.next_match_seconds = round
+                .as_deref()
+                .and_then(|round| {
+                    round.view().map(|view| {
+                        f64::from(round.restart_ticks)
+                            / f64::from(view.catalog.ticks_per_second.max(1))
+                    })
+                })
+                .unwrap_or(0.0);
+        }
+    }
+    flow.next_match_left = 0.0;
+    if flow.stage == Stage::MatchEnd && book.next_match_seconds > 0.0 {
+        let left = book.next_match_seconds - (now - book.match_end_since);
+        flow.next_match_left = engine::math::max(left as f32, 0.0);
+        if left <= 0.0 && !flow.settings_open {
+            flow.game += 1;
+            flow.stage = Stage::Playing;
+            book.seated_game = Some(flow.game);
+            book.saw_live = false;
+            book.next_match_seconds = 0.0;
         }
     }
     let stopped = flow.stage != Stage::Playing || flow.settings_open;

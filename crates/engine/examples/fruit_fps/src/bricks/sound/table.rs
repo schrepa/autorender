@@ -2,6 +2,8 @@ use std::collections::BTreeMap;
 
 use serde::Deserialize;
 
+use crate::solids::Kind;
+
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Curve {
@@ -53,8 +55,6 @@ pub(super) struct DeviceTiming {
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct Table {
-    pub folder: String,
-    pub extension: String,
     pub seed: u64,
     pub voices: usize,
     pub master_gain: f32,
@@ -68,6 +68,10 @@ pub(super) struct Table {
     pub occlusion_pullback_m: f32,
     pub pan_width: f32,
     pub quiet_step_gain: f32,
+    pub kinds: Vec<String>,
+    pub default_kind: String,
+    #[serde(skip)]
+    pub named: BTreeMap<Kind, String>,
     pub countdown_seconds: u32,
     pub device: DeviceTiming,
     pub curves: BTreeMap<String, Curve>,
@@ -77,7 +81,25 @@ pub(super) struct Table {
 
 impl Table {
     pub fn parse(bytes: &[u8]) -> Result<Table, String> {
-        let table: Table = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+        let mut table: Table = serde_json::from_slice(bytes).map_err(|error| error.to_string())?;
+        if !table.kinds.contains(&table.default_kind) {
+            return Err(format!(
+                "default_kind {} is not in kinds",
+                table.default_kind
+            ));
+        }
+        for kind in &table.kinds {
+            for event in ["step", "impact", "land.soft", "land.hard"] {
+                if !table.events.contains_key(&format!("{event}.{kind}")) {
+                    return Err(format!("kinds: no event {event}.{kind}"));
+                }
+            }
+        }
+        table.named = table
+            .kinds
+            .iter()
+            .map(|name| (Kind::named(name), name.clone()))
+            .collect();
         if table.voices == 0 {
             return Err("voices: 0".to_owned());
         }
@@ -105,7 +127,7 @@ impl Table {
         Ok(table)
     }
 
-    pub fn path(&self, file: &str) -> String {
-        format!("{}{file}{}", self.folder, self.extension)
+    pub fn kind(&self, kind: Kind) -> &str {
+        self.named.get(&kind).unwrap_or(&self.default_kind)
     }
 }

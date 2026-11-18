@@ -138,6 +138,8 @@ pub struct ScreenSource {
     pub font_texture: String,
     pub pictures: BTreeMap<String, String>,
     pub sized: BTreeMap<String, [f32; 2]>,
+    pub thin_faces: Vec<String>,
+    pub atlases: Vec<String>,
     pub menu: menu::MenuSource,
     pub keys: ScreenKeys,
     pub low: Lows,
@@ -190,6 +192,13 @@ struct PortraitsFile {
 }
 
 #[derive(Deserialize)]
+struct AtlasFile {
+    image: String,
+    size: [f32; 2],
+    cells: BTreeMap<String, [f32; 4]>,
+}
+
+#[derive(Deserialize)]
 struct SelectFile {
     image: String,
     size: [f32; 2],
@@ -235,28 +244,29 @@ fn face_of(file: FaceFile, name: &str) -> Result<Face, String> {
     })
 }
 
-fn font_of(text: &str) -> Result<Font, String> {
-    let mut file: FontFile = serde_json::from_str(text).map_err(|error| error.to_string())?;
+fn font_of(text: &str, thin_faces: &[String]) -> Result<(Font, Vec<String>), String> {
+    let file: FontFile = serde_json::from_str(text).map_err(|error| error.to_string())?;
     if !(file.em_px > 0.0 && file.spread_px > 0.0) {
         return Err("em_px and spread_px must be above 0".to_owned());
     }
-    let mut face = |name: &str| {
-        let found = file
-            .faces
-            .remove(name)
-            .ok_or_else(|| format!("faces.{name} is missing"))?;
-        face_of(found, name)
-    };
-    let regular = face("regular")?;
-    let bold = face("bold")?;
-    Ok(Font {
-        em_px: file.em_px,
-        spread_px: file.spread_px,
-        regular,
-        bold,
-    })
+    let mut names = Vec::new();
+    let mut faces = Vec::new();
+    let mut thin = Vec::new();
+    for (name, found) in file.faces {
+        faces.push(Some(face_of(found, &name)?));
+        thin.push(thin_faces.contains(&name));
+        names.push(name);
+    }
+    Ok((
+        Font {
+            em_px: file.em_px,
+            spread_px: file.spread_px,
+            faces,
+            thin,
+        },
+        names,
+    ))
 }
-
 fn inputs(names: &[String]) -> Result<Vec<Input>, String> {
     names
         .iter()
@@ -303,6 +313,9 @@ impl ScreenSource {
             self.minimap.clone(),
             self.portraits.clone(),
         ]
+        .into_iter()
+        .chain(self.atlases.iter().cloned())
+        .collect()
     }
 
     pub(super) fn loaded(&self) -> Option<&Loaded> {
@@ -343,11 +356,16 @@ impl ScreenSource {
                     let Some(picture) = pictures.iter().find(|picture| picture.name == name) else {
                         return Err(at(format!("image `{name}` is none of the bound pictures")));
                     };
-                    let atlas = file_name(&self.portraits);
+                    let known = |named: &str| {
+                        named == file_name(&self.portraits)
+                            || self.atlases.iter().any(|uri| file_name(uri) == named)
+                    };
                     if let Some((named, _)) = &image.cell
-                        && (named != atlas || picture.cells.is_empty())
+                        && (!known(named) || picture.cells.is_empty())
                     {
-                        return Err(at(format!("image atlas `{named}` is not `{atlas}`")));
+                        return Err(at(format!(
+                            "image atlas `{named}` is neither portraits.json nor one of `atlases`"
+                        )));
                     }
                 }
             }
@@ -382,8 +400,7 @@ impl ScreenSource {
     }
     fn pictures(
         &self,
-        map: &MapFile,
-        portraits: PortraitsFile,
+        (map, portraits, atlases): (&MapFile, PortraitsFile, Vec<AtlasFile>),
         skipped: &mut Vec<String>,
     ) -> Pictures {
         let mut found = vec![
@@ -405,6 +422,13 @@ impl ScreenSource {
                 name: select.image,
                 size: select.size,
                 cells: BTreeMap::new(),
+            });
+        }
+        for atlas in atlases {
+            found.push(Picture {
+                name: atlas.image,
+                size: atlas.size,
+                cells: atlas.cells,
             });
         }
         for (name, size) in &self.sized {
@@ -433,19 +457,27 @@ impl ScreenSource {
         }
         (pictures, textures, select_images)
     }
-    fn read(&self, files: [&[u8]; 5]) -> Result<Loaded, String> {
+    fn read(&self, files: [&[u8]; 5], atlases: &[Arc<[u8]>]) -> Result<Loaded, String> {
         self.checked()?;
         let [layout, icons, font, map, portraits] = files;
         let mut layout = layout::parse(text_of(layout, &self.layout)?)?;
         let icons: IconsFile = json_of(icons, &self.icons)?;
         let map: MapFile = json_of(map, &self.minimap)?;
         let portraits: PortraitsFile = json_of(portraits, &self.portraits)?;
-        let font = font_of(text_of(font, &self.font)?)
+        let (font, faces) = font_of(text_of(font, &self.font)?, &self.thin_faces)
             .map_err(|error| format!("{}: {error}", self.font))?;
+        layout.faces(&faces);
         let demo = demo::demo(&self.words);
+        let atlases = self
+            .atlases
+            .iter()
+            .zip(atlases)
+            .map(|(uri, bytes)| json_of::<AtlasFile>(bytes, uri))
+            .collect::<Result<Vec<_>, _>>()?;
         let (pictures, picture_textures, select_images) =
-            self.pictures(&map, portraits, &mut layout.skipped);
+            self.pictures((&map, portraits, atlases), &mut layout.skipped);
         layout.retain(|element| self.element_problem(element, &pictures, &demo));
+        layout.number();
         let keys = &self.keys;
         let menu = &self.menu.keys;
         Ok(Loaded {
@@ -481,7 +513,7 @@ impl ScreenSource {
         })
     }
     fn prepared(mut self, cx: &SceneCx<'_>, path: &str) -> Result<Self, Error> {
-        let mut files: Vec<Arc<[u8]>> = Vec::with_capacity(5);
+        let mut files: Vec<Arc<[u8]>> = Vec::with_capacity(5 + self.atlases.len());
         let named = [
             ("layout", &self.layout),
             ("icons", &self.icons),
@@ -494,11 +526,19 @@ impl ScreenSource {
                 files.push(bytes);
             }
         }
-        let [layout, icons, font, map, portraits] = files.as_slice() else {
+        for (index, uri) in self.atlases.iter().enumerate() {
+            if let Some(bytes) = cx.buffer(uri, &format!("{path}.atlases[{index}]"))? {
+                files.push(bytes);
+            }
+        }
+        let [layout, icons, font, map, portraits, atlases @ ..] = files.as_slice() else {
             return Ok(self);
         };
+        if atlases.len() != self.atlases.len() {
+            return Ok(self);
+        }
         let loaded = self
-            .read([layout, icons, font, map, portraits])
+            .read([layout, icons, font, map, portraits], atlases)
             .map_err(|problem| Error::new(ErrorCode::InvalidRecord, path).got(problem))?;
         self.loaded = Some(Arc::new(loaded));
         Ok(self)
@@ -569,6 +609,7 @@ pub(super) struct ScreenBook {
     buys: u32,
     hovered: Option<(layout::CardList, usize)>,
     pointer: Option<Vec2>,
+    pulses: Vec<paint::PulseState>,
 }
 
 pub struct ScreenBrick;
@@ -617,6 +658,11 @@ fn adopt(draw: &mut ScreenDraw, book: &mut ScreenBook, loaded: Option<&Arc<Loade
         return;
     }
     book.applied = loaded.cloned();
+    book.pulses.clear();
+    book.pulses.resize_with(
+        loaded.map_or(0, |loaded| loaded.layout.elements()),
+        paint::PulseState::default,
+    );
     draw.atlases = None;
     match loaded {
         Some(loaded) => {
@@ -672,10 +718,11 @@ type Shared<'w, 's> = (
     Res<'w, HudFacts>,
     Res<'w, ScreenState>,
     Option<Res<'w, Flow>>,
+    Res<'w, FrameTime>,
 );
 
 fn draw_screen(
-    (sources, scene, views, facts, state, flow): Shared,
+    (sources, scene, views, facts, state, flow, time): Shared,
     mut draw: ResMut<ScreenDraw>,
     mut book: ResMut<ScreenBook>,
     mut stats: ResMut<ScreenStats>,
@@ -706,6 +753,9 @@ fn draw_screen(
             map: &applied.map,
             scratch: &mut scratch,
             spare: &mut spare,
+            pulses: &mut book.pulses,
+            now: time.real_elapsed,
+            zoom: 1.0,
         };
         let behind_menu = matches!(state.shown, Shown::Title | Shown::Select)
             || (state.shown == Shown::Settings

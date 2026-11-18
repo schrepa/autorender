@@ -6,9 +6,11 @@ mod table;
 mod voices;
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
+use engine::Error;
 use engine::prelude::*;
-use engine_core::{Background, Files, Loaded, Output, Play, SoundId, Sounds, Taken, Tune};
+use engine_core::{Loaded, Output, Play, SceneCx, SoundId, Sounds, Tune};
 use glam::Vec3;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -18,7 +20,6 @@ use crate::play::events::arms::ArmsEvents;
 use crate::play::events::body::BodyEvents;
 use crate::play::events::powers::PowerEvents;
 use crate::play::events::round::RoundEvents;
-use crate::play::numbers::Numbers;
 use crate::play::round::Round;
 use crate::play::sound::{Anchor, Cue, SoundCues, SoundLoad, Volume};
 use crate::play::view::Watched;
@@ -29,7 +30,29 @@ use spatial::Listener;
 use table::{Group, Table};
 use voices::{Admit, Rng, Voice};
 
-const TABLE: &str = "data/sound.json";
+#[derive(Component, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+struct SoundTable {
+    table: String,
+    #[serde(skip)]
+    parsed: Option<Result<Arc<Table>, String>>,
+}
+
+impl SoundTable {
+    fn files(&self) -> Vec<String> {
+        vec![self.table.clone()]
+    }
+
+    fn prepared(mut self, cx: &SceneCx<'_>, path: &str) -> Result<Self, Error> {
+        let at = format!("{path}.table");
+        let Some(bytes) = cx.buffer(&self.table, &at)? else {
+            return Ok(self);
+        };
+        let parsed = Table::parse(&bytes).map(Arc::new);
+        self.parsed = Some(parsed.map_err(|error| format!("{}: {error}", self.table)));
+        Ok(self)
+    }
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct DoorStats {
@@ -60,15 +83,14 @@ stats! {
         pub asked: u32,
         pub loaded: u32,
         pub ready: bool,
+        pub waiting: Vec<String>,
         pub door: DoorStats,
     }
 }
 
 #[derive(Resource, Default)]
 struct Bank {
-    reading: Option<Background<Vec<u8>, String>>,
-    revision: Option<u64>,
-    table: Option<Table>,
+    table: Option<Arc<Table>>,
     refusal: Option<String>,
     files: BTreeMap<String, SoundId>,
     opened: bool,
@@ -98,6 +120,12 @@ impl Brick for SoundBrick {
 
     fn register(bricks: &mut Bricks<'_>) {
         bricks
+            .join::<SceneComponents>(
+                ComponentKind::of::<SoundTable>("sound")
+                    .schema(engine_core::schema_of::<SoundTable>)
+                    .files(SoundTable::files)
+                    .prepare(SoundTable::prepared),
+            )
             .resource::<SoundCues>()
             .resource::<SoundLoad>()
             .settings::<Volume>()
@@ -111,25 +139,19 @@ impl Brick for SoundBrick {
 }
 
 fn prepare(
-    numbers: Res<Numbers>,
+    tables: Query<Ref<SoundTable>>,
     volume: Res<Volume>,
     mut bank: ResMut<Bank>,
-    mut files: ResMut<Files>,
     mut sounds: ResMut<Sounds>,
 ) {
-    let revision = numbers.revision();
-    if bank.revision != Some(revision) && bank.reading.is_none() {
-        bank.revision = Some(revision);
-        bank.reading = Some(files.read(TABLE, |bytes| Ok(bytes.to_vec())));
-    }
-    if let Some(reading) = bank.reading.take() {
-        match reading.take(&*files) {
-            Taken::Waiting(reading) => bank.reading = Some(reading),
-            Taken::Failed(error) => bank.refusal = Some(error.to_string()),
-            Taken::Ready(bytes) => match Table::parse(&bytes) {
-                Ok(table) => adopt(&mut bank, table, &mut sounds),
-                Err(error) => bank.refusal = Some(format!("{TABLE}: {error}")),
-            },
+    for table in &tables {
+        if !table.is_changed() {
+            continue;
+        }
+        match &table.parsed {
+            Some(Ok(parsed)) => adopt(&mut bank, Arc::clone(parsed), &mut sounds),
+            Some(Err(error)) => bank.refusal = Some(error.clone()),
+            None => {}
         }
     }
     let Some(table) = bank.table.as_ref() else {
@@ -143,7 +165,7 @@ fn prepare(
     }
 }
 
-fn adopt(bank: &mut Bank, table: Table, sounds: &mut Sounds) {
+fn adopt(bank: &mut Bank, table: Arc<Table>, sounds: &mut Sounds) {
     if !bank.opened {
         sounds.open(table.latency_seconds);
         bank.opened = true;
@@ -152,7 +174,7 @@ fn adopt(bank: &mut Bank, table: Table, sounds: &mut Sounds) {
     for sound in table.sounds.values() {
         for file in &sound.files {
             if !bank.files.contains_key(&file.file) {
-                let id = sounds.load(&table.path(&file.file));
+                let id = sounds.load(&file.file);
                 bank.files.insert(file.file.clone(), id);
             }
         }
@@ -234,7 +256,7 @@ fn mix(
     let own = heard_by.and_then(|(slot, _)| slot);
     let mut fresh = heard;
     if let Some(arms) = arms.filter(|arms| arms.tick == now) {
-        events::arms(&arms, who, &mut fresh);
+        events::arms(&arms, who, table, &mut fresh);
     }
     if let Some(powers) = powers.filter(|powers| powers.tick == now) {
         events::powers(&powers, who, now, &mut fresh);
@@ -492,6 +514,17 @@ fn report(
     };
     let (loaded, failed) = (count(true), count(false));
     let asked = bank.files.len();
+    let waiting: Vec<String> = bank
+        .files
+        .iter()
+        .filter_map(|(file, id)| match sounds.loaded(*id) {
+            Some(Loaded::Reading) => Some(format!("{file} reading")),
+            Some(Loaded::Decoding) => Some(format!("{file} decoding")),
+            None => Some(format!("{file} unknown")),
+            Some(Loaded::Ready(_) | Loaded::Failed(_)) => None,
+        })
+        .take(10)
+        .collect();
     load.set_if_neq(SoundLoad {
         ready: bank.refusal.is_some() || (bank.table.is_some() && loaded + failed == asked),
         asked: u32::try_from(asked).unwrap_or(u32::MAX),
@@ -508,7 +541,7 @@ fn report(
         Output::Open {
             latency_seconds, ..
         } => Some(*latency_seconds),
-        Output::Closed | Output::Asked | Output::Failed(_) => None,
+        Output::Closed | Output::Asked | Output::Failed(_) | Output::Absent(_) => None,
     };
     let next = SoundStats {
         table,
@@ -524,6 +557,7 @@ fn report(
         asked: u32::try_from(asked).unwrap_or(u32::MAX),
         loaded: u32::try_from(loaded).unwrap_or(u32::MAX),
         ready: load.ready,
+        waiting,
         door: DoorStats {
             output: door.output.to_owned(),
             voices: door.voices.live,

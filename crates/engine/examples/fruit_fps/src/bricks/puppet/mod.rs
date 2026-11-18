@@ -2,7 +2,9 @@ engine::brick!(puppet);
 
 mod carry;
 mod choose;
+mod device;
 mod drops;
+mod props;
 
 use std::collections::BTreeMap;
 
@@ -10,7 +12,7 @@ use engine::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::play::puppet::{Muzzles, PuppetFile};
+use crate::play::puppet::{DeviceLamp, Muzzles, PuppetFile, Tasks};
 
 const PUPPET_PART: &str = "puppet";
 
@@ -37,6 +39,8 @@ stats! {
         pub actors: Vec<ActorStats>,
         pub held: u32,
         pub dropped: u32,
+        pub props: u32,
+        pub props_skipped: u32,
         pub refusal: Option<String>,
     }
 }
@@ -49,6 +53,17 @@ pub struct CarriedWeapon {
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct DroppedWeapon {
     id: u32,
+}
+
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct PropShown {
+    effect: u32,
+    part: u32,
+}
+
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct DeviceShown {
+    form: device::Form,
 }
 
 #[derive(Resource, Default)]
@@ -72,9 +87,17 @@ impl Brick for PuppetBrick {
             )
             .resource::<Memories>()
             .resource::<Muzzles>()
+            .resource::<Tasks>()
+            .resource::<DeviceLamp>()
+            .resource::<drops::Flights>()
+            .moves::<DroppedWeapon>(Pace::Tick)
+            .resource::<props::Spins>()
+            .moves::<PropShown>(Pace::Tick)
             .stats::<PuppetStats>()
             .systems(Schedule::FixedSimulation, choose::animate)
             .systems(Schedule::FixedSimulation, carry::carry)
-            .systems(Schedule::FixedSimulation, drops::lie);
+            .systems(Schedule::FixedSimulation, drops::lie)
+            .systems(Schedule::FixedSimulation, device::place)
+            .systems(Schedule::FixedSimulation, props::show);
     }
 }

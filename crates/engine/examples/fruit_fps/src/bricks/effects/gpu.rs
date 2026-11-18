@@ -2,15 +2,23 @@ use std::ops::Range;
 
 use bevy_ecs::system::SystemParamItem;
 use engine::prelude::*;
-use engine_core::{Entry, Error, Var, ViewFacts};
-use engine_render::{Access, Attach, Encode, FULLSCREEN, Own, PerBatch, Scene};
+use engine_core::{Entry, Error, Sampler, TextureRef, Var, ViewFacts};
+use engine_render::{
+    Access, Attach, BatchGroup, Encode, FULLSCREEN, GroupEntry, Own, PerBatch, Scene, Texture,
+};
 
 use super::assemble::BOX_VERTICES;
-use super::shaders::effects::{glow, items, screen, solid, volume};
+use super::shaders::effects::{field, glow, items, screen, solid, volume};
 use super::{EFFECTS_PASS, EffectsDrawing, EffectsFrame, Item};
 use crate::names::{COLOR, COLOR_PASS, DEPTH};
 
 const FULLSCREEN_VERTICES: u32 = 3;
+
+const TEXEL: wgpu::Extent3d = wgpu::Extent3d {
+    width: 1,
+    height: 1,
+    depth_or_array_layers: 1,
+};
 
 pub(super) struct EffectsGpu {
     glow: Pipeline<Self, Scene>,
@@ -21,6 +29,9 @@ pub(super) struct EffectsGpu {
     pass: engine_render::Pass<Self>,
     items: Buffer<Self>,
     frame: Buffer<Self>,
+    field_group: BatchGroup<Self>,
+    unlit: Texture<Self>,
+    field_bound: Option<Option<TextureRef>>,
     sent: Option<EffectsFrame>,
     glow_range: Range<u32>,
     solid_range: Range<u32>,
@@ -108,6 +119,12 @@ impl GpuPart for EffectsGpu {
             (items::EFFECTS_FRAME, frame_buffer),
         ];
         cx.frame(volume::EFFECTS_DEPTH, Bind::Target(DEPTH))?;
+        let field_group = cx.batch_group(field::MODULE, 1, &[])?;
+        let unlit = cx.texture(
+            "effects_unlit_field",
+            wgpu::TextureFormat::Rgba8Unorm,
+            Lifetime::Kept,
+        );
         let scene = Scene::named(COLOR_PASS);
         let over = [(blended(), wgpu::ColorWrites::ALL)];
         let opaque = [(None, wgpu::ColorWrites::ALL)];
@@ -162,6 +179,9 @@ impl GpuPart for EffectsGpu {
             pass,
             items: items_buffer,
             frame: frame_buffer,
+            field_group,
+            unlit,
+            field_bound: None,
             sent: None,
             glow_range: 0..0,
             solid_range: 0..0,
@@ -184,12 +204,15 @@ impl GpuPart for EffectsGpu {
         if !drawing.items.is_empty() {
             cx.write(self.items, 0, &drawing.items);
         }
+        let field = self.bind_field(drawing.field, cx);
+        let mut frame = drawing.frame;
+        if field.is_none() {
+            frame.field_shape = [0.0; 4];
+        }
         let bytes = size_of::<EffectsFrame>() as u64;
-        if cx.allocate_buffer(self.frame, bytes) == Allocation::Fresh
-            || self.sent != Some(drawing.frame)
-        {
-            cx.write(self.frame, 0, &[drawing.frame]);
-            self.sent = Some(drawing.frame);
+        if cx.allocate_buffer(self.frame, bytes) == Allocation::Fresh || self.sent != Some(frame) {
+            cx.write(self.frame, 0, &[frame]);
+            self.sent = Some(frame);
         }
         self.glow_range = drawing.glow.clone();
         self.solid_range = drawing.solid.clone();
@@ -228,6 +251,41 @@ impl GpuPart for EffectsGpu {
 }
 
 impl EffectsGpu {
+    fn bind_field(
+        &mut self,
+        wanted: Option<TextureRef>,
+        cx: &mut Prepare<'_, Self>,
+    ) -> Option<TextureRef> {
+        if cx.allocate(self.unlit, TEXEL, 1) == Allocation::Fresh {
+            let layout = wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            };
+            cx.write_texture(self.unlit, wgpu::Origin3d::ZERO, &[0_u8; 4], layout, TEXEL);
+            self.field_bound = None;
+        }
+        let shown = wanted.filter(|map| cx.texture_resident(map.texture));
+        if self.field_bound != Some(shown) {
+            let (texture, sampler) = match shown {
+                Some(map) => (GroupEntry::Asset(map.texture), map.sampler),
+                None => (GroupEntry::Texture(self.unlit), Sampler::CLAMP),
+            };
+            let entries = [
+                (field::EFFECTS_FIELD_MAP, texture),
+                (
+                    field::EFFECTS_FIELD_SAMPLER,
+                    GroupEntry::AssetSampler(sampler),
+                ),
+            ];
+            match cx.set_batch(self.field_group, None, &entries, None) {
+                Ok(()) => self.field_bound = Some(shown),
+                Err(error) => cx.report(error),
+            }
+        }
+        self.field_bound.flatten()
+    }
+
     pub(super) fn draw_effects(&self, draw: &mut Draw<'_, Self, Scene>) {
         if !self.solid_range.is_empty() {
             draw.draw(&self.solid, pulled(BOX_VERTICES, &self.solid_range));

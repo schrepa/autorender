@@ -2,7 +2,7 @@ use std::fmt::Debug;
 
 use engine::prelude::*;
 
-use super::{BotStat, BotsStats, SquadStat, WishStat};
+use super::{BotStat, Book, BotsStats, SquadStat, ThrowStat, WishStat};
 use crate::play::bots::BotMinds;
 use crate::play::paths::Paths;
 
@@ -22,7 +22,19 @@ fn name(value: impl Debug) -> String {
     out
 }
 
-pub(super) fn report(minds: Res<BotMinds>, paths: Res<Paths>, mut stats: ResMut<BotsStats>) {
+pub(super) fn report(
+    minds: Res<BotMinds>,
+    paths: Res<Paths>,
+    book: Res<Book>,
+    mut stats: ResMut<BotsStats>,
+) {
+    let places = book.places.as_deref();
+    let mut throws = ThrowStat::default();
+    for bot in &minds.bots {
+        throws.solved += bot.throws.solved;
+        throws.refused += bot.throws.refused;
+        throws.thrown += bot.throws.thrown;
+    }
     let squads = minds
         .squads
         .iter()
@@ -59,6 +71,11 @@ pub(super) fn report(minds: Res<BotMinds>, paths: Res<Paths>, mut stats: ResMut<
                 yaw: bot.wish.yaw_radians,
                 pitch: bot.wish.pitch_radians,
             },
+            line_up: bot
+                .line_up
+                .zip(places)
+                .map(|((line, _), places)| line.name(places)),
+            line_up_state: bot.line_up.map(|(_, state)| state.key().to_owned()),
         })
         .collect();
     stats.set_if_neq(BotsStats {
@@ -67,6 +84,8 @@ pub(super) fn report(minds: Res<BotMinds>, paths: Res<Paths>, mut stats: ResMut<
         frozen: minds.frozen,
         queries: minds.queries,
         expanded: minds.expanded,
+        throws,
+        drops: minds.drops,
         squads,
         bots,
     });

@@ -3,9 +3,10 @@ use engine::prelude::*;
 use super::apply::{Row, power_actor};
 use super::cast::Asked;
 use super::{Parts, Relay};
-use crate::abilities::{self, AbilitySpec, Aim, Event, World, needs_aim};
+use crate::abilities::{self, AbilitySpec, Aim, Event, Preview, needs_aim};
 use crate::play::events::powers::{Cast, Hold, HoldChange, PowerEvents, Refused};
 use crate::play::powers::{Held, Powers};
+use crate::play::world::Arena;
 use crate::rules::{AbilitySlot, AbilityUse};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -194,25 +195,28 @@ impl Casting<'_> {
 
     pub(super) fn previews(
         &self,
-        world: &impl World,
+        arena: &Arena,
         rows: &Query<Row<'_>>,
         order: &[(u32, Entity)],
         powers: &mut Powers,
     ) {
-        for held in &mut powers.held {
-            held.preview = order
-                .iter()
-                .find(|(slot, _)| *slot == held.slot)
-                .and_then(|(_, entity)| rows.get(*entity).ok())
-                .and_then(|(_, actor, wish, body, _, _, _, offsets, _, _)| {
-                    let spec = self.asked.spec(&actor.character, held.ability)?;
-                    let caster = power_actor(actor, body, wish, offsets, self.parts);
-                    let aim = Aim {
-                        origin: caster.eye,
-                        direction: caster.view,
-                    };
-                    abilities::preview(world, &caster, spec, aim)
-                });
+        let found: Vec<Option<Preview>> = powers
+            .held
+            .iter()
+            .map(|held| {
+                let (_, entity) = order.iter().find(|(slot, _)| *slot == held.slot)?;
+                let (_, actor, wish, body, _, _, _, offsets, _, _) = rows.get(*entity).ok()?;
+                let spec = self.asked.spec(&actor.character, held.ability)?;
+                let caster = power_actor(actor, body, wish, offsets, self.parts);
+                let aim = Aim {
+                    origin: caster.eye,
+                    direction: caster.view,
+                };
+                powers.landing(arena, &caster, spec, aim)
+            })
+            .collect();
+        for (held, preview) in powers.held.iter_mut().zip(found) {
+            held.preview = preview;
         }
     }
 }

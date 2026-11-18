@@ -1,4 +1,5 @@
 import package::engine::color::encode_srgb;
+import package::engine::post::frame::post;
 import package::generated::frame::FrameGrade;
 
 @group(0) @binding(2) var scene: texture_2d<f32>;
@@ -69,12 +70,17 @@ fn smoothed(uv: vec2<f32>, texel: vec2<f32>, middle: vec3<f32>) -> vec3<f32> {
 @fragment
 fn fs_composite(@builtin(position) position: vec4<f32>) -> @location(0) vec4<f32> {
     let size = vec2<i32>(textureDimensions(scene));
-    let pixel = min(vec2<i32>(position.xy), size - 1);
-    let middle = tonemap(graded(textureLoad(scene, pixel, 0).rgb));
+    let uv = position.xy * post.size.zw;
+    var middle: vec3<f32>;
+    if all(vec2<f32>(size) == post.size.xy) {
+        let pixel = min(vec2<i32>(position.xy), size - 1);
+        middle = tonemap(graded(textureLoad(scene, pixel, 0).rgb));
+    } else {
+        middle = shown_at(uv);
+    }
     var shown = middle;
     if frame_grade.grade.w > 0.5 {
-        let texel = 1.0 / vec2<f32>(size);
-        shown = smoothed(position.xy * texel, texel, middle);
+        shown = smoothed(uv, 1.0 / vec2<f32>(size), middle);
     }
     return vec4<f32>(encode_srgb(shown), 1.0);
 }

@@ -1,7 +1,41 @@
 use engine::prelude::{Component, Resource};
 use glam::Vec3;
 
+use crate::play::events::arms::Weapon;
 use crate::weapons::{Gun, GunKind, Loadout, Stance};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Held {
+    Gun(GunKind),
+    Melee,
+    Device,
+}
+
+impl Held {
+    pub fn key(self) -> &'static str {
+        match self {
+            Held::Gun(kind) => Weapon::Gun(kind).key(),
+            Held::Melee => Weapon::Melee.key(),
+            Held::Device => "device",
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HandAction {
+    Equip,
+    Swing { heavy: bool },
+    Plant,
+    Defuse,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Hand {
+    pub held: Held,
+    pub action: Option<HandAction>,
+    pub progress: f32,
+    pub seconds: f32,
+}
 
 #[derive(Component, Clone, Debug, PartialEq)]
 pub struct Arms {
@@ -15,10 +49,18 @@ pub struct Arms {
     pub tag_slow: f32,
     pub use_held: bool,
     pub pickable: Option<u32>,
+    pub run_factor: f32,
+    pub hand: Hand,
+    pub device_out: bool,
+    pub device_equip_left: u32,
+    pub busy: bool,
 }
 
 impl Arms {
-    pub fn new(loadout: Loadout) -> Self {
+    pub fn new(loadout: Loadout, run_factor: f32) -> Self {
+        let held = loadout
+            .active_gun()
+            .map_or(Held::Melee, |gun| Held::Gun(gun.kind()));
         Self {
             loadout,
             kick_pitch_radians: 0.0,
@@ -30,6 +72,16 @@ impl Arms {
             tag_slow: 0.0,
             use_held: false,
             pickable: None,
+            run_factor,
+            hand: Hand {
+                held,
+                action: None,
+                progress: 0.0,
+                seconds: 0.0,
+            },
+            device_out: false,
+            device_equip_left: 0,
+            busy: false,
         }
     }
 

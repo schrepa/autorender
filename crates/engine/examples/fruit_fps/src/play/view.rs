@@ -59,5 +59,6 @@ settings! {
         pub radians_per_pixel: f32 = 0.0022 => range(0.00001, 0.05),
         pub invert_pitch: bool = false => any,
         pub fov_degrees: f32 = 62.0 => range(40.0, 120.0),
+        pub render_scale: f32 = 1.0 => range(0.25, 1.0),
     }
 }

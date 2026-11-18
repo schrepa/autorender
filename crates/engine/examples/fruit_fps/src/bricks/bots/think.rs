@@ -1,15 +1,17 @@
 use engine::prelude::*;
 use glam::Vec3;
 
+use super::pickup::{self, Ground};
 use super::senses::{self, Events, Noise, ReadTicks, Sight, Who};
-use super::world::BotWorld;
+use super::world::{BotWorld, Thrower};
+use crate::abilities::{self as powers_maths, ActorId};
 use super::{Book, BotsTest, LevelChoice, Loaded, Reach, level_of};
 use crate::bots::{
     self, Brain, Call, Gait as BotGait, Heard, Intent, MatchSense, Mate, Member, Places, Role,
     Seen, Sense, Smoke, Squad, SquadSense, WeaponChoice,
 };
 use crate::play::actors::{Actor, Alive, Body, Equip, Gait, Health, Human, Wish};
-use crate::play::arms::Arms;
+use crate::play::arms::{Arms, Drops};
 use crate::play::bots::{BotMind, BotMinds, WishSummary};
 use crate::play::events::arms::ArmsEvents;
 use crate::play::events::body::BodyEvents;
@@ -22,6 +24,7 @@ use crate::play::round::Round;
 use crate::play::view::ViewOffsets;
 use crate::play::world::Arena;
 use crate::rules::{AbilitySlot, Team, View, suggest_buy};
+use crate::weapons::forward;
 
 const BRAIN_MIX: u64 = 0x9E37_79B9_7F4A_7C15;
 const SQUAD_MIX: u64 = 0xC2B2_AE3D_27D4_EB4F;
@@ -43,6 +46,8 @@ pub(super) struct Minds {
     calls: [Vec<Call>; 2],
     next_calls: [Vec<Call>; 2],
     fired: Vec<bool>,
+    picking: Vec<bool>,
+    drops: u32,
     read: ReadTicks,
     noises: Vec<Noise>,
     whos: Vec<Who>,
@@ -67,6 +72,7 @@ pub(super) struct Facts<'w> {
     powers: Option<Res<'w, Powers>>,
     hazards: Option<Res<'w, Hazards>>,
     flow: Option<Res<'w, Flow>>,
+    drops: Option<Res<'w, Drops>>,
 }
 
 #[derive(SystemParam)]
@@ -98,6 +104,7 @@ struct Ctx<'a> {
     arena: &'a Arena,
     paths: &'a Paths,
     powers: Option<&'a Powers>,
+    drops: Option<&'a Drops>,
     tick: u64,
 }
 
@@ -137,6 +144,8 @@ fn snapshot(
             velocity: body.velocity,
             eye: body.eye,
             crouched: body.crouched,
+            grounded: body.grounded,
+            pickable: arms.and_then(|arms| arms.pickable),
             yaw: wish.yaw_radians,
             pitch: wish.pitch_radians,
             recoil_yaw: recoil.1,
@@ -144,6 +153,7 @@ fn snapshot(
             health: health.health,
             armour: health.armour,
             gun: senses::gun_sense(arms, &loaded.weapons, body.motion, recoil),
+            character: loaded.book.character(actor.character.as_str()),
         });
     }
     whos.sort_by_key(|who| who.slot);
@@ -188,6 +198,9 @@ fn ensure_brains(state: &mut Minds, round: &Round, choice: LevelChoice) {
     }
     if state.fired.len() < slots {
         state.fired.resize(slots, false);
+    }
+    if state.picking.len() < slots {
+        state.picking.resize(slots, false);
     }
     for who in state.whos.iter().filter(|who| !who.human) {
         let held = &mut state.brains[who.slot as usize];
@@ -250,6 +263,7 @@ fn plan(state: &mut Minds, ctx: &Ctx<'_>, games: &[MatchSense; 2]) {
             paths: ctx.paths,
             team: index,
             places: ctx.places,
+            thrower: None,
         };
         if let Some(squad) = state.squads[index].as_mut() {
             squad.plan(&sense, &world, &ctx.loaded.bots, ctx.tick);
@@ -317,6 +331,7 @@ fn think_one(
         yaw: who.yaw,
         pitch: who.pitch,
         crouched: who.crouched,
+        grounded: who.grounded,
         health: who.health,
         armor: who.armour,
         gun: who.gun,
@@ -332,14 +347,48 @@ fn think_one(
         game: games[index],
         order,
     };
+    let loaded = ctx.loaded;
+    let thrower = who
+        .character
+        .and_then(|character| loaded.specs(character))
+        .map(|specs| Thrower {
+            actor: powers_maths::Actor {
+                id: ActorId(who.slot),
+                team: index,
+                feet: who.feet,
+                eye: who.eye,
+                view: forward(who.yaw, who.pitch),
+                radius: loaded.radius_m,
+                height: if who.crouched {
+                    loaded.crouch_height_m
+                } else {
+                    loaded.height_m
+                },
+            },
+            specs,
+            surfaces: &loaded.book.throw_surfaces,
+        });
     let world = BotWorld {
         arena: ctx.arena,
         paths: ctx.paths,
         team: index,
         places: ctx.places,
+        thrower,
     };
+    let quiet = state.seen.is_empty();
     let brain = state.brains.get_mut(who.slot as usize)?.as_mut()?;
-    let intent = bots::think(brain, &sense, &world, &ctx.loaded.bots, ctx.tick);
+    let mut intent = bots::think(brain, &sense, &world, &ctx.loaded.bots, ctx.tick);
+    let ground = Ground {
+        drops: ctx.drops,
+        arena: ctx.arena,
+        loaded: ctx.loaded,
+    };
+    let slot = who.slot as usize;
+    let before = state.picking.get(slot).copied().unwrap_or(false);
+    let press = quiet && pickup::consider(&ground, &who, brain, before, &mut intent);
+    if let Some(picking) = state.picking.get_mut(slot) {
+        *picking = press;
+    }
     if let Some(call) = intent.call {
         state.next_calls[index].push(call);
     }
@@ -386,8 +435,13 @@ fn apply(wish: &mut Wish, intent: &Intent, fired_before: bool, view: &View<'_>, 
         fire_held: intent.fire,
         fire_pressed: intent.fire && !fired_before,
         reload: intent.reload,
+        drop: intent.drop_device,
         scope: intent.scope,
-        equip: intent.switch.map(equip_of),
+        equip: if intent.drop_device {
+            Some(Equip::Device)
+        } else {
+            intent.switch.map(equip_of)
+        },
         interact_held: intent.plant || intent.defuse,
         cast: intent.ability.and_then(|ability| cast_of(ability.slot)),
         buys: if intent.buy {
@@ -424,6 +478,10 @@ fn write(state: &mut Minds, actors: &mut Query<Row<'_>>, view: &View<'_>) {
                 if let Some(fired) = state.fired.get_mut(slot) {
                     *fired = intent.fire;
                 }
+                if state.picking.get(slot).copied().unwrap_or(false) {
+                    wish.interact_held = true;
+                }
+                state.drops += u32::from(intent.drop_device);
                 state.wishes.push((actor.slot, summary(&wish)));
             }
             None => rest(&mut wish),
@@ -438,6 +496,8 @@ fn record(state: &Minds, minds: &mut BotMinds) {
             minds.bots.push(BotMind {
                 slot: *slot,
                 mind: brain.debug(),
+                throws: brain.throws(),
+                line_up: brain.last_throw(),
                 goal: intent.goal,
                 wish: state
                     .wishes
@@ -448,6 +508,7 @@ fn record(state: &Minds, minds: &mut BotMinds) {
         }
     }
     minds.squads = [0, 1].map(|team| state.squads[team].as_ref().map(Squad::debug));
+    minds.drops = state.drops;
 }
 
 fn gate(facts: &Facts<'_>, has_match: bool) -> Option<String> {
@@ -542,6 +603,7 @@ pub(super) fn think(
         arena: &facts.arena,
         paths: &facts.paths,
         powers: facts.powers.as_deref(),
+        drops: facts.drops.as_deref(),
         tick,
     };
     let state = &mut *state;

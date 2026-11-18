@@ -2,7 +2,7 @@ use engine::prelude::Resource;
 use glam::{Quat, Vec3};
 
 use crate::rules::Side;
-use crate::solids::{Dropped, Hit, Solids};
+use crate::solids::{Dropped, Hit, Kind, Solids};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Spawn {
@@ -42,6 +42,7 @@ pub struct Markers {
     pub attack: Vec<Spawn>,
     pub defend: Vec<Spawn>,
     pub zones: Vec<ZoneBox>,
+    pub kinds: Vec<(Kind, String)>,
 }
 
 #[derive(Resource, Clone, Debug)]
@@ -85,6 +86,12 @@ impl Arena {
 
     pub fn solids_mut(&mut self) -> &mut Solids {
         &mut self.solids
+    }
+
+    pub fn kind_name(&self, kind: Kind) -> Option<&str> {
+        (self.markers.kinds.iter())
+            .find(|(known, _)| *known == kind)
+            .map(|(_, name)| name.as_str())
     }
 
     pub fn dropped(&self) -> Dropped {
