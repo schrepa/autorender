@@ -8,6 +8,9 @@ use wesl::Mangler as _;
 #[cfg(any(feature = "dev", feature = "profiling"))]
 pub(crate) mod counting;
 mod driver;
+mod facts;
+
+pub(crate) use facts::Fragment;
 
 pub const CORE_PACKAGE: &str = "engine_render";
 pub const CAMERA: &str = "camera";
@@ -103,6 +106,9 @@ struct Module {
     package: &'static str,
     text: Cow<'static, str>,
     declared: Vec<Declaration>,
+    overrides: Vec<String>,
+    functions: Vec<(String, Option<wgpu::ShaderStages>)>,
+    items: Vec<String>,
     generated: bool,
 }
 
@@ -112,9 +118,16 @@ pub(crate) struct Composed {
     pub(crate) text: String,
     pub(crate) bindings: Vec<String>,
     pub(crate) overrides: Vec<(String, String)>,
+    pub(crate) fragments: Vec<(String, Fragment)>,
 }
 
 impl Composed {
+    pub(crate) fn fragment(&self, entry: &str) -> Option<&Fragment> {
+        (self.fragments.iter())
+            .find(|(name, _)| name == entry)
+            .map(|(_, fragment)| fragment)
+    }
+
     pub(crate) fn constants<'a>(&'a self, values: &[(&str, f64)]) -> Vec<(&'a str, f64)> {
         values
             .iter()
@@ -262,12 +275,15 @@ impl Linker {
         text: Cow<'static, str>,
         generated: bool,
     ) {
-        let declared = declarations(&text);
+        let facts = facts::facts(&text);
         self.modules.push(Module {
             path,
             package,
             text,
-            declared,
+            declared: facts.declared,
+            overrides: facts.overrides,
+            functions: facts.functions,
+            items: facts.items,
             generated,
         });
     }
@@ -301,8 +317,7 @@ impl Linker {
 
     pub(crate) fn has_entry(&self, entry: Entry) -> bool {
         let (path, name) = path_of((entry.module(), entry.name()));
-        self.module(path)
-            .is_some_and(|module| defines_function(&module.text, &name))
+        self.defines(path, &name)
     }
 
     pub(crate) fn buffer_usage(&self, var: Var) -> wgpu::BufferUsages {
@@ -436,11 +451,13 @@ impl Linker {
                 }
             }
         }
+        let fragments = facts::fragments(&text);
         let composed = Arc::new(Composed {
             module: module.to_owned(),
             text,
             bindings: linked.bindings,
             overrides,
+            fragments,
         });
         self.composed.insert(key, Arc::clone(&composed));
         Ok(composed)
@@ -519,7 +536,20 @@ impl Linker {
 
     pub(crate) fn defines(&self, path: &str, function: &str) -> bool {
         self.module(path)
-            .is_some_and(|module| defines_function(&module.text, function))
+            .is_some_and(|module| module.functions.iter().any(|(name, _)| name == function))
+    }
+
+    pub(crate) fn stage(&self, entry: Entry) -> wgpu::ShaderStages {
+        let (path, name) = path_of((entry.module(), entry.name()));
+        (self.module(path).into_iter())
+            .flat_map(|module| &module.functions)
+            .find(|(known, _)| *known == name)
+            .and_then(|(_, stage)| *stage)
+            .unwrap_or(wgpu::ShaderStages::FRAGMENT)
+    }
+
+    pub(crate) fn declarations(&self, path: &str) -> &[Declaration] {
+        self.module(path).map_or(&[], |module| &module.declared)
     }
 
     pub(crate) fn unused(&mut self, composed: &[Arc<Composed>]) -> Vec<Error> {
@@ -532,9 +562,9 @@ impl Linker {
             .iter()
             .filter(|module| !module.generated && module.package != CORE_PACKAGE)
             .flat_map(|module| {
-                entry_points(&module.text)
-                    .into_iter()
-                    .map(|name| (module.path.clone(), name))
+                (module.functions.iter())
+                    .filter(|(_, stage)| stage.is_some())
+                    .map(|(name, _)| (module.path.clone(), name.clone()))
             })
             .collect();
         let roots: Vec<(String, String)> = self.kept.iter().cloned().chain(entries).collect();
@@ -552,11 +582,11 @@ impl Linker {
             .iter()
             .filter(|module| !module.generated && module.package != CORE_PACKAGE)
         {
-            for item in items(&module.text) {
+            for item in &module.items {
                 let root = roots
                     .iter()
-                    .any(|(known, name)| *known == module.path && *name == item);
-                if !root && !mentioned(&texts, &module.path, &item) {
+                    .any(|(known, name)| *known == module.path && name == item);
+                if !root && !mentioned(&texts, &module.path, item) {
                     problems.push(Error::new(
                         ErrorCode::WgslUnused,
                         format!("$.shaders.{}.{item}", module.path),
@@ -604,12 +634,8 @@ fn prepare(
             .iter()
             .zip(&paths)
             .map(|(source, path)| {
-                declared_overrides(&source.text)
-                    .into_iter()
-                    .map(|name| {
-                        let mangled = mangle(path, &name);
-                        (name, mangled)
-                    })
+                (source.overrides.iter())
+                    .map(|name| (name.clone(), mangle(path, name)))
                     .collect()
             })
             .collect(),
@@ -720,199 +746,13 @@ fn word(character: char) -> bool {
 }
 
 fn items(text: &str) -> Vec<String> {
-    use wesl::syntax::{GlobalDeclaration, TranslationUnit};
-    let Ok(unit) = text.parse::<TranslationUnit>() else {
-        return Vec::new();
-    };
-    unit.global_declarations
-        .iter()
-        .filter_map(|declaration| match declaration.node() {
-            GlobalDeclaration::Function(item) => Some(item.ident.to_string()),
-            GlobalDeclaration::Struct(item) => Some(item.ident.to_string()),
-            GlobalDeclaration::Declaration(item) => Some(item.ident.to_string()),
-            GlobalDeclaration::TypeAlias(item) => Some(item.ident.to_string()),
-            GlobalDeclaration::Void
-            | GlobalDeclaration::ConstAssert(_)
-            | GlobalDeclaration::Compound(_) => None,
-        })
-        .collect()
-}
-
-fn entry_points(text: &str) -> Vec<String> {
-    use wesl::syntax::{GlobalDeclaration, TranslationUnit};
-    let Ok(unit) = text.parse::<TranslationUnit>() else {
-        return Vec::new();
-    };
-    unit.global_declarations
-        .iter()
-        .filter_map(|declaration| match declaration.node() {
-            GlobalDeclaration::Function(item)
-                if item
-                    .attributes
-                    .iter()
-                    .any(|attribute| attribute.node().is_entry_point()) =>
-            {
-                Some(item.ident.to_string())
-            }
-            GlobalDeclaration::Void
-            | GlobalDeclaration::Declaration(_)
-            | GlobalDeclaration::TypeAlias(_)
-            | GlobalDeclaration::Struct(_)
-            | GlobalDeclaration::Function(_)
-            | GlobalDeclaration::ConstAssert(_)
-            | GlobalDeclaration::Compound(_) => None,
-        })
-        .collect()
+    facts::facts(text).items
 }
 
 pub(crate) fn module_path(path: &str) -> Result<wesl::syntax::ModulePath, String> {
     format!("package::{path}")
         .parse::<wesl::syntax::ModulePath>()
         .map_err(|_| path.to_owned())
-}
-
-fn defines_function(text: &str, name: &str) -> bool {
-    let declaration = format!("fn {name}(");
-    text.match_indices(&declaration).any(|(at, _)| {
-        at == 0
-            || !text[..at]
-                .ends_with(|character: char| character.is_ascii_alphanumeric() || character == '_')
-    })
-}
-
-fn declared_overrides(text: &str) -> Vec<String> {
-    text.lines()
-        .filter_map(|line| line.trim_start().strip_prefix("override "))
-        .filter_map(|rest| {
-            let name: String = rest
-                .chars()
-                .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
-                .collect();
-            (!name.is_empty()).then_some(name)
-        })
-        .collect()
-}
-
-pub(crate) fn declarations(text: &str) -> Vec<Declaration> {
-    text.lines()
-        .filter_map(|line| {
-            let (_, group, name, rest) = declared_binding(line)?;
-            let binding = binding_number(line)?;
-            let ty = binding_ty(rest)?;
-            Some(Declaration {
-                group,
-                binding,
-                name,
-                ty,
-            })
-        })
-        .collect()
-}
-
-fn binding_number(line: &str) -> Option<u32> {
-    let after = &line[line.find("@binding(")? + "@binding(".len()..];
-    after[..after.find(')')?].trim().parse().ok()
-}
-
-fn binding_ty(rest: &str) -> Option<Ty> {
-    let declaration = rest.strip_prefix("var")?;
-    let (space, declaration) = match declaration.strip_prefix('<') {
-        Some(spaced) => {
-            let close = spaced.find('>')?;
-            (Some(&spaced[..close]), &spaced[close + 1..])
-        }
-        None => (None, declaration),
-    };
-    if let Some(space) = space {
-        let space = space.replace(' ', "");
-        return Some(match space.as_str() {
-            "uniform" => Ty::Uniform,
-            "storage,read_write" => Ty::Storage { write: true },
-            _ => Ty::Storage { write: false },
-        });
-    }
-    let ty = declaration[declaration.find(':')? + 1..]
-        .trim()
-        .trim_end_matches(';')
-        .replace(' ', "");
-    texture_ty(&ty)
-}
-
-fn texture_ty(ty: &str) -> Option<Ty> {
-    use wgpu::TextureViewDimension as D;
-    if ty == "sampler" {
-        return Some(Ty::Sampler);
-    }
-    if ty == "sampler_comparison" {
-        return Some(Ty::Comparison);
-    }
-    let depth = [
-        ("texture_depth_2d_array", D::D2Array),
-        ("texture_depth_cube_array", D::CubeArray),
-        ("texture_depth_cube", D::Cube),
-        ("texture_depth_2d", D::D2),
-    ];
-    if let Some(&(_, view)) = depth.iter().find(|(name, _)| ty == *name) {
-        return Some(Ty::Texture {
-            sample: Sample::Depth,
-            view,
-        });
-    }
-    let (head, inner) = ty.split_once('<')?;
-    let inner = inner.strip_suffix('>')?;
-    let views = [
-        ("2d_array", D::D2Array),
-        ("cube_array", D::CubeArray),
-        ("cube", D::Cube),
-        ("3d", D::D3),
-        ("2d", D::D2),
-        ("1d", D::D1),
-    ];
-    if let Some(shape) = head.strip_prefix("texture_storage_") {
-        let view = views.iter().find(|(name, _)| shape == *name)?.1;
-        let (format, access) = inner.split_once(',')?;
-        let format = storage_format(format)?;
-        let access = match access {
-            "read" => wgpu::StorageTextureAccess::ReadOnly,
-            "read_write" => wgpu::StorageTextureAccess::ReadWrite,
-            _ => wgpu::StorageTextureAccess::WriteOnly,
-        };
-        return Some(Ty::StorageTexture {
-            format,
-            access,
-            view,
-        });
-    }
-    let shape = head.strip_prefix("texture_")?;
-    let view = views.iter().find(|(name, _)| shape == *name)?.1;
-    let sample = match inner {
-        "u32" => Sample::Uint,
-        "i32" => Sample::Sint,
-        _ => Sample::Float,
-    };
-    Some(Ty::Texture { sample, view })
-}
-
-fn storage_format(format: &str) -> Option<wgpu::TextureFormat> {
-    use wgpu::TextureFormat as F;
-    Some(match format {
-        "r32float" => F::R32Float,
-        "r32uint" => F::R32Uint,
-        "r32sint" => F::R32Sint,
-        "rg32float" => F::Rg32Float,
-        "rg32uint" => F::Rg32Uint,
-        "rgba8unorm" => F::Rgba8Unorm,
-        "rgba8snorm" => F::Rgba8Snorm,
-        "rgba8uint" => F::Rgba8Uint,
-        "rgba16float" => F::Rgba16Float,
-        "rgba16uint" => F::Rgba16Uint,
-        "rgba32float" => F::Rgba32Float,
-        "rgba32uint" => F::Rgba32Uint,
-        "r16float" => F::R16Float,
-        "rg16float" => F::Rg16Float,
-        "bgra8unorm" => F::Bgra8Unorm,
-        _ => return None,
-    })
 }
 
 fn hex_floats(text: &str) -> Vec<String> {

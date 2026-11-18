@@ -114,7 +114,12 @@ impl Run {
                 };
                 made.slice(&mips, &layers, dimension).cloned()
             }
-            Bound::Target(name) => self.view_of(final_target(*name)).cloned(),
+            Bound::Target(name) => self
+                .machine
+                .declared
+                .target_of(*name)
+                .and_then(|target| self.view_of(target))
+                .cloned(),
             Bound::Buffer(_) | Bound::Window { .. } | Bound::Sampler(_) | Bound::Asset => None,
         }
     }
@@ -125,19 +130,10 @@ impl Run {
             .placeholders
             .iter()
             .any(|(known, _)| *known == key)
+            && let Some(made) = placeholder(&self.device, key.0)
         {
-            let made = placeholder(&self.device, key);
             self.bindings.placeholders.push((key, made));
         }
-    }
-
-    pub(super) fn binding_bytes(&self, pipeline: Option<usize>, group: u32, binding: u32) -> u64 {
-        let needed = self.machine.binding_bytes.get(&(pipeline, group, binding));
-        needed
-            .copied()
-            .unwrap_or(0)
-            .max(PLACEHOLDER_BYTES)
-            .next_multiple_of(16)
     }
 
     pub(super) fn resource(&mut self, bound: &Bound, ty: Ty) -> Resolved {
@@ -171,15 +167,12 @@ impl Run {
     pub(super) fn bind_group(
         &mut self,
         layout: &wgpu::BindGroupLayout,
-        (pipeline, group): (Option<usize>, u32),
         entries: Vec<(u32, Resolved)>,
-    ) -> wgpu::BindGroup {
+    ) -> Option<wgpu::BindGroup> {
         let mut keys: Vec<Option<(Ty, u64)>> = Vec::with_capacity(entries.len());
-        for (binding, resolved) in &entries {
+        for (_, resolved) in &entries {
             let key = match resolved {
-                Resolved::Placeholder(ty @ (Ty::Uniform | Ty::Storage { .. })) => {
-                    Some((*ty, self.binding_bytes(pipeline, group, *binding)))
-                }
+                Resolved::Placeholder(Ty::Uniform | Ty::Storage { .. }) => return None,
                 Resolved::Placeholder(ty) => Some((*ty, 0)),
                 Resolved::Buffer(_)
                 | Resolved::Dynamic(..)
@@ -213,7 +206,6 @@ impl Run {
                             .iter()
                             .find(|(known, _)| *known == key)
                     }) {
-                        Some((_, Placeholder::Buffer(buffer))) => buffer.as_entire_binding(),
                         Some((_, Placeholder::Texture(view))) => {
                             wgpu::BindingResource::TextureView(view)
                         }
@@ -225,11 +217,11 @@ impl Run {
                 },
             })
             .collect();
-        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("engine/bound-group"),
             layout,
             entries: &resources,
-        })
+        }))
     }
 
     pub(crate) fn refresh_groups(&mut self) {
@@ -276,14 +268,19 @@ impl Run {
                 resolved.push((binding, found));
             }
             let layout = self.machine.variants[variant].layout.clone();
-            let group = self.bind_group(&layout, (None, 0), resolved);
+            let group = self.bind_group(&layout, resolved);
             self.keep_group(Holder::Frame(variant as u32), parity, group);
         }
     }
 
-    fn keep_group(&mut self, holder: Holder, parity: usize, group: wgpu::BindGroup) {
+    fn keep_group(&mut self, holder: Holder, parity: usize, group: Option<wgpu::BindGroup>) {
         let made = if self.sets.holders.contains(&holder) {
-            self.set_mut().groups.entry(holder).or_default()
+            let index = self.bindings.holders.index(holder) as usize;
+            let groups = &mut self.sets.list[self.sets.at].groups;
+            if groups.len() <= index {
+                groups.resize_with(index + 1, || None);
+            }
+            &mut groups[index].get_or_insert_with(|| (holder, [None, None])).1
         } else {
             match holder {
                 Holder::Frame(variant) => &mut self.bindings.frame_groups[variant as usize].made,
@@ -292,7 +289,7 @@ impl Run {
                 }
             }
         };
-        made[parity] = Some(group);
+        made[parity] = group;
     }
 
     fn rebuild_own(&mut self, pipeline: usize, group: usize) {
@@ -310,8 +307,7 @@ impl Run {
             let layout = self.machine.pipelines[pipeline].groups[group]
                 .layout
                 .clone();
-            let index = self.machine.pipelines[pipeline].groups[group].index;
-            let made = self.bind_group(&layout, (Some(pipeline), index), resolved);
+            let made = self.bind_group(&layout, resolved);
             self.keep_group(Holder::Own(pipeline as u32, group as u32), parity, made);
         }
         for filled in &mut self.filled {
@@ -357,15 +353,9 @@ impl Run {
         };
         let split = self.canvas.rect.is_some();
         let set = self.set();
-        let held = set.targets.iter().any(|(target, made)| {
-            *target == Target::Canvas && made.texture.format() == self.canvas.format
-        });
-        if split == held
-            && set
-                .targets
-                .first()
-                .is_some_and(|(_, made)| made.size == extent)
-        {
+        let held = (set.canvas.as_ref())
+            .is_some_and(|made| made.texture.format() == self.canvas.format);
+        if split == held && set.first().is_some_and(|made| made.size == extent) {
             return;
         }
         let usage = wgpu::TextureUsages::RENDER_ATTACHMENT
@@ -383,24 +373,13 @@ impl Run {
             };
             Allocated::new(&device, &made, extent, 1)
         };
-        let mut targets: Vec<(Target, Allocated)> = self
-            .machine
-            .declared
-            .targets
-            .iter()
-            .map(|shared| {
-                let made = made(shared.name.name(), shared.format, shared.samples);
-                (Target::Shared(shared.name), made)
-            })
+        let shared: Vec<Allocated> = (self.machine.declared.targets.iter())
+            .map(|shared| made(shared.name.name(), shared.format, shared.samples))
             .collect();
-        if split {
-            targets.push((
-                Target::Canvas,
-                made("engine/view-canvas", self.canvas.format, 1),
-            ));
-        }
+        let canvas = split.then(|| made("engine/view-canvas", self.canvas.format, 1));
         let set = self.set_mut();
-        set.targets = targets;
+        set.shared = shared;
+        set.canvas = canvas;
         engine_profile::event(
             "rebuilt",
             "engine/view-targets",
@@ -409,54 +388,155 @@ impl Run {
         self.touch(Held::Targets);
     }
 
-    pub(crate) fn settle_sets(&mut self, listed: &[bevy_ecs::entity::Entity]) {
-        let main = listed
-            .first()
-            .copied()
-            .unwrap_or(bevy_ecs::entity::Entity::PLACEHOLDER);
-        if !self.sets.list.iter().any(|set| set.view == main)
-            && let Some(set) = self
-                .sets
-                .list
-                .iter_mut()
-                .find(|set| !listed.contains(&set.view))
+    pub(crate) fn settle_sets(&mut self, listed: &[engine_core::ViewFacts]) {
+        let sets = &self.sets;
+        let same = listed.len() == sets.list.len()
+            && listed.iter().all(|facts| {
+                sets.by_slot
+                    .get(facts.slot as usize)
+                    .and_then(|&at| sets.list.get(at as usize))
+                    .is_some_and(|set| set.view == facts.view)
+            });
+        if !same {
+            self.resettle(listed);
+        }
+        if let Some(main) = listed.first() {
+            self.select(main.slot);
+        }
+    }
+
+    fn resettle(&mut self, listed: &[engine_core::ViewFacts]) {
+        let shown = |view: bevy_ecs::entity::Entity| listed.iter().any(|facts| facts.view == view);
+        if let Some(main) = listed.first()
+            && !self.sets.list.iter().any(|set| set.view == main.view)
+            && let Some(set) = self.sets.list.iter_mut().find(|set| !shown(set.view))
         {
-            set.view = main;
+            set.view = main.view;
         }
         let machine = &self.machine;
         self.sets.list.retain_mut(|set| {
-            let kept = listed.contains(&set.view);
+            let kept = shown(set.view);
             if !kept {
                 set.release(machine, None);
             }
             kept
         });
+        for facts in listed {
+            if !self.sets.list.iter().any(|set| set.view == facts.view) {
+                let set = ViewSet::new(&self.device, &self.machine, facts.view, &self.sets.holders);
+                self.sets.list.push(set);
+            }
+        }
+        let slots = listed.iter().map(|facts| facts.slot as usize + 1).max().unwrap_or(0);
+        self.sets.by_slot.clear();
+        self.sets.by_slot.resize(slots, u32::MAX);
+        for (at, set) in self.sets.list.iter_mut().enumerate() {
+            if let Some(facts) = listed.iter().find(|facts| facts.view == set.view) {
+                set.slot = facts.slot;
+                self.sets.by_slot[facts.slot as usize] = at as u32;
+            }
+        }
         self.sets.at = usize::MAX;
-        self.select(main);
     }
 
-    pub(crate) fn select(&mut self, view: bevy_ecs::entity::Entity) -> usize {
-        let at = match self.sets.list.iter().position(|set| set.view == view) {
-            Some(at) => at,
-            None => {
-                let set = ViewSet::new(&self.device, &self.machine, view, &self.sets.holders);
-                self.sets.list.push(set);
-                self.sets.list.len() - 1
-            }
+    pub(crate) fn select(&mut self, slot: u32) -> usize {
+        let Some(at) = self
+            .sets
+            .by_slot
+            .get(slot as usize)
+            .map(|&at| at as usize)
+            .filter(|&at| at < self.sets.list.len())
+        else {
+            return self.sets.at;
         };
         if at != self.sets.at {
-            let holders = &self.sets.holders;
+            let holding = &self.sets.fixed.holding;
             for filled in &mut self.filled {
-                let held = holders.iter().any(
-                    |holder| matches!(holder, Holder::Own(pipeline, _) if *pipeline == filled.base),
-                );
-                if held {
+                if holding.contains(filled.base as usize) {
                     filled.groups.clear();
                 }
             }
             self.sets.at = at;
         }
         at
+    }
+
+    pub(crate) fn plan_view(&mut self) -> Result<Arc<Plan>, Error> {
+        let Self {
+            sets,
+            planning,
+            machine,
+            ..
+        } = self;
+        let scratch = &sets.scratch;
+        let set = &mut sets.list[sets.at];
+        let held = &mut set.plans[usize::from(scratch.skipped)];
+        let why = match held {
+            Some((key, plan))
+                if key.runs == planning.runs
+                    && key.outputs == scratch.outputs
+                    && key.ready == scratch.ready =>
+            {
+                return Ok(Arc::clone(plan));
+            }
+            Some((key, _)) if key.runs != planning.runs => 1,
+            Some((key, _)) if key.outputs != scratch.outputs => 2,
+            Some(_) => 3,
+            None => 0,
+        };
+        let plan = Arc::new(
+            machine
+                .graph
+                .plan(&planning.runs, &scratch.outputs, &scratch.ready)?,
+        );
+        match held {
+            Some((key, held)) => {
+                key.runs.assign(&planning.runs);
+                key.outputs.assign(&scratch.outputs);
+                key.ready.assign(&scratch.ready);
+                *held = Arc::clone(&plan);
+            }
+            None => {
+                let key = PlanKey {
+                    runs: planning.runs.clone(),
+                    outputs: scratch.outputs.clone(),
+                    ready: scratch.ready.clone(),
+                };
+                *held = Some((key, Arc::clone(&plan)));
+            }
+        }
+        sets.counted.plans[why] += 1;
+        if engine_profile::recording() {
+            engine_profile::event(
+                "plan",
+                &set.slot.to_string(),
+                &[("why", engine_profile::Fact::Text(PLAN_WHY[why]))],
+            );
+        }
+        Ok(plan)
+    }
+
+    pub(crate) fn drawing_of(
+        &mut self,
+        slot: u32,
+        handle: TextureHandle,
+    ) -> Option<(wgpu::TextureView, wgpu::Texture)> {
+        let (texture, _) = self.assets.textures.target(handle)?;
+        let set = self
+            .sets
+            .by_slot
+            .get(slot as usize)
+            .and_then(|&at| self.sets.list.get_mut(at as usize))?;
+        if set.drawing.as_ref().is_none_or(|(held, _)| held != texture) {
+            let view = texture.create_view(&wgpu::TextureViewDescriptor {
+                format: Some(texture.format().remove_srgb_suffix()),
+                ..Default::default()
+            });
+            set.drawing = Some((texture.clone(), view));
+        }
+        set.drawing
+            .as_ref()
+            .map(|(texture, view)| (view.clone(), texture.clone()))
     }
 
     pub(crate) fn carry(&mut self, from: usize) -> bool {
@@ -468,18 +548,14 @@ impl Run {
         if from == at {
             return false;
         }
-        let shared = &self.machine.declared.targets;
-        let pairs: Vec<(wgpu::Texture, wgpu::Texture, wgpu::Extent3d)> = shared
-            .iter()
-            .filter_map(|shared| {
-                let target = Target::Shared(shared.name);
-                let from = source.targets.iter().find(|(known, _)| *known == target)?;
-                let to = current.targets.iter().find(|(known, _)| *known == target)?;
-                (from.1.size == to.1.size)
-                    .then(|| (from.1.texture.clone(), to.1.texture.clone(), to.1.size))
+        let shared = self.machine.declared.targets.len();
+        let pairs: Vec<(wgpu::Texture, wgpu::Texture, wgpu::Extent3d)> = (0..shared)
+            .filter_map(|at| {
+                let (from, to) = (source.shared.get(at)?, current.shared.get(at)?);
+                (from.size == to.size).then(|| (from.texture.clone(), to.texture.clone(), to.size))
             })
             .collect();
-        if pairs.len() != shared.len() {
+        if pairs.len() != shared {
             return false;
         }
         let Some(encoder) = self.recording.encoder() else {
@@ -495,11 +571,7 @@ impl Run {
         let (Some(rect), Some(canvas)) = (self.canvas.rect, self.canvas.texture.as_ref()) else {
             return;
         };
-        let Some((_, held)) = self.sets.list[self.sets.at]
-            .targets
-            .iter()
-            .find(|(target, _)| *target == Target::Canvas)
-        else {
+        let Some(held) = self.sets.list[self.sets.at].canvas.as_ref() else {
             return;
         };
         let Some(encoder) = self.recording.encoder() else {
@@ -548,14 +620,28 @@ impl Tables {
     }
 }
 
+const PLAN_WHY: [&str; 4] = ["first", "runs", "outputs", "ready"];
+
+pub(crate) struct PlanKey {
+    runs: Bits,
+    outputs: Bits,
+    ready: Bits,
+}
+
+type HeldGroups = [Option<wgpu::BindGroup>; 2];
+
 pub(crate) struct ViewSet {
     pub(crate) view: bevy_ecs::entity::Entity,
-    pub(crate) targets: Vec<(Target, Allocated)>,
+    pub(crate) slot: u32,
+    pub(crate) shared: Vec<Allocated>,
+    pub(crate) canvas: Option<Allocated>,
     pub(crate) tables: Tables,
     pub(crate) post_buffer: wgpu::Buffer,
-    pub(crate) groups: std::collections::BTreeMap<Holder, [Option<wgpu::BindGroup>; 2]>,
+    pub(crate) groups: Vec<Option<(Holder, HeldGroups)>>,
     pub(crate) stale: std::collections::BTreeSet<Holder>,
     pub(crate) ran: Bits,
+    pub(crate) plans: [Option<(PlanKey, Arc<Plan>)>; 2],
+    pub(crate) drawing: Option<(wgpu::Texture, wgpu::TextureView)>,
 }
 
 impl ViewSet {
@@ -567,24 +653,43 @@ impl ViewSet {
     ) -> Self {
         Self {
             view,
-            targets: Vec::new(),
+            slot: 0,
+            shared: Vec::new(),
+            canvas: None,
             tables: Tables::of(machine),
             post_buffer: uniform_buffer(
                 device,
                 "engine/post-uniform",
                 size_of::<crate::shared::PostUniform>() as u64,
             ),
-            groups: std::collections::BTreeMap::new(),
+            groups: Vec::new(),
             stale: holders.clone(),
             ran: Bits::of(machine.graph.passes()),
+            plans: [None, None],
+            drawing: None,
         }
     }
 
+    pub(crate) fn group(&self, holder: u32) -> Option<&HeldGroups> {
+        self.groups
+            .get(holder as usize)?
+            .as_ref()
+            .map(|(_, made)| made)
+    }
+
+    pub(crate) fn allocated(&self, target: Target) -> Option<&Allocated> {
+        match target {
+            Target::Shared(at) => self.shared.get(at as usize),
+            Target::Canvas => self.canvas.as_ref(),
+        }
+    }
+
+    pub(crate) fn first(&self) -> Option<&Allocated> {
+        self.shared.first().or(self.canvas.as_ref())
+    }
+
     pub(crate) fn target(&self, target: Target) -> Option<&wgpu::TextureView> {
-        self.targets
-            .iter()
-            .find(|(known, _)| *known == target)
-            .map(|(_, made)| &made.view)
+        self.allocated(target).map(|made| &made.view)
     }
 
     pub(crate) fn release(&mut self, machine: &Machine, part: Option<u32>) {
@@ -600,16 +705,141 @@ impl ViewSet {
                 *made = None;
             }
         }
-        self.stale.extend(self.groups.keys().copied());
+        self.stale
+            .extend(self.groups.iter().flatten().map(|(holder, _)| *holder));
     }
+}
+
+pub(crate) struct Fixed {
+    pub(crate) holding: Bits,
+    pub(crate) part_passes: Vec<Vec<u32>>,
+    pub(crate) part_globals: Vec<Vec<u32>>,
+    pub(crate) global: Bits,
+    pub(crate) main_views: Bits,
+    pub(crate) names: Vec<u32>,
+}
+
+pub(crate) struct Scratch {
+    pub(crate) base: Bits,
+    pub(crate) asked: Bits,
+    pub(crate) outputs: Bits,
+    pub(crate) ready: Bits,
+    pub(crate) order: Vec<usize>,
+    pub(crate) drawn_on: Vec<(engine_core::Target, usize)>,
+    pub(crate) skipped: bool,
+}
+
+#[derive(Default)]
+pub(crate) struct Counted {
+    pub(crate) plans: [u64; 4],
+    pub(crate) opened: Vec<u64>,
+    pub(crate) merged: Vec<u64>,
+    pub(crate) why: Vec<Option<&'static str>>,
+    pub(crate) shared_open: bool,
 }
 
 pub(crate) struct Sets {
     pub(crate) list: Vec<ViewSet>,
     pub(crate) at: usize,
+    pub(crate) by_slot: Vec<u32>,
     pub(crate) holders: std::collections::BTreeSet<Holder>,
     pub(crate) passes: Bits,
     pub(crate) main: Bits,
+    pub(crate) fixed: Fixed,
+    pub(crate) scratch: Scratch,
+    pub(crate) counted: Counted,
+    pub(crate) settled: Option<Option<u64>>,
+}
+
+impl Sets {
+    pub(crate) fn of(
+        device: &wgpu::Device,
+        machine: &Machine,
+        holders: std::collections::BTreeSet<Holder>,
+    ) -> Self {
+        let (passes, main) = view_passes(machine);
+        let declared = &machine.declared.passes;
+        let count = declared.len();
+        let mut holding = Bits::of(machine.pipelines.len());
+        for holder in &holders {
+            if let Holder::Own(pipeline, _) = holder {
+                holding.insert(*pipeline as usize);
+            }
+        }
+        let parts = declared
+            .iter()
+            .map(|pass| pass.part as usize + 1)
+            .max()
+            .unwrap_or(0)
+            .max(machine.declared.parts.len());
+        let mut part_passes = vec![Vec::new(); parts];
+        let mut part_globals = vec![Vec::new(); parts];
+        let mut global = Bits::of(count);
+        let mut main_views = Bits::of(count);
+        let mut seen: Vec<&'static str> = Vec::new();
+        let mut names = Vec::with_capacity(count);
+        for (index, pass) in declared.iter().enumerate() {
+            part_passes[pass.part as usize].push(index as u32);
+            let viewed = passes.contains(index);
+            if !viewed {
+                part_globals[pass.part as usize].push(index as u32);
+            }
+            if !viewed && !main.contains(index) {
+                global.insert(index);
+            }
+            if viewed && pass.views == engine_core::PassViews::Main {
+                main_views.insert(index);
+            }
+            let name = pass.group.unwrap_or(pass.name);
+            let at = match seen.iter().position(|known| *known == name) {
+                Some(at) => at,
+                None => {
+                    seen.push(name);
+                    seen.len() - 1
+                }
+            };
+            names.push(at as u32);
+        }
+        let resources = machine.graph.resources();
+        let first = ViewSet::new(
+            device,
+            machine,
+            bevy_ecs::entity::Entity::PLACEHOLDER,
+            &holders,
+        );
+        Self {
+            list: vec![first],
+            at: 0,
+            by_slot: vec![0],
+            holders,
+            passes,
+            main,
+            fixed: Fixed {
+                holding,
+                part_passes,
+                part_globals,
+                global,
+                main_views,
+                names,
+            },
+            scratch: Scratch {
+                base: Bits::of(count),
+                asked: Bits::of(resources),
+                outputs: Bits::of(resources),
+                ready: Bits::of(resources),
+                order: Vec::new(),
+                drawn_on: Vec::new(),
+                skipped: false,
+            },
+            counted: Counted {
+                opened: vec![0; count],
+                merged: vec![0; count],
+                why: vec![None; count],
+                ..Counted::default()
+            },
+            settled: None,
+        }
+    }
 }
 
 fn view_resources(machine: &Machine) -> (Vec<u32>, Vec<u32>) {
@@ -632,7 +862,7 @@ fn view_resources(machine: &Machine) -> (Vec<u32>, Vec<u32>) {
     (textures, buffers)
 }
 
-pub(super) fn view_passes(machine: &Machine) -> (Bits, Bits) {
+fn view_passes(machine: &Machine) -> (Bits, Bits) {
     let graph = &machine.graph;
     let declared = &machine.declared.passes;
     let mut passes = Bits::of(graph.passes());
@@ -661,19 +891,10 @@ pub(super) fn view_passes(machine: &Machine) -> (Bits, Bits) {
     (passes, main)
 }
 
-fn placeholder(device: &wgpu::Device, (ty, bytes): (Ty, u64)) -> Placeholder {
+fn placeholder(device: &wgpu::Device, ty: Ty) -> Option<Placeholder> {
     use crate::linker::Sample;
-    let buffer = |usage| {
-        Placeholder::Buffer(crate::gpu_calls::create_buffer(device, &wgpu::BufferDescriptor {
-            label: Some("engine/placeholder"),
-            size: bytes.max(PLACEHOLDER_BYTES),
-            usage,
-            mapped_at_creation: false,
-        }))
-    };
-    match ty {
-        Ty::Uniform => buffer(wgpu::BufferUsages::UNIFORM),
-        Ty::Storage { .. } => buffer(wgpu::BufferUsages::STORAGE),
+    Some(match ty {
+        Ty::Uniform | Ty::Storage { .. } => return None,
         Ty::Sampler => Placeholder::Sampler(crate::textures::gpu_sampler(
             device,
             "engine/placeholder",
@@ -699,7 +920,7 @@ fn placeholder(device: &wgpu::Device, (ty, bytes): (Ty, u64)) -> Placeholder {
         Ty::StorageTexture { format, view, .. } => {
             placeholder_texture(device, format, view, wgpu::TextureUsages::STORAGE_BINDING)
         }
-    }
+    })
 }
 
 fn placeholder_texture(

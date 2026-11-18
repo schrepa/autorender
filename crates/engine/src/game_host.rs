@@ -324,9 +324,16 @@ impl<G: Game> GameHost<G> {
         self.finish_jobs(finished);
     }
 
-    pub fn job_kept(&mut self, id: JobId, key: String, output: Option<std::sync::Arc<[u8]>>) {
+    pub fn job_kept(
+        &mut self,
+        id: JobId,
+        key: String,
+        kept: Option<(std::sync::Arc<[u8]>, engine_core::JobSource)>,
+    ) {
+        let found = kept.as_ref().map(|(_, source)| *source);
+        engine_core::job_looked(self.app.engine_mut().app.world_mut(), id, found);
         let mut finished = Vec::new();
-        self.jobs.kept(id, key, output, &mut finished);
+        self.jobs.kept(id, key, kept.map(|(output, _)| output), &mut finished);
         self.finish_jobs(finished);
     }
 
@@ -360,8 +367,8 @@ impl<G: Game> GameHost<G> {
         self.app.take_pipelines();
     }
 
-    pub fn report_job_cache(&mut self, hits: u64, misses: u64, bytes: u64, mismatches: u64) {
-        self.app.report_job_cache(hits, misses, bytes, mismatches);
+    pub fn report_job_cache(&mut self, counts: [u64; 5]) {
+        self.app.report_job_cache(counts);
     }
 
     pub fn suspend(&mut self) {

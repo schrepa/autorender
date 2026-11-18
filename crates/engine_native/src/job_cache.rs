@@ -5,6 +5,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use engine_core::JobSource;
+use engine_profile::Fact;
 use engine::{Error, ErrorCode};
 use engine_worker::{
     JobCache, PACK_HEADER, PackEntry, PackIndex, listing_key, pack_directory, read_listing, unpack,
@@ -34,6 +36,7 @@ pub struct JobStore {
     index: JobCache,
     packs: Vec<Pack>,
     pack_hits: u64,
+    opened: Option<f64>,
     sample: Option<BTreeSet<String>>,
     saved: Instant,
 }
@@ -64,7 +67,11 @@ impl JobStore {
             std::fs::create_dir_all(&folder)?;
             let saved = std::fs::read_to_string(folder.join(INDEX)).ok();
             let index = JobCache::open(budget, None, verify, saved.as_deref());
-            let packs = packs.map(open_packs).unwrap_or_default();
+            let started = Instant::now();
+            let (packs, opened) = match packs {
+                Some(folder) => (open_packs(folder), Some(started.elapsed().as_secs_f64() * 1e3)),
+                None => (Vec::new(), None),
+            };
             let sample = sample
                 .filter(|_| verify)
                 .map(|count| sampled(&packs, count));
@@ -73,6 +80,7 @@ impl JobStore {
                 index,
                 packs,
                 pack_hits: 0,
+                opened,
                 sample,
                 saved: Instant::now(),
             };
@@ -109,13 +117,28 @@ impl JobStore {
             .is_some_and(|sample| sample.contains(key))
     }
 
-    pub fn counters(&self) -> (u64, u64, u64, u64) {
+    pub fn counters(&self) -> [u64; 5] {
         let (hits, misses, bytes, mismatches) = self.index.counters();
-        (hits + self.pack_hits, misses, bytes, mismatches)
+        [self.pack_hits, hits, misses, bytes, mismatches]
     }
 
     pub fn packed(&self) -> usize {
         self.packs.iter().map(|pack| pack.index.len()).sum()
+    }
+
+    pub fn note_opened(&mut self) {
+        let Some(ms) = self.opened.take().filter(|_| !self.packs.is_empty()) else {
+            return;
+        };
+        engine_profile::open_noting(
+            "launch",
+            "packs",
+            &[
+                ("packs", Fact::Count(self.packs.len() as u64)),
+                ("records", Fact::Count(self.packed() as u64)),
+                ("ms", Fact::Number(ms)),
+            ],
+        );
     }
 
     pub fn packs(&self) -> impl Iterator<Item = (&Path, u64)> {
@@ -149,7 +172,7 @@ impl JobStore {
         key: &str,
         sources: &[Source],
         read: Option<(usize, Arc<[u8]>)>,
-    ) -> Option<Arc<[u8]>> {
+    ) -> Option<(Arc<[u8]>, JobSource)> {
         let kept = sources
             .iter()
             .any(|source| matches!(source, Source::Kept { .. }));
@@ -157,12 +180,12 @@ impl JobStore {
             Some((at, bytes)) => match sources.get(at) {
                 Some(Source::Packed { .. }) => {
                     self.pack_hits += 1;
-                    Some(bytes)
+                    Some((bytes, JobSource::Pack))
                 }
                 Some(Source::Kept { .. }) => self
                     .index
                     .hit(key, Some(bytes.len() as u64))
-                    .then_some(bytes),
+                    .then_some((bytes, JobSource::Store)),
                 None => None,
             },
             None if kept => {

@@ -36,7 +36,8 @@ fn stage_texts(machine: &Machine) -> Vec<(&'static str, Vec<&'static str>, Strin
     let mut stages: Vec<(&'static str, Vec<&'static str>, String)> = Vec::new();
     for built in &machine.pipelines {
         let pass = match built.decl.scope {
-            Scoped::Scene(name) | Scoped::Outside(name) => name,
+            Scoped::Scene(bit) => machine.declared.scene_name(bit),
+            Scoped::Outside(name) => name,
             Scoped::Pass(pass) => machine
                 .declared
                 .passes
@@ -296,7 +297,10 @@ fn install_with(
         let index = listed
             .iter()
             .position(|entry| entry.record.part == draw.part);
-        if let (Some(index), Some(kind)) = (index, core.passes.kind(draw.kind).copied()) {
+        let kind = (core.passes.kinds().iter())
+            .position(|decl| decl.kind == draw.kind)
+            .and_then(|at| Some((at as u32, *core.passes.kinds().get(at)?)));
+        if let (Some(index), Some(kind)) = (index, kind) {
             core.draws.push(KindMember::new(
                 index as u32,
                 kind,
@@ -455,6 +459,10 @@ impl Renderer {
         run.installs.pass_gates = installed.pass_gates;
         run.installs.reinstalls = installed.reinstalls;
         run.installs.draw_entries = installed.draws;
+        run.installs.settle_members(&run.machine.declared);
+        if let Some(passes) = world.get_resource::<engine_core::ScenePasses>() {
+            run.tallies.kinds = crate::encode::KindTallies::of(passes, &run.machine.declared.passes);
+        }
         run.take_states(world.get_resource::<BrickStates>());
         run.canvas.surface = self.core.display.format();
         run.canvas.format = run.canvas.surface;
@@ -478,13 +486,13 @@ impl Renderer {
             })
             .collect();
         self.passes = Box::leak(installed.passes.into_boxed_slice());
-        self.plans.clear();
         #[cfg(not(target_arch = "wasm32"))]
         {
             run.pipelines.cache = self
                 .core
                 .pipeline_cache
                 .as_ref()
+                .ok()
                 .map(|kept| kept.cache.clone());
         }
         #[cfg(any(feature = "dev", feature = "profiling"))]

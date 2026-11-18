@@ -131,7 +131,6 @@ impl Renderer {
         self.surface = None;
         self.run = None;
         self.installing = None;
-        self.plans = PlanCache::default();
         self.core.display.configure(&device, period);
         self.core.profiler = GpuProfiler::new(features, f64::from(period));
         self.core.ledger = crate::pipelines::Ledger::default();
@@ -211,7 +210,6 @@ impl Renderer {
             core,
             run: None,
             assets: Some(assets),
-            plans: PlanCache::default(),
             passes: &[],
             spans: Vec::new(),
             installing: None,

@@ -10,7 +10,7 @@ use crate::pipelines::Listing;
 fn stage_key(
     stage: &Stage,
     (entry, constants): (&str, &[(String, f64)]),
-    (layout, paired): (&str, Option<u64>),
+    (layout, paired): (u64, Option<u64>),
 ) -> u64 {
     let mut hasher = DefaultHasher::new();
     (stage.text_key(), entry, layout, paired).hash(&mut hasher);
@@ -153,7 +153,8 @@ impl Machine {
             return "";
         };
         match built.decl.scope {
-            Scoped::Scene(name) | Scoped::Outside(name) => name,
+            Scoped::Scene(bit) => self.declared.scene_name(bit),
+            Scoped::Outside(name) => name,
             Scoped::Pass(pass) => self
                 .declared
                 .passes
@@ -513,7 +514,7 @@ impl Run {
     pub(super) fn render_pipeline(
         &mut self,
         pipeline: u32,
-        variant: Option<&Variant>,
+        drawn: Option<(&Variant, u64)>,
     ) -> Result<usize, engine_core::DropReason> {
         use engine_core::DropReason;
         let layout = self
@@ -521,23 +522,28 @@ impl Run {
             .open()
             .ok_or(DropReason::NoRenderPass)?
             .layout;
+        let identity = drawn.map_or(0, |(_, identity)| identity);
         let built = self
             .machine
             .pipelines
             .get(pipeline as usize)
             .ok_or(DropReason::UnknownPipeline)?;
-        let cut = cut_of(built, variant).as_ref().map(Variant::key);
         if let Some(at) = built
             .ready
             .iter()
-            .position(|ready| ready.layout == layout && ready.variant == cut)
+            .position(|ready| ready.layout == layout && ready.variant == identity)
         {
             return Ok(at);
         }
+        let variant = drawn.map(|(variant, _)| variant);
         let program = built.program_key;
         let speedup_only = built.decl.speedup_only;
-        let targets = (layout.formats(), layout.depth);
-        let shown = (layout.plain, layout.main);
+        let pass = self
+            .machine
+            .pass_layout(layout)
+            .ok_or(DropReason::NoRenderPass)?;
+        let targets = (pass.formats(), pass.depth);
+        let shown = (pass.plain, pass.main);
         if speedup_only {
             self.split().0.speedup_unmade(pipeline, targets, shown, variant)?;
         }
@@ -570,7 +576,7 @@ impl Run {
             .ok_or(DropReason::UnknownPipeline)?;
         built.ready.push(Ready {
             layout,
-            variant: cut,
+            variant: identity,
             made,
             exact,
         });
@@ -611,7 +617,7 @@ impl Run {
             let stages = vec![stage_key(
                 stage,
                 (stage.entry.name(), &constants),
-                (&built.layout_key, None),
+                (built.layout_key, None),
             )];
             let needed = if asked == Asked::Warmed || self.pipelines.settled {
                 Needed::Later
@@ -842,6 +848,7 @@ impl Compiler<'_> {
         if !refused {
             if !self.pipelines.standing.contains(&made) {
                 self.pipelines.standing.push(made);
+                self.pipelines.warming.stood_in += 1;
             }
             let warm = Warm {
                 pipeline,
@@ -983,7 +990,7 @@ impl Compiler<'_> {
         let fragment_stage = shape.fragment.and_then(|_| built.stages.get(1));
         let written = fragment_stage
             .zip(shape.fragment)
-            .and_then(|(stage, entry)| fragment_locations(&stage.composed.text, entry.name()));
+            .and_then(|(stage, entry)| written_locations(&stage.composed, entry.name()));
         let mut targets = color_targets(desc, shape.formats, written.as_deref());
         if let Some(cut) = &shape.cut {
             cut_targets(&mut targets, cut);
@@ -1008,18 +1015,20 @@ impl Compiler<'_> {
             stage_key(
                 stage,
                 (entry.name(), &fragment_constants),
-                (&built.layout_key, Some(u64::from(indexed))),
+                (built.layout_key, Some(u64::from(indexed))),
             )
         });
         let inputs = fragment_stage
             .zip(shape.fragment)
-            .map(|(stage, entry)| fragment_inputs(&stage.composed.text, entry.name()));
+            .map(|(stage, entry)| {
+                (stage.composed.fragment(entry.name())).map(|fragment| fragment.inputs.clone())
+            });
         let mut partner = DefaultHasher::new();
         inputs.hash(&mut partner);
         let stages = std::iter::once(stage_key(
             vertex_stage,
             (desc.vertex.name(), &vertex_constants),
-            (&built.layout_key, Some(partner.finish())),
+            (built.layout_key, Some(partner.finish())),
         ))
         .chain(paired)
         .collect();
@@ -1076,9 +1085,10 @@ impl Run {
                 .and_then(|target| declared.target_format(target));
         }
         for &(name, _) in &pass.targets {
-            formats.push(match final_target(name) {
-                Target::Canvas => Some(self.canvas.surface),
-                target @ Target::Shared(_) => declared.target_format(target),
+            formats.push(match declared.target_of(name) {
+                Some(Target::Canvas) => Some(self.canvas.surface),
+                Some(target @ Target::Shared(_)) => declared.target_format(target),
+                None => None,
             });
         }
         for &(texture, _) in &pass.colors {
@@ -1123,7 +1133,8 @@ impl Run {
             .stages
             .get(1)
             .zip(desc.fragment)
-            .and_then(|(stage, entry)| fragment_kinds(&stage.composed.text, entry.name()))
+            .and_then(|(stage, entry)| stage.composed.fragment(entry.name()))
+            .map(|fragment| fragment.outputs.clone())
         else {
             return true;
         };
@@ -1172,7 +1183,7 @@ impl Run {
             .stages
             .get(1)
             .zip(desc.fragment)
-            .and_then(|(stage, entry)| fragment_locations(&stage.composed.text, entry.name()));
+            .and_then(|(stage, entry)| written_locations(&stage.composed, entry.name()));
         let count = written
             .and_then(|written| written.iter().max().copied())
             .map_or(0, |last| last as usize + 1);
@@ -1200,80 +1211,9 @@ fn blendable(format: wgpu::TextureFormat) -> bool {
         .is_some_and(|sample| matches!(sample, wgpu::TextureSampleType::Float { filterable: true }))
 }
 
-fn fragment_outputs<'a>(text: &'a str, entry: &str) -> Option<&'a str> {
-    let at = text.find(&format!("fn {entry}("))?;
-    let rest = &text[at..];
-    let brace = rest.find('{')?;
-    let Some(arrow) = rest[..brace].find("->") else {
-        return Some("");
-    };
-    let returns = rest[arrow + 2..brace].trim();
-    if returns.starts_with('@') {
-        return Some(returns);
-    }
-    let name: String = returns
-        .chars()
-        .take_while(|character| character.is_ascii_alphanumeric() || *character == '_')
-        .collect();
-    let start = text.find(&format!("struct {name} {{"))?;
-    let body = &text[start..];
-    Some(&body[..body.find('}')?])
-}
-
-fn fragment_inputs(text: &str, entry: &str) -> Option<Vec<u32>> {
-    let open = text.find(&format!("fn {entry}("))? + entry.len() + 4;
-    let mut depth = 1_u32;
-    let close = text[open..].find(|character| {
-        match character {
-            '(' => depth += 1,
-            ')' => depth -= 1,
-            _ => {}
-        }
-        depth == 0
-    })?;
-    let parameters = &text[open..open + close];
-    let mut found = locations(parameters);
-    for part in parameters.split(',') {
-        let Some((_, ty)) = part.rsplit_once(':') else {
-            continue;
-        };
-        let name = ty.trim();
-        if let Some(start) = text.find(&format!("struct {name} {{")) {
-            let body = &text[start..];
-            found.extend(locations(&body[..body.find('}')?]));
-        }
-    }
-    found.sort_unstable();
-    Some(found)
-}
-
-fn fragment_locations(text: &str, entry: &str) -> Option<Vec<u32>> {
-    fragment_outputs(text, entry).map(locations)
-}
-
-fn fragment_kinds(text: &str, entry: &str) -> Option<Vec<(u32, wgpu::TextureSampleType)>> {
-    let outputs = fragment_outputs(text, entry)?;
-    let kinds = outputs.match_indices("@location(").map(|(at, _)| {
-        let field = &outputs[at..];
-        let field = &field[..field.find(',').unwrap_or(field.len())];
-        if field.contains("u32") {
-            wgpu::TextureSampleType::Uint
-        } else if field.contains("i32") {
-            wgpu::TextureSampleType::Sint
-        } else {
-            wgpu::TextureSampleType::Float { filterable: true }
-        }
-    });
-    Some(locations(outputs).into_iter().zip(kinds).collect())
-}
-
-fn locations(text: &str) -> Vec<u32> {
-    text.match_indices("@location(")
-        .filter_map(|(at, found)| {
-            let after = &text[at + found.len()..];
-            after[..after.find(')')?].trim().parse().ok()
-        })
-        .collect()
+fn written_locations(composed: &crate::linker::Composed, entry: &str) -> Option<Vec<u32>> {
+    let fragment = composed.fragment(entry)?;
+    Some(fragment.outputs.iter().map(|(at, _)| *at).collect())
 }
 
 fn cut_targets(targets: &mut [Option<wgpu::ColorTargetState>], cut: &Variant) {

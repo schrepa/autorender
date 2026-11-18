@@ -241,9 +241,21 @@ impl<G: Game> PageHost<G> {
         out
     }
 
-    pub fn job_kept(&mut self, id: f64, key: String, output: Option<js_sys::Uint8Array>) {
+    pub fn job_kept(
+        &mut self,
+        id: f64,
+        key: String,
+        output: Option<js_sys::Uint8Array>,
+        pack: bool,
+    ) {
+        let source = if pack {
+            engine_core::JobSource::Pack
+        } else {
+            engine_core::JobSource::Store
+        };
         if let Some(id) = job_id(id) {
-            self.host.job_kept(id, key, output.as_ref().map(shared));
+            self.host
+                .job_kept(id, key, output.as_ref().map(|output| (shared(output), source)));
         }
     }
 
@@ -259,7 +271,14 @@ impl<G: Game> PageHost<G> {
         }
     }
 
-    pub fn report_job_cache(&mut self, hits: f64, misses: f64, bytes: f64, mismatches: f64) {
+    pub fn report_job_cache(
+        &mut self,
+        pack_hits: f64,
+        store_hits: f64,
+        misses: f64,
+        bytes: f64,
+        mismatches: f64,
+    ) {
         let count = |value: f64| {
             if value.is_finite() && value > 0.0 {
                 value as u64
@@ -267,8 +286,13 @@ impl<G: Game> PageHost<G> {
                 0
             }
         };
-        self.host
-            .report_job_cache(count(hits), count(misses), count(bytes), count(mismatches));
+        self.host.report_job_cache([
+            count(pack_hits),
+            count(store_hits),
+            count(misses),
+            count(bytes),
+            count(mismatches),
+        ]);
     }
 
     pub fn reload_scene(
@@ -348,9 +372,19 @@ impl<G: Game> PageHost<G> {
         self.host.dev_reload_failed(error);
     }
 
-    pub fn dev_packs(&mut self, packs: &str) {
-        let packs = serde_json::from_str(packs)
+    pub fn dev_packs(&mut self, packs: &str, records: f64, ms: f64) {
+        let packs: serde_json::Value = serde_json::from_str(packs)
             .unwrap_or_else(|_| engine_registry::unavailable("unreadable_pack_list"));
+        let opened = packs.as_array().map_or(0, Vec::len) as u64;
+        engine_profile::event(
+            "packs",
+            "opened",
+            &[
+                ("packs", engine_profile::Fact::Count(opened)),
+                ("records", engine_profile::Fact::Count(records as u64)),
+                ("ms", engine_profile::Fact::Number(ms)),
+            ],
+        );
         PACKS.set(Some(packs));
     }
 }

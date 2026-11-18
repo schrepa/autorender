@@ -110,20 +110,15 @@ fn input_of<'b>(
 fn held_group<'g>(
     groups: &'g Groups,
     set: &'g views::ViewSet,
-    holder: Holder,
+    holder: u32,
     parity: usize,
 ) -> Option<&'g wgpu::BindGroup> {
-    set.groups
-        .get(&holder)
+    set.group(holder)
         .map_or(groups.made[parity].as_ref(), |made| made[parity].as_ref())
 }
 
-fn offsets_of<'o>(
-    windows: usize,
-    given: &mut &[u32],
-    held: &'o mut [u32; MOST_OFFSETS],
-) -> &'o [u32] {
-    let count = windows.min(MOST_OFFSETS);
+fn offsets_of<'o>(windows: usize, given: &mut &[u32], held: &'o mut [u32]) -> &'o [u32] {
+    let count = windows.min(held.len());
     for slot in &mut held[..count] {
         let (first, rest) = given
             .split_first()
@@ -140,8 +135,8 @@ impl Run {
         let kinds = &self.tallies.kinds;
         let kind = kinds
             .drawing
-            .and_then(|at| kinds.listed.get(at))
-            .map_or("", |tally| tally.kind.name());
+            .and_then(|at| kinds.kinds.get(kinds.kind_at(at).1 as usize))
+            .map_or("", |kind| kind.name());
         let pipeline = self.pipeline_of(handle).map_or("", |(pipeline, _)| {
             self.machine.draw_key(self.pass, pipeline).pipeline
         });
@@ -154,7 +149,7 @@ impl Run {
         });
     }
 
-    pub(super) fn scoped(&self, part: u32, point: Option<&'static str>, pipeline: u32) -> bool {
+    pub(super) fn scoped(&self, part: u32, point: Option<PassBit>, pipeline: u32) -> bool {
         let Some(built) = self.machine.pipelines.get(pipeline as usize) else {
             return false;
         };
@@ -173,7 +168,7 @@ impl Run {
     pub(crate) fn speedup_made(
         &mut self,
         part: u32,
-        point: Option<&'static str>,
+        point: Option<PassBit>,
         handle: u32,
     ) -> bool {
         let Some((pipeline, None)) = self.pipeline_of(handle) else {
@@ -190,12 +185,15 @@ impl Run {
         if built
             .ready
             .iter()
-            .any(|ready| ready.layout == layout && ready.variant.is_none())
+            .any(|ready| ready.layout == layout && ready.variant == 0)
         {
             return true;
         }
-        let targets = (layout.formats(), layout.depth);
-        let shown = (layout.plain, layout.main);
+        let Some(pass) = self.machine.pass_layout(layout) else {
+            return true;
+        };
+        let targets = (pass.formats(), pass.depth);
+        let shown = (pass.plain, pass.main);
         self.split()
             .0
             .speedup_unmade(pipeline, targets, shown, None)
@@ -205,7 +203,7 @@ impl Run {
     pub(crate) fn draw(
         &mut self,
         part: u32,
-        point: Option<&'static str>,
+        point: Option<PassBit>,
         handle: u32,
         shape: RawShape,
         timer: &GpuProfiler,
@@ -217,16 +215,10 @@ impl Run {
                 recorded
             }
             Err(reason) => {
-                let pass = self
-                    .machine
-                    .declared
-                    .passes
-                    .get(self.pass as usize)
-                    .map_or("", |declared| declared.name);
                 let asset = dropped_asset(reason, handles);
                 self.tallies
                     .kinds
-                    .drop_draws((part, pass), (reason, asset), 1);
+                    .drop_draws((part, self.pass), (reason, asset), 1);
                 if reason == DropReason::PipelineRefused {
                     crate::Recorded::Refused
                 } else {
@@ -241,7 +233,7 @@ impl Run {
     fn batch_variant(
         &self,
         (mesh, key): (Option<GeometryHandle>, Option<MaterialHandle>),
-    ) -> Result<Option<std::sync::Arc<crate::Variant>>, DropReason> {
+    ) -> Result<Option<resources::Drawn>, DropReason> {
         if mesh.is_some_and(|mesh| self.assets.meshes.get(mesh).is_none()) {
             return Err(DropReason::GeometryNotResident);
         }
@@ -261,7 +253,7 @@ impl Run {
     fn issue_draw(
         &mut self,
         part: u32,
-        point: Option<&'static str>,
+        point: Option<PassBit>,
         handle: u32,
         shape: RawShape,
         timer: &GpuProfiler,
@@ -280,12 +272,18 @@ impl Run {
         if self.machine.pipelines[pipeline as usize].holes && filled.is_none() {
             return Err(DropReason::UnfilledHoles);
         }
+        if self.spare.streams.len() > self.machine.limits.streams {
+            return Err(DropReason::MissingInput);
+        }
         if filled.is_some_and(|filled| self.filled[filled].groups.is_empty()) {
             self.fill_groups(pipeline, filled);
         }
         let (mesh, key) = handles_of(&shape);
         let variant = self.batch_variant((mesh, key))?;
-        let ready = self.render_pipeline(pipeline, variant.as_deref())?;
+        let drawn = variant
+            .as_ref()
+            .map(|(variant, identity)| (&**variant, *identity));
+        let ready = self.render_pipeline(pipeline, drawn)?;
         if self.recording.collecting() {
             return Ok(crate::Recorded::Waiting);
         }
@@ -296,11 +294,13 @@ impl Run {
             recording,
             bindings:
                 Bindings {
+                    holders,
                     frame_groups,
                     own_groups,
                     ..
                 },
             filled: fills,
+            spare,
             tables,
             sets,
             assets,
@@ -324,7 +324,7 @@ impl Run {
         let render = &mut open.pass;
         let frame = frame_groups
             .get(built.variant as usize)
-            .and_then(|groups| held_group(groups, set, Holder::Frame(built.variant), parity))
+            .and_then(|groups| held_group(groups, set, built.variant, parity))
             .ok_or(DropReason::MissingBindGroup)?;
         let camera = usize::from(
             machine
@@ -334,9 +334,9 @@ impl Run {
         );
         bound.draw_pipeline(render, &chosen.made);
         bound.draw_group(render, 0, frame, &[open.offset][..camera]);
-        let held = [0_u32; MOST_OFFSETS];
-        for (at, group) in built.groups.iter().enumerate() {
-            let dynamic = &held[..group.windows.min(MOST_OFFSETS)];
+        let zeros = std::mem::take(&mut bound.zeros);
+        let owned = built.groups.iter().enumerate().try_for_each(|(at, group)| {
+            let dynamic = &zeros[..group.windows.min(zeros.len())];
             let filled_group = filled.and_then(|filled| {
                 fills[filled]
                     .groups
@@ -344,15 +344,14 @@ impl Run {
                     .find(|(index, _)| *index == group.index)
                     .map(|(_, made)| made)
             });
-            let owned = held_group(
-                &own_groups[pipeline as usize][at],
-                set,
-                Holder::Own(pipeline, at as u32),
-                parity,
-            );
+            let holder = holders.index(Holder::Own(pipeline, at as u32));
+            let owned = held_group(&own_groups[pipeline as usize][at], set, holder, parity);
             let made = filled_group.or(owned).ok_or(DropReason::MissingBindGroup)?;
             bound.draw_group(render, group.index, made, dynamic);
-        }
+            Ok(())
+        });
+        bound.zeros = zeros;
+        owned?;
         for &(index, batch) in &built.batches {
             let group = assets
                 .batches
@@ -376,7 +375,7 @@ impl Run {
                 instances,
             } => {
                 let indexed = index_input(input, indices)?;
-                for (slot, (stream, _)) in vertices.listed().iter().enumerate() {
+                for (slot, (stream, _)) in vertices.listed(&spare.streams).iter().enumerate() {
                     let buffer = bound_input(input, *stream)?;
                     bound.vertex_buffer(render, slot as u32, buffer, 0);
                 }
@@ -400,7 +399,7 @@ impl Run {
                 let (args, offset) =
                     indirect_args((machine, arena), input, (args, offset, indices.is_some()))?;
                 let indexed = index_input(input, indices)?;
-                for (slot, (stream, _)) in vertices.listed().iter().enumerate() {
+                for (slot, (stream, _)) in vertices.listed(&spare.streams).iter().enumerate() {
                     let buffer = bound_input(input, *stream)?;
                     bound.vertex_buffer(render, slot as u32, buffer, 0);
                 }
@@ -423,7 +422,7 @@ impl Run {
                 let (args, offset) =
                     indirect_args((machine, arena), input, (args, offset, indices.is_some()))?;
                 let indexed = index_input(input, indices)?;
-                for (slot, (stream, start)) in vertices.listed().iter().enumerate() {
+                for (slot, (stream, start)) in vertices.listed(&spare.streams).iter().enumerate() {
                     let buffer = bound_input(input, *stream)?;
                     bound.vertex_buffer(render, slot as u32, buffer, *start);
                 }
@@ -450,7 +449,7 @@ impl Run {
                 for (slot, buffer) in buffers.enumerate() {
                     bound.vertex_buffer(render, slot as u32, buffer, 0);
                 }
-                for (at, (stream, start)) in streams.listed().iter().enumerate() {
+                for (at, (stream, start)) in streams.listed(&spare.streams).iter().enumerate() {
                     let buffer = bound_input(input, *stream)?;
                     let slot = geometry_slots + at as u32;
                     bound.vertex_buffer(render, slot, buffer, *start);
@@ -505,10 +504,9 @@ impl Run {
             let layout = self.machine.pipelines[pipeline as usize].groups[group]
                 .layout
                 .clone();
-            made.push((
-                index,
-                self.bind_group(&layout, (Some(pipeline as usize), index), resolved),
-            ));
+            if let Some(group) = self.bind_group(&layout, resolved) {
+                made.push((index, group));
+            }
         }
         self.filled[filled].groups = made;
     }
@@ -528,9 +526,8 @@ impl Run {
     pub(crate) fn reset_scissor(&mut self) {
         let size = self
             .set()
-            .targets
             .first()
-            .map(|(_, made)| (made.size.width, made.size.height));
+            .map(|made| (made.size.width, made.size.height));
         if let (Some(open), Some((width, height))) = (
             self.recording.open_mut().filter(|open| open.layered),
             size,
@@ -590,6 +587,7 @@ impl Run {
             recording,
             bindings:
                 Bindings {
+                    holders,
                     frame_groups,
                     own_groups,
                     ..
@@ -612,7 +610,7 @@ impl Run {
         bound.dispatch_pipeline(pass, compute);
         if let Some(group) = frame_groups
             .get(built.variant as usize)
-            .and_then(|groups| held_group(groups, set, Holder::Frame(built.variant), parity))
+            .and_then(|groups| held_group(groups, set, built.variant, parity))
         {
             let camera = usize::from(
                 machine
@@ -623,14 +621,15 @@ impl Run {
             bound.dispatch_group(pass, 0, group, &[offset][..camera]);
         }
         let mut given = offsets;
-        let mut held = [0_u32; MOST_OFFSETS];
+        let mut held = std::mem::take(&mut bound.given);
         for (at, group) in built.groups.iter().enumerate() {
             let dynamic = offsets_of(group.windows, &mut given, &mut held);
-            let holder = Holder::Own(handle, at as u32);
+            let holder = holders.index(Holder::Own(handle, at as u32));
             if let Some(made) = held_group(&own_groups[handle as usize][at], set, holder, parity) {
                 bound.dispatch_group(pass, group.index, made, dynamic);
             }
         }
+        bound.given = held;
         match count {
             CountRaw::Indirect(input, offset) => {
                 if let Some(buffer) = input_of(machine, (&*tables, set), part, input) {

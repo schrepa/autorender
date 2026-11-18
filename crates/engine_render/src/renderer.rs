@@ -4,7 +4,6 @@ use engine_core::{Error, Expected};
 use glam::Mat4;
 
 use crate::encode::{Assets, Run};
-use crate::graph::PlanCache;
 use crate::mesh_arena::GpuMeshes;
 use crate::textures::TextureStore;
 use crate::platform::{RenderTarget, failed, failed_with};
@@ -63,7 +62,7 @@ pub(crate) struct Core {
     pub(crate) ledger: crate::pipelines::Ledger,
     pub(crate) limits: engine_core::DeviceLimits,
     #[cfg(not(target_arch = "wasm32"))]
-    pub(crate) pipeline_cache: Option<cache::KeptCache>,
+    pub(crate) pipeline_cache: Result<cache::KeptCache, &'static str>,
 }
 
 pub struct Renderer {
@@ -73,7 +72,6 @@ pub struct Renderer {
     core: Core,
     run: Option<Run>,
     assets: Option<Assets>,
-    plans: PlanCache,
     passes: &'static [&'static str],
     spans: Vec<&'static str>,
     installing: Option<Validation>,

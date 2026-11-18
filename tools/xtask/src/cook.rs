@@ -386,7 +386,7 @@ fn run_on_pack(
     let stats = &report["stats"];
     let jobs = &stats["jobs"];
     let (hits, mismatches) = (
-        jobs["cache_hits"].as_u64().unwrap_or(0),
+        jobs["pack_hits"].as_u64().unwrap_or(0) + jobs["store_hits"].as_u64().unwrap_or(0),
         jobs["cache_mismatches"].as_u64().unwrap_or(u64::MAX),
     );
     let (listed, unlisted) = (

@@ -59,6 +59,16 @@ impl Variant {
         (!plain).then_some(cut)
     }
 
+    pub(crate) fn identity(&self) -> u64 {
+        let mut hasher = DefaultHasher::new();
+        let mut at = Some(self);
+        while let Some(variant) = at {
+            variant.key().hash(&mut hasher);
+            at = variant.stand_in.as_deref();
+        }
+        hasher.finish().max(1)
+    }
+
     pub(crate) fn key(&self) -> u64 {
         let mut hasher = DefaultHasher::new();
         for (name, value) in &self.constants {

@@ -33,7 +33,6 @@ mod registration;
 mod render_bricks;
 mod shaders;
 mod shared;
-mod sizes;
 mod uploads;
 
 mod mesh_arena;
@@ -148,12 +147,6 @@ impl Scene {
     pub const fn name(self) -> &'static str {
         self.0
     }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct SceneDraw {
-    pub(crate) pass: Scene,
-    pub(crate) bit: Option<PassBit>,
 }
 
 pub trait Scope<P> {
@@ -407,10 +400,19 @@ fn bound_list<P>(bound: &[(Var, Bind<P>)]) -> Vec<(Var, install::Bound)> {
         .collect()
 }
 
-fn scoped<P, S: Scope<P>>(scope: &S) -> install::Scoped {
-    match scope.pass_index() {
-        Some(pass) => install::Scoped::Pass(pass),
-        None => install::Scoped::Scene(scope.scene_pass().unwrap_or_default()),
+fn scoped<P, S: Scope<P>>(core: &mut install::InstallCore, scope: &S) -> install::Scoped {
+    if let Some(pass) = scope.pass_index() {
+        return install::Scoped::Pass(pass);
+    }
+    let name = scope.scene_pass().unwrap_or_default();
+    match core.passes.bit(name) {
+        Some(bit) => install::Scoped::Scene(bit),
+        None => {
+            let path = core.path("scene");
+            core.problems
+                .push(Error::new(engine_core::ErrorCode::PassMismatch, path).got(name));
+            install::Scoped::Outside(name)
+        }
     }
 }
 
@@ -542,9 +544,8 @@ impl<P: GpuPart> Install<'_, P> {
             samples: desc.samples,
             per_batch: desc.per_batch,
         });
-        let pipeline = self
-            .core
-            .pipeline(scoped(&scope), program, bound_list(bound))?;
+        let scope = scoped(self.core, &scope);
+        let pipeline = self.core.pipeline(scope, program, bound_list(bound))?;
         self.constants(pipeline, desc.constants);
         Ok(Pipeline(pipeline, PhantomData))
     }
@@ -572,11 +573,13 @@ impl<P: GpuPart> Install<'_, P> {
     }
 
     pub fn draw_input<S: Scope<P>>(&mut self, scope: S, buffer: Buffer<P>) -> DrawInput<P, S::Tag> {
-        DrawInput(self.core.draw_input(scoped(&scope), buffer.0), PhantomData)
+        let scope = scoped(self.core, &scope);
+        DrawInput(self.core.draw_input(scope, buffer.0), PhantomData)
     }
 
     pub fn args_input<S: Scope<P>>(&mut self, scope: S, buffer: Buffer<P>) -> DrawInput<P, S::Tag> {
-        DrawInput(self.core.args_input(scoped(&scope), buffer.0), PhantomData)
+        let scope = scoped(self.core, &scope);
+        DrawInput(self.core.args_input(scope, buffer.0), PhantomData)
     }
 
     pub fn batch_group(
@@ -1062,12 +1065,15 @@ pub struct Draw<'e, P, S> {
     part: PhantomData<fn() -> (P, S)>,
 }
 
-fn inputs<P, S>(inputs: &[DrawInput<P, S>]) -> encode::Streams {
-    encode::Streams::of(inputs.iter().map(|input| (input.0, 0)))
+fn inputs<P, S>(held: &mut Vec<(u32, u64)>, inputs: &[DrawInput<P, S>]) -> encode::Streams {
+    encode::Streams::of(held, inputs.iter().map(|input| (input.0, 0)))
 }
 
-fn streams<P, S>(streams: &[(DrawInput<P, S>, u64)]) -> encode::Streams {
-    encode::Streams::of(streams.iter().map(|(input, offset)| (input.0, *offset)))
+fn streams<P, S>(
+    held: &mut Vec<(u32, u64)>,
+    streams: &[(DrawInput<P, S>, u64)],
+) -> encode::Streams {
+    encode::Streams::of(held, streams.iter().map(|(input, offset)| (input.0, *offset)))
 }
 
 impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
@@ -1083,6 +1089,10 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
     }
 
     fn issue(&mut self, pipeline: &Pipeline<P, S>, shape: Shape<'_, P, S>) -> Recorded {
+        let (part, timer) = (self.raw.part(), self.raw.timer());
+        let run = self.raw.run();
+        let held = &mut run.spare.streams;
+        held.clear();
         let shape = match shape {
             Shape::Pulled {
                 vertices,
@@ -1099,7 +1109,7 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
                 elements,
                 instances,
             } => encode::RawShape::Buffers {
-                vertices: inputs(vertices),
+                vertices: inputs(held, vertices),
                 indices: indices.map(|input| input.0),
                 elements,
                 instances,
@@ -1111,7 +1121,7 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
                 offset,
                 key,
             } => encode::RawShape::Indirect {
-                vertices: inputs(vertices),
+                vertices: inputs(held, vertices),
                 indices: indices.map(|input| input.0),
                 args: args.0,
                 offset,
@@ -1123,7 +1133,7 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
                 args,
                 offset,
             } => encode::RawShape::IndirectAt {
-                vertices: streams(vertices),
+                vertices: streams(held, vertices),
                 indices: indices.map(|input| input.0),
                 args: args.0,
                 offset,
@@ -1139,7 +1149,7 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
                 key,
                 args: args.0,
                 offset,
-                streams: streams(given),
+                streams: streams(held, given),
             },
             Shape::Mesh {
                 mesh,
@@ -1151,8 +1161,6 @@ impl<P: GpuPart, S: 'static> Draw<'_, P, S> {
                 instances,
             },
         };
-        let (part, timer) = (self.raw.part(), self.raw.timer());
-        let run = self.raw.run();
         let point = run.point;
         run.draw(part, point, pipeline.0, shape, timer)
     }
@@ -1181,8 +1189,8 @@ impl<P: GpuPart> Draw<'_, P, Scene> {
         }
     }
 
-    pub fn pass(&mut self) -> Option<Scene> {
-        self.raw.run().point.map(Scene::named)
+    pub fn pass(&mut self) -> Option<PassBit> {
+        self.raw.run().point
     }
 }
 
@@ -1228,17 +1236,24 @@ impl<P: GpuPart> Draw<'_, P, Own> {
     pub fn scene(&mut self, own: &P) {
         let run = self.raw.run();
         run.reset_scissor();
-        let Some(scene) = run.scene_draw() else {
+        let Some(bit) = run.scene_bit() else {
             return;
         };
-        let members = run.scene_members();
-        run.tallies.kinds.scened(scene.pass.0);
+        let scene = bit.index();
+        run.tallies.kinds.scened(scene);
+        let Some(listed) = run.installs.members.get_mut(scene as usize).map(std::mem::take) else {
+            return;
+        };
+        let entries = std::mem::take(&mut run.installs.draw_entries);
+        run.point = Some(bit);
         let encoding = self.raw.part();
-        for member in members.iter() {
-            let batches = (&member.batches, scene.bit);
+        for &at in &listed {
+            let Some(member) = entries.get(at as usize) else {
+                continue;
+            };
             let run = self.raw.run();
-            if member.batches.drawn(scene.bit).next().is_none() {
-                run.tallies.kinds.begin(member.kind.kind, scene.pass.0);
+            if member.batches.drawn(Some(bit)).next().is_none() {
+                run.tallies.kinds.begin(scene, member.kind);
                 run.tallies.kinds.skip("no object of this kind is drawn here");
                 run.tallies.kinds.end();
                 continue;
@@ -1251,16 +1266,21 @@ impl<P: GpuPart> Draw<'_, P, Own> {
                 };
                 Some(held)
             };
-            run.point = Some(scene.pass.0);
-            run.tallies.kinds.begin(member.kind.kind, scene.pass.0);
+            run.tallies.kinds.begin(scene, member.kind);
             let part = held.as_ref().map_or(own as &dyn std::any::Any, |held| held.part());
+            let batches = (&member.batches, Some(bit));
             (member.call)(part, &mut self.raw.member(member.part, batches));
             let run = self.raw.run();
             run.tallies.kinds.end();
-            run.point = None;
             if let Some(held) = held {
                 run.give_member(member.part, held);
             }
+        }
+        let run = self.raw.run();
+        run.point = None;
+        run.installs.draw_entries = entries;
+        if let Some(slot) = run.installs.members.get_mut(scene as usize) {
+            *slot = listed;
         }
     }
 }

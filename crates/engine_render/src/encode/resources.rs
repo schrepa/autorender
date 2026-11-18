@@ -89,27 +89,37 @@ impl Run {
 
 pub(crate) struct HeldBatch {
     group: wgpu::BindGroup,
-    variant: Option<std::sync::Arc<crate::Variant>>,
+    variant: Option<Drawn>,
 }
 
+pub(crate) type Drawn = (std::sync::Arc<crate::Variant>, u64);
+
 #[derive(Default)]
-pub(crate) struct HeldBatches(Vec<std::collections::BTreeMap<Option<MaterialHandle>, HeldBatch>>);
+pub(crate) struct HeldBatches(Vec<Vec<Option<HeldBatch>>>);
+
+fn key_slot(key: Option<MaterialHandle>) -> usize {
+    key.map_or(0, |handle| handle.slot() + 1)
+}
+
+fn keyed_get(keyed: &[Option<HeldBatch>], key: Option<MaterialHandle>) -> Option<&HeldBatch> {
+    keyed.get(key_slot(key)).and_then(Option::as_ref)
+}
 
 impl HeldBatches {
     pub(crate) fn group(&self, batch: u32, key: Option<MaterialHandle>) -> Option<&wgpu::BindGroup> {
         self.0
             .get(batch as usize)
-            .and_then(|keyed| keyed.get(&key))
+            .and_then(|keyed| keyed_get(keyed, key))
             .map(|held| &held.group)
     }
 
     pub(crate) fn held(
         &self,
         key: Option<MaterialHandle>,
-    ) -> Option<Option<std::sync::Arc<crate::Variant>>> {
+    ) -> Option<Option<Drawn>> {
         let mut found = None;
         for keyed in &self.0 {
-            if let Some(held) = keyed.get(&key) {
+            if let Some(held) = keyed_get(keyed, key) {
                 if held.variant.is_some() {
                     return Some(held.variant.clone());
                 }
@@ -155,7 +165,7 @@ impl Run {
         let doubled = variant.is_some()
             && others
                 .filter(|(at, _)| *at != batch as usize)
-                .any(|(_, keyed)| keyed.get(&key).is_some_and(|held| held.variant.is_some()));
+                .any(|(_, keyed)| keyed_get(keyed, key).is_some_and(|held| held.variant.is_some()));
         if doubled {
             return Err(fault(path, ErrorCode::NameTwice).got("variant"));
         }
@@ -230,19 +240,30 @@ impl Run {
         if groups.len() <= batch as usize {
             groups.resize_with(batch as usize + 1, Default::default);
         }
-        groups[batch as usize].insert(
-            key,
-            HeldBatch {
-                group,
-                variant: variant.map(std::sync::Arc::new),
-            },
-        );
+        let keyed = &mut groups[batch as usize];
+        let slot = key_slot(key);
+        if keyed.len() <= slot {
+            keyed.resize_with(slot + 1, || None);
+        }
+        keyed[slot] = Some(HeldBatch {
+            group,
+            variant: variant.map(|variant| {
+                let identity = variant.identity();
+                (std::sync::Arc::new(variant), identity)
+            }),
+        });
         Ok(())
     }
 
     pub(crate) fn clear_batch(&mut self, batch: u32, key: Option<MaterialHandle>) {
-        if let Some(keyed) = self.assets.batches.0.get_mut(batch as usize) {
-            keyed.remove(&key);
+        if let Some(held) = self
+            .assets
+            .batches
+            .0
+            .get_mut(batch as usize)
+            .and_then(|keyed| keyed.get_mut(key_slot(key)))
+        {
+            *held = None;
         }
     }
 
@@ -257,7 +278,6 @@ impl Run {
         match made {
             Some(Placeholder::Texture(view)) => Held::View(view.clone()),
             Some(Placeholder::Sampler(sampler)) => Held::Sampler(sampler.clone()),
-            Some(Placeholder::Buffer(buffer)) => Held::Range(buffer.clone(), 0, buffer.size()),
             None => Held::Range(self.uniforms.camera.clone(), 0, self.uniforms.camera.size()),
         }
     }

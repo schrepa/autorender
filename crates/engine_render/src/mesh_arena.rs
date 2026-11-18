@@ -388,16 +388,22 @@ impl GpuMeshes {
         ) else {
             return 0;
         };
+        let since = residency.placed().since(&mut self.placed);
+        if matches!(since, Since::Same) {
+            return 0;
+        }
         let Some((classes, indices)) = residency.capacities() else {
             return 0;
         };
         let replaced = self.arena.fit(device, queue, &classes, indices);
-        if !replaced.is_empty() {
+        let since = if replaced.is_empty() {
+            since
+        } else {
             self.meshes.retain(|_, mesh| !mesh.in_class(&replaced));
-            self.placed = Cursor::default();
-        }
+            Since::All
+        };
         let all: Vec<GeometryHandle>;
-        let changed = match residency.placed().since(&mut self.placed) {
+        let changed = match since {
             Since::Same => return 0,
             Since::Listed(handles) => handles,
             Since::All => {

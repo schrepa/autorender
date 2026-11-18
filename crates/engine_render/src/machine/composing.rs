@@ -117,8 +117,7 @@ fn batch_entries(
         .iter()
         .map(|batch| {
             let path = batch_path(batch);
-            crate::linker::declarations(linker.text(path).unwrap_or_default())
-                .into_iter()
+            (linker.declarations(path).iter())
                 .filter(|found| found.group == batch.index)
                 .map(|found| {
                     let stages = staged
@@ -132,7 +131,7 @@ fn batch_entries(
                         .fold(ShaderStages::NONE, |all, (_, _, stages)| all | *stages);
                     BatchEntry {
                         binding: found.binding,
-                        name: found.name,
+                        name: found.name.clone(),
                         ty: found.ty,
                         stages: if stages.is_empty() {
                             ShaderStages::VERTEX_FRAGMENT
@@ -155,7 +154,7 @@ fn linked(
     for entry in decl.entries() {
         match linker.compose_in(entry) {
             Ok(composed) => {
-                let at = stage_of(entry, linker);
+                let at = linker.stage(entry);
                 for (module, declaration) in linker.reached(&composed) {
                     match reached.iter_mut().find(|(known, found, _)| {
                         *known == module && found.name == declaration.name

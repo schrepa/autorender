@@ -50,6 +50,11 @@ impl Renderer {
     }
 
     #[cfg(any(feature = "dev", feature = "profiling"))]
+    pub(crate) fn layouts(&self) -> Option<&crate::machine::Layouts> {
+        Some(&self.run.as_ref()?.machine.layouts)
+    }
+
+    #[cfg(any(feature = "dev", feature = "profiling"))]
     pub fn timer_names(world: &mut bevy_ecs::world::World) {
         use engine_registry::{Kind, NameEntry, register, unavailable};
         let names = [
@@ -65,6 +70,7 @@ impl Renderer {
             ("gpu.draws.measuring", Kind::State, None),
             ("gpu.pipelines", Kind::State, None),
             ("gpu.pipelines.counts", Kind::Count, Some("pipelines")),
+            ("gpu.pipelines.cache", Kind::State, None),
         ];
         for (name, kind, unit) in names {
             let entry = NameEntry::read(name, kind, move |reach, _| {
@@ -81,10 +87,14 @@ impl Renderer {
             );
         }
         crate::linker::counting::names(world);
+        crate::machine::layout_names(world);
     }
 
     #[cfg(any(feature = "dev", feature = "profiling"))]
     fn timer_read(&self, name: &str) -> serde_json::Value {
+        if name == "gpu.pipelines.cache" {
+            return self.cache_facts();
+        }
         let Some(run) = self.run.as_ref() else {
             return engine_registry::unavailable("not_installed");
         };
@@ -98,12 +108,36 @@ impl Renderer {
                         |built| crate::install::pipeline_facts(&built.decl),
                     )
             }),
-            "gpu.pipelines.counts" => pipelines
-                .making
-                .book
-                .counts((pipelines.up_front, pipelines.unlisted)),
+            "gpu.pipelines.counts" => {
+                let mut counts = pipelines
+                    .making
+                    .book
+                    .counts((pipelines.up_front, pipelines.unlisted));
+                if let Some(counts) = counts.as_object_mut() {
+                    counts.insert("warming".to_owned(), pipelines.warming_left().into());
+                    counts.insert("warmed".to_owned(), pipelines.warming.made().into());
+                    counts.insert("stood_in".to_owned(), pipelines.warming.stood_in().into());
+                }
+                counts
+            }
             _ => self.core.profiler.read(name),
         }
+    }
+
+    #[cfg(all(
+        any(feature = "dev", feature = "profiling"),
+        not(target_arch = "wasm32")
+    ))]
+    fn cache_facts(&self) -> serde_json::Value {
+        self.core.pipeline_cache.as_ref().map_or_else(
+            |&reason| engine_registry::unavailable(reason),
+            super::cache::KeptCache::facts,
+        )
+    }
+
+    #[cfg(all(any(feature = "dev", feature = "profiling"), target_arch = "wasm32"))]
+    fn cache_facts(&self) -> serde_json::Value {
+        engine_registry::unavailable("wasm")
     }
 
     pub fn is_texture_resident(&self, handle: engine_core::TextureHandle) -> bool {
@@ -141,7 +175,7 @@ impl Renderer {
 
     pub fn keep_pipeline_cache(&self) {
         #[cfg(not(target_arch = "wasm32"))]
-        if let Some(kept) = &self.core.pipeline_cache {
+        if let Ok(kept) = &self.core.pipeline_cache {
             super::cache::save(kept);
         }
     }

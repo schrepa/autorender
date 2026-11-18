@@ -5,7 +5,6 @@ use super::*;
 use crate::CameraUniform;
 use crate::encode::{Queued, Recording};
 use crate::gpu_calls::Handover;
-use crate::graph::Bits;
 use crate::install::Work;
 use crate::machine::Target;
 use crate::profiling::{GpuProfiler, Span};
@@ -160,21 +159,6 @@ fn mark_span(
     }
 }
 
-fn opaque_span(
-    passes: &[crate::install::PassDecl],
-    plan: &crate::graph::Plan,
-) -> Option<(usize, usize)> {
-    let opaque = |planned: &crate::graph::Planned| {
-        passes.get(planned.pass.index()).is_some_and(|pass| {
-            crate::machine::shared(pass) && planned.batch == 1
-        })
-    };
-    Some((
-        plan.passes.iter().position(opaque)?,
-        plan.passes.iter().rposition(opaque)?,
-    ))
-}
-
 fn camera_of(viewed: &Viewed) -> CameraUniform {
     CameraUniform::exact(viewed.view_projection, viewed.eye, viewed.seconds)
 }
@@ -263,7 +247,7 @@ impl Renderer {
         let Some(run) = self.run.as_mut() else {
             return;
         };
-        run.settle_parts(world.get_resource::<engine_registry::BrickStates>());
+        settle_states(run, world);
         for part in 0..run.parts.len() {
             let Some(gate) = run.installs.gates.get(part).copied().flatten() else {
                 continue;
@@ -386,9 +370,7 @@ impl Renderer {
             .queue
             .mark_unchanged(world.contains_resource::<crate::gpu_calls::UnchangedWrites>());
         let views = world.get_resource::<engine_core::Views>();
-        let listed: Vec<engine_core::ViewFacts> = views
-            .map(|views| views.listed().to_vec())
-            .unwrap_or_default();
+        let listed = views.map_or(&[][..], engine_core::Views::listed);
         if listed.is_empty() {
             return Ok(self.answer_picture(surface));
         }
@@ -420,31 +402,31 @@ impl Renderer {
             ..Queued::default()
         };
         run.tallies.kinds.start_frame();
-        let settings = world
-            .get_resource::<crate::RenderSettings>()
-            .cloned()
-            .unwrap_or_default();
+        let defaults;
+        let settings = match world.get_resource::<crate::RenderSettings>() {
+            Some(settings) => settings,
+            None => {
+                defaults = crate::RenderSettings::default();
+                &defaults
+            }
+        };
         run.reading.slots = settings.readback_slots.max(1) as usize;
         run.reading.slot_bytes = settings.readback_slot_bytes;
-        run.settle_parts(world.get_resource::<engine_registry::BrickStates>());
+        settle_states(run, world);
         warm_on_flip(run, &mut self.installing, &device, world);
         run.drop_unfilled();
         let seconds = world
             .get_resource::<FrameTime>()
             .map_or(0.0, |time| time.elapsed as f32);
-        let entities: Vec<bevy_ecs::entity::Entity> =
-            listed.iter().map(|facts| facts.view).collect();
-        run.settle_sets(&entities);
-        let cameras: Vec<CameraUniform> = listed
-            .iter()
-            .map(|facts| {
-                camera_of(&Viewed {
-                    view_projection: facts.view_projection,
-                    eye: facts.eye,
-                    seconds,
-                })
+        run.settle_sets(listed);
+        run.uniforms.cameras.clear();
+        run.uniforms.cameras.extend(listed.iter().map(|facts| {
+            camera_of(&Viewed {
+                view_projection: facts.view_projection,
+                eye: facts.eye,
+                seconds,
             })
-            .collect();
+        }));
         let shown = surface.as_ref().map(|surface| {
             let texture = surface.texture().clone();
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
@@ -455,7 +437,6 @@ impl Renderer {
         run.canvas.format = run.canvas.surface;
         run.uniforms.camera_slot = 0;
         let profile_writes = engine_profile::span("render", "queue_writes");
-        run.uniforms.cameras = cameras;
         run.start_runs();
         for index in 0..run.parts.len() {
             if !run.drawable(index as u32) {
@@ -509,22 +490,26 @@ impl Renderer {
         run.write_cameras();
         run.refresh_groups();
         drop(profile_writes);
-        self.core.profiler.begin_frame(&device, &settings);
+        self.core.profiler.begin_frame(&device, settings);
         let Some(run) = self.run.as_mut() else {
             return Ok(self.answer_picture(surface));
         };
         run.planning.merge = !self.core.profiler.splits();
-        let mut asked = Bits::of(run.machine.graph.resources());
+        let scratch = &mut run.sets.scratch;
+        scratch.asked.clear();
         if let Some(canvas) = run.machine.ids.target(Target::Canvas) {
-            asked.insert(canvas.index());
+            scratch.asked.insert(canvas.index());
         }
         for wanted in &run.queued.asked {
             if let Some(id) = run.machine.ids.buffers.get(wanted.buffer as usize) {
-                asked.insert(id.index());
+                scratch.asked.insert(id.index());
             }
         }
-        let base = run.planning.runs.clone();
-        let order = drawn_order(&listed);
+        scratch.base.assign(&run.planning.runs);
+        scratch.ready.clear();
+        scratch.drawn_on.clear();
+        let mut order = std::mem::take(&mut scratch.order);
+        drawn_order(listed, &mut order);
         let profile_encoding = engine_profile::span("render", "command_encoding");
         let mut encoder = self.frame_encoder(&device, 0);
         if !hidden {
@@ -537,9 +522,7 @@ impl Renderer {
         let mut batch = 0;
         let mut timed: Option<&'static str> = None;
         let mut parted: Option<(&'static str, u32)> = None;
-        let mut ran: Vec<&'static str> = Vec::new();
-        let mut ready = Bits::of(run.machine.graph.resources());
-        let mut drawn_on: Vec<(engine_core::Target, usize)> = Vec::new();
+        let mut ran: u128 = 0;
         let mut first = true;
         for &index in &order {
             let facts = listed[index];
@@ -551,8 +534,12 @@ impl Renderer {
             };
             let collecting = hidden && facts.target.surface();
             run.leave();
-            let set = run.select(facts.view);
-            let earlier = drawn_on
+            let set = run.select(facts.slot);
+            run.sets.counted.shared_open = false;
+            let earlier = run
+                .sets
+                .scratch
+                .drawn_on
                 .iter()
                 .rev()
                 .find(|(target, _)| *target == facts.target)
@@ -566,7 +553,7 @@ impl Renderer {
             run.canvas.load = earlier.is_some()
                 || (!facts.target.surface() && facts.clear != engine_core::Clear::All);
             run.size_targets((size.x, size.y), drawing);
-            run.planning.runs = base.clone();
+            run.planning.runs.assign(&run.sets.scratch.base);
             for part in 0..run.parts.len() {
                 if !run.drawable(part as u32) {
                     continue;
@@ -582,28 +569,30 @@ impl Renderer {
             run.lay_arena();
             keep_eligible(run, &facts, (first, index == 0));
             #[cfg(any(feature = "dev", feature = "profiling"))]
-            crate::whatif::skip(world, run.frames.asked, &mut run.planning.runs);
-            let mut outputs = asked.clone();
+            {
+                run.sets.scratch.skipped =
+                    crate::whatif::skip(world, run.frames.asked, &mut run.planning.runs);
+            }
+            let sets = &mut run.sets;
+            sets.scratch.outputs.assign(&sets.scratch.asked);
             if order.len() > 1 {
-                for pass in run
-                    .planning
-                    .runs
-                    .iter()
-                    .filter(|&pass| !run.sets.passes.contains(pass))
-                {
-                    outputs = union(&outputs, &run.machine.graph.writes(pass));
+                for pass in run.planning.runs.iter() {
+                    if !sets.passes.contains(pass) {
+                        sets.scratch
+                            .outputs
+                            .union_with(run.machine.graph.writes(pass));
+                    }
                 }
             }
             run.refresh_groups();
-            let plan = self.plans.plan(
-                &run.machine.graph,
-                (&run.planning.runs, &outputs, &ready),
-                crate::graph::PLANS,
-            )?;
+            let plan = run.plan_view()?;
             for planned in &plan.passes {
                 let pass = planned.pass.index();
                 if !run.sets.passes.contains(pass) {
-                    ready = union(&ready, &run.machine.graph.writes(pass));
+                    run.sets
+                        .scratch
+                        .ready
+                        .union_with(run.machine.graph.writes(pass));
                 }
             }
             run.planning.plan = Some(std::sync::Arc::clone(&plan));
@@ -629,7 +618,7 @@ impl Renderer {
             if run.canvas.load {
                 run.copy_canvas(true);
             }
-            let opaque = opaque_span(&run.machine.declared.passes, &plan);
+            let opaque = plan.opaque;
             let mut opaque_open = false;
             let mut ran_last: Option<u32> = None;
             for (at, planned) in plan.passes.iter().enumerate() {
@@ -683,7 +672,8 @@ impl Renderer {
                 let continues = ran_last
                     .is_some_and(|last| last != index as u32 && run.same_group(last, index as u32));
                 if !continues && !collected {
-                    ran.push(run.group_of(index as u32));
+                    let name = run.sets.fixed.names.get(index).copied().unwrap_or(u32::MAX);
+                    ran |= 1_u128.checked_shl(name).unwrap_or(0);
                 }
                 ran_last = Some(index as u32);
                 let wanted = run.span_of(index as u32);
@@ -766,16 +756,17 @@ impl Renderer {
             if run.canvas.rect.is_some() {
                 run.copy_canvas(false);
             }
-            drawn_on.push((facts.target, set));
+            run.sets.scratch.drawn_on.push((facts.target, set));
             first = false;
         }
         let Some(run) = self.run.as_mut() else {
             return Ok(self.answer_picture(surface));
         };
+        run.sets.scratch.order = order;
         run.close_encode_span(&self.core.profiler);
         run.flush_clears();
         run.leave();
-        run.select(entities[0]);
+        run.select(listed[0].slot);
         run.uniforms.camera_slot = 0;
         run.canvas.view = shown.as_ref().map(|(view, _)| view.clone());
         run.canvas.texture = shown.map(|(_, texture)| texture);
@@ -833,14 +824,17 @@ impl Renderer {
             surface.present(&self.core.queue);
         }
         let pipelines_created = self.core.ledger.frame_submitted(&self.core.queue);
-        let render_passes = self.ran_passes(&ran);
+        let render_passes = engine_core::Names {
+            bits: ran,
+            names: self.passes,
+        };
         let Some(run) = self.run.as_mut() else {
             return Ok(RenderStats::default());
         };
         run.reading.list.map();
         crate::platform::poll(&device);
         drop(profile_submit);
-        run.tallies.kinds.passes = super::kind_passes::kind_passes(run, world);
+        super::kind_passes::settle(run, world);
         let drawn = run.tallies.drawn.total.since(drawn_before);
         Ok(RenderStats {
             draw_calls: drawn.draws,
@@ -858,18 +852,6 @@ impl Renderer {
             render_passes,
             readback_overflows: run.reading.list.overflows(),
         })
-    }
-
-    fn ran_passes(&self, ran: &[&'static str]) -> engine_core::Names {
-        let names = self.passes;
-        let bits = names
-            .iter()
-            .enumerate()
-            .filter(|(_, name)| ran.contains(name))
-            .fold(0_u128, |bits, (at, _)| {
-                bits | 1_u128.checked_shl(at as u32).unwrap_or(0)
-            });
-        engine_core::Names { bits, names }
     }
 }
 
@@ -899,14 +881,24 @@ fn warm_on_flip(
     super::validate_also(installing, Box::pin(scope.pop()));
 }
 
-fn drawn_order(listed: &[engine_core::ViewFacts]) -> Vec<usize> {
-    let (surfaces, textures): (Vec<usize>, Vec<usize>) =
-        (0..listed.len()).partition(|&index| listed[index].target.surface());
-    textures.into_iter().chain(surfaces).collect()
+fn settle_states(run: &mut Run, world: &World) {
+    let states = world.get_resource::<engine_registry::BrickStates>();
+    let generation = states.map(engine_registry::BrickStates::generation);
+    if run.sets.settled == Some(generation) {
+        return;
+    }
+    run.settle_parts(states);
+    run.sets.settled = Some(generation);
+}
+
+fn drawn_order(listed: &[engine_core::ViewFacts], order: &mut Vec<usize>) {
+    order.clear();
+    order.extend((0..listed.len()).filter(|&index| !listed[index].target.surface()));
+    order.extend((0..listed.len()).filter(|&index| listed[index].target.surface()));
 }
 
 fn canvas_of(
-    run: &Run,
+    run: &mut Run,
     facts: &engine_core::ViewFacts,
     shown: Option<&(wgpu::TextureView, wgpu::Texture)>,
     display: glam::UVec2,
@@ -925,14 +917,10 @@ fn canvas_of(
         )),
         (engine_core::Target::Surface, None) => Some((None, None, run.canvas.surface, display)),
         (engine_core::Target::Texture(handle), _) => {
-            let (texture, _) = run.assets.textures.target(handle)?;
+            let (drawing, texture) = run.drawing_of(facts.slot, handle)?;
             let format = texture.format().remove_srgb_suffix();
-            let drawing = texture.create_view(&wgpu::TextureViewDescriptor {
-                format: Some(format),
-                ..Default::default()
-            });
             let extent = glam::UVec2::new(texture.width(), texture.height());
-            Some((Some(drawing), Some(texture.clone()), format, extent))
+            Some((Some(drawing), Some(texture), format, extent))
         }
     }
 }
@@ -942,31 +930,17 @@ fn keep_eligible(
     facts: &engine_core::ViewFacts,
     (first, main): (bool, bool),
 ) {
-    let listed: Vec<usize> = run.planning.runs.iter().collect();
-    for index in listed {
-        let viewed = run.sets.passes.contains(index);
-        let mained = run.sets.main.contains(index);
-        if (mained && !main) || (!mained && !viewed && !first) {
-            run.planning.runs.remove(index);
-            continue;
-        }
-        let views = match run.machine.declared.passes[index].views {
-            engine_core::PassViews::Every => true,
-            engine_core::PassViews::Main => facts.target.surface(),
-        };
-        if viewed && !views {
-            run.planning.runs.remove(index);
-        }
+    let (runs, sets) = (&mut run.planning.runs, &run.sets);
+    if !main {
+        runs.remove_all(&sets.main);
+    }
+    if !first {
+        runs.remove_all(&sets.fixed.global);
+    }
+    if !facts.target.surface() {
+        runs.remove_all(&sets.fixed.main_views);
     }
     run.drop_idle_scenes();
-}
-
-fn union(first: &Bits, second: &Bits) -> Bits {
-    let mut joined = first.clone();
-    for index in second.iter() {
-        joined.insert(index);
-    }
-    joined
 }
 
 #[cfg(any(feature = "dev", feature = "profiling"))]
@@ -984,7 +958,9 @@ pub(super) mod names {
     type Reader = fn(&Renderer, &Run, &World) -> Value;
 
     pub fn gpu_names(world: &mut World) {
-        let names: [(&'static str, Kind, Option<&'static str>, Reader); 18] = [
+        let names: [(&'static str, Kind, Option<&'static str>, Reader); 21] = [
+            ("gpu.plans.built", Kind::Count, Some("plans"), plans_built),
+            ("gpu.passes.opened", Kind::Count, Some("passes"), passes_opened),
             ("gpu.created", Kind::Count, None, |_, _, _| crate::gpu_calls::created()),
             ("gpu.created.bytes", Kind::Bytes, Some("bytes"), |_, _, _| {
                 crate::gpu_calls::created_bytes()
@@ -1020,6 +996,9 @@ pub(super) mod names {
             }),
             ("gpu.draws.indirect_draws", Kind::Count, None, |_, run, _| {
                 part_counts(run, |count| count.indirect)
+            }),
+            ("gpu.draws.dropped", Kind::Count, Some("draws"), |_, run, _| {
+                super::super::kind_passes::dropped_totals(run)
             }),
         ];
         for (name, kind, unit, read) in names {
@@ -1079,15 +1058,18 @@ pub(super) mod names {
             .get_resource::<engine_core::Views>()
             .map_or(&[][..], engine_core::Views::listed);
         let declared = &run.machine.declared.passes;
-        let views: Vec<Value> = super::drawn_order(listed)
+        let mut order = Vec::with_capacity(listed.len());
+        super::drawn_order(listed, &mut order);
+        let views: Vec<Value> = order
             .into_iter()
             .map(|index| {
                 let facts = &listed[index];
                 let passes: Vec<&'static str> = run
                     .sets
-                    .list
-                    .iter()
-                    .find(|set| set.view == facts.view)
+                    .by_slot
+                    .get(facts.slot as usize)
+                    .and_then(|&at| run.sets.list.get(at as usize))
+                    .filter(|set| set.view == facts.view)
                     .map(|set| {
                         set.ran
                             .iter()
@@ -1216,6 +1198,32 @@ pub(super) mod names {
             keyed(&mut map, pass.name, Value::Object(facts));
         }
         Value::Object(map)
+    }
+
+    fn plans_built(_: &Renderer, run: &Run, _: &World) -> Value {
+        let plans = run.sets.counted.plans;
+        json!({
+            "first": plans[0],
+            "runs": plans[1],
+            "outputs": plans[2],
+            "ready": plans[3],
+            "total": plans.iter().sum::<u64>(),
+        })
+    }
+
+    fn passes_opened(_: &Renderer, run: &Run, _: &World) -> Value {
+        let counted = &run.sets.counted;
+        let (mut opened, mut merged) = (Map::new(), Map::new());
+        for (index, pass) in run.machine.declared.passes.iter().enumerate() {
+            let count = |counts: &[u64]| json!(counts.get(index).copied().unwrap_or(0));
+            keyed(&mut opened, pass.name, count(&counted.opened));
+            keyed(&mut merged, pass.name, count(&counted.merged));
+        }
+        json!({
+            "opened": opened,
+            "merged": merged,
+            "total": counted.opened.iter().sum::<u64>(),
+        })
     }
 
     fn pass_counts(run: &Run, pick: fn(Count) -> u64) -> Value {

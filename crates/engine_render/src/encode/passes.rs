@@ -37,8 +37,40 @@ impl Run {
     }
 
     pub(crate) fn start_runs(&mut self) {
-        self.planning.runs = Bits::of(self.machine.graph.passes());
+        self.planning.runs.clear();
         self.planning.idle.clear();
+    }
+
+    pub(crate) fn forget_ran(&mut self, part: u32) {
+        let sets = &mut self.sets;
+        for &pass in sets.fixed.part_passes.get(part as usize).into_iter().flatten() {
+            for set in &mut sets.list {
+                set.ran.remove(pass as usize);
+            }
+        }
+    }
+
+    pub(crate) fn forget_global(&mut self, part: u32) {
+        let sets = &mut self.sets;
+        for &pass in sets.fixed.part_globals.get(part as usize).into_iter().flatten() {
+            for set in &mut sets.list {
+                set.ran.remove(pass as usize);
+            }
+        }
+    }
+
+    pub(crate) fn forget_viewed(&mut self) {
+        let sets = &mut self.sets;
+        sets.list[sets.at].ran.remove_all(&sets.passes);
+    }
+
+    pub(crate) fn ran_now(&mut self, pass: usize) {
+        let (at, global) = (self.sets.at, !self.sets.passes.contains(pass));
+        for (index, set) in self.sets.list.iter_mut().enumerate() {
+            if global || index == at {
+                set.ran.insert(pass);
+            }
+        }
     }
 
     pub(crate) fn skip_kind(&mut self, kind: engine_core::DrawKind, reason: &'static str) {
@@ -58,26 +90,23 @@ impl Run {
             return;
         }
         for (index, pass) in self.machine.declared.passes.iter().enumerate() {
-            let Some(scene) = pass.scene.filter(|scene| scene.core) else {
+            let Some(bit) = pass.scene.filter(|scene| scene.core).and_then(|scene| scene.bit)
+            else {
                 continue;
             };
             if !self.planning.runs.contains(index) {
                 continue;
             }
-            let skipped: Option<Vec<(engine_core::DrawKind, &'static str)>> = self
-                .installs
-                .draw_entries
+            let (installs, idle) = (&self.installs, &self.planning.idle);
+            let scene = bit.index();
+            let listed = installs.members.get(scene as usize).map_or(&[][..], Vec::as_slice);
+            let skipped: Option<Vec<(u32, &'static str)>> = listed
                 .iter()
-                .filter(|member| {
-                    pass.members.contains(&member.part)
-                        && member.kind.joins(scene.name)
-                })
+                .filter_map(|&at| installs.draw_entries.get(at as usize))
                 .map(|member| {
-                    self.planning
-                        .idle
-                        .iter()
-                        .find(|&&(part, kind, _)| part == member.part && kind == member.kind.kind)
-                        .map(|&(_, kind, reason)| (kind, reason))
+                    idle.iter()
+                        .find(|&&(part, kind, _)| part == member.part && kind == member.decl.kind)
+                        .map(|&(.., reason)| (member.kind, reason))
                 })
                 .collect();
             let Some(skipped) = skipped.filter(|skipped| !skipped.is_empty()) else {
@@ -85,9 +114,9 @@ impl Run {
             };
             self.planning.runs.remove(index);
             let kinds = &mut self.tallies.kinds;
-            kinds.scened(scene.name);
+            kinds.scened(scene);
             for (kind, reason) in skipped {
-                kinds.begin(kind, scene.name);
+                kinds.begin(scene, kind);
                 kinds.skip(reason);
                 kinds.end();
             }
@@ -310,7 +339,9 @@ impl Run {
                     }
                 }
                 for &(name, _) in &pass.targets {
-                    let target = final_target(name);
+                    let Some(target) = declared.target_of(name) else {
+                        continue;
+                    };
                     let ops = ops_of(self.machine.ids.target(target)).unwrap_or(Ops {
                         load: Load::Load,
                         store: true,
@@ -460,12 +491,19 @@ impl Run {
                 .map(|(key, ..)| *key)
                 .chain(depth.as_ref().map(|(key, ..)| *key)),
         );
+        let merge = self.planning.merge;
+        let differ = self.recording.open_mut().is_some_and(|open| {
+            merge && open.shared && is_shared && open.attachments != attachments
+        });
         if let Some(open) = self.recording.open_mut()
             && self.planning.merge
             && open.shared
             && is_shared
             && open.attachments == attachments
         {
+            if let Some(merged) = self.sets.counted.merged.get_mut(self.pass as usize) {
+                *merged += 1;
+            }
             open.offset = offset;
             if GROUPED && open.label != Some(self.pass) && self.planning.labelled != Some(self.pass)
             {
@@ -485,12 +523,12 @@ impl Run {
         self.group(current);
         let label = self.label_of(current).unwrap_or(pass.name);
         let collecting = self.recording.collecting();
-        let layout = pass_layout(
+        let layout = self.machine.layout_id(pass_layout(
             &colors,
             depth.as_ref().map(|(_, _, format, _)| *format),
             (plain, main),
             collecting.then(|| self.machine.declared.target_key(Target::Canvas)),
-        );
+        ));
         if collecting {
             self.recording.collected(super::recording::Opened {
                 layout,
@@ -533,6 +571,7 @@ impl Run {
                 multiview_mask: None,
             })
             .forget_lifetime();
+        self.opened(is_shared, differ);
         self.bound.forget();
         self.recording.transition(Step::Render(Box::new(Open {
             pass: render,
@@ -546,6 +585,38 @@ impl Run {
         colors.clear();
         self.spare.colors = colors;
         true
+    }
+
+    fn opened(&mut self, shared: bool, differ: bool) {
+        let pass = self.pass as usize;
+        let counted = &mut self.sets.counted;
+        if let Some(opened) = counted.opened.get_mut(pass) {
+            *opened += 1;
+        }
+        let why = match (shared, self.planning.merge, differ, counted.shared_open) {
+            (false, ..) => None,
+            (true, false, ..) => Some("merging_off"),
+            (true, true, true, _) => Some("attachments_differ"),
+            (true, true, false, true) => Some("group_boundary"),
+            (true, true, false, false) => None,
+        };
+        counted.shared_open = shared;
+        let Some(last) = counted.why.get_mut(pass) else {
+            return;
+        };
+        if why.is_none() || *last == why {
+            return;
+        }
+        *last = why;
+        if let (Some(why), Some(declared)) = (why, self.machine.declared.passes.get(pass))
+            && engine_profile::recording()
+        {
+            engine_profile::event(
+                "pass_merge",
+                declared.name,
+                &[("why", engine_profile::Fact::Text(why))],
+            );
+        }
     }
 
     pub(super) fn mismatch(&mut self, name: &str) -> bool {

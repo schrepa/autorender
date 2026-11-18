@@ -44,7 +44,7 @@ pub(crate) enum Work {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Scoped {
     Pass(u32),
-    Scene(&'static str),
+    Scene(PassBit),
     Outside(&'static str),
 }
 
@@ -214,6 +214,13 @@ pub(crate) struct Counts {
 }
 
 impl Declared {
+    pub(crate) fn scene_name(&self, bit: PassBit) -> &'static str {
+        self.passes
+            .iter()
+            .find_map(|pass| pass.scene.filter(|scene| scene.bit == Some(bit)))
+            .map_or("", |scene| scene.name)
+    }
+
     pub(crate) fn counts(&self) -> Counts {
         Counts {
             targets: self.targets.len(),
@@ -279,7 +286,7 @@ impl InstallCore {
         }
     }
 
-    fn path(&self, what: &str) -> String {
+    pub(crate) fn path(&self, what: &str) -> String {
         let name = self
             .declared
             .parts
@@ -518,7 +525,7 @@ impl InstallCore {
         let mut members: Vec<u32> = self
             .draws
             .iter()
-            .filter(|member| member.kind.joins(name))
+            .filter(|member| member.decl.joins(name))
             .map(|member| member.part)
             .collect();
         members.sort_unstable();

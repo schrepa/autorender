@@ -102,13 +102,22 @@ impl AppHost {
             })
         })?;
         let mut start = std::pin::pin!(Renderer::start(target));
+        let asked = now_ms();
         let started =
             std::future::poll_fn(|cx| std::task::Poll::Ready(std::future::Future::poll(start.as_mut(), cx))).await;
+        let first_poll = if started.is_ready() { "ready" } else { "pending" };
         let ahead = engine_profile::caused(install, || Renderer::ahead(engine.app.world_mut()));
         let starting = match started {
             std::task::Poll::Ready(starting) => starting,
             std::task::Poll::Pending => start.await,
-        }?;
+        };
+        let device = [
+            ("ms", engine_profile::Fact::Number(now_ms() - asked)),
+            ("first_poll", engine_profile::Fact::Text(first_poll)),
+            ("within", engine_profile::Fact::Count(u64::from(install.0))),
+        ];
+        engine_profile::caused(install, || engine_profile::open_noting("launch", "device", &device));
+        let starting = starting?;
         let renderer = Box::new(starting.finish());
         let mut host = Self::with(engine, renderer);
         engine_profile::caused(install, || host.claim_passes(ahead))?;
@@ -308,14 +317,14 @@ impl AppHost {
         self.finish_job(id, Err(error));
     }
 
-    pub fn report_job_cache(&mut self, hits: u64, misses: u64, bytes: u64, mismatches: u64) {
+    pub fn report_job_cache(&mut self, counts: [u64; 5]) {
         if let Some(mut jobs) = self
             .engine
             .app
             .world_mut()
             .get_resource_mut::<JobExchange>()
         {
-            jobs.report_cache(hits, misses, bytes, mismatches);
+            jobs.report_cache(counts);
         }
     }
 
@@ -487,8 +496,9 @@ impl AppHost {
         let frame = self.engine.extract_frame()?;
         let after_extraction = now_ms();
         let rendered = self.renderer.render_frame(frame)?;
-        let reports = self.renderer.take_draw_reports().unwrap_or_default();
-        self.engine.report_drawing(reports);
+        if let Some(reports) = self.renderer.take_draw_reports() {
+            self.engine.report_drawing(reports);
+        }
         self.collect_pipelines();
         self.report_shader_errors();
         self.report_notices();

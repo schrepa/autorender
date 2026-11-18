@@ -1,4 +1,4 @@
-use super::{Open, PassLayout};
+use super::Open;
 
 pub(crate) enum Recording {
     Idle,
@@ -10,7 +10,7 @@ pub(crate) enum Recording {
 
 #[derive(Clone, Copy)]
 pub(crate) struct Opened {
-    pub(crate) layout: PassLayout,
+    pub(crate) layout: u32,
     pub(crate) shared: bool,
 }
 

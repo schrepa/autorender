@@ -33,12 +33,10 @@ impl Run {
                 .written_texture(texture)
                 .map(|made| made.texture.clone()),
             Copied::Target(view) => {
-                let target = final_target(view);
+                let target = self.machine.declared.target_of(view)?;
                 self.set()
-                    .targets
-                    .iter()
-                    .find(|(known, _)| *known == target)
-                    .map(|(_, made)| made.texture.clone())
+                    .allocated(target)
+                    .map(|made| made.texture.clone())
             }
             Copied::Canvas => self.canvas.texture.clone(),
             Copied::Buffer(_) => None,

@@ -581,7 +581,7 @@ impl GpuPart for DrawnGpu {
         let moved = self.upload_order(&table, cx);
         for member in &mut cx.core.installs.draw_entries {
             if moved || !member.batches.filled {
-                member.batches.fill(&table, member.kind.kind);
+                member.batches.fill(&table, member.decl.kind);
             }
         }
         let streams = poses.streams(&hierarchy);

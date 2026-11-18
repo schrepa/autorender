@@ -52,6 +52,7 @@ pub(crate) struct Warming {
     pub(super) fed: Option<(u64, u64)>,
     open: bool,
     pub(super) made: u32,
+    pub(super) stood_in: u64,
     passes: Vec<bool>,
     pub(super) running: Vec<bool>,
 }
@@ -65,6 +66,11 @@ impl Warming {
 
     pub(crate) fn made(&self) -> u32 {
         self.made
+    }
+
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    pub(crate) fn stood_in(&self) -> u64 {
+        self.stood_in
     }
 
     pub(crate) fn open(&mut self, open: bool) {

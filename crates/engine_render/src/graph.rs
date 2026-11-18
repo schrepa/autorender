@@ -68,6 +68,27 @@ impl Bits {
         }
     }
 
+    pub fn assign(&mut self, other: &Self) {
+        self.0.clear();
+        self.0.extend_from_slice(&other.0);
+    }
+
+    pub fn union_with(&mut self, other: &Self) {
+        for (word, more) in self.0.iter_mut().zip(&other.0) {
+            *word |= more;
+        }
+    }
+
+    pub fn remove_all(&mut self, other: &Self) {
+        for (word, gone) in self.0.iter_mut().zip(&other.0) {
+            *word &= !gone;
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.0.fill(0);
+    }
+
     fn union(&self, other: &Self) -> Self {
         Self(self.0.iter().zip(&other.0).map(|(a, b)| a | b).collect())
     }
@@ -156,6 +177,14 @@ pub struct Declared {
     pub current: Vec<ResourceId>,
 }
 
+#[derive(Clone, Debug, Default)]
+struct Derived {
+    inputs: Bits,
+    required: Bits,
+    outputs: Bits,
+    reads_only: Bits,
+}
+
 #[derive(Clone, Debug)]
 struct Node {
     entry: PassEntry,
@@ -164,6 +193,7 @@ struct Node {
     current: Bits,
     colors: Vec<(ResourceId, Access)>,
     depth: Option<(ResourceId, Access)>,
+    derived: Derived,
 }
 
 impl Node {
@@ -171,38 +201,46 @@ impl Node {
         self.colors.iter().chain(&self.depth).copied()
     }
 
-    fn inputs(&self) -> Bits {
+    fn derive(&mut self) {
         let mut inputs = self.reads.clone();
+        let mut outputs = self.writes.clone();
         for (resource, access) in self.attachments() {
             if !matches!(access, Access::Clear(_)) {
                 inputs.insert(resource.index());
             }
+            if access != Access::ReadOnly {
+                outputs.insert(resource.index());
+            }
         }
-        inputs
-    }
-
-    fn required(&self) -> Bits {
-        let mut required = self.reads.without(&self.outputs());
+        let mut required = self.reads.without(&outputs);
         for (resource, access) in self.attachments() {
             if matches!(access, Access::Load | Access::ReadOnly) {
                 required.insert(resource.index());
             }
         }
-        required
+        let reads_only = inputs.without(&outputs);
+        self.derived = Derived {
+            inputs,
+            required,
+            outputs,
+            reads_only,
+        };
     }
 
-    fn outputs(&self) -> Bits {
-        let mut outputs = self.writes.clone();
-        for (resource, access) in self.attachments() {
-            if access != Access::ReadOnly {
-                outputs.insert(resource.index());
-            }
-        }
-        outputs
+    fn inputs(&self) -> &Bits {
+        &self.derived.inputs
     }
 
-    fn reads_only(&self) -> Bits {
-        self.inputs().without(&self.outputs())
+    fn required(&self) -> &Bits {
+        &self.derived.required
+    }
+
+    fn outputs(&self) -> &Bits {
+        &self.derived.outputs
+    }
+
+    fn reads_only(&self) -> &Bits {
+        &self.derived.reads_only
     }
 
     fn key(&self, index: usize) -> (u32, usize) {
@@ -221,6 +259,7 @@ pub struct Planned {
 #[derive(Clone, Debug, Default)]
 pub struct Plan {
     pub passes: Vec<Planned>,
+    pub opaque: Option<(usize, usize)>,
 }
 
 #[derive(Debug, Default)]
@@ -230,6 +269,7 @@ pub struct StaticGraph {
     order: Vec<usize>,
     batches: Vec<u8>,
     starved: Bits,
+    empty: Bits,
     #[cfg(any(feature = "dev", feature = "profiling"))]
     after: Vec<Vec<PassId>>,
     #[cfg(any(feature = "dev", feature = "profiling"))]
@@ -278,14 +318,17 @@ fn nodes_of(passes: Vec<Declared>, width: usize) -> (Vec<Node>, Vec<Vec<PassId>>
             current.insert(resource.index());
         }
         after.push(declared.after);
-        nodes.push(Node {
+        let mut node = Node {
             entry: declared.entry,
             reads,
             writes,
             current,
             colors: declared.colors,
             depth: declared.depth,
-        });
+            derived: Derived::default(),
+        };
+        node.derive();
+        nodes.push(node);
     }
     (nodes, after)
 }
@@ -318,14 +361,14 @@ fn passes_before(
                 continue;
             }
             let outputs = writer.outputs();
-            for resource in outputs.intersect(&reads).iter() {
+            for resource in outputs.intersect(reads).iter() {
                 if resources[resource].life == Life::Kept && !reader.current.contains(resource) {
                     kept.push((early, late));
                 } else {
                     before[late].insert(early);
                 }
             }
-            if early < late && !made.intersect(&outputs).intersect(views).is_empty() {
+            if early < late && !made.intersect(outputs).intersect(views).is_empty() {
                 ties.push((early, late));
             }
         }
@@ -439,7 +482,7 @@ fn check_writers_ordered(
         for second in first + 1..count {
             let shared = nodes[first]
                 .outputs()
-                .intersect(&nodes[second].outputs())
+                .intersect(nodes[second].outputs())
                 .without(views);
             let Some(resource) = shared.first() else {
                 continue;
@@ -491,7 +534,7 @@ fn starved_of(resources: &[ResourceEntry], nodes: &[Node], unmet: &[Bits]) -> Bi
         if nodes[pass].entry.brick.is_empty() {
             let made = nodes[pass].outputs();
             for (reader, node) in nodes.iter().enumerate() {
-                if !node.reads_only().intersect(&made).is_empty() {
+                if !node.reads_only().intersect(made).is_empty() {
                     starved.insert(reader);
                 }
             }
@@ -562,6 +605,7 @@ impl StaticGraph {
             order,
             batches,
             starved,
+            empty: Bits::default(),
             #[cfg(any(feature = "dev", feature = "profiling"))]
             after,
             #[cfg(any(feature = "dev", feature = "profiling"))]
@@ -587,10 +631,8 @@ impl StaticGraph {
         view_bits(&self.resources)
     }
 
-    pub fn writes(&self, pass: usize) -> Bits {
-        self.nodes
-            .get(pass)
-            .map_or_else(|| Bits::of(self.resources.len()), Node::outputs)
+    pub fn writes(&self, pass: usize) -> &Bits {
+        self.nodes.get(pass).map_or(&self.empty, Node::outputs)
     }
 
     pub fn spread(&self, mut passes: Bits, mut varying: Bits) -> Bits {
@@ -605,7 +647,7 @@ impl StaticGraph {
             for (index, node) in self.nodes.iter().enumerate() {
                 let touches = !node
                     .inputs()
-                    .union(&node.outputs())
+                    .union(node.outputs())
                     .intersect(&varying)
                     .is_empty();
                 if !passes.contains(index) && !touches {
@@ -666,7 +708,7 @@ impl StaticGraph {
                     needed.remove(resource);
                 }
             }
-            needed = needed.union(&node.inputs());
+            needed.union_with(node.inputs());
         }
         let mut written = ready.clone();
         for (index, resource) in self.resources.iter().enumerate() {
@@ -675,7 +717,7 @@ impl StaticGraph {
             }
         }
         let planned_writes = kept.iter().flatten().fold(ready.clone(), |all, planned| {
-            all.union(&self.nodes[planned.pass.index()].outputs())
+            all.union(self.nodes[planned.pass.index()].outputs())
         });
         let mut passes = Vec::new();
         for mut planned in kept.into_iter().flatten() {
@@ -712,52 +754,17 @@ impl StaticGraph {
             {
                 ops.load = load_op(access, written.contains(resource.index()));
             }
-            written = written.union(&node.outputs());
+            written.union_with(node.outputs());
             passes.push(planned);
         }
-        Ok(Plan { passes })
-    }
-}
-
-pub const PLANS: usize = 16;
-
-#[derive(Debug, Default)]
-pub struct PlanCache {
-    plans: Vec<(Bits, Bits, Bits, std::sync::Arc<Plan>)>,
-}
-
-impl PlanCache {
-    pub fn plan(
-        &mut self,
-        graph: &StaticGraph,
-        (runs, outputs, ready): (&Bits, &Bits, &Bits),
-        most: usize,
-    ) -> Result<std::sync::Arc<Plan>, Error> {
-        let found = self
-            .plans
-            .iter()
-            .position(|(known, read, held, _)| known == runs && read == outputs && held == ready);
-        let index = match found {
-            Some(index) => index,
-            None => {
-                let plan = graph.plan(runs, outputs, ready)?;
-                if self.plans.len() >= most.max(1) {
-                    self.plans.remove(0);
-                }
-                self.plans.push((
-                    runs.clone(),
-                    outputs.clone(),
-                    ready.clone(),
-                    std::sync::Arc::new(plan),
-                ));
-                self.plans.len() - 1
-            }
+        let opaque = |planned: &Planned| {
+            planned.batch == 1 && self.nodes[planned.pass.index()].entry.shared
         };
-        Ok(std::sync::Arc::clone(&self.plans[index].3))
-    }
-
-    pub fn clear(&mut self) {
-        self.plans.clear();
+        let opaque = passes
+            .iter()
+            .position(opaque)
+            .zip(passes.iter().rposition(opaque));
+        Ok(Plan { passes, opaque })
     }
 }
 
@@ -819,7 +826,7 @@ mod facts {
             if node.outputs().intersect(&needed).is_empty() {
                 unread.insert(index);
             } else {
-                needed = needed.union(&node.inputs());
+                needed = needed.union(node.inputs());
             }
         }
         unread
@@ -877,7 +884,7 @@ mod facts {
                 return json!({"reason": "writer_dropped", "resources": labels(&fed)});
             }
             if self.unread.contains(pass) {
-                return json!({"reason": "never_read", "resources": labels(&node.outputs())});
+                return json!({"reason": "never_read", "resources": labels(node.outputs())});
             }
             Value::Null
         }

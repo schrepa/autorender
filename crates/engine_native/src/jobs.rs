@@ -104,7 +104,7 @@ pub struct JobPool {
     report: Sender<Reported>,
     reports: Receiver<Reported>,
     store: Option<JobStore>,
-    reported: Option<(u64, u64, u64, u64)>,
+    reported: Option<[u64; 5]>,
     cook: Option<PackWriter>,
     mismatched: Vec<(Option<JobRef>, String)>,
     sampled: Vec<(Option<JobRef>, String)>,
@@ -161,6 +161,9 @@ impl JobPool {
         if let Some(sample) = self.store.as_ref().and_then(JobStore::sample) {
             host.set_job_sample(sample.clone());
         }
+        if let Some(store) = &mut self.store {
+            store.note_opened();
+        }
     }
 
     pub fn exchange<G: Game>(&mut self, host: &mut GameHost<G>) {
@@ -195,8 +198,7 @@ impl JobPool {
             let counters = store.counters();
             if self.reported != Some(counters) {
                 self.reported = Some(counters);
-                let (hits, misses, bytes, mismatches) = counters;
-                host.report_job_cache(hits, misses, bytes, mismatches);
+                host.report_job_cache(counters);
             }
         }
     }
@@ -277,7 +279,7 @@ impl JobPool {
         if kept.is_some() && self.store.as_ref().is_some_and(|store| store.sampled(&key)) {
             self.sampled.push((kind.clone(), key.clone()));
         }
-        if let (Some(cook), Some(record)) = (&mut self.cook, &kept) {
+        if let (Some(cook), Some((record, _))) = (&mut self.cook, &kept) {
             cook.take(&key, kind.as_ref(), record);
         }
         host.job_kept(id, key, kept);

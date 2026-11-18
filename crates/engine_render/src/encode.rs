@@ -4,19 +4,19 @@ use std::sync::Arc;
 
 use bevy_ecs::world::World;
 use engine_core::{
-    Error, ErrorCode, FrameId, GeometryHandle, MaterialHandle, Readback, TextureHandle,
+    Error, ErrorCode, FrameId, GeometryHandle, MaterialHandle, PassBit, Readback, TextureHandle,
 };
 
 use crate::graph::{Bits, Clear, FAR, Load, Ops, Plan, Planned};
 use crate::install::{Bound, Copied, PassDecl, Program, Reinstall, Scoped, Work};
 use crate::linker::Ty;
 use crate::machine::{
-    CAMERA_STRIDE, Machine, Ready, SetFormat, Target, final_target, lit_set, shared,
+    CAMERA_STRIDE, Machine, Ready, SetFormat, Target, lit_set, shared,
 };
 use crate::profiling::GpuProfiler;
 use crate::readback::{Deliver, Keep, Readbacks, Reader};
 use crate::registration::{Installed, KindMember};
-use crate::{AfterRead, Allocation, CameraUniform, DepthUse, SceneDraw, VertexLayout};
+use crate::{AfterRead, Allocation, CameraUniform, DepthUse, VertexLayout};
 
 mod arena;
 mod compile;
@@ -34,36 +34,32 @@ pub(crate) use arena::Arena;
 pub(crate) use compile::Compiler;
 pub(crate) use recording::{Ended, Recording, Step};
 pub(crate) use resources::{BatchEntryRaw, HeldBatches};
-pub(crate) use run::{Bindings, DroppedTally, Pipelines, Run};
+pub(crate) use run::{Bindings, DroppedTally, KindTallies, Pipelines, Run};
 pub(crate) use views::Tables;
 
 pub(crate) type FrameCore = Run;
 pub(crate) type EncodeCore = Run;
 
-const MOST_STREAMS: usize = 16;
-const MOST_OFFSETS: usize = 16;
-const MOST_GROUPS: usize = 8;
 const MOST_COLORS: usize = 8;
 
 #[derive(Clone, Copy)]
 pub(crate) struct Streams {
-    held: [(u32, u64); MOST_STREAMS],
+    start: usize,
     count: usize,
 }
 
 impl Streams {
-    pub(crate) fn of(given: impl Iterator<Item = (u32, u64)>) -> Self {
-        let mut held = [(0, 0); MOST_STREAMS];
-        let mut count = 0;
-        for (slot, stream) in held.iter_mut().zip(given) {
-            *slot = stream;
-            count += 1;
+    pub(crate) fn of(held: &mut Vec<(u32, u64)>, given: impl Iterator<Item = (u32, u64)>) -> Self {
+        let start = held.len();
+        held.extend(given);
+        Self {
+            start,
+            count: held.len() - start,
         }
-        Self { held, count }
     }
 
-    fn listed(&self) -> &[(u32, u64)] {
-        &self.held[..self.count]
+    fn listed(self, held: &[(u32, u64)]) -> &[(u32, u64)] {
+        held.get(self.start..self.start + self.count).unwrap_or_default()
     }
 }
 
@@ -88,13 +84,25 @@ pub(crate) struct Holders {
     targets: Vec<Holder>,
     cameras: Vec<Holder>,
     post: Vec<Holder>,
+    own_base: Vec<u32>,
 }
 
 impl Holders {
     fn of(machine: &Machine) -> Self {
+        let mut base = machine.variants.len() as u32;
+        let own_base = machine
+            .pipelines
+            .iter()
+            .map(|built| {
+                let at = base;
+                base += built.groups.len() as u32;
+                at
+            })
+            .collect();
         let mut holders = Self {
             textures: vec![Vec::new(); machine.declared.textures.len()],
             buffers: vec![Vec::new(); machine.declared.buffers.len()],
+            own_base,
             ..Self::default()
         };
         for (variant, found) in machine.variants.iter().enumerate() {
@@ -119,6 +127,16 @@ impl Holders {
             }
         }
         holders
+    }
+
+    pub(crate) fn index(&self, holder: Holder) -> u32 {
+        match holder {
+            Holder::Frame(variant) => variant,
+            Holder::Own(pipeline, group) => self
+                .own_base
+                .get(pipeline as usize)
+                .map_or(u32::MAX, |base| base + group),
+        }
     }
 
     fn hold(&mut self, bound: &Bound, holder: Holder) {
@@ -237,8 +255,6 @@ struct Listing {
 }
 
 const GROUPED: bool = cfg!(any(not(target_arch = "wasm32"), feature = "profiling"));
-
-const PLACEHOLDER_BYTES: u64 = 4_096;
 
 pub(crate) struct Allocated {
     pub(crate) texture: wgpu::Texture,
@@ -361,7 +377,7 @@ pub(crate) struct Filled {
 pub(crate) struct Open {
     pub(crate) pass: wgpu::RenderPass<'static>,
     pub(crate) attachments: Vec<u64>,
-    pub(crate) layout: PassLayout,
+    pub(crate) layout: u32,
     pub(crate) offset: u32,
     pub(crate) shared: bool,
     pub(crate) layered: bool,
@@ -397,7 +413,6 @@ pub(crate) struct Reached {
 }
 
 pub(crate) enum Placeholder {
-    Buffer(wgpu::Buffer),
     Texture(wgpu::TextureView),
     Sampler(wgpu::Sampler),
 }
@@ -443,6 +458,7 @@ pub(crate) enum RawShape {
 
 #[derive(Default)]
 pub(crate) struct Spare {
+    pub(crate) streams: Vec<(u32, u64)>,
     colors: Vec<(u64, Option<wgpu::TextureView>, wgpu::TextureFormat, Ops)>,
     attachments: Vec<u64>,
     cameras: Vec<u8>,
@@ -730,34 +746,13 @@ impl Run {
         }
     }
 
-    pub(crate) fn scene_draw(&self) -> Option<SceneDraw> {
-        let scene = self
-            .machine
+    pub(crate) fn scene_bit(&self) -> Option<PassBit> {
+        self.machine
             .declared
             .passes
             .get(self.pass as usize)?
-            .scene?;
-        Some(SceneDraw {
-            pass: crate::Scene::named(scene.name),
-            bit: scene.bit,
-        })
-    }
-
-    pub(crate) fn scene_members(&self) -> Vec<KindMember> {
-        let Some(pass) = self.machine.declared.passes.get(self.pass as usize) else {
-            return Vec::new();
-        };
-        let Some(scene) = pass.scene else {
-            return Vec::new();
-        };
-        self.installs
-            .draw_entries
-            .iter()
-            .filter(|member| {
-                pass.members.contains(&member.part) && member.kind.joins(scene.name)
-            })
-            .cloned()
-            .collect()
+            .scene?
+            .bit
     }
 
     pub(crate) fn run_pass(&mut self, pass: u32) {
@@ -1010,42 +1005,6 @@ impl Run {
                 written: arrived.read.written,
             };
             (arrived.deliver)(world, arrived.tag, read);
-        }
-    }
-
-    pub(crate) fn forget_ran(&mut self, part: u32) {
-        for (pass, declared) in self.machine.declared.passes.iter().enumerate() {
-            if declared.part == part {
-                for set in &mut self.sets.list {
-                    set.ran.remove(pass);
-                }
-            }
-        }
-    }
-
-    pub(crate) fn forget_global(&mut self, part: u32) {
-        for (pass, declared) in self.machine.declared.passes.iter().enumerate() {
-            if declared.part == part && !self.sets.passes.contains(pass) {
-                for set in &mut self.sets.list {
-                    set.ran.remove(pass);
-                }
-            }
-        }
-    }
-
-    pub(crate) fn forget_viewed(&mut self) {
-        let at = self.sets.at;
-        for pass in self.sets.passes.iter() {
-            self.sets.list[at].ran.remove(pass);
-        }
-    }
-
-    pub(crate) fn ran_now(&mut self, pass: usize) {
-        let (at, global) = (self.sets.at, !self.sets.passes.contains(pass));
-        for (index, set) in self.sets.list.iter_mut().enumerate() {
-            if global || index == at {
-                set.ran.insert(pass);
-            }
         }
     }
 

@@ -78,13 +78,9 @@ pub struct PassFragment {
     pub depth: DepthUse,
 }
 
-struct FormScene<P> {
-    scene: Scene,
-    pipeline: Pipeline<P, Scene>,
-}
 
 pub struct Form<P> {
-    scenes: Vec<FormScene<P>>,
+    scenes: Vec<Option<Pipeline<P, Scene>>>,
 }
 
 pub trait SurfaceForms<P> {
@@ -221,8 +217,9 @@ fn form_built<P: GpuPart>(
             return Err(Error::new(ErrorCode::PassMismatch, path).got(own.pass.name()));
         }
     }
-    let mut scenes = Vec::with_capacity(listed.len());
+    let mut scenes = Vec::new();
     for listed in listed {
+        let Some(bit) = listed.bit else { continue };
         let scene = Scene::named(listed.name);
         let program = match owns.iter().find(|own| own.pass.name() == listed.name) {
             Some(own) => pass_program(form, own),
@@ -243,7 +240,11 @@ fn form_built<P: GpuPart>(
             per_batch: program.per_batch,
         };
         let pipeline = cx.render_pipeline(scene, &desc, &cut)?;
-        scenes.push(FormScene { scene, pipeline });
+        let at = bit.index() as usize;
+        if scenes.len() <= at {
+            scenes.resize(at + 1, None);
+        }
+        scenes[at] = Some(pipeline);
     }
     Ok(Form { scenes })
 }
@@ -266,9 +267,6 @@ impl<P: GpuPart> SurfaceForms<P> for Install<'_, P> {
 impl<P: GpuPart> FormDraw<P> for Draw<'_, P, Scene> {
     fn form(&mut self, form: &Form<P>) -> Option<Pipeline<P, Scene>> {
         let pass = self.pass()?;
-        form.scenes
-            .iter()
-            .find(|known| known.scene == pass)
-            .map(|known| known.pipeline)
+        form.scenes.get(pass.index() as usize).copied().flatten()
     }
 }

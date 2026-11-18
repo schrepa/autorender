@@ -416,6 +416,7 @@ pub(crate) enum Work {
         sent: f64,
         looking: bool,
         looked: bool,
+        answered: Option<JobSource>,
         then: Option<JobRequest>,
         cause: Carried,
     },
@@ -525,6 +526,21 @@ pub struct JobId(pub u64);
 
 pub const MISSING_RECORD: &str = "no store holds the record";
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum JobSource {
+    Pack,
+    Store,
+}
+
+impl JobSource {
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Pack => "pack",
+            Self::Store => "store",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct JobRequest {
     pub id: JobId,
@@ -594,7 +610,8 @@ pub struct JobStats {
     pub cancelled: u64,
     pub shares: u32,
     pub shared_bytes: u64,
-    pub cache_hits: u64,
+    pub pack_hits: u64,
+    pub store_hits: u64,
     pub cache_misses: u64,
     pub cache_bytes: u64,
     pub cache_mismatches: u64,
@@ -631,7 +648,7 @@ pub struct JobExchange {
     queue: Vec<RecordKey>,
     running: usize,
     admitted: AtomicUsize,
-    cache: [u64; 4],
+    cache: [u64; 5],
     held: u32,
     shared: Vec<Share>,
     memo: JobMemo,
@@ -666,7 +683,7 @@ impl Default for JobExchange {
             queue: Vec::new(),
             running: 0,
             admitted: AtomicUsize::new(0),
-            cache: [0; 4],
+            cache: [0; 5],
             held: 0,
             shared: Vec::new(),
             memo: JobMemo::default(),
@@ -801,8 +818,8 @@ impl JobExchange {
         }
     }
 
-    pub fn report_cache(&mut self, hits: u64, misses: u64, bytes: u64, mismatches: u64) {
-        self.cache = [hits, misses, bytes, mismatches];
+    pub fn report_cache(&mut self, counts: [u64; 5]) {
+        self.cache = counts;
     }
 
     pub fn report_held(&mut self, held: u32) {
@@ -823,10 +840,11 @@ impl JobExchange {
                 .iter()
                 .map(|share| share.bytes.len() as u64)
                 .sum(),
-            cache_hits: self.cache[0],
-            cache_misses: self.cache[1],
-            cache_bytes: self.cache[2],
-            cache_mismatches: self.cache[3],
+            pack_hits: self.cache[0],
+            store_hits: self.cache[1],
+            cache_misses: self.cache[2],
+            cache_bytes: self.cache[3],
+            cache_mismatches: self.cache[4],
             held: self.held,
             ..self.stats
         }
@@ -1047,6 +1065,7 @@ impl JobExchange {
             sent: self.now,
             looking,
             looked: false,
+            answered: None,
             then: None,
             cause,
         };
@@ -1092,16 +1111,17 @@ impl JobExchange {
             sent,
             looking,
             looked,
+            answered,
             then,
             cause,
         }) = records.work_mut(&key)
         else {
             return;
         };
-        let (name, times, (looking, looked), then, cause) = (
+        let (name, times, (looking, looked, answered), then, cause) = (
             kind_name(kind.as_ref()).to_owned(),
             (*asked, *sent),
-            (*looking, *looked),
+            (*looking, *looked, *answered),
             then.take(),
             *cause,
         );
@@ -1126,13 +1146,18 @@ impl JobExchange {
             self.send(records, JobMessage::Run(request));
             return;
         }
-        let cache = match (looking, looked, &output) {
-            (true, _, Ok(_)) => "hit",
-            (true, _, Err(_)) | (false, true, _) => "miss",
-            (false, false, _) => "not_looked",
+        let cache = match (looking, looked, answered, &output) {
+            (_, _, Some(_), Ok(_)) | (true, _, None, Ok(_)) => "hit",
+            (true, _, _, Err(_)) | (false, true, _, _) => "miss",
+            (false, false, _, _) => "not_looked",
+        };
+        let source = match (answered, &output) {
+            (Some(found), Ok(_)) => Fact::Text(found.name()),
+            (_, Err(_)) if missing => Fact::Unavailable("no_output"),
+            (None, Ok(_)) | (_, Err(_)) => Fact::Text("made"),
         };
         engine_profile::caused(cause.cause(), || {
-            self.landed((&name, id), times, cache, (&output, missing));
+            self.landed((&name, id), times, (cache, source), (&output, missing));
         });
         match output {
             Ok(bytes) => {
@@ -1173,7 +1198,7 @@ impl JobExchange {
         &mut self,
         (name, id): (&str, JobId),
         (asked, sent): (f64, f64),
-        cache: &str,
+        (cache, source): (&str, Fact<'_>),
         (output, missing): (&Result<Arc<[u8]>, String>, bool),
     ) {
         let landed = self.now;
@@ -1196,10 +1221,11 @@ impl JobExchange {
             ("landed_s", Fact::Number(landed)),
             ("ran_s", Fact::Number(ran)),
             ("cache", Fact::Text(cache)),
+            ("source", source),
             ("outcome", Fact::Text(outcome)),
             ("error", Fact::Text(error.unwrap_or_default())),
         ];
-        let shown = if error.is_some() { 8 } else { 7 };
+        let shown = if error.is_some() { 9 } else { 8 };
         engine_profile::event("job", name, &facts[..shown]);
     }
 
@@ -1312,6 +1338,21 @@ pub(crate) fn exchange_orders(world: &mut World) {
         crate::modify(world, |records: &mut Records| {
             exchange.settle(orders, &mut records.requests, now);
         });
+    });
+}
+
+pub fn job_looked(world: &mut World, id: JobId, found: Option<JobSource>) {
+    crate::modify(world, |records: &mut Records| {
+        let Some(&key) = records.requests.key_of(Ticket::numbered(id.0)) else {
+            return;
+        };
+        if let Some(Work::Sent {
+            looked, answered, ..
+        }) = records.requests.work_mut(&key)
+        {
+            *looked = true;
+            *answered = found;
+        }
     });
 }
 
@@ -1431,7 +1472,8 @@ mod read {
                 "failed": stats.failed,
                 "cancelled": stats.cancelled,
                 "in_place": stats.in_place,
-                "cache_hits": stats.cache_hits,
+                "pack_hits": stats.pack_hits,
+                "store_hits": stats.store_hits,
                 "cache_misses": stats.cache_misses,
                 "cache_mismatches": stats.cache_mismatches,
             })

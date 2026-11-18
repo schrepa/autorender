@@ -24,7 +24,7 @@ impl GpuPart for ScenePart {
                 cx.core
                     .draws
                     .iter()
-                    .any(|member| member.kind.joins(listed.name))
+                    .any(|member| member.decl.joins(listed.name))
             })
             .copied()
             .collect();

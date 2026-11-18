@@ -9,7 +9,7 @@ struct PlateCorner {
 }
 
 fn corner_unit(corner: u32) -> vec2<f32> {
-    return vec2<f32>(f32((50u >> corner) & 1u), f32((44u >> corner) & 1u));
+    return vec2<f32>(f32((52u >> corner) & 1u), f32((26u >> corner) & 1u));
 }
 
 @vertex fn vs_plate(@builtin(vertex_index) corner: u32, @builtin(instance_index) index: u32)

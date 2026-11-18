@@ -200,7 +200,7 @@ export class JobPool {
     await Promise.all(lookups.map(async (order, at) => {
       const kept = await answers?.[at].catch(() => undefined);
       if (this.runtime !== runtime) return;
-      this.call(runtime => runtime.job_kept(order.lookup, order.key, kept));
+      this.call(runtime => runtime.job_kept(order.lookup, order.key, kept?.[0], kept?.[1] ?? false));
       this.exchange();
     }));
   }
@@ -221,13 +221,14 @@ export class JobPool {
     if (!store || this.runtime !== runtime) return;
     if (!this.packsReported && store.loaded.length > 0) {
       this.packsReported = true;
-      this.call(runtime => runtime.dev_packs?.(JSON.stringify(store.loaded.map(({ name, bytes }) => ({ name, bytes })))));
+      const records = store.loaded.reduce((sum, pack) => sum + pack.directory.records(), 0);
+      this.call(runtime => runtime.dev_packs?.(JSON.stringify(store.loaded.map(({ name, bytes }) => ({ name, bytes }))), records, store.openedMs));
     }
-    const [hits, misses, bytes, mismatches] = store.counters();
-    const text = `${hits} ${misses} ${bytes} ${mismatches}`;
+    const [packHits, storeHits, misses, bytes, mismatches] = store.counters();
+    const text = `${packHits} ${storeHits} ${misses} ${bytes} ${mismatches}`;
     if (text === this.reported) return;
     this.reported = text;
-    this.call(runtime => runtime.report_job_cache(hits, misses, bytes, mismatches));
+    this.call(runtime => runtime.report_job_cache(packHits, storeHits, misses, bytes, mismatches));
   }
 
   private unpack(stored: Uint8Array, raw: number): Promise<Uint8Array> {

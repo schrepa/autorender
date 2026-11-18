@@ -30,6 +30,7 @@ interface JobCacheIndex {
 
 interface PackDirectory {
   find(key: string): Float64Array | undefined;
+  records(): number;
 }
 
 export interface IndexBindings {
@@ -47,6 +48,8 @@ export interface JobCacheSettings { outputs: number; records: number; verify: bo
 interface Pack { url: string; name: string; bytes: number | { unavailable: string }; directory: PackDirectory }
 
 interface Wanted { key: string; url: string; offset: number; stored: number; raw: number }
+
+type Kept = [output: Uint8Array, pack: boolean];
 
 export function jobCacheSettings(): JobCacheSettings | undefined {
   const requested = new URLSearchParams(location.search).get("jobcache");
@@ -175,6 +178,7 @@ export class JobStore {
   private packs: Promise<Pack[]> | undefined;
   private packHits = 0;
   loaded: Pack[] = [];
+  openedMs = 0;
 
   private constructor(private readonly bindings: IndexBindings, private readonly outputs: Shelf, private readonly records: Shelf,
     private readonly coder: Coder) {}
@@ -202,13 +206,13 @@ export class JobStore {
     return this.outputs.index.verify();
   }
 
-  counters(): [number, number, number, number] {
+  counters(): [number, number, number, number, number] {
     const [hits, misses, bytes, mismatches] = this.outputs.index.counters();
     const [held, , mirrored] = this.records.index.counters();
-    return [hits + held + this.packHits, misses, bytes + mirrored, mismatches];
+    return [this.packHits, hits + held, misses, bytes + mirrored, mismatches];
   }
 
-  lookup(keys: string[]): Promise<Uint8Array | undefined>[] {
+  lookup(keys: string[]): Promise<Kept | undefined>[] {
     const remote = keys.filter(key => !this.records.holds(key) && !this.outputs.holds(key));
     const fetched = this.fetch(remote);
     const held = [...new Set(keys.filter(key => !fetched.has(key)))];
@@ -234,20 +238,24 @@ export class JobStore {
   }
 
   private opened(): Promise<Pack[]> {
-    return this.packs ??= openPacks(this.bindings).then(packs => this.loaded = packs);
+    const started = performance.now();
+    return this.packs ??= openPacks(this.bindings).then(packs => {
+      this.openedMs = performance.now() - started;
+      return this.loaded = packs;
+    });
   }
 
   private size(key: string): number {
     return Math.max(this.records.size(key), this.outputs.size(key));
   }
 
-  private async local(key: string): Promise<Uint8Array | undefined> {
+  private async local(key: string): Promise<Kept | undefined> {
     for (const shelf of [this.records, this.outputs]) {
       if (!shelf.holds(key)) continue;
       const kept = await shelf.read(key);
       if (!kept) continue;
       try {
-        return await this.coder.unpack(kept.stored, kept.raw);
+        return [await this.coder.unpack(kept.stored, kept.raw), false];
       } catch (error) {
         console.warn(`A kept record does not read: ${String(error)}`);
         shelf.drop(key);
@@ -256,10 +264,12 @@ export class JobStore {
     return this.fetch([key]).get(key);
   }
 
-  private fetch(keys: string[]): Map<string, Promise<Uint8Array | undefined>> {
+  private fetch(keys: string[]): Map<string, Promise<Kept | undefined>> {
     if (keys.length === 0) return new Map();
     const planned = this.opened().then(packs => this.plan(keys, packs));
-    return new Map(keys.map(key => [key, planned.then(answers => answers.get(key))]));
+    return new Map(keys.map(key => [key, planned
+      .then(answers => answers.get(key))
+      .then((output): Kept | undefined => output === undefined ? undefined : [output, true])]));
   }
 
   private plan(keys: string[], packs: Pack[]): Map<string, Promise<Uint8Array | undefined>> {

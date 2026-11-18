@@ -107,16 +107,18 @@ impl KindDraw {
 #[derive(Clone)]
 pub(crate) struct KindMember {
     pub(crate) part: u32,
-    pub(crate) kind: KindDecl,
+    pub(crate) kind: u32,
+    pub(crate) decl: KindDecl,
     pub(crate) call: KindCall,
     pub(crate) batches: Batches,
 }
 
 impl KindMember {
-    pub(crate) fn new(part: u32, kind: KindDecl, call: KindCall) -> Self {
+    pub(crate) fn new(part: u32, (kind, decl): (u32, KindDecl), call: KindCall) -> Self {
         Self {
             part,
             kind,
+            decl,
             call,
             batches: Batches::default(),
         }
@@ -217,7 +219,7 @@ pub(crate) fn kind_passes(
     let mut kinds = serde_json::Map::new();
     for member in members {
         let listed = kinds
-            .entry(member.kind.kind.name())
+            .entry(member.decl.kind.name())
             .or_insert_with(|| serde_json::json!([]));
         let serde_json::Value::Array(passes) = listed else {
             continue;
@@ -226,7 +228,7 @@ pub(crate) fn kind_passes(
             let joins = pass.members.contains(&member.part)
                 && pass
                     .scene
-                    .is_some_and(|scene| member.kind.joins(scene.name));
+                    .is_some_and(|scene| member.decl.joins(scene.name));
             if joins && !passes.iter().any(|known| known == pass.name) {
                 passes.push(serde_json::json!(pass.name));
             }

@@ -5,6 +5,8 @@
 
 use std::hash::{DefaultHasher, Hasher};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{SyncSender, TrySendError};
 use std::thread::JoinHandle;
 
@@ -13,8 +15,33 @@ const SEAL_BYTES: usize = size_of::<u64>();
 pub(crate) struct KeptCache {
     pub(crate) cache: wgpu::PipelineCache,
     place: Place,
+    #[cfg_attr(
+        not(any(feature = "dev", feature = "profiling")),
+        expect(dead_code, reason = "only dev and profiling builds read the loaded bytes")
+    )]
+    loaded: u64,
+    saved: Arc<Saved>,
     asks: Option<SyncSender<()>>,
     saver: Option<JoinHandle<()>>,
+}
+
+#[derive(Default)]
+struct Saved {
+    saves: AtomicU64,
+    bytes: AtomicU64,
+}
+
+impl KeptCache {
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    pub(crate) fn facts(&self) -> serde_json::Value {
+        serde_json::json!({
+            "opened": true,
+            "key": self.place.key,
+            "loaded_bytes": self.loaded,
+            "saves": self.saved.saves.load(Ordering::Relaxed),
+            "saved_bytes": self.saved.bytes.load(Ordering::Relaxed),
+        })
+    }
 }
 
 #[derive(Clone)]
@@ -50,12 +77,15 @@ fn unsealed(place: &Place, mut bytes: Vec<u8>) -> Option<Vec<u8>> {
     (seal(&place.key, &bytes) == sealed).then_some(bytes)
 }
 
-pub(super) fn open(device: &wgpu::Device, adapter: &wgpu::AdapterInfo) -> Option<KeptCache> {
+pub(super) fn open(
+    device: &wgpu::Device,
+    adapter: &wgpu::AdapterInfo,
+) -> Result<KeptCache, &'static str> {
     if !device.features().contains(wgpu::Features::PIPELINE_CACHE) {
-        return None;
+        return Err("no_pipeline_cache_feature");
     }
-    let (folder, most) = crate::platform::pipeline_cache_folder()?;
-    let key = wgpu::util::pipeline_cache_key(adapter)?;
+    let (folder, most) = crate::platform::pipeline_cache_folder().ok_or("no_cache_folder")?;
+    let key = wgpu::util::pipeline_cache_key(adapter).ok_or("no_cache_key")?;
     let place = Place {
         file: folder.join(&key),
         key,
@@ -75,21 +105,25 @@ pub(super) fn open(device: &wgpu::Device, adapter: &wgpu::AdapterInfo) -> Option
             fallback: true,
         })
     };
+    let loaded = data.as_ref().map_or(0, |data| data.len() as u64);
+    let saved = Arc::new(Saved::default());
     let (asks, asked) = std::sync::mpsc::sync_channel(1);
     let saver = std::thread::Builder::new()
         .name("engine_pipeline_cache_save".to_owned())
         .spawn({
-            let (cache, place) = (cache.clone(), place.clone());
+            let (cache, place, saved) = (cache.clone(), place.clone(), Arc::clone(&saved));
             move || {
                 while asked.recv().is_ok() {
-                    write(&cache, &place);
+                    write(&cache, &place, &saved);
                 }
             }
         })
         .ok();
-    Some(KeptCache {
+    Ok(KeptCache {
         cache,
         place,
+        loaded,
+        saved,
         asks: saver.is_some().then_some(asks),
         saver,
     })
@@ -98,27 +132,33 @@ pub(super) fn open(device: &wgpu::Device, adapter: &wgpu::AdapterInfo) -> Option
 pub(super) fn save(kept: &KeptCache) {
     match kept.asks.as_ref().map(|asks| asks.try_send(())) {
         Some(Ok(()) | Err(TrySendError::Full(()))) => {}
-        Some(Err(TrySendError::Disconnected(()))) | None => write(&kept.cache, &kept.place),
+        Some(Err(TrySendError::Disconnected(()))) | None => {
+            write(&kept.cache, &kept.place, &kept.saved);
+        }
     }
 }
 
-fn write(cache: &wgpu::PipelineCache, place: &Place) {
+fn write(cache: &wgpu::PipelineCache, place: &Place, saved: &Saved) {
     let Some(mut data) = cache.get_data() else {
         return;
     };
     if (data.len() + SEAL_BYTES) as u64 > place.most {
         return;
     }
+    let bytes = data.len() as u64;
     let sealed = seal(&place.key, &data);
     data.extend_from_slice(&sealed.to_le_bytes());
     let file: &Path = &place.file;
     let partial = file.with_extension("partial");
-    let saved = file
+    let written = file
         .parent()
         .map_or(Ok(()), std::fs::create_dir_all)
         .and_then(|()| std::fs::write(&partial, &data))
         .and_then(|()| std::fs::rename(&partial, file));
-    if saved.is_err() {
+    if written.is_err() {
         let _ = std::fs::remove_file(&partial);
+        return;
     }
+    saved.saves.fetch_add(1, Ordering::Relaxed);
+    saved.bytes.store(bytes, Ordering::Relaxed);
 }

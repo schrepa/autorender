@@ -8,7 +8,7 @@ pub(crate) struct Run {
     pub(crate) assets: Assets,
     pub(crate) part: u32,
     pub(crate) pass: u32,
-    pub(crate) point: Option<&'static str>,
+    pub(crate) point: Option<PassBit>,
     pub(crate) recording: Recording,
     pub(crate) timed: Timed,
     pub(crate) queued: Queued,
@@ -31,32 +31,14 @@ pub(crate) struct Run {
     pub(crate) arena: Arena,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-struct Offsets {
-    held: [u32; MOST_OFFSETS],
-    count: usize,
-}
-
-impl Offsets {
-    fn of(given: &[u32]) -> Option<Self> {
-        let mut held = [0; MOST_OFFSETS];
-        held.get_mut(..given.len())?.copy_from_slice(given);
-        Some(Self {
-            held,
-            count: given.len(),
-        })
-    }
-
-    fn listed(&self) -> &[u32] {
-        &self.held[..self.count]
-    }
-}
-
 #[derive(Default)]
 pub(crate) struct Bound {
     vertex: Vec<Option<(wgpu::Buffer, u64)>>,
     index: Option<wgpu::Buffer>,
-    groups: [Option<(wgpu::BindGroup, Offsets)>; MOST_GROUPS],
+    groups: Vec<Option<(wgpu::BindGroup, usize)>>,
+    offsets: Vec<u32>,
+    pub(crate) zeros: Vec<u32>,
+    pub(crate) given: Vec<u32>,
     render: Option<wgpu::RenderPipeline>,
     compute: Option<wgpu::ComputePipeline>,
     viewport: Option<[u32; 4]>,
@@ -107,26 +89,50 @@ pub(crate) struct Live {
 }
 
 impl Bound {
+    pub(crate) fn of(limits: crate::machine::Limits) -> Self {
+        Self {
+            groups: vec![None; limits.groups],
+            offsets: vec![0; limits.groups * limits.offsets],
+            zeros: vec![0; limits.offsets],
+            given: vec![0; limits.offsets],
+            ..Self::default()
+        }
+    }
+
     pub(crate) fn forget(&mut self) {
         self.vertex.clear();
         self.index = None;
-        self.groups = Default::default();
+        self.groups.fill(None);
         self.render = None;
         self.compute = None;
         self.viewport = None;
         self.scissor = None;
     }
 
+    fn held_offsets(&self, index: u32, count: usize) -> Option<&[u32]> {
+        let start = index as usize * self.zeros.len();
+        self.offsets.get(start..start + count)
+    }
+
     fn holds(&self, index: u32, group: &wgpu::BindGroup, offsets: &[u32]) -> bool {
         self.groups
             .get(index as usize)
             .and_then(Option::as_ref)
-            .is_some_and(|(held, at)| held == group && at.listed() == offsets)
+            .is_some_and(|(held, count)| {
+                held == group && self.held_offsets(index, *count) == Some(offsets)
+            })
     }
 
     fn hold(&mut self, index: u32, group: &wgpu::BindGroup, offsets: &[u32]) {
+        let start = index as usize * self.zeros.len();
+        let kept = offsets.len() <= self.zeros.len()
+            && self
+                .offsets
+                .get_mut(start..start + offsets.len())
+                .map(|held| held.copy_from_slice(offsets))
+                .is_some();
         if let Some(slot) = self.groups.get_mut(index as usize) {
-            *slot = Offsets::of(offsets).map(|offsets| (group.clone(), offsets));
+            *slot = kept.then(|| (group.clone(), offsets.len()));
         }
     }
 
@@ -275,6 +281,7 @@ pub(crate) struct Installs {
     pub(crate) faults: Vec<Error>,
     pub(crate) reinstalls: Vec<Reinstall>,
     pub(crate) draw_entries: Vec<KindMember>,
+    pub(crate) members: Vec<Vec<u32>>,
     pub(crate) installed: Vec<FrameId>,
     pub(crate) gates: Vec<Option<engine_registry::BrickId>>,
     pub(crate) pass_gates: Vec<(u32, engine_registry::BrickId)>,
@@ -288,10 +295,28 @@ impl Installs {
             faults: Vec::new(),
             reinstalls: Vec::new(),
             draw_entries: Vec::new(),
+            members: Vec::new(),
             installed: vec![FrameId::default(); count],
             gates: Vec::new(),
             pass_gates: Vec::new(),
             features,
+        }
+    }
+
+    pub(crate) fn settle_members(&mut self, declared: &crate::install::Declared) {
+        self.members.clear();
+        for pass in &declared.passes {
+            let Some((scene, bit)) = pass.scene.and_then(|scene| Some((scene, scene.bit?))) else {
+                continue;
+            };
+            let at = bit.index() as usize;
+            if self.members.len() <= at {
+                self.members.resize(at + 1, Vec::new());
+            }
+            let listed = self.draw_entries.iter().enumerate().filter(|(_, member)| {
+                pass.members.contains(&member.part) && member.decl.joins(scene.name)
+            });
+            self.members[at] = listed.map(|(at, _)| at as u32).collect();
         }
     }
 }
@@ -412,19 +437,20 @@ pub(crate) struct Tallies {
     pub(crate) worst: crate::Recorded,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub(crate) struct KindTally {
-    pub(crate) kind: engine_core::DrawKind,
-    pub(crate) pass: &'static str,
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct KindCell {
+    pub(crate) joins: bool,
+    pub(crate) begun: bool,
     pub(crate) reached: u32,
     pub(crate) skipped: Option<&'static str>,
+    pub(crate) reported: bool,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct DroppedTally {
     pub(crate) part: u32,
-    pub(crate) kind: Option<engine_core::DrawKind>,
-    pub(crate) pass: &'static str,
+    pub(crate) kind: Option<u32>,
+    pub(crate) pass: u32,
     pub(crate) reason: engine_core::DropReason,
     pub(crate) asset: Option<engine_core::Asset>,
     pub(crate) count: u32,
@@ -432,41 +458,70 @@ pub(crate) struct DroppedTally {
 
 #[derive(Default)]
 pub(crate) struct KindTallies {
+    pub(crate) kinds: Vec<engine_core::DrawKind>,
+    pub(crate) scenes: Vec<(&'static str, u32)>,
+    pub(crate) cells: Vec<KindCell>,
+    pub(crate) ran: Vec<bool>,
     pub(crate) drawing: Option<usize>,
-    pub(crate) ran: Vec<&'static str>,
-    pub(crate) listed: Vec<KindTally>,
     pub(crate) dropped: Vec<DroppedTally>,
-    pub(crate) reported: Vec<(engine_core::DrawKind, &'static str)>,
+    pub(crate) last_dropped: Vec<DroppedTally>,
+    pub(crate) states: Vec<Option<engine_core::KindPassState>>,
+    pub(crate) last_states: Vec<Option<engine_core::KindPassState>>,
+    pub(crate) totals: Vec<(DroppedTally, u64)>,
     pub(crate) problems: Vec<Error>,
     pub(crate) report: Option<engine_core::DrawReports>,
     pub(crate) passes: Vec<engine_core::KindPass>,
+    pub(crate) settled: bool,
 }
 
 impl KindTallies {
-    pub(crate) fn scened(&mut self, pass: &'static str) {
-        if !self.ran.contains(&pass) {
-            self.ran.push(pass);
+    pub(crate) fn of(passes: &engine_core::ScenePasses, declared: &[PassDecl]) -> Self {
+        let kinds: Vec<engine_core::DrawKind> =
+            passes.kinds().iter().map(|decl| decl.kind).collect();
+        let scenes: Vec<(&'static str, u32)> = passes
+            .listed()
+            .iter()
+            .filter(|listed| listed.bit.is_some())
+            .map(|listed| {
+                let pass = declared
+                    .iter()
+                    .position(|pass| pass.scene.is_some_and(|scene| scene.name == listed.name))
+                    .map_or(u32::MAX, |at| at as u32);
+                (listed.name, pass)
+            })
+            .collect();
+        let mut cells = Vec::with_capacity(scenes.len() * kinds.len());
+        for (name, _) in &scenes {
+            for decl in passes.kinds() {
+                cells.push(KindCell {
+                    joins: decl.joins(name),
+                    ..KindCell::default()
+                });
+            }
+        }
+        Self {
+            ran: vec![false; scenes.len()],
+            states: vec![None; cells.len()],
+            last_states: vec![None; cells.len()],
+            kinds,
+            scenes,
+            cells,
+            ..Self::default()
         }
     }
 
-    pub(crate) fn begin(&mut self, kind: engine_core::DrawKind, pass: &'static str) {
-        let at = match self
-            .listed
-            .iter()
-            .position(|known| known.kind == kind && known.pass == pass)
-        {
-            Some(at) => at,
-            None => {
-                self.listed.push(KindTally {
-                    kind,
-                    pass,
-                    reached: 0,
-                    skipped: None,
-                });
-                self.listed.len() - 1
-            }
-        };
-        self.drawing = Some(at);
+    pub(crate) fn scened(&mut self, scene: u32) {
+        if let Some(ran) = self.ran.get_mut(scene as usize) {
+            *ran = true;
+        }
+    }
+
+    pub(crate) fn begin(&mut self, scene: u32, kind: u32) {
+        let at = scene as usize * self.kinds.len() + kind as usize;
+        self.drawing = self.cells.get_mut(at).map(|cell| {
+            cell.begun = true;
+            at
+        });
     }
 
     pub(crate) fn end(&mut self) {
@@ -474,34 +529,47 @@ impl KindTallies {
     }
 
     pub(crate) fn skip(&mut self, reason: &'static str) {
-        if let Some(tally) = self.drawing.and_then(|at| self.listed.get_mut(at)) {
-            tally.skipped = Some(reason);
+        if let Some(cell) = self.drawing.and_then(|at| self.cells.get_mut(at)) {
+            cell.skipped = Some(reason);
         }
     }
 
     pub(crate) fn reached(&mut self) {
-        if let Some(tally) = self.drawing.and_then(|at| self.listed.get_mut(at)) {
-            tally.reached += 1;
+        if let Some(cell) = self.drawing.and_then(|at| self.cells.get_mut(at)) {
+            cell.reached += 1;
         }
+    }
+
+    pub(crate) fn kind_at(&self, cell: usize) -> (u32, u32) {
+        let kinds = self.kinds.len().max(1);
+        ((cell / kinds) as u32, (cell % kinds) as u32)
     }
 
     pub(crate) fn drop_draws(
         &mut self,
-        (part, own_pass): (u32, &'static str),
+        (part, own_pass): (u32, u32),
         (reason, asset): (engine_core::DropReason, Option<engine_core::Asset>),
         count: u32,
     ) {
-        let (kind, pass) = match self.drawing.and_then(|at| self.listed.get(at)) {
-            Some(tally) => (Some(tally.kind), tally.pass),
+        let (kind, pass) = match self.drawing {
+            Some(at) => {
+                let (scene, kind) = self.kind_at(at);
+                let pass = self.scenes.get(scene as usize).map_or(own_pass, |scene| scene.1);
+                (Some(kind), pass)
+            }
             None => (None, own_pass),
         };
-        let known = self.dropped.iter_mut().find(|known| {
+        let same = |known: &DroppedTally| {
             known.part == part
                 && known.kind == kind
                 && known.pass == pass
                 && known.reason == reason
                 && known.asset == asset
-        });
+        };
+        let known = match self.dropped.last_mut() {
+            Some(last) if same(last) => Some(last),
+            Some(_) | None => self.dropped.iter_mut().find(|known| same(known)),
+        };
         match known {
             Some(known) => known.count += count,
             None => self.dropped.push(DroppedTally {
@@ -517,8 +585,12 @@ impl KindTallies {
 
     pub(crate) fn start_frame(&mut self) {
         self.drawing = None;
-        self.ran.clear();
-        self.listed.clear();
+        self.ran.fill(false);
+        for cell in &mut self.cells {
+            cell.begun = false;
+            cell.reached = 0;
+            cell.skipped = None;
+        }
         self.dropped.clear();
     }
 }
@@ -592,7 +664,7 @@ impl Run {
         let view_holders = holders.of_view(&machine);
         let mut stale = stale_holders(&machine);
         stale.retain(|holder| !view_holders.contains(holder));
-        let sets = first_sets(&device, &machine, view_holders);
+        let sets = views::Sets::of(&device, &machine, view_holders);
         let pass_decls = machine
             .declared
             .passes
@@ -601,6 +673,7 @@ impl Run {
             .collect();
         let pass_sets = pass_sets_of(&machine);
         let drawn = crate::gpu_calls::Drawn::new(machine.declared.passes.len(), count);
+        let bound = Bound::of(machine.limits);
         Self {
             device,
             queue,
@@ -657,32 +730,12 @@ impl Run {
                 slots: 3,
                 ..Reading::default()
             },
-            bound: Bound::default(),
+            bound,
             arena: Arena::default(),
         }
     }
 }
 
-fn first_sets(
-    device: &wgpu::Device,
-    machine: &Machine,
-    holders: std::collections::BTreeSet<super::Holder>,
-) -> views::Sets {
-    let (passes, main) = views::view_passes(machine);
-    let first = views::ViewSet::new(
-        device,
-        machine,
-        bevy_ecs::entity::Entity::PLACEHOLDER,
-        &holders,
-    );
-    views::Sets {
-        list: vec![first],
-        at: 0,
-        holders,
-        passes,
-        main,
-    }
-}
 
 impl Canvas {
     fn fresh() -> Self {
