@@ -97,6 +97,7 @@ pub fn start(page: Page<'_>, run: Run, settings: Settings) -> Result<Session, St
         format!("--user-data-dir={}", profile.display()),
         "--remote-debugging-port=0".to_owned(),
         "--enable-unsafe-webgpu".to_owned(),
+        "--enable-webgpu-developer-features".to_owned(),
         "--no-first-run".to_owned(),
         "--no-default-browser-check".to_owned(),
         "--disable-background-timer-throttling".to_owned(),

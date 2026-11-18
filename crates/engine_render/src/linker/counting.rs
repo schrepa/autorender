@@ -36,9 +36,15 @@ pub(crate) fn names(world: &mut bevy_ecs::world::World) {
             Ok(reach.part::<crate::Renderer>().map_or_else(
                 || unavailable("no_renderer"),
                 |renderer| {
-                    renderer
-                        .counter()
-                        .map_or_else(|| unavailable("never_switched_on"), |counter| counter.read(name))
+                    renderer.counter().map_or_else(
+                        || {
+                            serde_json::json!({
+                                "unavailable": "never_switched_on",
+                                "switched_on_by": { "call": "record", "instruments": [INSTRUMENT] },
+                            })
+                        },
+                        |counter| counter.read(name),
+                    )
                 },
             ))
         });

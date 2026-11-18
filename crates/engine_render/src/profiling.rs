@@ -515,24 +515,39 @@ mod timer {
         }
 
 
-        fn unavailable(&self, timing: bool) -> Option<&'static str> {
-            if timing {
-                return (!self.timestamps)
-                    .then_some("timestamp_query_unavailable")
-                    .or((!self.on.timed_once).then_some("never_switched_on"));
+        fn unavailable(&self, timing: bool) -> Option<Value> {
+            let lacking = |reason: &str, feature: &str| {
+                Some(json!({ "unavailable": reason, "device_lacks": feature }))
+            };
+            if timing && !self.timestamps {
+                return lacking("timestamp_query_unavailable", "TIMESTAMP_QUERY");
             }
-            if !cfg!(feature = "profiling") {
-                return Some("profiling_build_only");
+            if !timing && !cfg!(feature = "profiling") {
+                return Some(json!({ "unavailable": "profiling_build_only" }));
             }
-            (!self.statistics)
-                .then_some("pipeline_statistics_query_unavailable")
-                .or((!self.on.counted_once).then_some("never_switched_on"))
+            if !timing && !self.statistics {
+                return lacking(
+                    "pipeline_statistics_query_unavailable",
+                    "PIPELINE_STATISTICS_QUERY",
+                );
+            }
+            let (switched, instruments): (bool, &[&str]) = if timing {
+                (self.on.timed_once, &super::INSTRUMENTS[..2])
+            } else {
+                (self.on.counted_once, &super::INSTRUMENTS[2..3])
+            };
+            (!switched).then(|| {
+                json!({
+                    "unavailable": "never_switched_on",
+                    "switched_on_by": { "call": "record", "instruments": instruments },
+                })
+            })
         }
 
         pub fn read(&self, name: &str) -> Value {
             let timing = name.starts_with("gpu.passes.");
-            if let Some(reason) = self.unavailable(timing) {
-                return json!({ "unavailable": reason });
+            if let Some(unavailable) = self.unavailable(timing) {
+                return unavailable;
             }
             let through = self.through.map_or_else(
                 || json!({ "unavailable": "nothing_arrived" }),
