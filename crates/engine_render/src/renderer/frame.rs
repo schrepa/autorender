@@ -506,6 +506,12 @@ impl Renderer {
             }
         }
         scratch.base.assign(&run.planning.runs);
+        #[cfg(any(feature = "dev", feature = "profiling"))]
+        if crate::whatif::changed(world, &mut scratch.seen) {
+            for set in &mut run.sets.list {
+                set.plans.retain(|(skips, ..)| *skips == 0);
+            }
+        }
         scratch.ready.clear();
         scratch.drawn_on.clear();
         let mut order = std::mem::take(&mut scratch.order);
@@ -570,7 +576,7 @@ impl Renderer {
             keep_eligible(run, &facts, (first, index == 0));
             #[cfg(any(feature = "dev", feature = "profiling"))]
             {
-                run.sets.scratch.skipped =
+                run.sets.scratch.skips =
                     crate::whatif::skip(world, run.frames.asked, &mut run.planning.runs);
             }
             let sets = &mut run.sets;

@@ -245,8 +245,8 @@ impl<G: Game> PageHost<G> {
         &mut self,
         id: f64,
         key: String,
-        output: Option<js_sys::Uint8Array>,
         pack: bool,
+        output: Option<js_sys::Uint8Array>,
     ) {
         let source = if pack {
             engine_core::JobSource::Pack

@@ -46,7 +46,6 @@ export type GpuTime = number | { unavailable: string };
 
 export interface JobStats {
   cache_bytes: number;
-  cache_hits: number;
   cache_mismatches: number;
   cache_misses: number;
   cancelled: number;
@@ -54,9 +53,11 @@ export interface JobStats {
   failed: number;
   held: number;
   in_place: number;
+  pack_hits: number;
   running: number;
   shared_bytes: number;
   shares: number;
+  store_hits: number;
   submitted: number;
   workers: number;
 }

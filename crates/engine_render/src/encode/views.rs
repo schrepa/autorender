@@ -470,17 +470,17 @@ impl Run {
         } = self;
         let scratch = &sets.scratch;
         let set = &mut sets.list[sets.at];
-        let held = &mut set.plans[usize::from(scratch.skipped)];
-        let why = match held {
-            Some((key, plan))
+        let found = (set.plans.iter()).position(|(skips, ..)| *skips == scratch.skips);
+        let why = match found.map(|at| &set.plans[at]) {
+            Some((_, key, plan))
                 if key.runs == planning.runs
                     && key.outputs == scratch.outputs
                     && key.ready == scratch.ready =>
             {
                 return Ok(Arc::clone(plan));
             }
-            Some((key, _)) if key.runs != planning.runs => 1,
-            Some((key, _)) if key.outputs != scratch.outputs => 2,
+            Some((_, key, _)) if key.runs != planning.runs => 1,
+            Some((_, key, _)) if key.outputs != scratch.outputs => 2,
             Some(_) => 3,
             None => 0,
         };
@@ -489,8 +489,9 @@ impl Run {
                 .graph
                 .plan(&planning.runs, &scratch.outputs, &scratch.ready)?,
         );
-        match held {
-            Some((key, held)) => {
+        match found {
+            Some(at) => {
+                let (_, key, held) = &mut set.plans[at];
                 key.runs.assign(&planning.runs);
                 key.outputs.assign(&scratch.outputs);
                 key.ready.assign(&scratch.ready);
@@ -502,7 +503,7 @@ impl Run {
                     outputs: scratch.outputs.clone(),
                     ready: scratch.ready.clone(),
                 };
-                *held = Some((key, Arc::clone(&plan)));
+                set.plans.push((scratch.skips, key, Arc::clone(&plan)));
             }
         }
         sets.counted.plans[why] += 1;
@@ -640,7 +641,7 @@ pub(crate) struct ViewSet {
     pub(crate) groups: Vec<Option<(Holder, HeldGroups)>>,
     pub(crate) stale: std::collections::BTreeSet<Holder>,
     pub(crate) ran: Bits,
-    pub(crate) plans: [Option<(PlanKey, Arc<Plan>)>; 2],
+    pub(crate) plans: Vec<(u64, PlanKey, Arc<Plan>)>,
     pub(crate) drawing: Option<(wgpu::Texture, wgpu::TextureView)>,
 }
 
@@ -665,7 +666,7 @@ impl ViewSet {
             groups: Vec::new(),
             stale: holders.clone(),
             ran: Bits::of(machine.graph.passes()),
-            plans: [None, None],
+            plans: Vec::new(),
             drawing: None,
         }
     }
@@ -726,7 +727,9 @@ pub(crate) struct Scratch {
     pub(crate) ready: Bits,
     pub(crate) order: Vec<usize>,
     pub(crate) drawn_on: Vec<(engine_core::Target, usize)>,
-    pub(crate) skipped: bool,
+    pub(crate) skips: u64,
+    #[cfg(any(feature = "dev", feature = "profiling"))]
+    pub(crate) seen: Vec<(usize, std::num::NonZeroU64)>,
 }
 
 #[derive(Default)]
@@ -829,7 +832,9 @@ impl Sets {
                 ready: Bits::of(resources),
                 order: Vec::new(),
                 drawn_on: Vec::new(),
-                skipped: false,
+                skips: 0,
+                #[cfg(any(feature = "dev", feature = "profiling"))]
+                seen: Vec::new(),
             },
             counted: Counted {
                 opened: vec![0; count],

@@ -19,7 +19,7 @@ macro_rules! __game_surface {
                 fn set_job_workers(workers: u32) -> bool;
                 fn set_job_cache(caching: bool, verify: bool);
                 fn take_jobs() -> $crate::__private::js_sys::Array;
-                fn job_kept(id: f64, key: String, output: Option<$crate::__private::js_sys::Uint8Array>, pack: bool);
+                fn job_kept(id: f64, key: String, pack: bool, output: Option<$crate::__private::js_sys::Uint8Array>);
                 fn lose_job_worker(worker: u32, error: &str, replaced: bool);
                 fn job_task() -> Option<u32>;
                 fn job_task_done(worker: u32);

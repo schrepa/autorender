@@ -106,18 +106,28 @@ pub(crate) fn install(world: &mut World, machine: &Machine) {
     whatif.settle();
 }
 
-pub(crate) fn skip(world: &World, frame: u64, runs: &mut Bits) -> bool {
+pub(crate) fn skip(world: &World, frame: u64, runs: &mut Bits) -> u64 {
     let Some(whatif) = world.get_resource::<WhatIf>() else {
-        return false;
+        return 0;
     };
-    let mut skipped = false;
-    for &(pass, every) in &whatif.skips {
-        if frame % every != 0 && runs.contains(pass) {
+    let mut skips = 0;
+    for (at, &(pass, every)) in whatif.skips.iter().enumerate() {
+        if frame % every != 0 {
             runs.remove(pass);
-            skipped = true;
+            skips |= 1_u64.checked_shl(at as u32).unwrap_or(1 << 63);
         }
     }
-    skipped
+    skips
+}
+
+pub(crate) fn changed(world: &World, seen: &mut Vec<(usize, NonZeroU64)>) -> bool {
+    let skips = (world.get_resource::<WhatIf>()).map_or(&[][..], |whatif| &whatif.skips);
+    if seen.as_slice() == skips {
+        return false;
+    }
+    seen.clear();
+    seen.extend_from_slice(skips);
+    true
 }
 
 fn set(reach: &mut ReachMut<'_>, given: &Value) -> Result<Value, Error> {

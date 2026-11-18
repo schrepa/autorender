@@ -200,7 +200,7 @@ export class JobPool {
     await Promise.all(lookups.map(async (order, at) => {
       const kept = await answers?.[at].catch(() => undefined);
       if (this.runtime !== runtime) return;
-      this.call(runtime => runtime.job_kept(order.lookup, order.key, kept?.[0], kept?.[1] ?? false));
+      this.call(runtime => runtime.job_kept(order.lookup, order.key, kept?.[1] ?? false, kept?.[0]));
       this.exchange();
     }));
   }
