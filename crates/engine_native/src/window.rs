@@ -104,6 +104,7 @@ impl<'a, G: Game> App<'a, G> {
         if let Some(place) = &self.options.keep {
             host.keep_in(place);
         }
+        host.offer_close();
         crate::open_scene(&mut host, &self.options.scene)?;
         options.settings.apply(&mut host)?;
         let mut jobs = options.jobs.pool(false);
@@ -222,6 +223,10 @@ impl<G: Game> ApplicationHandler for App<'_, G> {
                     }
                 };
                 self.input.apply_cursor(&running.host, &running.window);
+                if running.host.close_asked() {
+                    event_loop.exit();
+                    return;
+                }
                 if phase == FramePhase::Idle {
                     return;
                 }

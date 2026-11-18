@@ -404,6 +404,23 @@ impl<G: Game> GameHost<G> {
         self.suspend();
     }
 
+    pub fn offer_close(&mut self) {
+        let world = self.app.engine_mut().app.world_mut();
+        if let Some(mut closing) = world.get_resource_mut::<engine_core::Closing>() {
+            closing.offer();
+        }
+    }
+
+    pub fn close_asked(&self) -> bool {
+        let world = self.app.engine().app.world();
+        world
+            .get_resource::<engine_core::Closing>()
+            .is_some_and(engine_core::Closing::asked)
+            && !world
+                .get_resource::<engine_core::Kept>()
+                .is_some_and(engine_core::Kept::in_flight)
+    }
+
     pub fn keep_in(&mut self, place: &str) {
         let world = self.app.engine_mut().app.world_mut();
         if let Some(mut kept) = world.get_resource_mut::<engine_core::Kept>() {

@@ -11,6 +11,7 @@ mod authoring;
 mod background;
 mod bricks;
 mod clock;
+mod closing;
 mod cook;
 mod cursor;
 mod drawn;
@@ -48,6 +49,7 @@ pub use background::{Background, Delivers, Landed, Taken};
 pub use bevy_app::App;
 pub use bricks::*;
 pub use clock::*;
+pub use closing::Closing;
 pub use cook::{Cook, CookAsks, CookList, cook};
 pub use cursor::*;
 pub use drawn::{
@@ -368,6 +370,7 @@ impl Engine {
             .init_resource::<Records>()
             .init_resource::<Files>()
             .init_resource::<Kept>()
+            .init_resource::<Closing>()
             .init_resource::<RecordExchange>()
             .insert_resource(DeviceLimits::without_device(cores))
             .init_resource::<Devices>()
