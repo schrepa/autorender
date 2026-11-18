@@ -1,11 +1,11 @@
 use engine::math;
 use engine::prelude::*;
-use glam::Mat3;
+use glam::{Mat3, Quat};
 
 use super::gather::{Setup, Spawns, SprayKind, device_spot, view_direction};
 use super::models::{ShowcaseModels, traps_layout};
 use super::numbers::{
-    BarrierLook, DeviceLook, EffectsNumbers, OrbLook, PropsLook, SmokeLook, Spray,
+    BarrierLook, DeviceLook, EffectsNumbers, OrbLook, PropsLook, RindLook, SmokeLook, Spray,
 };
 use super::{EffectsDrawing, EffectsFrame, EffectsShow, EffectsStats, Item, ScreenStats, Show};
 use crate::abilities::OrbState;
@@ -33,8 +33,6 @@ const FLASH: f32 = 1.0;
 const SPRAY: f32 = 2.0;
 const HALO: f32 = 3.0;
 
-const RIND: f32 = 4.0;
-const CURTAIN: f32 = 5.0;
 const GLOWING: f32 = 1.0;
 const STRAND: f32 = 3.0;
 
@@ -44,6 +42,7 @@ const STRIKE: f32 = 2.0;
 const PULSE: f32 = 3.0;
 const NEAR: f32 = 4.0;
 const BLOB: f32 = 5.0;
+const CONTACT: f32 = 8.0;
 
 pub(super) const BOX_VERTICES: u32 = 36;
 const QUAD_VERTICES: u32 = 6;
@@ -58,6 +57,17 @@ fn rgb(c: [f32; 3], w: f32) -> [f32; 4] {
 
 fn seeded(seed: u32) -> f32 {
     (seed >> 8) as f32
+}
+
+fn unit_hash(seed: u32) -> f32 {
+    let mut x = seed.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
+    x = ((x >> ((x >> 28) + 4)) ^ x).wrapping_mul(277_803_737);
+    (((x >> 22) ^ x) >> 8) as f32 / 16_777_216.0
+}
+
+fn eased(share: f32) -> f32 {
+    let rest = 1.0 - math::clamp(share, 0.0, 1.0);
+    1.0 - rest * rest * rest
 }
 
 fn age_of(now: f64, born: f64) -> f32 {
@@ -245,7 +255,7 @@ struct Solid {
     pulse_hz: f32,
 }
 
-fn solid_item(solid: &Solid, look: &EffectsNumbers) -> Item {
+fn solid_item(solid: &Solid) -> Item {
     let shape = &solid.shape;
     Item {
         rows: [
@@ -260,8 +270,8 @@ fn solid_item(solid: &Solid, look: &EffectsNumbers) -> Item {
             ],
             row(shape.axes.x_axis, 0.0),
             row(shape.axes.y_axis, 0.0),
-            rgb(solid.edge, look.panels.edge_power),
-            [look.panels.edge_glow, 0.0, 0.0, 0.0],
+            rgb(solid.edge, 0.0),
+            [0.0; 4],
         ],
     }
 }
@@ -301,7 +311,7 @@ fn disc(look: &EffectsNumbers, centre: Vec3, radius: f32, color: [f32; 3], kind:
     Mark {
         centre,
         radius,
-        half: Vec3::new(radius, zones.height_m, radius),
+        half: Vec3::new(radius + zones.rim_m, zones.height_m, radius + zones.rim_m),
         axes: Mat3::IDENTITY,
         color,
         fill: zones.fill,
@@ -338,6 +348,8 @@ fn progress(shown: &Shown) -> f32 {
 #[derive(Default)]
 struct Sorted {
     solids: Vec<Item>,
+    slabs: Vec<Item>,
+    sheets: Vec<Item>,
     smokes: Vec<Item>,
     marks: Vec<Item>,
     cover: f32,
@@ -360,33 +372,150 @@ fn smoke_item(look: &EffectsNumbers, centre: Vec3, radius: f32, strength: f32, s
     }
 }
 
-fn panel_item(look: &EffectsNumbers, thing: &Shown, tick_seconds: f32) -> Item {
-    let (_, radius) = centre_radius(&thing.form);
-    let rise = math::clamp(
-        thing.age_ticks as f32 * tick_seconds / math::max(look.panels.rise_seconds, 1.0e-3),
-        0.0,
-        1.0,
-    );
-    let mut shape = boxed(&thing.form, radius);
-    let sunk = shape.half.y * (1.0 - rise);
-    shape.centre -= shape.axes.y_axis * sunk;
-    shape.half.y -= sunk;
-    let edge = team_color(look, thing.team);
-    let panel = Solid {
-        shape,
-        kind: if thing.look == Look::Wall {
-            RIND
-        } else {
-            CURTAIN
-        },
-        fill: edge,
-        glow: 1.0,
-        edge,
-        armed: thing.armed,
-        strength: thing.strength,
-        pulse_hz: 0.0,
+struct Wall {
+    base: Vec3,
+    along: Vec3,
+    up: Vec3,
+    half_length: f32,
+    half_thickness: f32,
+    height: f32,
+}
+
+fn wall_of(form: &Form) -> Option<Wall> {
+    let Form::Box {
+        centre,
+        half_extents,
+        axes,
+    } = *form
+    else {
+        return None;
     };
-    solid_item(&panel, look)
+    let (along, half_length, half_thickness) = if half_extents.x >= half_extents.z {
+        (axes.x_axis, half_extents.x, half_extents.z)
+    } else {
+        (axes.z_axis, half_extents.z, half_extents.x)
+    };
+    Some(Wall {
+        base: centre - axes.y_axis * half_extents.y,
+        along,
+        up: axes.y_axis,
+        half_length,
+        half_thickness,
+        height: half_extents.y * 2.0,
+    })
+}
+
+fn life_seconds(thing: &Shown, tick_seconds: f32) -> (f32, f32) {
+    let left = thing.lifetime_ticks.map_or(f32::MAX, |life| {
+        life.saturating_sub(thing.age_ticks) as f32 * tick_seconds
+    });
+    (thing.age_ticks as f32 * tick_seconds, left)
+}
+
+fn contact_mark(rind: &RindLook, wall: &Wall, share: f32) -> Item {
+    mark_item(&Mark {
+        centre: wall.base,
+        radius: rind.contact_m,
+        half: Vec3::new(
+            wall.half_length + rind.contact_m,
+            rind.contact_height_m,
+            wall.half_thickness + rind.contact_m,
+        ),
+        axes: Mat3::from_cols(wall.along, wall.up, wall.along.cross(wall.up)),
+        color: [0.0; 3],
+        fill: rind.contact * share,
+        kind: CONTACT,
+        seed: 0.0,
+        rim: rind.contact_m,
+        progress: 0.0,
+        fade: 1.0,
+        pattern: (0.0, 0.0),
+    })
+}
+
+fn rind_items(look: &EffectsNumbers, thing: &Shown, tick_seconds: f32, out: &mut Sorted) -> u32 {
+    let Some(wall) = wall_of(&thing.form) else {
+        return 0;
+    };
+    let rind = &look.panels.rind;
+    let count = math::max(
+        (wall.half_length * 2.0 / math::max(rind.slab_m, 0.1)).round(),
+        1.0,
+    ) as u32;
+    let half_width = wall.half_length / count as f32;
+    let middle = (count as f32 - 1.0) * 0.5;
+    let (age, left) = life_seconds(thing, tick_seconds);
+    let team = team_color(look, thing.team);
+    let mut risen = 0.0;
+    for slab in 0..count {
+        let seed = thing.effect.wrapping_mul(7919).wrapping_add(slab * 104_729);
+        let random = |salt: u32| unit_hash(seed.wrapping_add(salt));
+        let order = if middle > 0.0 {
+            (slab as f32 - middle).abs() / middle
+        } else {
+            0.0
+        };
+        let delay = rind.stagger_seconds * (0.6 * order + 0.4 * random(0));
+        let rising = eased((age - delay) / math::max(rind.rise_seconds, 1.0e-3));
+        let sinking =
+            eased((rind.sink_seconds + delay - left) / math::max(rind.sink_seconds, 1.0e-3));
+        let shown = rising * (1.0 - sinking);
+        risen += shown;
+        let tops = [
+            wall.height + rind.bevel_m + rind.top_m * random(1),
+            wall.height + rind.bevel_m + rind.top_m * random(2),
+        ];
+        let sink = (math::max(tops[0], tops[1]) + rind.bury_m) * (1.0 - shown);
+        let yaw = (random(3) * 2.0 - 1.0) * rind.yaw_degrees.to_radians();
+        let lean = (random(4) * 2.0 - 1.0) * rind.lean_degrees.to_radians();
+        let x = Quat::from_axis_angle(wall.up, yaw) * wall.along;
+        let y = Quat::from_axis_angle(x, lean) * wall.up;
+        let offset = (slab as f32 - middle) * half_width * 2.0;
+        out.slabs.push(Item {
+            rows: [
+                row(wall.base + wall.along * offset - wall.up * sink, half_width),
+                [wall.half_thickness, tops[0], tops[1], rind.bevel_m],
+                [random(5) * 64.0, thing.strength, sink, 0.0],
+                rgb(team, 0.0),
+                row(x, 0.0),
+                row(y, rind.bury_m),
+                [0.0; 4],
+                [0.0; 4],
+            ],
+        });
+    }
+    out.marks
+        .push(contact_mark(rind, &wall, risen / count as f32));
+    count
+}
+
+fn curtain_item(look: &EffectsNumbers, thing: &Shown, tick_seconds: f32) -> Option<Item> {
+    let wall = wall_of(&thing.form)?;
+    let curtain = &look.panels.curtain;
+    let (age, left) = life_seconds(thing, tick_seconds);
+    let fall = math::max(curtain.fall_seconds, 1.0e-3);
+    Some(Item {
+        rows: [
+            row(wall.base, wall.half_length),
+            [
+                wall.half_thickness,
+                wall.height,
+                curtain.end_m,
+                curtain.top_m,
+            ],
+            [
+                unit_hash(thing.effect) * 64.0,
+                math::clamp(age / fall, 0.0, 1.0),
+                math::clamp(1.0 - left / fall, 0.0, 1.0),
+                0.0,
+            ],
+            rgb(team_color(look, thing.team), 0.0),
+            row(wall.along, 0.0),
+            row(wall.up, 0.0),
+            [0.0; 4],
+            [0.0; 4],
+        ],
+    })
 }
 
 fn trim_ring(look: &EffectsNumbers, thing: &Shown) -> Item {
@@ -449,10 +578,7 @@ fn sort_shown(
     let traps = &look.traps;
     for (index, thing) in shown.iter().enumerate() {
         if meshed.contains(&thing.effect)
-            && matches!(
-                thing.look,
-                Look::Projectile | Look::Trap | Look::Sensor | Look::Wall | Look::Curtain
-            )
+            && matches!(thing.look, Look::Projectile | Look::Trap | Look::Sensor)
         {
             stats.meshed += 1;
             if matches!(thing.look, Look::Trap | Look::Sensor) {
@@ -502,17 +628,23 @@ fn sort_shown(
                 let mut mark = disc(look, centre, radius, look.strike.color, STRIKE);
                 mark.fill = look.strike.fill;
                 mark.rim = look.strike.rim_m;
+                mark.half.x = radius + mark.rim;
+                mark.half.z = radius + mark.rim;
                 mark.half.y = look.strike.height_m;
                 mark.progress = progress(thing);
                 out.marks.push(mark_item(&mark));
             }
-            Look::Curtain | Look::Wall => {
+            Look::Wall => {
                 stats.panels += 1;
-                out.solids.push(panel_item(look, thing, tick_seconds));
+                stats.slabs += rind_items(look, thing, tick_seconds, out);
+            }
+            Look::Curtain => {
+                stats.panels += 1;
+                out.sheets.extend(curtain_item(look, thing, tick_seconds));
             }
             Look::Trap | Look::Sensor => {
                 stats.glowing += 1;
-                out.solids.push(solid_item(&glowing(traps.size_m), look));
+                out.solids.push(solid_item(&glowing(traps.size_m)));
             }
             Look::Wire => {
                 stats.glowing += 1;
@@ -533,7 +665,7 @@ fn sort_shown(
                     .find(|(effect, _)| *effect == thing.effect)
                     .map_or(1.0, |&(_, share)| math::clamp(share, 0.0, 1.0));
                 stats.faded_wires += u32::from(share < 1.0);
-                let mut item = solid_item(&strand, look);
+                let mut item = solid_item(&strand);
                 item.rows[3][1] = share;
                 item.rows[7][1] = look.props.wire_pulse_mps;
                 item.rows[7][2] = look.props.wire_pulse_m;
@@ -542,7 +674,7 @@ fn sort_shown(
             Look::Projectile => {
                 stats.glowing += 1;
                 out.solids
-                    .push(solid_item(&glowing(traps.projectile_size_m), look));
+                    .push(solid_item(&glowing(traps.projectile_size_m)));
             }
         }
         if matches!(
@@ -794,7 +926,7 @@ fn device_items(
     };
     let halo = device.light.map(|value| value * glow * 0.5);
     (
-        vec![solid_item(&light, look)],
+        vec![solid_item(&light)],
         Some((halo_item(lamp, halo, device.halo_m), glow)),
     )
 }
@@ -844,9 +976,9 @@ fn barrier_item(look: &BarrierLook, raised: &Raised, seed: f32) -> Item {
             row(rise.normalize_or(Vec3::Y), raised.drop),
             rgb(color.map(|value| value * look.glow), look.near_boost),
             raised.near.map_or([0.0; 4], |near| row(near, look.near_m)),
-            [look.cell_m, look.band_m, look.band_mps, look.line_px],
-            [look.fill, look.line, look.edge, look.edge_m],
-            [seed, look.band_share, 0.0, 0.0],
+            [look.cell_m, look.band_m, look.band_mps, look.band_share],
+            [look.fill, look.line, look.ground, look.ground_m],
+            [seed, look.side_m, look.fade_from, 0.0],
         ],
     }
 }
@@ -1209,7 +1341,6 @@ fn prop_items(
             }
             PropPlace::Thrown { .. }
             | PropPlace::Placed { .. }
-            | PropPlace::Wall { .. }
             | PropPlace::Wire { .. }
             | PropPlace::Drop { .. } => {}
         }
@@ -1233,7 +1364,7 @@ fn screen_frame(
     };
     let damage = spawns.hurt.now(now, screen.damage_seconds);
     let panels = &look.panels;
-    let (rind, curtain) = (&panels.rind, &panels.curtain);
+    let (rind, curtain, barrier) = (&panels.rind, &panels.curtain, &look.barrier);
     let frame = EffectsFrame {
         clock: [(now % 3600.0) as f32, screen.damage_edge, 0.0, 0.0],
         flash: rgb(screen.flash, math::clamp(flash, 0.0, 1.0)),
@@ -1247,12 +1378,30 @@ fn screen_frame(
         rind_skin: rgb(rind.skin, rind.stripe_m),
         rind_stripe: rgb(rind.stripe, rind.pith_m),
         rind_pith: rgb(rind.pith, rind.seed_m),
-        rind_flesh: rgb(rind.flesh, 0.0),
-        rind_seed: rgb(rind.seed, 0.0),
-        curtain_peel: rgb(curtain.peel, curtain.cell_m),
+        rind_flesh: rgb(rind.flesh, rind.skin_m),
+        rind_seed: rgb(rind.seed, rind.round),
+        curtain_peel: rgb(curtain.peel, curtain.streak_m),
         curtain_pulp: rgb(curtain.pulp, curtain.glow),
-        panel: [panels.trim_m, panels.rim_glow, curtain.pleat_m, 0.0],
+        curtain_foam: rgb(curtain.foam, curtain.fleck_m),
+        curtain_shape: [
+            curtain.fall_mps,
+            curtain.splash_m,
+            curtain.near_m,
+            curtain.hop_m,
+        ],
+        panel: [
+            panels.trim_m,
+            panels.rim_glow,
+            panels.edge_power,
+            panels.edge_glow,
+        ],
         zones: [look.zones.dashes, look.zones.dash_speed, 0.0, 0.0],
+        barrier: [
+            barrier.eye_m,
+            barrier.eye_least,
+            barrier.drift_mps,
+            barrier.line_px,
+        ],
     };
     let stats = ScreenStats {
         flash: frame.flash[3],
@@ -1340,8 +1489,10 @@ fn lobby_frame(drawing: &mut EffectsDrawing, stats: &mut EffectsStats) {
     };
 }
 
-fn span(items: &[Item], start: usize) -> std::ops::Range<u32> {
-    start as u32..items.len() as u32
+fn put(items: &mut Vec<Item>, list: Vec<Item>) -> std::ops::Range<u32> {
+    let start = items.len() as u32;
+    items.extend(list);
+    start..items.len() as u32
 }
 
 #[derive(SystemParam)]
@@ -1467,7 +1618,7 @@ pub(super) fn assemble(
     let timing = (parsed.fuse_seconds, fixed.delta_seconds, time.alpha);
     let place = (round.as_deref(), show.show, human);
     let device_solids = device_part(look, &seen, place, (timing, now), (&mut items, &mut next));
-    let glow = span(&items, 0);
+    let glow = 0..items.len() as u32;
     let mut shown = feed.shown.clone();
     if show.show != Show::Off {
         shown.extend(showcase_shown(look, show.show, human, now));
@@ -1479,15 +1630,11 @@ pub(super) fn assemble(
     let timing = (eye, fixed.delta_seconds, now);
     let things = (&shown[..], &*feed, &*spawns, viewer);
     shown_things(look, things, timing, (&mut sorted, &mut next));
-    let start = items.len();
-    items.extend(sorted.solids);
-    let solid = span(&items, start);
-    let start = items.len();
-    items.extend(device_solids);
-    let device = span(&items, start);
-    let start = items.len();
-    items.extend(sorted.smokes);
-    let smoke = span(&items, start);
+    let solid = put(&mut items, sorted.solids);
+    let slab = put(&mut items, sorted.slabs);
+    let sheet = put(&mut items, sorted.sheets);
+    let device = put(&mut items, device_solids);
+    let smoke = put(&mut items, sorted.smokes);
     let (mut frame, mut screen) = screen_frame(look, &feed, show.show, &spawns, now, sorted.cover);
     let field = lit_frame(&mut frame, seen.lighting.as_deref());
     let limit = if show.show == Show::NearSight {
@@ -1505,15 +1652,12 @@ pub(super) fn assemble(
         frame.damage[3] = 0.0;
         screen = ScreenStats::default();
     }
-    let start = items.len();
-    items.extend(sorted.marks);
-    let marks = span(&items, start);
+    let marks = put(&mut items, sorted.marks);
     let shown_barrier = if show.show == Show::Barrier || show.show == Show::All {
         showcase_barrier(look, human, now)
     } else {
         Vec::new()
     };
-    let start = items.len();
     let sources = (&seen, round.as_deref());
     let faces = barrier_part(
         look,
@@ -1522,10 +1666,11 @@ pub(super) fn assemble(
         shown_barrier,
         &mut next,
     );
-    items.extend(faces);
-    let barrier = span(&items, start);
+    let barrier = put(&mut items, faces);
     let screened = frame.flash[3] > 0.0 || frame.damage[3] > 0.0 || frame.cover[3] > 0.0;
-    let ranges = [&glow, &solid, &device, &smoke, &marks, &barrier];
+    let ranges = [
+        &glow, &solid, &slab, &sheet, &device, &smoke, &marks, &barrier,
+    ];
     next.draws =
         ranges.iter().filter(|range| !range.is_empty()).count() as u32 + u32::from(screened);
     next.instances = items.len() as u32;
@@ -1536,6 +1681,8 @@ pub(super) fn assemble(
         items,
         glow,
         solid,
+        slab,
+        sheet,
         device,
         smoke,
         marks,

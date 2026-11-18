@@ -8,13 +8,15 @@ use engine_render::{
 };
 
 use super::assemble::BOX_VERTICES;
-use super::shaders::effects::{barrier, field, glow, items, screen, solid, volume};
+use super::shaders::effects::{barrier, field, glow, items, screen, sheet, slab, solid, volume};
 use super::{DEVICE, EFFECTS, EFFECTS_PASS, EffectsDrawing, EffectsFrame, Item};
 use crate::names::{COLOR, COLOR_PASS, DEPTH};
 
 const FULLSCREEN_VERTICES: u32 = 3;
 
 const QUAD_VERTICES: u32 = 6;
+
+const SLAB_VERTICES: u32 = 54;
 
 const TEXEL: wgpu::Extent3d = wgpu::Extent3d {
     width: 1,
@@ -25,6 +27,8 @@ const TEXEL: wgpu::Extent3d = wgpu::Extent3d {
 pub(super) struct EffectsGpu {
     glow: Pipeline<Self, Scene>,
     solid: Pipeline<Self, Scene>,
+    slab: Pipeline<Self, Scene>,
+    sheet: Pipeline<Self, Scene>,
     barrier: Pipeline<Self, Scene>,
     smoke: Pipeline<Self, Own>,
     marks: Pipeline<Self, Own>,
@@ -38,6 +42,8 @@ pub(super) struct EffectsGpu {
     sent: Option<EffectsFrame>,
     glow_range: Range<u32>,
     solid_range: Range<u32>,
+    slab_range: Range<u32>,
+    sheet_range: Range<u32>,
     device_range: Range<u32>,
     smoke_range: Range<u32>,
     marks_range: Range<u32>,
@@ -151,6 +157,20 @@ impl GpuPart for EffectsGpu {
             &description(entries[0], entries[1], tested(true), &opaque),
             &list,
         )?;
+        let entries = [slab::VS_SLAB, slab::FS_SLAB];
+        let list = bound(cx, entries, buffers);
+        let slab = cx.render_pipeline(
+            scene,
+            &description(entries[0], entries[1], tested(true), &opaque),
+            &list,
+        )?;
+        let entries = [sheet::VS_SHEET, sheet::FS_SHEET];
+        let list = bound(cx, entries, buffers);
+        let sheet = cx.render_pipeline(
+            scene,
+            &description(entries[0], entries[1], tested(true), &over),
+            &list,
+        )?;
         let entries = [barrier::VS_BARRIER, barrier::FS_BARRIER];
         let list = bound(cx, entries, buffers);
         let barrier = cx.render_pipeline(
@@ -189,6 +209,8 @@ impl GpuPart for EffectsGpu {
         Ok(Self {
             glow,
             solid,
+            slab,
+            sheet,
             barrier,
             smoke,
             marks,
@@ -202,6 +224,8 @@ impl GpuPart for EffectsGpu {
             sent: None,
             glow_range: 0..0,
             solid_range: 0..0,
+            slab_range: 0..0,
+            sheet_range: 0..0,
             device_range: 0..0,
             smoke_range: 0..0,
             marks_range: 0..0,
@@ -238,6 +262,8 @@ impl GpuPart for EffectsGpu {
         }
         self.glow_range = drawing.glow.clone();
         self.solid_range = drawing.solid.clone();
+        self.slab_range = drawing.slab.clone();
+        self.sheet_range = drawing.sheet.clone();
         self.device_range = drawing.device.clone();
         self.smoke_range = drawing.smoke.clone();
         self.marks_range = drawing.marks.clone();
@@ -312,6 +338,12 @@ impl EffectsGpu {
     pub(super) fn draw_effects(&self, draw: &mut Draw<'_, Self, Scene>) {
         if !self.solid_range.is_empty() {
             draw.draw(&self.solid, pulled(BOX_VERTICES, &self.solid_range));
+        }
+        if !self.slab_range.is_empty() {
+            draw.draw(&self.slab, pulled(SLAB_VERTICES, &self.slab_range));
+        }
+        if !self.sheet_range.is_empty() {
+            draw.draw(&self.sheet, pulled(BOX_VERTICES, &self.sheet_range));
         }
         if !self.glow_range.is_empty() {
             draw.draw(&self.glow, pulled(self.glow_vertices, &self.glow_range));

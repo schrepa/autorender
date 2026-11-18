@@ -106,7 +106,6 @@ pub(super) struct PanelLook {
     pub edge_glow: f32,
     pub edge_power: f32,
     pub rim_glow: f32,
-    pub rise_seconds: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -118,8 +117,22 @@ pub(super) struct RindLook {
     pub flesh: [f32; 3],
     pub seed: [f32; 3],
     pub stripe_m: f32,
+    pub skin_m: f32,
     pub pith_m: f32,
     pub seed_m: f32,
+    pub slab_m: f32,
+    pub bevel_m: f32,
+    pub top_m: f32,
+    pub bury_m: f32,
+    pub round: f32,
+    pub yaw_degrees: f32,
+    pub lean_degrees: f32,
+    pub rise_seconds: f32,
+    pub stagger_seconds: f32,
+    pub sink_seconds: f32,
+    pub contact: f32,
+    pub contact_m: f32,
+    pub contact_height_m: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -127,9 +140,17 @@ pub(super) struct RindLook {
 pub(super) struct CurtainLook {
     pub peel: [f32; 3],
     pub pulp: [f32; 3],
+    pub foam: [f32; 3],
     pub glow: f32,
-    pub cell_m: f32,
-    pub pleat_m: f32,
+    pub streak_m: f32,
+    pub fleck_m: f32,
+    pub fall_mps: f32,
+    pub splash_m: f32,
+    pub hop_m: f32,
+    pub near_m: f32,
+    pub end_m: f32,
+    pub top_m: f32,
+    pub fall_seconds: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -210,13 +231,18 @@ pub(super) struct BarrierLook {
     pub glow: f32,
     pub fill: f32,
     pub line: f32,
-    pub edge: f32,
-    pub edge_m: f32,
+    pub ground: f32,
+    pub ground_m: f32,
+    pub fade_from: f32,
+    pub side_m: f32,
     pub cell_m: f32,
     pub line_px: f32,
+    pub drift_mps: f32,
     pub band_m: f32,
     pub band_mps: f32,
     pub band_share: f32,
+    pub eye_m: f32,
+    pub eye_least: f32,
     pub extend_m: f32,
     pub near_m: f32,
     pub near_boost: f32,

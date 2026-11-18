@@ -44,8 +44,11 @@ gpu_struct! {
         pub rind_seed: [f32; 4],
         pub curtain_peel: [f32; 4],
         pub curtain_pulp: [f32; 4],
+        pub curtain_foam: [f32; 4],
+        pub curtain_shape: [f32; 4],
         pub panel: [f32; 4],
         pub zones: [f32; 4],
+        pub barrier: [f32; 4],
     }
 }
 
@@ -60,6 +63,8 @@ pub(crate) struct EffectsDrawing {
     pub items: Vec<Item>,
     pub glow: Range<u32>,
     pub solid: Range<u32>,
+    pub slab: Range<u32>,
+    pub sheet: Range<u32>,
     pub device: Range<u32>,
     pub smoke: Range<u32>,
     pub marks: Range<u32>,
@@ -137,6 +142,7 @@ stats! {
         pub smokes: u32,
         pub zones: u32,
         pub panels: u32,
+        pub slabs: u32,
         pub glowing: u32,
         pub blobs: u32,
         pub trails: u32,

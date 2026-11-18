@@ -1,4 +1,4 @@
-use glam::{Mat3, Vec3};
+use glam::Vec3;
 
 use super::effects::{ActorId, EffectId, Effects, Living, State};
 use super::numbers::{AbilityId, Delivery, TrapShape};
@@ -15,11 +15,6 @@ pub enum PropPose {
         contact: Vec3,
         normal: Vec3,
         facing: Vec3,
-    },
-    Wall {
-        base: Vec3,
-        axes: Mat3,
-        half_extents: Vec3,
     },
     Wire {
         a: Vec3,
@@ -82,11 +77,6 @@ fn pose_of(living: &Living) -> Option<PropPose> {
             velocity_per_tick: Vec3::ZERO,
             resting: true,
         }),
-        State::Wall(wall) => Some(PropPose::Wall {
-            base: wall.centre - Vec3::Y * wall.half_extents.y,
-            axes: wall.axes,
-            half_extents: wall.half_extents,
-        }),
         State::Trap(trap) => Some(match trap.spec.shape {
             TrapShape::Radius(_) => placed(trap.a, trap.normal_a),
             TrapShape::Wire { .. } => PropPose::Wire {
@@ -104,6 +94,7 @@ fn pose_of(living: &Living) -> Option<PropPose> {
             impact_tick: living.born + u64::from(*warn_ticks),
         }),
         State::Pending
+        | State::Wall(_)
         | State::Glare(_)
         | State::Heal { .. }
         | State::Dash { .. }

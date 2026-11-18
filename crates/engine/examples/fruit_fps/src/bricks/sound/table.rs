@@ -9,7 +9,10 @@ use crate::solids::Kind;
 pub(super) struct Curve {
     pub flat: bool,
     pub near_m: f32,
+    #[serde(default)]
     pub far_m: f32,
+    #[serde(default)]
+    pub far_from: Option<String>,
     pub floor: f32,
     pub power: f32,
     pub occluded: f32,
@@ -43,6 +46,8 @@ pub(super) struct SoundEntry {
     pub group: Group,
     #[serde(default)]
     pub stand_in: Option<String>,
+    #[serde(default)]
+    pub gain_jitter_db: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -143,11 +148,30 @@ impl Table {
             }
         }
         for (name, curve) in &table.curves {
-            if !curve.flat && curve.far_m <= curve.near_m {
+            if !curve.flat && curve.far_from.is_none() && curve.far_m <= curve.near_m {
                 return Err(format!("curves.{name}: far_m must be above near_m"));
             }
         }
         Ok(table)
+    }
+
+    pub fn reach(&mut self, numbers: &serde_json::Value) -> Result<(), String> {
+        for (name, curve) in &mut self.curves {
+            let Some(path) = &curve.far_from else {
+                continue;
+            };
+            let far = numbers
+                .pointer(path)
+                .and_then(serde_json::Value::as_f64)
+                .ok_or_else(|| {
+                    format!("curves.{name}.far_from: numbers.json has no number at {path}")
+                })?;
+            if far as f32 <= curve.near_m {
+                return Err(format!("curves.{name}: {path} = {far} is not above near_m"));
+            }
+            curve.far_m = far as f32;
+        }
+        Ok(())
     }
 
     pub fn kind(&self, kind: Kind) -> &str {

@@ -21,6 +21,7 @@ use crate::play::events::arms::ArmsEvents;
 use crate::play::events::body::BodyEvents;
 use crate::play::events::powers::PowerEvents;
 use crate::play::events::round::RoundEvents;
+use crate::play::numbers::Numbers;
 use crate::play::powers::Powers;
 use crate::play::round::Round;
 use crate::play::sound::{Anchor, Cue, SoundCues, SoundLoad, Volume};
@@ -98,6 +99,7 @@ struct Bank {
     files: BTreeMap<String, SoundId>,
     opened: bool,
     master: Option<f32>,
+    reached: Option<u64>,
 }
 
 #[derive(Resource, Default)]
@@ -148,6 +150,7 @@ impl Brick for SoundBrick {
 
 fn prepare(
     tables: Query<Ref<SoundTable>>,
+    numbers: Res<Numbers>,
     volume: Res<Volume>,
     mut bank: ResMut<Bank>,
     mut sounds: ResMut<Sounds>,
@@ -162,6 +165,7 @@ fn prepare(
             None => {}
         }
     }
+    reach(&mut bank, &numbers);
     let Some(table) = bank.table.as_ref() else {
         return;
     };
@@ -170,6 +174,23 @@ fn prepare(
     if bank.master != Some(master) {
         sounds.master(master, glide);
         bank.master = Some(master);
+    }
+}
+
+fn reach(bank: &mut Bank, numbers: &Numbers) {
+    let revision = numbers.revision();
+    let (Some(table), Some(parsed)) = (bank.table.as_mut(), numbers.get()) else {
+        return;
+    };
+    if bank.reached == Some(revision) {
+        return;
+    }
+    bank.reached = Some(revision);
+    let reached = serde_json::from_str::<serde_json::Value>(&parsed.text)
+        .map_err(|error| error.to_string())
+        .and_then(|whole| Arc::make_mut(table).reach(&whole));
+    if let Err(error) = reached {
+        bank.refusal = Some(error);
     }
 }
 
@@ -189,6 +210,7 @@ fn adopt(bank: &mut Bank, table: Arc<Table>, sounds: &mut Sounds) {
     }
     bank.table = Some(table);
     bank.refusal = None;
+    bank.reached = None;
 }
 
 fn ticks_per_second(time: &FixedTime) -> Option<u32> {
@@ -625,7 +647,8 @@ fn start(
     let at = place.at(cue.anchor, place.listener.eye);
     let occlusion = if own { 1.0 } else { place.occlusion(curve, at) };
     let (attenuation, pan) = place.shape(curve, own, cue.anchor, at);
-    let base = sound.gain * cue.gain * if own { sound.own_gain } else { 1.0 };
+    let level = 10.0_f32.powf(rng.signed() * sound.gain_jitter_db / 20.0);
+    let base = sound.gain * level * cue.gain * if own { sound.own_gain } else { 1.0 };
     let gain = base * place.group(sound.group) * attenuation * occlusion;
     if gain < table.audible_gain {
         mixdown.inaudible += 1;

@@ -277,15 +277,6 @@ impl Sheet<'_> {
                         normal,
                         facing,
                     },
-                    PropPose::Wall {
-                        base,
-                        axes,
-                        half_extents,
-                    } => PropPlace::Wall {
-                        base,
-                        axes,
-                        half_extents,
-                    },
                     PropPose::Wire {
                         a,
                         b,
@@ -443,7 +434,6 @@ pub(super) fn prop_stats(props: &[PropShown]) -> Vec<PropStat> {
                     centre, resting, ..
                 } => (if resting { "resting" } else { "thrown" }, centre),
                 PropPlace::Placed { contact, .. } => ("placed", contact),
-                PropPlace::Wall { base, .. } => ("wall", base),
                 PropPlace::Wire { a, .. } => ("wire", a),
                 PropPlace::Drop { target, .. } => ("drop", target),
             };

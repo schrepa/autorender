@@ -23,14 +23,20 @@ let layer: Layer = "loading";
 
 function show(next: Layer) {
   if (layer === "gpu" || layer === next) return;
+  const fading = layer === "loading" && next === "playing";
   layer = next;
-  for (const [name, element] of Object.entries(layers)) element.hidden = name !== next;
+  for (const [name, element] of Object.entries(layers)) {
+    if (!(fading && name === "loading")) element.hidden = name !== next;
+  }
+  if (!fading) return;
+  layers.loading.classList.add("gone");
+  setTimeout(() => { if (layer === "playing") layers.loading.hidden = true; }, 320);
 }
 
 function progress(title: string, done: number, total: number, text: string) {
   stage.textContent = title;
-  track.hidden = total <= 0;
-  bar.style.width = `${total > 0 ? Math.min(100, (done / total) * 100) : 0}%`;
+  track.toggleAttribute("data-unknown", total <= 0);
+  bar.style.setProperty("--done", String(total > 0 ? Math.min(1, done / total) : 0));
   detail.textContent = text;
 }
 

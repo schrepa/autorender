@@ -169,7 +169,7 @@ fn ring(distance: f32, at: f32, width: f32) -> f32 {
     return 1.0 - smoothstep(0.0, max(width, 1.0e-3), abs(distance - at));
 }
 
-fn marked(item: EffectItem, local: vec3<f32>, seen: Seen) -> f32 {
+fn marked(item: EffectItem, local: vec3<f32>, seen: Seen, grain: f32) -> f32 {
     let kind = u32(item.p3.x);
     let radius = item.p0.w;
     let rim = item.p3.w;
@@ -203,19 +203,28 @@ fn marked(item: EffectItem, local: vec3<f32>, seen: Seen) -> f32 {
         }
         return fill * item.p6.y * (1.0 - smoothstep(ragged * 0.5, ragged, spot));
     }
+    if kind == 8u {
+        let outside = max(abs(local.xz) - (item.p1.xz - vec2<f32>(rim)), vec2<f32>(0.0));
+        let spread = 1.0 - saturate(length(outside) / max(rim, 1.0e-3));
+        return fill * spread * spread * (1.0 - abs(local.y) / item.p1.y);
+    }
     let across = length(local.xz);
-    if across > radius {
+    let line = max(rim, min(grain * 1.5, rim * 3.0));
+    let inner = 1.0 - smoothstep(radius - rim, radius, across);
+    if across > radius + line {
         return 0.0;
     }
     if kind == 1u {
-        let wave = 0.5 + 0.5 * sin((across - effect_seconds() * item.p5.w) / max(item.p4.w, 1.0e-3) * EFFECT_TAU);
-        let edge = smoothstep(radius - rim, radius, across) * zone_dashes(local.xz);
-        return max(fill * (0.8 + 0.2 * wave), edge);
+        let period = max(item.p4.w, 1.0e-3);
+        let wave = 0.5 + 0.5 * sin((across - effect_seconds() * item.p5.w) / period * EFFECT_TAU);
+        let steady = mix(wave, 0.5, smoothstep(0.12, 0.3, grain / period));
+        let edge = ring(across, radius - rim * 0.5, line) * zone_dashes(local.xz);
+        return max(fill * (0.8 + 0.2 * steady) * inner, edge);
     }
     if kind == 2u {
-        let closing = ring(across, radius * (1.0 - progress), rim);
-        let edge = ring(across, radius - rim * 0.5, rim) * zone_dashes(local.xz);
-        return max(max(edge, closing), fill * (0.7 + 0.3 * progress));
+        let closing = ring(across, radius * (1.0 - progress), line);
+        let edge = ring(across, radius - rim * 0.5, line) * zone_dashes(local.xz);
+        return max(max(edge, closing), fill * (0.7 + 0.3 * progress) * inner);
     }
     let front = radius * progress;
     let inside = select(0.0, fill, across <= front);
@@ -225,10 +234,11 @@ fn marked(item: EffectItem, local: vec3<f32>, seen: Seen) -> f32 {
 @fragment fn fs_marks(corner: VolumeCorner) -> @location(0) vec4<f32> {
     let item = effect_items[corner.index];
     let seen = seen_from(corner, corner.clip.xy);
+    let point = seen.eye + seen.toward * seen.scene;
+    let grain = max(length(fwidth(point)), 1.0e-4);
     if !far_face(item, seen) {
         discard;
     }
-    let point = seen.eye + seen.toward * seen.scene;
     let local = (point - item.p0.xyz) * effect_axes(item);
     let kind = u32(item.p3.x);
     var wall = 0.0;
@@ -237,7 +247,7 @@ fn marked(item: EffectItem, local: vec3<f32>, seen: Seen) -> f32 {
     } else if kind == 3u {
         wall = wall_glow(item, seen, max(item.p0.w * item.p6.x, 1.0e-3), false) * (1.0 - item.p6.x);
     }
-    let alpha = saturate(max(marked(item, local, seen), wall));
+    let alpha = saturate(max(marked(item, local, seen, grain), wall));
     if alpha <= 0.0 {
         discard;
     }

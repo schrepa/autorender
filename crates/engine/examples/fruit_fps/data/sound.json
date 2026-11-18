@@ -73,9 +73,9 @@
   "step": {
    "flat": false,
    "near_m": 1.0,
-   "far_m": 25.0,
+   "far_from": "/player/footstep_heard_m",
    "floor": 0.0,
-   "power": 2.0,
+   "power": 0.8,
    "occluded": 0.35
   },
   "near": {
@@ -140,7 +140,7 @@
    "files": [
     {
      "file": "assets/sfx/airstrike_impact.ogg",
-     "seconds": 1.419375
+     "seconds": 1.427708
     }
    ],
    "loops": false,
@@ -149,13 +149,14 @@
    "priority": 100,
    "curve": "blast",
    "own_gain": 1.0,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "airstrike_whistle": {
    "files": [
     {
      "file": "assets/sfx/airstrike_whistle.ogg",
-     "seconds": 2.205333
+     "seconds": 2.213667
     }
    ],
    "loops": false,
@@ -164,13 +165,14 @@
    "priority": 70,
    "curve": "ability",
    "own_gain": 0.9,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "armor_break_dealt": {
    "files": [
     {
      "file": "assets/sfx/armor_break_dealt.ogg",
-     "seconds": 0.261437
+     "seconds": 0.269771
     }
    ],
    "loops": false,
@@ -185,7 +187,7 @@
    "files": [
     {
      "file": "assets/sfx/armor_break_taken.ogg",
-     "seconds": 0.305875
+     "seconds": 0.314208
     }
    ],
    "loops": false,
@@ -200,7 +202,7 @@
    "files": [
     {
      "file": "assets/sfx/barrier_drop.ogg",
-     "seconds": 1.115417
+     "seconds": 1.12375
     }
    ],
    "loops": false,
@@ -230,7 +232,7 @@
    "files": [
     {
      "file": "assets/sfx/bounce.ogg",
-     "seconds": 0.148792
+     "seconds": 0.157125
     }
    ],
    "loops": false,
@@ -239,13 +241,14 @@
    "priority": 50,
    "curve": "near",
    "own_gain": 0.9,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "bounce_body": {
    "files": [
     {
      "file": "assets/sfx/bounce_body.ogg",
-     "seconds": 0.136375
+     "seconds": 0.144708
     }
    ],
    "loops": false,
@@ -260,7 +263,7 @@
    "files": [
     {
      "file": "assets/sfx/break_large.ogg",
-     "seconds": 1.178958
+     "seconds": 1.187292
     }
    ],
    "loops": false,
@@ -275,7 +278,7 @@
    "files": [
     {
      "file": "assets/sfx/break_small.ogg",
-     "seconds": 0.320458
+     "seconds": 0.328792
     }
    ],
    "loops": false,
@@ -290,7 +293,7 @@
    "files": [
     {
      "file": "assets/sfx/buff_on.ogg",
-     "seconds": 0.625917
+     "seconds": 0.63425
     }
    ],
    "loops": false,
@@ -299,13 +302,14 @@
    "priority": 70,
    "curve": "ability",
    "own_gain": 0.9,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "countdown_tick": {
    "files": [
     {
      "file": "assets/sfx/countdown_tick.ogg",
-     "seconds": 0.102625
+     "seconds": 0.110958
     }
    ],
    "loops": false,
@@ -314,13 +318,14 @@
    "priority": 100,
    "curve": "flat",
    "own_gain": 1.0,
-   "group": "interface"
+   "group": "interface",
+   "gain_jitter_db": 0.0
   },
   "dash": {
    "files": [
     {
      "file": "assets/sfx/dash.ogg",
-     "seconds": 0.341875
+     "seconds": 0.345333
     }
    ],
    "loops": false,
@@ -329,13 +334,14 @@
    "priority": 70,
    "curve": "ability",
    "own_gain": 0.9,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "device_beep": {
    "files": [
     {
      "file": "assets/sfx/device_beep.ogg",
-     "seconds": 0.092021
+     "seconds": 0.136271
     }
    ],
    "loops": false,
@@ -344,13 +350,14 @@
    "priority": 80,
    "curve": "device",
    "own_gain": 1.0,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "device_defuse_tick": {
    "files": [
     {
      "file": "assets/sfx/device_defuse_tick.ogg",
-     "seconds": 0.061687
+     "seconds": 0.070062
     }
    ],
    "loops": false,
@@ -359,13 +366,14 @@
    "priority": 60,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "device_defused": {
    "files": [
     {
      "file": "assets/sfx/device_defused.ogg",
-     "seconds": 0.850333
+     "seconds": 0.858667
     }
    ],
    "loops": false,
@@ -374,13 +382,14 @@
    "priority": 85,
    "curve": "loud",
    "own_gain": 1.0,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "device_explode": {
    "files": [
     {
      "file": "assets/sfx/device_explode.ogg",
-     "seconds": 2.652854
+     "seconds": 2.661188
     }
    ],
    "loops": false,
@@ -389,13 +398,14 @@
    "priority": 100,
    "curve": "blast",
    "own_gain": 1.0,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "device_plant_tick": {
    "files": [
     {
      "file": "assets/sfx/device_plant_tick.ogg",
-     "seconds": 0.04875
+     "seconds": 0.076667
     }
    ],
    "loops": false,
@@ -404,13 +414,14 @@
    "priority": 60,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "device_planted": {
    "files": [
     {
      "file": "assets/sfx/device_planted.ogg",
-     "seconds": 0.788
+     "seconds": 0.807562
     }
    ],
    "loops": false,
@@ -419,13 +430,14 @@
    "priority": 85,
    "curve": "loud",
    "own_gain": 1.0,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "flash_pop": {
    "files": [
     {
      "file": "assets/sfx/flash_pop.ogg",
-     "seconds": 0.429854
+     "seconds": 0.438188
     }
    ],
    "loops": false,
@@ -434,7 +446,8 @@
    "priority": 85,
    "curve": "loud",
    "own_gain": 1.0,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "flash_ring": {
    "files": [
@@ -449,17 +462,18 @@
    "priority": 65,
    "curve": "ability",
    "own_gain": 0.9,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "gun_drop_hard": {
    "files": [
     {
      "file": "assets/sfx/gun_drop_hard_1.ogg",
-     "seconds": 0.390688
+     "seconds": 0.399021
     },
     {
      "file": "assets/sfx/gun_drop_hard_2.ogg",
-     "seconds": 0.344542
+     "seconds": 0.352875
     }
    ],
    "loops": false,
@@ -474,11 +488,11 @@
    "files": [
     {
      "file": "assets/sfx/gun_drop_metal_1.ogg",
-     "seconds": 0.498104
+     "seconds": 0.506437
     },
     {
      "file": "assets/sfx/gun_drop_metal_2.ogg",
-     "seconds": 0.493125
+     "seconds": 0.501458
     }
    ],
    "loops": false,
@@ -493,11 +507,11 @@
    "files": [
     {
      "file": "assets/sfx/gun_drop_soft_1.ogg",
-     "seconds": 0.244583
+     "seconds": 0.252917
     },
     {
      "file": "assets/sfx/gun_drop_soft_2.ogg",
-     "seconds": 0.209875
+     "seconds": 0.218208
     }
    ],
    "loops": false,
@@ -512,7 +526,7 @@
    "files": [
     {
      "file": "assets/sfx/gun_drop_water.ogg",
-     "seconds": 0.427708
+     "seconds": 0.436042
     }
    ],
    "loops": false,
@@ -527,11 +541,11 @@
    "files": [
     {
      "file": "assets/sfx/gun_drop_wood_1.ogg",
-     "seconds": 0.325729
+     "seconds": 0.334062
     },
     {
      "file": "assets/sfx/gun_drop_wood_2.ogg",
-     "seconds": 0.382042
+     "seconds": 0.390375
     }
    ],
    "loops": false,
@@ -555,13 +569,14 @@
    "priority": 65,
    "curve": "ability",
    "own_gain": 0.9,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "heal_start": {
    "files": [
     {
      "file": "assets/sfx/heal_start.ogg",
-     "seconds": 1.117646
+     "seconds": 1.125979
     }
    ],
    "loops": false,
@@ -570,21 +585,22 @@
    "priority": 70,
    "curve": "ability",
    "own_gain": 0.9,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "hit_body": {
    "files": [
     {
      "file": "assets/sfx/hit_body_1.ogg",
-     "seconds": 0.116687
+     "seconds": 0.125021
     },
     {
      "file": "assets/sfx/hit_body_2.ogg",
-     "seconds": 0.123729
+     "seconds": 0.132062
     },
     {
      "file": "assets/sfx/hit_body_3.ogg",
-     "seconds": 0.111687
+     "seconds": 0.120021
     }
    ],
    "loops": false,
@@ -593,17 +609,18 @@
    "priority": 75,
    "curve": "near",
    "own_gain": 1.0,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "hit_head": {
    "files": [
     {
      "file": "assets/sfx/hit_head_1.ogg",
-     "seconds": 0.237
+     "seconds": 0.245333
     },
     {
      "file": "assets/sfx/hit_head_2.ogg",
-     "seconds": 0.227229
+     "seconds": 0.235563
     }
    ],
    "loops": false,
@@ -612,21 +629,22 @@
    "priority": 80,
    "curve": "near",
    "own_gain": 1.0,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "impact_dirt": {
    "files": [
     {
      "file": "assets/sfx/impact_dirt_1.ogg",
-     "seconds": 0.224917
+     "seconds": 0.23325
     },
     {
      "file": "assets/sfx/impact_dirt_2.ogg",
-     "seconds": 0.225917
+     "seconds": 0.23425
     },
     {
      "file": "assets/sfx/impact_dirt_3.ogg",
-     "seconds": 0.242479
+     "seconds": 0.250812
     }
    ],
    "loops": false,
@@ -635,21 +653,22 @@
    "priority": 50,
    "curve": "impact",
    "own_gain": 1.0,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 1.0
   },
   "impact_glass": {
    "files": [
     {
      "file": "assets/sfx/impact_glass_1.ogg",
-     "seconds": 0.299167
+     "seconds": 0.3075
     },
     {
      "file": "assets/sfx/impact_glass_2.ogg",
-     "seconds": 0.304063
+     "seconds": 0.312396
     },
     {
      "file": "assets/sfx/impact_glass_3.ogg",
-     "seconds": 0.310979
+     "seconds": 0.319312
     }
    ],
    "loops": false,
@@ -658,21 +677,22 @@
    "priority": 50,
    "curve": "impact",
    "own_gain": 1.0,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 1.0
   },
   "impact_metal": {
    "files": [
     {
      "file": "assets/sfx/impact_metal_1.ogg",
-     "seconds": 0.619125
+     "seconds": 0.627458
     },
     {
      "file": "assets/sfx/impact_metal_2.ogg",
-     "seconds": 0.572708
+     "seconds": 0.581042
     },
     {
      "file": "assets/sfx/impact_metal_3.ogg",
-     "seconds": 0.621083
+     "seconds": 0.629417
     }
    ],
    "loops": false,
@@ -681,21 +701,22 @@
    "priority": 50,
    "curve": "impact",
    "own_gain": 1.0,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 1.0
   },
   "impact_plaster": {
    "files": [
     {
      "file": "assets/sfx/impact_plaster_1.ogg",
-     "seconds": 0.327083
+     "seconds": 0.335417
     },
     {
      "file": "assets/sfx/impact_plaster_2.ogg",
-     "seconds": 0.335792
+     "seconds": 0.344125
     },
     {
      "file": "assets/sfx/impact_plaster_3.ogg",
-     "seconds": 0.312688
+     "seconds": 0.321021
     }
    ],
    "loops": false,
@@ -704,21 +725,22 @@
    "priority": 50,
    "curve": "impact",
    "own_gain": 1.0,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 1.0
   },
   "impact_stone": {
    "files": [
     {
      "file": "assets/sfx/impact_stone_1.ogg",
-     "seconds": 0.33325
+     "seconds": 0.341583
     },
     {
      "file": "assets/sfx/impact_stone_2.ogg",
-     "seconds": 0.318167
+     "seconds": 0.3265
     },
     {
      "file": "assets/sfx/impact_stone_3.ogg",
-     "seconds": 0.282125
+     "seconds": 0.290458
     }
    ],
    "loops": false,
@@ -727,21 +749,22 @@
    "priority": 50,
    "curve": "impact",
    "own_gain": 1.0,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 1.0
   },
   "impact_wood": {
    "files": [
     {
      "file": "assets/sfx/impact_wood_1.ogg",
-     "seconds": 0.221333
+     "seconds": 0.229667
     },
     {
      "file": "assets/sfx/impact_wood_2.ogg",
-     "seconds": 0.224167
+     "seconds": 0.2325
     },
     {
      "file": "assets/sfx/impact_wood_3.ogg",
-     "seconds": 0.201292
+     "seconds": 0.209625
     }
    ],
    "loops": false,
@@ -750,13 +773,22 @@
    "priority": 50,
    "curve": "impact",
    "own_gain": 1.0,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 1.0
   },
   "jump": {
    "files": [
     {
      "file": "assets/sfx/jump.ogg",
-     "seconds": 0.226208
+     "seconds": 0.234542
+    },
+    {
+     "file": "assets/sfx/jump_2.ogg",
+     "seconds": 0.241437
+    },
+    {
+     "file": "assets/sfx/jump_3.ogg",
+     "seconds": 0.22775
     }
    ],
    "loops": false,
@@ -765,13 +797,29 @@
    "priority": 45,
    "curve": "step",
    "own_gain": 0.5,
-   "group": "footsteps"
+   "group": "footsteps",
+   "gain_jitter_db": 1.0
+  },
+  "kill_confirm": {
+   "files": [
+    {
+     "file": "assets/sfx/kill_confirm.ogg",
+     "seconds": 0.614313
+    }
+   ],
+   "loops": false,
+   "gain": 0.6,
+   "jitter": 0.0,
+   "priority": 95,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
   },
   "kill_confirm_1": {
    "files": [
     {
      "file": "assets/sfx/kill_confirm_1.ogg",
-     "seconds": 0.256604
+     "seconds": 0.264937
     }
    ],
    "loops": false,
@@ -786,7 +834,7 @@
    "files": [
     {
      "file": "assets/sfx/kill_confirm_2.ogg",
-     "seconds": 0.2895
+     "seconds": 0.297833
     }
    ],
    "loops": false,
@@ -801,7 +849,7 @@
    "files": [
     {
      "file": "assets/sfx/kill_confirm_3.ogg",
-     "seconds": 0.327604
+     "seconds": 0.335938
     }
    ],
    "loops": false,
@@ -816,7 +864,7 @@
    "files": [
     {
      "file": "assets/sfx/kill_confirm_4.ogg",
-     "seconds": 0.359521
+     "seconds": 0.367854
     }
    ],
    "loops": false,
@@ -831,7 +879,7 @@
    "files": [
     {
      "file": "assets/sfx/kill_confirm_5.ogg",
-     "seconds": 0.399604
+     "seconds": 0.407938
     }
    ],
    "loops": false,
@@ -846,7 +894,15 @@
    "files": [
     {
      "file": "assets/sfx/land_hard.ogg",
-     "seconds": 0.311479
+     "seconds": 0.319812
+    },
+    {
+     "file": "assets/sfx/land_hard_2.ogg",
+     "seconds": 0.320271
+    },
+    {
+     "file": "assets/sfx/land_hard_3.ogg",
+     "seconds": 0.311063
     }
    ],
    "loops": false,
@@ -855,13 +911,14 @@
    "priority": 45,
    "curve": "step",
    "own_gain": 0.5,
-   "group": "footsteps"
+   "group": "footsteps",
+   "gain_jitter_db": 1.0
   },
   "land_hard_dirt": {
    "files": [
     {
      "file": "assets/sfx/land_hard_dirt.ogg",
-     "seconds": 0.303125
+     "seconds": 0.311458
     }
    ],
    "loops": false,
@@ -870,13 +927,14 @@
    "priority": 45,
    "curve": "step",
    "own_gain": 0.5,
-   "group": "footsteps"
+   "group": "footsteps",
+   "gain_jitter_db": 1.0
   },
   "land_hard_metal": {
    "files": [
     {
      "file": "assets/sfx/land_hard_metal.ogg",
-     "seconds": 0.303938
+     "seconds": 0.312271
     }
    ],
    "loops": false,
@@ -885,13 +943,14 @@
    "priority": 45,
    "curve": "step",
    "own_gain": 0.5,
-   "group": "footsteps"
+   "group": "footsteps",
+   "gain_jitter_db": 1.0
   },
   "land_hard_wood": {
    "files": [
     {
      "file": "assets/sfx/land_hard_wood.ogg",
-     "seconds": 0.302667
+     "seconds": 0.311
     }
    ],
    "loops": false,
@@ -900,13 +959,22 @@
    "priority": 45,
    "curve": "step",
    "own_gain": 0.5,
-   "group": "footsteps"
+   "group": "footsteps",
+   "gain_jitter_db": 1.0
   },
   "land_soft": {
    "files": [
     {
      "file": "assets/sfx/land_soft.ogg",
-     "seconds": 0.201437
+     "seconds": 0.209771
+    },
+    {
+     "file": "assets/sfx/land_soft_2.ogg",
+     "seconds": 0.228292
+    },
+    {
+     "file": "assets/sfx/land_soft_3.ogg",
+     "seconds": 0.206208
     }
    ],
    "loops": false,
@@ -915,13 +983,14 @@
    "priority": 45,
    "curve": "step",
    "own_gain": 0.5,
-   "group": "footsteps"
+   "group": "footsteps",
+   "gain_jitter_db": 1.0
   },
   "land_soft_dirt": {
    "files": [
     {
      "file": "assets/sfx/land_soft_dirt.ogg",
-     "seconds": 0.204604
+     "seconds": 0.212938
     }
    ],
    "loops": false,
@@ -930,13 +999,14 @@
    "priority": 45,
    "curve": "step",
    "own_gain": 0.5,
-   "group": "footsteps"
+   "group": "footsteps",
+   "gain_jitter_db": 1.0
   },
   "land_soft_metal": {
    "files": [
     {
      "file": "assets/sfx/land_soft_metal.ogg",
-     "seconds": 0.229437
+     "seconds": 0.237771
     }
    ],
    "loops": false,
@@ -945,13 +1015,14 @@
    "priority": 45,
    "curve": "step",
    "own_gain": 0.5,
-   "group": "footsteps"
+   "group": "footsteps",
+   "gain_jitter_db": 1.0
   },
   "land_soft_wood": {
    "files": [
     {
      "file": "assets/sfx/land_soft_wood.ogg",
-     "seconds": 0.216771
+     "seconds": 0.225104
     }
    ],
    "loops": false,
@@ -960,13 +1031,14 @@
    "priority": 45,
    "curve": "step",
    "own_gain": 0.5,
-   "group": "footsteps"
+   "group": "footsteps",
+   "gain_jitter_db": 1.0
   },
   "match_loss": {
    "files": [
     {
      "file": "assets/sfx/match_loss.ogg",
-     "seconds": 3.465063
+     "seconds": 3.473396
     }
    ],
    "loops": false,
@@ -975,13 +1047,14 @@
    "priority": 100,
    "curve": "flat",
    "own_gain": 1.0,
-   "group": "interface"
+   "group": "interface",
+   "gain_jitter_db": 0.0
   },
   "match_win": {
    "files": [
     {
      "file": "assets/sfx/match_win.ogg",
-     "seconds": 3.10775
+     "seconds": 3.116083
     }
    ],
    "loops": false,
@@ -990,17 +1063,18 @@
    "priority": 100,
    "curve": "flat",
    "own_gain": 1.0,
-   "group": "interface"
+   "group": "interface",
+   "gain_jitter_db": 0.0
   },
   "melee_heavy_hit": {
    "files": [
     {
      "file": "assets/sfx/melee_heavy_hit_1.ogg",
-     "seconds": 0.3575
+     "seconds": 0.365833
     },
     {
      "file": "assets/sfx/melee_heavy_hit_2.ogg",
-     "seconds": 0.384417
+     "seconds": 0.39275
     }
    ],
    "loops": false,
@@ -1015,11 +1089,11 @@
    "files": [
     {
      "file": "assets/sfx/melee_heavy_swing_1.ogg",
-     "seconds": 0.446625
+     "seconds": 0.441437
     },
     {
      "file": "assets/sfx/melee_heavy_swing_2.ogg",
-     "seconds": 0.433208
+     "seconds": 0.428604
     }
    ],
    "loops": false,
@@ -1034,7 +1108,7 @@
    "files": [
     {
      "file": "assets/sfx/melee_hit.ogg",
-     "seconds": 0.248229
+     "seconds": 0.256563
     }
    ],
    "loops": false,
@@ -1043,17 +1117,18 @@
    "priority": 60,
    "curve": "near",
    "own_gain": 0.9,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "melee_swing": {
    "files": [
     {
      "file": "assets/sfx/melee_swing_1.ogg",
-     "seconds": 0.321583
+     "seconds": 0.316542
     },
     {
      "file": "assets/sfx/melee_swing_2.ogg",
-     "seconds": 0.248792
+     "seconds": 0.250646
     }
    ],
    "loops": false,
@@ -1062,13 +1137,14 @@
    "priority": 60,
    "curve": "near",
    "own_gain": 0.9,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "reveal_ping": {
    "files": [
     {
      "file": "assets/sfx/reveal_ping.ogg",
-     "seconds": 1.491521
+     "seconds": 1.499854
     }
    ],
    "loops": false,
@@ -1077,7 +1153,8 @@
    "priority": 70,
    "curve": "ability",
    "own_gain": 0.9,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "reveal_warning": {
    "files": [
@@ -1098,7 +1175,7 @@
    "files": [
     {
      "file": "assets/sfx/rifle_bolt.ogg",
-     "seconds": 0.296604
+     "seconds": 0.302312
     }
    ],
    "loops": false,
@@ -1107,13 +1184,14 @@
    "priority": 40,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "rifle_dry": {
    "files": [
     {
      "file": "assets/sfx/rifle_dry.ogg",
-     "seconds": 0.041396
+     "seconds": 0.04975
     }
    ],
    "loops": false,
@@ -1122,13 +1200,14 @@
    "priority": 30,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "rifle_equip": {
    "files": [
     {
      "file": "assets/sfx/rifle_equip.ogg",
-     "seconds": 0.267542
+     "seconds": 0.270313
     }
    ],
    "loops": false,
@@ -1137,21 +1216,22 @@
    "priority": 40,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "rifle_fire": {
    "files": [
     {
      "file": "assets/sfx/rifle_fire_1.ogg",
-     "seconds": 0.635583
+     "seconds": 0.643917
     },
     {
      "file": "assets/sfx/rifle_fire_2.ogg",
-     "seconds": 0.703646
+     "seconds": 0.711979
     },
     {
      "file": "assets/sfx/rifle_fire_3.ogg",
-     "seconds": 0.656625
+     "seconds": 0.664958
     }
    ],
    "loops": false,
@@ -1160,13 +1240,14 @@
    "priority": 90,
    "curve": "shot",
    "own_gain": 1.0,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 1.0
   },
   "rifle_mag_in": {
    "files": [
     {
      "file": "assets/sfx/rifle_mag_in.ogg",
-     "seconds": 0.171667
+     "seconds": 0.178604
     }
    ],
    "loops": false,
@@ -1175,13 +1256,14 @@
    "priority": 40,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "rifle_mag_out": {
    "files": [
     {
      "file": "assets/sfx/rifle_mag_out.ogg",
-     "seconds": 0.160708
+     "seconds": 0.167458
     }
    ],
    "loops": false,
@@ -1190,13 +1272,14 @@
    "priority": 40,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "round_loss": {
    "files": [
     {
      "file": "assets/sfx/round_loss.ogg",
-     "seconds": 1.837771
+     "seconds": 1.846104
     }
    ],
    "loops": false,
@@ -1205,13 +1288,14 @@
    "priority": 100,
    "curve": "flat",
    "own_gain": 1.0,
-   "group": "interface"
+   "group": "interface",
+   "gain_jitter_db": 0.0
   },
   "round_start": {
    "files": [
     {
      "file": "assets/sfx/round_start.ogg",
-     "seconds": 1.842688
+     "seconds": 1.851021
     }
    ],
    "loops": false,
@@ -1220,13 +1304,14 @@
    "priority": 100,
    "curve": "flat",
    "own_gain": 1.0,
-   "group": "interface"
+   "group": "interface",
+   "gain_jitter_db": 0.0
   },
   "round_win": {
    "files": [
     {
      "file": "assets/sfx/round_win.ogg",
-     "seconds": 1.783542
+     "seconds": 1.791875
     }
    ],
    "loops": false,
@@ -1235,13 +1320,14 @@
    "priority": 100,
    "curve": "flat",
    "own_gain": 1.0,
-   "group": "interface"
+   "group": "interface",
+   "gain_jitter_db": 0.0
   },
   "scope_in_sniper": {
    "files": [
     {
      "file": "assets/sfx/scope_in_sniper.ogg",
-     "seconds": 0.204875
+     "seconds": 0.214479
     }
    ],
    "loops": false,
@@ -1256,7 +1342,7 @@
    "files": [
     {
      "file": "assets/sfx/scope_out_sniper.ogg",
-     "seconds": 0.151104
+     "seconds": 0.159438
     }
    ],
    "loops": false,
@@ -1271,7 +1357,7 @@
    "files": [
     {
      "file": "assets/sfx/sidearm_bolt.ogg",
-     "seconds": 0.206021
+     "seconds": 0.213458
     }
    ],
    "loops": false,
@@ -1280,13 +1366,14 @@
    "priority": 40,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "sidearm_dry": {
    "files": [
     {
      "file": "assets/sfx/sidearm_dry.ogg",
-     "seconds": 0.047
+     "seconds": 0.055354
     }
    ],
    "loops": false,
@@ -1295,13 +1382,14 @@
    "priority": 30,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "sidearm_equip": {
    "files": [
     {
      "file": "assets/sfx/sidearm_equip.ogg",
-     "seconds": 0.227542
+     "seconds": 0.230083
     }
    ],
    "loops": false,
@@ -1310,21 +1398,22 @@
    "priority": 40,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "sidearm_fire": {
    "files": [
     {
      "file": "assets/sfx/sidearm_fire_1.ogg",
-     "seconds": 0.394229
+     "seconds": 0.402562
     },
     {
      "file": "assets/sfx/sidearm_fire_2.ogg",
-     "seconds": 0.412354
+     "seconds": 0.420687
     },
     {
      "file": "assets/sfx/sidearm_fire_3.ogg",
-     "seconds": 0.357354
+     "seconds": 0.365687
     }
    ],
    "loops": false,
@@ -1333,42 +1422,13 @@
    "priority": 90,
    "curve": "shot",
    "own_gain": 1.0,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 1.0
   },
   "sidearm_mag_in": {
    "files": [
     {
      "file": "assets/sfx/sidearm_mag_in.ogg",
-     "seconds": 0.144375
-    }
-   ],
-   "loops": false,
-   "gain": 1.0,
-   "jitter": 0.02,
-   "priority": 40,
-   "curve": "near",
-   "own_gain": 0.8,
-   "group": "effects"
-  },
-  "sidearm_mag_out": {
-   "files": [
-    {
-     "file": "assets/sfx/sidearm_mag_out.ogg",
-     "seconds": 0.130042
-    }
-   ],
-   "loops": false,
-   "gain": 1.0,
-   "jitter": 0.02,
-   "priority": 40,
-   "curve": "near",
-   "own_gain": 0.8,
-   "group": "effects"
-  },
-  "smg_bolt": {
-   "files": [
-    {
-     "file": "assets/sfx/smg_bolt.ogg",
      "seconds": 0.151354
     }
    ],
@@ -1378,13 +1438,46 @@
    "priority": 40,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
+  },
+  "sidearm_mag_out": {
+   "files": [
+    {
+     "file": "assets/sfx/sidearm_mag_out.ogg",
+     "seconds": 0.13825
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 40,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects",
+   "gain_jitter_db": 0.0
+  },
+  "smg_bolt": {
+   "files": [
+    {
+     "file": "assets/sfx/smg_bolt.ogg",
+     "seconds": 0.160917
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 40,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "smg_dry": {
    "files": [
     {
      "file": "assets/sfx/smg_dry.ogg",
-     "seconds": 0.044312
+     "seconds": 0.052646
     }
    ],
    "loops": false,
@@ -1393,13 +1486,14 @@
    "priority": 30,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "smg_equip": {
    "files": [
     {
      "file": "assets/sfx/smg_equip.ogg",
-     "seconds": 0.24325
+     "seconds": 0.247833
     }
    ],
    "loops": false,
@@ -1408,21 +1502,22 @@
    "priority": 40,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "smg_fire": {
    "files": [
     {
      "file": "assets/sfx/smg_fire_1.ogg",
-     "seconds": 0.154875
+     "seconds": 0.163208
     },
     {
      "file": "assets/sfx/smg_fire_2.ogg",
-     "seconds": 0.154146
+     "seconds": 0.162479
     },
     {
      "file": "assets/sfx/smg_fire_3.ogg",
-     "seconds": 0.144313
+     "seconds": 0.152646
     }
    ],
    "loops": false,
@@ -1431,13 +1526,14 @@
    "priority": 90,
    "curve": "shot",
    "own_gain": 1.0,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 1.0
   },
   "smg_mag_in": {
    "files": [
     {
      "file": "assets/sfx/smg_mag_in.ogg",
-     "seconds": 0.154417
+     "seconds": 0.162188
     }
    ],
    "loops": false,
@@ -1446,13 +1542,14 @@
    "priority": 40,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "smg_mag_out": {
    "files": [
     {
      "file": "assets/sfx/smg_mag_out.ogg",
-     "seconds": 0.141083
+     "seconds": 0.149479
     }
    ],
    "loops": false,
@@ -1461,13 +1558,14 @@
    "priority": 40,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "smoke_hiss": {
    "files": [
     {
      "file": "assets/sfx/smoke_hiss.ogg",
-     "seconds": 2.779479
+     "seconds": 2.787812
     }
    ],
    "loops": false,
@@ -1476,13 +1574,14 @@
    "priority": 70,
    "curve": "ability",
    "own_gain": 0.9,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "sniper_bolt": {
    "files": [
     {
      "file": "assets/sfx/sniper_bolt.ogg",
-     "seconds": 0.646938
+     "seconds": 0.655271
     }
    ],
    "loops": false,
@@ -1491,13 +1590,14 @@
    "priority": 40,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "sniper_dry": {
    "files": [
     {
      "file": "assets/sfx/sniper_dry.ogg",
-     "seconds": 0.042688
+     "seconds": 0.051021
     }
    ],
    "loops": false,
@@ -1506,13 +1606,14 @@
    "priority": 30,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "sniper_equip": {
    "files": [
     {
      "file": "assets/sfx/sniper_equip.ogg",
-     "seconds": 0.307208
+     "seconds": 0.308271
     }
    ],
    "loops": false,
@@ -1521,21 +1622,22 @@
    "priority": 40,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "sniper_fire": {
    "files": [
     {
      "file": "assets/sfx/sniper_fire_1.ogg",
-     "seconds": 1.970875
+     "seconds": 1.979208
     },
     {
      "file": "assets/sfx/sniper_fire_2.ogg",
-     "seconds": 2.041812
+     "seconds": 2.050146
     },
     {
      "file": "assets/sfx/sniper_fire_3.ogg",
-     "seconds": 1.90425
+     "seconds": 1.912583
     }
    ],
    "loops": false,
@@ -1544,13 +1646,14 @@
    "priority": 90,
    "curve": "shot",
    "own_gain": 1.0,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 1.0
   },
   "sniper_mag_in": {
    "files": [
     {
      "file": "assets/sfx/sniper_mag_in.ogg",
-     "seconds": 0.192062
+     "seconds": 0.200104
     }
    ],
    "loops": false,
@@ -1559,13 +1662,14 @@
    "priority": 40,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "sniper_mag_out": {
    "files": [
     {
      "file": "assets/sfx/sniper_mag_out.ogg",
-     "seconds": 0.178604
+     "seconds": 0.186875
     }
    ],
    "loops": false,
@@ -1574,13 +1678,14 @@
    "priority": 40,
    "curve": "near",
    "own_gain": 0.8,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "spike_alert": {
    "files": [
     {
      "file": "assets/sfx/spike_alert.ogg",
-     "seconds": 0.547479
+     "seconds": 0.564042
     }
    ],
    "loops": false,
@@ -1589,25 +1694,26 @@
    "priority": 100,
    "curve": "flat",
    "own_gain": 1.0,
-   "group": "interface"
+   "group": "interface",
+   "gain_jitter_db": 0.0
   },
   "step_dirt": {
    "files": [
     {
      "file": "assets/sfx/step_dirt_1.ogg",
-     "seconds": 0.161458
+     "seconds": 0.169792
     },
     {
      "file": "assets/sfx/step_dirt_2.ogg",
-     "seconds": 0.177167
+     "seconds": 0.1855
     },
     {
      "file": "assets/sfx/step_dirt_3.ogg",
-     "seconds": 0.154188
+     "seconds": 0.162521
     },
     {
      "file": "assets/sfx/step_dirt_4.ogg",
-     "seconds": 0.174
+     "seconds": 0.182333
     }
    ],
    "loops": false,
@@ -1616,25 +1722,26 @@
    "priority": 45,
    "curve": "step",
    "own_gain": 0.45,
-   "group": "footsteps"
+   "group": "footsteps",
+   "gain_jitter_db": 1.0
   },
   "step_grate": {
    "files": [
     {
      "file": "assets/sfx/step_grate_1.ogg",
-     "seconds": 0.262208
+     "seconds": 0.270542
     },
     {
      "file": "assets/sfx/step_grate_2.ogg",
-     "seconds": 0.28925
+     "seconds": 0.297583
     },
     {
      "file": "assets/sfx/step_grate_3.ogg",
-     "seconds": 0.264937
+     "seconds": 0.273271
     },
     {
      "file": "assets/sfx/step_grate_4.ogg",
-     "seconds": 0.275687
+     "seconds": 0.284021
     }
    ],
    "loops": false,
@@ -1643,25 +1750,26 @@
    "priority": 45,
    "curve": "step",
    "own_gain": 0.45,
-   "group": "footsteps"
+   "group": "footsteps",
+   "gain_jitter_db": 1.0
   },
   "step_metal": {
    "files": [
     {
      "file": "assets/sfx/step_metal_1.ogg",
-     "seconds": 0.273333
+     "seconds": 0.281667
     },
     {
      "file": "assets/sfx/step_metal_2.ogg",
-     "seconds": 0.292604
+     "seconds": 0.300938
     },
     {
      "file": "assets/sfx/step_metal_3.ogg",
-     "seconds": 0.260875
+     "seconds": 0.269208
     },
     {
      "file": "assets/sfx/step_metal_4.ogg",
-     "seconds": 0.280896
+     "seconds": 0.289229
     }
    ],
    "loops": false,
@@ -1670,25 +1778,26 @@
    "priority": 45,
    "curve": "step",
    "own_gain": 0.45,
-   "group": "footsteps"
+   "group": "footsteps",
+   "gain_jitter_db": 1.0
   },
   "step_planks": {
    "files": [
     {
      "file": "assets/sfx/step_planks_1.ogg",
-     "seconds": 0.239083
+     "seconds": 0.247417
     },
     {
      "file": "assets/sfx/step_planks_2.ogg",
-     "seconds": 0.246396
+     "seconds": 0.254729
     },
     {
      "file": "assets/sfx/step_planks_3.ogg",
-     "seconds": 0.210042
+     "seconds": 0.218375
     },
     {
      "file": "assets/sfx/step_planks_4.ogg",
-     "seconds": 0.220604
+     "seconds": 0.228937
     }
    ],
    "loops": false,
@@ -1697,25 +1806,26 @@
    "priority": 45,
    "curve": "step",
    "own_gain": 0.45,
-   "group": "footsteps"
+   "group": "footsteps",
+   "gain_jitter_db": 1.0
   },
   "step_stone": {
    "files": [
     {
      "file": "assets/sfx/step_stone_1.ogg",
-     "seconds": 0.178313
+     "seconds": 0.186646
     },
     {
      "file": "assets/sfx/step_stone_2.ogg",
-     "seconds": 0.169479
+     "seconds": 0.177813
     },
     {
      "file": "assets/sfx/step_stone_3.ogg",
-     "seconds": 0.157104
+     "seconds": 0.165437
     },
     {
      "file": "assets/sfx/step_stone_4.ogg",
-     "seconds": 0.171104
+     "seconds": 0.179437
     }
    ],
    "loops": false,
@@ -1724,25 +1834,26 @@
    "priority": 45,
    "curve": "step",
    "own_gain": 0.45,
-   "group": "footsteps"
+   "group": "footsteps",
+   "gain_jitter_db": 1.0
   },
   "step_water": {
    "files": [
     {
      "file": "assets/sfx/step_water_1.ogg",
-     "seconds": 0.287396
+     "seconds": 0.295729
     },
     {
      "file": "assets/sfx/step_water_2.ogg",
-     "seconds": 0.306375
+     "seconds": 0.314708
     },
     {
      "file": "assets/sfx/step_water_3.ogg",
-     "seconds": 0.294104
+     "seconds": 0.302438
     },
     {
      "file": "assets/sfx/step_water_4.ogg",
-     "seconds": 0.281354
+     "seconds": 0.289687
     }
    ],
    "loops": false,
@@ -1751,25 +1862,26 @@
    "priority": 45,
    "curve": "step",
    "own_gain": 0.45,
-   "group": "footsteps"
+   "group": "footsteps",
+   "gain_jitter_db": 1.0
   },
   "step_wood": {
    "files": [
     {
      "file": "assets/sfx/step_wood_1.ogg",
-     "seconds": 0.183021
+     "seconds": 0.191354
     },
     {
      "file": "assets/sfx/step_wood_2.ogg",
-     "seconds": 0.203208
+     "seconds": 0.211542
     },
     {
      "file": "assets/sfx/step_wood_3.ogg",
-     "seconds": 0.189667
+     "seconds": 0.198
     },
     {
      "file": "assets/sfx/step_wood_4.ogg",
-     "seconds": 0.190542
+     "seconds": 0.198875
     }
    ],
    "loops": false,
@@ -1778,13 +1890,14 @@
    "priority": 45,
    "curve": "step",
    "own_gain": 0.45,
-   "group": "footsteps"
+   "group": "footsteps",
+   "gain_jitter_db": 1.0
   },
   "throw": {
    "files": [
     {
      "file": "assets/sfx/throw.ogg",
-     "seconds": 0.225917
+     "seconds": 0.231771
     }
    ],
    "loops": false,
@@ -1793,13 +1906,14 @@
    "priority": 50,
    "curve": "near",
    "own_gain": 0.9,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "trap_arm": {
    "files": [
     {
      "file": "assets/sfx/trap_arm.ogg",
-     "seconds": 0.326896
+     "seconds": 0.3705
     }
    ],
    "loops": false,
@@ -1808,13 +1922,14 @@
    "priority": 70,
    "curve": "ability",
    "own_gain": 0.9,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "trap_trigger": {
    "files": [
     {
      "file": "assets/sfx/trap_trigger.ogg",
-     "seconds": 0.383188
+     "seconds": 0.391521
     }
    ],
    "loops": false,
@@ -1823,13 +1938,14 @@
    "priority": 70,
    "curve": "ability",
    "own_gain": 0.9,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "ui_buy": {
    "files": [
     {
      "file": "assets/sfx/ui_buy.ogg",
-     "seconds": 0.451167
+     "seconds": 0.4595
     }
    ],
    "loops": false,
@@ -1838,13 +1954,14 @@
    "priority": 100,
    "curve": "flat",
    "own_gain": 1.0,
-   "group": "interface"
+   "group": "interface",
+   "gain_jitter_db": 0.0
   },
   "ui_click": {
    "files": [
     {
      "file": "assets/sfx/ui_click.ogg",
-     "seconds": 0.065021
+     "seconds": 0.073354
     }
    ],
    "loops": false,
@@ -1853,13 +1970,14 @@
    "priority": 100,
    "curve": "flat",
    "own_gain": 1.0,
-   "group": "interface"
+   "group": "interface",
+   "gain_jitter_db": 0.0
   },
   "ui_deny": {
    "files": [
     {
      "file": "assets/sfx/ui_deny.ogg",
-     "seconds": 0.190104
+     "seconds": 0.192271
     }
    ],
    "loops": false,
@@ -1868,13 +1986,14 @@
    "priority": 100,
    "curve": "flat",
    "own_gain": 1.0,
-   "group": "interface"
+   "group": "interface",
+   "gain_jitter_db": 0.0
   },
   "ui_hover": {
    "files": [
     {
      "file": "assets/sfx/ui_hover.ogg",
-     "seconds": 0.045333
+     "seconds": 0.053667
     }
    ],
    "loops": false,
@@ -1883,13 +2002,14 @@
    "priority": 100,
    "curve": "flat",
    "own_gain": 1.0,
-   "group": "interface"
+   "group": "interface",
+   "gain_jitter_db": 0.0
   },
   "ui_ready": {
    "files": [
     {
      "file": "assets/sfx/ui_ready.ogg",
-     "seconds": 0.264625
+     "seconds": 0.272958
     }
    ],
    "loops": false,
@@ -1904,7 +2024,7 @@
    "files": [
     {
      "file": "assets/sfx/ult_cast.ogg",
-     "seconds": 1.714604
+     "seconds": 1.689208
     }
    ],
    "loops": false,
@@ -1913,7 +2033,8 @@
    "priority": 70,
    "curve": "ability",
    "own_gain": 0.9,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "ult_orb_loop": {
    "files": [
@@ -1934,7 +2055,7 @@
    "files": [
     {
      "file": "assets/sfx/ult_orb_pickup.ogg",
-     "seconds": 0.840792
+     "seconds": 0.849125
     }
    ],
    "loops": false,
@@ -1949,7 +2070,7 @@
    "files": [
     {
      "file": "assets/sfx/ult_ready.ogg",
-     "seconds": 1.407729
+     "seconds": 1.416063
     }
    ],
    "loops": false,
@@ -1958,13 +2079,14 @@
    "priority": 70,
    "curve": "ability",
    "own_gain": 0.9,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "ult_sting_ally": {
    "files": [
     {
      "file": "assets/sfx/ult_sting_ally.ogg",
-     "seconds": 1.206333
+     "seconds": 1.205417
     }
    ],
    "loops": false,
@@ -1979,7 +2101,7 @@
    "files": [
     {
      "file": "assets/sfx/ult_sting_enemy.ogg",
-     "seconds": 1.198063
+     "seconds": 1.206396
     }
    ],
    "loops": false,
@@ -1994,7 +2116,7 @@
    "files": [
     {
      "file": "assets/sfx/vo_prop_lost.ogg",
-     "seconds": 1.002417
+     "seconds": 1.01075
     }
    ],
    "loops": false,
@@ -2003,13 +2125,13 @@
    "priority": 95,
    "curve": "flat",
    "own_gain": 1.0,
-   "group": "footsteps"
+   "group": "interface"
   },
   "wall_break": {
    "files": [
     {
      "file": "assets/sfx/wall_break.ogg",
-     "seconds": 0.826
+     "seconds": 0.834333
     }
    ],
    "loops": false,
@@ -2018,13 +2140,14 @@
    "priority": 70,
    "curve": "ability",
    "own_gain": 0.9,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "wall_rise": {
    "files": [
     {
      "file": "assets/sfx/wall_rise.ogg",
-     "seconds": 1.450937
+     "seconds": 1.454917
     }
    ],
    "loops": false,
@@ -2033,13 +2156,14 @@
    "priority": 70,
    "curve": "ability",
    "own_gain": 0.9,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "wire_release": {
    "files": [
     {
      "file": "assets/sfx/wire_release.ogg",
-     "seconds": 0.236063
+     "seconds": 0.244396
     }
    ],
    "loops": false,
@@ -2054,7 +2178,7 @@
    "files": [
     {
      "file": "assets/sfx/wire_taut_loop.ogg",
-     "seconds": 1.0
+     "seconds": 2.0
     }
    ],
    "loops": true,
@@ -2069,7 +2193,7 @@
    "files": [
     {
      "file": "assets/sfx/wire_zap.ogg",
-     "seconds": 0.305
+     "seconds": 0.313333
     }
    ],
    "loops": false,
@@ -2093,13 +2217,14 @@
    "priority": 65,
    "curve": "ability",
    "own_gain": 0.9,
-   "group": "effects"
+   "group": "effects",
+   "gain_jitter_db": 0.0
   },
   "zoom_in": {
    "files": [
     {
      "file": "assets/sfx/zoom_in.ogg",
-     "seconds": 0.108792
+     "seconds": 0.116125
     }
    ],
    "loops": false,
@@ -2114,7 +2239,7 @@
    "files": [
     {
      "file": "assets/sfx/zoom_out.ogg",
-     "seconds": 0.091729
+     "seconds": 0.099104
     }
    ],
    "loops": false,
@@ -2179,6 +2304,7 @@
   "impact.water": "impact_stone",
   "impact.wood": "impact_wood",
   "jump": "jump",
+  "kill.confirm": "kill_confirm",
   "kill.confirm.1": "kill_confirm_1",
   "kill.confirm.2": "kill_confirm_2",
   "kill.confirm.3": "kill_confirm_3",

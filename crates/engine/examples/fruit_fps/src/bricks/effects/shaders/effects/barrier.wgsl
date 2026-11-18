@@ -1,5 +1,6 @@
-import package::engine::view::view_clip;
-import package::effects::items::{effect_corner, effect_items, effect_lattice, effect_seconds};
+import package::engine::view::{camera, view_clip};
+import package::effects::items::{EFFECT_TAU, effect_corner, effect_items, effect_lattice, effect_seconds,
+    effects_frame};
 
 struct BarrierCorner {
     @builtin(position) clip: vec4<f32>,
@@ -22,30 +23,51 @@ struct BarrierCorner {
     return out;
 }
 
+fn barrier_hex(point: vec2<f32>) -> vec3<f32> {
+    let spacing = vec2<f32>(1.0, 1.7320508);
+    let middle = spacing * 0.5;
+    let a = point - spacing * floor(point / spacing) - middle;
+    let b = point - middle - spacing * floor((point - middle) / spacing) - middle;
+    let offset = select(b, a, dot(a, a) < dot(b, b));
+    let away = abs(offset);
+    let reach = max(away.x * 0.5 + away.y * 0.8660254, away.x);
+    return vec3<f32>(0.5 - reach, point - offset);
+}
+
 @fragment fn fs_barrier(corner: BarrierCorner) -> @location(0) vec4<f32> {
     let item = effect_items[corner.index];
     let size = vec2<f32>(item.p0.w, item.p1.w);
     let local = corner.local;
     let pattern = item.p5;
     let alphas = item.p6;
+    let shape = item.p7;
+    let look = effects_frame.barrier;
+    let seconds = effect_seconds();
     let drop = item.p2.w;
-    let blur = max(fwidth(local), vec2<f32>(1.0e-4)) * pattern.w;
-    let to_line = abs(fract(local / pattern.x + 0.5) - 0.5) * pattern.x;
-    let lines = 1.0 - smoothstep(vec2<f32>(0.0), blur, to_line);
-    let grid = max(lines.x, lines.y);
-    let phase = (local.x + local.y - effect_seconds() * pattern.z) / pattern.y;
-    let band = smoothstep(0.3, 0.5, abs(fract(phase) - 0.5));
-    let to_edge = min(min(local.x, size.x - local.x), min(local.y, size.y - local.y));
-    let edge = 1.0 - smoothstep(0.0, alphas.w, to_edge);
+    let cell = max(pattern.x, 0.05);
+    let flowing = vec2<f32>(local.x, local.y - seconds * look.z) / cell;
+    let grain = max(length(fwidth(flowing)), 1.0e-4);
+    let hex = barrier_hex(flowing);
+    let width = grain * look.w;
+    let lines = (1.0 - smoothstep(width * 0.5, width * 1.5, hex.x)) * (1.0 - smoothstep(0.12, 0.35, grain));
+    let chance = effect_lattice(vec3<f32>(hex.yz, shape.x));
+    let twinkle = 0.5 + 0.5 * sin(seconds * 0.9 + chance * EFFECT_TAU);
+    let phase = (local.x + local.y * 0.6 - seconds * pattern.z) / max(pattern.y, 0.1);
+    let band = pow(0.5 + 0.5 * cos(phase * EFFECT_TAU), 4.0);
+    let rise = saturate(local.y / max(size.y, 0.01));
+    let fading = 1.0 - smoothstep(shape.z, 1.0, rise);
+    let ground = alphas.z * exp(-local.y / max(alphas.w, 0.01));
+    let side = smoothstep(0.0, max(shape.y, 0.01), min(local.x, size.x - local.x));
     let near = item.p4;
-    let close = select(0.0, 1.0 - smoothstep(0.0, near.w, distance(corner.world, near.xyz)),
-        near.w > 0.0);
-    let chance = effect_lattice(vec3<f32>(floor(local / pattern.x), item.p7.x));
-    let rim = select(0.0, 1.0 - smoothstep(0.0, 0.15, chance - drop), drop > 0.0);
-    let strength = alphas.x + alphas.y * max(grid, band * item.p7.y) + alphas.z * edge;
-    let alpha = saturate(strength * (1.0 + item.p3.w * close) + rim * alphas.z);
+    let close = select(0.0, 1.0 - smoothstep(0.0, near.w, distance(corner.world, near.xyz)), near.w > 0.0);
+    let eye = mix(look.y, 1.0, smoothstep(0.0, max(look.x, 0.01), distance(corner.world, camera.position.xyz)));
+    let cells = alphas.x + alphas.y * lines * (0.55 + 0.45 * twinkle) * (1.0 + pattern.w * band);
+    let glow = alphas.x * pattern.w * band;
+    let strength = ((cells + glow) * fading + ground) * (1.0 + item.p3.w * close);
+    let flare = select(0.0, 1.0 - smoothstep(0.0, 0.15, chance - drop), drop > 0.0);
+    let alpha = saturate((strength + flare * alphas.y) * side * eye);
     if chance < drop || alpha < 0.004 {
         discard;
     }
-    return vec4<f32>(item.p3.rgb * (1.0 + rim) * alpha, alpha);
+    return vec4<f32>(item.p3.rgb * (1.0 + flare) * alpha, alpha);
 }

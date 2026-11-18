@@ -99,11 +99,6 @@ pub enum PropPlace {
         normal: Vec3,
         facing: Vec3,
     },
-    Wall {
-        base: Vec3,
-        axes: Mat3,
-        half_extents: Vec3,
-    },
     Wire {
         a: Vec3,
         b: Vec3,

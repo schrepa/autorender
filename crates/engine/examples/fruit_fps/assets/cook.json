@@ -969,6 +969,28 @@
     },
     {
       "kind": "clip",
+      "name": "lobby",
+      "source": "../../../../../artifacts/game/art/anim/anim_lobby.glb",
+      "root_motion": "Hip",
+      "rig_from": "banana",
+      "clips": {
+        "lobby_idle_banana": "lobby_idle_banana",
+        "lobby_idle_strawberry": "lobby_idle_strawberry",
+        "lobby_idle_orange": "lobby_idle_orange",
+        "lobby_idle_watermelon": "lobby_idle_watermelon",
+        "lobby_idle_eggplant": "lobby_idle_eggplant",
+        "lobby_pick_banana": "lobby_pick_banana",
+        "lobby_pick_strawberry": "lobby_pick_strawberry",
+        "lobby_pick_orange": "lobby_pick_orange",
+        "lobby_pick_watermelon": "lobby_pick_watermelon",
+        "lobby_pick_eggplant": "lobby_pick_eggplant"
+      },
+      "budgets": {
+        "joints": 96
+      }
+    },
+    {
+      "kind": "clip",
       "name": "fp_rifle_inspect",
       "source": "../../../../../artifacts/game/art/anim/anim_fp_rifle.glb",
       "rig_from": "rifle",
@@ -1527,40 +1549,6 @@
     },
     {
       "kind": "static",
-      "name": "prop_rind_wall",
-      "source": "source/prop_rind_wall.glb",
-      "scale": 1.0,
-      "texture_size": 1024,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 400,
-        "vertices": 1000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
-        },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
-      ],
-      "exact_alpha": [
-        "orm"
-      ],
-      "map_stem": "abilities"
-    },
-    {
-      "kind": "static",
       "name": "prop_melon_drop",
       "source": "source/prop_melon_drop.glb",
       "scale": 1.0,
@@ -1640,40 +1628,6 @@
       },
       "budgets": {
         "triangles": 800,
-        "vertices": 1000
-      },
-      "textures": [
-        {
-          "name": "bc",
-          "base_color": "bc7_srgb",
-          "normal": "bc5",
-          "orm": "bc7"
-        },
-        {
-          "name": "rgba8",
-          "base_color": "rgba8_srgb",
-          "normal": "rgba8",
-          "orm": "rgba8"
-        }
-      ],
-      "exact_alpha": [
-        "orm"
-      ],
-      "map_stem": "abilities"
-    },
-    {
-      "kind": "static",
-      "name": "prop_citrus_curtain",
-      "source": "source/prop_citrus_curtain.glb",
-      "scale": 1.0,
-      "texture_size": 1024,
-      "material": {
-        "slot": "figure",
-        "module": "figure",
-        "lighting": "figure"
-      },
-      "budgets": {
-        "triangles": 400,
         "vertices": 1000
       },
       "textures": [

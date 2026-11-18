@@ -2759,52 +2759,6 @@
       "lighting": "figure"
     },
     {
-      "id": "prop_rind_wall",
-      "color": [
-        1.0,
-        1.0,
-        1.0,
-        1.0
-      ],
-      "normal_scale": 1.0,
-      "cull": "none",
-      "slots": {
-        "figure": {
-          "module": "figure",
-          "maps": {
-            "base_color": {
-              "id": "abilities_base_color",
-              "wrap_u": "repeat",
-              "wrap_v": "repeat",
-              "mag_filter": "linear",
-              "min_filter": "linear",
-              "mipmap_filter": "linear",
-              "tex_coord": 0
-            },
-            "normal": {
-              "id": "abilities_normal",
-              "wrap_u": "repeat",
-              "wrap_v": "repeat",
-              "mag_filter": "linear",
-              "min_filter": "linear",
-              "mipmap_filter": "linear",
-              "tex_coord": 0
-            },
-            "orm": {
-              "id": "abilities_orm",
-              "wrap_u": "repeat",
-              "wrap_v": "repeat",
-              "mag_filter": "linear",
-              "min_filter": "linear",
-              "mipmap_filter": "linear",
-              "tex_coord": 0
-            }
-          }
-        }
-      },
-      "lighting": "figure"
-    },
-    {
       "id": "prop_melon_drop",
       "color": [
         1.0,
@@ -2898,52 +2852,6 @@
     },
     {
       "id": "prop_vine_wire",
-      "color": [
-        1.0,
-        1.0,
-        1.0,
-        1.0
-      ],
-      "normal_scale": 1.0,
-      "cull": "none",
-      "slots": {
-        "figure": {
-          "module": "figure",
-          "maps": {
-            "base_color": {
-              "id": "abilities_base_color",
-              "wrap_u": "repeat",
-              "wrap_v": "repeat",
-              "mag_filter": "linear",
-              "min_filter": "linear",
-              "mipmap_filter": "linear",
-              "tex_coord": 0
-            },
-            "normal": {
-              "id": "abilities_normal",
-              "wrap_u": "repeat",
-              "wrap_v": "repeat",
-              "mag_filter": "linear",
-              "min_filter": "linear",
-              "mipmap_filter": "linear",
-              "tex_coord": 0
-            },
-            "orm": {
-              "id": "abilities_orm",
-              "wrap_u": "repeat",
-              "wrap_v": "repeat",
-              "mag_filter": "linear",
-              "min_filter": "linear",
-              "mipmap_filter": "linear",
-              "tex_coord": 0
-            }
-          }
-        }
-      },
-      "lighting": "figure"
-    },
-    {
-      "id": "prop_citrus_curtain",
       "color": [
         1.0,
         1.0,
@@ -6482,13 +6390,6 @@
       }
     },
     {
-      "id": "prop_rind_wall",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/prop_rind_wall.emb"
-      }
-    },
-    {
       "id": "prop_melon_drop",
       "source": {
         "kind": "buffer",
@@ -6507,13 +6408,6 @@
       "source": {
         "kind": "buffer",
         "uri": "assets/cooked/prop_vine_wire.emb"
-      }
-    },
-    {
-      "id": "prop_citrus_curtain",
-      "source": {
-        "kind": "buffer",
-        "uri": "assets/cooked/prop_citrus_curtain.emb"
       }
     },
     {
@@ -13999,6 +13893,8 @@
       "figure": {
         "clips": {
           "idle": "assets/cooked/idle.clip",
+          "lobby_idle_banana": "assets/cooked/lobby_idle_banana.clip",
+          "lobby_pick_banana": "assets/cooked/lobby_pick_banana.clip",
           "victory": "assets/cooked/victory.clip"
         },
         "skeleton": "assets/cooked/banana.skel"
@@ -14022,6 +13918,8 @@
       "figure": {
         "clips": {
           "idle": "assets/cooked/idle.clip",
+          "lobby_idle_strawberry": "assets/cooked/lobby_idle_strawberry.clip",
+          "lobby_pick_strawberry": "assets/cooked/lobby_pick_strawberry.clip",
           "victory": "assets/cooked/victory.clip"
         },
         "skeleton": "assets/cooked/strawberry.skel"
@@ -14045,6 +13943,8 @@
       "figure": {
         "clips": {
           "idle": "assets/cooked/idle.clip",
+          "lobby_idle_orange": "assets/cooked/lobby_idle_orange.clip",
+          "lobby_pick_orange": "assets/cooked/lobby_pick_orange.clip",
           "victory": "assets/cooked/victory.clip"
         },
         "skeleton": "assets/cooked/orange.skel"
@@ -14068,6 +13968,8 @@
       "figure": {
         "clips": {
           "idle": "assets/cooked/idle.clip",
+          "lobby_idle_watermelon": "assets/cooked/lobby_idle_watermelon.clip",
+          "lobby_pick_watermelon": "assets/cooked/lobby_pick_watermelon.clip",
           "victory": "assets/cooked/victory.clip"
         },
         "skeleton": "assets/cooked/watermelon.skel"
@@ -14091,6 +13993,8 @@
       "figure": {
         "clips": {
           "idle": "assets/cooked/idle.clip",
+          "lobby_idle_eggplant": "assets/cooked/lobby_idle_eggplant.clip",
+          "lobby_pick_eggplant": "assets/cooked/lobby_pick_eggplant.clip",
           "victory": "assets/cooked/victory.clip"
         },
         "skeleton": "assets/cooked/eggplant.skel"

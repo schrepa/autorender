@@ -112,6 +112,7 @@ pub(super) fn arms(
     for death in &events.deaths {
         if death.killer.is_some_and(|killer| human.is(killer as usize)) {
             let step = round_kills.unwrap_or(1).clamp(1, table.kill_steps);
+            out.push(cue("kill.confirm", Anchor::Listener, death.killer));
             out.push(cue(
                 format!("kill.confirm.{step}"),
                 Anchor::Listener,

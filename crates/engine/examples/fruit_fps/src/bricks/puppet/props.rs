@@ -90,20 +90,6 @@ fn radius_of(book: &AbilityBook, prop: &PropState) -> f32 {
     }
 }
 
-fn wall_tiles(tile: Vec3, (base, axes, half): (Vec3, Mat3, Vec3)) -> Vec<Transform> {
-    let width = 2.0 * half.x;
-    let (tile_width, tile_height) = (max(tile.x, 0.01), max(tile.y, 0.01));
-    let count = max((width / tile_width).round(), 1.0);
-    let rotation = Quat::from_mat3(&axes).normalize();
-    let scale = Vec3::new(width / count / tile_width, 2.0 * half.y / tile_height, 1.0);
-    (0..count as u32)
-        .map(|tile| {
-            let along = -half.x + (tile as f32 + 0.5) * width / count;
-            placed(base + axes.x_axis * along, rotation, scale)
-        })
-        .collect()
-}
-
 fn falling(
     book: &AbilityBook,
     prop: &PropState,
@@ -143,7 +129,7 @@ fn flying(
 fn pieces(
     (spins, book): (&mut Spins, &AbilityBook),
     prop: &PropState,
-    (tile, left_ticks): (Option<Vec3>, Option<u32>),
+    left_ticks: Option<u32>,
 ) -> Vec<Transform> {
     match prop.pose {
         PropPose::Flying {
@@ -164,13 +150,6 @@ fn pieces(
             let at = contact + normal * lift_of(book, prop);
             vec![placed(at, standing(normal, facing), Vec3::ONE)]
         }
-        PropPose::Wall {
-            base,
-            axes,
-            half_extents,
-        } => tile.map_or_else(Vec::new, |tile| {
-            wall_tiles(tile, (base, axes, half_extents))
-        }),
         PropPose::Wire {
             a,
             b,
@@ -195,7 +174,6 @@ fn spun(spins: &mut Spins, look: &PropsLook, prop: &PropState, delta: f32) {
         }
         PropPose::Flying { resting: true, .. }
         | PropPose::Placed { .. }
-        | PropPose::Wall { .. }
         | PropPose::Wire { .. }
         | PropPose::Falling { .. } => 0.0,
     };
@@ -336,8 +314,7 @@ pub(super) fn show(
         let drawn = trimmed(drawn, &look.trim, ally);
         spun(&mut spins, look, prop, fixed.delta_seconds);
         let left = marks.get(&prop.effect.0).copied();
-        let tile = bounds_of(library.as_deref(), &drawn).map(|(low, high)| high - low);
-        for (part, at) in pieces((&mut spins, abilities), prop, (tile, left))
+        for (part, at) in pieces((&mut spins, abilities), prop, left)
             .into_iter()
             .enumerate()
         {
