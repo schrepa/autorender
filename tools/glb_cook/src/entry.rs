@@ -9,12 +9,14 @@ use engine_scene::{SceneMap, SceneMaterial, SceneSlot};
 use engine_textures::Image;
 
 use crate::config::{
-    BakedPlan, Character, ClipEntry, Cook, Entry, MapEntry, MaterialNames, TextureVariant, ValueMap,
+    BakedPlan, Character, ClipEntry, Cook, Entry, FormEntry, MapEntry, MaterialNames, SetsPlan,
+    TextureVariant, ValueMap, ValueRule,
 };
 use crate::encode;
 use crate::fault::Fault;
 use crate::fragment::{
-    CookedMaterial, FragmentDrawn, FragmentEntity, assemble, material, validate,
+    CookedMaterial, FragmentDrawn, FragmentEntity, LevelPiece, LevelSets, assemble, material,
+    validate,
 };
 use crate::geometry::{self, Built};
 use crate::maps::{self, MapKind};
@@ -22,6 +24,7 @@ use crate::markers;
 use crate::mips;
 use crate::motion;
 use crate::rig::{Rig, rig, rig_by_names};
+use crate::sets;
 use crate::source::Source;
 
 #[derive(Default)]
@@ -127,6 +130,7 @@ fn mesh_counts(file: &str, report: &mut Report, meshes: &[Built], budgets: (usiz
 pub struct Baked<'a> {
     pub plans: &'a BTreeMap<String, BakedPlan>,
     pub value_maps: &'a BTreeMap<String, ValueMap>,
+    pub value_rules: &'a BTreeMap<String, ValueRule>,
     pub pictures: Vec<(String, String, Image)>,
 }
 
@@ -138,6 +142,9 @@ pub struct MaterialPlan<'a> {
     pub textures: &'a [TextureVariant],
     pub material_sizes: Option<&'a BTreeMap<String, BTreeMap<String, u32>>>,
     pub baked: Option<Baked<'a>>,
+    pub extra: Vec<FragmentEntity>,
+    pub exact_alpha: &'a [String],
+    pub map_stem: Option<&'a str>,
 }
 
 impl<'a> MaterialPlan<'a> {
@@ -161,6 +168,9 @@ impl<'a> MaterialPlan<'a> {
             kinds,
             textures,
             material_sizes: None,
+            extra: Vec::new(),
+            exact_alpha: &[],
+            map_stem: None,
             baked: None,
         }
     }
@@ -330,12 +340,14 @@ fn entities(
             })?;
             Ok(FragmentEntity {
                 id: mesh.stem.clone(),
-                drawn: FragmentDrawn {
+                drawn: Some(FragmentDrawn {
                     kind: plan.kind.clone(),
                     mesh: mesh.stem.clone(),
                     material: mapping[mesh.stem.as_str()].clone(),
-                },
-                transform: BTreeMap::new(),
+                }),
+                level_piece: mesh.largest_m.map(|largest_m| LevelPiece { largest_m }),
+                level_sets: None,
+                transform: Some(BTreeMap::new()),
             })
         })
         .collect()
@@ -381,9 +393,10 @@ fn cook_one(
             ));
             continue;
         }
-        if let Some(map) = report.take(maps::map(source, &held, kind, &stem(index), size)) {
+        let map_stem = plan.map_stem.map_or_else(|| stem(index), str::to_owned);
+        if let Some(map) = report.take(maps::map(source, &held, kind, &map_stem, size)) {
             if let Some(key) = key {
-                shared.insert(key, stem(index));
+                shared.insert(key, map_stem);
             }
             maps.push(map);
         }
@@ -426,6 +439,23 @@ fn cook_one(
             (&mut material, &plan.names.slot),
             baked.value_maps,
         ))?;
+        for (key, rule) in baked.value_rules {
+            let held = material
+                .values
+                .as_ref()
+                .and_then(|values| values.get(key))
+                .copied();
+            if let Some(value) = held
+                && !rule.holds(value)
+            {
+                report.faults.push(source.fault(
+                    "ValueRule",
+                    format!("materials[{index}].values.{key}"),
+                    format!("{value} breaks the rule {rule:?}"),
+                ));
+                return None;
+            }
+        }
     }
     Some((made, material))
 }
@@ -475,6 +505,17 @@ fn cook_materials(
             ));
         }
     }
+    for variant in plan.textures {
+        for wanted in variant.material_sizes.keys() {
+            if !named.contains(&wanted.as_str()) {
+                report.faults.push(source.fault(
+                    "MaterialSizes",
+                    format!("textures.{}.material_sizes.{wanted}", variant.name),
+                    "no drawn material has this name",
+                ));
+            }
+        }
+    }
     let mapping: BTreeMap<&str, String> = meshes
         .iter()
         .map(|mesh| (mesh.stem.as_str(), stem(mesh.material)))
@@ -489,7 +530,10 @@ fn cook_materials(
     let pictures = plan.baked.iter().flat_map(|baked| &baked.pictures);
     let drawn = match &plan.baked {
         Some(baked) => match entities(source, meshes, &mapping, baked.plans) {
-            Ok(drawn) => drawn,
+            Ok(mut drawn) => {
+                drawn.extend(plan.extra.iter().cloned());
+                drawn
+            }
             Err(fault) => {
                 report.faults.push(fault);
                 return;
@@ -512,7 +556,14 @@ fn cook_materials(
     if plan.textures.is_empty() {
         write_png(cook, source, report, (name, meshes), made);
     } else {
-        write_variants(cook, source, report, (name, meshes), &made, plan.textures);
+        write_variants(
+            cook,
+            source,
+            report,
+            (name, meshes),
+            &made,
+            (plan.textures, plan.exact_alpha),
+        );
     }
 }
 
@@ -561,7 +612,7 @@ fn write_variants(
     report: &mut Report,
     (name, meshes): (&str, &[Built]),
     made: &Made<'_>,
-    textures: &[TextureVariant],
+    (textures, exact_alpha): (&[TextureVariant], &[String]),
 ) {
     let (cooked, scene, pictures, picture_images) = (
         &made.cooked,
@@ -588,15 +639,27 @@ fn write_variants(
                 &map.decoded,
                 [map.sampling.wrap_u, map.sampling.wrap_v],
             );
-            let Some(encoded) =
-                report.take(encode::encode(map.kind, encoding, &chain).map_err(|error| {
+            let limit = variant
+                .material_sizes
+                .get(&map.material)
+                .and_then(|sizes| sizes.get(map.kind.name()));
+            let top = limit.map_or(0, |&limit| {
+                chain
+                    .iter()
+                    .position(|level| level.width <= limit && level.height <= limit)
+                    .unwrap_or(chain.len() - 1)
+            });
+            let chain = &chain[top..];
+            let exact = exact_alpha.iter().any(|name| name == map.kind.name());
+            let Some(encoded) = report.take(
+                encode::encode(map.kind, encoding, chain, exact).map_err(|error| {
                     source.fault(
                         "TextureEncode",
                         format!("{} {}", map.stem, encoding.name()),
                         error,
                     )
-                }))
-            else {
+                }),
+            ) else {
                 continue;
             };
             file_bytes += encoded.file.len();
@@ -815,6 +878,95 @@ fn run_character(cook: &Cook, source: &Source, report: &mut Report, character: &
     );
 }
 
+fn same_rig(owner: &Rig, form: &Rig, tolerance: f32) -> Result<(), String> {
+    let (held, made) = (owner.skeleton.joints(), form.skeleton.joints());
+    if held.len() != made.len() {
+        return Err(format!(
+            "{} joints, the full mesh has {}",
+            made.len(),
+            held.len()
+        ));
+    }
+    for (at, (full, reduced)) in held.iter().zip(made).enumerate() {
+        if full.name != reduced.name || full.parent != reduced.parent {
+            return Err(format!(
+                "joint {at} is `{}` with parent {:?}, the full mesh has `{}` with parent {:?}",
+                reduced.name, reduced.parent, full.name, full.parent
+            ));
+        }
+        if !full
+            .inverse_bind
+            .abs_diff_eq(reduced.inverse_bind, tolerance)
+        {
+            return Err(format!(
+                "joint `{}` has another inverse bind matrix (tolerance {tolerance})",
+                full.name
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn run_form(cook: &Cook, base: &Path, source: &Source, report: &mut Report, form: &FormEntry) {
+    let owner = cook.entries.iter().find_map(|entry| match entry {
+        Entry::Character(character) if character.name == form.form_of => Some(character),
+        Entry::Character(_)
+        | Entry::Form(_)
+        | Entry::Clip(_)
+        | Entry::Static(_)
+        | Entry::Map(_)
+        | Entry::Picture(_) => None,
+    });
+    let Some(owner) = owner else {
+        report.faults.push(source.fault(
+            "FormOf",
+            format!("entries.{}.form_of", form.name),
+            format!("no character entry `{}`", form.form_of),
+        ));
+        return;
+    };
+    let Some(full) = report.take(
+        Source::load(&base.join(&owner.source))
+            .and_then(|held| rig(&held, owner.scale, cook.tolerance)),
+    ) else {
+        return;
+    };
+    let Some(made) = report.take(rig(source, owner.scale, cook.tolerance)) else {
+        return;
+    };
+    if let Err(detail) = same_rig(&full, &made, cook.tolerance) {
+        report
+            .faults
+            .push(source.fault("FormRig", format!("entries.{}", form.name), detail));
+        return;
+    }
+    let Some(meshes) = report.take(geometry::character(source, &made, &form.name)) else {
+        return;
+    };
+    mesh_counts(
+        &source.file,
+        report,
+        &meshes,
+        (form.budgets.triangles, form.budgets.vertices),
+    );
+    let influences = meshes
+        .iter()
+        .map(|mesh| mesh.influences)
+        .max()
+        .unwrap_or_default();
+    report.budget(
+        &source.file,
+        "BudgetInfluences",
+        influences,
+        form.budgets.influences,
+    );
+    report.counts.insert(
+        "form_of",
+        json!({"character": owner.name, "joints": full.skeleton.len()}),
+    );
+    push_meshes(report, &meshes);
+}
+
 fn baked_pictures(
     cook: &Cook,
     base: &Path,
@@ -831,6 +983,7 @@ fn baked_pictures(
             .find_map(|entry| match entry {
                 Entry::Picture(picture) if picture.name == wanted => Some(picture),
                 Entry::Character(_)
+                | Entry::Form(_)
                 | Entry::Clip(_)
                 | Entry::Static(_)
                 | Entry::Map(_)
@@ -850,6 +1003,120 @@ fn baked_pictures(
         ));
     }
     Ok(pictures)
+}
+
+struct SetsMade {
+    entity: FragmentEntity,
+    file: (String, Vec<u8>),
+    key_file: (String, Vec<u8>),
+    summary: Value,
+}
+
+fn cached_sets(
+    folder: &Path,
+    (stem, key_name): (&str, &str),
+    key: &str,
+) -> Option<(Vec<u8>, Value)> {
+    let text = std::fs::read_to_string(folder.join(key_name)).ok()?;
+    let held: Value = serde_json::from_str(&text).ok()?;
+    if held["key"].as_str() != Some(key) {
+        return None;
+    }
+    let bytes = std::fs::read(folder.join(stem)).ok()?;
+    if held["summary"]["file_bytes"].as_u64() != Some(bytes.len() as u64) {
+        return None;
+    }
+    Some((bytes, held["summary"].clone()))
+}
+
+fn visible_sets(
+    cook: &Cook,
+    base: &Path,
+    source: &Source,
+    (name, plan): (&str, &SetsPlan),
+    meshes: &[Built],
+) -> Result<SetsMade, Fault> {
+    let path = base.join(&plan.data);
+    let file = path.display().to_string();
+    let fault = |detail: &dyn std::fmt::Display| {
+        Fault::new(
+            "VisibleSets",
+            &file,
+            format!("entries.{name}.visible_sets"),
+            detail,
+        )
+    };
+    let text = std::fs::read_to_string(&path).map_err(|error| fault(&error))?;
+    let data: Value = serde_json::from_str(&text).map_err(|error| fault(&error))?;
+    let materials: Vec<gltf::Material<'_>> = source.gltf.materials().collect();
+    for wanted in &plan.see_through {
+        if !meshes
+            .iter()
+            .any(|mesh| materials[mesh.material].name() == Some(wanted.as_str()))
+        {
+            return Err(fault(&format!(
+                "see_through `{wanted}`: no drawn material has this name"
+            )));
+        }
+    }
+    let mut chunks = Vec::with_capacity(meshes.len());
+    for mesh in meshes {
+        let held = engine_assets::Mesh::from_record(&mesh.bytes).map_err(|error| fault(&error))?;
+        let material = &materials[mesh.material];
+        let see_through = plan
+            .see_through
+            .iter()
+            .any(|wanted| material.name() == Some(wanted.as_str()));
+        chunks.push(sets::Chunk {
+            id: mesh.stem.clone(),
+            positions: held
+                .vertices()
+                .iter()
+                .map(|vertex| vertex.position)
+                .collect(),
+            indices: held.indices().to_vec(),
+            occludes: !see_through && material.alpha_mode() == gltf::material::AlphaMode::Opaque,
+            two_sided: material.double_sided(),
+        });
+    }
+    let stem = format!("{name}.sets.bin");
+    let key_name = format!("{name}.sets.key.json");
+    let tool = std::env::current_exe()
+        .and_then(std::fs::read)
+        .map_err(|error| fault(&error))?;
+    let mut described = serde_json::to_value(plan).map_err(|error| fault(&error))?;
+    if let Some(fields) = described.as_object_mut() {
+        fields.remove("data");
+    }
+    let key = sets::key(&described, &data, &chunks, &tool);
+    let folder = base.join(&cook.output);
+    let (bytes, summary, cached) = match cached_sets(&folder, (&stem, &key_name), &key) {
+        Some((bytes, summary)) => (bytes, summary, true),
+        None => {
+            let built = sets::build(plan, &data, &chunks).map_err(|detail| fault(&detail))?;
+            (built.bytes, built.summary, false)
+        }
+    };
+    let key_text = serde_json::to_string_pretty(&json!({"key": key, "summary": summary}))
+        .map_err(|error| fault(&error))?;
+    let mut summary = summary;
+    summary["cached"] = json!(cached);
+    summary["key"] = json!(key);
+    let entity = FragmentEntity {
+        id: format!("{name}_sets"),
+        drawn: None,
+        level_piece: None,
+        level_sets: Some(LevelSets {
+            file: format!("{}{stem}", cook.uri_prefix),
+        }),
+        transform: None,
+    };
+    Ok(SetsMade {
+        entity,
+        file: (stem, bytes),
+        key_file: (key_name, key_text.into_bytes()),
+        summary,
+    })
 }
 
 fn run_map(cook: &Cook, base: &Path, source: &Source, report: &mut Report, map: &MapEntry) {
@@ -897,13 +1164,29 @@ fn run_map(cook: &Cook, base: &Path, source: &Source, report: &mut Report, map: 
             &map.textures,
         );
         plan.material_sizes = Some(&map.material_sizes);
-        if !map.baked.is_empty() || !map.value_maps.is_empty() {
+        if let Some(sets) = &map.visible_sets {
+            let Some(made) = report.take(visible_sets(
+                cook,
+                base,
+                source,
+                (&map.name, sets),
+                &drawn.built,
+            )) else {
+                return;
+            };
+            report.counts.insert("visible_sets", made.summary);
+            report.files.push(made.file);
+            report.files.push(made.key_file);
+            plan.extra.push(made.entity);
+        }
+        if !map.baked.is_empty() || !map.value_maps.is_empty() || !map.value_rules.is_empty() {
             let Some(pictures) = report.take(baked_pictures(cook, base, map)) else {
                 return;
             };
             plan.baked = Some(Baked {
                 plans: &map.baked,
                 value_maps: &map.value_maps,
+                value_rules: &map.value_rules,
                 pictures,
             });
         }
@@ -958,6 +1241,7 @@ fn clip_rig(cook: &Cook, base: &Path, source: &Source, clip: &ClipEntry) -> Resu
         .find_map(|entry| match entry {
             Entry::Character(character) if character.name == *name => Some(character),
             Entry::Character(_)
+            | Entry::Form(_)
             | Entry::Clip(_)
             | Entry::Static(_)
             | Entry::Map(_)
@@ -972,7 +1256,15 @@ fn clip_rig(cook: &Cook, base: &Path, source: &Source, clip: &ClipEntry) -> Resu
         })?;
     let owner = Source::load(&base.join(&character.source))?;
     let from = rig(&owner, character.scale, cook.tolerance)?;
-    rig_by_names(source, &from, cook.tolerance)
+    let made = rig_by_names(source, &from, cook.tolerance)?;
+    same_rig(&from, &made, cook.tolerance).map_err(|detail| {
+        source.fault(
+            "ClipRig",
+            format!("entries.{}.rig_from", clip.name),
+            format!("the clip file's skeleton differs from `{name}`: {detail}"),
+        )
+    })?;
+    Ok(made)
 }
 
 pub fn run(cook: &Cook, base: &Path, entry: &Entry, path: &Path) -> Report {
@@ -1000,7 +1292,7 @@ pub fn run(cook: &Cook, base: &Path, entry: &Entry, path: &Path) -> Report {
             );
             let plan = ClipPlan {
                 clips: &clip.clips,
-                root_motion: Some(&clip.root_motion),
+                root_motion: clip.root_motion.as_deref(),
                 remove_travel: &clip.remove_travel,
                 keys_per_second: clip.keys_per_second.unwrap_or(cook.keys_per_second),
                 tolerance: clip.tolerance.unwrap_or(cook.tolerance),
@@ -1020,12 +1312,23 @@ pub fn run(cook: &Cook, base: &Path, entry: &Entry, path: &Path) -> Report {
                     &meshes,
                     (fixed.budgets.triangles, fixed.budgets.vertices),
                 );
-                let plan = MaterialPlan::new(
+                let mut plan = MaterialPlan::new(
                     &fixed.material,
                     (fixed.texture_size, &fixed.map_sizes),
                     fixed.maps.as_deref(),
                     &fixed.textures,
                 );
+                plan.exact_alpha = &fixed.exact_alpha;
+                plan.map_stem = fixed.map_stem.as_deref();
+                for wanted in &fixed.exact_alpha {
+                    if !plan.kinds.iter().any(|kind| kind.name() == wanted) {
+                        report.faults.push(source.fault(
+                            "ExactAlpha",
+                            format!("entries.{}.exact_alpha", fixed.name),
+                            format!("`{wanted}` is not a map this entry cooks"),
+                        ));
+                    }
+                }
                 cook_materials(cook, &source, &mut report, &fixed.name, &meshes, &plan);
                 let found =
                     markers::markers(&source, Mat4::from_scale(Vec3::splat(fixed.scale)), |_| {
@@ -1035,6 +1338,7 @@ pub fn run(cook: &Cook, base: &Path, entry: &Entry, path: &Path) -> Report {
             }
         }
         Entry::Map(map) => run_map(cook, base, &source, &mut report, map),
+        Entry::Form(form) => run_form(cook, base, &source, &mut report, form),
         Entry::Picture(_) => {}
     }
     report

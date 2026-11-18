@@ -90,16 +90,20 @@ impl Piece {
     }
 }
 
-fn cell_of(plan: &ChunkPlan, corners: [[f32; 3]; 3]) -> (i32, i32) {
+fn cell_of(plan: &ChunkPlan, origin: [f32; 2], corners: [[f32; 3]; 3]) -> (i32, i32) {
     let x = (corners[0][0] + corners[1][0] + corners[2][0]) / 3.0;
     let z = (corners[0][2] + corners[1][2] + corners[2][2]) / 3.0;
     (
-        (x / plan.cell_m).floor() as i32,
-        (z / plan.cell_m).floor() as i32,
+        ((x - origin[0]) / plan.cell_m).floor() as i32,
+        ((z - origin[1]) / plan.cell_m).floor() as i32,
     )
 }
 
-pub fn split(plan: &ChunkPlan, sources: &[Source<'_>]) -> (Vec<Piece>, usize) {
+pub fn split(
+    plan: &ChunkPlan,
+    origin: [f32; 2],
+    sources: &[Source<'_>],
+) -> (Vec<Piece>, usize, usize) {
     let uv1 = sources.first().is_some_and(|source| source.uv1.is_some());
     let colors = sources
         .first()
@@ -111,7 +115,7 @@ pub fn split(plan: &ChunkPlan, sources: &[Source<'_>]) -> (Vec<Piece>, usize) {
         for triangle in source.indices.as_chunks::<3>().0 {
             let corners =
                 [0, 1, 2].map(|corner| source.vertices[triangle[corner] as usize].position);
-            let cell = cell_of(plan, corners);
+            let cell = cell_of(plan, origin, corners);
             let piece = cells
                 .entry(cell)
                 .or_insert_with(|| Piece::new(cell, uv1, colors));
@@ -122,6 +126,10 @@ pub fn split(plan: &ChunkPlan, sources: &[Source<'_>]) -> (Vec<Piece>, usize) {
         }
     }
     let mut pieces: Vec<Piece> = cells.into_values().collect();
+    let under = pieces
+        .iter()
+        .filter(|piece| piece.triangles() < plan.fold_triangles)
+        .count();
     let mut folded = 0;
     while pieces.len() > 1 {
         let Some((small, _)) = pieces
@@ -147,7 +155,122 @@ pub fn split(plan: &ChunkPlan, sources: &[Source<'_>]) -> (Vec<Piece>, usize) {
         pieces[near].absorb(taken);
         folded += 1;
     }
-    (pieces, folded)
+    (pieces, folded, under)
+}
+
+fn root(parent: &mut [usize], mut at: usize) -> usize {
+    while parent[at] != at {
+        parent[at] = parent[parent[at]];
+        at = parent[at];
+    }
+    at
+}
+
+pub struct Sized {
+    pub class: usize,
+    pub largest_m: f32,
+    pub pieces: usize,
+    pub piece: Piece,
+}
+
+pub fn by_size(piece: Piece, bounds: &[f32]) -> Vec<Sized> {
+    let mut welded: BTreeMap<[i64; 3], usize> = BTreeMap::new();
+    let weld: Vec<usize> = piece
+        .vertices
+        .iter()
+        .map(|vertex| {
+            let key = vertex
+                .position
+                .map(|axis| (f64::from(axis) * 1000.0).round() as i64);
+            let next = welded.len();
+            *welded.entry(key).or_insert(next)
+        })
+        .collect();
+    let mut parent: Vec<usize> = (0..welded.len()).collect();
+    let triangles = piece.indices.as_chunks::<3>().0;
+    for triangle in triangles {
+        let first = root(&mut parent, weld[triangle[0] as usize]);
+        for &corner in &triangle[1..] {
+            let other = root(&mut parent, weld[corner as usize]);
+            parent[other] = first;
+        }
+    }
+    let mut boxes: BTreeMap<usize, ([f32; 3], [f32; 3])> = BTreeMap::new();
+    let roots: Vec<usize> = triangles
+        .iter()
+        .map(|triangle| {
+            let held = root(&mut parent, weld[triangle[0] as usize]);
+            let (low, high) = boxes
+                .entry(held)
+                .or_insert(([f32::INFINITY; 3], [f32::NEG_INFINITY; 3]));
+            for &corner in triangle {
+                let position = piece.vertices[corner as usize].position;
+                for axis in 0..3 {
+                    if position[axis] < low[axis] {
+                        low[axis] = position[axis];
+                    }
+                    if position[axis] > high[axis] {
+                        high[axis] = position[axis];
+                    }
+                }
+            }
+            held
+        })
+        .collect();
+    let extents: BTreeMap<usize, (usize, f32)> = boxes
+        .into_iter()
+        .map(|(held, (low, high))| {
+            let extent = (0..3)
+                .map(|axis| high[axis] - low[axis])
+                .fold(0.0, |most, next| if next > most { next } else { most });
+            let class = bounds.iter().filter(|bound| **bound <= extent).count();
+            (held, (class, extent))
+        })
+        .collect();
+    let mut classes: Vec<Sized> = (0..=bounds.len())
+        .map(|class| Sized {
+            class,
+            largest_m: 0.0,
+            pieces: 0,
+            piece: Piece::new(piece.cell, piece.uv1.is_some(), piece.colors.is_some()),
+        })
+        .collect();
+    for &(class, extent) in extents.values() {
+        let held = &mut classes[class];
+        held.pieces += 1;
+        if extent > held.largest_m {
+            held.largest_m = extent;
+        }
+    }
+    let source = Source {
+        vertices: &piece.vertices,
+        indices: &piece.indices,
+        uv1: piece.uv1.as_deref(),
+        colors: piece.colors.as_deref(),
+    };
+    let mut at: Vec<BTreeMap<(u32, u32), u32>> = vec![BTreeMap::new(); classes.len()];
+    for (triangle, held) in triangles.iter().zip(&roots) {
+        let class = extents[held].0;
+        for &corner in triangle {
+            let origin = piece.origins[corner as usize];
+            let target = &mut classes[class].piece;
+            let index = *at[class].entry(origin).or_insert_with(|| {
+                let vertex = corner as usize;
+                target.vertices.push(source.vertices[vertex]);
+                if let (Some(out), Some(from)) = (&mut target.uv1, source.uv1) {
+                    out.push(from[vertex]);
+                }
+                if let (Some(out), Some(from)) = (&mut target.colors, source.colors) {
+                    out.push(from[vertex]);
+                }
+                target.origins.push(origin);
+                u32::try_from(target.vertices.len() - 1).expect("chunk_vertices_fit_u32")
+            });
+            target.indices.push(index);
+        }
+    }
+    classes.retain(|held| held.pieces != 0);
+    classes
 }
 
 pub fn duplicated(pieces: &[Piece]) -> usize {
@@ -165,10 +288,10 @@ pub fn summary(
     plan: &ChunkPlan,
     before: (usize, usize),
     rows: &[(String, usize, usize)],
-    extra: (usize, usize),
+    extra: (usize, usize, usize),
 ) -> Value {
     let (vertices, indices) = before;
-    let (duplicated, folded) = extra;
+    let (duplicated, folded, under) = extra;
     let largest = rows.iter().max_by_key(|row| (row.1, row.0.clone()));
     let smallest = rows.iter().min_by_key(|row| (row.1, row.0.clone()));
     let row = |held: Option<&(String, usize, usize)>| {
@@ -178,6 +301,7 @@ pub fn summary(
         "cell_m": plan.cell_m,
         "fold_triangles": plan.fold_triangles,
         "chunks": rows.len(),
+        "cells_under_fold": under,
         "folded": folded,
         "largest": row(largest),
         "smallest": row(smallest),

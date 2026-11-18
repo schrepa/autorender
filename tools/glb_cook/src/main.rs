@@ -12,11 +12,13 @@ mod maps;
 mod markers;
 mod mips;
 mod motion;
+mod order;
 mod part;
 mod picture;
 mod probe;
 mod rig;
 mod scene;
+mod sets;
 mod source;
 mod uris;
 
@@ -39,33 +41,56 @@ fn folder(path: &Path) -> PathBuf {
 }
 
 fn cook_all(cook_path: &Path) -> ExitCode {
+    let finished = cook_steps(cook_path);
+    println!(
+        "{}",
+        json!({"cook": cook_path.display().to_string(), "finished": if finished { "success" } else { "failure: the faults above say why" }})
+    );
+    if finished {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
+    }
+}
+
+fn cook_steps(cook_path: &Path) -> bool {
     let cook = match config::read(cook_path) {
         Ok(cook) => cook,
         Err(faults) => {
             print_faults(&faults);
-            return ExitCode::FAILURE;
+            return false;
         }
     };
     let base = folder(cook_path);
     let missing = config::missing_baked_pictures(&cook, &base);
     if !missing.is_empty() {
         print_faults(&missing);
-        return ExitCode::FAILURE;
+        return false;
     }
-    let mut written: BTreeMap<String, String> = BTreeMap::new();
+    let mut written: BTreeMap<String, (String, Vec<u8>)> = BTreeMap::new();
     let mut ready = Vec::new();
     let mut failed = false;
     for entry in &cook.entries {
+        println!("{}", json!({"entry": entry.name(), "started": true}));
         let report = entry::run(&cook, &base, entry, &base.join(entry.source()));
         let mut faults = report.faults;
-        for (file, _) in &report.files {
-            if let Some(earlier) = written.insert(file.clone(), entry.name().to_owned()) {
-                faults.push(Fault::new(
+        let mut files = Vec::new();
+        for (file, bytes) in report.files {
+            match written.get(&file) {
+                Some((_, held)) if *held == bytes => {}
+                Some((earlier, _)) => faults.push(Fault::new(
                     "FileTwice",
                     &cook_path.display().to_string(),
                     file.clone(),
-                    format!("written by entries `{earlier}` and `{}`", entry.name()),
-                ));
+                    format!(
+                        "written with different bytes by entries `{earlier}` and `{}`",
+                        entry.name()
+                    ),
+                )),
+                None => {
+                    written.insert(file.clone(), (entry.name().to_owned(), bytes.clone()));
+                    files.push((file, bytes));
+                }
             }
         }
         println!(
@@ -77,10 +102,10 @@ fn cook_all(cook_path: &Path) -> ExitCode {
         }
         print_faults(&faults);
         failed |= !faults.is_empty();
-        ready.push((entry.name().to_owned(), report.files));
+        ready.push((entry.name().to_owned(), files));
     }
     if failed {
-        return ExitCode::FAILURE;
+        return false;
     }
     let output = base.join(&cook.output);
     if let Err(error) = std::fs::create_dir_all(&output) {
@@ -90,7 +115,7 @@ fn cook_all(cook_path: &Path) -> ExitCode {
             "folder",
             error,
         )]);
-        return ExitCode::FAILURE;
+        return false;
     }
     for (name, files) in ready {
         for (file, bytes) in &files {
@@ -102,7 +127,7 @@ fn cook_all(cook_path: &Path) -> ExitCode {
                     "file",
                     error,
                 )]);
-                return ExitCode::FAILURE;
+                return false;
             }
         }
         let names: Vec<&String> = files.iter().map(|(file, _)| file).collect();
@@ -115,6 +140,7 @@ fn cook_all(cook_path: &Path) -> ExitCode {
                     picture.name == *name && base.join(&picture.source).is_file()
                 }
                 config::Entry::Character(_)
+                | config::Entry::Form(_)
                 | config::Entry::Clip(_)
                 | config::Entry::Static(_)
                 | config::Entry::Map(_) => false,
@@ -124,7 +150,7 @@ fn cook_all(cook_path: &Path) -> ExitCode {
             Ok(line) => println!("{line}"),
             Err(fault) => {
                 print_faults(&[fault]);
-                return ExitCode::FAILURE;
+                return false;
             }
         }
     }
@@ -136,14 +162,14 @@ fn cook_all(cook_path: &Path) -> ExitCode {
             ),
             Err(fault) => {
                 print_faults(&[fault]);
-                return ExitCode::FAILURE;
+                return false;
             }
         }
     }
     shipped_uris(&cook, &base)
 }
 
-fn shipped_uris(cook: &config::Cook, base: &Path) -> ExitCode {
+fn shipped_uris(cook: &config::Cook, base: &Path) -> bool {
     let mut shipped: BTreeMap<PathBuf, Vec<String>> = BTreeMap::new();
     for variant in &cook.scenes {
         for scene in [&variant.from, &variant.to] {
@@ -162,11 +188,7 @@ fn shipped_uris(cook: &config::Cook, base: &Path) -> ExitCode {
         print_faults(&faults);
         missing |= !faults.is_empty();
     }
-    if missing {
-        ExitCode::FAILURE
-    } else {
-        ExitCode::SUCCESS
-    }
+    !missing
 }
 
 fn check(glb: &Path, cook_path: &Path, name: &str) -> ExitCode {

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::fault::Fault;
 
@@ -30,6 +30,8 @@ pub struct ScenePart {
     #[serde(default)]
     pub materials: Vec<serde_json::Value>,
     #[serde(default)]
+    pub meshes: Vec<serde_json::Value>,
+    #[serde(default)]
     pub entities: Vec<serde_json::Value>,
 }
 
@@ -46,10 +48,28 @@ pub struct SceneVariant {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Entry {
     Character(Character),
+    Form(FormEntry),
     Clip(ClipEntry),
     Static(StaticEntry),
     Map(MapEntry),
     Picture(PictureEntry),
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FormEntry {
+    pub name: String,
+    pub source: String,
+    pub form_of: String,
+    pub budgets: FormBudgets,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FormBudgets {
+    pub triangles: usize,
+    pub vertices: usize,
+    pub influences: usize,
 }
 
 #[derive(Debug, Deserialize)]
@@ -111,6 +131,26 @@ pub struct ValueMap {
     pub needs: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ValueRule {
+    pub one_of: Option<Vec<f32>>,
+    pub min: Option<f32>,
+    pub max: Option<f32>,
+}
+
+impl ValueRule {
+    pub fn holds(&self, value: f32) -> bool {
+        value.is_finite()
+            && self
+                .one_of
+                .as_ref()
+                .is_none_or(|allowed| allowed.contains(&value))
+            && self.min.is_none_or(|least| value >= least)
+            && self.max.is_none_or(|most| value <= most)
+    }
+}
+
 pub const BAKED_STREAMS: [&str; 2] = ["uv1", "color"];
 
 #[derive(Debug, Deserialize)]
@@ -156,7 +196,7 @@ pub struct CharacterBudgets {
 pub struct ClipEntry {
     pub name: String,
     pub source: String,
-    pub root_motion: String,
+    pub root_motion: Option<String>,
     pub rig_from: Option<String>,
     pub clips: BTreeMap<String, String>,
     #[serde(default)]
@@ -185,6 +225,9 @@ pub struct StaticEntry {
     pub maps: Option<Vec<String>>,
     #[serde(default)]
     pub textures: Vec<TextureVariant>,
+    #[serde(default)]
+    pub exact_alpha: Vec<String>,
+    pub map_stem: Option<String>,
     pub budgets: StaticBudgets,
 }
 
@@ -222,9 +265,39 @@ pub struct MapEntry {
     pub baked: BTreeMap<String, BakedPlan>,
     #[serde(default)]
     pub value_maps: BTreeMap<String, ValueMap>,
+    #[serde(default)]
+    pub value_rules: BTreeMap<String, ValueRule>,
     pub merge: Vec<MergeRule>,
     pub chunks: Option<ChunkPlan>,
+    pub visible_sets: Option<Box<SetsPlan>>,
     pub budgets: MapBudgets,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetsPlan {
+    pub data: String,
+    pub cell_m: f32,
+    pub eye_inset_m: f32,
+    pub eye_heights_m: Vec<f32>,
+    pub top_m: f32,
+    pub padding_cells: u32,
+    pub face_step_m: f32,
+    pub probe_m: f32,
+    pub target_gap_m: f32,
+    pub ground: String,
+    pub occluders: OccluderPlan,
+    pub see_through: Vec<String>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OccluderPlan {
+    pub names: Vec<String>,
+    pub surfaces: Vec<String>,
+    pub shrink_m: f32,
+    #[serde(default)]
+    pub starts_m: BTreeMap<String, f32>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -232,6 +305,7 @@ pub struct MapEntry {
 pub struct ChunkPlan {
     pub cell_m: f32,
     pub fold_triangles: usize,
+    pub detail_classes_m: Option<Vec<f32>>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -275,6 +349,8 @@ impl Encoding {
 #[serde(deny_unknown_fields)]
 pub struct TextureVariant {
     pub name: String,
+    #[serde(default)]
+    pub material_sizes: BTreeMap<String, BTreeMap<String, u32>>,
     pub base_color: Option<Encoding>,
     pub normal: Option<Encoding>,
     pub orm: Option<Encoding>,
@@ -295,6 +371,7 @@ impl Entry {
     pub fn name(&self) -> &str {
         match self {
             Self::Character(entry) => &entry.name,
+            Self::Form(entry) => &entry.name,
             Self::Clip(entry) => &entry.name,
             Self::Static(entry) => &entry.name,
             Self::Map(entry) => &entry.name,
@@ -305,6 +382,7 @@ impl Entry {
     pub fn source(&self) -> &str {
         match self {
             Self::Character(entry) => &entry.source,
+            Self::Form(entry) => &entry.source,
             Self::Clip(entry) => &entry.source,
             Self::Static(entry) => &entry.source,
             Self::Map(entry) => &entry.source,
@@ -316,7 +394,7 @@ impl Entry {
         match self {
             Self::Character(entry) => Some(&entry.clips),
             Self::Clip(entry) => Some(&entry.clips),
-            Self::Static(_) | Self::Map(_) | Self::Picture(_) => None,
+            Self::Form(_) | Self::Static(_) | Self::Map(_) | Self::Picture(_) => None,
         }
     }
 
@@ -325,7 +403,7 @@ impl Entry {
             Self::Character(entry) => entry.maps.as_deref(),
             Self::Static(entry) => entry.maps.as_deref(),
             Self::Map(entry) => entry.maps.as_deref(),
-            Self::Clip(_) | Self::Picture(_) => None,
+            Self::Form(_) | Self::Clip(_) | Self::Picture(_) => None,
         }
     }
 
@@ -334,7 +412,7 @@ impl Entry {
             Self::Character(entry) => Some(&entry.map_sizes),
             Self::Static(entry) => Some(&entry.map_sizes),
             Self::Map(entry) => Some(&entry.map_sizes),
-            Self::Clip(_) | Self::Picture(_) => None,
+            Self::Form(_) | Self::Clip(_) | Self::Picture(_) => None,
         }
     }
 
@@ -343,7 +421,7 @@ impl Entry {
             Self::Character(entry) => &entry.textures,
             Self::Static(entry) => &entry.textures,
             Self::Map(entry) => &entry.textures,
-            Self::Clip(_) | Self::Picture(_) => &[],
+            Self::Form(_) | Self::Clip(_) | Self::Picture(_) => &[],
         }
     }
 
@@ -351,7 +429,7 @@ impl Entry {
         match self {
             Self::Character(entry) => &entry.remove_travel,
             Self::Clip(entry) => &entry.remove_travel,
-            Self::Static(_) | Self::Map(_) | Self::Picture(_) => &[],
+            Self::Form(_) | Self::Static(_) | Self::Map(_) | Self::Picture(_) => &[],
         }
     }
 }
@@ -403,7 +481,11 @@ fn value_map_faults(file: &str, cook: &Cook, map: &MapEntry, faults: &mut Vec<Fa
             Entry::Picture(picture) => {
                 picture.name == held.picture && picture.encodings.contains_key(&held.variant)
             }
-            Entry::Character(_) | Entry::Clip(_) | Entry::Static(_) | Entry::Map(_) => false,
+            Entry::Character(_)
+            | Entry::Form(_)
+            | Entry::Clip(_)
+            | Entry::Static(_)
+            | Entry::Map(_) => false,
         });
         let baked = map
             .baked
@@ -437,7 +519,11 @@ fn baked_faults(file: &str, cook: &Cook, map: &MapEntry, faults: &mut Vec<Fault>
                 Entry::Picture(picture) => {
                     picture.name == baked.picture && picture.encodings.contains_key(&baked.variant)
                 }
-                Entry::Character(_) | Entry::Clip(_) | Entry::Static(_) | Entry::Map(_) => false,
+                Entry::Character(_)
+                | Entry::Form(_)
+                | Entry::Clip(_)
+                | Entry::Static(_)
+                | Entry::Map(_) => false,
             });
             if !found || MAP_NAMES.contains(&slot_map.as_str()) || baked.sampling.contains_key("id")
             {
@@ -455,7 +541,11 @@ fn size_faults(file: &str, entry: &Entry, faults: &mut Vec<Fault>) {
     };
     let per_material = match entry {
         Entry::Map(map) => map.material_sizes.values().flatten().collect(),
-        Entry::Character(_) | Entry::Clip(_) | Entry::Static(_) | Entry::Picture(_) => Vec::new(),
+        Entry::Character(_)
+        | Entry::Form(_)
+        | Entry::Clip(_)
+        | Entry::Static(_)
+        | Entry::Picture(_) => Vec::new(),
     };
     for (map, &size) in entry.map_sizes().into_iter().flatten().chain(per_material) {
         if !cooked.contains(&map.as_str()) || size == 0 {
@@ -577,7 +667,7 @@ fn entry_faults(file: &str, entry: &Entry, faults: &mut Vec<Fault>) {
         Entry::Character(entry) => (Some(entry.scale), Some(entry.texture_size)),
         Entry::Static(entry) => (Some(entry.scale), Some(entry.texture_size)),
         Entry::Map(entry) => (Some(entry.scale), Some(entry.texture_size)),
-        Entry::Clip(_) | Entry::Picture(_) => (None, None),
+        Entry::Form(_) | Entry::Clip(_) | Entry::Picture(_) => (None, None),
     };
     if let Some(scale) = scale
         && !positive(scale)
@@ -597,6 +687,7 @@ pub fn missing_baked_pictures(cook: &Cook, base: &Path) -> Vec<Fault> {
             let source = cook.entries.iter().find_map(|held| match held {
                 Entry::Picture(picture) if picture.name == wanted => Some(&picture.source),
                 Entry::Character(_)
+                | Entry::Form(_)
                 | Entry::Clip(_)
                 | Entry::Static(_)
                 | Entry::Map(_)
@@ -642,6 +733,23 @@ pub fn read(path: &Path) -> Result<Cook, Vec<Fault>> {
         {
             let item = format!("entries.{}.chunks.cell_m", map.name);
             faults.push(Fault::new("ChunkCell", &file, item, plan.cell_m));
+        }
+        if let Entry::Map(map) = entry
+            && let Some(bounds) = map
+                .chunks
+                .as_ref()
+                .and_then(|plan| plan.detail_classes_m.as_ref())
+            && (bounds.is_empty()
+                || !bounds.iter().copied().all(positive)
+                || bounds.windows(2).any(|pair| pair[0] >= pair[1]))
+        {
+            let item = format!("entries.{}.chunks.detail_classes_m", map.name);
+            faults.push(Fault::new(
+                "DetailClasses",
+                &file,
+                item,
+                format!("{bounds:?}: a non-empty list of rising positive sizes"),
+            ));
         }
         let Entry::Clip(clip) = entry else {
             continue;
@@ -691,13 +799,22 @@ pub fn read(path: &Path) -> Result<Cook, Vec<Fault>> {
         let known = |name: &String| {
             cook.entries.iter().any(|entry| match entry {
                 Entry::Picture(picture) => picture.name == *name,
-                Entry::Character(_) | Entry::Clip(_) | Entry::Static(_) | Entry::Map(_) => false,
+                Entry::Character(_)
+                | Entry::Form(_)
+                | Entry::Clip(_)
+                | Entry::Static(_)
+                | Entry::Map(_) => false,
             })
         };
-        let unnamed = [&part.textures, &part.materials, &part.entities]
-            .into_iter()
-            .flatten()
-            .any(|item| !item["id"].is_string());
+        let unnamed = [
+            &part.textures,
+            &part.materials,
+            &part.meshes,
+            &part.entities,
+        ]
+        .into_iter()
+        .flatten()
+        .any(|item| !item["id"].is_string());
         if part.needs.iter().any(|name| !known(name)) || unnamed {
             faults.push(Fault::new(
                 "ScenePart",

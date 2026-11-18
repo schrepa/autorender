@@ -147,13 +147,21 @@ fn angles(source: &[u8], made: &[u8]) -> (f64, f64) {
     (total / count, widest)
 }
 
-pub fn encode(kind: MapKind, encoding: Encoding, chain: &[Image]) -> Result<Encoded, String> {
+pub fn encode(
+    kind: MapKind,
+    encoding: Encoding,
+    chain: &[Image],
+    exact_alpha: bool,
+) -> Result<Encoded, String> {
     let started = Instant::now();
     let levels: Vec<Vec<u8>> = chain
         .iter()
         .map(|image| match encoding {
             Encoding::Rgba8 | Encoding::Rgba8Srgb => image.pixels.clone(),
             Encoding::Bc5 => blocks(image, bc5::encode_block),
+            Encoding::Bc7 | Encoding::Bc7Srgb if exact_alpha => {
+                blocks(image, bc7::encode_block_exact_alpha)
+            }
             Encoding::Bc7 | Encoding::Bc7Srgb => blocks(image, bc7::encode_block),
         })
         .collect();
@@ -196,8 +204,18 @@ pub fn encode(kind: MapKind, encoding: Encoding, chain: &[Image]) -> Result<Enco
             let (mean, widest) = angles(source, &pixels);
             json!({"normal_mean_degrees": mean, "normal_widest_degrees": widest})
         }
-        MapKind::BaseColor | MapKind::Orm => {
+        MapKind::BaseColor => {
             json!({"psnr_rgb_db": psnr(source, &pixels, 3), "psnr_rgba_db": psnr(source, &pixels, 4)})
+        }
+        MapKind::Orm => {
+            let alpha_differs = source
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(pixels.as_chunks::<4>().0)
+                .filter(|(held, read)| held[3] != read[3])
+                .count();
+            json!({"psnr_rgb_db": psnr(source, &pixels, 3), "psnr_rgba_db": psnr(source, &pixels, 4), "alpha_texels_differing": alpha_differs})
         }
     };
     Ok(Encoded {

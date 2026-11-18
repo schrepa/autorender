@@ -58,7 +58,7 @@ pub fn run(picture: &PictureEntry, path: &Path) -> Report {
         } else {
             vec![image.clone()]
         };
-        match encode(kind, encoding, &levels) {
+        match encode(kind, encoding, &levels, false) {
             Ok(encoded) => {
                 variants.insert(
                     variant.clone(),

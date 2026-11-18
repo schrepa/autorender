@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use engine_assets::{
     AttributeFormat, Mesh, MeshStreams, MeshVertex, NamedStream, encode_mesh_buffer_with,
 };
@@ -8,6 +10,7 @@ use serde_json::{Value, json};
 use crate::chunks;
 use crate::config::ChunkPlan;
 use crate::fault::Fault;
+use crate::order;
 use crate::rig::Rig;
 use crate::source::{Source, node_label};
 
@@ -20,6 +23,7 @@ pub struct Built {
     pub influences: usize,
     pub colored: bool,
     pub uv1: bool,
+    pub largest_m: Option<f32>,
 }
 
 struct Part {
@@ -279,7 +283,7 @@ fn read_back(
     Ok(())
 }
 
-fn encode(source: &Source, item: &str, parts: &[Part]) -> Result<Built, Fault> {
+fn encode(source: &Source, item: &str, parts: &[Part], ordered: bool) -> Result<Built, Fault> {
     let with_uv1 = parts.iter().filter(|part| part.uv1.is_some()).count();
     let with_skin = parts.iter().filter(|part| part.skin.is_some()).count();
     let with_colors = parts.iter().filter(|part| part.colors.is_some()).count();
@@ -318,6 +322,21 @@ fn encode(source: &Source, item: &str, parts: &[Part]) -> Result<Built, Fault> {
         if let Some((joint_bytes, weight_bytes)) = &part.skin {
             joints.extend_from_slice(joint_bytes);
             weights.extend_from_slice(weight_bytes);
+        }
+    }
+    if ordered {
+        indices = order::triangles(&indices, vertices.len());
+        let old_of = order::first_use(&mut indices, vertices.len());
+        vertices = order::permuted(&vertices, &old_of);
+        if !uv1.is_empty() {
+            uv1 = order::permuted(&uv1, &old_of);
+        }
+        if !colors.is_empty() {
+            colors = order::permuted_bytes(&colors, 8, &old_of);
+        }
+        if !joints.is_empty() {
+            joints = order::permuted_bytes(&joints, joints.len() / old_of.len(), &old_of);
+            weights = order::permuted_bytes(&weights, weights.len() / old_of.len(), &old_of);
         }
     }
     let mut named = Vec::new();
@@ -372,6 +391,7 @@ fn encode(source: &Source, item: &str, parts: &[Part]) -> Result<Built, Fault> {
             .unwrap_or_default(),
         colored: with_colors != 0,
         uv1: with_uv1 != 0,
+        largest_m: None,
     })
 }
 
@@ -406,7 +426,7 @@ pub fn character(source: &Source, rig: &Rig, name: &str) -> Result<Vec<Built>, F
         for held in mesh.primitives() {
             let item = primitive_item(&node, &held);
             let part = read_part(source, &item, &held, place, Some(rig), Reading::Drawn)?;
-            built.push(encode(source, &item, &[part])?);
+            built.push(encode(source, &item, &[part], true)?);
         }
     }
     if built.is_empty() {
@@ -453,7 +473,7 @@ pub fn fixed(source: &Source, name: &str, scale: f32, tolerance: f32) -> Result<
         for held in mesh.primitives() {
             let item = primitive_item(&node, &held);
             let part = read_part(source, &item, &held, place, None, Reading::Drawn)?;
-            built.push(encode(source, &item, &[part])?);
+            built.push(encode(source, &item, &[part], true)?);
         }
     }
     if built.is_empty() {
@@ -476,7 +496,7 @@ pub struct Drawn {
 
 fn chunked(
     source: &Source,
-    plan: &ChunkPlan,
+    (plan, origin, classes): (&ChunkPlan, [f32; 2], Option<&[f32]>),
     stem: &str,
     group: &[Part],
     tally: &mut Tally,
@@ -492,11 +512,27 @@ fn chunked(
         .collect();
     tally.vertices += group.iter().map(|part| part.vertices.len()).sum::<usize>();
     tally.indices += group.iter().map(|part| part.indices.len()).sum::<usize>();
-    let (pieces, folded) = chunks::split(plan, &sources);
+    let (pieces, folded, under) = chunks::split(plan, origin, &sources);
     tally.duplicated += chunks::duplicated(&pieces);
     tally.folded += folded;
+    tally.under += under;
+    let sized: Vec<(Option<(usize, f32)>, chunks::Piece)> = match classes {
+        None => pieces.into_iter().map(|piece| (None, piece)).collect(),
+        Some(bounds) => pieces
+            .into_iter()
+            .flat_map(|piece| chunks::by_size(piece, bounds))
+            .map(|held| {
+                let row = tally.classes.entry(held.class).or_default();
+                row.0 += 1;
+                row.1 += held.pieces;
+                row.2 += held.piece.triangles();
+                (Some((held.class, held.largest_m)), held.piece)
+            })
+            .collect(),
+    };
     let mut built = Vec::new();
-    for (at, piece) in pieces.into_iter().enumerate() {
+    for (at, (class, piece)) in sized.into_iter().enumerate() {
+        let piece_cell = piece.cell;
         let item = format!(
             "{stem} chunk {at} (cell {}, {})",
             piece.cell.0, piece.cell.1
@@ -512,8 +548,12 @@ fn chunked(
             normals: group[0].normals,
             uv: group[0].uv,
         };
-        let mut mesh = encode(source, &item, std::slice::from_ref(&part))?;
-        mesh.stem = format!("{stem}_c{at}");
+        let mut mesh = encode(source, &item, std::slice::from_ref(&part), true)?;
+        mesh.stem = format!("{stem}_{}_{}", piece_cell.0, piece_cell.1);
+        if let Some((class, largest_m)) = class {
+            mesh.stem = format!("{}_s{class}", mesh.stem);
+            mesh.largest_m = Some(largest_m);
+        }
         tally
             .rows
             .push((mesh.stem.clone(), mesh.triangles, mesh.vertices));
@@ -528,7 +568,9 @@ struct Tally {
     indices: usize,
     duplicated: usize,
     folded: usize,
+    under: usize,
     rows: Vec<(String, usize, usize)>,
+    classes: BTreeMap<usize, (usize, usize, usize)>,
 }
 
 pub fn map_drawn(
@@ -580,7 +622,17 @@ pub fn map_drawn(
     groups.sort_unstable();
     groups.dedup();
     let mut built = Vec::new();
-    let mut tally = Tally::default();
+    let mut tallies = [Tally::default(), Tally::default()];
+    let origin = parts.iter().flat_map(|part| part.vertices.iter()).fold(
+        [f32::INFINITY; 2],
+        |low, vertex| {
+            let lower = |held: f32, next: f32| if next < held { next } else { held };
+            [
+                lower(low[0], vertex.position[0]),
+                lower(low[1], vertex.position[2]),
+            ]
+        },
+    );
     for &(material, colored) in &groups {
         let group: Vec<Part> = parts
             .extract_if(.., |part| {
@@ -598,10 +650,25 @@ pub fn map_drawn(
             stem
         };
         if let Some(plan) = plan {
-            built.extend(chunked(source, plan, &stem, &group, &mut tally)?);
+            built.extend(chunked(
+                source,
+                (
+                    plan,
+                    origin,
+                    plan.detail_classes_m.as_deref().filter(|_| colored),
+                ),
+                &stem,
+                &group,
+                &mut tallies[usize::from(colored)],
+            )?);
             continue;
         }
-        let mut mesh = encode(source, &format!("materials[{material}] group"), &group)?;
+        let mut mesh = encode(
+            source,
+            &format!("materials[{material}] group"),
+            &group,
+            true,
+        )?;
         mesh.stem = stem;
         built.push(mesh);
     }
@@ -609,12 +676,23 @@ pub fn map_drawn(
         return Err(source.fault("NoMesh", "nodes", "no drawn mesh to cook"));
     }
     let chunks = plan.map(|plan| {
-        chunks::summary(
-            plan,
-            (tally.vertices, tally.indices),
-            &tally.rows,
-            (tally.duplicated, tally.folded),
-        )
+        let [lit, detail] = tallies.map(|tally| {
+            let mut held = chunks::summary(
+                plan,
+                (tally.vertices, tally.indices),
+                &tally.rows,
+                (tally.duplicated, tally.folded, tally.under),
+            );
+            if !tally.classes.is_empty() {
+                held["classes"] = tally
+                    .classes
+                    .iter()
+                    .map(|(class, (meshes, pieces, triangles))| json!({"class": class, "meshes": meshes, "pieces": pieces, "triangles": triangles}))
+                    .collect();
+            }
+            held
+        });
+        json!({"lightmapped": lit, "vertex_lit": detail})
     });
     Ok(Drawn {
         built,
@@ -682,7 +760,7 @@ pub fn map_merged(
             "no mesh node name starts with it",
         ));
     }
-    let mut built = encode(source, &format!("merge `{output}`"), &parts)?;
+    let mut built = encode(source, &format!("merge `{output}`"), &parts, false)?;
     built.stem = output.to_owned();
     Ok(Merged {
         output: output.to_owned(),

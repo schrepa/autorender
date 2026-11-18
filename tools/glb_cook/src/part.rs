@@ -5,7 +5,7 @@ use serde_json::{Map, Value, json};
 use crate::config::ScenePart;
 use crate::fault::Fault;
 
-const LISTS: [&str; 3] = ["textures", "materials", "entities"];
+const LISTS: [&str; 4] = ["textures", "materials", "meshes", "entities"];
 
 type Spans = (usize, usize, Vec<(usize, usize)>);
 
@@ -114,10 +114,10 @@ fn merged(held: &Value, made: &Value) -> Value {
     }
 }
 
-fn pretty(value: &Value) -> String {
+fn pretty(value: &Value, newline: &str) -> String {
     serde_json::to_string_pretty(value)
         .expect("values_serialize")
-        .replace('\n', "\n    ")
+        .replace('\n', &format!("{newline}    "))
 }
 
 pub fn apply(base: &Path, part: &ScenePart, present: bool) -> Result<Value, Fault> {
@@ -128,11 +128,13 @@ pub fn apply(base: &Path, part: &ScenePart, present: bool) -> Result<Value, Faul
     let mut expected: Value = serde_json::from_str(&text)
         .map_err(|error| Fault::new("SceneInvalid", &file, "file", error))?;
     let mut written = text.clone();
+    let newline = if text.contains("\r\n") { "\r\n" } else { "\n" };
     let mut changed = Vec::new();
     for list in LISTS {
         let made: &[Value] = match list {
             "textures" => &part.textures,
             "materials" => &part.materials,
+            "meshes" => &part.meshes,
             _ => &part.entities,
         };
         let ids: Vec<&str> = made.iter().filter_map(|item| item["id"].as_str()).collect();
@@ -172,7 +174,7 @@ pub fn apply(base: &Path, part: &ScenePart, present: bool) -> Result<Value, Faul
                 items.push((value.clone(), written[*start..*end].to_owned()));
             } else {
                 changed.push(format!("{list}.{id} updated"));
-                let shown = pretty(&joined);
+                let shown = pretty(&joined, newline);
                 items.push((joined, shown));
             }
         }
@@ -183,7 +185,7 @@ pub fn apply(base: &Path, part: &ScenePart, present: bool) -> Result<Value, Faul
                         "{list}.{} added",
                         next["id"].as_str().unwrap_or_default()
                     ));
-                    items.push((next.clone(), pretty(next)));
+                    items.push((next.clone(), pretty(next, newline)));
                 }
             }
         }
@@ -191,7 +193,10 @@ pub fn apply(base: &Path, part: &ScenePart, present: bool) -> Result<Value, Faul
             String::new()
         } else {
             let joined: Vec<&str> = items.iter().map(|(_, shown)| shown.as_str()).collect();
-            format!("\n    {}\n  ", joined.join(",\n    "))
+            format!(
+                "{newline}    {}{newline}  ",
+                joined.join(&format!(",{newline}    "))
+            )
         };
         expected[list] = Value::Array(items.into_iter().map(|(value, _)| value).collect());
         written = format!("{}{body}{}", &written[..=open], &written[close..]);

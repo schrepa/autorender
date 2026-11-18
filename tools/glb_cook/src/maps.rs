@@ -35,6 +35,7 @@ pub struct Sampling {
 
 pub struct Map {
     pub kind: MapKind,
+    pub material: String,
     pub stem: String,
     pub png: Vec<u8>,
     pub decoded: Image,
@@ -120,7 +121,7 @@ fn filtered(
     factors: [f32; 2],
 ) -> Result<Vec<u8>, (usize, usize)> {
     let factor = image.width as usize / size;
-    let channels = if kind == MapKind::BaseColor { 4 } else { 3 };
+    let channels = if kind == MapKind::Normal { 3 } else { 4 };
     let mut out = Vec::with_capacity(size * size * channels);
     let srgb: Vec<f32> = (0..=255u8).map(srgb_to_linear).collect();
     for y in 0..size {
@@ -153,13 +154,15 @@ fn filtered(
                     out.extend(mean.map(|value| byte((value / length) * 0.5 + 0.5)));
                 }
                 MapKind::Orm => {
-                    let [roughness, metallic] = block(image, factor, x, y, |[_, g, b, _]| {
-                        [
-                            f32::from(g) / 255.0 * factors[0],
-                            f32::from(b) / 255.0 * factors[1],
-                        ]
-                    });
-                    out.extend_from_slice(&[255, byte(roughness), byte(metallic)]);
+                    let [roughness, metallic, alpha] =
+                        block(image, factor, x, y, |[_, g, b, a]| {
+                            [
+                                f32::from(g) / 255.0 * factors[0],
+                                f32::from(b) / 255.0 * factors[1],
+                                f32::from(a) / 255.0,
+                            ]
+                        });
+                    out.extend_from_slice(&[255, byte(roughness), byte(metallic), byte(alpha)]);
                 }
             }
         }
@@ -280,13 +283,14 @@ pub fn map(
             format!("normals average to zero at {x},{y}"),
         )
     })?;
-    let channels = if kind == MapKind::BaseColor { 4 } else { 3 };
+    let channels = if kind == MapKind::Normal { 3 } else { 4 };
     let png = encode_png(&pixels, size, channels)
         .map_err(|error| source.fault("PngEncode", item.clone(), error))?;
     let written = decode_image(&item, &png)
         .map_err(|error| source.fault("PngReadBack", item.clone(), error))?;
     Ok(Map {
         kind,
+        material: material.name().unwrap_or_default().to_owned(),
         stem: format!("{stem}_{}", kind.name()),
         png,
         decoded: written,

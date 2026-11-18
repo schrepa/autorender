@@ -29,8 +29,24 @@ pub struct Fragment {
 #[derive(Clone, Serialize)]
 pub struct FragmentEntity {
     pub id: String,
-    pub drawn: FragmentDrawn,
-    pub transform: BTreeMap<String, f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub drawn: Option<FragmentDrawn>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level_piece: Option<LevelPiece>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub level_sets: Option<LevelSets>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transform: Option<BTreeMap<String, f32>>,
+}
+
+#[derive(Clone, Serialize)]
+pub struct LevelSets {
+    pub file: String,
+}
+
+#[derive(Clone, Serialize)]
+pub struct LevelPiece {
+    pub largest_m: f32,
 }
 
 #[derive(Clone, Serialize)]

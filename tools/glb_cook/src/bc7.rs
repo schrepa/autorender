@@ -1,3 +1,4 @@
+use engine_assets::{Texture, TextureFormat};
 use engine_math::{max, min};
 use engine_textures::bc7::{MODES, Parity, WEIGHTS, anchor_of, expand, subset_of, weights};
 
@@ -559,19 +560,17 @@ const FITTING_ITERATIONS: u32 = 4;
 const TRIED2: usize = 4;
 const TRIED3: usize = 2;
 
-pub(crate) fn encode_block(texels: &[[u8; 4]; 16]) -> [u8; 16] {
+fn searched(texels: &[[u8; 4]; 16]) -> Option<Candidate> {
     let colors: Texels = texels.map(|texel| texel.map(f32::from));
     let opaque = texels.iter().all(|texel| texel[3] == 255);
-    let Some(mut best) = encode_mode(&colors, 6, (0, 0, 0), u32::MAX) else {
-        return [0; 16];
-    };
+    let mut best = encode_mode(&colors, 6, (0, 0, 0), u32::MAX)?;
     let consider = |best: &mut Candidate, number: usize, choice: (usize, u32, u32)| {
         if let Some(candidate) = encode_mode(&colors, number, choice, best.error) {
             *best = candidate;
         }
     };
     if best.error <= GOOD_ENOUGH {
-        return pack(best);
+        return Some(best);
     }
     for rotation in u32::from(opaque)..4 {
         consider(&mut best, 5, (0, rotation, 0));
@@ -580,7 +579,7 @@ pub(crate) fn encode_block(texels: &[[u8; 4]; 16]) -> [u8; 16] {
         }
     }
     if best.error <= GOOD_ENOUGH {
-        return pack(best);
+        return Some(best);
     }
     if opaque {
         let rgb = Span { first: 0, count: 3 };
@@ -605,5 +604,39 @@ pub(crate) fn encode_block(texels: &[[u8; 4]; 16]) -> [u8; 16] {
             consider(&mut best, 7, (partition, 0, 0));
         }
     }
-    pack(best)
+    Some(best)
+}
+
+fn alpha_kept(block: [u8; 16], texels: &[[u8; 4]; 16]) -> bool {
+    let Ok(texture) = Texture::from_levels(TextureFormat::Bc7, 4, 4, vec![block.to_vec()]) else {
+        return false;
+    };
+    let Ok(plain) = engine_textures::decompress(&texture) else {
+        return false;
+    };
+    plain.levels()[0]
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(texels)
+        .all(|(read, held)| read[3] == held[3])
+}
+
+pub(crate) fn encode_block(texels: &[[u8; 4]; 16]) -> [u8; 16] {
+    searched(texels).map_or([0; 16], pack)
+}
+
+pub(crate) fn encode_block_exact_alpha(texels: &[[u8; 4]; 16]) -> [u8; 16] {
+    let Some(best) = searched(texels) else {
+        return [0; 16];
+    };
+    let packed = pack(best);
+    if texels.iter().all(|texel| texel[3] == 255) || alpha_kept(packed, texels) {
+        return packed;
+    }
+    let colors: Texels = texels.map(|texel| texel.map(f32::from));
+    encode_mode(&colors, 5, (0, 0, 0), u32::MAX)
+        .map(pack)
+        .filter(|separate| alpha_kept(*separate, texels))
+        .unwrap_or(packed)
 }
