@@ -1,0 +1,32 @@
+@group(1) @binding(0) var level_base_color_map: texture_2d<f32>;
+@group(1) @binding(1) var level_base_color_sampler: sampler;
+@group(1) @binding(2) var level_normal_map: texture_2d<f32>;
+@group(1) @binding(3) var level_normal_sampler: sampler;
+@group(1) @binding(4) var level_orm_map: texture_2d<f32>;
+@group(1) @binding(5) var level_orm_sampler: sampler;
+@group(1) @binding(6) var level_lightmap: texture_2d<f32>;
+@group(1) @binding(7) var level_lightmap_sampler: sampler;
+
+struct LevelTexels {
+    base_color: vec3<f32>,
+    normal: vec3<f32>,
+    occlusion: f32,
+    roughness: f32,
+    metallic: f32,
+}
+
+fn level_texels(uv: vec2<f32>) -> LevelTexels {
+    var texels: LevelTexels;
+    texels.base_color = textureSample(level_base_color_map, level_base_color_sampler, uv).rgb;
+    let across = textureSample(level_normal_map, level_normal_sampler, uv).xy * 2.0 - 1.0;
+    texels.normal = vec3<f32>(across, sqrt(max(1.0 - dot(across, across), 0.0)));
+    let orm = textureSample(level_orm_map, level_orm_sampler, uv);
+    texels.occlusion = orm.r;
+    texels.roughness = orm.g;
+    texels.metallic = orm.b;
+    return texels;
+}
+
+fn level_baked(uv1: vec2<f32>) -> vec4<f32> {
+    return textureSample(level_lightmap, level_lightmap_sampler, uv1);
+}

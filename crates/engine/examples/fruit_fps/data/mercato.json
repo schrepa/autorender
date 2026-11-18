@@ -1,0 +1,4337 @@
+{
+ "map": "mercato",
+ "frame": "x east, y north, z up, metres (Blender). In the glTF / game frame a point (x, y, z) here is (x, z, -y).",
+ "player": {
+  "radius": 0.35,
+  "step": 0.35,
+  "eye": 1.6,
+  "clear": 2.2
+ },
+ "bounds": [
+  -40.0,
+  -44.0,
+  40.0,
+  42.0
+ ],
+ "zones": [
+  {
+   "name": "atk_spawn",
+   "rect": [
+    -12,
+    -42,
+    12,
+    -30
+   ],
+   "floor": 0.0,
+   "callout": "Loading Dock"
+  },
+  {
+   "name": "a_lobby",
+   "rect": [
+    -34,
+    -34,
+    -12,
+    -26
+   ],
+   "floor": 0.0,
+   "callout": "Olive Yard"
+  },
+  {
+   "name": "b_lobby",
+   "rect": [
+    12,
+    -34,
+    34,
+    -26
+   ],
+   "floor": 0.0,
+   "callout": "Bakery Row"
+  },
+  {
+   "name": "mid_street",
+   "rect": [
+    -5,
+    -30,
+    5,
+    -6
+   ],
+   "floor": 0.0,
+   "callout": "Via Lunga"
+  },
+  {
+   "name": "a_main",
+   "rect": [
+    -34,
+    -26,
+    -26,
+    0
+   ],
+   "floor": 0.0,
+   "callout": "Lemon Alley"
+  },
+  {
+   "name": "b_main",
+   "rect": [
+    26,
+    -26,
+    34,
+    -2
+   ],
+   "floor": 0.0,
+   "callout": "Spice Lane"
+  },
+  {
+   "name": "a_site",
+   "rect": [
+    -36,
+    0,
+    -16,
+    20
+   ],
+   "floor": 0.0,
+   "callout": "Piazza (A)"
+  },
+  {
+   "name": "b_site",
+   "rect": [
+    16,
+    -2,
+    36,
+    18
+   ],
+   "floor": 0.0,
+   "callout": "Market Hall (B)"
+  },
+  {
+   "name": "courtyard",
+   "rect": [
+    -8,
+    -6,
+    8,
+    14
+   ],
+   "floor": 0.0,
+   "callout": "Fountain"
+  },
+  {
+   "name": "a_link",
+   "rect": [
+    -16,
+    10,
+    -8,
+    14
+   ],
+   "floor": 0.0,
+   "callout": "Tailor Cut"
+  },
+  {
+   "name": "b_link",
+   "rect": [
+    8,
+    4,
+    16,
+    8
+   ],
+   "floor": 0.0,
+   "callout": "Cheese Gap"
+  },
+  {
+   "name": "arch",
+   "rect": [
+    -5,
+    14,
+    5,
+    28
+   ],
+   "floor": 0.0,
+   "callout": "Archway"
+  },
+  {
+   "name": "def_spawn",
+   "rect": [
+    -12,
+    28,
+    12,
+    40
+   ],
+   "floor": 0.0,
+   "callout": "Bell Square"
+  },
+  {
+   "name": "a_back",
+   "rect": [
+    -26,
+    20,
+    -20,
+    34
+   ],
+   "floor": 0.0,
+   "callout": "Well Yard"
+  },
+  {
+   "name": "def_west",
+   "rect": [
+    -20,
+    30,
+    -12,
+    34
+   ],
+   "floor": 0.0,
+   "callout": "West Passage"
+  },
+  {
+   "name": "b_back",
+   "rect": [
+    20,
+    18,
+    26,
+    33
+   ],
+   "floor": 0.0,
+   "callout": "Cellar Row"
+  },
+  {
+   "name": "def_east",
+   "rect": [
+    12,
+    29,
+    20,
+    33
+   ],
+   "floor": 0.0,
+   "callout": "East Passage"
+  },
+  {
+   "name": "arcade",
+   "rect": [
+    -12.8,
+    -6,
+    -8,
+    9.3
+   ],
+   "floor": 0.0,
+   "callout": "Arcade"
+  }
+ ],
+ "raised": [
+  {
+   "name": "a_stage",
+   "rect": [
+    -36,
+    14,
+    -30,
+    20
+   ],
+   "floor": 1.0,
+   "ramp": {
+    "rect": [
+     -36,
+     10,
+     -33.5,
+     14
+    ],
+    "up": "+y",
+    "from": 0.0,
+    "to": 1.0
+   }
+  }
+ ],
+ "roofed": [
+  {
+   "name": "market_hall",
+   "rect": [
+    16,
+    -2,
+    36,
+    18
+   ],
+   "ceiling": 5.0,
+   "skylights": [
+    [
+     22,
+     4,
+     30,
+     12
+    ]
+   ]
+  }
+ ],
+ "portals": [
+  {
+   "zones": [
+    "atk_spawn",
+    "a_lobby"
+   ],
+   "segment": [
+    [
+     -12,
+     -34.0
+    ],
+    [
+     -12,
+     -30
+    ]
+   ],
+   "width": 4.0
+  },
+  {
+   "zones": [
+    "atk_spawn",
+    "b_lobby"
+   ],
+   "segment": [
+    [
+     12,
+     -34.0
+    ],
+    [
+     12,
+     -30
+    ]
+   ],
+   "width": 4.0
+  },
+  {
+   "zones": [
+    "atk_spawn",
+    "mid_street"
+   ],
+   "segment": [
+    [
+     -5.0,
+     -30
+    ],
+    [
+     5,
+     -30
+    ]
+   ],
+   "width": 10.0
+  },
+  {
+   "zones": [
+    "a_lobby",
+    "a_main"
+   ],
+   "segment": [
+    [
+     -34.0,
+     -26
+    ],
+    [
+     -26,
+     -26
+    ]
+   ],
+   "width": 8.0
+  },
+  {
+   "zones": [
+    "b_lobby",
+    "b_main"
+   ],
+   "segment": [
+    [
+     26.0,
+     -26
+    ],
+    [
+     34,
+     -26
+    ]
+   ],
+   "width": 8.0
+  },
+  {
+   "zones": [
+    "mid_street",
+    "courtyard"
+   ],
+   "segment": [
+    [
+     -5.0,
+     -6
+    ],
+    [
+     5,
+     -6
+    ]
+   ],
+   "width": 10.0
+  },
+  {
+   "zones": [
+    "a_main",
+    "a_site"
+   ],
+   "segment": [
+    [
+     -31.5,
+     0
+    ],
+    [
+     -28.5,
+     0
+    ]
+   ],
+   "width": 3.0
+  },
+  {
+   "zones": [
+    "b_main",
+    "b_site"
+   ],
+   "segment": [
+    [
+     26.5,
+     -2
+    ],
+    [
+     29.5,
+     -2
+    ]
+   ],
+   "width": 3.0
+  },
+  {
+   "zones": [
+    "a_site",
+    "a_link"
+   ],
+   "segment": [
+    [
+     -16,
+     10.5
+    ],
+    [
+     -16,
+     13.5
+    ]
+   ],
+   "width": 3.0
+  },
+  {
+   "zones": [
+    "a_site",
+    "a_back"
+   ],
+   "segment": [
+    [
+     -25.0,
+     20
+    ],
+    [
+     -21.0,
+     20
+    ]
+   ],
+   "width": 4.0
+  },
+  {
+   "zones": [
+    "b_site",
+    "b_link"
+   ],
+   "segment": [
+    [
+     16,
+     4.5
+    ],
+    [
+     16,
+     7.5
+    ]
+   ],
+   "width": 3.0
+  },
+  {
+   "zones": [
+    "b_site",
+    "b_back"
+   ],
+   "segment": [
+    [
+     21.7,
+     18
+    ],
+    [
+     25.7,
+     18
+    ]
+   ],
+   "width": 4.0
+  },
+  {
+   "zones": [
+    "courtyard",
+    "a_link"
+   ],
+   "segment": [
+    [
+     -8,
+     10.0
+    ],
+    [
+     -8,
+     14
+    ]
+   ],
+   "width": 4.0
+  },
+  {
+   "zones": [
+    "courtyard",
+    "b_link"
+   ],
+   "segment": [
+    [
+     8,
+     4.0
+    ],
+    [
+     8,
+     8
+    ]
+   ],
+   "width": 4.0
+  },
+  {
+   "zones": [
+    "courtyard",
+    "arch"
+   ],
+   "segment": [
+    [
+     -5.0,
+     14
+    ],
+    [
+     5,
+     14
+    ]
+   ],
+   "width": 10.0
+  },
+  {
+   "zones": [
+    "courtyard",
+    "arcade"
+   ],
+   "segment": [
+    [
+     -8,
+     -5.25
+    ],
+    [
+     -8,
+     -1.1499999999999995
+    ]
+   ],
+   "width": 4.1
+  },
+  {
+   "zones": [
+    "courtyard",
+    "arcade"
+   ],
+   "segment": [
+    [
+     -8,
+     -0.39999999999999947
+    ],
+    [
+     -8,
+     3.700000000000001
+    ]
+   ],
+   "width": 4.1
+  },
+  {
+   "zones": [
+    "courtyard",
+    "arcade"
+   ],
+   "segment": [
+    [
+     -8,
+     4.450000000000001
+    ],
+    [
+     -8,
+     8.55
+    ]
+   ],
+   "width": 4.1
+  },
+  {
+   "zones": [
+    "arch",
+    "def_spawn"
+   ],
+   "segment": [
+    [
+     -5.0,
+     28
+    ],
+    [
+     5,
+     28
+    ]
+   ],
+   "width": 10.0
+  },
+  {
+   "zones": [
+    "def_spawn",
+    "def_west"
+   ],
+   "segment": [
+    [
+     -12,
+     30.0
+    ],
+    [
+     -12,
+     34
+    ]
+   ],
+   "width": 4.0
+  },
+  {
+   "zones": [
+    "def_spawn",
+    "def_east"
+   ],
+   "segment": [
+    [
+     12,
+     29.0
+    ],
+    [
+     12,
+     33
+    ]
+   ],
+   "width": 4.0
+  },
+  {
+   "zones": [
+    "a_back",
+    "def_west"
+   ],
+   "segment": [
+    [
+     -20,
+     30.0
+    ],
+    [
+     -20,
+     34
+    ]
+   ],
+   "width": 4.0
+  },
+  {
+   "zones": [
+    "b_back",
+    "def_east"
+   ],
+   "segment": [
+    [
+     20,
+     29.0
+    ],
+    [
+     20,
+     33
+    ]
+   ],
+   "width": 4.0
+  }
+ ],
+ "chokes": [
+  {
+   "name": "arch_a_main",
+   "zones": [
+    "a_main",
+    "a_site"
+   ],
+   "segment": [
+    [
+     -31.5,
+     -0.5
+    ],
+    [
+     -28.5,
+     -0.5
+    ]
+   ],
+   "width": 3.0,
+   "clear_height": 2.6,
+   "deliberate": true
+  },
+  {
+   "name": "arch_b_main",
+   "zones": [
+    "b_main",
+    "b_site"
+   ],
+   "segment": [
+    [
+     26.5,
+     -2.5
+    ],
+    [
+     29.5,
+     -2.5
+    ]
+   ],
+   "width": 3.0,
+   "clear_height": 2.6,
+   "deliberate": true
+  },
+  {
+   "name": "arch_a_link",
+   "zones": [
+    "a_link",
+    "a_site"
+   ],
+   "segment": [
+    [
+     -15.5,
+     10.5
+    ],
+    [
+     -15.5,
+     13.5
+    ]
+   ],
+   "width": 3.0,
+   "clear_height": 2.6,
+   "deliberate": true
+  },
+  {
+   "name": "arch_b_link",
+   "zones": [
+    "b_link",
+    "b_site"
+   ],
+   "segment": [
+    [
+     15.5,
+     4.5
+    ],
+    [
+     15.5,
+     7.5
+    ]
+   ],
+   "width": 3.0,
+   "clear_height": 2.6,
+   "deliberate": true
+  },
+  {
+   "name": "arch_a_back",
+   "zones": [
+    "a_back",
+    "a_site"
+   ],
+   "segment": [
+    [
+     -25.0,
+     20.5
+    ],
+    [
+     -21.0,
+     20.5
+    ]
+   ],
+   "width": 4.0,
+   "clear_height": 3.0,
+   "deliberate": false
+  },
+  {
+   "name": "arch_b_back",
+   "zones": [
+    "b_back",
+    "b_site"
+   ],
+   "segment": [
+    [
+     21.7,
+     18.5
+    ],
+    [
+     25.7,
+     18.5
+    ]
+   ],
+   "width": 4.0,
+   "clear_height": 3.0,
+   "deliberate": false
+  },
+  {
+   "name": "arch_mid",
+   "zones": [
+    "arch",
+    "arch"
+   ],
+   "segment": [
+    [
+     1.0,
+     19.0
+    ],
+    [
+     5.0,
+     19.0
+    ]
+   ],
+   "width": 4.0,
+   "clear_height": 3.0,
+   "deliberate": false
+  },
+  {
+   "name": "arcade_1",
+   "zones": [
+    "arcade",
+    "courtyard"
+   ],
+   "segment": [
+    [
+     -8.4,
+     -5.25
+    ],
+    [
+     -8.4,
+     -1.15
+    ]
+   ],
+   "width": 4.1,
+   "clear_height": 2.8,
+   "deliberate": false
+  },
+  {
+   "name": "arcade_2",
+   "zones": [
+    "arcade",
+    "courtyard"
+   ],
+   "segment": [
+    [
+     -8.4,
+     -0.4
+    ],
+    [
+     -8.4,
+     3.7
+    ]
+   ],
+   "width": 4.1,
+   "clear_height": 2.8,
+   "deliberate": false
+  },
+  {
+   "name": "arcade_3",
+   "zones": [
+    "arcade",
+    "courtyard"
+   ],
+   "segment": [
+    [
+     -8.4,
+     4.45
+    ],
+    [
+     -8.4,
+     8.55
+    ]
+   ],
+   "width": 4.1,
+   "clear_height": 2.8,
+   "deliberate": false
+  }
+ ],
+ "spawns": [
+  {
+   "name": "spawn_attack_1",
+   "team": "attack",
+   "pos": [
+    -3.0,
+    -33.5,
+    0.0
+   ],
+   "facing_deg": 0.0
+  },
+  {
+   "name": "spawn_attack_2",
+   "team": "attack",
+   "pos": [
+    -1.5,
+    -33.5,
+    0.0
+   ],
+   "facing_deg": 0.0
+  },
+  {
+   "name": "spawn_attack_3",
+   "team": "attack",
+   "pos": [
+    0.0,
+    -33.5,
+    0.0
+   ],
+   "facing_deg": 0.0
+  },
+  {
+   "name": "spawn_attack_4",
+   "team": "attack",
+   "pos": [
+    1.5,
+    -33.5,
+    0.0
+   ],
+   "facing_deg": 0.0
+  },
+  {
+   "name": "spawn_attack_5",
+   "team": "attack",
+   "pos": [
+    3.0,
+    -33.5,
+    0.0
+   ],
+   "facing_deg": 0.0
+  },
+  {
+   "name": "spawn_defend_1",
+   "team": "defend",
+   "pos": [
+    -4.2,
+    36.6,
+    0.0
+   ],
+   "facing_deg": 180.0
+  },
+  {
+   "name": "spawn_defend_2",
+   "team": "defend",
+   "pos": [
+    -3.0,
+    36.6,
+    0.0
+   ],
+   "facing_deg": 180.0
+  },
+  {
+   "name": "spawn_defend_3",
+   "team": "defend",
+   "pos": [
+    -1.8,
+    36.6,
+    0.0
+   ],
+   "facing_deg": 180.0
+  },
+  {
+   "name": "spawn_defend_4",
+   "team": "defend",
+   "pos": [
+    -3.6,
+    38.2,
+    0.0
+   ],
+   "facing_deg": 180.0
+  },
+  {
+   "name": "spawn_defend_5",
+   "team": "defend",
+   "pos": [
+    -2.4,
+    38.2,
+    0.0
+   ],
+   "facing_deg": 180.0
+  }
+ ],
+ "plant_zones": [
+  {
+   "site": "a",
+   "rect": [
+    -30,
+    6,
+    -22,
+    14
+   ],
+   "center": [
+    -26.0,
+    10.0
+   ]
+  },
+  {
+   "site": "b",
+   "rect": [
+    22,
+    4,
+    30,
+    12
+   ],
+   "center": [
+    26.0,
+    8.0
+   ]
+  }
+ ],
+ "zone_empties": [
+  {
+   "name": "zone_site_a",
+   "center": [
+    -26.0,
+    10.0,
+    1.5
+   ],
+   "half": [
+    4.0,
+    4.0,
+    1.5
+   ]
+  },
+  {
+   "name": "zone_site_b",
+   "center": [
+    26.0,
+    8.0,
+    1.5
+   ],
+   "half": [
+    4.0,
+    4.0,
+    1.5
+   ]
+  },
+  {
+   "name": "zone_buy_attack",
+   "center": [
+    0.0,
+    -36.0,
+    1.5
+   ],
+   "half": [
+    12.0,
+    6.0,
+    1.5
+   ]
+  },
+  {
+   "name": "zone_buy_defend",
+   "center": [
+    0.0,
+    34.0,
+    1.5
+   ],
+   "half": [
+    12.0,
+    6.0,
+    1.5
+   ]
+  }
+ ],
+ "cover": [
+  {
+   "name": "atk_van",
+   "kind": "van",
+   "pos": [
+    0.0,
+    -39.5,
+    0.0
+   ],
+   "size": [
+    2.4,
+    5.0,
+    2.5
+   ],
+   "class": "full",
+   "zone": "atk_spawn"
+  },
+  {
+   "name": "atk_crates_w",
+   "kind": "crates",
+   "pos": [
+    -7.2,
+    -33.2,
+    0.0
+   ],
+   "size": [
+    1.2,
+    6.4,
+    2.4
+   ],
+   "class": "full",
+   "zone": "atk_spawn"
+  },
+  {
+   "name": "atk_crates_e",
+   "kind": "crates",
+   "pos": [
+    7.2,
+    -33.2,
+    0.0
+   ],
+   "size": [
+    1.2,
+    6.4,
+    2.4
+   ],
+   "class": "full",
+   "zone": "atk_spawn"
+  },
+  {
+   "name": "a_lobby_stall",
+   "kind": "stall",
+   "pos": [
+    -22.25,
+    -26.6,
+    0.0
+   ],
+   "size": [
+    3.5,
+    1.2,
+    2.63
+   ],
+   "class": "full",
+   "zone": "a_lobby"
+  },
+  {
+   "name": "a_lobby_crates",
+   "kind": "crates",
+   "pos": [
+    -33.4,
+    -32.8,
+    0.0
+   ],
+   "size": [
+    1.2,
+    2.4,
+    2.4
+   ],
+   "class": "full",
+   "zone": "a_lobby"
+  },
+  {
+   "name": "b_lobby_kiosk",
+   "kind": "kiosk",
+   "pos": [
+    19.2,
+    -32.8,
+    0.0
+   ],
+   "size": [
+    2.4,
+    2.4,
+    2.6
+   ],
+   "class": "full",
+   "zone": "b_lobby"
+  },
+  {
+   "name": "b_lobby_crates",
+   "kind": "crates",
+   "pos": [
+    33.4,
+    -32.9,
+    0.0
+   ],
+   "size": [
+    1.2,
+    2.2,
+    1.2
+   ],
+   "class": "half",
+   "zone": "b_lobby"
+  },
+  {
+   "name": "mid_cart",
+   "kind": "cart",
+   "pos": [
+    2.0,
+    -11.1,
+    0.0
+   ],
+   "size": [
+    6.0,
+    2.2,
+    2.4
+   ],
+   "class": "full",
+   "zone": "mid_street"
+  },
+  {
+   "name": "mid_crates",
+   "kind": "crates",
+   "pos": [
+    -2.0,
+    -18.4,
+    0.0
+   ],
+   "size": [
+    6.0,
+    1.2,
+    2.4
+   ],
+   "class": "full",
+   "zone": "mid_street"
+  },
+  {
+   "name": "mid_crates_low",
+   "kind": "crates",
+   "pos": [
+    4.4,
+    -26.0,
+    0.0
+   ],
+   "size": [
+    1.2,
+    2.0,
+    1.2
+   ],
+   "class": "half",
+   "zone": "mid_street"
+  },
+  {
+   "name": "a_main_stall",
+   "kind": "stall",
+   "pos": [
+    -33.4,
+    -22.5,
+    0.0
+   ],
+   "size": [
+    1.2,
+    3.0,
+    1.1
+   ],
+   "class": "half",
+   "zone": "a_main"
+  },
+  {
+   "name": "a_main_crates",
+   "kind": "crates",
+   "pos": [
+    -26.6,
+    -22.0,
+    0.0
+   ],
+   "size": [
+    1.2,
+    2.0,
+    2.4
+   ],
+   "class": "full",
+   "zone": "a_main"
+  },
+  {
+   "name": "b_main_crates",
+   "kind": "crates",
+   "pos": [
+    33.4,
+    -4.0,
+    0.0
+   ],
+   "size": [
+    1.2,
+    2.0,
+    1.2
+   ],
+   "class": "half",
+   "zone": "b_main"
+  },
+  {
+   "name": "b_main_stall",
+   "kind": "stall",
+   "pos": [
+    26.6,
+    -24.5,
+    0.0
+   ],
+   "size": [
+    1.2,
+    3.0,
+    1.1
+   ],
+   "class": "half",
+   "zone": "b_main"
+  },
+  {
+   "name": "a_screen_s",
+   "kind": "stall",
+   "pos": [
+    -28.8,
+    4.6,
+    0.0
+   ],
+   "size": [
+    6.4,
+    1.2,
+    2.63
+   ],
+   "class": "full",
+   "zone": "a_site"
+  },
+  {
+   "name": "a_crates_full_s",
+   "kind": "crates",
+   "pos": [
+    -21.0,
+    1.0,
+    0.0
+   ],
+   "size": [
+    2.0,
+    2.0,
+    2.4
+   ],
+   "class": "full",
+   "zone": "a_site"
+  },
+  {
+   "name": "a_crates_plant",
+   "kind": "crates",
+   "pos": [
+    -26.5,
+    10.0,
+    0.0
+   ],
+   "size": [
+    1.8,
+    1.2,
+    1.2
+   ],
+   "class": "half",
+   "zone": "a_site"
+  },
+  {
+   "name": "a_screen_link",
+   "kind": "stall",
+   "pos": [
+    -20.6,
+    11.6,
+    0.0
+   ],
+   "size": [
+    1.2,
+    6.0,
+    2.63
+   ],
+   "class": "full",
+   "zone": "a_site"
+  },
+  {
+   "name": "a_stall",
+   "kind": "stall",
+   "pos": [
+    -17.5,
+    19.4,
+    0.0
+   ],
+   "size": [
+    3.0,
+    1.2,
+    1.1
+   ],
+   "class": "half",
+   "zone": "a_site"
+  },
+  {
+   "name": "a_planter_tree",
+   "kind": "planter",
+   "pos": [
+    -18.0,
+    0.8,
+    0.0
+   ],
+   "size": [
+    4.0,
+    1.6,
+    1.15
+   ],
+   "class": "half",
+   "zone": "a_site"
+  },
+  {
+   "name": "a_crates_full_n",
+   "kind": "crates",
+   "pos": [
+    -29.4,
+    18.0,
+    0.0
+   ],
+   "size": [
+    1.2,
+    4.0,
+    2.4
+   ],
+   "class": "full",
+   "zone": "a_site"
+  },
+  {
+   "name": "a_stage_crates",
+   "kind": "crates",
+   "pos": [
+    -30.8,
+    19.0,
+    1.0
+   ],
+   "size": [
+    1.2,
+    2.0,
+    1.2
+   ],
+   "class": "half",
+   "zone": "a_site"
+  },
+  {
+   "name": "b_pillar_sw",
+   "kind": "pillar",
+   "pos": [
+    20.6,
+    2.6,
+    0.0
+   ],
+   "size": [
+    0.8,
+    0.8,
+    5.0
+   ],
+   "class": "full",
+   "zone": "b_site"
+  },
+  {
+   "name": "b_pillar_se",
+   "kind": "pillar",
+   "pos": [
+    31.4,
+    2.6,
+    0.0
+   ],
+   "size": [
+    0.8,
+    0.8,
+    5.0
+   ],
+   "class": "full",
+   "zone": "b_site"
+  },
+  {
+   "name": "b_pillar_nw",
+   "kind": "pillar",
+   "pos": [
+    20.6,
+    13.4,
+    0.0
+   ],
+   "size": [
+    0.8,
+    0.8,
+    5.0
+   ],
+   "class": "full",
+   "zone": "b_site"
+  },
+  {
+   "name": "b_screen_s",
+   "kind": "crates",
+   "pos": [
+    28.3,
+    2.8,
+    0.0
+   ],
+   "size": [
+    5.4,
+    1.2,
+    2.4
+   ],
+   "class": "full",
+   "zone": "b_site"
+  },
+  {
+   "name": "b_crates_full",
+   "kind": "crates",
+   "pos": [
+    22.2,
+    13.3,
+    0.0
+   ],
+   "size": [
+    2.4,
+    1.0,
+    2.4
+   ],
+   "class": "full",
+   "zone": "b_site"
+  },
+  {
+   "name": "b_pillar_ne",
+   "kind": "pillar",
+   "pos": [
+    31.4,
+    13.4,
+    0.0
+   ],
+   "size": [
+    0.8,
+    0.8,
+    5.0
+   ],
+   "class": "full",
+   "zone": "b_site"
+  },
+  {
+   "name": "b_juice_bar",
+   "kind": "juicebar",
+   "pos": [
+    33.9,
+    15.4,
+    0.0
+   ],
+   "size": [
+    4.2,
+    5.2,
+    1.1
+   ],
+   "class": "half",
+   "zone": "b_site"
+  },
+  {
+   "name": "b_crates_plant",
+   "kind": "crates",
+   "pos": [
+    26.7,
+    8.6,
+    0.0
+   ],
+   "size": [
+    1.8,
+    1.2,
+    1.2
+   ],
+   "class": "half",
+   "zone": "b_site"
+  },
+  {
+   "name": "b_screen_link",
+   "kind": "crates",
+   "pos": [
+    20.8,
+    8.0,
+    0.0
+   ],
+   "size": [
+    1.2,
+    10.0,
+    2.4
+   ],
+   "class": "full",
+   "zone": "b_site"
+  },
+  {
+   "name": "fountain",
+   "kind": "fountain",
+   "pos": [
+    0.0,
+    0.0,
+    0.0
+   ],
+   "size": [
+    5.2,
+    5.2,
+    1.72
+   ],
+   "class": "full",
+   "zone": "courtyard"
+  },
+  {
+   "name": "court_edicola",
+   "kind": "kiosk",
+   "pos": [
+    0.4,
+    9.0,
+    0.0
+   ],
+   "size": [
+    2.4,
+    4.0,
+    2.4
+   ],
+   "class": "full",
+   "zone": "courtyard"
+  },
+  {
+   "name": "court_kiosk",
+   "kind": "kiosk",
+   "pos": [
+    6.9,
+    12.0,
+    0.0
+   ],
+   "size": [
+    2.2,
+    4.0,
+    2.6
+   ],
+   "class": "full",
+   "zone": "courtyard"
+  },
+  {
+   "name": "a_back_crates",
+   "kind": "crates",
+   "pos": [
+    -25.0,
+    27.0,
+    0.0
+   ],
+   "size": [
+    2.0,
+    2.0,
+    2.4
+   ],
+   "class": "full",
+   "zone": "a_back"
+  },
+  {
+   "name": "b_back_crates",
+   "kind": "crates",
+   "pos": [
+    21.0,
+    26.0,
+    0.0
+   ],
+   "size": [
+    2.0,
+    2.0,
+    2.4
+   ],
+   "class": "full",
+   "zone": "b_back"
+  },
+  {
+   "name": "def_crates_w",
+   "kind": "crates",
+   "pos": [
+    -7.2,
+    31.8,
+    0.0
+   ],
+   "size": [
+    1.2,
+    7.6,
+    2.4
+   ],
+   "class": "full",
+   "zone": "def_spawn"
+  },
+  {
+   "name": "def_crates_e",
+   "kind": "crates",
+   "pos": [
+    7.2,
+    31.8,
+    0.0
+   ],
+   "size": [
+    1.2,
+    7.6,
+    2.4
+   ],
+   "class": "full",
+   "zone": "def_spawn"
+  }
+ ],
+ "callouts": [
+  {
+   "name": "Loading Dock",
+   "zone": "atk_spawn",
+   "pos": [
+    0.0,
+    -36.0
+   ]
+  },
+  {
+   "name": "Olive Yard",
+   "zone": "a_lobby",
+   "pos": [
+    -23.0,
+    -30.0
+   ]
+  },
+  {
+   "name": "Bakery Row",
+   "zone": "b_lobby",
+   "pos": [
+    23.0,
+    -30.0
+   ]
+  },
+  {
+   "name": "Via Lunga",
+   "zone": "mid_street",
+   "pos": [
+    0.0,
+    -18.0
+   ]
+  },
+  {
+   "name": "Lemon Alley",
+   "zone": "a_main",
+   "pos": [
+    -30.0,
+    -13.0
+   ]
+  },
+  {
+   "name": "Spice Lane",
+   "zone": "b_main",
+   "pos": [
+    30.0,
+    -14.0
+   ]
+  },
+  {
+   "name": "Piazza (A)",
+   "zone": "a_site",
+   "pos": [
+    -26.0,
+    10.0
+   ]
+  },
+  {
+   "name": "Market Hall (B)",
+   "zone": "b_site",
+   "pos": [
+    26.0,
+    8.0
+   ]
+  },
+  {
+   "name": "Fountain",
+   "zone": "courtyard",
+   "pos": [
+    0.0,
+    4.0
+   ]
+  },
+  {
+   "name": "Tailor Cut",
+   "zone": "a_link",
+   "pos": [
+    -12.0,
+    12.0
+   ]
+  },
+  {
+   "name": "Cheese Gap",
+   "zone": "b_link",
+   "pos": [
+    12.0,
+    6.0
+   ]
+  },
+  {
+   "name": "Archway",
+   "zone": "arch",
+   "pos": [
+    0.0,
+    21.0
+   ]
+  },
+  {
+   "name": "Bell Square",
+   "zone": "def_spawn",
+   "pos": [
+    0.0,
+    34.0
+   ]
+  },
+  {
+   "name": "Well Yard",
+   "zone": "a_back",
+   "pos": [
+    -23.0,
+    27.0
+   ]
+  },
+  {
+   "name": "West Passage",
+   "zone": "def_west",
+   "pos": [
+    -16.0,
+    32.0
+   ]
+  },
+  {
+   "name": "Cellar Row",
+   "zone": "b_back",
+   "pos": [
+    23.0,
+    25.5
+   ]
+  },
+  {
+   "name": "East Passage",
+   "zone": "def_east",
+   "pos": [
+    16.0,
+    31.0
+   ]
+  },
+  {
+   "name": "Arcade",
+   "zone": "arcade",
+   "pos": [
+    -10.4,
+    1.6500000000000004
+   ]
+  },
+  {
+   "name": "Stage",
+   "zone": "a_site",
+   "pos": [
+    -33.0,
+    17.0
+   ]
+  },
+  {
+   "name": "Ramp",
+   "zone": "a_site",
+   "pos": [
+    -34.75,
+    12.0
+   ]
+  },
+  {
+   "name": "Juice Bar",
+   "zone": "b_site",
+   "pos": [
+    34.0,
+    15.0
+   ]
+  },
+  {
+   "name": "Pillars",
+   "zone": "b_site",
+   "pos": [
+    26.0,
+    15.6
+   ]
+  },
+  {
+   "name": "Cart",
+   "zone": "mid_street",
+   "pos": [
+    2.0,
+    -11.1
+   ]
+  },
+  {
+   "name": "Edicola",
+   "zone": "courtyard",
+   "pos": [
+    0.4,
+    9.0
+   ]
+  },
+  {
+   "name": "Bell Tower",
+   "zone": "courtyard",
+   "pos": [
+    -7.0,
+    18.5
+   ]
+  },
+  {
+   "name": "Kiosk",
+   "zone": "courtyard",
+   "pos": [
+    6.7,
+    12.0
+   ]
+  },
+  {
+   "name": "Lemon Bend",
+   "zone": "a_main",
+   "pos": [
+    -30.0,
+    -10.5
+   ]
+  },
+  {
+   "name": "Spice Bend",
+   "zone": "b_main",
+   "pos": [
+    30.0,
+    -12.5
+   ]
+  }
+ ],
+ "sun": {
+  "dir_to_sun": [
+   0.45,
+   -0.35,
+   0.82
+  ],
+  "rgb": [
+   1.0,
+   0.95,
+   0.86
+  ]
+ },
+ "sight_caps": {
+  "lanes": [
+   "mid_street",
+   "a_main",
+   "b_main"
+  ],
+  "lane_m": 45.0,
+  "other_m": 35.0
+ },
+ "collision": [
+  {
+   "name": "col_mass_000",
+   "type": "box",
+   "min": [
+    -40.0,
+    -44.0,
+    0.0
+   ],
+   "max": [
+    -32.0,
+    -34.0,
+    7.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_001",
+   "type": "box",
+   "min": [
+    -32.0,
+    -44.0,
+    0.0
+   ],
+   "max": [
+    40.0,
+    -42.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_002",
+   "type": "box",
+   "min": [
+    -32.0,
+    -42.0,
+    0.0
+   ],
+   "max": [
+    -12.0,
+    -34.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_003",
+   "type": "box",
+   "min": [
+    12.0,
+    -42.0,
+    0.0
+   ],
+   "max": [
+    40.0,
+    -34.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_004",
+   "type": "box",
+   "min": [
+    -40.0,
+    -34.0,
+    0.0
+   ],
+   "max": [
+    -34.0,
+    -20.0,
+    7.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_005",
+   "type": "box",
+   "min": [
+    34.0,
+    -34.0,
+    0.0
+   ],
+   "max": [
+    40.0,
+    -6.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_006",
+   "type": "box",
+   "min": [
+    -12.0,
+    -30.0,
+    0.0
+   ],
+   "max": [
+    -5.0,
+    -23.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_007",
+   "type": "box",
+   "min": [
+    5.0,
+    -30.0,
+    0.0
+   ],
+   "max": [
+    12.0,
+    -26.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_008",
+   "type": "box",
+   "min": [
+    -26.0,
+    -26.0,
+    0.0
+   ],
+   "max": [
+    -12.0,
+    -23.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_009",
+   "type": "box",
+   "min": [
+    5.0,
+    -26.0,
+    0.0
+   ],
+   "max": [
+    26.0,
+    -23.0,
+    7.5
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_010",
+   "type": "box",
+   "min": [
+    -26.0,
+    -23.0,
+    0.0
+   ],
+   "max": [
+    -23.0,
+    0.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_011",
+   "type": "box",
+   "min": [
+    -23.0,
+    -23.0,
+    0.0
+   ],
+   "max": [
+    -8.0,
+    -9.0,
+    9.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_012",
+   "type": "box",
+   "min": [
+    -8.0,
+    -23.0,
+    0.0
+   ],
+   "max": [
+    -5.0,
+    -6.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_013",
+   "type": "box",
+   "min": [
+    5.0,
+    -23.0,
+    0.0
+   ],
+   "max": [
+    8.0,
+    -6.0,
+    7.5
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_014",
+   "type": "box",
+   "min": [
+    8.0,
+    -23.0,
+    0.0
+   ],
+   "max": [
+    23.0,
+    -9.0,
+    9.5
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_015",
+   "type": "box",
+   "min": [
+    23.0,
+    -23.0,
+    0.0
+   ],
+   "max": [
+    26.0,
+    -2.0,
+    7.5
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_016",
+   "type": "box",
+   "min": [
+    -40.0,
+    -20.0,
+    0.0
+   ],
+   "max": [
+    -34.0,
+    0.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_017",
+   "type": "box",
+   "min": [
+    26.0,
+    -18.0,
+    0.0
+   ],
+   "max": [
+    30.0,
+    -14.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_018",
+   "type": "box",
+   "min": [
+    -30.0,
+    -16.0,
+    0.0
+   ],
+   "max": [
+    -26.0,
+    -12.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_019",
+   "type": "box",
+   "min": [
+    -23.0,
+    -9.0,
+    0.0
+   ],
+   "max": [
+    -8.0,
+    -6.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_020",
+   "type": "box",
+   "min": [
+    8.0,
+    -9.0,
+    0.0
+   ],
+   "max": [
+    23.0,
+    -6.0,
+    7.5
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_021",
+   "type": "box",
+   "min": [
+    -23.0,
+    -6.0,
+    0.0
+   ],
+   "max": [
+    -12.8,
+    0.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_022",
+   "type": "box",
+   "min": [
+    -8.8,
+    -6.0,
+    0.0
+   ],
+   "max": [
+    -8.0,
+    -5.25,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_023",
+   "type": "box",
+   "min": [
+    8.0,
+    -6.0,
+    0.0
+   ],
+   "max": [
+    14.0,
+    4.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_024",
+   "type": "box",
+   "min": [
+    14.0,
+    -6.0,
+    0.0
+   ],
+   "max": [
+    23.0,
+    -2.0,
+    7.5
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_025",
+   "type": "box",
+   "min": [
+    34.0,
+    -6.0,
+    0.0
+   ],
+   "max": [
+    40.0,
+    -2.0,
+    7.5
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_026",
+   "type": "box",
+   "min": [
+    26.0,
+    -3.0,
+    0.0
+   ],
+   "max": [
+    26.5,
+    -2.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_027",
+   "type": "box",
+   "min": [
+    29.5,
+    -3.0,
+    0.0
+   ],
+   "max": [
+    34.0,
+    -2.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_028",
+   "type": "box",
+   "min": [
+    14.0,
+    -2.0,
+    0.0
+   ],
+   "max": [
+    16.0,
+    4.0,
+    7.5
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_029",
+   "type": "box",
+   "min": [
+    36.0,
+    -2.0,
+    0.0
+   ],
+   "max": [
+    40.0,
+    22.0,
+    7.5
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_030",
+   "type": "box",
+   "min": [
+    -8.8,
+    -1.15,
+    0.0
+   ],
+   "max": [
+    -8.0,
+    -0.4,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_031",
+   "type": "box",
+   "min": [
+    -34.0,
+    -1.0,
+    0.0
+   ],
+   "max": [
+    -31.5,
+    0.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_032",
+   "type": "box",
+   "min": [
+    -28.5,
+    -1.0,
+    0.0
+   ],
+   "max": [
+    -26.0,
+    0.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_033",
+   "type": "box",
+   "min": [
+    -40.0,
+    0.0,
+    0.0
+   ],
+   "max": [
+    -36.0,
+    20.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_034",
+   "type": "box",
+   "min": [
+    -16.0,
+    0.0,
+    0.0
+   ],
+   "max": [
+    -12.8,
+    10.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_035",
+   "type": "box",
+   "min": [
+    -8.8,
+    3.7,
+    0.0
+   ],
+   "max": [
+    -8.0,
+    4.45,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_036",
+   "type": "box",
+   "min": [
+    15.0,
+    4.0,
+    0.0
+   ],
+   "max": [
+    16.0,
+    4.5,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_037",
+   "type": "box",
+   "min": [
+    15.0,
+    7.5,
+    0.0
+   ],
+   "max": [
+    16.0,
+    8.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_038",
+   "type": "box",
+   "min": [
+    8.0,
+    8.0,
+    0.0
+   ],
+   "max": [
+    14.0,
+    28.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_039",
+   "type": "box",
+   "min": [
+    14.0,
+    8.0,
+    0.0
+   ],
+   "max": [
+    16.0,
+    22.0,
+    7.5
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_040",
+   "type": "box",
+   "min": [
+    -8.8,
+    8.55,
+    0.0
+   ],
+   "max": [
+    -8.0,
+    10.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_041",
+   "type": "box",
+   "min": [
+    -12.8,
+    9.3,
+    0.0
+   ],
+   "max": [
+    -8.8,
+    10.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_042",
+   "type": "box",
+   "min": [
+    -16.0,
+    10.0,
+    0.0
+   ],
+   "max": [
+    -15.0,
+    10.5,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_043",
+   "type": "box",
+   "min": [
+    -16.0,
+    13.5,
+    0.0
+   ],
+   "max": [
+    -15.0,
+    30.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_044",
+   "type": "box",
+   "min": [
+    -15.0,
+    14.0,
+    0.0
+   ],
+   "max": [
+    -5.0,
+    16.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_045",
+   "type": "box",
+   "min": [
+    5.0,
+    14.0,
+    0.0
+   ],
+   "max": [
+    8.0,
+    28.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_046",
+   "type": "box",
+   "min": [
+    -15.0,
+    16.0,
+    0.0
+   ],
+   "max": [
+    -9.5,
+    28.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_047",
+   "type": "box",
+   "min": [
+    -9.5,
+    16.0,
+    0.0
+   ],
+   "max": [
+    -5.0,
+    21.0,
+    14.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_048",
+   "type": "box",
+   "min": [
+    -5.0,
+    18.0,
+    0.0
+   ],
+   "max": [
+    1.0,
+    20.0,
+    6.5
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_049",
+   "type": "box",
+   "min": [
+    16.0,
+    18.0,
+    0.0
+   ],
+   "max": [
+    20.0,
+    22.0,
+    7.5
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_050",
+   "type": "box",
+   "min": [
+    20.0,
+    18.0,
+    0.0
+   ],
+   "max": [
+    21.7,
+    19.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_051",
+   "type": "box",
+   "min": [
+    25.7,
+    18.0,
+    0.0
+   ],
+   "max": [
+    26.0,
+    19.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_052",
+   "type": "box",
+   "min": [
+    26.0,
+    18.0,
+    0.0
+   ],
+   "max": [
+    36.0,
+    22.0,
+    7.5
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_053",
+   "type": "box",
+   "min": [
+    -40.0,
+    20.0,
+    0.0
+   ],
+   "max": [
+    -26.0,
+    42.0,
+    7.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_054",
+   "type": "box",
+   "min": [
+    -26.0,
+    20.0,
+    0.0
+   ],
+   "max": [
+    -25.0,
+    21.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_055",
+   "type": "box",
+   "min": [
+    -21.0,
+    20.0,
+    0.0
+   ],
+   "max": [
+    -16.0,
+    21.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_056",
+   "type": "box",
+   "min": [
+    -20.0,
+    21.0,
+    0.0
+   ],
+   "max": [
+    -16.0,
+    30.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_057",
+   "type": "box",
+   "min": [
+    -9.5,
+    21.0,
+    0.0
+   ],
+   "max": [
+    -5.0,
+    28.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_058",
+   "type": "box",
+   "min": [
+    14.0,
+    22.0,
+    0.0
+   ],
+   "max": [
+    20.0,
+    29.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_059",
+   "type": "box",
+   "min": [
+    26.0,
+    22.0,
+    0.0
+   ],
+   "max": [
+    40.0,
+    42.0,
+    8.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_060",
+   "type": "box",
+   "min": [
+    -1.0,
+    24.0,
+    0.0
+   ],
+   "max": [
+    5.0,
+    26.0,
+    6.5
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_061",
+   "type": "box",
+   "min": [
+    -15.0,
+    28.0,
+    0.0
+   ],
+   "max": [
+    -12.0,
+    30.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_062",
+   "type": "box",
+   "min": [
+    12.0,
+    28.0,
+    0.0
+   ],
+   "max": [
+    14.0,
+    29.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_063",
+   "type": "box",
+   "min": [
+    12.0,
+    33.0,
+    0.0
+   ],
+   "max": [
+    26.0,
+    42.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_064",
+   "type": "box",
+   "min": [
+    -26.0,
+    34.0,
+    0.0
+   ],
+   "max": [
+    -12.0,
+    42.0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_mass_065",
+   "type": "box",
+   "min": [
+    -12.0,
+    40.0,
+    0.0
+   ],
+   "max": [
+    12.0,
+    42.0,
+    7.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_ground",
+   "type": "box",
+   "min": [
+    -40.0,
+    -44.0,
+    -0.5
+   ],
+   "max": [
+    40.0,
+    42.0,
+    0.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_arch_a_main",
+   "type": "box",
+   "min": [
+    -31.5,
+    -1,
+    2.6
+   ],
+   "max": [
+    -28.5,
+    0,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_arch_b_main",
+   "type": "box",
+   "min": [
+    26.5,
+    -3,
+    2.6
+   ],
+   "max": [
+    29.5,
+    -2,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_arch_a_link",
+   "type": "box",
+   "min": [
+    -16,
+    10.5,
+    2.6
+   ],
+   "max": [
+    -15,
+    13.5,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_arch_b_link",
+   "type": "box",
+   "min": [
+    15,
+    4.5,
+    2.6
+   ],
+   "max": [
+    16,
+    7.5,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_arch_a_back",
+   "type": "box",
+   "min": [
+    -25.0,
+    20,
+    3.0
+   ],
+   "max": [
+    -21.0,
+    21,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_arch_b_back",
+   "type": "box",
+   "min": [
+    21.7,
+    18,
+    3.0
+   ],
+   "max": [
+    25.7,
+    19,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_arch_mid",
+   "type": "box",
+   "min": [
+    1.0,
+    18,
+    3.0
+   ],
+   "max": [
+    5.0,
+    20,
+    6.5
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_arcade_1",
+   "type": "box",
+   "min": [
+    -8.8,
+    -5.25,
+    2.8
+   ],
+   "max": [
+    -8.0,
+    -1.15,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_arcade_2",
+   "type": "box",
+   "min": [
+    -8.8,
+    -0.4,
+    2.8
+   ],
+   "max": [
+    -8.0,
+    3.7,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_arcade_3",
+   "type": "box",
+   "min": [
+    -8.8,
+    4.45,
+    2.8
+   ],
+   "max": [
+    -8.0,
+    8.55,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_hall_roof_0_0",
+   "type": "box",
+   "min": [
+    16,
+    -2,
+    5.0
+   ],
+   "max": [
+    22,
+    4,
+    5.3
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_hall_roof_0_1",
+   "type": "box",
+   "min": [
+    16,
+    4,
+    5.0
+   ],
+   "max": [
+    22,
+    12,
+    5.3
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_hall_roof_0_2",
+   "type": "box",
+   "min": [
+    16,
+    12,
+    5.0
+   ],
+   "max": [
+    22,
+    18,
+    5.3
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_hall_roof_1_0",
+   "type": "box",
+   "min": [
+    22,
+    -2,
+    5.0
+   ],
+   "max": [
+    30,
+    4,
+    5.3
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_hall_roof_1_2",
+   "type": "box",
+   "min": [
+    22,
+    12,
+    5.0
+   ],
+   "max": [
+    30,
+    18,
+    5.3
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_hall_roof_2_0",
+   "type": "box",
+   "min": [
+    30,
+    -2,
+    5.0
+   ],
+   "max": [
+    36,
+    4,
+    5.3
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_hall_roof_2_1",
+   "type": "box",
+   "min": [
+    30,
+    4,
+    5.0
+   ],
+   "max": [
+    36,
+    12,
+    5.3
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_hall_roof_2_2",
+   "type": "box",
+   "min": [
+    30,
+    12,
+    5.0
+   ],
+   "max": [
+    36,
+    18,
+    5.3
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_a_stage",
+   "type": "box",
+   "min": [
+    -36,
+    14,
+    0.0
+   ],
+   "max": [
+    -30,
+    20,
+    1.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_a_stage_ramp",
+   "type": "ramp",
+   "min": [
+    -36,
+    10,
+    0.0
+   ],
+   "max": [
+    -33.5,
+    14,
+    1.0
+   ],
+   "up": "+y",
+   "surface": "stone"
+  },
+  {
+   "name": "col_atk_van",
+   "type": "box",
+   "min": [
+    -1.2,
+    -42.0,
+    0
+   ],
+   "max": [
+    1.2,
+    -37.0,
+    2.5
+   ],
+   "surface": "metal"
+  },
+  {
+   "name": "col_atk_crates_w",
+   "type": "box",
+   "min": [
+    -7.8,
+    -36.4,
+    0.0
+   ],
+   "max": [
+    -6.6,
+    -30.0,
+    2.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_atk_crates_e",
+   "type": "box",
+   "min": [
+    6.6,
+    -36.4,
+    0.0
+   ],
+   "max": [
+    7.8,
+    -30.0,
+    2.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_atk_crates_sw",
+   "type": "box",
+   "min": [
+    -12.0,
+    -42.0,
+    0.0
+   ],
+   "max": [
+    -10.0,
+    -40.8,
+    1.2
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_atk_barrels_se",
+   "type": "box",
+   "min": [
+    10.6,
+    -42.0,
+    0
+   ],
+   "max": [
+    12.0,
+    -40.6,
+    0.95
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_lobby_stall",
+   "type": "box",
+   "min": [
+    -24.0,
+    -27.2,
+    0
+   ],
+   "max": [
+    -20.5,
+    -26.0,
+    1.1
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_lobby_stall_awning",
+   "type": "box",
+   "min": [
+    -24.0,
+    -27.9,
+    2.4
+   ],
+   "max": [
+    -20.5,
+    -26.0,
+    2.8
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_lobby_stall_back",
+   "type": "box",
+   "min": [
+    -24.0,
+    -26.3,
+    1.1
+   ],
+   "max": [
+    -20.5,
+    -26.0,
+    2.63
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_lobby_planter",
+   "type": "box",
+   "min": [
+    -22.0,
+    -34.0,
+    0
+   ],
+   "max": [
+    -20.4,
+    -32.4,
+    1.15
+   ],
+   "surface": "dirt"
+  },
+  {
+   "name": "col_a_lobby_planter_trunk",
+   "type": "box",
+   "min": [
+    -21.34,
+    -33.34,
+    1.15
+   ],
+   "max": [
+    -21.06,
+    -33.06,
+    2.9
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_lobby_planter_canopy",
+   "type": "prism",
+   "center": [
+    -21.2,
+    -33.2
+   ],
+   "radius": 1.5,
+   "sides": 8,
+   "rot": 0.39269908169872414,
+   "z": [
+    2.9,
+    4.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_lobby_crates",
+   "type": "box",
+   "min": [
+    -34.0,
+    -34.0,
+    0.0
+   ],
+   "max": [
+    -32.8,
+    -31.6,
+    2.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_b_lobby_kiosk",
+   "type": "box",
+   "min": [
+    18.0,
+    -34.0,
+    0
+   ],
+   "max": [
+    20.4,
+    -31.6,
+    2.6
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_b_lobby_kiosk_roof",
+   "type": "box",
+   "min": [
+    17.75,
+    -34.25,
+    2.6
+   ],
+   "max": [
+    20.65,
+    -31.35,
+    2.7800000000000002
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_b_lobby_crates",
+   "type": "box",
+   "min": [
+    32.8,
+    -34.0,
+    0.0
+   ],
+   "max": [
+    34.0,
+    -31.8,
+    1.2
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_b_lobby_planter",
+   "type": "box",
+   "min": [
+    12.4,
+    -27.6,
+    0
+   ],
+   "max": [
+    14.0,
+    -26.0,
+    1.15
+   ],
+   "surface": "dirt"
+  },
+  {
+   "name": "col_mid_cart",
+   "type": "box",
+   "min": [
+    -1.0,
+    -12.2,
+    0
+   ],
+   "max": [
+    5.0,
+    -10.0,
+    2.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_mid_crates",
+   "type": "box",
+   "min": [
+    -5.0,
+    -19.0,
+    0.0
+   ],
+   "max": [
+    1.0,
+    -17.8,
+    2.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_mid_crates_low",
+   "type": "box",
+   "min": [
+    3.8,
+    -27.0,
+    0.0
+   ],
+   "max": [
+    5.0,
+    -25.0,
+    1.2
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_main_stall",
+   "type": "box",
+   "min": [
+    -34.0,
+    -24.0,
+    0
+   ],
+   "max": [
+    -32.8,
+    -21.0,
+    1.1
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_main_stall_awning",
+   "type": "box",
+   "min": [
+    -34.0,
+    -24.0,
+    2.4
+   ],
+   "max": [
+    -32.099999999999994,
+    -21.0,
+    2.8
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_main_crates",
+   "type": "box",
+   "min": [
+    -27.2,
+    -23.0,
+    0.0
+   ],
+   "max": [
+    -26.0,
+    -21.0,
+    2.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_b_main_crates",
+   "type": "box",
+   "min": [
+    32.8,
+    -5.0,
+    0.0
+   ],
+   "max": [
+    34.0,
+    -3.0,
+    1.2
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_b_main_stall",
+   "type": "box",
+   "min": [
+    26.0,
+    -26.0,
+    0
+   ],
+   "max": [
+    27.2,
+    -23.0,
+    1.1
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_b_main_stall_awning",
+   "type": "box",
+   "min": [
+    26.0,
+    -26.0,
+    2.4
+   ],
+   "max": [
+    27.9,
+    -23.0,
+    2.8
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_screen_s",
+   "type": "box",
+   "min": [
+    -32.0,
+    4.0,
+    0
+   ],
+   "max": [
+    -25.6,
+    5.2,
+    1.1
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_screen_s_awning",
+   "type": "box",
+   "min": [
+    -32.0,
+    4.0,
+    2.4
+   ],
+   "max": [
+    -25.6,
+    5.9,
+    2.8
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_screen_s_back",
+   "type": "box",
+   "min": [
+    -32.0,
+    4.0,
+    1.1
+   ],
+   "max": [
+    -25.6,
+    4.3,
+    2.63
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_crates_full_s",
+   "type": "box",
+   "min": [
+    -22.0,
+    0.0,
+    0.0
+   ],
+   "max": [
+    -20.0,
+    2.0,
+    2.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_crates_plant",
+   "type": "box",
+   "min": [
+    -27.4,
+    9.4,
+    0.0
+   ],
+   "max": [
+    -25.6,
+    10.6,
+    1.2
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_screen_link",
+   "type": "box",
+   "min": [
+    -21.2,
+    8.6,
+    0
+   ],
+   "max": [
+    -20.0,
+    14.6,
+    1.1
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_screen_link_awning",
+   "type": "box",
+   "min": [
+    -21.9,
+    8.6,
+    2.4
+   ],
+   "max": [
+    -20.0,
+    14.6,
+    2.8
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_screen_link_back",
+   "type": "box",
+   "min": [
+    -20.3,
+    8.6,
+    1.1
+   ],
+   "max": [
+    -20.0,
+    14.6,
+    2.63
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_stall",
+   "type": "box",
+   "min": [
+    -19.0,
+    18.8,
+    0
+   ],
+   "max": [
+    -16.0,
+    20.0,
+    1.1
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_stall_awning",
+   "type": "box",
+   "min": [
+    -19.0,
+    18.1,
+    2.4
+   ],
+   "max": [
+    -16.0,
+    20.0,
+    2.8
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_planter_tree",
+   "type": "box",
+   "min": [
+    -20.0,
+    0.0,
+    0
+   ],
+   "max": [
+    -16.0,
+    1.6,
+    1.15
+   ],
+   "surface": "dirt"
+  },
+  {
+   "name": "col_a_planter_tree_trunk",
+   "type": "box",
+   "min": [
+    -18.14,
+    0.66,
+    1.15
+   ],
+   "max": [
+    -17.86,
+    0.9400000000000001,
+    2.9
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_planter_tree_canopy",
+   "type": "prism",
+   "center": [
+    -18.0,
+    0.8
+   ],
+   "radius": 0.8,
+   "sides": 8,
+   "rot": 0.39269908169872414,
+   "z": [
+    2.9,
+    4.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_crates_full_n",
+   "type": "box",
+   "min": [
+    -30.0,
+    16.0,
+    0.0
+   ],
+   "max": [
+    -28.8,
+    20.0,
+    2.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_stage_crates",
+   "type": "box",
+   "min": [
+    -31.4,
+    18.0,
+    1.0
+   ],
+   "max": [
+    -30.2,
+    20.0,
+    2.2
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_b_pillar_sw",
+   "type": "box",
+   "min": [
+    20.2,
+    2.2,
+    0
+   ],
+   "max": [
+    21.0,
+    3.0,
+    5.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_b_pillar_se",
+   "type": "box",
+   "min": [
+    31.0,
+    2.2,
+    0
+   ],
+   "max": [
+    31.8,
+    3.0,
+    5.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_b_pillar_nw",
+   "type": "box",
+   "min": [
+    20.2,
+    13.0,
+    0
+   ],
+   "max": [
+    21.0,
+    13.8,
+    5.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_b_screen_s",
+   "type": "box",
+   "min": [
+    25.6,
+    2.2,
+    0.0
+   ],
+   "max": [
+    31.0,
+    3.4,
+    2.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_b_crates_full",
+   "type": "box",
+   "min": [
+    21.0,
+    12.8,
+    0.0
+   ],
+   "max": [
+    23.4,
+    13.8,
+    2.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_b_pillar_ne",
+   "type": "box",
+   "min": [
+    31.0,
+    13.0,
+    0
+   ],
+   "max": [
+    31.8,
+    13.8,
+    5.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_b_juice_bar_0",
+   "type": "box",
+   "min": [
+    31.8,
+    12.8,
+    0
+   ],
+   "max": [
+    36.0,
+    13.600000000000001,
+    1.1
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_b_juice_bar_1",
+   "type": "box",
+   "min": [
+    31.8,
+    13.600000000000001,
+    0
+   ],
+   "max": [
+    32.6,
+    18.0,
+    1.1
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_b_juice_bar_shelf",
+   "type": "box",
+   "min": [
+    35.5,
+    14.000000000000002,
+    0
+   ],
+   "max": [
+    36.0,
+    18.0,
+    2.2
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_b_juice_bar_sign",
+   "type": "box",
+   "min": [
+    32.0,
+    13.160000000000002,
+    2.7
+   ],
+   "max": [
+    35.6,
+    13.24,
+    3.3
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_b_crates_plant",
+   "type": "box",
+   "min": [
+    25.8,
+    8.0,
+    0.0
+   ],
+   "max": [
+    27.6,
+    9.2,
+    1.2
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_b_screen_link",
+   "type": "box",
+   "min": [
+    20.2,
+    3.0,
+    0.0
+   ],
+   "max": [
+    21.4,
+    13.0,
+    2.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_fountain_basin",
+   "type": "prism",
+   "center": [
+    0.0,
+    0.0
+   ],
+   "radius": 2.6,
+   "sides": 8,
+   "rot": 0.39269908169872414,
+   "z": [
+    0,
+    0.8
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_fountain_pedestal",
+   "type": "prism",
+   "center": [
+    0.0,
+    0.0
+   ],
+   "radius": 1.25,
+   "sides": 8,
+   "rot": 0.39269908169872414,
+   "z": [
+    0.8,
+    1.72
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_fountain_column",
+   "type": "prism",
+   "center": [
+    0.0,
+    0.0
+   ],
+   "radius": 0.45,
+   "sides": 8,
+   "rot": 0.39269908169872414,
+   "z": [
+    1.72,
+    2.35
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_fountain_bowl",
+   "type": "prism",
+   "center": [
+    0.0,
+    0.0
+   ],
+   "radius": 1.18,
+   "sides": 8,
+   "rot": 0.39269908169872414,
+   "z": [
+    2.35,
+    2.68
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_fountain_statue",
+   "type": "prism",
+   "center": [
+    0.0,
+    0.0
+   ],
+   "radius": 0.3,
+   "sides": 8,
+   "rot": 0.39269908169872414,
+   "z": [
+    2.68,
+    3.8
+   ],
+   "surface": "metal"
+  },
+  {
+   "name": "col_court_edicola",
+   "type": "box",
+   "min": [
+    -0.8,
+    7.0,
+    0
+   ],
+   "max": [
+    1.6,
+    11.0,
+    2.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_court_edicola_roof",
+   "type": "box",
+   "min": [
+    -1.05,
+    6.75,
+    2.4
+   ],
+   "max": [
+    1.85,
+    11.25,
+    2.58
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_court_planter_se",
+   "type": "box",
+   "min": [
+    6.4,
+    -6.0,
+    0
+   ],
+   "max": [
+    8.0,
+    -4.4,
+    1.15
+   ],
+   "surface": "dirt"
+  },
+  {
+   "name": "col_court_planter_se_trunk",
+   "type": "box",
+   "min": [
+    7.0600000000000005,
+    -5.34,
+    1.15
+   ],
+   "max": [
+    7.34,
+    -5.0600000000000005,
+    2.9
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_court_planter_se_canopy",
+   "type": "prism",
+   "center": [
+    7.2,
+    -5.2
+   ],
+   "radius": 1.5,
+   "sides": 8,
+   "rot": 0.39269908169872414,
+   "z": [
+    2.9,
+    4.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_court_kiosk",
+   "type": "box",
+   "min": [
+    5.8,
+    10.0,
+    0
+   ],
+   "max": [
+    8.0,
+    14.0,
+    2.6
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_court_kiosk_roof",
+   "type": "box",
+   "min": [
+    5.55,
+    9.75,
+    2.6
+   ],
+   "max": [
+    8.25,
+    14.25,
+    2.7800000000000002
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_a_back_crates",
+   "type": "box",
+   "min": [
+    -26.0,
+    26.0,
+    0.0
+   ],
+   "max": [
+    -24.0,
+    28.0,
+    2.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_b_back_crates",
+   "type": "box",
+   "min": [
+    20.0,
+    25.0,
+    0.0
+   ],
+   "max": [
+    22.0,
+    27.0,
+    2.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_def_planter",
+   "type": "box",
+   "min": [
+    -1.0,
+    38.4,
+    0
+   ],
+   "max": [
+    1.0,
+    40.0,
+    1.15
+   ],
+   "surface": "dirt"
+  },
+  {
+   "name": "col_def_planter_trunk",
+   "type": "box",
+   "min": [
+    -0.14,
+    39.06,
+    1.15
+   ],
+   "max": [
+    0.14,
+    39.34,
+    2.9
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_def_planter_canopy",
+   "type": "prism",
+   "center": [
+    0.0,
+    39.2
+   ],
+   "radius": 1.5,
+   "sides": 8,
+   "rot": 0.39269908169872414,
+   "z": [
+    2.9,
+    4.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_def_crates_w",
+   "type": "box",
+   "min": [
+    -7.8,
+    28.0,
+    0.0
+   ],
+   "max": [
+    -6.6,
+    35.6,
+    2.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_def_crates_e",
+   "type": "box",
+   "min": [
+    6.6,
+    28.0,
+    0.0
+   ],
+   "max": [
+    7.8,
+    35.6,
+    2.4
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_def_crates",
+   "type": "box",
+   "min": [
+    10.4,
+    38.8,
+    0.0
+   ],
+   "max": [
+    12.0,
+    40.0,
+    1.2
+   ],
+   "surface": "wood"
+  },
+  {
+   "name": "col_arcade_walk_ceiling",
+   "type": "box",
+   "min": [
+    -12.8,
+    -6.0,
+    5.0
+   ],
+   "max": [
+    -8.8,
+    9.3,
+    6.0
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_hall_lantern",
+   "type": "box",
+   "min": [
+    21.65,
+    3.65,
+    7.4
+   ],
+   "max": [
+    30.35,
+    12.35,
+    9.319999999999999
+   ],
+   "surface": "stone"
+  },
+  {
+   "name": "col_tower_crown",
+   "type": "box",
+   "min": [
+    -9.8,
+    15.7,
+    14.0
+   ],
+   "max": [
+    -4.2,
+    21.3,
+    20.599999999999998
+   ],
+   "surface": "stone"
+  }
+ ]
+}

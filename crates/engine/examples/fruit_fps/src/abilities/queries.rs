@@ -1,0 +1,410 @@
+use glam::{Mat3, Vec3};
+
+use super::effects::{ActorId, EffectId, Effects, Living, State};
+use super::numbers::{AbilityId, Modifiers, TrapShape};
+use super::shapes::{ray_box, ray_sphere};
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Transformation {
+    pub ability: AbilityId,
+    pub until: u64,
+    pub refresh_signature_on_kill: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DangerKind {
+    Damage,
+    Strike,
+    Slow,
+    NearSight,
+    Reveal,
+    Smoke,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Danger {
+    pub kind: DangerKind,
+    pub centre: Vec3,
+    pub radius: f32,
+    pub weight: f32,
+    pub until: u64,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DrawKind {
+    Projectile,
+    Smoke,
+    Zone,
+    Curtain,
+    Wall,
+    Trap,
+    Wire,
+    Sensor,
+    StrikeMark,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DrawShape {
+    Sphere {
+        centre: Vec3,
+        radius: f32,
+    },
+    Box {
+        centre: Vec3,
+        half_extents: Vec3,
+        axes: Mat3,
+    },
+    Segment {
+        a: Vec3,
+        b: Vec3,
+    },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Drawable {
+    pub effect: EffectId,
+    pub kind: DrawKind,
+    pub ability: AbilityId,
+    pub team: usize,
+    pub shape: DrawShape,
+    pub age: u32,
+    pub lifetime: Option<u32>,
+    pub strength: f32,
+    pub armed: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShootableHit {
+    pub effect: EffectId,
+    pub distance: f32,
+}
+
+fn nearer(best: Option<f32>, candidate: Option<f32>) -> Option<f32> {
+    match (best, candidate) {
+        (Some(a), Some(b)) => Some(if b < a { b } else { a }),
+        (a, None) => a,
+        (None, b) => b,
+    }
+}
+
+fn smoke_strength(age: u32, ticks: u32, grow_ticks: u32, fade_ticks: u32) -> f32 {
+    let mut strength = 1.0f32;
+    if grow_ticks > 0 && age < grow_ticks {
+        strength = (age + 1) as f32 / grow_ticks as f32;
+    }
+    let left = ticks.saturating_sub(age);
+    if fade_ticks > 0 && left < fade_ticks {
+        let fading = left as f32 / fade_ticks as f32;
+        if fading < strength {
+            strength = fading;
+        }
+    }
+    strength
+}
+
+impl Effects {
+    pub fn sight_blocked(&self, a: Vec3, b: Vec3) -> bool {
+        self.livings
+            .iter()
+            .any(|living| living.blocks_sight(self.now, a, b))
+    }
+
+    pub fn blindness(&self, actor: ActorId) -> f32 {
+        self.marks
+            .blinds
+            .iter()
+            .filter(|blind| blind.actor == actor)
+            .map(|blind| blind.value(self.now))
+            .fold(0.0, |most, value| if value > most { value } else { most })
+    }
+
+    pub fn sight_limit(&self, actor: ActorId) -> Option<f32> {
+        self.modifiers(actor).sight_m
+    }
+
+    pub fn modifiers(&self, actor: ActorId) -> Modifiers {
+        self.marks
+            .buffs
+            .iter()
+            .filter(|buff| buff.actor == actor)
+            .fold(Modifiers::NONE, |all, buff| all.combine(buff.modifiers))
+    }
+
+    pub fn revealed(&self, actor: ActorId, team: usize) -> bool {
+        self.marks.reveals.contains_key(&(team, actor))
+    }
+
+    pub fn reveals(&self) -> Vec<(usize, ActorId, u64)> {
+        self.marks
+            .reveals
+            .iter()
+            .map(|(&(team, actor), &until)| (team, actor, until))
+            .collect()
+    }
+
+    pub fn transformation(&self, actor: ActorId) -> Option<Transformation> {
+        self.livings.iter().find_map(|living| {
+            let State::Transform {
+                ticks,
+                refresh_signature_on_kill,
+            } = living.state
+            else {
+                return None;
+            };
+            (living.caster.id == actor).then_some(Transformation {
+                ability: living.ability,
+                until: living.born + ticks as u64,
+                refresh_signature_on_kill,
+            })
+        })
+    }
+
+    pub fn dangers(&self, team: usize) -> Vec<Danger> {
+        let mut dangers = Vec::new();
+        for living in &self.livings {
+            let enemy = living.caster.team != team;
+            match living.state {
+                State::Zone { centre, spec } => {
+                    let until = living.born + spec.ticks as u64;
+                    let mut add = |kind, weight| {
+                        dangers.push(Danger {
+                            kind,
+                            centre,
+                            radius: spec.radius_m,
+                            weight,
+                            until,
+                        })
+                    };
+                    if let Some(per_tick) = spec.damage_per_tick
+                        && (enemy || spec.hurts_team)
+                    {
+                        add(DangerKind::Damage, per_tick);
+                    }
+                    if enemy {
+                        if let Some(slow) = spec.slow {
+                            add(DangerKind::Slow, slow);
+                        }
+                        if let Some(sight) = spec.sight_m {
+                            add(DangerKind::NearSight, sight);
+                        }
+                        if spec.reveal {
+                            add(DangerKind::Reveal, 0.0);
+                        }
+                    }
+                }
+                State::Strike {
+                    centre,
+                    warn_ticks,
+                    falloff,
+                } if enemy || falloff.hurts_team => dangers.push(Danger {
+                    kind: DangerKind::Strike,
+                    centre,
+                    radius: falloff.radius_m,
+                    weight: falloff.max,
+                    until: living.born + warn_ticks as u64,
+                }),
+                State::Smoke { centre, spec } => dangers.push(Danger {
+                    kind: DangerKind::Smoke,
+                    centre,
+                    radius: Living::smoke_radius(&spec, living.age(self.now)),
+                    weight: spec.radius_m,
+                    until: living.born + spec.ticks as u64,
+                }),
+                State::Strike { .. }
+                | State::Pending
+                | State::Flight(_)
+                | State::Wall(_)
+                | State::Trap(_)
+                | State::Sensor(_)
+                | State::Glare(_)
+                | State::Heal { .. }
+                | State::Dash { .. }
+                | State::Transform { .. }
+                | State::Done => {}
+            }
+        }
+        dangers
+    }
+
+    pub fn drawables(&self) -> Vec<Drawable> {
+        self.livings
+            .iter()
+            .filter_map(|living| self.drawable(living))
+            .collect()
+    }
+
+    fn drawable(&self, living: &Living) -> Option<Drawable> {
+        let age = living.age(self.now);
+        let (kind, shape, lifetime, strength, armed) = match &living.state {
+            State::Flight(flight) => (
+                DrawKind::Projectile,
+                DrawShape::Sphere {
+                    centre: flight.position,
+                    radius: flight.throw.radius_m,
+                },
+                flight.throw.fuse_ticks,
+                1.0,
+                false,
+            ),
+            State::Smoke { centre, spec } => (
+                DrawKind::Smoke,
+                DrawShape::Sphere {
+                    centre: *centre,
+                    radius: Living::smoke_radius(spec, age),
+                },
+                Some(spec.ticks),
+                smoke_strength(age, spec.ticks, spec.grow_ticks, spec.fade_ticks),
+                false,
+            ),
+            State::Zone { centre, spec } => (
+                DrawKind::Zone,
+                DrawShape::Sphere {
+                    centre: *centre,
+                    radius: spec.radius_m,
+                },
+                Some(spec.ticks),
+                1.0,
+                false,
+            ),
+            State::Wall(wall) => (
+                if wall.spec.solid {
+                    DrawKind::Wall
+                } else {
+                    DrawKind::Curtain
+                },
+                DrawShape::Box {
+                    centre: wall.centre,
+                    half_extents: wall.half_extents,
+                    axes: wall.axes,
+                },
+                Some(wall.spec.ticks),
+                match (wall.health, wall.spec.health) {
+                    (Some(now), Some(full)) if full > 0.0 => now / full,
+                    _ => 1.0,
+                },
+                false,
+            ),
+            State::Trap(trap) => match trap.spec.shape {
+                TrapShape::Radius(radius) => (
+                    DrawKind::Trap,
+                    DrawShape::Sphere {
+                        centre: trap.a,
+                        radius,
+                    },
+                    trap.spec.life_ticks,
+                    1.0,
+                    trap.armed,
+                ),
+                TrapShape::Wire { .. } => (
+                    DrawKind::Wire,
+                    DrawShape::Segment {
+                        a: trap.a,
+                        b: trap.b,
+                    },
+                    trap.spec.life_ticks,
+                    1.0,
+                    trap.armed,
+                ),
+            },
+            State::Sensor(sensor) => (
+                DrawKind::Sensor,
+                DrawShape::Sphere {
+                    centre: sensor.at,
+                    radius: sensor.spec.radius_m,
+                },
+                sensor.spec.life_ticks,
+                1.0,
+                sensor.armed,
+            ),
+            State::Strike {
+                centre,
+                warn_ticks,
+                falloff,
+            } => (
+                DrawKind::StrikeMark,
+                DrawShape::Sphere {
+                    centre: *centre,
+                    radius: falloff.radius_m,
+                },
+                Some(*warn_ticks),
+                1.0,
+                false,
+            ),
+            State::Pending
+            | State::Glare(_)
+            | State::Heal { .. }
+            | State::Dash { .. }
+            | State::Transform { .. }
+            | State::Done => return None,
+        };
+        Some(Drawable {
+            effect: living.id,
+            kind,
+            ability: living.ability,
+            team: living.caster.team,
+            shape,
+            age,
+            lifetime,
+            strength,
+            armed,
+        })
+    }
+
+    pub fn shootable_ray(&self, origin: Vec3, direction: Vec3, max: f32) -> Option<ShootableHit> {
+        let mut best: Option<ShootableHit> = None;
+        for living in &self.livings {
+            let distance = match &living.state {
+                State::Wall(wall) if wall.health.is_some() => ray_box(
+                    origin,
+                    direction,
+                    max,
+                    wall.centre,
+                    wall.half_extents,
+                    wall.axes,
+                ),
+                State::Trap(trap) => {
+                    let near_a = ray_sphere(origin, direction, max, trap.a, trap.spec.hit_radius_m);
+                    match trap.spec.shape {
+                        TrapShape::Radius(_) => near_a,
+                        TrapShape::Wire { .. } => nearer(
+                            near_a,
+                            ray_sphere(origin, direction, max, trap.b, trap.spec.hit_radius_m),
+                        ),
+                    }
+                }
+                State::Sensor(sensor) => {
+                    ray_sphere(origin, direction, max, sensor.at, sensor.spec.hit_radius_m)
+                }
+                State::Wall(_)
+                | State::Pending
+                | State::Flight(_)
+                | State::Smoke { .. }
+                | State::Zone { .. }
+                | State::Strike { .. }
+                | State::Glare(_)
+                | State::Heal { .. }
+                | State::Dash { .. }
+                | State::Transform { .. }
+                | State::Done => None,
+            };
+            if let Some(distance) = distance
+                && best.is_none_or(|hit| distance < hit.distance)
+            {
+                best = Some(ShootableHit {
+                    effect: living.id,
+                    distance,
+                });
+            }
+        }
+        best
+    }
+
+    pub fn effect_of_solid(&self, id: u32) -> Option<EffectId> {
+        self.livings.iter().find_map(|living| {
+            let State::Wall(wall) = living.state else {
+                return None;
+            };
+            (wall.solid_id == Some(id)).then_some(living.id)
+        })
+    }
+}

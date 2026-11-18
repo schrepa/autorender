@@ -6,5 +6,13 @@
     "package": "bare_game",
     "page": "bare.html",
     "wasm": "bare_game"
+  },
+  {
+    "folder": "crates/engine/examples/fruit_fps",
+    "game": "fruit_fps",
+    "native": "fruit_fps-native",
+    "package": "fruit_fps",
+    "page": "fruit_fps.html",
+    "wasm": "fruit_fps"
   }
 ]

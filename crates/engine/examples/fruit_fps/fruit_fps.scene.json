@@ -1,0 +1,2640 @@
+{
+  "id": "fruit_fps",
+  "revision": 1,
+  "environment": {
+    "flow": {
+      "play_now": true
+    }
+  },
+  "textures": [
+    {
+      "id": "banana_base_color",
+      "uri": "assets/cooked/banana_base_color.bc.ktx2"
+    },
+    {
+      "id": "banana_normal",
+      "uri": "assets/cooked/banana_normal.bc.ktx2"
+    },
+    {
+      "id": "banana_orm",
+      "uri": "assets/cooked/banana_orm.bc.ktx2"
+    },
+    {
+      "id": "strawberry_base_color",
+      "uri": "assets/cooked/strawberry_base_color.bc.ktx2"
+    },
+    {
+      "id": "strawberry_normal",
+      "uri": "assets/cooked/strawberry_normal.bc.ktx2"
+    },
+    {
+      "id": "strawberry_orm",
+      "uri": "assets/cooked/strawberry_orm.bc.ktx2"
+    },
+    {
+      "id": "orange_base_color",
+      "uri": "assets/cooked/orange_base_color.bc.ktx2"
+    },
+    {
+      "id": "orange_normal",
+      "uri": "assets/cooked/orange_normal.bc.ktx2"
+    },
+    {
+      "id": "orange_orm",
+      "uri": "assets/cooked/orange_orm.bc.ktx2"
+    },
+    {
+      "id": "eggplant_base_color",
+      "uri": "assets/cooked/eggplant_base_color.bc.ktx2"
+    },
+    {
+      "id": "eggplant_normal",
+      "uri": "assets/cooked/eggplant_normal.bc.ktx2"
+    },
+    {
+      "id": "eggplant_orm",
+      "uri": "assets/cooked/eggplant_orm.bc.ktx2"
+    },
+    {
+      "id": "watermelon_base_color",
+      "uri": "assets/cooked/watermelon_base_color.bc.ktx2"
+    },
+    {
+      "id": "watermelon_normal",
+      "uri": "assets/cooked/watermelon_normal.bc.ktx2"
+    },
+    {
+      "id": "watermelon_orm",
+      "uri": "assets/cooked/watermelon_orm.bc.ktx2"
+    },
+    {
+      "id": "rifle_base_color",
+      "uri": "assets/cooked/rifle_base_color.png"
+    },
+    {
+      "id": "rifle_normal",
+      "uri": "assets/cooked/rifle_normal.png"
+    },
+    {
+      "id": "rifle_orm",
+      "uri": "assets/cooked/rifle_orm.png"
+    },
+    {
+      "id": "sidearm_base_color",
+      "uri": "assets/cooked/sidearm_base_color.png"
+    },
+    {
+      "id": "sidearm_normal",
+      "uri": "assets/cooked/sidearm_normal.png"
+    },
+    {
+      "id": "sidearm_orm",
+      "uri": "assets/cooked/sidearm_orm.png"
+    },
+    {
+      "id": "smg_base_color",
+      "uri": "assets/cooked/smg_base_color.png"
+    },
+    {
+      "id": "smg_normal",
+      "uri": "assets/cooked/smg_normal.png"
+    },
+    {
+      "id": "smg_orm",
+      "uri": "assets/cooked/smg_orm.png"
+    },
+    {
+      "id": "sniper_base_color",
+      "uri": "assets/cooked/sniper_base_color.png"
+    },
+    {
+      "id": "sniper_normal",
+      "uri": "assets/cooked/sniper_normal.png"
+    },
+    {
+      "id": "sniper_orm",
+      "uri": "assets/cooked/sniper_orm.png"
+    },
+    {
+      "id": "tp_rifle_base_color",
+      "uri": "assets/cooked/tp_rifle_base_color.png"
+    },
+    {
+      "id": "tp_rifle_normal",
+      "uri": "assets/cooked/tp_rifle_normal.png"
+    },
+    {
+      "id": "tp_rifle_orm",
+      "uri": "assets/cooked/tp_rifle_orm.png"
+    },
+    {
+      "id": "tp_sidearm_base_color",
+      "uri": "assets/cooked/tp_sidearm_base_color.png"
+    },
+    {
+      "id": "tp_sidearm_normal",
+      "uri": "assets/cooked/tp_sidearm_normal.png"
+    },
+    {
+      "id": "tp_sidearm_orm",
+      "uri": "assets/cooked/tp_sidearm_orm.png"
+    },
+    {
+      "id": "tp_smg_base_color",
+      "uri": "assets/cooked/tp_smg_base_color.png"
+    },
+    {
+      "id": "tp_smg_normal",
+      "uri": "assets/cooked/tp_smg_normal.png"
+    },
+    {
+      "id": "tp_smg_orm",
+      "uri": "assets/cooked/tp_smg_orm.png"
+    },
+    {
+      "id": "tp_sniper_base_color",
+      "uri": "assets/cooked/tp_sniper_base_color.png"
+    },
+    {
+      "id": "tp_sniper_normal",
+      "uri": "assets/cooked/tp_sniper_normal.png"
+    },
+    {
+      "id": "tp_sniper_orm",
+      "uri": "assets/cooked/tp_sniper_orm.png"
+    },
+    {
+      "id": "mercato_0_base_color",
+      "uri": "assets/cooked/mercato_0_base_color.bc.ktx2"
+    },
+    {
+      "id": "mercato_0_normal",
+      "uri": "assets/cooked/mercato_0_normal.bc.ktx2"
+    },
+    {
+      "id": "mercato_0_orm",
+      "uri": "assets/cooked/mercato_0_orm.bc.ktx2"
+    },
+    {
+      "id": "mercato_1_base_color",
+      "uri": "assets/cooked/mercato_1_base_color.bc.ktx2"
+    },
+    {
+      "id": "mercato_1_normal",
+      "uri": "assets/cooked/mercato_1_normal.bc.ktx2"
+    },
+    {
+      "id": "mercato_1_orm",
+      "uri": "assets/cooked/mercato_1_orm.bc.ktx2"
+    },
+    {
+      "id": "mercato_2_base_color",
+      "uri": "assets/cooked/mercato_2_base_color.bc.ktx2"
+    },
+    {
+      "id": "mercato_2_normal",
+      "uri": "assets/cooked/mercato_2_normal.bc.ktx2"
+    },
+    {
+      "id": "mercato_2_orm",
+      "uri": "assets/cooked/mercato_2_orm.bc.ktx2"
+    },
+    {
+      "id": "mercato_3_base_color",
+      "uri": "assets/cooked/mercato_3_base_color.bc.ktx2"
+    },
+    {
+      "id": "mercato_3_normal",
+      "uri": "assets/cooked/mercato_3_normal.bc.ktx2"
+    },
+    {
+      "id": "mercato_3_orm",
+      "uri": "assets/cooked/mercato_3_orm.bc.ktx2"
+    },
+    {
+      "id": "mercato_4_base_color",
+      "uri": "assets/cooked/mercato_4_base_color.bc.ktx2"
+    },
+    {
+      "id": "mercato_4_normal",
+      "uri": "assets/cooked/mercato_4_normal.bc.ktx2"
+    },
+    {
+      "id": "mercato_4_orm",
+      "uri": "assets/cooked/mercato_4_orm.bc.ktx2"
+    },
+    {
+      "id": "mercato_5_base_color",
+      "uri": "assets/cooked/mercato_5_base_color.bc.ktx2"
+    },
+    {
+      "id": "mercato_5_normal",
+      "uri": "assets/cooked/mercato_5_normal.bc.ktx2"
+    },
+    {
+      "id": "mercato_5_orm",
+      "uri": "assets/cooked/mercato_5_orm.bc.ktx2"
+    },
+    {
+      "id": "mercato_6_base_color",
+      "uri": "assets/cooked/mercato_6_base_color.bc.ktx2"
+    },
+    {
+      "id": "mercato_6_normal",
+      "uri": "assets/cooked/mercato_6_normal.bc.ktx2"
+    },
+    {
+      "id": "mercato_6_orm",
+      "uri": "assets/cooked/mercato_6_orm.bc.ktx2"
+    },
+    {
+      "id": "mercato_7_base_color",
+      "uri": "assets/cooked/mercato_7_base_color.bc.ktx2"
+    },
+    {
+      "id": "mercato_7_normal",
+      "uri": "assets/cooked/mercato_7_normal.bc.ktx2"
+    },
+    {
+      "id": "mercato_7_orm",
+      "uri": "assets/cooked/mercato_7_orm.bc.ktx2"
+    },
+    {
+      "id": "icons_atlas",
+      "uri": "assets/cooked/icons_atlas.ktx2"
+    },
+    {
+      "id": "font_atlas",
+      "uri": "assets/cooked/font_atlas.ktx2"
+    },
+    {
+      "id": "minimap",
+      "uri": "assets/cooked/minimap.ktx2"
+    },
+    {
+      "id": "portraits",
+      "uri": "assets/cooked/portraits.ktx2"
+    },
+    {
+      "id": "select_banana",
+      "uri": "assets/cooked/select_banana.ktx2"
+    },
+    {
+      "id": "select_strawberry",
+      "uri": "assets/cooked/select_strawberry.ktx2"
+    },
+    {
+      "id": "select_orange",
+      "uri": "assets/cooked/select_orange.ktx2"
+    },
+    {
+      "id": "select_watermelon",
+      "uri": "assets/cooked/select_watermelon.ktx2"
+    },
+    {
+      "id": "select_eggplant",
+      "uri": "assets/cooked/select_eggplant.ktx2"
+    },
+    {
+      "id": "mercato_light",
+      "uri": "assets/source/map_mercato_light.png"
+    },
+    {
+      "id": "title",
+      "uri": "assets/ui/title.png"
+    },
+    {
+      "id": "title_small",
+      "uri": "assets/ui/title_1280x720.png"
+    }
+  ],
+  "materials": [
+    {
+      "id": "banana",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "banana_base_color",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "banana_normal",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "banana_orm",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "strawberry",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "strawberry_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "strawberry_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "strawberry_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "orange",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "orange_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "orange_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "orange_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "eggplant",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "eggplant_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "eggplant_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "eggplant_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "watermelon",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "watermelon_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "watermelon_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "watermelon_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "rifle",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "rifle_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "rifle_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "rifle_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "sidearm",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "sidearm_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "sidearm_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "sidearm_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "smg",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "smg_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "smg_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "smg_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "sniper",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "sniper_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "sniper_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "sniper_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "tp_rifle",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "tp_rifle_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "tp_rifle_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "tp_rifle_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "tp_sidearm",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "tp_sidearm_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "tp_sidearm_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "tp_sidearm_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "tp_smg",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "tp_smg_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "tp_smg_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "tp_smg_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "tp_sniper",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "tp_sniper_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "tp_sniper_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "tp_sniper_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "nearest",
+              "min_filter": "nearest",
+              "mipmap_filter": "nearest",
+              "tex_coord": 0
+            }
+          }
+        }
+      },
+      "lighting": "figure"
+    },
+    {
+      "id": "mercato_0",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_0_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "mercato_0_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_0_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "lightmap": {
+              "id": "mercato_light",
+              "tex_coord": 1,
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge",
+              "mag_filter": "linear",
+              "min_filter": "linear"
+            }
+          }
+        }
+      },
+      "lighting": "figure",
+      "values": {
+        "lightmap_scale": 4.0
+      }
+    },
+    {
+      "id": "mercato_1",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_1_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "mercato_1_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_1_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "lightmap": {
+              "id": "mercato_light",
+              "tex_coord": 1,
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge",
+              "mag_filter": "linear",
+              "min_filter": "linear"
+            }
+          }
+        }
+      },
+      "lighting": "figure",
+      "values": {
+        "lightmap_scale": 4.0
+      }
+    },
+    {
+      "id": "mercato_2",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_2_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "mercato_2_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_2_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "lightmap": {
+              "id": "mercato_light",
+              "tex_coord": 1,
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge",
+              "mag_filter": "linear",
+              "min_filter": "linear"
+            }
+          }
+        }
+      },
+      "lighting": "figure",
+      "values": {
+        "lightmap_scale": 4.0
+      }
+    },
+    {
+      "id": "mercato_3",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_3_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "mercato_3_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_3_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "lightmap": {
+              "id": "mercato_light",
+              "tex_coord": 1,
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge",
+              "mag_filter": "linear",
+              "min_filter": "linear"
+            }
+          }
+        }
+      },
+      "lighting": "figure",
+      "values": {
+        "lightmap_scale": 4.0
+      }
+    },
+    {
+      "id": "mercato_4",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_4_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "mercato_4_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_4_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "lightmap": {
+              "id": "mercato_light",
+              "tex_coord": 1,
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge",
+              "mag_filter": "linear",
+              "min_filter": "linear"
+            }
+          }
+        }
+      },
+      "lighting": "figure",
+      "values": {
+        "lightmap_scale": 4.0
+      }
+    },
+    {
+      "id": "mercato_5",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_5_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "mercato_5_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_5_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "lightmap": {
+              "id": "mercato_light",
+              "tex_coord": 1,
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge",
+              "mag_filter": "linear",
+              "min_filter": "linear"
+            }
+          }
+        }
+      },
+      "lighting": "figure",
+      "values": {
+        "lightmap_scale": 4.0
+      }
+    },
+    {
+      "id": "mercato_6",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_6_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "mercato_6_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_6_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "lightmap": {
+              "id": "mercato_light",
+              "tex_coord": 1,
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge",
+              "mag_filter": "linear",
+              "min_filter": "linear"
+            }
+          }
+        }
+      },
+      "lighting": "figure",
+      "values": {
+        "lightmap_scale": 4.0
+      }
+    },
+    {
+      "id": "mercato_7",
+      "color": [
+        1.0,
+        1.0,
+        1.0,
+        1.0
+      ],
+      "normal_scale": 1.0,
+      "cull": "back",
+      "slots": {
+        "figure": {
+          "module": "figure",
+          "maps": {
+            "base_color": {
+              "id": "mercato_7_base_color",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "normal": {
+              "id": "mercato_7_normal",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "orm": {
+              "id": "mercato_7_orm",
+              "wrap_u": "repeat",
+              "wrap_v": "repeat",
+              "mag_filter": "linear",
+              "min_filter": "linear",
+              "mipmap_filter": "linear",
+              "tex_coord": 0
+            },
+            "lightmap": {
+              "id": "mercato_light",
+              "tex_coord": 1,
+              "wrap_u": "clamp_to_edge",
+              "wrap_v": "clamp_to_edge",
+              "mag_filter": "linear",
+              "min_filter": "linear"
+            }
+          }
+        }
+      },
+      "lighting": "figure",
+      "values": {
+        "lightmap_scale": 4.0
+      }
+    }
+  ],
+  "meshes": [
+    {
+      "id": "banana",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/banana.emb"
+      }
+    },
+    {
+      "id": "strawberry",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/strawberry.emb"
+      }
+    },
+    {
+      "id": "orange",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/orange.emb"
+      }
+    },
+    {
+      "id": "eggplant",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/eggplant.emb"
+      }
+    },
+    {
+      "id": "watermelon",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/watermelon.emb"
+      }
+    },
+    {
+      "id": "rifle",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/rifle.emb"
+      }
+    },
+    {
+      "id": "sidearm",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/sidearm.emb"
+      }
+    },
+    {
+      "id": "smg",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/smg.emb"
+      }
+    },
+    {
+      "id": "sniper",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/sniper.emb"
+      }
+    },
+    {
+      "id": "tp_rifle",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/tp_rifle.emb"
+      }
+    },
+    {
+      "id": "tp_sidearm",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/tp_sidearm.emb"
+      }
+    },
+    {
+      "id": "tp_smg",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/tp_smg.emb"
+      }
+    },
+    {
+      "id": "tp_sniper",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/tp_sniper.emb"
+      }
+    },
+    {
+      "id": "mercato_0",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_0.emb"
+      }
+    },
+    {
+      "id": "mercato_1",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_1.emb"
+      }
+    },
+    {
+      "id": "mercato_2",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_2.emb"
+      }
+    },
+    {
+      "id": "mercato_3",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_3.emb"
+      }
+    },
+    {
+      "id": "mercato_4",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_4.emb"
+      }
+    },
+    {
+      "id": "mercato_5",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_5.emb"
+      }
+    },
+    {
+      "id": "mercato_6",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_6.emb"
+      }
+    },
+    {
+      "id": "mercato_7",
+      "source": {
+        "kind": "buffer",
+        "uri": "assets/cooked/mercato_7.emb"
+      }
+    }
+  ],
+  "entities": [
+    {
+      "id": "game",
+      "numbers": {
+        "file": "data/numbers.json"
+      },
+      "puppet": {
+        "file": "data/puppet.json",
+        "weapons": {
+          "rifle": {
+            "figure": {
+              "skeleton": "assets/cooked/rifle.skel",
+              "clips": {
+                "fire": "assets/cooked/rifle_fire.clip",
+                "reload_parts": "assets/cooked/rifle_reload_parts.clip",
+                "equip": "assets/cooked/rifle_equip.clip"
+              }
+            },
+            "markers": "assets/cooked/rifle.markers.json",
+            "mesh": "rifle",
+            "material": "rifle",
+            "held_mesh": "tp_rifle",
+            "held_material": "tp_rifle"
+          },
+          "smg": {
+            "figure": {
+              "skeleton": "assets/cooked/smg.skel",
+              "clips": {
+                "fire": "assets/cooked/smg_fire.clip",
+                "reload_parts": "assets/cooked/smg_reload_parts.clip",
+                "equip": "assets/cooked/smg_equip.clip"
+              }
+            },
+            "markers": "assets/cooked/smg.markers.json",
+            "mesh": "smg",
+            "material": "smg",
+            "held_mesh": "tp_smg",
+            "held_material": "tp_smg"
+          },
+          "sniper": {
+            "figure": {
+              "skeleton": "assets/cooked/sniper.skel",
+              "clips": {
+                "fire": "assets/cooked/sniper_fire.clip",
+                "reload_parts": "assets/cooked/sniper_reload_parts.clip",
+                "equip": "assets/cooked/sniper_equip.clip"
+              }
+            },
+            "markers": "assets/cooked/sniper.markers.json",
+            "mesh": "sniper",
+            "material": "sniper",
+            "held_mesh": "tp_sniper",
+            "held_material": "tp_sniper"
+          },
+          "sidearm": {
+            "figure": {
+              "skeleton": "assets/cooked/sidearm.skel",
+              "clips": {
+                "fire": "assets/cooked/sidearm_fire.clip",
+                "reload_parts": "assets/cooked/sidearm_reload_parts.clip",
+                "equip": "assets/cooked/sidearm_equip.clip"
+              }
+            },
+            "markers": "assets/cooked/sidearm.markers.json",
+            "mesh": "sidearm",
+            "material": "sidearm",
+            "held_mesh": "tp_sidearm",
+            "held_material": "tp_sidearm"
+          }
+        }
+      }
+    },
+    {
+      "id": "map",
+      "arena": {
+        "cooked": {
+          "collision": "assets/cooked/mercato_col.emb",
+          "ranges": "assets/cooked/mercato_col.json",
+          "markers": "assets/cooked/mercato.markers.json"
+        }
+      },
+      "paths": {
+        "cooked": {
+          "mesh": "assets/cooked/mercato_nav.emb"
+        },
+        "layout": "data/mercato.json"
+      }
+    },
+    {
+      "id": "camera",
+      "look": {},
+      "node": {
+        "mobility": "moving"
+      },
+      "view": {
+        "clear_color": [
+          0.36,
+          0.58,
+          0.88,
+          1.0
+        ]
+      }
+    },
+    {
+      "id": "sun",
+      "light": {
+        "direction": [
+          0.4506,
+          0.8211,
+          0.3505
+        ],
+        "sun": [
+          2.0,
+          1.9,
+          1.72
+        ],
+        "sky": [
+          0.35,
+          0.42,
+          0.55
+        ],
+        "ground": [
+          0.18,
+          0.15,
+          0.12
+        ]
+      }
+    },
+    {
+      "id": "first_banana",
+      "actor": {
+        "slot": 0,
+        "team": "first",
+        "character": "banana",
+        "yaw_radians": 0.0
+      },
+      "node": {
+        "mobility": "moving",
+        "visible": false
+      },
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          4.0
+        ]
+      },
+      "drawn": {
+        "kind": "figure",
+        "mesh": "banana",
+        "material": "banana"
+      },
+      "figure": {
+        "skeleton": "assets/cooked/banana.skel",
+        "clips": {
+          "idle": "assets/cooked/idle.clip",
+          "walk": "assets/cooked/walk.clip",
+          "run": "assets/cooked/run.clip",
+          "jump": "assets/cooked/jump.clip",
+          "fall": "assets/cooked/fall.clip",
+          "turn": "assets/cooked/turn.clip",
+          "shoot": "assets/cooked/shoot.clip",
+          "fire": "assets/cooked/fire.clip",
+          "hurt": "assets/cooked/hurt.clip",
+          "hit_to_head": "assets/cooked/hit_to_head.clip",
+          "hit_to_body": "assets/cooked/hit_to_body.clip",
+          "hit_to_side": "assets/cooked/hit_to_side.clip",
+          "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
+          "defeat_a": "assets/cooked/defeat_a.clip",
+          "defeat_b": "assets/cooked/defeat_b.clip",
+          "cast": "assets/cooked/cast.clip",
+          "dig": "assets/cooked/dig.clip",
+          "throw": "assets/cooked/throw.clip",
+          "slash": "assets/cooked/slash.clip",
+          "victory": "assets/cooked/victory.clip",
+          "death_back": "assets/cooked/death_back.clip",
+          "death_front": "assets/cooked/death_front.clip",
+          "death_side": "assets/cooked/death_side.clip",
+          "plant_in": "assets/cooked/plant_in.clip",
+          "plant_loop": "assets/cooked/plant_loop.clip",
+          "defuse_loop": "assets/cooked/defuse_loop.clip",
+          "crouch_idle": "assets/cooked/crouch_idle.clip",
+          "crouch_walk": "assets/cooked/crouch_walk.clip",
+          "land": "assets/cooked/land.clip"
+        }
+      },
+      "figure_play": {
+        "base": {
+          "clip": "idle",
+          "speed": 1.0,
+          "looping": true,
+          "fade_seconds": 0.2,
+          "cue": 0
+        }
+      },
+      "human": {}
+    },
+    {
+      "id": "first_strawberry",
+      "actor": {
+        "slot": 1,
+        "team": "first",
+        "character": "strawberry",
+        "yaw_radians": 0.0
+      },
+      "node": {
+        "mobility": "moving"
+      },
+      "transform": {
+        "translation": [
+          -3.0,
+          0.0,
+          1.0
+        ]
+      },
+      "drawn": {
+        "kind": "figure",
+        "mesh": "strawberry",
+        "material": "strawberry"
+      },
+      "figure": {
+        "skeleton": "assets/cooked/strawberry.skel",
+        "clips": {
+          "idle": "assets/cooked/idle.clip",
+          "walk": "assets/cooked/walk.clip",
+          "run": "assets/cooked/run.clip",
+          "jump": "assets/cooked/jump.clip",
+          "fall": "assets/cooked/fall.clip",
+          "turn": "assets/cooked/turn.clip",
+          "shoot": "assets/cooked/shoot.clip",
+          "fire": "assets/cooked/fire.clip",
+          "hurt": "assets/cooked/hurt.clip",
+          "hit_to_head": "assets/cooked/hit_to_head.clip",
+          "hit_to_body": "assets/cooked/hit_to_body.clip",
+          "hit_to_side": "assets/cooked/hit_to_side.clip",
+          "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
+          "defeat_a": "assets/cooked/defeat_a.clip",
+          "defeat_b": "assets/cooked/defeat_b.clip",
+          "cast": "assets/cooked/cast.clip",
+          "dig": "assets/cooked/dig.clip",
+          "throw": "assets/cooked/throw.clip",
+          "slash": "assets/cooked/slash.clip",
+          "victory": "assets/cooked/victory.clip",
+          "death_back": "assets/cooked/death_back.clip",
+          "death_front": "assets/cooked/death_front.clip",
+          "death_side": "assets/cooked/death_side.clip",
+          "plant_in": "assets/cooked/plant_in.clip",
+          "plant_loop": "assets/cooked/plant_loop.clip",
+          "defuse_loop": "assets/cooked/defuse_loop.clip",
+          "crouch_idle": "assets/cooked/crouch_idle.clip",
+          "crouch_walk": "assets/cooked/crouch_walk.clip",
+          "land": "assets/cooked/land.clip"
+        }
+      },
+      "figure_play": {
+        "base": {
+          "clip": "idle",
+          "speed": 1.0,
+          "looping": true,
+          "fade_seconds": 0.2,
+          "cue": 0
+        }
+      }
+    },
+    {
+      "id": "first_orange",
+      "actor": {
+        "slot": 2,
+        "team": "first",
+        "character": "orange",
+        "yaw_radians": 0.0
+      },
+      "node": {
+        "mobility": "moving"
+      },
+      "transform": {
+        "translation": [
+          3.0,
+          0.0,
+          1.0
+        ]
+      },
+      "drawn": {
+        "kind": "figure",
+        "mesh": "orange",
+        "material": "orange"
+      },
+      "figure": {
+        "skeleton": "assets/cooked/orange.skel",
+        "clips": {
+          "idle": "assets/cooked/idle.clip",
+          "walk": "assets/cooked/walk.clip",
+          "run": "assets/cooked/run.clip",
+          "jump": "assets/cooked/jump.clip",
+          "fall": "assets/cooked/fall.clip",
+          "turn": "assets/cooked/turn.clip",
+          "shoot": "assets/cooked/shoot.clip",
+          "fire": "assets/cooked/fire.clip",
+          "hurt": "assets/cooked/hurt.clip",
+          "hit_to_head": "assets/cooked/hit_to_head.clip",
+          "hit_to_body": "assets/cooked/hit_to_body.clip",
+          "hit_to_side": "assets/cooked/hit_to_side.clip",
+          "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
+          "defeat_a": "assets/cooked/defeat_a.clip",
+          "defeat_b": "assets/cooked/defeat_b.clip",
+          "cast": "assets/cooked/cast.clip",
+          "dig": "assets/cooked/dig.clip",
+          "throw": "assets/cooked/throw.clip",
+          "slash": "assets/cooked/slash.clip",
+          "victory": "assets/cooked/victory.clip",
+          "death_back": "assets/cooked/death_back.clip",
+          "death_front": "assets/cooked/death_front.clip",
+          "death_side": "assets/cooked/death_side.clip",
+          "plant_in": "assets/cooked/plant_in.clip",
+          "plant_loop": "assets/cooked/plant_loop.clip",
+          "defuse_loop": "assets/cooked/defuse_loop.clip",
+          "crouch_idle": "assets/cooked/crouch_idle.clip",
+          "crouch_walk": "assets/cooked/crouch_walk.clip",
+          "land": "assets/cooked/land.clip"
+        }
+      },
+      "figure_play": {
+        "base": {
+          "clip": "idle",
+          "speed": 1.0,
+          "looping": true,
+          "fade_seconds": 0.2,
+          "cue": 0
+        }
+      }
+    },
+    {
+      "id": "first_watermelon",
+      "actor": {
+        "slot": 3,
+        "team": "first",
+        "character": "watermelon",
+        "yaw_radians": 0.0
+      },
+      "node": {
+        "mobility": "moving"
+      },
+      "transform": {
+        "translation": [
+          -5.0,
+          0.0,
+          -1.0
+        ]
+      },
+      "drawn": {
+        "kind": "figure",
+        "mesh": "watermelon",
+        "material": "watermelon"
+      },
+      "figure": {
+        "skeleton": "assets/cooked/watermelon.skel",
+        "clips": {
+          "idle": "assets/cooked/idle.clip",
+          "walk": "assets/cooked/walk.clip",
+          "run": "assets/cooked/run.clip",
+          "jump": "assets/cooked/jump.clip",
+          "fall": "assets/cooked/fall.clip",
+          "turn": "assets/cooked/turn.clip",
+          "shoot": "assets/cooked/shoot.clip",
+          "fire": "assets/cooked/fire.clip",
+          "hurt": "assets/cooked/hurt.clip",
+          "hit_to_head": "assets/cooked/hit_to_head.clip",
+          "hit_to_body": "assets/cooked/hit_to_body.clip",
+          "hit_to_side": "assets/cooked/hit_to_side.clip",
+          "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
+          "defeat_a": "assets/cooked/defeat_a.clip",
+          "defeat_b": "assets/cooked/defeat_b.clip",
+          "cast": "assets/cooked/cast.clip",
+          "dig": "assets/cooked/dig.clip",
+          "throw": "assets/cooked/throw.clip",
+          "slash": "assets/cooked/slash.clip",
+          "victory": "assets/cooked/victory.clip",
+          "death_back": "assets/cooked/death_back.clip",
+          "death_front": "assets/cooked/death_front.clip",
+          "death_side": "assets/cooked/death_side.clip",
+          "plant_in": "assets/cooked/plant_in.clip",
+          "plant_loop": "assets/cooked/plant_loop.clip",
+          "defuse_loop": "assets/cooked/defuse_loop.clip",
+          "crouch_idle": "assets/cooked/crouch_idle.clip",
+          "crouch_walk": "assets/cooked/crouch_walk.clip",
+          "land": "assets/cooked/land.clip"
+        }
+      },
+      "figure_play": {
+        "base": {
+          "clip": "idle",
+          "speed": 1.0,
+          "looping": true,
+          "fade_seconds": 0.2,
+          "cue": 0
+        }
+      }
+    },
+    {
+      "id": "first_eggplant",
+      "actor": {
+        "slot": 4,
+        "team": "first",
+        "character": "eggplant",
+        "yaw_radians": 0.0
+      },
+      "node": {
+        "mobility": "moving"
+      },
+      "transform": {
+        "translation": [
+          5.0,
+          0.0,
+          -1.0
+        ]
+      },
+      "drawn": {
+        "kind": "figure",
+        "mesh": "eggplant",
+        "material": "eggplant"
+      },
+      "figure": {
+        "skeleton": "assets/cooked/eggplant.skel",
+        "clips": {
+          "idle": "assets/cooked/idle.clip",
+          "walk": "assets/cooked/walk.clip",
+          "run": "assets/cooked/run.clip",
+          "jump": "assets/cooked/jump.clip",
+          "fall": "assets/cooked/fall.clip",
+          "turn": "assets/cooked/turn.clip",
+          "shoot": "assets/cooked/shoot.clip",
+          "fire": "assets/cooked/fire.clip",
+          "hurt": "assets/cooked/hurt.clip",
+          "hit_to_head": "assets/cooked/hit_to_head.clip",
+          "hit_to_body": "assets/cooked/hit_to_body.clip",
+          "hit_to_side": "assets/cooked/hit_to_side.clip",
+          "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
+          "defeat_a": "assets/cooked/defeat_a.clip",
+          "defeat_b": "assets/cooked/defeat_b.clip",
+          "cast": "assets/cooked/cast.clip",
+          "dig": "assets/cooked/dig.clip",
+          "throw": "assets/cooked/throw.clip",
+          "slash": "assets/cooked/slash.clip",
+          "victory": "assets/cooked/victory.clip",
+          "death_back": "assets/cooked/death_back.clip",
+          "death_front": "assets/cooked/death_front.clip",
+          "death_side": "assets/cooked/death_side.clip",
+          "plant_in": "assets/cooked/plant_in.clip",
+          "plant_loop": "assets/cooked/plant_loop.clip",
+          "defuse_loop": "assets/cooked/defuse_loop.clip",
+          "crouch_idle": "assets/cooked/crouch_idle.clip",
+          "crouch_walk": "assets/cooked/crouch_walk.clip",
+          "land": "assets/cooked/land.clip"
+        }
+      },
+      "figure_play": {
+        "base": {
+          "clip": "idle",
+          "speed": 1.0,
+          "looping": true,
+          "fade_seconds": 0.2,
+          "cue": 0
+        }
+      }
+    },
+    {
+      "id": "second_banana",
+      "actor": {
+        "slot": 5,
+        "team": "second",
+        "character": "banana",
+        "yaw_radians": 3.1415927
+      },
+      "node": {
+        "mobility": "moving"
+      },
+      "transform": {
+        "translation": [
+          0.0,
+          0.0,
+          -6.0
+        ]
+      },
+      "drawn": {
+        "kind": "figure",
+        "mesh": "banana",
+        "material": "banana"
+      },
+      "figure": {
+        "skeleton": "assets/cooked/banana.skel",
+        "clips": {
+          "idle": "assets/cooked/idle.clip",
+          "walk": "assets/cooked/walk.clip",
+          "run": "assets/cooked/run.clip",
+          "jump": "assets/cooked/jump.clip",
+          "fall": "assets/cooked/fall.clip",
+          "turn": "assets/cooked/turn.clip",
+          "shoot": "assets/cooked/shoot.clip",
+          "fire": "assets/cooked/fire.clip",
+          "hurt": "assets/cooked/hurt.clip",
+          "hit_to_head": "assets/cooked/hit_to_head.clip",
+          "hit_to_body": "assets/cooked/hit_to_body.clip",
+          "hit_to_side": "assets/cooked/hit_to_side.clip",
+          "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
+          "defeat_a": "assets/cooked/defeat_a.clip",
+          "defeat_b": "assets/cooked/defeat_b.clip",
+          "cast": "assets/cooked/cast.clip",
+          "dig": "assets/cooked/dig.clip",
+          "throw": "assets/cooked/throw.clip",
+          "slash": "assets/cooked/slash.clip",
+          "victory": "assets/cooked/victory.clip",
+          "death_back": "assets/cooked/death_back.clip",
+          "death_front": "assets/cooked/death_front.clip",
+          "death_side": "assets/cooked/death_side.clip",
+          "plant_in": "assets/cooked/plant_in.clip",
+          "plant_loop": "assets/cooked/plant_loop.clip",
+          "defuse_loop": "assets/cooked/defuse_loop.clip",
+          "crouch_idle": "assets/cooked/crouch_idle.clip",
+          "crouch_walk": "assets/cooked/crouch_walk.clip",
+          "land": "assets/cooked/land.clip"
+        }
+      },
+      "figure_play": {
+        "base": {
+          "clip": "idle",
+          "speed": 1.0,
+          "looping": true,
+          "fade_seconds": 0.2,
+          "cue": 0
+        }
+      }
+    },
+    {
+      "id": "second_strawberry",
+      "actor": {
+        "slot": 6,
+        "team": "second",
+        "character": "strawberry",
+        "yaw_radians": 3.1415927
+      },
+      "node": {
+        "mobility": "moving"
+      },
+      "transform": {
+        "translation": [
+          -2.0,
+          0.0,
+          -8.0
+        ]
+      },
+      "drawn": {
+        "kind": "figure",
+        "mesh": "strawberry",
+        "material": "strawberry"
+      },
+      "figure": {
+        "skeleton": "assets/cooked/strawberry.skel",
+        "clips": {
+          "idle": "assets/cooked/idle.clip",
+          "walk": "assets/cooked/walk.clip",
+          "run": "assets/cooked/run.clip",
+          "jump": "assets/cooked/jump.clip",
+          "fall": "assets/cooked/fall.clip",
+          "turn": "assets/cooked/turn.clip",
+          "shoot": "assets/cooked/shoot.clip",
+          "fire": "assets/cooked/fire.clip",
+          "hurt": "assets/cooked/hurt.clip",
+          "hit_to_head": "assets/cooked/hit_to_head.clip",
+          "hit_to_body": "assets/cooked/hit_to_body.clip",
+          "hit_to_side": "assets/cooked/hit_to_side.clip",
+          "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
+          "defeat_a": "assets/cooked/defeat_a.clip",
+          "defeat_b": "assets/cooked/defeat_b.clip",
+          "cast": "assets/cooked/cast.clip",
+          "dig": "assets/cooked/dig.clip",
+          "throw": "assets/cooked/throw.clip",
+          "slash": "assets/cooked/slash.clip",
+          "victory": "assets/cooked/victory.clip",
+          "death_back": "assets/cooked/death_back.clip",
+          "death_front": "assets/cooked/death_front.clip",
+          "death_side": "assets/cooked/death_side.clip",
+          "plant_in": "assets/cooked/plant_in.clip",
+          "plant_loop": "assets/cooked/plant_loop.clip",
+          "defuse_loop": "assets/cooked/defuse_loop.clip",
+          "crouch_idle": "assets/cooked/crouch_idle.clip",
+          "crouch_walk": "assets/cooked/crouch_walk.clip",
+          "land": "assets/cooked/land.clip"
+        }
+      },
+      "figure_play": {
+        "base": {
+          "clip": "idle",
+          "speed": 1.0,
+          "looping": true,
+          "fade_seconds": 0.2,
+          "cue": 0
+        }
+      }
+    },
+    {
+      "id": "second_orange",
+      "actor": {
+        "slot": 7,
+        "team": "second",
+        "character": "orange",
+        "yaw_radians": 3.1415927
+      },
+      "node": {
+        "mobility": "moving"
+      },
+      "transform": {
+        "translation": [
+          2.0,
+          0.0,
+          -8.0
+        ]
+      },
+      "drawn": {
+        "kind": "figure",
+        "mesh": "orange",
+        "material": "orange"
+      },
+      "figure": {
+        "skeleton": "assets/cooked/orange.skel",
+        "clips": {
+          "idle": "assets/cooked/idle.clip",
+          "walk": "assets/cooked/walk.clip",
+          "run": "assets/cooked/run.clip",
+          "jump": "assets/cooked/jump.clip",
+          "fall": "assets/cooked/fall.clip",
+          "turn": "assets/cooked/turn.clip",
+          "shoot": "assets/cooked/shoot.clip",
+          "fire": "assets/cooked/fire.clip",
+          "hurt": "assets/cooked/hurt.clip",
+          "hit_to_head": "assets/cooked/hit_to_head.clip",
+          "hit_to_body": "assets/cooked/hit_to_body.clip",
+          "hit_to_side": "assets/cooked/hit_to_side.clip",
+          "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
+          "defeat_a": "assets/cooked/defeat_a.clip",
+          "defeat_b": "assets/cooked/defeat_b.clip",
+          "cast": "assets/cooked/cast.clip",
+          "dig": "assets/cooked/dig.clip",
+          "throw": "assets/cooked/throw.clip",
+          "slash": "assets/cooked/slash.clip",
+          "victory": "assets/cooked/victory.clip",
+          "death_back": "assets/cooked/death_back.clip",
+          "death_front": "assets/cooked/death_front.clip",
+          "death_side": "assets/cooked/death_side.clip",
+          "plant_in": "assets/cooked/plant_in.clip",
+          "plant_loop": "assets/cooked/plant_loop.clip",
+          "defuse_loop": "assets/cooked/defuse_loop.clip",
+          "crouch_idle": "assets/cooked/crouch_idle.clip",
+          "crouch_walk": "assets/cooked/crouch_walk.clip",
+          "land": "assets/cooked/land.clip"
+        }
+      },
+      "figure_play": {
+        "base": {
+          "clip": "idle",
+          "speed": 1.0,
+          "looping": true,
+          "fade_seconds": 0.2,
+          "cue": 0
+        }
+      }
+    },
+    {
+      "id": "second_watermelon",
+      "actor": {
+        "slot": 8,
+        "team": "second",
+        "character": "watermelon",
+        "yaw_radians": 3.1415927
+      },
+      "node": {
+        "mobility": "moving"
+      },
+      "transform": {
+        "translation": [
+          -4.0,
+          0.0,
+          -9.0
+        ]
+      },
+      "drawn": {
+        "kind": "figure",
+        "mesh": "watermelon",
+        "material": "watermelon"
+      },
+      "figure": {
+        "skeleton": "assets/cooked/watermelon.skel",
+        "clips": {
+          "idle": "assets/cooked/idle.clip",
+          "walk": "assets/cooked/walk.clip",
+          "run": "assets/cooked/run.clip",
+          "jump": "assets/cooked/jump.clip",
+          "fall": "assets/cooked/fall.clip",
+          "turn": "assets/cooked/turn.clip",
+          "shoot": "assets/cooked/shoot.clip",
+          "fire": "assets/cooked/fire.clip",
+          "hurt": "assets/cooked/hurt.clip",
+          "hit_to_head": "assets/cooked/hit_to_head.clip",
+          "hit_to_body": "assets/cooked/hit_to_body.clip",
+          "hit_to_side": "assets/cooked/hit_to_side.clip",
+          "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
+          "defeat_a": "assets/cooked/defeat_a.clip",
+          "defeat_b": "assets/cooked/defeat_b.clip",
+          "cast": "assets/cooked/cast.clip",
+          "dig": "assets/cooked/dig.clip",
+          "throw": "assets/cooked/throw.clip",
+          "slash": "assets/cooked/slash.clip",
+          "victory": "assets/cooked/victory.clip",
+          "death_back": "assets/cooked/death_back.clip",
+          "death_front": "assets/cooked/death_front.clip",
+          "death_side": "assets/cooked/death_side.clip",
+          "plant_in": "assets/cooked/plant_in.clip",
+          "plant_loop": "assets/cooked/plant_loop.clip",
+          "defuse_loop": "assets/cooked/defuse_loop.clip",
+          "crouch_idle": "assets/cooked/crouch_idle.clip",
+          "crouch_walk": "assets/cooked/crouch_walk.clip",
+          "land": "assets/cooked/land.clip"
+        }
+      },
+      "figure_play": {
+        "base": {
+          "clip": "idle",
+          "speed": 1.0,
+          "looping": true,
+          "fade_seconds": 0.2,
+          "cue": 0
+        }
+      }
+    },
+    {
+      "id": "second_eggplant",
+      "actor": {
+        "slot": 9,
+        "team": "second",
+        "character": "eggplant",
+        "yaw_radians": 3.1415927
+      },
+      "node": {
+        "mobility": "moving"
+      },
+      "transform": {
+        "translation": [
+          4.0,
+          0.0,
+          -9.0
+        ]
+      },
+      "drawn": {
+        "kind": "figure",
+        "mesh": "eggplant",
+        "material": "eggplant"
+      },
+      "figure": {
+        "skeleton": "assets/cooked/eggplant.skel",
+        "clips": {
+          "idle": "assets/cooked/idle.clip",
+          "walk": "assets/cooked/walk.clip",
+          "run": "assets/cooked/run.clip",
+          "jump": "assets/cooked/jump.clip",
+          "fall": "assets/cooked/fall.clip",
+          "turn": "assets/cooked/turn.clip",
+          "shoot": "assets/cooked/shoot.clip",
+          "fire": "assets/cooked/fire.clip",
+          "hurt": "assets/cooked/hurt.clip",
+          "hit_to_head": "assets/cooked/hit_to_head.clip",
+          "hit_to_body": "assets/cooked/hit_to_body.clip",
+          "hit_to_side": "assets/cooked/hit_to_side.clip",
+          "hit_to_stomach": "assets/cooked/hit_to_stomach.clip",
+          "defeat_a": "assets/cooked/defeat_a.clip",
+          "defeat_b": "assets/cooked/defeat_b.clip",
+          "cast": "assets/cooked/cast.clip",
+          "dig": "assets/cooked/dig.clip",
+          "throw": "assets/cooked/throw.clip",
+          "slash": "assets/cooked/slash.clip",
+          "victory": "assets/cooked/victory.clip",
+          "death_back": "assets/cooked/death_back.clip",
+          "death_front": "assets/cooked/death_front.clip",
+          "death_side": "assets/cooked/death_side.clip",
+          "plant_in": "assets/cooked/plant_in.clip",
+          "plant_loop": "assets/cooked/plant_loop.clip",
+          "defuse_loop": "assets/cooked/defuse_loop.clip",
+          "crouch_idle": "assets/cooked/crouch_idle.clip",
+          "crouch_walk": "assets/cooked/crouch_walk.clip",
+          "land": "assets/cooked/land.clip"
+        }
+      },
+      "figure_play": {
+        "base": {
+          "clip": "idle",
+          "speed": 1.0,
+          "looping": true,
+          "fade_seconds": 0.2,
+          "cue": 0
+        }
+      }
+    },
+    {
+      "id": "mercato_0",
+      "drawn": {
+        "kind": "level",
+        "mesh": "mercato_0",
+        "material": "mercato_0"
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_1",
+      "drawn": {
+        "kind": "level",
+        "mesh": "mercato_1",
+        "material": "mercato_1"
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_2",
+      "drawn": {
+        "kind": "level",
+        "mesh": "mercato_2",
+        "material": "mercato_2"
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_3",
+      "drawn": {
+        "kind": "level",
+        "mesh": "mercato_3",
+        "material": "mercato_3"
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_4",
+      "drawn": {
+        "kind": "level",
+        "mesh": "mercato_4",
+        "material": "mercato_4"
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_5",
+      "drawn": {
+        "kind": "level",
+        "mesh": "mercato_5",
+        "material": "mercato_5"
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_6",
+      "drawn": {
+        "kind": "level",
+        "mesh": "mercato_6",
+        "material": "mercato_6"
+      },
+      "transform": {}
+    },
+    {
+      "id": "mercato_7",
+      "drawn": {
+        "kind": "level",
+        "mesh": "mercato_7",
+        "material": "mercato_7"
+      },
+      "transform": {}
+    },
+    {
+      "id": "sky",
+      "drawn": {
+        "kind": "sky"
+      },
+      "transform": {}
+    },
+    {
+      "id": "effects",
+      "drawn": {
+        "kind": "effects"
+      },
+      "transform": {}
+    },
+    {
+      "id": "device",
+      "drawn": {
+        "kind": "device"
+      },
+      "device": {
+        "stand_in": true
+      },
+      "node": {
+        "mobility": "moving",
+        "visible": false
+      },
+      "transform": {}
+    },
+    {
+      "id": "screen",
+      "screen": {
+        "layout": "assets/ui/layout.json",
+        "icons": "assets/ui/icons_atlas.json",
+        "font": "assets/ui/font_atlas.json",
+        "minimap": "assets/ui/minimap.json",
+        "portraits": "assets/ui/portraits.json",
+        "icons_texture": "icons_atlas",
+        "font_texture": "font_atlas",
+        "keys": {
+          "take": [
+            "MouseLeft"
+          ],
+          "give_back": [
+            "MouseRight"
+          ],
+          "pick": [
+            "Digit1",
+            "Digit2",
+            "Digit3",
+            "Digit4",
+            "Digit5",
+            "Digit6",
+            "Digit7",
+            "Digit8"
+          ]
+        },
+        "low": {
+          "time_seconds": 10.0,
+          "fuse_seconds": 10.0,
+          "health": 30.0,
+          "magazine_share": 0.25,
+          "buy_seconds": 5.0
+        },
+        "feed": {
+          "lines": 5,
+          "seconds": 6.0
+        },
+        "marks": {
+          "hit": {
+            "gap_px": 6.0,
+            "length_px": 8.0,
+            "width_px": 2.0,
+            "seconds": 0.25
+          },
+          "damage": {
+            "gap_px": 150.0,
+            "length_px": 64.0,
+            "width_px": 8.0,
+            "seconds": 1.5
+          }
+        },
+        "words": {
+          "attackers": "Attackers",
+          "defenders": "Defenders",
+          "round_won": "Round won",
+          "round_lost": "Round lost",
+          "victory": "Victory",
+          "defeat": "Defeat",
+          "elimination": "Team eliminated",
+          "exploded": "{device} detonated on site {site}",
+          "defused": "{device} defused on site {site}",
+          "time_out": "Time ran out",
+          "planting": "Planting {device}",
+          "defusing": "Defusing {device}",
+          "free": "FREE",
+          "armor_kind": "armour",
+          "light": "Light",
+          "heavy": "Heavy",
+          "per_charge": "per charge",
+          "hidden": "-",
+          "mvp_round": "{name}   {kills} kills",
+          "mvp_match": "{name}   {kills} kills",
+          "mvp_stats": "{kills} kills   {deaths} deaths   {assists} assists   ADR {adr}",
+          "mvp_char": "{character}  {role}"
+        },
+        "pictures": {
+          "minimap.png": "minimap",
+          "portraits.png": "portraits",
+          "select_banana.png": "select_banana",
+          "select_strawberry.png": "select_strawberry",
+          "select_orange.png": "select_orange",
+          "select_watermelon.png": "select_watermelon",
+          "select_eggplant.png": "select_eggplant",
+          "title.png": "title",
+          "title_1280x720.png": "title_small"
+        },
+        "sized": {
+          "title.png": [
+            1920.0,
+            1080.0
+          ],
+          "title_1280x720.png": [
+            1280.0,
+            720.0
+          ]
+        },
+        "menu": {
+          "keys": {
+            "confirm": [
+              "Enter",
+              "NumpadEnter"
+            ],
+            "back": [
+              "Escape"
+            ],
+            "up": [
+              "ArrowUp"
+            ],
+            "down": [
+              "ArrowDown"
+            ],
+            "left": [
+              "ArrowLeft"
+            ],
+            "right": [
+              "ArrowRight"
+            ],
+            "levels": [
+              "Digit1",
+              "Digit2",
+              "Digit3"
+            ]
+          },
+          "levels": [
+            "easy",
+            "normal",
+            "hard"
+          ],
+          "sliders": {
+            "sensitivity": {
+              "min": 0.0005,
+              "max": 0.006,
+              "step": 0.0001,
+              "shown_scale": 1000.0,
+              "digits": 1,
+              "suffix": ""
+            },
+            "fov": {
+              "min": 40.0,
+              "max": 120.0,
+              "step": 1.0,
+              "shown_scale": 1.0,
+              "digits": 0,
+              "suffix": " deg"
+            },
+            "volume": {
+              "min": 0.0,
+              "max": 1.0,
+              "step": 0.05,
+              "shown_scale": 100.0,
+              "digits": 0,
+              "suffix": "%"
+            }
+          },
+          "key_rows": [
+            {
+              "action": "Move forward",
+              "key": "forward"
+            },
+            {
+              "action": "Move back",
+              "key": "back"
+            },
+            {
+              "action": "Move left",
+              "key": "left"
+            },
+            {
+              "action": "Move right",
+              "key": "right"
+            },
+            {
+              "action": "Walk",
+              "key": "walk"
+            },
+            {
+              "action": "Crouch",
+              "key": "crouch"
+            },
+            {
+              "action": "Jump",
+              "key": "jump"
+            },
+            {
+              "action": "Fire",
+              "key": "fire"
+            },
+            {
+              "action": "Scope",
+              "key": "scope"
+            },
+            {
+              "action": "Reload",
+              "key": "reload"
+            },
+            {
+              "action": "Plant / defuse",
+              "key": "interact"
+            },
+            {
+              "action": "Buy menu",
+              "key": "buy_menu"
+            },
+            {
+              "action": "Scoreboard",
+              "key": "scoreboard"
+            },
+            {
+              "action": "Pause",
+              "key": "release"
+            }
+          ],
+          "crosshairs": [
+            "xhair_white",
+            "xhair_yellow",
+            "xhair_lime",
+            "xhair_cyan",
+            "xhair_pink"
+          ],
+          "scope": {
+            "ring_share": 0.8,
+            "width_px": 2.0,
+            "line_px": 1.0,
+            "color": "ink"
+          },
+          "backdrop": "scrim",
+          "loading": {
+            "map": "Mercato",
+            "mode": "5 v 5 defuse",
+            "site_a_note": "Open square, long sightlines",
+            "site_b_note": "Covered hall, close fights",
+            "min_seconds": 2.5
+          }
+        }
+      }
+    }
+  ]
+}

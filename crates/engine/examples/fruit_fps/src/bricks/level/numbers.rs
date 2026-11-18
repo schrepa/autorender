@@ -1,0 +1,84 @@
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SkyNumbers {
+    pub zenith_scale: f32,
+    pub horizon: [f32; 3],
+    pub below: [f32; 3],
+    pub haze_height: f32,
+    pub disc_degrees: f32,
+    pub disc_soft_degrees: f32,
+    pub disc_strength: f32,
+    pub glow_power: f32,
+    pub glow_strength: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct FogNumbers {
+    pub start_m: f32,
+    pub density_per_m: f32,
+    pub most: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GradeNumbers {
+    pub exposure: f32,
+    pub contrast: f32,
+    pub saturation: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct BlobNumbers {
+    pub radius_scale: f32,
+    pub opacity: f32,
+    pub fade_height_m: f32,
+    pub depth_m: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AmbientNumbers {
+    pub sky_scale: f32,
+    pub ground_scale: f32,
+    pub base_occlusion: f32,
+    pub base_height_m: f32,
+    pub floor_m: f32,
+    pub black_floor: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Antialias {
+    Off,
+    Fxaa,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LightingNumbers {
+    pub sun_wrap: f32,
+    pub sky: SkyNumbers,
+    pub fog: FogNumbers,
+    pub grade: GradeNumbers,
+    pub blob: BlobNumbers,
+    #[serde(default)]
+    pub ambient: Option<AmbientNumbers>,
+    #[serde(default)]
+    pub antialias: Option<Antialias>,
+}
+
+#[derive(Deserialize)]
+struct FilePart {
+    lighting: LightingNumbers,
+}
+
+pub(super) fn parse(text: &str) -> Result<LightingNumbers, String> {
+    serde_json::from_str::<FilePart>(text)
+        .map(|part| part.lighting)
+        .map_err(|error| error.to_string())
+}

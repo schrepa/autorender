@@ -1,0 +1,516 @@
+{
+  "output": "cooked",
+  "uri_prefix": "assets/cooked/",
+  "keys_per_second": 24,
+  "tolerance": 1e-05,
+  "entries": [
+    {
+      "kind": "character",
+      "name": "banana",
+      "source": "source/char_banana.glb",
+      "scale": 1.883,
+      "texture_size": 1024,
+      "root_motion": "Hip",
+      "clips": {
+        "idle": "idle",
+        "walk": "walk",
+        "run": "run",
+        "jump": "jump",
+        "fall": "fall",
+        "turn": "turn",
+        "shoot": "shoot",
+        "fire": "fire",
+        "hurt": "hurt",
+        "hit_to_head": "hit_to_head",
+        "hit_to_body_01": "hit_to_body",
+        "defeat_02": "defeat_a",
+        "defeat_03": "defeat_b",
+        "cast_a_spell": "cast",
+        "dig": "dig",
+        "pitch_baseball": "throw",
+        "slash": "slash",
+        "hit_to_side": "hit_to_side",
+        "hit_to_stomach": "hit_to_stomach",
+        "victory_celebration": "victory"
+      },
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 26000,
+        "vertices": 26000,
+        "joints": 96,
+        "influences": 4
+      },
+      "remove_travel": [
+        "run"
+      ],
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "character",
+      "name": "strawberry",
+      "source": "source/char_strawberry.glb",
+      "scale": 1.755,
+      "texture_size": 1024,
+      "root_motion": "Hip",
+      "clips": {},
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 26000,
+        "vertices": 26000,
+        "joints": 96,
+        "influences": 4
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "character",
+      "name": "orange",
+      "source": "source/char_orange.glb",
+      "scale": 1.802,
+      "texture_size": 1024,
+      "root_motion": "Hip",
+      "clips": {},
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 26000,
+        "vertices": 26000,
+        "joints": 96,
+        "influences": 4
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "character",
+      "name": "eggplant",
+      "source": "source/char_eggplant.glb",
+      "scale": 1.915,
+      "texture_size": 1024,
+      "root_motion": "Hip",
+      "clips": {},
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 26000,
+        "vertices": 26000,
+        "joints": 96,
+        "influences": 4
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "character",
+      "name": "watermelon",
+      "source": "source/char_watermelon.glb",
+      "scale": 1.746,
+      "texture_size": 1024,
+      "root_motion": "Hip",
+      "clips": {},
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 26000,
+        "vertices": 26000,
+        "joints": 96,
+        "influences": 4
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "static",
+      "name": "ground",
+      "source": "source/static_ground.glb",
+      "scale": 1.0,
+      "texture_size": 1024,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 2000,
+        "vertices": 1000
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "character",
+      "name": "rifle",
+      "source": "source/fp_rifle.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "clips": {
+        "fire": "rifle_fire",
+        "reload_parts": "rifle_reload_parts",
+        "equip": "rifle_equip"
+      },
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 12000,
+        "vertices": 16000,
+        "joints": 16,
+        "influences": 4
+      }
+    },
+    {
+      "kind": "character",
+      "name": "sidearm",
+      "source": "source/fp_sidearm.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "clips": {
+        "fire": "sidearm_fire",
+        "reload_parts": "sidearm_reload_parts",
+        "equip": "sidearm_equip"
+      },
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 12000,
+        "vertices": 16000,
+        "joints": 16,
+        "influences": 4
+      }
+    },
+    {
+      "kind": "character",
+      "name": "smg",
+      "source": "source/fp_smg.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "clips": {
+        "fire": "smg_fire",
+        "reload_parts": "smg_reload_parts",
+        "equip": "smg_equip"
+      },
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 12000,
+        "vertices": 16000,
+        "joints": 16,
+        "influences": 4
+      }
+    },
+    {
+      "kind": "character",
+      "name": "sniper",
+      "source": "source/fp_sniper.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "clips": {
+        "fire": "sniper_fire",
+        "reload_parts": "sniper_reload_parts",
+        "equip": "sniper_equip"
+      },
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 12000,
+        "vertices": 16000,
+        "joints": 16,
+        "influences": 4
+      }
+    },
+    {
+      "kind": "static",
+      "name": "tp_rifle",
+      "source": "source/tp_rifle.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 2500,
+        "vertices": 6000
+      }
+    },
+    {
+      "kind": "static",
+      "name": "tp_sidearm",
+      "source": "source/tp_sidearm.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 2500,
+        "vertices": 6000
+      }
+    },
+    {
+      "kind": "static",
+      "name": "tp_smg",
+      "source": "source/tp_smg.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 2500,
+        "vertices": 6000
+      }
+    },
+    {
+      "kind": "static",
+      "name": "tp_sniper",
+      "source": "source/tp_sniper.glb",
+      "scale": 1.0,
+      "texture_size": 64,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "budgets": {
+        "triangles": 2500,
+        "vertices": 6000
+      }
+    },
+    {
+      "kind": "map",
+      "name": "mercato",
+      "source": "source/map_mercato.glb",
+      "scale": 1.0,
+      "texture_size": 1024,
+      "material": {
+        "slot": "figure",
+        "module": "figure",
+        "lighting": "figure"
+      },
+      "merge": [
+        {
+          "prefix": "col_",
+          "output": "mercato_col",
+          "triangles": 12000
+        },
+        {
+          "prefix": "nav_",
+          "output": "mercato_nav",
+          "triangles": 20000
+        }
+      ],
+      "budgets": {
+        "triangles": 150000,
+        "vertices": 150000,
+        "materials": 8,
+        "object_vertices": 65535
+      },
+      "textures": [
+        {
+          "name": "bc",
+          "base_color": "bc7_srgb",
+          "normal": "bc5",
+          "orm": "bc7"
+        },
+        {
+          "name": "rgba8",
+          "base_color": "rgba8_srgb",
+          "normal": "rgba8",
+          "orm": "rgba8"
+        }
+      ]
+    },
+    {
+      "kind": "clip",
+      "name": "banana_extra",
+      "source": "source/anim_banana_extra.glb",
+      "root_motion": "Hip",
+      "rig_from": "banana",
+      "clips": {
+        "death_back": "death_back",
+        "death_front": "death_front",
+        "death_side": "death_side",
+        "plant_in": "plant_in",
+        "plant_loop": "plant_loop",
+        "defuse_loop": "defuse_loop",
+        "crouch_idle": "crouch_idle",
+        "crouch_walk": "crouch_walk",
+        "land": "land"
+      },
+      "budgets": {
+        "joints": 96
+      }
+    },
+    {
+      "kind": "picture",
+      "name": "font_atlas",
+      "source": "ui/font_atlas.png",
+      "encoding": "rgba8",
+      "mips": true
+    },
+    {
+      "kind": "picture",
+      "name": "icons_atlas",
+      "source": "ui/icons_atlas.png",
+      "encoding": "bc7",
+      "mips": true
+    },
+    {
+      "kind": "picture",
+      "name": "portraits",
+      "source": "ui/portraits.png",
+      "encoding": "bc7_srgb",
+      "mips": true
+    },
+    {
+      "kind": "picture",
+      "name": "minimap",
+      "source": "ui/minimap.png",
+      "encoding": "bc7_srgb",
+      "mips": true
+    },
+    {
+      "kind": "picture",
+      "name": "select_banana",
+      "source": "ui/select_banana.png",
+      "encoding": "bc7_srgb",
+      "mips": true
+    },
+    {
+      "kind": "picture",
+      "name": "select_strawberry",
+      "source": "ui/select_strawberry.png",
+      "encoding": "bc7_srgb",
+      "mips": true
+    },
+    {
+      "kind": "picture",
+      "name": "select_orange",
+      "source": "ui/select_orange.png",
+      "encoding": "bc7_srgb",
+      "mips": true
+    },
+    {
+      "kind": "picture",
+      "name": "select_eggplant",
+      "source": "ui/select_eggplant.png",
+      "encoding": "bc7_srgb",
+      "mips": true
+    },
+    {
+      "kind": "picture",
+      "name": "select_watermelon",
+      "source": "ui/select_watermelon.png",
+      "encoding": "bc7_srgb",
+      "mips": true
+    }
+  ]
+}

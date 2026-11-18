@@ -33,6 +33,7 @@ const CLOSED: &[(&str, &[&str])] = &[
             "engine_lodbuild",
             "engine_sources",
             "engine_command_line",
+            "engine_rig",
         ],
     ),
     ("core", CORE_CRATES),

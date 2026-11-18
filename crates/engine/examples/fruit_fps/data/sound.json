@@ -1,0 +1,1405 @@
+{
+ "folder": "assets/sfx/",
+ "extension": ".ogg",
+ "seed": 7,
+ "voices": 32,
+ "master_gain": 0.6,
+ "latency_seconds": 0.01,
+ "glide_seconds": 0.03,
+ "steal_fade_seconds": 0.04,
+ "hold_fade_seconds": 0.15,
+ "audible_gain": 0.005,
+ "tune_step": 0.02,
+ "occlusion_every_ticks": 6,
+ "occlusion_pullback_m": 0.2,
+ "pan_width": 0.8,
+ "quiet_step_gain": 0.5,
+ "countdown_seconds": 3,
+ "device": {
+  "plant_repeat_seconds": 0.45,
+  "defuse_repeat_seconds": 0.45,
+  "beep_slow_seconds": 1.0,
+  "beep_fast_seconds": 0.12
+ },
+ "curves": {
+  "flat": {
+   "flat": true,
+   "near_m": 0.0,
+   "far_m": 1.0,
+   "floor": 1.0,
+   "power": 1.0,
+   "occluded": 1.0
+  },
+  "shot": {
+   "flat": false,
+   "near_m": 4.0,
+   "far_m": 90.0,
+   "floor": 0.12,
+   "power": 1.0,
+   "occluded": 0.5
+  },
+  "impact": {
+   "flat": false,
+   "near_m": 2.0,
+   "far_m": 40.0,
+   "floor": 0.0,
+   "power": 1.5,
+   "occluded": 0.4
+  },
+  "step": {
+   "flat": false,
+   "near_m": 1.0,
+   "far_m": 25.0,
+   "floor": 0.0,
+   "power": 2.0,
+   "occluded": 0.35
+  },
+  "near": {
+   "flat": false,
+   "near_m": 1.5,
+   "far_m": 20.0,
+   "floor": 0.0,
+   "power": 2.0,
+   "occluded": 0.4
+  },
+  "ability": {
+   "flat": false,
+   "near_m": 3.0,
+   "far_m": 50.0,
+   "floor": 0.0,
+   "power": 1.5,
+   "occluded": 0.5
+  },
+  "loud": {
+   "flat": false,
+   "near_m": 5.0,
+   "far_m": 80.0,
+   "floor": 0.1,
+   "power": 1.0,
+   "occluded": 0.6
+  },
+  "device": {
+   "flat": false,
+   "near_m": 3.0,
+   "far_m": 45.0,
+   "floor": 0.05,
+   "power": 1.0,
+   "occluded": 0.6
+  },
+  "blast": {
+   "flat": false,
+   "near_m": 8.0,
+   "far_m": 140.0,
+   "floor": 0.3,
+   "power": 1.0,
+   "occluded": 0.7
+  }
+ },
+ "sounds": {
+  "airstrike_impact": {
+   "files": [
+    {
+     "file": "airstrike_impact",
+     "seconds": 1.419375
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 100,
+   "curve": "blast",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "airstrike_whistle": {
+   "files": [
+    {
+     "file": "airstrike_whistle",
+     "seconds": 2.205333
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 70,
+   "curve": "ability",
+   "own_gain": 0.9,
+   "group": "effects"
+  },
+  "bounce": {
+   "files": [
+    {
+     "file": "bounce",
+     "seconds": 0.148792
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.04,
+   "priority": 50,
+   "curve": "near",
+   "own_gain": 0.9,
+   "group": "effects"
+  },
+  "buff_on": {
+   "files": [
+    {
+     "file": "buff_on",
+     "seconds": 0.625917
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 70,
+   "curve": "ability",
+   "own_gain": 0.9,
+   "group": "effects"
+  },
+  "countdown_tick": {
+   "files": [
+    {
+     "file": "countdown_tick",
+     "seconds": 0.102625
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 100,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
+  "dash": {
+   "files": [
+    {
+     "file": "dash",
+     "seconds": 0.341875
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 70,
+   "curve": "ability",
+   "own_gain": 0.9,
+   "group": "effects"
+  },
+  "device_beep": {
+   "files": [
+    {
+     "file": "device_beep",
+     "seconds": 0.092021
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 80,
+   "curve": "device",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "device_defuse_tick": {
+   "files": [
+    {
+     "file": "device_defuse_tick",
+     "seconds": 0.061687
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 60,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "device_defused": {
+   "files": [
+    {
+     "file": "device_defused",
+     "seconds": 0.850333
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 85,
+   "curve": "loud",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "device_explode": {
+   "files": [
+    {
+     "file": "device_explode",
+     "seconds": 2.652854
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 100,
+   "curve": "blast",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "device_plant_tick": {
+   "files": [
+    {
+     "file": "device_plant_tick",
+     "seconds": 0.04875
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 60,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "device_planted": {
+   "files": [
+    {
+     "file": "device_planted",
+     "seconds": 0.788
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 85,
+   "curve": "loud",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "flash_pop": {
+   "files": [
+    {
+     "file": "flash_pop",
+     "seconds": 0.429854
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 85,
+   "curve": "loud",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "flash_ring": {
+   "files": [
+    {
+     "file": "flash_ring",
+     "seconds": 1.5
+    }
+   ],
+   "loops": true,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 65,
+   "curve": "ability",
+   "own_gain": 0.9,
+   "group": "effects"
+  },
+  "heal_loop": {
+   "files": [
+    {
+     "file": "heal_loop",
+     "seconds": 2.0
+    }
+   ],
+   "loops": true,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 65,
+   "curve": "ability",
+   "own_gain": 0.9,
+   "group": "effects"
+  },
+  "heal_start": {
+   "files": [
+    {
+     "file": "heal_start",
+     "seconds": 1.117646
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 70,
+   "curve": "ability",
+   "own_gain": 0.9,
+   "group": "effects"
+  },
+  "hit_body": {
+   "files": [
+    {
+     "file": "hit_body_1",
+     "seconds": 0.116687
+    },
+    {
+     "file": "hit_body_2",
+     "seconds": 0.123729
+    },
+    {
+     "file": "hit_body_3",
+     "seconds": 0.111687
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.03,
+   "priority": 75,
+   "curve": "near",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "hit_head": {
+   "files": [
+    {
+     "file": "hit_head_1",
+     "seconds": 0.237
+    },
+    {
+     "file": "hit_head_2",
+     "seconds": 0.227229
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 80,
+   "curve": "near",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "impact_metal": {
+   "files": [
+    {
+     "file": "impact_metal_1",
+     "seconds": 0.619125
+    },
+    {
+     "file": "impact_metal_2",
+     "seconds": 0.572708
+    },
+    {
+     "file": "impact_metal_3",
+     "seconds": 0.621083
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.05,
+   "priority": 50,
+   "curve": "impact",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "impact_stone": {
+   "files": [
+    {
+     "file": "impact_stone_1",
+     "seconds": 0.33325
+    },
+    {
+     "file": "impact_stone_2",
+     "seconds": 0.318167
+    },
+    {
+     "file": "impact_stone_3",
+     "seconds": 0.282125
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.05,
+   "priority": 50,
+   "curve": "impact",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "impact_wood": {
+   "files": [
+    {
+     "file": "impact_wood_1",
+     "seconds": 0.221333
+    },
+    {
+     "file": "impact_wood_2",
+     "seconds": 0.224167
+    },
+    {
+     "file": "impact_wood_3",
+     "seconds": 0.201292
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.05,
+   "priority": 50,
+   "curve": "impact",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "jump": {
+   "files": [
+    {
+     "file": "jump",
+     "seconds": 0.226208
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.03,
+   "priority": 45,
+   "curve": "step",
+   "own_gain": 0.5,
+   "group": "footsteps"
+  },
+  "kill_confirm": {
+   "files": [
+    {
+     "file": "kill_confirm",
+     "seconds": 0.605979
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 95,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
+  "land_hard": {
+   "files": [
+    {
+     "file": "land_hard",
+     "seconds": 0.311479
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.03,
+   "priority": 45,
+   "curve": "step",
+   "own_gain": 0.5,
+   "group": "footsteps"
+  },
+  "land_soft": {
+   "files": [
+    {
+     "file": "land_soft",
+     "seconds": 0.201437
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.03,
+   "priority": 45,
+   "curve": "step",
+   "own_gain": 0.5,
+   "group": "footsteps"
+  },
+  "match_loss": {
+   "files": [
+    {
+     "file": "match_loss",
+     "seconds": 3.465063
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 100,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
+  "match_win": {
+   "files": [
+    {
+     "file": "match_win",
+     "seconds": 3.10775
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 100,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
+  "melee_hit": {
+   "files": [
+    {
+     "file": "melee_hit",
+     "seconds": 0.248229
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.04,
+   "priority": 60,
+   "curve": "near",
+   "own_gain": 0.9,
+   "group": "effects"
+  },
+  "melee_swing": {
+   "files": [
+    {
+     "file": "melee_swing_1",
+     "seconds": 0.321583
+    },
+    {
+     "file": "melee_swing_2",
+     "seconds": 0.248792
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.04,
+   "priority": 60,
+   "curve": "near",
+   "own_gain": 0.9,
+   "group": "effects"
+  },
+  "reveal_ping": {
+   "files": [
+    {
+     "file": "reveal_ping",
+     "seconds": 1.491521
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 70,
+   "curve": "ability",
+   "own_gain": 0.9,
+   "group": "effects"
+  },
+  "rifle_bolt": {
+   "files": [
+    {
+     "file": "rifle_bolt",
+     "seconds": 0.296604
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 40,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "rifle_dry": {
+   "files": [
+    {
+     "file": "rifle_dry",
+     "seconds": 0.041396
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 30,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "rifle_equip": {
+   "files": [
+    {
+     "file": "rifle_equip",
+     "seconds": 0.267542
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 40,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "rifle_fire": {
+   "files": [
+    {
+     "file": "rifle_fire_1",
+     "seconds": 0.635583
+    },
+    {
+     "file": "rifle_fire_2",
+     "seconds": 0.703646
+    },
+    {
+     "file": "rifle_fire_3",
+     "seconds": 0.656625
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.03,
+   "priority": 90,
+   "curve": "shot",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "rifle_mag_in": {
+   "files": [
+    {
+     "file": "rifle_mag_in",
+     "seconds": 0.171667
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 40,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "rifle_mag_out": {
+   "files": [
+    {
+     "file": "rifle_mag_out",
+     "seconds": 0.160708
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 40,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "round_loss": {
+   "files": [
+    {
+     "file": "round_loss",
+     "seconds": 1.837771
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 100,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
+  "round_start": {
+   "files": [
+    {
+     "file": "round_start",
+     "seconds": 1.842688
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 100,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
+  "round_win": {
+   "files": [
+    {
+     "file": "round_win",
+     "seconds": 1.783542
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 100,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
+  "sidearm_bolt": {
+   "files": [
+    {
+     "file": "sidearm_bolt",
+     "seconds": 0.206021
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 40,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "sidearm_dry": {
+   "files": [
+    {
+     "file": "sidearm_dry",
+     "seconds": 0.047
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 30,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "sidearm_equip": {
+   "files": [
+    {
+     "file": "sidearm_equip",
+     "seconds": 0.227542
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 40,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "sidearm_fire": {
+   "files": [
+    {
+     "file": "sidearm_fire_1",
+     "seconds": 0.394229
+    },
+    {
+     "file": "sidearm_fire_2",
+     "seconds": 0.412354
+    },
+    {
+     "file": "sidearm_fire_3",
+     "seconds": 0.357354
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.03,
+   "priority": 90,
+   "curve": "shot",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "sidearm_mag_in": {
+   "files": [
+    {
+     "file": "sidearm_mag_in",
+     "seconds": 0.144375
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 40,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "sidearm_mag_out": {
+   "files": [
+    {
+     "file": "sidearm_mag_out",
+     "seconds": 0.130042
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 40,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "smg_bolt": {
+   "files": [
+    {
+     "file": "smg_bolt",
+     "seconds": 0.151354
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 40,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "smg_dry": {
+   "files": [
+    {
+     "file": "smg_dry",
+     "seconds": 0.044312
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 30,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "smg_equip": {
+   "files": [
+    {
+     "file": "smg_equip",
+     "seconds": 0.24325
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 40,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "smg_fire": {
+   "files": [
+    {
+     "file": "smg_fire_1",
+     "seconds": 0.154875
+    },
+    {
+     "file": "smg_fire_2",
+     "seconds": 0.154146
+    },
+    {
+     "file": "smg_fire_3",
+     "seconds": 0.144313
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.03,
+   "priority": 90,
+   "curve": "shot",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "smg_mag_in": {
+   "files": [
+    {
+     "file": "smg_mag_in",
+     "seconds": 0.154417
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 40,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "smg_mag_out": {
+   "files": [
+    {
+     "file": "smg_mag_out",
+     "seconds": 0.141083
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 40,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "smoke_hiss": {
+   "files": [
+    {
+     "file": "smoke_hiss",
+     "seconds": 2.779479
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 70,
+   "curve": "ability",
+   "own_gain": 0.9,
+   "group": "effects"
+  },
+  "sniper_bolt": {
+   "files": [
+    {
+     "file": "sniper_bolt",
+     "seconds": 0.646938
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 40,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "sniper_dry": {
+   "files": [
+    {
+     "file": "sniper_dry",
+     "seconds": 0.042688
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 30,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "sniper_equip": {
+   "files": [
+    {
+     "file": "sniper_equip",
+     "seconds": 0.307208
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 40,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "sniper_fire": {
+   "files": [
+    {
+     "file": "sniper_fire_1",
+     "seconds": 1.970875
+    },
+    {
+     "file": "sniper_fire_2",
+     "seconds": 2.041812
+    },
+    {
+     "file": "sniper_fire_3",
+     "seconds": 1.90425
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.03,
+   "priority": 90,
+   "curve": "shot",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "sniper_mag_in": {
+   "files": [
+    {
+     "file": "sniper_mag_in",
+     "seconds": 0.192062
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 40,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "sniper_mag_out": {
+   "files": [
+    {
+     "file": "sniper_mag_out",
+     "seconds": 0.178604
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 40,
+   "curve": "near",
+   "own_gain": 0.8,
+   "group": "effects"
+  },
+  "spike_alert": {
+   "files": [
+    {
+     "file": "spike_alert",
+     "seconds": 0.547479
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 100,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
+  "step_metal": {
+   "files": [
+    {
+     "file": "step_metal_1",
+     "seconds": 0.273333
+    },
+    {
+     "file": "step_metal_2",
+     "seconds": 0.292604
+    },
+    {
+     "file": "step_metal_3",
+     "seconds": 0.260875
+    },
+    {
+     "file": "step_metal_4",
+     "seconds": 0.280896
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.05,
+   "priority": 45,
+   "curve": "step",
+   "own_gain": 0.45,
+   "group": "footsteps"
+  },
+  "step_stone": {
+   "files": [
+    {
+     "file": "step_stone_1",
+     "seconds": 0.178313
+    },
+    {
+     "file": "step_stone_2",
+     "seconds": 0.169479
+    },
+    {
+     "file": "step_stone_3",
+     "seconds": 0.157104
+    },
+    {
+     "file": "step_stone_4",
+     "seconds": 0.171104
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.05,
+   "priority": 45,
+   "curve": "step",
+   "own_gain": 0.45,
+   "group": "footsteps"
+  },
+  "step_wood": {
+   "files": [
+    {
+     "file": "step_wood_1",
+     "seconds": 0.183021
+    },
+    {
+     "file": "step_wood_2",
+     "seconds": 0.203208
+    },
+    {
+     "file": "step_wood_3",
+     "seconds": 0.189667
+    },
+    {
+     "file": "step_wood_4",
+     "seconds": 0.190542
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.05,
+   "priority": 45,
+   "curve": "step",
+   "own_gain": 0.45,
+   "group": "footsteps"
+  },
+  "throw": {
+   "files": [
+    {
+     "file": "throw",
+     "seconds": 0.225917
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.04,
+   "priority": 50,
+   "curve": "near",
+   "own_gain": 0.9,
+   "group": "effects"
+  },
+  "trap_arm": {
+   "files": [
+    {
+     "file": "trap_arm",
+     "seconds": 0.326896
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 70,
+   "curve": "ability",
+   "own_gain": 0.9,
+   "group": "effects"
+  },
+  "trap_trigger": {
+   "files": [
+    {
+     "file": "trap_trigger",
+     "seconds": 0.383188
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 70,
+   "curve": "ability",
+   "own_gain": 0.9,
+   "group": "effects"
+  },
+  "ui_buy": {
+   "files": [
+    {
+     "file": "ui_buy",
+     "seconds": 0.451167
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 100,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
+  "ui_click": {
+   "files": [
+    {
+     "file": "ui_click",
+     "seconds": 0.065021
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 100,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
+  "ui_deny": {
+   "files": [
+    {
+     "file": "ui_deny",
+     "seconds": 0.190104
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 100,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
+  "ui_hover": {
+   "files": [
+    {
+     "file": "ui_hover",
+     "seconds": 0.045333
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 100,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
+  "ult_cast": {
+   "files": [
+    {
+     "file": "ult_cast",
+     "seconds": 1.714604
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 70,
+   "curve": "ability",
+   "own_gain": 0.9,
+   "group": "effects"
+  },
+  "ult_ready": {
+   "files": [
+    {
+     "file": "ult_ready",
+     "seconds": 1.407729
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 70,
+   "curve": "ability",
+   "own_gain": 0.9,
+   "group": "effects"
+  },
+  "wall_break": {
+   "files": [
+    {
+     "file": "wall_break",
+     "seconds": 0.826
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 70,
+   "curve": "ability",
+   "own_gain": 0.9,
+   "group": "effects"
+  },
+  "wall_rise": {
+   "files": [
+    {
+     "file": "wall_rise",
+     "seconds": 1.450937
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 70,
+   "curve": "ability",
+   "own_gain": 0.9,
+   "group": "effects"
+  },
+  "zone_sizzle": {
+   "files": [
+    {
+     "file": "zone_sizzle",
+     "seconds": 2.0
+    }
+   ],
+   "loops": true,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 65,
+   "curve": "ability",
+   "own_gain": 0.9,
+   "group": "effects"
+  }
+ },
+ "events": {
+  "bolt.rifle": "rifle_bolt",
+  "bolt.sidearm": "sidearm_bolt",
+  "bolt.smg": "smg_bolt",
+  "bolt.sniper": "sniper_bolt",
+  "device.alert": "spike_alert",
+  "device.beep": "device_beep",
+  "device.defuse_tick": "device_defuse_tick",
+  "device.defused": "device_defused",
+  "device.explode": "device_explode",
+  "device.plant_tick": "device_plant_tick",
+  "device.planted": "device_planted",
+  "dry.rifle": "rifle_dry",
+  "dry.sidearm": "sidearm_dry",
+  "dry.smg": "smg_dry",
+  "dry.sniper": "sniper_dry",
+  "equip.melee": "melee_swing",
+  "equip.rifle": "rifle_equip",
+  "equip.sidearm": "sidearm_equip",
+  "equip.smg": "smg_equip",
+  "equip.sniper": "sniper_equip",
+  "hit.body": "hit_body",
+  "hit.head": "hit_head",
+  "hit.leg": "hit_body",
+  "hit.melee": "melee_hit",
+  "impact.dirt": "impact_stone",
+  "impact.metal": "impact_metal",
+  "impact.stone": "impact_stone",
+  "impact.wood": "impact_wood",
+  "jump": "jump",
+  "kill.confirm": "kill_confirm",
+  "land.hard": "land_hard",
+  "land.soft": "land_soft",
+  "mag_in.rifle": "rifle_mag_in",
+  "mag_in.sidearm": "sidearm_mag_in",
+  "mag_in.smg": "smg_mag_in",
+  "mag_in.sniper": "sniper_mag_in",
+  "mag_out.rifle": "rifle_mag_out",
+  "mag_out.sidearm": "sidearm_mag_out",
+  "mag_out.smg": "smg_mag_out",
+  "mag_out.sniper": "sniper_mag_out",
+  "match.loss": "match_loss",
+  "match.win": "match_win",
+  "power.blinded": "flash_ring",
+  "power.bounce": "bounce",
+  "power.cast": "throw",
+  "power.dash": "dash",
+  "power.destroyed": "wall_break",
+  "power.explosion": "airstrike_impact",
+  "power.flash_burst": "flash_pop",
+  "power.glare": "flash_ring",
+  "power.heal_loop": "heal_loop",
+  "power.heal_start": "heal_start",
+  "power.pulse": "reveal_ping",
+  "power.sensor_placed": "trap_arm",
+  "power.smoke_burst": "smoke_hiss",
+  "power.strike_impact": "airstrike_impact",
+  "power.strike_warning": "airstrike_whistle",
+  "power.throw": "throw",
+  "power.transform_end": "buff_on",
+  "power.transform_start": "buff_on",
+  "power.trap_armed": "trap_arm",
+  "power.trap_placed": "trap_arm",
+  "power.trap_triggered": "trap_trigger",
+  "power.ultimate": "ult_cast",
+  "power.wall_down": "wall_break",
+  "power.wall_up": "wall_rise",
+  "power.zone_start": "zone_sizzle",
+  "round.countdown": "countdown_tick",
+  "round.loss": "round_loss",
+  "round.start": "round_start",
+  "round.win": "round_win",
+  "shot.melee": "melee_swing",
+  "shot.rifle": "rifle_fire",
+  "shot.sidearm": "sidearm_fire",
+  "shot.smg": "smg_fire",
+  "shot.sniper": "sniper_fire",
+  "step.dirt": "step_stone",
+  "step.metal": "step_metal",
+  "step.stone": "step_stone",
+  "step.wood": "step_wood",
+  "ui.buy": "ui_buy",
+  "ui.click": "ui_click",
+  "ui.deny": "ui_deny",
+  "ui.hover": "ui_hover",
+  "ult.ready": "ult_ready"
+ }
+}

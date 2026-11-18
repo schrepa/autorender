@@ -1,0 +1,663 @@
+{
+ "image": "minimap.png",
+ "size": [
+  1024,
+  1024
+ ],
+ "source": "mercato.json",
+ "frame": "map metres: x east, y north (as in the map json); game frame point (gx, gy, gz) = map (x, z, -y)",
+ "px_per_m": 11.377778,
+ "origin_m": [
+  -45.0,
+  44.0
+ ],
+ "map_to_px": "px = (x - origin_m[0]) * px_per_m;  py = (origin_m[1] - y) * px_per_m   (north up)",
+ "game_to_px": "px = (gx - origin_m[0]) * px_per_m;  py = (origin_m[1] + gz) * px_per_m",
+ "yaw": "markers use compass yaw: 0 = north (+y map, -z game), clockwise positive",
+ "callouts": [
+  {
+   "name": "Loading Dock",
+   "zone": "atk_spawn",
+   "pos_m": [
+    0.0,
+    -36.0
+   ],
+   "px": [
+    512.0,
+    910.22
+   ]
+  },
+  {
+   "name": "Olive Yard",
+   "zone": "a_lobby",
+   "pos_m": [
+    -23.0,
+    -30.0
+   ],
+   "px": [
+    250.31,
+    841.96
+   ]
+  },
+  {
+   "name": "Bakery Row",
+   "zone": "b_lobby",
+   "pos_m": [
+    23.0,
+    -30.0
+   ],
+   "px": [
+    773.69,
+    841.96
+   ]
+  },
+  {
+   "name": "Via Lunga",
+   "zone": "mid_street",
+   "pos_m": [
+    0.0,
+    -18.0
+   ],
+   "px": [
+    512.0,
+    705.42
+   ]
+  },
+  {
+   "name": "Lemon Alley",
+   "zone": "a_main",
+   "pos_m": [
+    -30.0,
+    -13.0
+   ],
+   "px": [
+    170.67,
+    648.53
+   ]
+  },
+  {
+   "name": "Spice Lane",
+   "zone": "b_main",
+   "pos_m": [
+    30.0,
+    -14.0
+   ],
+   "px": [
+    853.33,
+    659.91
+   ]
+  },
+  {
+   "name": "Piazza (A)",
+   "zone": "a_site",
+   "pos_m": [
+    -26.0,
+    10.0
+   ],
+   "px": [
+    216.18,
+    386.84
+   ]
+  },
+  {
+   "name": "Market Hall (B)",
+   "zone": "b_site",
+   "pos_m": [
+    26.0,
+    8.0
+   ],
+   "px": [
+    807.82,
+    409.6
+   ]
+  },
+  {
+   "name": "Fountain",
+   "zone": "courtyard",
+   "pos_m": [
+    0.0,
+    4.0
+   ],
+   "px": [
+    512.0,
+    455.11
+   ]
+  },
+  {
+   "name": "Tailor Cut",
+   "zone": "a_link",
+   "pos_m": [
+    -11.0,
+    11.75
+   ],
+   "px": [
+    386.84,
+    366.93
+   ]
+  },
+  {
+   "name": "Cheese Gap",
+   "zone": "b_link",
+   "pos_m": [
+    11.0,
+    6.25
+   ],
+   "px": [
+    637.16,
+    429.51
+   ]
+  },
+  {
+   "name": "Archway",
+   "zone": "arch",
+   "pos_m": [
+    0.0,
+    21.0
+   ],
+   "px": [
+    512.0,
+    261.69
+   ]
+  },
+  {
+   "name": "Bell Square",
+   "zone": "def_spawn",
+   "pos_m": [
+    0.0,
+    34.0
+   ],
+   "px": [
+    512.0,
+    113.78
+   ]
+  },
+  {
+   "name": "Well Yard",
+   "zone": "a_back",
+   "pos_m": [
+    -23.0,
+    27.0
+   ],
+   "px": [
+    250.31,
+    193.42
+   ]
+  },
+  {
+   "name": "West Passage",
+   "zone": "def_west",
+   "pos_m": [
+    -16.0,
+    32.0
+   ],
+   "px": [
+    329.96,
+    136.53
+   ]
+  },
+  {
+   "name": "Cellar Row",
+   "zone": "b_back",
+   "pos_m": [
+    23.0,
+    26.0
+   ],
+   "px": [
+    773.69,
+    204.8
+   ]
+  },
+  {
+   "name": "East Passage",
+   "zone": "def_east",
+   "pos_m": [
+    16.0,
+    32.0
+   ],
+   "px": [
+    694.04,
+    136.53
+   ]
+  },
+  {
+   "name": "Stage",
+   "zone": "a_site",
+   "pos_m": [
+    -33.0,
+    17.0
+   ],
+   "px": [
+    136.53,
+    307.2
+   ]
+  },
+  {
+   "name": "Ramp",
+   "zone": "a_site",
+   "pos_m": [
+    -34.75,
+    12.0
+   ],
+   "px": [
+    116.62,
+    364.09
+   ]
+  },
+  {
+   "name": "Juice Bar",
+   "zone": "b_site",
+   "pos_m": [
+    34.0,
+    15.0
+   ],
+   "px": [
+    898.84,
+    329.96
+   ]
+  },
+  {
+   "name": "Pillars",
+   "zone": "b_site",
+   "pos_m": [
+    26.0,
+    15.5
+   ],
+   "px": [
+    807.82,
+    324.27
+   ]
+  },
+  {
+   "name": "Cart",
+   "zone": "mid_street",
+   "pos_m": [
+    1.6,
+    -12.9
+   ],
+   "px": [
+    530.2,
+    647.4
+   ]
+  },
+  {
+   "name": "Edicola",
+   "zone": "courtyard",
+   "pos_m": [
+    1.8,
+    8.2
+   ],
+   "px": [
+    532.48,
+    407.32
+   ]
+  },
+  {
+   "name": "Bell Tower",
+   "zone": "courtyard",
+   "pos_m": [
+    -7.0,
+    18.5
+   ],
+   "px": [
+    432.36,
+    290.13
+   ]
+  },
+  {
+   "name": "Kiosk",
+   "zone": "courtyard",
+   "pos_m": [
+    4.5,
+    11.2
+   ],
+   "px": [
+    563.2,
+    373.19
+   ]
+  },
+  {
+   "name": "Lemon Bend",
+   "zone": "a_main",
+   "pos_m": [
+    -30.0,
+    -10.5
+   ],
+   "px": [
+    170.67,
+    620.09
+   ]
+  },
+  {
+   "name": "Spice Bend",
+   "zone": "b_main",
+   "pos_m": [
+    30.0,
+    -12.5
+   ],
+   "px": [
+    853.33,
+    642.84
+   ]
+  }
+ ],
+ "sites": {
+  "a": {
+   "center_m": [
+    -26.0,
+    10.0
+   ],
+   "px": [
+    216.18,
+    386.84
+   ],
+   "rect_m": [
+    -30,
+    6,
+    -22,
+    14
+   ],
+   "name": "Piazza (A)"
+  },
+  "b": {
+   "center_m": [
+    26.0,
+    8.0
+   ],
+   "px": [
+    807.82,
+    409.6
+   ],
+   "rect_m": [
+    22,
+    4,
+    30,
+    12
+   ],
+   "name": "Market Hall (B)"
+  }
+ },
+ "spawns": [
+  {
+   "team": "attack",
+   "pos_m": [
+    -6.0,
+    -38.5
+   ],
+   "px": [
+    443.73,
+    938.67
+   ]
+  },
+  {
+   "team": "attack",
+   "pos_m": [
+    -3.0,
+    -38.5
+   ],
+   "px": [
+    477.87,
+    938.67
+   ]
+  },
+  {
+   "team": "attack",
+   "pos_m": [
+    0.0,
+    -38.5
+   ],
+   "px": [
+    512.0,
+    938.67
+   ]
+  },
+  {
+   "team": "attack",
+   "pos_m": [
+    3.0,
+    -38.5
+   ],
+   "px": [
+    546.13,
+    938.67
+   ]
+  },
+  {
+   "team": "attack",
+   "pos_m": [
+    6.0,
+    -38.5
+   ],
+   "px": [
+    580.27,
+    938.67
+   ]
+  },
+  {
+   "team": "defend",
+   "pos_m": [
+    -6.0,
+    37.8
+   ],
+   "px": [
+    443.73,
+    70.54
+   ]
+  },
+  {
+   "team": "defend",
+   "pos_m": [
+    -3.0,
+    37.8
+   ],
+   "px": [
+    477.87,
+    70.54
+   ]
+  },
+  {
+   "team": "defend",
+   "pos_m": [
+    0.0,
+    37.8
+   ],
+   "px": [
+    512.0,
+    70.54
+   ]
+  },
+  {
+   "team": "defend",
+   "pos_m": [
+    3.0,
+    37.8
+   ],
+   "px": [
+    546.13,
+    70.54
+   ]
+  },
+  {
+   "team": "defend",
+   "pos_m": [
+    6.0,
+    37.8
+   ],
+   "px": [
+    580.27,
+    70.54
+   ]
+  }
+ ],
+ "zones": [
+  {
+   "name": "atk_spawn",
+   "callout": "Loading Dock",
+   "rect_m": [
+    -12,
+    -42,
+    12,
+    -30
+   ]
+  },
+  {
+   "name": "a_lobby",
+   "callout": "Olive Yard",
+   "rect_m": [
+    -34,
+    -34,
+    -12,
+    -26
+   ]
+  },
+  {
+   "name": "b_lobby",
+   "callout": "Bakery Row",
+   "rect_m": [
+    12,
+    -34,
+    34,
+    -26
+   ]
+  },
+  {
+   "name": "mid_street",
+   "callout": "Via Lunga",
+   "rect_m": [
+    -4,
+    -30,
+    4,
+    -6
+   ]
+  },
+  {
+   "name": "a_main",
+   "callout": "Lemon Alley",
+   "rect_m": [
+    -34,
+    -26,
+    -26,
+    0
+   ]
+  },
+  {
+   "name": "b_main",
+   "callout": "Spice Lane",
+   "rect_m": [
+    26,
+    -26,
+    34,
+    -2
+   ]
+  },
+  {
+   "name": "a_site",
+   "callout": "Piazza (A)",
+   "rect_m": [
+    -36,
+    0,
+    -16,
+    20
+   ]
+  },
+  {
+   "name": "b_site",
+   "callout": "Market Hall (B)",
+   "rect_m": [
+    16,
+    -2,
+    36,
+    18
+   ]
+  },
+  {
+   "name": "courtyard",
+   "callout": "Fountain",
+   "rect_m": [
+    -6,
+    -6,
+    6,
+    14
+   ]
+  },
+  {
+   "name": "a_link",
+   "callout": "Tailor Cut",
+   "rect_m": [
+    -16,
+    10,
+    -6,
+    13.5
+   ]
+  },
+  {
+   "name": "b_link",
+   "callout": "Cheese Gap",
+   "rect_m": [
+    6,
+    4.5,
+    16,
+    8
+   ]
+  },
+  {
+   "name": "arch",
+   "callout": "Archway",
+   "rect_m": [
+    -5,
+    14,
+    5,
+    28
+   ]
+  },
+  {
+   "name": "def_spawn",
+   "callout": "Bell Square",
+   "rect_m": [
+    -12,
+    28,
+    12,
+    40
+   ]
+  },
+  {
+   "name": "a_back",
+   "callout": "Well Yard",
+   "rect_m": [
+    -26,
+    20,
+    -20,
+    34
+   ]
+  },
+  {
+   "name": "def_west",
+   "callout": "West Passage",
+   "rect_m": [
+    -20,
+    30,
+    -12,
+    34
+   ]
+  },
+  {
+   "name": "b_back",
+   "callout": "Cellar Row",
+   "rect_m": [
+    20,
+    18,
+    26,
+    34
+   ]
+  },
+  {
+   "name": "def_east",
+   "callout": "East Passage",
+   "rect_m": [
+    12,
+    30,
+    20,
+    34
+   ]
+  }
+ ]
+}

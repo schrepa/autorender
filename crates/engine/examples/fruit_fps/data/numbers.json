@@ -1,0 +1,1421 @@
+{
+  "about": "Lead's first numbers for the fruit shooter. Game data, to be moved into the game crate's data files and tuned by play. Mechanics follow the tactical-shooter genre; every name and design here is our own.",
+  "match": {
+    "team_size": 5,
+    "rounds_to_win": 13,
+    "swap_sides_after_round": 12,
+    "buy_seconds": 20,
+    "buy_seconds_first_round_of_half": 30,
+    "round_seconds": 100,
+    "plant_seconds": 4.0,
+    "defuse_seconds": 7.0,
+    "defuse_half_checkpoint": true,
+    "device_fuse_seconds": 45,
+    "round_end_seconds": 5,
+    "device_name": "Juicer",
+    "sites": [
+      "a",
+      "b"
+    ],
+    "roster": [
+      {
+        "team": "first",
+        "character": "banana",
+        "control": "human",
+        "level": "normal"
+      },
+      {
+        "team": "first",
+        "character": "strawberry",
+        "control": "bot",
+        "level": "normal"
+      },
+      {
+        "team": "first",
+        "character": "orange",
+        "control": "bot",
+        "level": "normal"
+      },
+      {
+        "team": "first",
+        "character": "watermelon",
+        "control": "bot",
+        "level": "normal"
+      },
+      {
+        "team": "first",
+        "character": "eggplant",
+        "control": "bot",
+        "level": "normal"
+      },
+      {
+        "team": "second",
+        "character": "banana",
+        "control": "bot",
+        "level": "normal"
+      },
+      {
+        "team": "second",
+        "character": "strawberry",
+        "control": "bot",
+        "level": "normal"
+      },
+      {
+        "team": "second",
+        "character": "orange",
+        "control": "bot",
+        "level": "normal"
+      },
+      {
+        "team": "second",
+        "character": "watermelon",
+        "control": "bot",
+        "level": "normal"
+      },
+      {
+        "team": "second",
+        "character": "eggplant",
+        "control": "bot",
+        "level": "normal"
+      }
+    ],
+    "next_match_seconds": 10,
+    "device_reach_m": 1.5
+  },
+  "economy": {
+    "start": 800,
+    "cap": 9000,
+    "kill": 200,
+    "plant_team_bonus": 300,
+    "round_win": 3000,
+    "round_loss_by_streak": [
+      1900,
+      2400,
+      2900
+    ],
+    "light_armor": {
+      "cost": 400,
+      "points": 25
+    },
+    "heavy_armor": {
+      "cost": 1000,
+      "points": 50
+    },
+    "armor_absorb": 0.66
+  },
+  "player": {
+    "health": 100,
+    "height_m": 1.8,
+    "eye_height_m": 1.6,
+    "crouch_eye_height_m": 1.1,
+    "radius_m": 0.35,
+    "run_speed_mps": 5.4,
+    "walk_factor": 0.5,
+    "crouch_factor": 0.4,
+    "jump_height_m": 0.9,
+    "ground_accel_mps2": 60,
+    "ground_friction": 9,
+    "air_accel_mps2": 8,
+    "step_height_m": 0.35,
+    "footstep_heard_m": 28,
+    "walk_is_silent": true,
+    "slope_limit_deg": 50,
+    "crouch_height_m": 1.25,
+    "jump_apex_seconds": 0.3,
+    "crouch_seconds": 0.12,
+    "stride_run_m": 1.5,
+    "stride_walk_m": 1.2,
+    "stride_crouch_m": 1.0,
+    "hard_landing_mps": 7.5
+  },
+  "weapons": {
+    "sidearm": {
+      "name": "Pip",
+      "cost": 0,
+      "auto": false,
+      "shots_per_second": 6.75,
+      "magazine": 12,
+      "reserve": 36,
+      "reload_seconds": 1.75,
+      "equip_seconds": 0.75,
+      "speed_factor": 1.06,
+      "damage": [
+        {
+          "to_m": 30,
+          "head": 78,
+          "body": 26,
+          "leg": 22
+        },
+        {
+          "to_m": 999,
+          "head": 66,
+          "body": 22,
+          "leg": 18
+        }
+      ],
+      "spread_deg": {
+        "stand": 0.4,
+        "crouch": 0.3,
+        "walk": 1.0,
+        "run": 2.2,
+        "air": 5.0,
+        "crouch_move": 0.6,
+        "land": 7.0
+      },
+      "recoil": {
+        "up_deg_per_shot": 0.9,
+        "max_up_deg": 4.5,
+        "side_deg": 0.25,
+        "side_starts_after_shots": 3,
+        "side_swing_shots": 2,
+        "side_jitter_deg": 0.1,
+        "recover_seconds": 0.35
+      },
+      "tag_slow": 0.725,
+      "pierce_m": 0.1
+    },
+    "smg": {
+      "name": "Zest",
+      "cost": 1600,
+      "auto": true,
+      "shots_per_second": 13.5,
+      "magazine": 30,
+      "reserve": 90,
+      "reload_seconds": 2.25,
+      "equip_seconds": 0.75,
+      "speed_factor": 1.06,
+      "damage": [
+        {
+          "to_m": 20,
+          "head": 67,
+          "body": 27,
+          "leg": 23
+        },
+        {
+          "to_m": 999,
+          "head": 55,
+          "body": 22,
+          "leg": 18
+        }
+      ],
+      "spread_deg": {
+        "stand": 0.5,
+        "crouch": 0.4,
+        "walk": 1.2,
+        "run": 2.6,
+        "air": 6.0,
+        "crouch_move": 0.6,
+        "land": 7.0
+      },
+      "recoil": {
+        "up_deg_per_shot": 0.55,
+        "max_up_deg": 5.0,
+        "side_deg": 0.45,
+        "side_starts_after_shots": 4,
+        "side_swing_shots": 3,
+        "side_jitter_deg": 0.15,
+        "recover_seconds": 0.35
+      },
+      "tag_slow": 0.725,
+      "pierce_m": 0.2,
+      "scope": {
+        "zoom": [
+          1.15
+        ],
+        "speed_factor": 0.8,
+        "spread_deg": {
+          "stand": 0.4,
+          "crouch": 0.32,
+          "walk": 1.0,
+          "run": 2.4,
+          "air": 6.0,
+          "crouch_move": 0.5,
+          "land": 7.0
+        },
+        "fire_rate_factor": 0.9,
+        "scope_in_seconds": 0.1,
+        "breaks_on_shot": false
+      }
+    },
+    "rifle": {
+      "name": "Rind",
+      "cost": 2900,
+      "auto": true,
+      "shots_per_second": 9.75,
+      "magazine": 25,
+      "reserve": 75,
+      "reload_seconds": 2.5,
+      "equip_seconds": 1.0,
+      "speed_factor": 1.0,
+      "damage": [
+        {
+          "to_m": 999,
+          "head": 160,
+          "body": 40,
+          "leg": 34
+        }
+      ],
+      "spread_deg": {
+        "stand": 0.25,
+        "crouch": 0.16,
+        "walk": 2.0,
+        "run": 5.0,
+        "air": 8.0,
+        "crouch_move": 0.8,
+        "land": 7.0
+      },
+      "recoil": {
+        "up_deg_per_shot": 0.8,
+        "max_up_deg": 9.0,
+        "side_deg": 0.6,
+        "side_starts_after_shots": 6,
+        "side_swing_shots": 4,
+        "side_jitter_deg": 0.1,
+        "recover_seconds": 0.4
+      },
+      "tag_slow": 0.725,
+      "pierce_m": 0.2,
+      "scope": {
+        "zoom": [
+          1.25
+        ],
+        "speed_factor": 0.8,
+        "spread_deg": {
+          "stand": 0.2,
+          "crouch": 0.13,
+          "walk": 1.8,
+          "run": 4.5,
+          "air": 8.0,
+          "crouch_move": 0.7,
+          "land": 7.0
+        },
+        "fire_rate_factor": 0.9,
+        "scope_in_seconds": 0.1,
+        "breaks_on_shot": false
+      }
+    },
+    "sniper": {
+      "name": "Stem",
+      "cost": 4700,
+      "auto": false,
+      "shots_per_second": 0.6,
+      "magazine": 5,
+      "reserve": 10,
+      "reload_seconds": 3.7,
+      "equip_seconds": 1.25,
+      "speed_factor": 0.95,
+      "damage": [
+        {
+          "to_m": 999,
+          "head": 255,
+          "body": 150,
+          "leg": 120
+        }
+      ],
+      "spread_deg": {
+        "stand": 5.0,
+        "crouch": 4.0,
+        "walk": 7.0,
+        "run": 12.0,
+        "air": 10.0,
+        "crouch_move": 5.0,
+        "land": 10.0
+      },
+      "recoil": {
+        "up_deg_per_shot": 3.0,
+        "max_up_deg": 3.0,
+        "side_deg": 0.3,
+        "side_starts_after_shots": 0,
+        "side_swing_shots": 1,
+        "side_jitter_deg": 0.0,
+        "recover_seconds": 0.6
+      },
+      "scope": {
+        "zoom": [
+          2.5,
+          5.0
+        ],
+        "speed_factor": 0.76,
+        "spread_deg": {
+          "stand": 0.0,
+          "crouch": 0.0,
+          "walk": 3.0,
+          "run": 7.0,
+          "air": 10.0,
+          "crouch_move": 2.0,
+          "land": 10.0
+        },
+        "fire_rate_factor": 1.0,
+        "scope_in_seconds": 0.25,
+        "breaks_on_shot": true
+      },
+      "tag_slow": 0.725,
+      "pierce_m": 0.4
+    },
+    "melee": {
+      "name": "Peeler",
+      "damage_front": 50,
+      "damage_back": 100,
+      "range_m": 1.6,
+      "speed_factor": 1.25,
+      "swing_seconds": 0.6,
+      "equip_seconds": 0.5,
+      "heavy_front": 75.0,
+      "heavy_back": 150.0,
+      "heavy_swing_seconds": 1.0
+    }
+  },
+  "ability_slots": {
+    "c": "bought each round",
+    "q": "bought each round",
+    "e": "signature: one free charge each round, then a cooldown or a refresh rule",
+    "x": "ultimate: charged by points (kill 1, plant or defuse 1, every round end 1)"
+  },
+  "characters": {
+    "banana": {
+      "name": "Bananito",
+      "role": "entry",
+      "c": {
+        "name": "Peel",
+        "block": "trap",
+        "cost": 200,
+        "charges": 2,
+        "arm_seconds": 1.0,
+        "lasts_seconds": 30,
+        "trigger_radius_m": 0.8,
+        "effect": {
+          "stun_seconds": 1.2,
+          "slow": 0.7
+        },
+        "delivery": {
+          "place": {
+            "range_m": 6.0,
+            "onto": "ground",
+            "lift_m": 0.02
+          }
+        },
+        "health": 20,
+        "hit_radius_m": 0.3
+      },
+      "q": {
+        "name": "Ripe Flash",
+        "block": "flash",
+        "cost": 250,
+        "charges": 2,
+        "fuse_seconds": 0.6,
+        "max_blind_seconds": 1.6,
+        "range_m": 30,
+        "delivery": {
+          "throw": {
+            "speed_mps": 22.0,
+            "gravity_mps2": 20.0,
+            "radius_m": 0.06,
+            "bounces": 1,
+            "bounce_keep": 0.5
+          }
+        },
+        "away_factor": 0.3,
+        "fade_seconds": 0.5
+      },
+      "e": {
+        "name": "Split",
+        "block": "dash",
+        "distance_m": 7.0,
+        "seconds": 0.25,
+        "charges": 1,
+        "refresh_on_kills": 2
+      },
+      "x": {
+        "name": "Bunch",
+        "block": "self_buff",
+        "points": 7,
+        "seconds": 10,
+        "speed_factor": 1.15,
+        "fire_rate_factor": 1.1,
+        "dash_refresh_on_kill": true
+      }
+    },
+    "strawberry": {
+      "name": "Strawberina",
+      "role": "support",
+      "c": {
+        "name": "Jam Pool",
+        "block": "zone_slow",
+        "cost": 200,
+        "charges": 2,
+        "radius_m": 5.0,
+        "seconds": 8,
+        "slow": 0.5,
+        "delivery": {
+          "throw": {
+            "speed_mps": 16.0,
+            "gravity_mps2": 20.0,
+            "radius_m": 0.08,
+            "bounces": 0,
+            "bounce_keep": 0.0
+          }
+        }
+      },
+      "q": {
+        "name": "Seed Sensor",
+        "block": "trap_reveal",
+        "cost": 300,
+        "charges": 1,
+        "radius_m": 6.0,
+        "reveal_seconds": 3.0,
+        "lasts_whole_round": true,
+        "delivery": {
+          "place": {
+            "range_m": 8.0,
+            "onto": "surface",
+            "lift_m": 0.1
+          }
+        },
+        "arm_seconds": 1.0,
+        "health": 40,
+        "hit_radius_m": 0.2
+      },
+      "e": {
+        "name": "Sweet Spot",
+        "block": "zone_heal",
+        "radius_m": 4.0,
+        "seconds": 5,
+        "heal_per_second": 12,
+        "cooldown_seconds": 40,
+        "charges": 1,
+        "delivery": {
+          "throw": {
+            "speed_mps": 12.0,
+            "gravity_mps2": 20.0,
+            "radius_m": 0.08,
+            "bounces": 0,
+            "bounce_keep": 0.0
+          }
+        }
+      },
+      "x": {
+        "name": "Sugar Rush",
+        "block": "team_heal",
+        "points": 7,
+        "radius_m": 15.0,
+        "heal_seconds": 3.0,
+        "overshield": 25,
+        "heal_per_second": 25
+      }
+    },
+    "orange": {
+      "name": "Orangelo",
+      "role": "controller",
+      "c": {
+        "name": "Zest Bomb",
+        "block": "zone_damage",
+        "cost": 300,
+        "charges": 1,
+        "radius_m": 4.5,
+        "seconds": 7,
+        "damage_per_second": 10,
+        "delivery": {
+          "throw": {
+            "speed_mps": 16.0,
+            "gravity_mps2": 20.0,
+            "radius_m": 0.08,
+            "bounces": 1,
+            "bounce_keep": 0.4
+          }
+        },
+        "hurts_team": true
+      },
+      "q": {
+        "name": "Citrus Curtain",
+        "block": "wall_vision",
+        "cost": 300,
+        "charges": 1,
+        "length_m": 16.0,
+        "height_m": 4.0,
+        "seconds": 12,
+        "thickness_m": 0.3
+      },
+      "e": {
+        "name": "Pulp Cloud",
+        "block": "smoke",
+        "radius_m": 4.5,
+        "seconds": 15,
+        "range_m": 30,
+        "charges": 2,
+        "cooldown_seconds": 35,
+        "delivery": {
+          "throw": {
+            "speed_mps": 18.0,
+            "gravity_mps2": 20.0,
+            "radius_m": 0.08,
+            "bounces": 0,
+            "bounce_keep": 0.0
+          }
+        },
+        "grow_seconds": 0.5,
+        "fade_seconds": 1.0
+      },
+      "x": {
+        "name": "Juice Flood",
+        "block": "zone_slow_reveal",
+        "points": 7,
+        "radius_m": 12.0,
+        "seconds": 10,
+        "slow": 0.3,
+        "delivery": "caster"
+      }
+    },
+    "watermelon": {
+      "name": "Watermelina",
+      "role": "initiator",
+      "c": {
+        "name": "Seed Grenade",
+        "block": "grenade",
+        "cost": 300,
+        "charges": 1,
+        "fuse_seconds": 1.5,
+        "radius_m": 5.0,
+        "max_damage": 80,
+        "min_damage": 15,
+        "delivery": {
+          "throw": {
+            "speed_mps": 18.0,
+            "gravity_mps2": 20.0,
+            "radius_m": 0.08,
+            "bounces": 2,
+            "bounce_keep": 0.45
+          }
+        },
+        "hurts_team": true
+      },
+      "q": {
+        "name": "Rind Wall",
+        "block": "wall_solid",
+        "cost": 300,
+        "charges": 1,
+        "width_m": 6.0,
+        "height_m": 3.0,
+        "health": 800,
+        "seconds": 20,
+        "delivery": {
+          "place": {
+            "range_m": 10.0,
+            "onto": "ground",
+            "lift_m": 0.0
+          }
+        },
+        "thickness_m": 0.4
+      },
+      "e": {
+        "name": "Thump",
+        "block": "reveal_pulse",
+        "radius_m": 18.0,
+        "reveal_seconds": 2.5,
+        "cooldown_seconds": 40,
+        "charges": 1
+      },
+      "x": {
+        "name": "Melon Drop",
+        "block": "airstrike",
+        "points": 8,
+        "delay_seconds": 2.5,
+        "radius_m": 10.0,
+        "max_damage": 150,
+        "min_damage": 40,
+        "delivery": {
+          "place": {
+            "range_m": 60.0,
+            "onto": "ground",
+            "lift_m": 0.0
+          }
+        },
+        "hurts_team": true
+      }
+    },
+    "eggplant": {
+      "name": "The Eggplant",
+      "role": "denial",
+      "c": {
+        "name": "Nightshade",
+        "block": "zone_nearsight",
+        "cost": 250,
+        "charges": 1,
+        "radius_m": 5.0,
+        "seconds": 6,
+        "sight_m": 5.0,
+        "delivery": {
+          "throw": {
+            "speed_mps": 16.0,
+            "gravity_mps2": 20.0,
+            "radius_m": 0.08,
+            "bounces": 0,
+            "bounce_keep": 0.0
+          }
+        }
+      },
+      "q": {
+        "name": "Vine Wire",
+        "block": "trap_tripwire",
+        "cost": 200,
+        "charges": 1,
+        "max_length_m": 6.0,
+        "slow": 0.8,
+        "slow_seconds": 1.5,
+        "reveal_seconds": 3.0,
+        "lasts_whole_round": true,
+        "delivery": {
+          "place": {
+            "range_m": 5.0,
+            "onto": "surface",
+            "lift_m": 0.05
+          }
+        },
+        "arm_seconds": 1.0,
+        "health": 30,
+        "hit_radius_m": 0.15
+      },
+      "e": {
+        "name": "Glare",
+        "block": "flash_cone",
+        "windup_seconds": 0.5,
+        "cone_deg": 90,
+        "range_m": 12.0,
+        "max_blind_seconds": 1.4,
+        "cooldown_seconds": 35,
+        "charges": 1,
+        "away_factor": 0.3,
+        "fade_seconds": 0.4
+      },
+      "x": {
+        "name": "Made Man",
+        "block": "self_buff",
+        "points": 7,
+        "seconds": 12,
+        "overshield": 100,
+        "spread_factor": 0.6
+      }
+    }
+  },
+  "bots": {
+    "levels": {
+      "easy": {
+        "reaction_seconds": 0.45,
+        "aim_error_deg": 2.4,
+        "turn_deg_per_second": 220,
+        "burst_shots": [
+          2,
+          4
+        ],
+        "first_error": 1.5,
+        "settle_seconds": 0.9,
+        "move_error": 1.5,
+        "head_share": 0.15,
+        "recoil_control": 0.35,
+        "fire_tolerance": 2.0,
+        "stop_to_shoot": 0.45,
+        "burst_pause_seconds": 0.45,
+        "hearing_loudness": 0.45,
+        "hearing_error_m": 6.0,
+        "memory_seconds": 4.0,
+        "ability_use": 0.45,
+        "corner_check": 0.5,
+        "over_peek": 0.35,
+        "hesitate_seconds": [
+          0.4,
+          1.4
+        ],
+        "peek_wait_seconds": [
+          0.1,
+          0.6
+        ],
+        "shoot_through_smoke": false
+      },
+      "normal": {
+        "reaction_seconds": 0.3,
+        "aim_error_deg": 1.4,
+        "turn_deg_per_second": 320,
+        "burst_shots": [
+          3,
+          5
+        ],
+        "first_error": 1.2,
+        "settle_seconds": 0.7,
+        "move_error": 1.0,
+        "head_share": 0.4,
+        "recoil_control": 0.65,
+        "fire_tolerance": 1.5,
+        "stop_to_shoot": 0.8,
+        "burst_pause_seconds": 0.35,
+        "hearing_loudness": 0.3,
+        "hearing_error_m": 4.0,
+        "memory_seconds": 6.0,
+        "ability_use": 0.75,
+        "corner_check": 0.8,
+        "over_peek": 0.15,
+        "hesitate_seconds": [
+          0.2,
+          0.7
+        ],
+        "peek_wait_seconds": [
+          0.3,
+          1.2
+        ],
+        "shoot_through_smoke": false
+      },
+      "hard": {
+        "reaction_seconds": 0.2,
+        "aim_error_deg": 0.8,
+        "turn_deg_per_second": 480,
+        "burst_shots": [
+          3,
+          6
+        ],
+        "first_error": 1.0,
+        "settle_seconds": 0.45,
+        "move_error": 0.6,
+        "head_share": 0.7,
+        "recoil_control": 0.9,
+        "fire_tolerance": 1.1,
+        "stop_to_shoot": 0.97,
+        "burst_pause_seconds": 0.25,
+        "hearing_loudness": 0.12,
+        "hearing_error_m": 2.0,
+        "memory_seconds": 8.0,
+        "ability_use": 0.95,
+        "corner_check": 1.0,
+        "over_peek": 0.04,
+        "hesitate_seconds": [
+          0.05,
+          0.25
+        ],
+        "peek_wait_seconds": [
+          0.4,
+          2.0
+        ],
+        "shoot_through_smoke": true
+      }
+    },
+    "play": {
+      "reaction_reset_seconds": 1.0,
+      "reaction_jitter": 0.25,
+      "preaimed_reaction": 0.7,
+      "preaim_cone_deg": 12,
+      "aim_ease_deg": 15,
+      "aim_min_turn_share": 0.2,
+      "error_wander_seconds": 0.3,
+      "blind_turn": 0.7,
+      "spray_m": 8,
+      "stop_speed_share": 0.3,
+      "strafe_seconds": [
+        0.25,
+        0.6
+      ],
+      "head_radius_m": 0.2,
+      "body_radius_m": 0.28,
+      "mate_clearance_m": 0.8,
+      "low_ammo_share": 0.35,
+      "retreat_health": 35,
+      "cover_search_m": 8,
+      "walk_near_m": 12,
+      "preaim_m": 16,
+      "angle_look_seconds": 0.35,
+      "angle_forget_seconds": 10,
+      "angle_scan_seconds": 0.15,
+      "arrive_m": 0.6,
+      "repath_m": 2.0,
+      "stuck_seconds": 1.5,
+      "stuck_progress_m": 0.4,
+      "unstick_m": 2.5,
+      "hold_scan_seconds": [
+        1.5,
+        4.0
+      ],
+      "hold_scan_deg": 10,
+      "heard_seconds": 2.5,
+      "call_repeat_seconds": 3,
+      "hurt_call_health": 50,
+      "stage_back_m": 8,
+      "gather_seconds": [
+        5,
+        12
+      ],
+      "go_stagger_seconds": 0.6,
+      "utility_lead_seconds": 1.2,
+      "default_pick_share": [
+        0.3,
+        0.5
+      ],
+      "approach_weights": [
+        0.35,
+        0.3,
+        0.35
+      ],
+      "late_round_seconds": 15,
+      "save_gun_cost": 2000,
+      "eco_gun_cost": 1000,
+      "rotate_seen": 2,
+      "info_seconds": 8,
+      "site_near_m": 14,
+      "retake_wait_seconds": 8,
+      "clear_seconds": 3,
+      "defuse_margin_seconds": 2,
+      "plan_seconds": 0.25,
+      "heal_below": 60,
+      "flash_mate_m": 10,
+      "flash_inside_m": 5,
+      "smoke_inside_m": 5,
+      "utility_aim_deg": 8,
+      "utility_seconds": 0.5,
+      "lose_odds": [
+        1,
+        3
+      ],
+      "smoke_spray_seconds": 0.6,
+      "blind_retreat": 0.5,
+      "mid_share": 0.45,
+      "reach_m": 1.2,
+      "merge_m": 4,
+      "gate_step_m": 2,
+      "spacing_m": 1.5,
+      "idle_turn_share": 0.5,
+      "sidearm_switch_control": 0.8,
+      "burst_pause_stretch": 3,
+      "burst_hold_share": 3,
+      "preaim_front": 0.3,
+      "hold_lost_share": 0.5,
+      "push_count": 2,
+      "utility_repeat_seconds": 4,
+      "utility_patience": 4,
+      "flash_shift_m": 3,
+      "flash_avert_seconds": 0.7,
+      "near_m": 0.1
+    },
+    "senses": {
+      "view_half_angle_deg": 55,
+      "touch_m": 1.5,
+      "shot_heard_m": 60,
+      "reload_heard_m": 10,
+      "ability_heard_m": 20,
+      "device_heard_m": 25
+    }
+  },
+  "hit_shapes": {
+    "torso_radius_m": 0.2,
+    "leg_radius_m": 0.1,
+    "head_lift_m": 0.12,
+    "head_radius_m": {
+      "banana": 0.2,
+      "strawberry": 0.26,
+      "orange": 0.27,
+      "watermelon": 0.32,
+      "eggplant": 0.24
+    },
+    "stand_joints_m": {
+      "head": 1.45,
+      "spine": 1.15,
+      "hip": 0.85,
+      "feet_apart": 0.24
+    }
+  },
+  "nav": {
+    "weld_m": 0.01,
+    "locate_height_m": 1.0,
+    "locate_distance_m": 1.0,
+    "arrive_m": 0.2,
+    "replan_m": 1.5,
+    "lookahead_corners": 4,
+    "cover_gap_m": 0.15
+  },
+  "combat": {
+    "friendly_fire": false,
+    "assist_seconds": 4.0,
+    "seed": 1,
+    "loadout_primary": "rifle",
+    "deadzone_share": 0.275,
+    "walk_share": 0.55,
+    "land_seconds": 0.225,
+    "tag_seconds": 0.5,
+    "pierce_tag_slow": 0.25,
+    "pierce_damage": 0.5,
+    "pierce_hardness": {
+      "wood": 1.0,
+      "dirt": 1.5,
+      "stone": 2.0,
+      "metal": 4.0
+    },
+    "pickup_reach_m": 1.8,
+    "pickup_aim_m": 0.5
+  },
+  "keys": {
+    "forward": [
+      "KeyW"
+    ],
+    "back": [
+      "KeyS"
+    ],
+    "left": [
+      "KeyA"
+    ],
+    "right": [
+      "KeyD"
+    ],
+    "walk": [
+      "ShiftLeft",
+      "ShiftRight"
+    ],
+    "crouch": [
+      "ControlLeft",
+      "ControlRight",
+      "KeyZ"
+    ],
+    "jump": [
+      "Space"
+    ],
+    "fire": [
+      "MouseLeft"
+    ],
+    "scope": [
+      "MouseRight"
+    ],
+    "reload": [
+      "KeyR"
+    ],
+    "primary": [
+      "Digit1"
+    ],
+    "sidearm": [
+      "Digit2"
+    ],
+    "melee": [
+      "Digit3"
+    ],
+    "device": [
+      "Digit4"
+    ],
+    "interact": [
+      "KeyF"
+    ],
+    "ability_c": [
+      "KeyC"
+    ],
+    "ability_q": [
+      "KeyQ"
+    ],
+    "ability_e": [
+      "KeyE"
+    ],
+    "ability_x": [
+      "KeyX"
+    ],
+    "buy_menu": [
+      "KeyB"
+    ],
+    "scoreboard": [
+      "Tab"
+    ],
+    "capture": [
+      "MouseLeft"
+    ],
+    "release": [
+      "Escape"
+    ]
+  },
+  "paths": {
+    "heat_seconds": 8.0,
+    "heat_radius_m": 4.0,
+    "heat_factor": 3.0,
+    "hazard_factors": {
+      "damage": 8,
+      "strike": 20,
+      "slow": 2,
+      "near_sight": 2,
+      "reveal": 1.5,
+      "smoke": 1.5
+    }
+  },
+  "effects": {
+    "pools": {
+      "tracers": 64,
+      "flashes": 32,
+      "sprays": 96,
+      "decals": 128,
+      "rings": 16
+    },
+    "tracer": {
+      "seconds": 0.06,
+      "width_m": 0.012,
+      "core": [
+        4.0,
+        3.4,
+        2.2
+      ],
+      "halo": 2.0,
+      "muzzle_offset_m": [
+        0.12,
+        -0.1,
+        0.5
+      ]
+    },
+    "flash": {
+      "seconds": 0.05,
+      "size_m": 0.18,
+      "color": [
+        6.0,
+        4.2,
+        1.8
+      ],
+      "points": 5.0
+    },
+    "impacts": {
+      "stone": {
+        "sprites": 10,
+        "seconds": 0.6,
+        "speed_mps": 2.5,
+        "spread": 0.8,
+        "size_m": 0.03,
+        "gravity_mps2": 9.8,
+        "color": [
+          0.55,
+          0.52,
+          0.48
+        ],
+        "opacity": 0.8,
+        "streak_seconds": 0.0
+      },
+      "metal": {
+        "sprites": 12,
+        "seconds": 0.25,
+        "speed_mps": 6.0,
+        "spread": 0.6,
+        "size_m": 0.012,
+        "gravity_mps2": 9.8,
+        "color": [
+          5.0,
+          3.2,
+          1.2
+        ],
+        "opacity": 0.0,
+        "streak_seconds": 0.02
+      },
+      "wood": {
+        "sprites": 8,
+        "seconds": 0.7,
+        "speed_mps": 3.0,
+        "spread": 0.7,
+        "size_m": 0.025,
+        "gravity_mps2": 9.8,
+        "color": [
+          0.45,
+          0.3,
+          0.16
+        ],
+        "opacity": 1.0,
+        "streak_seconds": 0.0
+      },
+      "dirt": {
+        "sprites": 10,
+        "seconds": 0.8,
+        "speed_mps": 2.0,
+        "spread": 0.9,
+        "size_m": 0.04,
+        "gravity_mps2": 9.8,
+        "color": [
+          0.32,
+          0.24,
+          0.16
+        ],
+        "opacity": 0.85,
+        "streak_seconds": 0.0
+      }
+    },
+    "juice": {
+      "spray": {
+        "sprites": 14,
+        "seconds": 0.5,
+        "speed_mps": 3.0,
+        "spread": 0.9,
+        "size_m": 0.035,
+        "gravity_mps2": 9.8,
+        "color": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "opacity": 0.9,
+        "streak_seconds": 0.0
+      },
+      "death_scale": 2.5,
+      "colors": {
+        "banana": [
+          0.95,
+          0.85,
+          0.25
+        ],
+        "strawberry": [
+          0.85,
+          0.08,
+          0.12
+        ],
+        "orange": [
+          1.0,
+          0.55,
+          0.05
+        ],
+        "watermelon": [
+          0.9,
+          0.2,
+          0.3
+        ],
+        "eggplant": [
+          0.4,
+          0.15,
+          0.45
+        ]
+      }
+    },
+    "decal": {
+      "seconds": 8.0,
+      "fade_seconds": 2.0,
+      "size_m": 0.06,
+      "depth_m": 0.05,
+      "color": [
+        0.05,
+        0.045,
+        0.04
+      ],
+      "opacity": 0.85
+    },
+    "smoke": {
+      "color": [
+        0.62,
+        0.64,
+        0.66
+      ],
+      "rim_m": 0.6,
+      "sight_m": 3.0,
+      "noise_scale": 0.9,
+      "noise_speed": 0.25
+    },
+    "panels": {
+      "wall": [
+        0.55,
+        0.6,
+        0.7
+      ],
+      "curtain": [
+        0.25,
+        0.3,
+        0.35
+      ],
+      "edge_glow": 2.0,
+      "edge_power": 3.0
+    },
+    "teams": [
+      [
+        0.2,
+        0.6,
+        1.0
+      ],
+      [
+        1.0,
+        0.35,
+        0.2
+      ]
+    ],
+    "zones": {
+      "damage": [
+        0.9,
+        0.3,
+        0.1
+      ],
+      "slow": [
+        0.3,
+        0.5,
+        1.0
+      ],
+      "heal": [
+        0.3,
+        1.0,
+        0.4
+      ],
+      "sight": [
+        0.25,
+        0.1,
+        0.35
+      ],
+      "reveal": [
+        1.0,
+        0.9,
+        0.3
+      ],
+      "fill": 0.25,
+      "rim_m": 0.15,
+      "pattern_m": 0.6,
+      "pattern_speed": 0.4,
+      "height_m": 0.6
+    },
+    "traps": {
+      "size_m": 0.25,
+      "wire_width_m": 0.02,
+      "projectile_size_m": 0.12,
+      "idle_glow": 1.5,
+      "armed_glow": 4.0,
+      "pulse_hz": 2.0
+    },
+    "strike": {
+      "color": [
+        1.0,
+        0.25,
+        0.1
+      ],
+      "rim_m": 0.2,
+      "fill": 0.15,
+      "height_m": 1.0
+    },
+    "pulse": {
+      "color": [
+        1.0,
+        0.9,
+        0.4
+      ],
+      "rim_m": 0.4,
+      "fill": 0.1,
+      "height_m": 1.5
+    },
+    "blast": {
+      "flash_scale": 12.0,
+      "spray": {
+        "sprites": 24,
+        "seconds": 0.8,
+        "speed_mps": 8.0,
+        "spread": 1.0,
+        "size_m": 0.12,
+        "gravity_mps2": 4.0,
+        "color": [
+          5.0,
+          2.5,
+          0.8
+        ],
+        "opacity": 0.0,
+        "streak_seconds": 0.03
+      }
+    },
+    "screen": {
+      "flash": [
+        1.0,
+        1.0,
+        1.0
+      ],
+      "damage": [
+        0.8,
+        0.05,
+        0.05
+      ],
+      "damage_full": 50.0,
+      "damage_seconds": 0.6,
+      "damage_edge": 0.4,
+      "sight": [
+        0.02,
+        0.0,
+        0.04
+      ],
+      "sight_fade_m": 2.0
+    },
+    "device": {
+      "size_m": [
+        0.35,
+        0.18,
+        0.25
+      ],
+      "body": [
+        0.15,
+        0.16,
+        0.18
+      ],
+      "light": [
+        4.0,
+        0.3,
+        0.2
+      ],
+      "light_size_m": 0.05,
+      "blink_slow_seconds": 1.0,
+      "blink_fast_seconds": 0.12,
+      "lit_share": 0.4
+    },
+    "showcase": {
+      "every_seconds": 1.5,
+      "distance_m": 6.0,
+      "radius_m": 2.5,
+      "wall_m": [
+        4.0,
+        3.0,
+        0.3
+      ]
+    },
+    "enemy": {
+      "rim": [
+        1.0,
+        0.25,
+        0.2
+      ],
+      "rim_strength": 0.9,
+      "reveal": [
+        1.0,
+        0.35,
+        0.25
+      ]
+    }
+  },
+  "spectate": {
+    "corpse_seconds": 1.5,
+    "pull_back_m": 2.5,
+    "rise_m": 1.2
+  },
+  "lighting": {
+    "sun_wrap": 0.2,
+    "sky": {
+      "zenith_scale": 1.8,
+      "horizon": [
+        0.78,
+        0.84,
+        0.9
+      ],
+      "below": [
+        0.3,
+        0.27,
+        0.24
+      ],
+      "haze_height": 0.22,
+      "disc_degrees": 0.55,
+      "disc_soft_degrees": 0.2,
+      "disc_strength": 40.0,
+      "glow_power": 32.0,
+      "glow_strength": 0.8
+    },
+    "fog": {
+      "start_m": 20.0,
+      "density_per_m": 0.006,
+      "most": 0.35
+    },
+    "grade": {
+      "exposure": 1.0,
+      "contrast": 1.05,
+      "saturation": 1.08
+    },
+    "blob": {
+      "radius_scale": 1.6,
+      "opacity": 0.7,
+      "fade_height_m": 1.5,
+      "depth_m": 0.3
+    },
+    "ambient": {
+      "sky_scale": 1.4,
+      "ground_scale": 0.5,
+      "base_occlusion": 0.55,
+      "base_height_m": 1.6,
+      "floor_m": 0.0,
+      "black_floor": 0.06
+    },
+    "antialias": "fxaa"
+  }
+}

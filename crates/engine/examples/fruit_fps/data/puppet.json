@@ -1,0 +1,437 @@
+{
+  "aim": {
+    "chain": [
+      "Spine01",
+      "Spine02"
+    ],
+    "share": 1.0
+  },
+  "crouch": {
+    "drop_m": 0.4,
+    "use_clips": false,
+    "clips": {
+      "from": 0.5,
+      "idle": {
+        "clip": "crouch_idle",
+        "fade_seconds": 0.2
+      },
+      "walk": {
+        "clip": "crouch_walk",
+        "fade_seconds": 0.2
+      }
+    }
+  },
+  "still_below_mps": 0.3,
+  "rate": {
+    "min": 0.5,
+    "max": 2.0,
+    "stride_floor_mps": 0.2
+  },
+  "idle": {
+    "clip": "idle",
+    "fade_seconds": 0.25
+  },
+  "walk": {
+    "clip": "walk",
+    "fade_seconds": 0.2
+  },
+  "run": {
+    "clip": "run",
+    "fade_seconds": 0.15
+  },
+  "turn": {
+    "clip": "turn",
+    "fade_seconds": 0.2
+  },
+  "look": {
+    "hips": "Hip",
+    "limit_radians": 1.05,
+    "catch_up_radians_per_second": 5.0
+  },
+  "rise": {
+    "clip": "jump",
+    "fade_seconds": 0.08,
+    "looping": false
+  },
+  "fall": {
+    "clip": "fall",
+    "fade_seconds": 0.3
+  },
+  "hits": {
+    "head": "hit_to_head",
+    "front": "hit_to_body",
+    "back": "hit_to_body",
+    "side": "hit_to_side",
+    "low": "hit_to_stomach",
+    "from": "Spine01",
+    "feather": 2,
+    "weight": 1.0,
+    "speed": 1.3
+  },
+  "melee": {
+    "clip": "slash",
+    "from": "Spine01",
+    "feather": 2,
+    "weight": 1.0,
+    "speed": 1.0
+  },
+  "casts": {
+    "caster": {
+      "clip": "cast",
+      "from": "Spine01",
+      "feather": 2,
+      "weight": 1.0,
+      "speed": 1.0
+    },
+    "throw": {
+      "clip": "throw",
+      "from": "Spine01",
+      "feather": 2,
+      "weight": 1.0,
+      "speed": 1.0
+    },
+    "place": {
+      "clip": "dig",
+      "from": "Spine01",
+      "feather": 2,
+      "weight": 1.0,
+      "speed": 1.0
+    }
+  },
+  "victory": {
+    "clip": "victory",
+    "from": "Hip",
+    "feather": 0,
+    "weight": 1.0,
+    "speed": 1.0
+  },
+  "death": {
+    "from_front": "death_back",
+    "from_back": "death_front",
+    "from_side": "death_side",
+    "speed": 1.0,
+    "fade_seconds": 0.1
+  },
+  "plant": {
+    "start": {
+      "clip": "plant_in",
+      "fade_seconds": 0.2
+    },
+    "hold": {
+      "clip": "plant_loop",
+      "fade_seconds": 0.2
+    }
+  },
+  "defuse": {
+    "clip": "defuse_loop",
+    "fade_seconds": 0.2
+  },
+  "land": {
+    "clip": "land",
+    "from": "Hip",
+    "feather": 0,
+    "weight": 1.0,
+    "speed": 1.0
+  },
+  "reload_hand": {
+    "to": [
+      0.12,
+      0.98,
+      0.08
+    ],
+    "share": 0.3
+  },
+  "switch": {
+    "dip_m": 0.25,
+    "dip_radians": 0.9
+  },
+  "aiming": {
+    "seconds": 0.2,
+    "lower": 0.8,
+    "hand": [
+      0.16,
+      1.45,
+      0.3
+    ]
+  },
+  "dropped": {
+    "lift_m": 0.03,
+    "roll_radians": 1.5708,
+    "turn_radians_per_id": 2.4
+  },
+  "pin_feet": {
+    "contact_m": 0.03,
+    "clips": [
+      "idle",
+      "crouch_idle",
+      "plant_in",
+      "plant_loop",
+      "defuse_loop",
+      "victory",
+      "turn"
+    ]
+  },
+  "hold_blend_seconds": 0.15,
+  "hand_axes": {
+    "right": {
+      "fingers": [
+        0,
+        1,
+        0
+      ],
+      "palm": [
+        1,
+        0,
+        0
+      ]
+    },
+    "left": {
+      "fingers": [
+        0,
+        1,
+        0
+      ],
+      "palm": [
+        -1,
+        0,
+        0
+      ]
+    }
+  },
+  "holds": {
+    "long": {
+      "pivot": [
+        -0.08,
+        1.33,
+        0.05
+      ],
+      "grip": [
+        0.0,
+        -0.02,
+        0.08
+      ],
+      "pitch_share": 1.0,
+      "right": {
+        "fingers": [
+          0.0,
+          -0.5,
+          0.87
+        ],
+        "palm": [
+          1,
+          0,
+          0
+        ],
+        "pole": [
+          -0.7,
+          -0.7,
+          0.0
+        ],
+        "wrist_m": 0.07
+      },
+      "left": {
+        "fingers": [
+          -0.5,
+          0.0,
+          0.87
+        ],
+        "palm": [
+          0,
+          1,
+          0
+        ],
+        "pole": [
+          0.5,
+          -0.85,
+          0.0
+        ],
+        "wrist_m": 0.07
+      }
+    },
+    "pistol": {
+      "pivot": [
+        0.0,
+        1.36,
+        0.0
+      ],
+      "grip": [
+        -0.03,
+        0.0,
+        0.32
+      ],
+      "pitch_share": 1.0,
+      "right": {
+        "fingers": [
+          0.0,
+          -0.6,
+          0.8
+        ],
+        "palm": [
+          1,
+          0,
+          0
+        ],
+        "pole": [
+          -0.6,
+          -0.8,
+          0.0
+        ],
+        "wrist_m": 0.07
+      },
+      "left": {
+        "fingers": [
+          0.0,
+          -0.6,
+          0.8
+        ],
+        "palm": [
+          -1,
+          0,
+          0
+        ],
+        "pole": [
+          0.6,
+          -0.8,
+          0.0
+        ],
+        "wrist_m": 0.07
+      }
+    },
+    "low": {
+      "pivot": [
+        -0.16,
+        1.32,
+        -0.05
+      ],
+      "grip": [
+        -0.06,
+        -0.42,
+        0.18
+      ],
+      "pitch_share": 0.3,
+      "right": {
+        "fingers": [
+          0.0,
+          -0.3,
+          0.95
+        ],
+        "palm": [
+          1,
+          0,
+          0
+        ],
+        "pole": [
+          -0.6,
+          -0.8,
+          -0.2
+        ],
+        "wrist_m": 0.07
+      }
+    }
+  },
+  "weapons": {
+    "rifle": "long",
+    "smg": "long",
+    "sniper": "long",
+    "sidearm": "pistol",
+    "melee": "low"
+  },
+  "view": {
+    "scale": 0.25,
+    "scope_seconds": 0.15,
+    "lower_seconds": 0.2,
+    "sway": {
+      "metres_per_radian": 0.004,
+      "max_m": 0.02,
+      "follow_per_second": 10.0
+    },
+    "bob": {
+      "stride_m": 1.8,
+      "side_m": 0.008,
+      "up_m": 0.01,
+      "full_mps": 5.4
+    },
+    "kick": {
+      "back_m": 0.03,
+      "up_radians": 0.04,
+      "return_per_second": 12.0
+    },
+    "fire": "fire",
+    "reload": "reload_parts",
+    "equip": "equip",
+    "weapons": {
+      "rifle": {
+        "rest": [
+          0.14,
+          -0.15,
+          -0.36
+        ],
+        "scoped": [
+          0.0,
+          0.0,
+          -0.26
+        ],
+        "lowered": [
+          0.16,
+          -0.36,
+          -0.21
+        ],
+        "lower_running": false
+      },
+      "smg": {
+        "rest": [
+          0.13,
+          -0.14,
+          -0.32
+        ],
+        "scoped": [
+          0.0,
+          0.0,
+          -0.24
+        ],
+        "lowered": [
+          0.15,
+          -0.34,
+          -0.19
+        ],
+        "lower_running": false
+      },
+      "sniper": {
+        "rest": [
+          0.16,
+          -0.17,
+          -0.4
+        ],
+        "scoped": [
+          0.0,
+          0.0,
+          -0.28
+        ],
+        "lowered": [
+          0.18,
+          -0.38,
+          -0.25
+        ],
+        "lower_running": false
+      },
+      "sidearm": {
+        "rest": [
+          0.12,
+          -0.13,
+          -0.31
+        ],
+        "scoped": [
+          0.0,
+          0.0,
+          -0.28
+        ],
+        "lowered": [
+          0.14,
+          -0.32,
+          -0.19
+        ],
+        "lower_running": false
+      }
+    }
+  }
+}

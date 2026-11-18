@@ -1,0 +1,601 @@
+{
+ "image": "icons_atlas.png",
+ "size": [
+  1024,
+  1024
+ ],
+ "color": "white on transparent (straight alpha); tint in the shader: rgb = tint.rgb, a = tint.a * texel.a",
+ "family": {
+  "cell": 128,
+  "live_area": [
+   8,
+   120
+  ],
+  "stroke": 10,
+  "cut": 7,
+  "corner_round": 1.6,
+  "weapons": "256x104 cells, muzzle to the right"
+ },
+ "padding_px": 2,
+ "mips": "cells on even coordinates with a 2 px gap; every icon keeps 3 px of clear border inside its cell",
+ "icons": {
+  "ability_peel": [
+   2,
+   214,
+   128,
+   128
+  ],
+  "ability_ripe_flash": [
+   132,
+   214,
+   128,
+   128
+  ],
+  "ability_split": [
+   262,
+   214,
+   128,
+   128
+  ],
+  "ability_bunch": [
+   392,
+   214,
+   128,
+   128
+  ],
+  "ability_jam_pool": [
+   522,
+   214,
+   128,
+   128
+  ],
+  "ability_seed_sensor": [
+   652,
+   214,
+   128,
+   128
+  ],
+  "ability_sweet_spot": [
+   782,
+   214,
+   128,
+   128
+  ],
+  "ability_sugar_rush": [
+   2,
+   344,
+   128,
+   128
+  ],
+  "ability_zest_bomb": [
+   132,
+   344,
+   128,
+   128
+  ],
+  "ability_citrus_curtain": [
+   262,
+   344,
+   128,
+   128
+  ],
+  "ability_pulp_cloud": [
+   392,
+   344,
+   128,
+   128
+  ],
+  "ability_juice_flood": [
+   522,
+   344,
+   128,
+   128
+  ],
+  "ability_seed_grenade": [
+   652,
+   344,
+   128,
+   128
+  ],
+  "ability_rind_wall": [
+   782,
+   344,
+   128,
+   128
+  ],
+  "ability_thump": [
+   2,
+   474,
+   128,
+   128
+  ],
+  "ability_melon_drop": [
+   132,
+   474,
+   128,
+   128
+  ],
+  "ability_nightshade": [
+   262,
+   474,
+   128,
+   128
+  ],
+  "ability_vine_wire": [
+   392,
+   474,
+   128,
+   128
+  ],
+  "ability_glare": [
+   522,
+   474,
+   128,
+   128
+  ],
+  "ability_made_man": [
+   652,
+   474,
+   128,
+   128
+  ],
+  "armor_light": [
+   782,
+   474,
+   128,
+   128
+  ],
+  "armor_heavy": [
+   2,
+   604,
+   128,
+   128
+  ],
+  "device": [
+   132,
+   604,
+   128,
+   128
+  ],
+  "defuse": [
+   262,
+   604,
+   128,
+   128
+  ],
+  "skull": [
+   392,
+   604,
+   128,
+   128
+  ],
+  "headshot": [
+   522,
+   604,
+   128,
+   128
+  ],
+  "credits": [
+   652,
+   604,
+   128,
+   128
+  ],
+  "clock": [
+   782,
+   604,
+   128,
+   128
+  ],
+  "site_a": [
+   2,
+   734,
+   128,
+   128
+  ],
+  "site_b": [
+   132,
+   734,
+   128,
+   128
+  ],
+  "alive": [
+   262,
+   734,
+   128,
+   128
+  ],
+  "dead": [
+   392,
+   734,
+   128,
+   128
+  ],
+  "ammo": [
+   522,
+   734,
+   128,
+   128
+  ],
+  "health": [
+   652,
+   734,
+   128,
+   128
+  ],
+  "world_fall": [
+   782,
+   734,
+   128,
+   128
+  ],
+  "map_arrow": [
+   776,
+   2,
+   64,
+   64
+  ],
+  "map_arrow_rim": [
+   842,
+   2,
+   64,
+   64
+  ],
+  "map_cone": [
+   2,
+   864,
+   128,
+   128
+  ],
+  "char_banana": [
+   132,
+   864,
+   128,
+   128
+  ],
+  "char_strawberry": [
+   262,
+   864,
+   128,
+   128
+  ],
+  "char_orange": [
+   392,
+   864,
+   128,
+   128
+  ],
+  "char_watermelon": [
+   522,
+   864,
+   128,
+   128
+  ],
+  "char_eggplant": [
+   652,
+   864,
+   128,
+   128
+  ],
+  "weapon_pip": [
+   2,
+   2,
+   256,
+   104
+  ],
+  "weapon_zest": [
+   260,
+   2,
+   256,
+   104
+  ],
+  "weapon_rind": [
+   518,
+   2,
+   256,
+   104
+  ],
+  "weapon_stem": [
+   2,
+   108,
+   256,
+   104
+  ],
+  "weapon_peeler": [
+   260,
+   108,
+   256,
+   104
+  ]
+ },
+ "trim": {
+  "ability_peel": [
+   5,
+   224,
+   122,
+   113
+  ],
+  "ability_ripe_flash": [
+   143,
+   224,
+   106,
+   108
+  ],
+  "ability_split": [
+   265,
+   231,
+   108,
+   94
+  ],
+  "ability_bunch": [
+   407,
+   224,
+   98,
+   111
+  ],
+  "ability_jam_pool": [
+   530,
+   230,
+   112,
+   101
+  ],
+  "ability_seed_sensor": [
+   661,
+   249,
+   110,
+   62
+  ],
+  "ability_sweet_spot": [
+   792,
+   234,
+   108,
+   100
+  ],
+  "ability_sugar_rush": [
+   21,
+   353,
+   90,
+   105
+  ],
+  "ability_zest_bomb": [
+   142,
+   371,
+   108,
+   94
+  ],
+  "ability_citrus_curtain": [
+   269,
+   357,
+   114,
+   104
+  ],
+  "ability_pulp_cloud": [
+   402,
+   366,
+   109,
+   81
+  ],
+  "ability_juice_flood": [
+   528,
+   359,
+   117,
+   102
+  ],
+  "ability_seed_grenade": [
+   678,
+   349,
+   78,
+   110
+  ],
+  "ability_rind_wall": [
+   794,
+   370,
+   105,
+   85
+  ],
+  "ability_thump": [
+   11,
+   483,
+   110,
+   110
+  ],
+  "ability_melon_drop": [
+   153,
+   479,
+   87,
+   116
+  ],
+  "ability_nightshade": [
+   272,
+   496,
+   109,
+   81
+  ],
+  "ability_vine_wire": [
+   400,
+   502,
+   113,
+   88
+  ],
+  "ability_glare": [
+   530,
+   479,
+   117,
+   118
+  ],
+  "ability_made_man": [
+   683,
+   478,
+   66,
+   117
+  ],
+  "armor_light": [
+   798,
+   481,
+   96,
+   114
+  ],
+  "armor_heavy": [
+   23,
+   616,
+   86,
+   104
+  ],
+  "device": [
+   146,
+   609,
+   101,
+   114
+  ],
+  "defuse": [
+   289,
+   616,
+   74,
+   111
+  ],
+  "skull": [
+   414,
+   616,
+   85,
+   100
+  ],
+  "headshot": [
+   527,
+   609,
+   118,
+   118
+  ],
+  "credits": [
+   666,
+   618,
+   101,
+   101
+  ],
+  "clock": [
+   797,
+   610,
+   99,
+   112
+  ],
+  "site_a": [
+   14,
+   746,
+   105,
+   105
+  ],
+  "site_b": [
+   144,
+   746,
+   105,
+   105
+  ],
+  "alive": [
+   280,
+   750,
+   92,
+   100
+  ],
+  "dead": [
+   405,
+   747,
+   102,
+   103
+  ],
+  "ammo": [
+   542,
+   753,
+   89,
+   92
+  ],
+  "health": [
+   664,
+   746,
+   105,
+   105
+  ],
+  "world_fall": [
+   791,
+   743,
+   110,
+   105
+  ],
+  "map_arrow": [
+   794,
+   11,
+   28,
+   43
+  ],
+  "map_arrow_rim": [
+   855,
+   5,
+   38,
+   54
+  ],
+  "map_cone": [
+   24,
+   868,
+   84,
+   59
+  ],
+  "char_banana": [
+   148,
+   869,
+   91,
+   118
+  ],
+  "char_strawberry": [
+   281,
+   873,
+   90,
+   105
+  ],
+  "char_orange": [
+   412,
+   875,
+   89,
+   106
+  ],
+  "char_watermelon": [
+   526,
+   900,
+   120,
+   60
+  ],
+  "char_eggplant": [
+   684,
+   867,
+   65,
+   116
+  ],
+  "weapon_pip": [
+   70,
+   20,
+   141,
+   79
+  ],
+  "weapon_zest": [
+   276,
+   18,
+   223,
+   85
+  ],
+  "weapon_rind": [
+   524,
+   12,
+   245,
+   90
+  ],
+  "weapon_stem": [
+   6,
+   114,
+   249,
+   66
+  ],
+  "weapon_peeler": [
+   272,
+   126,
+   233,
+   63
+  ]
+ }
+}

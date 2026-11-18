@@ -1,0 +1,79 @@
+{
+ "image": "portraits.png",
+ "size": [
+  2048,
+  512
+ ],
+ "padding_px": 2,
+ "color": "straight alpha, transparent pixels carry the nearest opaque colour",
+ "view": "bust, three-quarter view from the character's left, chest to the top of the stem; Blender EEVEE, soft warm-white key, weak cool fill, white rim; bind pose with the upper arms lowered",
+ "portraits": {
+  "char_banana": [
+   2,
+   2,
+   256,
+   256
+  ],
+  "char_strawberry": [
+   260,
+   2,
+   256,
+   256
+  ],
+  "char_orange": [
+   518,
+   2,
+   256,
+   256
+  ],
+  "char_watermelon": [
+   776,
+   2,
+   256,
+   256
+  ],
+  "char_eggplant": [
+   1034,
+   2,
+   256,
+   256
+  ]
+ },
+ "select": {
+  "char_banana": {
+   "image": "select_banana.png",
+   "size": [
+    512,
+    768
+   ]
+  },
+  "char_strawberry": {
+   "image": "select_strawberry.png",
+   "size": [
+    512,
+    768
+   ]
+  },
+  "char_orange": {
+   "image": "select_orange.png",
+   "size": [
+    512,
+    768
+   ]
+  },
+  "char_watermelon": {
+   "image": "select_watermelon.png",
+   "size": [
+    512,
+    768
+   ]
+  },
+  "char_eggplant": {
+   "image": "select_eggplant.png",
+   "size": [
+    512,
+    768
+   ]
+  }
+ }
+}
