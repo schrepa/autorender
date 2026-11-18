@@ -57,6 +57,7 @@ pub struct HitEvent {
     pub armor_lost: f32,
     pub health: f32,
     pub armor: f32,
+    pub armor_broke: bool,
     pub killed: bool,
     pub headshot: bool,
 }

@@ -6,7 +6,7 @@ use super::numbers::BotNumbers;
 use super::places::{Places, ZoneId};
 use super::rng::Rng;
 use super::sense::{Block, Call, CallKind, GamePhase, MatchSense, Side, World};
-use tactics::{Hold, SiteTactics, Tactics};
+pub use tactics::{Hold, SiteTactics, Tactics, Way, build as build_tactics};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Role {
@@ -79,7 +79,9 @@ pub enum LineKind {
     DamagePlant,
     RetakeFlash,
     RetakeSmoke,
+    RetakeZone,
     StallChoke,
+    AnswerPush,
 }
 
 impl LineKind {
@@ -91,7 +93,9 @@ impl LineKind {
             LineKind::DamagePlant => "damage_plant",
             LineKind::RetakeFlash => "retake_flash",
             LineKind::RetakeSmoke => "retake_smoke",
+            LineKind::RetakeZone => "retake_zone",
             LineKind::StallChoke => "stall_choke",
+            LineKind::AnswerPush => "answer_push",
         }
     }
 }
@@ -171,6 +175,13 @@ pub struct Member {
     pub role: Role,
     pub carrying_device: bool,
     pub gun_cost: u32,
+    pub tools: u16,
+}
+
+impl Member {
+    pub fn has(&self, block: Block) -> bool {
+        self.tools & block.bit() != 0
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -238,6 +249,9 @@ pub struct Squad {
     sweep: Vec<Vec3>,
     sweep_at: Vec<usize>,
     hand_over: Option<(usize, usize)>,
+    way_go: Vec<u64>,
+    retake_tools: Vec<Option<Utility>>,
+    retake_arrive: u64,
 }
 
 pub struct Plan<'a, 'b> {
@@ -309,6 +323,9 @@ impl Squad {
             sweep: Vec::new(),
             sweep_at: vec![0; members],
             hand_over: None,
+            way_go: Vec::new(),
+            retake_tools: Vec::new(),
+            retake_arrive: u64::MAX,
         }
     }
 
@@ -406,7 +423,7 @@ impl Squad {
                 CallKind::Device => numbers.play.rotate_seen,
                 CallKind::Spotted | CallKind::Down => u32::from(i.count),
                 CallKind::Heard => 1,
-                CallKind::Hurt => 0,
+                CallKind::Hurt | CallKind::Flash => 0,
             })
             .sum()
     }
@@ -418,7 +435,7 @@ impl Squad {
             .map(|i| match i.kind {
                 CallKind::Device => numbers.play.rotate_seen,
                 CallKind::Spotted | CallKind::Down => u32::from(i.count),
-                CallKind::Heard | CallKind::Hurt => 0,
+                CallKind::Heard | CallKind::Hurt | CallKind::Flash => 0,
             })
             .sum()
     }
@@ -469,9 +486,10 @@ impl Squad {
             (Side::Attack, GamePhase::Live) => self.start_attack(plan),
             (Side::Defend, GamePhase::Live) => self.start_defense(plan),
             (_, GamePhase::Planted) => {
-                self.deadline =
-                    plan.tick + plan.numbers.ticks(plan.numbers.play.retake_wait_seconds);
                 self.go_tick = u64::MAX;
+                self.way_go.clear();
+                self.retake_tools.clear();
+                self.retake_arrive = u64::MAX;
                 self.defuser = None;
                 self.entry_way.iter_mut().for_each(|w| *w = None);
                 let step = if game.side == Side::Attack {

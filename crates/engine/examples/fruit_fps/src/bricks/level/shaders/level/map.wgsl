@@ -35,6 +35,7 @@ struct LevelCorner {
     @location(2) uv0: vec2<f32>,
     @location(3) uv1: vec2<f32>,
     @location(4) color: vec4<f32>,
+    @location(5) fog: f32,
 }
 
 fn level_octahedral(packed: vec2<f32>) -> vec3<f32> {
@@ -60,11 +61,15 @@ fn level_deflected(normal: vec3<f32>, world: vec3<f32>, uv: vec2<f32>, sampled: 
     return stable_normalize(tangent * deflection.x - bitangent * deflection.y + normal * sampled.z);
 }
 
-fn level_fogged(color: vec3<f32>, world: vec3<f32>) -> vec3<f32> {
+fn level_fog(world: vec3<f32>) -> f32 {
     let distance = length(world - camera.position.xyz);
     let fog = level_light.fog;
-    let amount = level_light.horizon.w * (1.0 - exp(-max(distance - fog.x, 0.0) * fog.y));
-    return mix(color, level_light.horizon.rgb, amount);
+    return level_light.horizon.w * (1.0 - exp(-max(distance - fog.x, 0.0) * fog.y));
+}
+
+fn level_pow5(x: f32) -> f32 {
+    let squared = x * x;
+    return squared * squared * x;
 }
 
 fn level_corner(index: u32, position: vec3<f32>, normal: vec2<f32>, uv0: vec2<f32>) -> LevelCorner {
@@ -77,6 +82,7 @@ fn level_corner(index: u32, position: vec3<f32>, normal: vec2<f32>, uv0: vec2<f3
     out.uv0 = uv0;
     out.uv1 = uv0;
     out.color = vec4<f32>(1.0);
+    out.fog = level_fog(world);
     return out;
 }
 
@@ -113,7 +119,10 @@ fn level_corner(index: u32, position: vec3<f32>, normal: vec2<f32>, uv0: vec2<f3
         indirect = select(stored.rgb, stored.rgb * stored.rgb, level_surface.baked.y > 1.5) * scale;
         sun_seen = stored.a;
     }
-    let normal = level_deflected(facing, corner.world, corner.uv0, texels.normal);
+    var normal = facing;
+    if level_surface.cut.z == 0.0 {
+        normal = level_deflected(facing, corner.world, corner.uv0, texels.normal);
+    }
     if !baked {
         let ambient = level_light.ambient;
         let sky = level_light.sky_light.rgb * ambient.x;
@@ -137,7 +146,7 @@ fn level_corner(index: u32, position: vec3<f32>, normal: vec2<f32>, uv0: vec2<f3
     let distribution = alpha_2 / (LEVEL_PI * lobe * lobe);
     let visibility = 0.5 / max(mix(2.0 * lit_side * n_v, lit_side + n_v, alpha), LEVEL_SMALLEST_COSINE);
     let reflectance = mix(vec3<f32>(LEVEL_REFLECTANCE), texels.base_color, texels.metallic);
-    let grazing = pow(1.0 - max(dot(view, half_way), 0.0), 5.0);
+    let grazing = level_pow5(1.0 - max(dot(view, half_way), 0.0));
     let fresnel = reflectance + (1.0 - reflectance) * grazing;
     let gloss = fresnel * distribution * visibility * lit_side;
     let mirrored = reflect(-view, normal);
@@ -153,7 +162,7 @@ fn level_corner(index: u32, position: vec3<f32>, normal: vec2<f32>, uv0: vec2<f3
     }
     let sky_luma = max(dot(level_light.sky_light.rgb, vec3<f32>(0.333)), 1.0e-3);
     let dimmed = select(1.0, saturate(dot(indirect, vec3<f32>(0.333)) / sky_luma), baked);
-    let rim_fresnel = reflectance + (1.0 - reflectance) * pow(1.0 - n_v, 5.0) * (1.0 - texels.roughness);
+    let rim_fresnel = reflectance + (1.0 - reflectance) * level_pow5(1.0 - n_v) * (1.0 - texels.roughness);
     let sheen = sky_seen * rim_fresnel * (1.0 - texels.roughness) * texels.occlusion * dimmed;
     let albedo = max(texels.base_color, vec3<f32>(level_light.ground.w));
     let diffuse = albedo * (1.0 - texels.metallic);
@@ -161,5 +170,9 @@ fn level_corner(index: u32, position: vec3<f32>, normal: vec2<f32>, uv0: vec2<f3
     let lit = diffuse * (sun * wrapped + indirect * texels.occlusion) + sun * gloss + sheen;
     let glow = level_surface.glow.rgb * texels.glow;
     let shown = select(texels.base_color, lit, level_light.sun.w != 0.0) + glow;
-    return vec4<f32>(level_fogged(shown, corner.world), 1.0);
+    var fog = corner.fog;
+    if !LEVEL_DETAIL {
+        fog = level_fog(corner.world);
+    }
+    return vec4<f32>(mix(shown, level_light.horizon.rgb, fog), 1.0);
 }

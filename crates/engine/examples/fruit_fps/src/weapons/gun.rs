@@ -1,5 +1,5 @@
 use super::numbers::{GunKind, GunNumbers, WeaponNumbers, ticks};
-use super::recoil::{Aim, Kick, Recoil, Shot, ShotRng, Stance, bloomed_deg, fire, recover};
+use super::recoil::{Aim, Kick, Recoil, Shot, ShotRng, Stance, bloomed_deg, fire, least, recover};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Phase {
@@ -27,6 +27,9 @@ pub struct Gun {
     scope_level: usize,
     scoped_ticks: u32,
     settled: usize,
+    zoom_from: f32,
+    zoom_ticks: u32,
+    rescope: Option<usize>,
     recoil: Recoil,
 }
 
@@ -97,6 +100,9 @@ impl Gun {
             scope_level: 0,
             scoped_ticks: 0,
             settled: 0,
+            zoom_from: 1.0,
+            zoom_ticks: 0,
+            rescope: None,
             recoil: Recoil::default(),
         }
     }
@@ -155,17 +161,32 @@ impl Gun {
         } else {
             Phase::Equipping { left }
         };
-        self.scope_level = 0;
-        self.scoped_ticks = 0;
-        self.settled = 0;
+        self.unscope();
         self.armed = false;
     }
 
     pub fn put_away(&mut self) {
         self.phase = Phase::Holstered;
+        self.unscope();
+    }
+
+    fn unscope(&mut self) {
         self.scope_level = 0;
         self.scoped_ticks = 0;
         self.settled = 0;
+        self.zoom_from = 1.0;
+        self.zoom_ticks = 0;
+        self.rescope = None;
+    }
+
+    fn scope_to(&mut self, level: usize, gun: &GunNumbers, ticks_per_second: u32) {
+        self.zoom_from = self.zoom_of(gun, ticks_per_second);
+        self.zoom_ticks = 0;
+        self.scope_level = level;
+    }
+
+    pub fn scope_raised(&self) -> bool {
+        self.settled > 0
     }
 
     pub fn speed_factor(&self, numbers: &WeaponNumbers) -> f32 {
@@ -176,13 +197,24 @@ impl Gun {
         }
     }
 
-    pub fn view_zoom(&self, numbers: &WeaponNumbers) -> f32 {
-        let gun = numbers.gun(self.kind);
-        gun.scope
-            .as_ref()
-            .and_then(|scope| scope.zoom.get(self.scope_level.checked_sub(1)?))
-            .copied()
-            .unwrap_or(1.0)
+    pub fn view_zoom(&self, numbers: &WeaponNumbers, ticks_per_second: u32) -> f32 {
+        self.zoom_of(numbers.gun(self.kind), ticks_per_second)
+    }
+
+    fn zoom_of(&self, gun: &GunNumbers, ticks_per_second: u32) -> f32 {
+        let Some(scope) = &gun.scope else {
+            return 1.0;
+        };
+        let level = self.scope_level.checked_sub(1);
+        let Some(&target) = level.and_then(|index| scope.zoom.get(index)) else {
+            return 1.0;
+        };
+        let raise = ticks(scope.scope_in_seconds, ticks_per_second);
+        if raise == 0 {
+            return target;
+        }
+        let share = least(self.zoom_ticks as f32 / raise as f32, 1.0);
+        self.zoom_from + (target - self.zoom_from) * share
     }
 
     pub fn view<'a>(&self, numbers: &'a WeaponNumbers, stance: Stance) -> GunView<'a> {
@@ -234,6 +266,7 @@ impl Gun {
         } else {
             0
         };
+        self.zoom_ticks = self.zoom_ticks.saturating_add(1);
         self.settled = self.settled_scope(gun, ticks_per_second);
         match pull {
             Pull::Shoot => {
@@ -243,11 +276,15 @@ impl Gun {
                 self.cooldown_ticks += ticks_per_second as f32 / rate - 1.0;
                 let spread =
                     bloomed_deg(gun, stance, self.settled, self.recoil.shots) * input.pace.spread;
-                let (shot, kick) = fire(&gun.recoil, &mut self.recoil, aim, spread, rng);
+                let recoil = match &gun.scope {
+                    Some(scope) if self.settled > 0 => gun.recoil.scaled(scope.recoil_factor),
+                    Some(_) | None => gun.recoil,
+                };
+                let (shot, kick) = fire(&recoil, &mut self.recoil, aim, spread, rng);
                 if gun.scope.as_ref().is_some_and(|scope| scope.breaks_on_shot) {
-                    self.scope_level = 0;
-                    self.scoped_ticks = 0;
-                    self.settled = 0;
+                    let level = self.scope_level;
+                    self.unscope();
+                    self.rescope = (level > 0).then_some(level);
                 }
                 out.shot = Some(shot);
                 out.kick = kick;
@@ -300,12 +337,20 @@ impl Gun {
         if input.scope_pressed
             && let Some(scope) = &gun.scope
         {
-            self.scope_level = (self.scope_level + 1) % (scope.zoom.len() + 1);
+            let level = if self.rescope.take().is_some() {
+                0
+            } else {
+                self.scope_level
+            };
+            self.scope_to((level + 1) % (scope.zoom.len() + 1), gun, ticks_per_second);
+        } else if cycled && let Some(level) = self.rescope.take() {
+            self.scope_to(level, gun, ticks_per_second);
         }
-        if input.reload_pressed && self.magazine < gun.magazine && self.reserve > 0 {
+        let wanted = input.reload_pressed || (self.magazine == 0 && cycled);
+        if wanted && self.magazine < gun.magazine && self.reserve > 0 {
             let total = ticks(gun.reload_seconds / input.pace.reload, ticks_per_second);
             self.phase = Phase::Reloading { left: total, total };
-            self.scope_level = 0;
+            self.unscope();
             out.reload_started = true;
             return Pull::Nothing;
         }

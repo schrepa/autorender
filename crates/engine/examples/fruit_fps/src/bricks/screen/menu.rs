@@ -44,6 +44,10 @@ pub struct SliderSet {
     pub fov: SliderNumbers,
     pub volume: SliderNumbers,
     pub render_scale: SliderNumbers,
+    pub crosshair_gap: SliderNumbers,
+    pub crosshair_length: SliderNumbers,
+    pub crosshair_thickness: SliderNumbers,
+    pub crosshair_outline: SliderNumbers,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -60,6 +64,7 @@ pub struct ScopeNumbers {
     pub width_px: f32,
     pub line_px: f32,
     pub color: String,
+    pub shade: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -99,7 +104,12 @@ settings! {
     #[section("options")]
     #[serde(deny_unknown_fields)]
     pub struct Options {
-        pub crosshair: u32 = 0 => any,
+        pub crosshair: u32 = 2 => any,
+        pub crosshair_gap: f32 = 4.0 => range(0.0, 20.0),
+        pub crosshair_length: f32 = 6.0 => range(1.0, 20.0),
+        pub crosshair_thickness: f32 = 2.0 => range(1.0, 6.0),
+        pub crosshair_outline: f32 = 2.0 => range(0.0, 3.0),
+        pub crosshair_dot: bool = true => any,
     }
 }
 
@@ -159,23 +169,30 @@ const TITLE: [&str; 3] = ["play", "settings", "quit"];
 const TITLE_NO_QUIT: [&str; 2] = ["play", "settings"];
 const PAUSE: [&str; 3] = ["resume", "settings", "quit"];
 const MATCH_END: [&str; 2] = ["play", "quit"];
-const SETTINGS_ROWS: [&str; 10] = [
-    "sensitivity",
-    "fov",
-    "invert",
-    "crosshair",
+const SETTINGS_ROWS: [&str; 16] = [
     "master",
     "effects",
+    "footsteps",
     "interface",
+    "sensitivity",
+    "invert",
+    "fov",
     "render_scale",
     "bots",
+    "crosshair",
+    "crosshair_gap",
+    "crosshair_length",
+    "crosshair_thickness",
+    "crosshair_outline",
+    "crosshair_dot",
     "back",
 ];
-const SLIDER_ROWS: [usize; 6] = [0, 1, 4, 5, 6, 7];
-const INVERT_ROW: usize = 2;
-const CROSSHAIR_ROW: usize = 3;
+const SLIDER_ROWS: [usize; 11] = [4, 6, 0, 1, 3, 7, 10, 11, 12, 13, 2];
+const INVERT_ROW: usize = 5;
+const CROSSHAIR_ROW: usize = 9;
+const DOT_ROW: usize = 14;
 const BOTS_ROW: usize = 8;
-const BACK_ROW: usize = 9;
+const BACK_ROW: usize = 15;
 
 #[derive(Resource, Default)]
 pub(super) struct MenuState {
@@ -398,7 +415,12 @@ impl Values {
             2 => self.volume.master,
             3 => self.volume.effects,
             4 => self.volume.interface,
-            _ => self.controls.render_scale,
+            5 => self.controls.render_scale,
+            6 => self.options.crosshair_gap,
+            7 => self.options.crosshair_length,
+            8 => self.options.crosshair_thickness,
+            9 => self.options.crosshair_outline,
+            _ => self.volume.footsteps,
         }
     }
 
@@ -409,7 +431,12 @@ impl Values {
             2 => self.volume.master = value,
             3 => self.volume.effects = value,
             4 => self.volume.interface = value,
-            _ => self.controls.render_scale = value,
+            5 => self.controls.render_scale = value,
+            6 => self.options.crosshair_gap = value,
+            7 => self.options.crosshair_length = value,
+            8 => self.options.crosshair_thickness = value,
+            9 => self.options.crosshair_outline = value,
+            _ => self.volume.footsteps = value,
         }
     }
 }
@@ -419,17 +446,27 @@ fn numbers_of(sliders: &SliderSet, row: usize) -> &SliderNumbers {
         0 => &sliders.sensitivity,
         1 => &sliders.fov,
         2..=4 => &sliders.volume,
-        _ => &sliders.render_scale,
+        5 => &sliders.render_scale,
+        6 => &sliders.crosshair_gap,
+        7 => &sliders.crosshair_length,
+        8 => &sliders.crosshair_thickness,
+        9 => &sliders.crosshair_outline,
+        _ => &sliders.volume,
     }
 }
 
-const SLIDER_IDS: [&str; 6] = [
+const SLIDER_IDS: [&str; 11] = [
     "slider_sensitivity",
     "slider_fov",
     "slider_master",
     "slider_effects",
     "slider_interface",
     "slider_render_scale",
+    "slider_crosshair_gap",
+    "slider_crosshair_length",
+    "slider_crosshair_thickness",
+    "slider_crosshair_outline",
+    "slider_footsteps",
 ];
 
 fn level_step(flow: &mut Flow, levels: &[String], turn: i32) {
@@ -477,6 +514,9 @@ fn settings(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow, values: &mut 
     if state.focus == INVERT_ROW && (turn != 0 || confirmed) {
         values.controls.invert_pitch = !values.controls.invert_pitch;
     }
+    if state.focus == DOT_ROW && (turn != 0 || confirmed) {
+        values.options.crosshair_dot = !values.options.crosshair_dot;
+    }
     if confirmed && state.focus == BACK_ROW {
         flow.settings_open = false;
     }
@@ -489,6 +529,10 @@ fn settings_click(nav: &Nav<'_>, state: &mut MenuState, flow: &mut Flow, values:
     if nav.over(Shown::Settings, "invert_off").is_some() {
         values.controls.invert_pitch = !values.controls.invert_pitch;
         state.focus = INVERT_ROW;
+    }
+    if nav.over(Shown::Settings, "dot_off").is_some() {
+        values.options.crosshair_dot = !values.options.crosshair_dot;
+        state.focus = DOT_ROW;
     }
     let sliders = &nav.source.sliders;
     for (slider, id) in SLIDER_IDS.iter().enumerate() {
@@ -578,7 +622,7 @@ pub(super) fn navigate(
     menu.focus.push_str(focus.unwrap_or(""));
 }
 
-pub(super) fn slider_facts(sliders: &mut [Slider; 6], source: &SliderSet, values: &Values) {
+pub(super) fn slider_facts(sliders: &mut [Slider; 11], source: &SliderSet, values: &Values) {
     for (row, slider) in sliders.iter_mut().enumerate() {
         let numbers = numbers_of(source, row);
         let value = values.slider(row);

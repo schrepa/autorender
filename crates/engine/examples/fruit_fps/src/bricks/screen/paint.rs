@@ -4,16 +4,21 @@ use engine::math;
 use glam::Vec2;
 
 use crate::play::screen::{
-    Align, Area, Case, Cover, Fit, HudFacts, Plate, Rgba, ScreenDraw, Shown, Stroke, TextStyle,
+    Align, Anchor, Area, Case, Cover, Fit, HudFacts, Plate, Reticle, Rgba, ScreenDraw, Shown,
+    Stroke, TextStyle,
 };
 
 const KNOB_RING_PX: f32 = 6.0;
 const KNOB_INSET_PX: f32 = 2.0;
 const WHITE: Rgba = Rgba([1.0; 4]);
+const ARC_PIECES: usize = 5;
+const SCOPE_OPEN: f32 = 0.35;
+const ARMOR_POP: f32 = 0.3;
+const ARMOR_POP_SHARE: f32 = 0.3;
 
 use super::layout::{
-    Arc, Cond, Dir, Element, FlowKind, Format, Kind, Knob, Layout, Markers, Number, Paint, Piece,
-    Set, Shadow, StrokeRef, Template,
+    Arc, Cond, Dir, Element, FlowKind, Format, Kind, Knob, Layout, Markers, Number, Paint, Picture,
+    Piece, Screen, Set, Shadow, Stack, StrokeRef, Template,
 };
 use super::menu::ScopeNumbers;
 use super::paths::Val;
@@ -27,8 +32,46 @@ pub(super) struct Painter<'a> {
     pub scratch: &'a mut String,
     pub spare: &'a mut String,
     pub pulses: &'a mut [PulseState],
+    pub rows: &'a mut [RowState],
     pub now: f64,
     pub zoom: f32,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct RowState {
+    span: Option<(f32, f32)>,
+    lift: Option<f32>,
+}
+
+fn place_rows(rows: &mut [RowState], stack: &Stack, (gap, ceiling, floor): (f32, f32, f32)) {
+    for row in stack.rows.clone() {
+        let Some((top, bottom)) = rows[row].span else {
+            continue;
+        };
+        let tall = bottom - top;
+        let taken = |rows: &[RowState], y: f32| {
+            rows[stack.rows.start..row].iter().find_map(|placed| {
+                let (Some((above, below)), Some(lift)) = (placed.span, placed.lift) else {
+                    return None;
+                };
+                let (above, below) = (above + lift, below + lift);
+                (y < below + gap && y + tall + gap > above).then_some((above, below))
+            })
+        };
+        let mut y = top;
+        while let Some((_, below)) = taken(rows, y) {
+            y = below + gap;
+        }
+        if y + tall <= floor || y == top {
+            rows[row].lift = Some(y - top);
+            continue;
+        }
+        y = top;
+        while let Some((above, _)) = taken(rows, y) {
+            y = above - gap - tall;
+        }
+        rows[row].lift = (y >= ceiling).then_some(y - top);
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -350,7 +393,8 @@ impl Painter<'_> {
                 | Kind::Markers(_)
                 | Kind::Bar { .. }
                 | Kind::Pips { .. }
-                | Kind::Flow { .. } => {}
+                | Kind::Flow { .. }
+                | Kind::Reticle => {}
             }
         }
     }
@@ -436,9 +480,68 @@ impl Painter<'_> {
         if let Some(over) = screen.over {
             self.screen(over, spread_px);
         }
+        self.stack(screen);
         for element in &screen.elements {
             self.element(element, spread_px);
         }
+    }
+
+    fn stack(&mut self, screen: &Screen) {
+        self.rows.fill(RowState::default());
+        for element in &screen.elements {
+            let Some(row) = element.row else {
+                continue;
+            };
+            if !self.holds(&element.when) {
+                continue;
+            }
+            let area = self
+                .draw
+                .place(element.rect, element.anchor, element.unscaled);
+            let (top, bottom) = (area.y, area.y + area.h);
+            let Some(state) = self.rows.get_mut(row) else {
+                continue;
+            };
+            state.span = Some(state.span.map_or((top, bottom), |(above, below)| {
+                (math::min(above, top), math::max(below, bottom))
+            }));
+        }
+        let layout = self.layout;
+        let s = self.draw.scale();
+        for stack in &layout.stacks {
+            let edge = |(rect, anchor): ([f32; 4], Anchor)| self.draw.place(rect, anchor, false).y;
+            let bounds = (stack.gap * s, edge(stack.ceiling), edge(stack.floor));
+            place_rows(self.rows, stack, bounds);
+        }
+    }
+
+    fn placed(&self, element: &Element) -> Option<Area> {
+        let mut area = self
+            .draw
+            .place(element.rect, element.anchor, element.unscaled);
+        if let Some(row) = element.row {
+            area.y += self.rows.get(row).and_then(|state| state.lift)?;
+        }
+        Some(area)
+    }
+
+    pub(super) fn crossed(&self, shown: Shown, reach: f32) -> bool {
+        let Some(screen) = self.layout.screens.get(&shown) else {
+            return false;
+        };
+        let center = (self.draw.size * 0.5).round();
+        screen.elements.iter().any(|element| {
+            matches!(
+                element.kind,
+                Kind::Plate | Kind::Flow { .. } | Kind::Image(_)
+            ) && self.holds(&element.when)
+                && self.placed(element).is_some_and(|area| {
+                    area.x < center.x + reach
+                        && area.x + area.w > center.x - reach
+                        && area.y < center.y + reach
+                        && area.y + area.h > center.y - reach
+                })
+        })
     }
 
     fn crosshair_shift(&self, area: Area) -> Vec2 {
@@ -456,7 +559,12 @@ impl Painter<'_> {
         Vec2::new(step(delta.x), step(delta.y))
     }
 
-    fn framed<'e>(&mut self, element: &'e Element, spread_px: f32) -> (Look<'e>, Area, f32, f32) {
+    fn framed<'e>(
+        &mut self,
+        element: &'e Element,
+        spread_px: f32,
+    ) -> Option<(Look<'e>, Area, f32, f32)> {
+        let mut area = self.placed(element)?;
         let mut look = self.look(element);
         let (zoom, flash) = self.pulse(element);
         if let Some(flash) = flash {
@@ -464,9 +572,6 @@ impl Painter<'_> {
             look.color = look.color.map(|_| flash);
         }
         self.zoom = zoom;
-        let mut area = self
-            .draw
-            .place(element.rect, element.anchor, element.unscaled);
         if zoom != 1.0 {
             let center = area.center();
             area.w *= zoom;
@@ -490,14 +595,16 @@ impl Painter<'_> {
             .as_ref()
             .and_then(|sweep| number_of(self.facts, sweep))
             .unwrap_or(1.0);
-        (look, area, s, sweep)
+        Some((look, area, s, sweep))
     }
 
     fn element(&mut self, element: &Element, spread_px: f32) {
         if !self.holds(&element.when) {
             return;
         }
-        let (look, area, s, sweep) = self.framed(element, spread_px);
+        let Some((look, area, s, sweep)) = self.framed(element, spread_px) else {
+            return;
+        };
         let radius = element.radius * s;
         let whole = matches!(element.kind, Kind::Plate) && sweep >= 1.0;
         if !whole {
@@ -546,53 +653,7 @@ impl Painter<'_> {
             }
             Kind::Icon(fit, atlas) => self.icon(&look, area, (*fit, atlas.as_deref())),
             Kind::Arc(arc) => self.arc(arc, area, s, self.color(look.color)),
-            Kind::Image(picture) => {
-                let Some(color) = self.color(look.color) else {
-                    return;
-                };
-                let case = self.case_of(look.shadows, s);
-                if case.is_none() {
-                    self.shadow_plates(look.shadows, area, (radius, s));
-                }
-                let frame = (radius, case);
-                let mut out = std::mem::take(self.scratch);
-                let mut name = std::mem::take(self.spare);
-                self.render(&picture.image, &mut name);
-                if let Some(small) = &picture.small {
-                    self.render(small, &mut out);
-                    if self
-                        .draw
-                        .picture_size(&out)
-                        .is_some_and(|size| area.h <= size[1])
-                    {
-                        std::mem::swap(&mut name, &mut out);
-                    }
-                }
-                let fit = if picture.cover {
-                    Cover::Fill
-                } else {
-                    Cover::Fit
-                };
-                match &picture.cell {
-                    Some((_, key)) => {
-                        self.render(key, &mut out);
-                        if !out.is_empty() {
-                            self.draw.image(
-                                (&name, Some(&out), fit, look.grey),
-                                area,
-                                (color, frame),
-                            );
-                        }
-                    }
-                    None if !name.is_empty() => {
-                        self.draw
-                            .image((&name, None, fit, look.grey), area, (color, frame));
-                    }
-                    None => {}
-                }
-                *self.scratch = out;
-                *self.spare = name;
-            }
+            Kind::Image(picture) => self.image(picture, &look, area, (radius, s)),
             Kind::Markers(markers) => self.markers(markers, area, s, self.color(look.color)),
             Kind::Bar {
                 value,
@@ -614,6 +675,46 @@ impl Painter<'_> {
             }
             Kind::Pips { .. } => self.pips(element, area, s),
             Kind::Flow { .. } => self.flow(element, &look, area, s),
+            Kind::Reticle => self.reticle(area.center().round(), 0.0),
+        }
+    }
+
+    fn image(&mut self, picture: &Picture, look: &Look<'_>, area: Area, (radius, s): (f32, f32)) {
+        let Some(color) = self.color(look.color) else {
+            return;
+        };
+        let case = self.case_of(look.shadows, s);
+        if case.is_none() {
+            self.shadow_plates(look.shadows, area, (radius, s));
+        }
+        let frame = (radius, case);
+        let at = self.draw.quads.len();
+        let mut out = std::mem::take(self.scratch);
+        let mut name = std::mem::take(self.spare);
+        self.render(&picture.image, &mut name);
+        let fit = if picture.cover {
+            Cover::Fill
+        } else {
+            Cover::Fit
+        };
+        match &picture.cell {
+            Some((_, key)) => {
+                self.render(key, &mut out);
+                if !out.is_empty() {
+                    self.draw
+                        .image((&name, Some(&out), fit, look.grey), area, (color, frame));
+                }
+            }
+            None if !name.is_empty() => {
+                self.draw
+                    .image((&name, None, fit, look.grey), area, (color, frame));
+            }
+            None => {}
+        }
+        *self.scratch = out;
+        *self.spare = name;
+        if picture.opaque && picture.cover && radius == 0.0 && color.0[3] >= 1.0 {
+            self.draw.floor_at(at);
         }
     }
 
@@ -958,39 +1059,54 @@ impl Painter<'_> {
         self.plate(whole, Some(WHITE.faded(math::min(amount, 1.0))), 0.0, None);
     }
 
-    pub(super) fn scope(&mut self, scope: &ScopeNumbers) {
-        let Some(color) = self.layout.palette.get(&scope.color).copied() else {
+    pub(super) fn scope(&mut self, scope: &ScopeNumbers, ease: f32) {
+        let (Some(color), Some(shade)) = (self.palette(&scope.color), self.palette(&scope.shade))
+        else {
             return;
         };
+        let ease = math::clamp(ease, 0.0, 1.0);
         let center = (self.draw.size * 0.5).round();
-        let wide = self.draw.size.y * scope.ring_share;
+        let clear = self.draw.size.y * scope.ring_share * 0.5 * (1.0 + SCOPE_OPEN * (1.0 - ease));
+        let outer = self.draw.size.length() * 0.5 + 2.0;
+        let whole = Area {
+            x: center.x - outer,
+            y: center.y - outer,
+            w: 2.0 * outer,
+            h: 2.0 * outer,
+        };
+        let surround = Stroke {
+            width: outer - clear,
+            inset: 0.0,
+            color: shade.faded(ease),
+        };
+        self.plate(whole, None, outer, Some(surround));
         let ring = Area {
-            x: center.x - wide * 0.5,
-            y: center.y - wide * 0.5,
-            w: wide,
-            h: wide,
+            x: center.x - clear,
+            y: center.y - clear,
+            w: 2.0 * clear,
+            h: 2.0 * clear,
         };
         let stroke = Stroke {
             width: scope.width_px,
             inset: 0.0,
-            color,
+            color: color.faded(ease),
         };
-        self.plate(ring, None, wide * 0.5, Some(stroke));
+        self.plate(ring, None, clear, Some(stroke));
         let line = scope.line_px;
         let across = Area {
             x: ring.x,
             y: center.y - line * 0.5,
-            w: wide,
+            w: ring.w,
             h: line,
         };
         let down = Area {
             x: center.x - line * 0.5,
             y: ring.y,
             w: line,
-            h: wide,
+            h: ring.h,
         };
-        self.plate(across, Some(color), 0.0, None);
-        self.plate(down, Some(color), 0.0, None);
+        self.plate(across, Some(color.faded(ease)), 0.0, None);
+        self.plate(down, Some(color.faded(ease)), 0.0, None);
     }
 
     pub(super) fn backdrop(&mut self, color: &str) {
@@ -1014,98 +1130,73 @@ impl Painter<'_> {
     pub(super) fn marks(&mut self, marks: &Marks) {
         let center = (self.draw.size * 0.5).round();
         let ink = self.palette(&marks.outline_color);
-        if let Some(hit) = self.facts.hit {
-            let numbers = &marks.hit;
-            let edge = numbers.rim_px;
-            let key = if hit.killed {
-                &marks.kill_color
-            } else if hit.headshot {
-                &marks.head_color
-            } else {
-                &numbers.color
-            };
-            let left = 1.0 - hit.age / numbers.seconds;
-            let reach = numbers.gap_px + numbers.length_px * 0.5;
-            let (w, h) = (numbers.length_px, numbers.width_px);
-            for quarter in [1.0_f32, 3.0, 5.0, 7.0] {
-                let angle = quarter * std::f32::consts::FRAC_PI_4;
-                let (sin, cos) = math::sin_cos(angle);
-                let at = center + Vec2::new(cos, sin) * reach;
-                if let Some(ink) = ink {
-                    self.bar_mark(
-                        at,
-                        (w + 2.0 * edge, h + 2.0 * edge),
-                        (angle, ink.faded(left)),
-                    );
-                }
-                if let Some(color) = self.palette(key) {
-                    self.bar_mark(at, (w, h), (angle, color.faded(left)));
-                }
-            }
-        }
-        let s = self.draw.scale();
-        let numbers = &marks.damage;
-        let color = self.palette(&numbers.color);
-        let facts = self.facts;
-        let radius = numbers.gap_px * s;
-        if radius <= 0.0 {
-            return;
-        }
-        let edge = numbers.rim_px;
-        for mark in &facts.damage {
-            let left = 1.0 - mark.age / numbers.seconds;
-            let toward = -mark.angle_radians;
-            let layers = [
-                (
-                    ink,
-                    numbers.width_px * s + 2.0 * edge * s,
-                    numbers.length_px * s + 2.0 * edge * s,
-                ),
-                (color, numbers.width_px * s, numbers.length_px * s),
-            ];
-            for (paint, width, length) in layers {
-                let Some(paint) = paint else {
-                    continue;
-                };
-                let span = length / radius;
-                let outer = radius + width * 0.5;
-                let ring = Area {
-                    x: center.x - outer,
-                    y: center.y - outer,
-                    w: 2.0 * outer,
-                    h: 2.0 * outer,
-                };
-                self.draw.plate(
-                    ring,
-                    Plate {
-                        fill: None,
-                        radius: outer,
-                        stroke: Some(Stroke {
-                            width,
-                            inset: 0.0,
-                            color: paint.faded(left),
-                        }),
-                        angle_radians: toward - span * 0.5,
-                        soft: 1.0,
-                        sweep: span / std::f32::consts::TAU,
-                    },
-                );
-            }
-            let layout = self.layout;
-            if let Some(tip) = &layout.damage_tip {
-                let (sin, cos) = math::sin_cos(toward);
-                let reach = (numbers.gap_px + tip.radius_add_px) * s;
+        if let (Some(age), Some(atlas)) = (self.facts.armor_break, self.layout.stickers.clone()) {
+            let numbers = &marks.armor;
+            let s = self.draw.scale();
+            let left = 1.0 - age / numbers.seconds;
+            let pop =
+                1.0 + ARMOR_POP * math::max(0.0, 1.0 - age / (numbers.seconds * ARMOR_POP_SHARE));
+            let at = center + Vec2::new(numbers.offset_px[0], numbers.offset_px[1]) * s;
+            let size = numbers.size_px * s * pop;
+            if let Some([w, h]) = self.draw.sticker_size(&atlas, &numbers.icon) {
                 self.draw.sticker_turned(
-                    (&tip.atlas, &tip.icon),
-                    center + Vec2::new(sin, -cos) * reach,
-                    (tip.scale * s, toward),
+                    (&atlas, &numbers.icon),
+                    at,
+                    (size / math::max(w, h), 0.0),
                     WHITE.faded(left),
                 );
             }
         }
+        self.damage_marks(ink);
     }
 
-    fn bar_mark(&mut self, at: Vec2, (w, h): (f32, f32), (angle, color): (f32, Rgba)) {
+    fn damage_marks(&mut self, ink: Option<Rgba>) {
+        let Some(edge) = self.layout.damage_edge.as_ref() else {
+            return;
+        };
+        let s = self.draw.scale();
+        let center = self.draw.size * 0.5;
+        let radius = edge.radius_share * self.draw.size.y;
+        if radius <= 0.0 || edge.fade_seconds <= 0.0 {
+            return;
+        }
+        let span = edge.length_deg.to_radians();
+        let (band, rim) = (edge.band_px * s, edge.rim_px * s);
+        let facts = self.facts;
+        for mark in &facts.damage {
+            let t = math::clamp(mark.age / edge.fade_seconds, 0.0, 1.0);
+            let left = (1.0 - t) * (1.0 - t);
+            let toward = -mark.angle_radians;
+            let ends: [Vec2; ARC_PIECES + 1] = std::array::from_fn(|at| {
+                let along = at as f32 / ARC_PIECES as f32 - 0.5;
+                let (sin, cos) = math::sin_cos(toward + along * span);
+                center + Vec2::new(sin, -cos) * radius
+            });
+            for (paint, thick) in [(ink, band + 2.0 * rim), (Some(edge.color), band)] {
+                let Some(paint) = paint else {
+                    continue;
+                };
+                for pair in ends.windows(2) {
+                    let step = pair[1] - pair[0];
+                    let angle = math::atan2(step.y, step.x);
+                    self.round_bar(
+                        (pair[0] + pair[1]) * 0.5,
+                        (step.length() + thick, thick),
+                        (angle, paint.faded(left)),
+                    );
+                }
+            }
+            let (sin, cos) = math::sin_cos(toward);
+            self.draw.sticker_turned(
+                (&edge.atlas, &edge.tip),
+                center + Vec2::new(sin, -cos) * radius,
+                (edge.tip_scale * s, toward),
+                WHITE.faded(left),
+            );
+        }
+    }
+
+    fn round_bar(&mut self, at: Vec2, (w, h): (f32, f32), (angle, color): (f32, Rgba)) {
         self.draw.plate(
             Area {
                 x: at.x - w * 0.5,
@@ -1122,6 +1213,54 @@ impl Painter<'_> {
                 sweep: 1.0,
             },
         );
+    }
+
+    pub(super) fn reticle(&mut self, center: Vec2, spread_px: f32) {
+        let settings = &self.facts.menu.settings;
+        let reticle: Reticle = settings.reticle;
+        let Some(color) = self.palette(&settings.crosshair_color) else {
+            return;
+        };
+        let ink = self.layout.crosshair.map(|piece| piece.outline);
+        let thick = math::max(reticle.thickness.round(), 1.0);
+        let gap = reticle.gap.round() + spread_px.round();
+        let length = reticle.length.round();
+        let outline = reticle.outline.round();
+        let near = (thick * 0.5).floor();
+        let (cx, cy) = (center.x - near, center.y - near);
+        let mut pieces = vec![
+            [cx - gap - length, cy, length, thick],
+            [cx + thick + gap, cy, length, thick],
+            [cx, cy - gap - length, thick, length],
+            [cx, cy + thick + gap, thick, length],
+        ];
+        if reticle.dot {
+            pieces.push([cx, cy, thick, thick]);
+        }
+        let case = ink.filter(|_| outline > 0.0).map(|ink| Case {
+            color: ink,
+            grow: outline,
+            offset: [0.0, 0.0],
+            doubled: false,
+            rim: None,
+        });
+        for [x, y, w, h] in pieces {
+            if w <= 0.0 || h <= 0.0 {
+                continue;
+            }
+            self.draw.cased_plate(
+                Area { x, y, w, h },
+                Plate {
+                    fill: Some(color),
+                    radius: 0.0,
+                    stroke: None,
+                    angle_radians: 0.0,
+                    soft: 1.0,
+                    sweep: 1.0,
+                },
+                case,
+            );
+        }
     }
 }
 

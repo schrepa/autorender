@@ -109,6 +109,8 @@ struct Mixdown {
     drops_seen: Vec<u32>,
     was_ready: bool,
     heard: BTreeMap<String, u64>,
+    started_at: BTreeMap<String, u64>,
+    scopes: BTreeMap<u32, (crate::play::events::arms::Weapon, usize)>,
     cues_tick: u32,
     cues: u64,
     started: u64,
@@ -193,14 +195,22 @@ fn ticks_per_second(time: &FixedTime) -> Option<u32> {
     (time.delta_seconds > 0.0).then(|| (1.0 / time.delta_seconds).round() as u32)
 }
 
-type ActorRow<'a> = (&'a Actor, &'a Body, Has<Human>, Option<&'a Wish>);
+type ActorRow<'a> = (
+    &'a Actor,
+    &'a Body,
+    Has<Human>,
+    Option<&'a Wish>,
+    Option<&'a crate::play::arms::Arms>,
+);
 
 struct Row {
     slot: u32,
     team: crate::rules::Team,
+    character: String,
     body: Body,
     human: bool,
     yaw: f32,
+    scope: Option<(crate::play::events::arms::Weapon, usize)>,
 }
 
 type Scene<'w> = (
@@ -249,17 +259,7 @@ fn mix(
     };
     let mixdown = &mut *mixdown;
     let now = time.tick;
-    let mut rows: Vec<Row> = actors
-        .iter()
-        .map(|(actor, body, human, wish)| Row {
-            slot: actor.slot,
-            team: actor.team,
-            body: *body,
-            human,
-            yaw: wish.map_or(actor.yaw_radians, |wish| wish.yaw_radians),
-        })
-        .collect();
-    rows.sort_by_key(|row| row.slot);
+    let rows = rows_of(&actors);
     let human = rows.iter().find(|row| row.human);
     let who = events::Human {
         slot: human.map(|row| row.slot),
@@ -268,25 +268,35 @@ fn mix(
     let heard_by = listener(&rows, watched.as_deref());
     let own = heard_by.and_then(|(slot, _)| slot);
     let mut fresh = heard;
-    if let Some(arms) = arms.filter(|arms| arms.tick == now) {
-        events::arms(&arms, who, table, &mut fresh);
-    }
+    let fed = Fed {
+        who,
+        rows: &rows,
+        round: round.as_deref(),
+        table,
+    };
+    gunplay(
+        mixdown,
+        arms.filter(|arms| arms.tick == now).as_deref(),
+        &fed,
+        &mut fresh,
+    );
     let mut stops = Vec::new();
     if let Some(powers) = powers.filter(|powers| powers.tick == now) {
+        let casters: Vec<(u32, crate::rules::Team, String)> = rows
+            .iter()
+            .map(|row| (row.slot, row.team, row.character.clone()))
+            .collect();
         let heard = events::Heard {
             human: who,
             listener: own,
+            casters: &casters,
             now,
             table,
             orbs: power_state.as_deref().map_or(&[], Powers::orbs),
         };
         events::powers(&powers, &heard, &mut fresh, &mut stops);
     }
-    for voice in &mut mixdown.voices {
-        if voice.tag.is_some_and(|tag| stops.contains(&tag)) {
-            voice.ends = now;
-        }
-    }
+    stop_tagged(&mut mixdown.voices, &stops, now);
     if let Some(round_events) = round_events {
         events::round(
             &round_events.events,
@@ -305,21 +315,20 @@ fn mix(
         events::bodies(&body_events, own, slowed, table, &mut fresh);
     }
     mixdown.repeaters.tick(now, tps, table, &mut fresh);
-    if let Some(view) = round.as_deref().and_then(Round::view)
-        && view.phase == crate::rules::Phase::Buy
-    {
-        events::countdown(view.ticks_left, tps, table, &mut fresh);
-    }
-    let human_ready = round
-        .as_deref()
-        .and_then(Round::view)
-        .zip(who.slot)
-        .is_some_and(|(view, slot)| view.ready(slot as usize));
-    events::ready(&mut mixdown.was_ready, human_ready, &mut fresh);
     let barrier = barrier.as_deref();
-    if barrier.is_some_and(|barrier| barrier.dropped_tick == Some(now)) {
-        fresh.push(events::cue("barrier.drop", Anchor::Listener, None));
-    }
+    let clock = Clock {
+        table,
+        tps,
+        now,
+        human: who.slot,
+    };
+    timing(
+        &clock,
+        round.as_deref(),
+        barrier,
+        &mut mixdown.was_ready,
+        &mut fresh,
+    );
     if let Some(drops) = drops.as_deref() {
         events::drops(
             drops,
@@ -359,6 +368,93 @@ fn mix(
         start(mixdown, &place, &bank, &mut rng, cue, &mut sounds);
     }
     mixdown.rng = Some(rng);
+}
+
+fn rows_of(actors: &Query<ActorRow<'_>>) -> Vec<Row> {
+    let mut rows: Vec<Row> = actors
+        .iter()
+        .map(|(actor, body, human, wish, arms)| Row {
+            slot: actor.slot,
+            team: actor.team,
+            character: actor.character.clone(),
+            body: *body,
+            human,
+            yaw: wish.map_or(actor.yaw_radians, |wish| wish.yaw_radians),
+            scope: arms.and_then(|arms| arms.loadout.active_gun()).map(|gun| {
+                (
+                    crate::play::events::arms::Weapon::Gun(gun.kind()),
+                    gun.scope_level(),
+                )
+            }),
+        })
+        .collect();
+    rows.sort_by_key(|row| row.slot);
+    rows
+}
+
+struct Fed<'a> {
+    who: events::Human,
+    rows: &'a [Row],
+    round: Option<&'a Round>,
+    table: &'a Table,
+}
+
+fn gunplay(mixdown: &mut Mixdown, arms: Option<&ArmsEvents>, fed: &Fed<'_>, out: &mut Vec<Cue>) {
+    let round_kills = fed
+        .round
+        .and_then(Round::view)
+        .zip(fed.who.slot)
+        .and_then(|(view, slot)| {
+            view.players
+                .get(slot as usize)
+                .map(|player| player.round_kills)
+        });
+    if let Some(arms) = arms {
+        events::arms(arms, (fed.who, round_kills), fed.table, out);
+    }
+    let fired: Vec<u32> = arms
+        .map(|arms| arms.shots.iter().map(|shot| shot.shooter).collect())
+        .unwrap_or_default();
+    let scoped: Vec<(u32, Option<(crate::play::events::arms::Weapon, usize)>)> =
+        fed.rows.iter().map(|row| (row.slot, row.scope)).collect();
+    events::scopes(&scoped, &mut mixdown.scopes, &fired, out);
+}
+
+fn stop_tagged(voices: &mut [Voice], stops: &[u64], now: u64) {
+    for voice in voices {
+        if voice.tag.is_some_and(|tag| stops.contains(&tag)) {
+            voice.ends = now;
+        }
+    }
+}
+
+struct Clock<'a> {
+    table: &'a Table,
+    tps: u32,
+    now: u64,
+    human: Option<u32>,
+}
+
+fn timing(
+    clock: &Clock<'_>,
+    round: Option<&Round>,
+    barrier: Option<&Barrier>,
+    was_ready: &mut bool,
+    out: &mut Vec<Cue>,
+) {
+    let view = round.and_then(Round::view);
+    if let Some(view) = &view
+        && view.phase == crate::rules::Phase::Buy
+    {
+        events::countdown(view.ticks_left, clock.tps, clock.table, out);
+    }
+    let human_ready = view
+        .zip(clock.human)
+        .is_some_and(|(view, slot)| view.ready(slot as usize));
+    events::ready(was_ready, human_ready, out);
+    if barrier.is_some_and(|barrier| barrier.dropped_tick == Some(clock.now)) {
+        out.push(events::cue("barrier.drop", Anchor::Listener, None));
+    }
 }
 
 fn hum(
@@ -515,6 +611,10 @@ fn start(
         mixdown.unmapped += 1;
         return;
     };
+    if clashed(mixdown, place, name, sounds) {
+        mixdown.dropped += 1;
+        return;
+    }
     let pick = voices::variation(rng, sound.files.len(), mixdown.last.get(name).copied());
     mixdown.last.insert(name.clone(), pick);
     let Some(file) = sound.files.get(pick) else {
@@ -584,7 +684,34 @@ fn start(
         occlusion,
         looping,
         ends,
+        started: place.now,
     });
+    mixdown.started_at.insert(name.clone(), place.now);
+}
+
+fn clashed(mixdown: &mut Mixdown, place: &Place<'_>, name: &str, sounds: &mut Sounds) -> bool {
+    let table = place.table;
+    let span = |seconds: f32| (f64::from(seconds) * f64::from(place.tps)).round() as u64;
+    let mut lost = false;
+    for clash in &table.clashes {
+        let window = span(clash.seconds);
+        if clash.loser == name {
+            lost |= mixdown
+                .started_at
+                .get(&clash.winner)
+                .is_some_and(|at| place.now < at + window);
+        }
+        if clash.winner == name {
+            mixdown.voices.retain(|voice| {
+                let beaten = voice.sound == clash.loser && place.now < voice.started + window;
+                if let (true, Some(door)) = (beaten, voice.door) {
+                    sounds.stop(door, table.steal_fade_seconds);
+                }
+                !beaten
+            });
+        }
+    }
+    lost
 }
 
 fn report(

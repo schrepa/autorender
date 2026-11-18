@@ -4,22 +4,25 @@ use bevy_ecs::system::SystemParamItem;
 use engine::prelude::*;
 use engine_core::{
     AlphaMode, AssetLibrary, AssetResidency, Cull, DrawnTable, Error, ErrorCode, Expected,
-    Material, MaterialHandle, Sampler, TextureHandle, TextureRef, Var, ViewFacts, gpu_struct,
+    GeometryHandle, Material, MaterialHandle, Sampler, TextureHandle, TextureRef, Var, ViewFacts,
+    gpu_struct,
 };
 use engine_render::{
     BatchGroup, GroupEntry, PerBatch, Scene, Texture, Variant, VertexLayout, wgpu,
 };
 
-use super::chunks::{self, Chunk};
+use super::chunks::{self, Chunk, PieceSizes, Sized};
+use super::sets::VisibleSets;
 use super::shaders::level::{light, map, material, picture, sky};
 use super::{
-    COLOR_STREAM, EMISSIVE_STRENGTH, LEVEL_DETAIL, LIGHTMAP_CURVE, LIGHTMAP_SCALE, MACRO_COLOR,
-    MACRO_MAP, MACRO_ROUGH, MACRO_TILE, MIRROR, PICTURE_MAP, SKY, SKY_ABOVE, SKY_BELOW, SKY_FADE,
-    SKY_HAZE, SKY_TURNS, SURFACE_MAPS,
+    COLOR_STREAM, EMISSIVE_STRENGTH, LEVEL_DETAIL, LIGHT_FIELD, LIGHTMAP_CURVE, LIGHTMAP_SCALE,
+    MACRO_COLOR, MACRO_MAP, MACRO_ROUGH, MACRO_TILE, MIRROR, PICTURE_MAP, SKY, SKY_ABOVE,
+    SKY_BELOW, SKY_FADE, SKY_HAZE, SKY_TURNS, SURFACE_MAPS,
 };
 use crate::bricks::figures::{LEVEL, LIGHTMAP_MAP};
 use crate::names::COLOR_PASS;
-use crate::play::light::Lighting;
+use crate::play::light::{DetailLimit, Filtering, Lighting};
+use crate::play::screen::Covered;
 
 gpu_struct! {
     pub struct LevelLight {
@@ -150,6 +153,12 @@ pub(super) struct LevelGpu {
     ready: bool,
     chunks: [Vec<Chunk>; 2],
     order: [Vec<u32>; 2],
+    filtering: Filtering,
+    covered: bool,
+    detail_limit: DetailLimit,
+    held_small: BTreeSet<GeometryHandle>,
+    sets: VisibleSets,
+    sets_on: bool,
 }
 
 fn face(cull: Cull) -> Option<wgpu::Face> {
@@ -412,7 +421,16 @@ fn mapped(material: &Material, path: &str, detail: bool) -> Result<Mapped, Vec<E
             glow: rgb(emissive, 0.0),
             baked: [scale, curve, material.normal_scale(), 0.0],
             broken: strengths,
-            cut: [cutoff.unwrap_or(0.0), mirror, 0.0, 0.0],
+            cut: [
+                cutoff.unwrap_or(0.0),
+                mirror,
+                if plain || material.normal_scale() == 0.0 {
+                    1.0
+                } else {
+                    0.0
+                },
+                0.0,
+            ],
         },
         cutout: cutoff.is_some(),
         cull: face(material.cull()),
@@ -483,6 +501,11 @@ impl GpuPart for LevelGpu {
         Res<'static, DrawnTable>,
         Option<Res<'static, AssetResidency>>,
         Option<Res<'static, AssetLibrary>>,
+        (
+            Option<Res<'static, Covered>>,
+            Res<'static, PieceSizes>,
+            Res<'static, VisibleSets>,
+        ),
     );
     const NAME: &'static str = "level";
 
@@ -561,21 +584,42 @@ impl GpuPart for LevelGpu {
             ready: false,
             chunks: [Vec::new(), Vec::new()],
             order: [Vec::new(), Vec::new()],
+            filtering: Filtering::default(),
+            covered: false,
+            detail_limit: DetailLimit::default(),
+            held_small: BTreeSet::new(),
+            sets: VisibleSets::default(),
+            sets_on: false,
         })
     }
 
     fn prepare(
         &mut self,
-        (lighting, table, residency, library): SystemParamItem<'_, '_, Self::Reads>,
+        (lighting, table, residency, library, (covered, pieces, sets)): SystemParamItem<
+            '_,
+            '_,
+            Self::Reads,
+        >,
         cx: &mut Prepare<'_, Self>,
     ) {
+        self.covered = covered.is_some_and(|covered| covered.0);
+        if self.covered {
+            for kind in [LEVEL, LEVEL_DETAIL, SKY, LIGHT_FIELD] {
+                cx.skip_kind(kind, "covered");
+            }
+        }
         let layout = wgpu::TexelCopyBufferLayout {
             offset: 0,
             bytes_per_row: Some(4),
             rows_per_image: Some(1),
         };
+        self.detail_limit = lighting.detail;
+        self.sets_on = lighting.visible_sets;
+        if self.sets != *sets {
+            self.sets = sets.clone();
+        }
         for (kind, into) in [LEVEL, LEVEL_DETAIL].into_iter().zip(&mut self.chunks) {
-            chunks::listed(&table, library.as_deref(), kind, into);
+            chunks::listed((&table, library.as_deref(), &pieces), kind, into);
         }
         let mut fresh = cx.allocate(self.unbaked, TEXEL, 1) == Allocation::Fresh;
         for texture in self.plain {
@@ -599,6 +643,16 @@ impl GpuPart for LevelGpu {
             self.ready = true;
         }
         let mut changed = Vec::new();
+        if self.filtering != lighting.filtering {
+            self.filtering = lighting.filtering;
+            self.pictured = None;
+            changed.extend(
+                self.held
+                    .iter()
+                    .filter(|(_, held)| held.bound.is_some())
+                    .map(|(handle, _)| *handle),
+            );
+        }
         if self.ready
             && let (Some(residency), Some(library)) = (residency, library)
         {
@@ -638,8 +692,18 @@ impl GpuPart for LevelGpu {
     }
 
     fn view(&mut self, facts: &ViewFacts, _cx: &mut Prepare<'_, Self>) {
+        let set = if self.sets_on {
+            self.sets.at(facts.eye)
+        } else {
+            None
+        };
+        let mut sized = Sized {
+            limit: self.detail_limit,
+            held: Some(&mut self.held_small),
+            set,
+        };
         for (listed, order) in self.chunks.iter().zip(&mut self.order) {
-            chunks::ordered(listed, facts, order);
+            chunks::ordered(listed, facts, &mut sized, order);
         }
     }
 }
@@ -659,6 +723,9 @@ impl LevelGpu {
         pipeline: &Pipeline<Self, Scene>,
         at: usize,
     ) {
+        if self.covered {
+            return;
+        }
         let pass = draw.pass();
         for &index in &self.order[at] {
             let chunk = &self.chunks[at][index as usize];
@@ -688,6 +755,9 @@ impl LevelGpu {
     }
 
     pub(super) fn draw_sky(&self, draw: &mut Draw<'_, Self, Scene>) {
+        if self.covered {
+            return;
+        }
         let shown = self
             .pictured
             .as_ref()
@@ -837,30 +907,38 @@ impl LevelGpu {
                 entries.push((*sampler, GroupEntry::AssetSampler(Sampler::CLAMP)));
             }
         }
-        for ((_, texture, sampler), map) in MAPS.iter().zip(&mapped.maps) {
+        let filtering = &self.filtering;
+        let surface = [filtering.base_color, filtering.normal, filtering.orm];
+        for (((_, texture, sampler), map), filter) in MAPS.iter().zip(&mapped.maps).zip(surface) {
             entries.push((*texture, GroupEntry::Asset(map.texture)));
-            entries.push((*sampler, GroupEntry::AssetSampler(map.sampler)));
+            entries.push((
+                *sampler,
+                GroupEntry::AssetSampler(filter.applied(map.sampler)),
+            ));
         }
         let extra = [
             (
                 mapped.baked,
                 material::LEVEL_LIGHTMAP,
                 material::LEVEL_LIGHTMAP_SAMPLER,
+                filtering.lightmap,
             ),
             (
                 mapped.broken,
                 material::LEVEL_MACRO_MAP,
                 material::LEVEL_MACRO_SAMPLER,
+                filtering.macro_map,
             ),
             (
                 self.shown().map(|shown| shown.map),
                 material::LEVEL_SKY_MAP,
                 material::LEVEL_SKY_SAMPLER,
+                filtering.sky_picture,
             ),
         ];
-        for (map, texture, sampler) in extra {
+        for (map, texture, sampler, chosen) in extra {
             let (bound, filter) = match map {
-                Some(map) => (GroupEntry::Asset(map.texture), map.sampler),
+                Some(map) => (GroupEntry::Asset(map.texture), chosen.applied(map.sampler)),
                 None => (GroupEntry::Texture(self.unbaked), Sampler::CLAMP),
             };
             entries.push((texture, bound));
@@ -952,7 +1030,7 @@ impl LevelGpu {
             (picture::SKY_PICTURE_MAP, GroupEntry::Asset(map.texture)),
             (
                 picture::SKY_PICTURE_SAMPLER,
-                GroupEntry::AssetSampler(map.sampler),
+                GroupEntry::AssetSampler(self.filtering.sky_picture.applied(map.sampler)),
             ),
         ];
         let shown = match cx.set_batch(self.sky_group, Some(handle), &entries, None) {

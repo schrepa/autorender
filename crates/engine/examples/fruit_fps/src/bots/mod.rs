@@ -26,11 +26,12 @@ pub use places::{
 };
 pub use sense::{
     AbilitySense, AbilityUse, Block, BuySense, Call, CallKind, DeviceSense, Gait, GamePhase,
-    GunClass, GunSense, Heard, Intent, MatchSense, Mate, Purchase, Seen, Sense, Side, Smoke,
-    SoundKind, WeaponChoice, World,
+    GunClass, GunSense, Hazard, Heard, Intent, MatchSense, Mate, ObjectKind, ObjectSense, OrbSense,
+    Purchase, Seen, Sense, Side, Smoke, SoundKind, WeaponChoice, World, tools_of,
 };
 pub use team::{
-    Approach, Duty, Line, LineKind, Member, Order, Role, Squad, SquadSense, Step, Utility,
+    Approach, Duty, Hold, Line, LineKind, Member, Order, Role, SiteTactics, Squad, SquadSense, Step,
+    Tactics, Utility, Way, build_tactics,
 };
 
 use abilities::Utilities;
@@ -39,14 +40,6 @@ use fighter::{Fight, Glance};
 use memory::{Look, Memory};
 use moving::Mover;
 use rng::Rng;
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Gift {
-    Idle,
-    Bought(u64),
-    Dropped(u64),
-    Done,
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Brain {
@@ -62,8 +55,12 @@ pub struct Brain {
     round: Option<u32>,
     hesitate_until: u64,
     buy_tick: Option<u64>,
-    gift: Gift,
+    bought: bool,
     line_since: Option<u64>,
+    stuck_tick: u64,
+    reveal_spot: Option<Vec3>,
+    hazard_spot: Option<Vec3>,
+    orb_spot: Option<Vec3>,
     debug: BotDebug,
     last_magazine: u32,
     last_fire: bool,
@@ -100,8 +97,12 @@ impl Brain {
             round: None,
             hesitate_until: 0,
             buy_tick: None,
-            gift: Gift::Idle,
+            bought: false,
             line_since: None,
+            stuck_tick: 0,
+            reveal_spot: None,
+            hazard_spot: None,
+            orb_spot: None,
             debug: BotDebug {
                 level,
                 duty: order.duty,
@@ -130,7 +131,8 @@ impl Brain {
         self.utilities.counts = counts;
         self.aim.synced = false;
         self.buy_tick = None;
-        self.gift = Gift::Idle;
+        self.bought = false;
+        self.orb_spot = None;
         self.hesitate_until = 0;
         self.last_heard_call = None;
         self.debug.why = Why::RoundStart;

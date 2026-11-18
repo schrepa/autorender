@@ -6,7 +6,7 @@ use engine_core::Error;
 use engine_core::math::{clamp, max, min};
 
 use super::files::Rig;
-use crate::play::figures::{BaseLayer, Figure, FigurePlay};
+use crate::play::figures::{BaseLayer, Figure, FigurePlay, UpperLayer};
 
 pub(super) struct Readout {
     pub(super) base_seconds: f32,
@@ -15,13 +15,22 @@ pub(super) struct Readout {
     pub(super) upper_seconds: f32,
     pub(super) upper_done: bool,
     pub(super) upper_cue: Option<u32>,
+    pub(super) upper_rate: f32,
+}
+
+fn fitted(rig: &Rig, clip: &str, fit: Option<f32>, speed: f32) -> f32 {
+    match fit {
+        Some(fit) if fit > 0.0 => rig.duration(clip) / fit,
+        Some(_) | None => speed,
+    }
 }
 
 fn rate(rig: &Rig, base: &BaseLayer) -> f32 {
-    match base.fit_seconds {
-        Some(fit) if fit > 0.0 => rig.duration(&base.clip) / fit,
-        Some(_) | None => base.speed,
-    }
+    fitted(rig, &base.clip, base.fit_seconds, base.speed)
+}
+
+fn upper_rate(rig: &Rig, upper: &UpperLayer) -> f32 {
+    fitted(rig, &upper.clip, upper.fit_seconds, upper.speed)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -106,12 +115,48 @@ impl Fade {
     }
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Upper {
+    pub(super) clock: LayerClock,
+    pub(super) layer: UpperLayer,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct UpperFade {
+    pub(super) from: Option<Upper>,
+    elapsed: f32,
+    step: f32,
+    seconds: f32,
+}
+
+impl UpperFade {
+    pub(super) fn weight(&self, back: f32) -> f32 {
+        clamp((self.elapsed - back * self.step) / self.seconds, 0.0, 1.0)
+    }
+}
+
+fn faded(old: Option<Upper>, new: Option<&Upper>) -> Option<UpperFade> {
+    let additive = |upper: &&Upper| upper.layer.additive;
+    let seconds = new
+        .filter(additive)
+        .or(old.as_ref().filter(additive))
+        .map_or(0.0, |upper| upper.layer.fade_seconds);
+    (seconds > 0.0).then(|| UpperFade {
+        from: old.filter(|upper| upper.layer.additive),
+        elapsed: 0.0,
+        step: 0.0,
+        seconds,
+    })
+}
+
 pub(super) struct Clocks {
     pub(super) figure: Figure,
     pub(super) rig: Result<Arc<Rig>, Error>,
     pub(super) base: Option<LayerClock>,
     pub(super) fade: Option<Fade>,
-    pub(super) upper: Option<LayerClock>,
+    pub(super) upper: Option<Upper>,
+    pub(super) upper_fade: Option<UpperFade>,
+    pub(super) fit: f32,
 }
 
 impl Clocks {
@@ -122,6 +167,8 @@ impl Clocks {
             base: None,
             fade: None,
             upper: None,
+            upper_fade: None,
+            fit: 1.0,
         }
     }
 
@@ -133,6 +180,7 @@ impl Clocks {
             self.base = None;
             self.fade = None;
             self.upper = None;
+            self.upper_fade = None;
             return;
         };
         if let Some(fade) = &mut self.fade {
@@ -183,18 +231,48 @@ impl Clocks {
         if let Some(clock) = &mut self.base {
             clock.synced = base.synced;
         }
-        match (&play.upper, &mut self.upper) {
-            (None, _) => self.upper = None,
-            (Some(upper), Some(clock)) if !clock.restarts(&upper.clip, upper.cue) => {
-                clock.speed = upper.speed;
-                clock.looping = upper.looping;
-                clock.advance(rig.duration(&upper.clip), delta);
+        self.upper_tick(play.upper.as_ref(), delta);
+    }
+
+    fn upper_tick(&mut self, wanted: Option<&UpperLayer>, delta: f32) {
+        let Ok(rig) = &self.rig else {
+            return;
+        };
+        if let Some(fade) = &mut self.upper_fade {
+            if fade.elapsed >= fade.seconds {
+                self.upper_fade = None;
+            } else {
+                if let Some(from) = &mut fade.from {
+                    from.clock.advance(rig.duration(&from.clock.clip), delta);
+                }
+                let before = fade.elapsed;
+                fade.elapsed = min(before + delta, fade.seconds);
+                fade.step = fade.elapsed - before;
             }
-            (Some(upper), Some(_) | None) => {
-                self.upper = Some(
-                    LayerClock::started(&upper.clip, upper.cue, upper.speed, upper.looping)
-                        .windowed(upper.window),
-                );
+        }
+        match (wanted, &mut self.upper) {
+            (None, None) => {}
+            (Some(upper), Some(held)) if !held.clock.restarts(&upper.clip, upper.cue) => {
+                held.clock.speed = upper_rate(rig, upper);
+                held.clock.looping = upper.looping;
+                held.clock.advance(rig.duration(&upper.clip), delta);
+                if held.layer != *upper {
+                    held.layer.clone_from(upper);
+                }
+            }
+            (Some(_) | None, Some(_) | None) => {
+                let started = wanted.map(|upper| Upper {
+                    clock: LayerClock::started(
+                        &upper.clip,
+                        upper.cue,
+                        upper_rate(rig, upper),
+                        upper.looping,
+                    )
+                    .windowed(upper.window),
+                    layer: upper.clone(),
+                });
+                let old = std::mem::replace(&mut self.upper, started);
+                self.upper_fade = faded(old, self.upper.as_ref());
             }
         }
     }
@@ -210,15 +288,17 @@ impl Clocks {
                 (clock.seconds, clock.done(duration(clock)))
             })
         };
+        let upper = self.upper.as_ref().map(|upper| &upper.clock);
         let (base_seconds, base_done) = of(self.base.as_ref());
-        let (upper_seconds, upper_done) = of(self.upper.as_ref());
+        let (upper_seconds, upper_done) = of(upper);
         Readout {
             base_seconds,
             base_done,
             base_cue: self.base.as_ref().map_or(0, |clock| clock.cue),
             upper_seconds,
             upper_done,
-            upper_cue: self.upper.as_ref().map(|clock| clock.cue),
+            upper_cue: upper.map(|clock| clock.cue),
+            upper_rate: upper.map_or(0.0, |clock| clock.speed),
         }
     }
 }

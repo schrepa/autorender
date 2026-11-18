@@ -24,7 +24,7 @@ impl Held {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum HandAction {
     Equip,
-    Swing { heavy: bool },
+    Swing { heavy: bool, step: u8 },
     Plant,
     Defuse,
 }
@@ -55,6 +55,8 @@ pub struct Arms {
     pub device_equip_left: u32,
     pub busy: bool,
     pub weapon_down: bool,
+    pub zoom: f32,
+    pub scoped: bool,
 }
 
 impl Arms {
@@ -84,6 +86,8 @@ impl Arms {
             device_equip_left: 0,
             busy: false,
             weapon_down: false,
+            zoom: 1.0,
+            scoped: false,
         }
     }
 

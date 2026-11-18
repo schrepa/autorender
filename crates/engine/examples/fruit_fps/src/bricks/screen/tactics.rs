@@ -1,8 +1,9 @@
 use engine::prelude::*;
 use engine::{FixedTime, FrameTime};
 
-use crate::abilities::{AbilityId, DrawKind, DrawShape, Drawable, Modifiers, OrbState};
+use crate::abilities::{AbilityId, DrawKind, DrawShape, Drawable, OrbState, StatusKind};
 use crate::play::actors::{Actor, Body, Human};
+use crate::play::bots::{BotMinds, TeamSight};
 use crate::play::powers::Powers;
 use crate::play::round::Round;
 use crate::play::screen::{HudFacts, MapItem, StatusFacts};
@@ -10,14 +11,16 @@ use crate::play::view::{Watch, Watched};
 use crate::rules::{Catalog, Team, View};
 
 use super::ScreenSource;
-use super::facts::{Hold, Mark, Recent, compass, spot};
-use super::live::{named, set, tone};
+use super::facts::{Recent, spot};
+use super::live::{character_key, character_name, named, set, tone};
 
 const SLOWED: &str = "slowed";
 const REVEALED: &str = "revealed";
 const SIGHT: &str = "sight";
 const VULNERABLE: &str = "vulnerable";
 const BOOSTED: &str = "boosted";
+const CHAINED: &str = "chained";
+const LOST_RADIUS_M: f32 = 1.6;
 
 type Reads<'w, 's> = (
     Option<Res<'w, Round>>,
@@ -27,11 +30,6 @@ type Reads<'w, 's> = (
     (Res<'w, FixedTime>, Res<'w, FrameTime>),
     Query<'w, 's, &'static ScreenSource>,
 );
-
-#[derive(Default)]
-pub(super) struct Lost {
-    seen: Vec<(u32, MapItem, f64)>,
-}
 
 fn ability_icon(out: &mut String, catalog: &Catalog, ability: AbilityId) {
     match catalog
@@ -44,43 +42,32 @@ fn ability_icon(out: &mut String, catalog: &Catalog, ability: AbilityId) {
     }
 }
 
-fn status_kind(hold: Hold, enemy: usize) -> Option<&'static str> {
-    match hold {
-        Hold::Reveal(team) if team == enemy => Some(REVEALED),
-        Hold::Reveal(_) => None,
-        Hold::Buff(_, modifiers) => buff_kind(modifiers),
-    }
-}
-
-fn buff_kind(modifiers: Modifiers) -> Option<&'static str> {
-    if modifiers.sight_m.is_some() {
-        Some(SIGHT)
-    } else if modifiers.speed < 1.0 {
-        Some(SLOWED)
-    } else if modifiers.damage_taken > 1.0 {
-        Some(VULNERABLE)
-    } else if modifiers.fire_rate > 1.0 || modifiers.reload < 1.0 {
-        Some(BOOSTED)
-    } else {
-        None
-    }
-}
+const KINDS: [(StatusKind, &str); 6] = [
+    (StatusKind::Chained, CHAINED),
+    (StatusKind::Slowed, SLOWED),
+    (StatusKind::SightCut, SIGHT),
+    (StatusKind::Vulnerable, VULNERABLE),
+    (StatusKind::Revealed, REVEALED),
+    (StatusKind::Boosted, BOOSTED),
+];
 
 fn statuses_part(
     facts: &mut HudFacts,
-    (marks, source): (&[Mark], &ScreenSource),
-    (view, slot, team): (&View<'_>, u32, Team),
-    (tick, step): (u64, f32),
+    (powers, source): (&Powers, &ScreenSource),
+    (slot, team): (u32, Team),
+    step: f32,
 ) {
     let enemy = team.other().index();
     let words = &source.words;
+    let held = powers.statuses(slot);
     let mut count = 0;
-    for kind in [SLOWED, SIGHT, VULNERABLE, REVEALED, BOOSTED] {
-        let longest = marks
+    for (wanted, kind) in KINDS {
+        let longest = held
             .iter()
-            .filter(|mark| mark.actor == slot && status_kind(mark.hold, enemy) == Some(kind))
-            .max_by_key(|mark| mark.until);
-        let Some(mark) = longest else {
+            .filter(|status| status.kind == wanted)
+            .filter(|status| status.kind != StatusKind::Revealed || status.to_team == Some(enemy))
+            .max_by_key(|status| status.ticks_left);
+        let Some(status) = longest else {
             continue;
         };
         if facts.statuses.len() == count {
@@ -93,11 +80,11 @@ fn statuses_part(
             SIGHT => &words.status_sight,
             VULNERABLE => &words.status_vulnerable,
             REVEALED => &words.status_revealed,
+            CHAINED => &words.status_chained,
             _ => &words.status_boosted,
         };
         set(&mut shown.label, label);
-        ability_icon(&mut shown.icon, view.catalog, mark.ability);
-        shown.left = mark.until.saturating_sub(tick) as f32 * step;
+        shown.left = status.ticks_left as f32 * step;
         count += 1;
     }
     facts.statuses.truncate(count);
@@ -138,49 +125,99 @@ fn utility_part(facts: &mut HudFacts, powers: &Powers, (catalog, team): (&Catalo
                 ability_icon(&mut item.icon, catalog, drawable.ability);
                 minimap.utility.push(item);
             }
-            _ => {}
+            DrawKind::Projectile
+            | DrawKind::Zone
+            | DrawKind::Curtain
+            | DrawKind::Wall
+            | DrawKind::Trap
+            | DrawKind::Wire
+            | DrawKind::Sensor
+            | DrawKind::StrikeMark => {}
         }
     }
 }
 
 fn enemies_part(
     facts: &mut HudFacts,
-    (powers, view, team): (&Powers, &View<'_>, Team),
+    (sight, view, team): (&TeamSight, &View<'_>, Team),
     bodies: &Query<(&Actor, &Body)>,
-    (lost, now, keep): (&mut Lost, f64, f64),
+    (tick, step, keep): (u64, f32, f32),
 ) {
-    let color = Some(tone(view.side_of(team.other())));
-    for (actor, body) in bodies {
-        let foe = view
-            .players
-            .get(actor.slot as usize)
-            .filter(|player| player.team != team && player.alive);
-        if foe.is_none() || !powers.revealed(actor.slot, team) {
+    let side = tone(view.side_of(team.other()));
+    let index = team.index();
+    let alive = |slot: u32| {
+        view.players
+            .get(slot as usize)
+            .filter(|player| player.team != team && player.alive)
+    };
+    let minimap = &mut facts.minimap;
+    minimap.enemies.clear();
+    minimap.lost.clear();
+    let mut shown: Vec<u32> = Vec::new();
+    let seen = sight.seen.get(index).map_or(&[][..], Vec::as_slice);
+    for &(enemy, _) in seen {
+        if shown.contains(&enemy) {
             continue;
         }
-        let item = MapItem {
+        let (Some(player), Some((_, body))) = (
+            alive(enemy),
+            bodies.iter().find(|(actor, _)| actor.slot == enemy),
+        ) else {
+            continue;
+        };
+        let mut item = MapItem {
             pos: spot(body.feet),
-            yaw_degrees: compass(actor.yaw_radians),
-            color,
+            color: Some(side),
             ..MapItem::default()
         };
-        lost.seen.retain(|(slot, _, _)| *slot != actor.slot);
-        lost.seen.push((actor.slot, item, now));
+        named(&mut item.icon, "char_", character_key(view.catalog, player));
+        item.icon.push('_');
+        item.icon.push_str(side.key());
+        shown.push(enemy);
+        minimap.enemies.push(item);
     }
-    lost.seen.retain(|(slot, _, born)| {
-        now - born < keep
-            && view
-                .players
-                .get(*slot as usize)
-                .is_some_and(|player| player.alive)
-    });
-    let enemies = &mut facts.minimap.enemies;
-    enemies.clear();
-    for (_, item, born) in &lost.seen {
-        let mut shown = item.clone();
-        shown.fade = ((now - born) / keep) as f32;
-        enemies.push(shown);
+    let last = sight.last.get(index).map_or(&[][..], Vec::as_slice);
+    for &(enemy, at_tick, feet) in last {
+        let age = tick.saturating_sub(at_tick) as f32 * step;
+        if shown.contains(&enemy) || alive(enemy).is_none() || keep <= 0.0 || age >= keep {
+            continue;
+        }
+        minimap.lost.push(MapItem {
+            pos: spot(feet),
+            color: Some(side),
+            fade: age / keep,
+            radius_m: LOST_RADIUS_M,
+            ..MapItem::default()
+        });
     }
+}
+
+fn ultimate_part(
+    facts: &mut HudFacts,
+    (cast, view, team): (Option<(f64, u32)>, &View<'_>, Team),
+    (now, keep): (f64, f64),
+) {
+    let banner = &mut facts.ult;
+    let caster = cast
+        .filter(|(born, _)| now - born < keep)
+        .and_then(|(_, slot)| view.players.get(slot as usize));
+    banner.active = caster.is_some();
+    let Some(player) = caster else {
+        return;
+    };
+    let catalog = view.catalog;
+    let side = view.side_of(player.team);
+    banner.ally = player.team == team;
+    banner.color = tone(side);
+    set(&mut banner.name, character_name(catalog, player));
+    named(&mut banner.icon, "char_", character_key(catalog, player));
+    banner.icon.push('_');
+    banner.icon.push_str(banner.color.key());
+    let ultimate = catalog
+        .characters
+        .get(player.character)
+        .map_or("", |entry| entry.ability_names[3].as_str());
+    set(&mut banner.ultimate, ultimate);
 }
 
 fn orbs_part(facts: &mut HudFacts, powers: &Powers, (slot, tick): (u32, u64)) {
@@ -205,7 +242,7 @@ pub(super) fn fill_tactics(
     (round, powers, watched, recent, (fixed, frame), sources): Reads,
     humans: Query<&Actor, With<Human>>,
     bodies: Query<(&Actor, &Body)>,
-    mut lost: Local<Lost>,
+    minds: Option<Res<BotMinds>>,
     mut facts: ResMut<HudFacts>,
 ) {
     if recent.shows_demo() {
@@ -235,18 +272,23 @@ pub(super) fn fill_tactics(
     let tick = fixed.tick;
     facts.blind = powers.blindness_at(viewer, tick as f64 + f64::from(frame.alpha));
     orbs_part(facts, powers, (actor.slot, tick));
-    statuses_part(
-        facts,
-        (&recent.marks, source),
-        (&view, actor.slot, team),
-        (tick, fixed.delta_seconds),
-    );
+    statuses_part(facts, (powers, source), (viewer, team), fixed.delta_seconds);
     utility_part(facts, powers, (view.catalog, team));
-    let keep = f64::from(source.low.lost_seconds);
-    enemies_part(
+    ultimate_part(
         facts,
-        (powers, &view, team),
-        &bodies,
-        (&mut lost, frame.elapsed, keep),
+        (recent.ultimate, &view, team),
+        (frame.elapsed, f64::from(source.low.ult_seconds)),
     );
+    let sight = minds.as_deref().map(|minds| &minds.sight);
+    if let Some(sight) = sight {
+        enemies_part(
+            facts,
+            (sight, &view, team),
+            &bodies,
+            (tick, fixed.delta_seconds, source.low.lost_seconds),
+        );
+    } else {
+        facts.minimap.enemies.clear();
+        facts.minimap.lost.clear();
+    }
 }

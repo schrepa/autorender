@@ -3,6 +3,33 @@ use super::{
     Player, PlayerId, Team, TickInput, View, WeaponId, WeaponSlot,
 };
 
+fn gift_cost(
+    catalog: &super::Catalog,
+    players: &[Player],
+    payer: PlayerId,
+    (weapon, receiver): (WeaponId, PlayerId),
+) -> Result<u32, BuyRefusal> {
+    let entry = catalog.weapon(weapon).ok_or(BuyRefusal::NotForSale)?;
+    if entry.slot != WeaponSlot::Primary {
+        return Err(BuyRefusal::NotForSale);
+    }
+    let to = players.get(receiver).ok_or(BuyRefusal::UnknownPlayer)?;
+    if receiver == payer || to.team != players[payer].team {
+        return Err(BuyRefusal::NotForSale);
+    }
+    if !to.alive {
+        return Err(BuyRefusal::Dead);
+    }
+    if to.primary.is_some() {
+        return Err(BuyRefusal::AlreadyOwned);
+    }
+    let cost = entry.cost.unwrap_or(0);
+    if players[payer].credits < cost {
+        return Err(BuyRefusal::TooFewCredits);
+    }
+    Ok(cost)
+}
+
 fn shop_open(
     phase: Phase,
     players: &[Player],
@@ -25,6 +52,21 @@ fn shop_open(
 impl View<'_> {
     pub fn loss_bonus(&self, team: Team) -> u32 {
         self.catalog.loss_reward(self.loss_streak[team.index()])
+    }
+
+    pub fn asked(&self, player: PlayerId) -> Option<WeaponId> {
+        let ask = self.asks.get(player).copied().flatten();
+        ask.filter(|_| self.phase == Phase::Buy)
+    }
+
+    pub fn price_for(
+        &self,
+        payer: PlayerId,
+        weapon: WeaponId,
+        receiver: PlayerId,
+    ) -> Result<u32, BuyRefusal> {
+        self.can_buy(payer)?;
+        gift_cost(self.catalog, self.players, payer, (weapon, receiver))
     }
 
     pub fn can_buy(&self, player: PlayerId) -> Result<(), BuyRefusal> {
@@ -93,6 +135,10 @@ impl Match {
                 BuyRequest::Sell(Item::Weapon(weapon)) => self.sell_weapon(player, weapon, events),
                 BuyRequest::Sell(Item::Armor(tier)) => self.sell_armor(player, tier, events),
                 BuyRequest::Sell(Item::Ability(slot)) => self.sell_charge(player, slot, events),
+                BuyRequest::Ask(weapon) => self.ask(player, weapon),
+                BuyRequest::BuyFor(weapon, receiver) => {
+                    self.buy_for(player, (weapon, receiver), events)
+                }
             });
         if let Err(reason) = outcome {
             events.push(Event::BuyRefused {
@@ -106,6 +152,39 @@ impl Match {
     fn buy_context(&self, player: PlayerId, input: &TickInput) -> Result<(), BuyRefusal> {
         let in_zone = input.players.get(player).is_some_and(|f| f.in_buy_zone);
         shop_open(self.phase, &self.players, player, in_zone).map(|_| ())
+    }
+
+    fn ask(&mut self, player: PlayerId, weapon: WeaponId) -> Result<(), BuyRefusal> {
+        let entry = self.catalog.weapon(weapon).ok_or(BuyRefusal::NotForSale)?;
+        if entry.slot != WeaponSlot::Primary {
+            return Err(BuyRefusal::NotForSale);
+        }
+        if self.players[player].primary == Some(weapon) {
+            return Err(BuyRefusal::AlreadyOwned);
+        }
+        self.asks[player] = Some(weapon);
+        Ok(())
+    }
+
+    fn buy_for(
+        &mut self,
+        payer: PlayerId,
+        (weapon, receiver): (WeaponId, PlayerId),
+        events: &mut Vec<Event>,
+    ) -> Result<(), BuyRefusal> {
+        let cost = gift_cost(&self.catalog, &self.players, payer, (weapon, receiver))?;
+        self.pay(payer, cost, events);
+        self.players[receiver].primary = Some(weapon);
+        let ledger = &mut self.ledgers[receiver];
+        ledger.primary_paid = Some(cost);
+        ledger.paid_by = Some(payer);
+        ledger.replaced_primary = None;
+        self.asks[receiver] = None;
+        events.push(Event::GiveWeapon {
+            player: receiver,
+            weapon,
+        });
+        Ok(())
     }
 
     fn take_free_sidearm(
@@ -159,13 +238,18 @@ impl Match {
                 weapon: old,
             });
             match paid {
-                Some(amount) => self.refund(player, amount, events),
+                Some(amount) => {
+                    let payer = self.ledgers[player].paid_by.unwrap_or(player);
+                    self.refund(payer, amount, events);
+                }
                 None => self.ledgers[player].replaced_primary = Some(old),
             }
         }
         self.pay(player, cost, events);
         self.players[player].primary = Some(weapon);
         self.ledgers[player].primary_paid = Some(cost);
+        self.ledgers[player].paid_by = None;
+        self.asks[player] = None;
         events.push(Event::GiveWeapon { player, weapon });
         Ok(())
     }
@@ -181,9 +265,11 @@ impl Match {
             return Err(BuyRefusal::NothingToSell);
         };
         events.push(Event::TakeWeapon { player, weapon });
-        self.refund(player, amount, events);
+        let payer = self.ledgers[player].paid_by.unwrap_or(player);
+        self.refund(payer, amount, events);
         let ledger = &mut self.ledgers[player];
         ledger.primary_paid = None;
+        ledger.paid_by = None;
         let back = ledger.replaced_primary.take();
         self.players[player].primary = back;
         if let Some(weapon) = back {

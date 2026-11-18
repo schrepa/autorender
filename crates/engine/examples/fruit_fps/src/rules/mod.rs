@@ -129,6 +129,8 @@ pub enum Item {
 pub enum BuyRequest {
     Buy(Item),
     Sell(Item),
+    Ask(WeaponId),
+    BuyFor(WeaponId, PlayerId),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -246,6 +248,7 @@ pub struct Player {
     pub abilities: [Ability; 3],
     pub ultimate: Ultimate,
     pub kills: u32,
+    pub round_kills: u32,
     pub deaths: u32,
     pub assists: u32,
 }
@@ -430,12 +433,14 @@ pub struct View<'a> {
     pub loss_streak: [u32; 2],
     pub overtime: bool,
     pub decider: bool,
+    pub held: bool,
     pub players: &'a [Player],
     pub device: &'a Device,
     pub catalog: &'a Catalog,
     ledgers: &'a [Ledger],
     ready: &'a [bool],
     in_zone: &'a [bool],
+    asks: &'a [Option<WeaponId>],
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -473,6 +478,7 @@ impl View<'_> {
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 struct Ledger {
     primary_paid: Option<u32>,
+    paid_by: Option<PlayerId>,
     replaced_primary: Option<WeaponId>,
     armor_paid: Option<u32>,
     replaced_armor: Option<Armor>,
@@ -508,6 +514,8 @@ pub struct Match {
     overtime_rounds: u32,
     ready: Vec<bool>,
     in_zone: Vec<bool>,
+    asks: Vec<Option<WeaponId>>,
+    held: bool,
 }
 
 impl Match {
@@ -542,6 +550,12 @@ impl Match {
             self.apply_ability(*used, &mut events);
         }
         self.advance_cooldowns(&mut events);
+        if self.held {
+            if self.phase == Phase::Live {
+                self.pick_up_device(input, &mut events);
+            }
+            return events;
+        }
         match self.phase {
             Phase::Buy => self.advance_buy(&mut events),
             Phase::Live => self.advance_live(input, &mut events),
@@ -556,6 +570,10 @@ impl Match {
         let mut events = std::mem::take(&mut self.pending);
         self.set_credits(player, credits, CreditReason::Granted, &mut events);
         self.pending = events;
+    }
+
+    pub fn hold(&mut self, held: bool) {
+        self.held = held;
     }
 
     pub fn mark_ready(&mut self, player: PlayerId) {
@@ -582,7 +600,13 @@ impl Match {
         if p.primary != holding.primary {
             let ledger = &mut self.ledgers[holding.player];
             ledger.primary_paid = None;
+            ledger.paid_by = None;
             ledger.replaced_primary = None;
+            if holding.primary.is_some()
+                && let Some(ask) = self.asks.get_mut(holding.player)
+            {
+                *ask = None;
+            }
         }
         p.primary = holding.primary;
         p.sidearm = holding.sidearm;
@@ -602,12 +626,14 @@ impl Match {
             loss_streak: self.loss_streak,
             overtime: self.overtime_rounds > 0,
             decider: self.overtime_rounds > self.catalog.overtime_rounds_before_decider,
+            held: self.held,
             players: &self.players,
             device: &self.device,
             catalog: &self.catalog,
             ledgers: &self.ledgers,
             ready: &self.ready,
             in_zone: &self.in_zone,
+            asks: &self.asks,
         }
     }
 

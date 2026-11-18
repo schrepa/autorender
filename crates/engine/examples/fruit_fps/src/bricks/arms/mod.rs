@@ -30,6 +30,9 @@ pub struct WeaponStats {
     pub held: String,
     pub action: Option<String>,
     pub action_progress: f32,
+    pub swing_step: u32,
+    pub zoom: f32,
+    pub scope_raised: bool,
     pub run_factor: f32,
 }
 
@@ -207,8 +210,8 @@ fn ticks_per_second(time: &FixedTime) -> Option<u32> {
 fn action_name(action: HandAction) -> String {
     match action {
         HandAction::Equip => "equip",
-        HandAction::Swing { heavy: false } => "swing_light",
-        HandAction::Swing { heavy: true } => "swing_heavy",
+        HandAction::Swing { heavy: false, .. } => "swing_light",
+        HandAction::Swing { heavy: true, .. } => "swing_heavy",
         HandAction::Plant => "plant",
         HandAction::Defuse => "defuse",
     }
@@ -324,6 +327,13 @@ fn report(
             held: arms.hand.held.key().to_owned(),
             action: arms.hand.action.map(action_name),
             action_progress: arms.hand.progress,
+            swing_step: match arms.hand.action {
+                Some(HandAction::Swing { step, .. }) => u32::from(step),
+                _ => 0,
+            },
+            zoom: arms.zoom,
+            scope_raised: (arms.loadout.active_gun())
+                .is_some_and(crate::weapons::Gun::scope_raised),
             run_factor: arms.run_factor,
         });
     }

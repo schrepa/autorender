@@ -4,6 +4,7 @@ mod chunks;
 mod gpu;
 mod numbers;
 mod scene;
+mod sets;
 
 use engine::prelude::*;
 use engine_core::{
@@ -82,6 +83,14 @@ stats! {
         pub skipped: u32,
         pub waiting: u32,
         pub vertices: u64,
+        pub skipped_small: u32,
+        pub triangles_submitted: u64,
+        pub sets_loaded: bool,
+        pub sets_unknown: u32,
+        pub sets: bool,
+        pub set_cell: Option<[u32; 2]>,
+        pub kept_by_frustum: u32,
+        pub kept_by_set: u32,
         pub triangles: u64,
         pub materials: u32,
         pub baked: u32,
@@ -114,6 +123,18 @@ impl Brick for LevelBrick {
             .resource::<Lighting>()
             .resource::<GroundMarks>()
             .resource::<scene::Setup>()
+            .resource::<chunks::PieceSizes>()
+            .resource::<sets::VisibleSets>()
+            .join::<SceneComponents>(
+                ComponentKind::of::<sets::LevelSets>("level_sets")
+                    .schema(engine_core::schema_of::<sets::LevelSets>)
+                    .files(sets::LevelSets::files)
+                    .prepare(sets::LevelSets::prepared),
+            )
+            .join::<SceneComponents>(
+                ComponentKind::of::<chunks::LevelPiece>("level_piece")
+                    .schema(engine_core::schema_of::<chunks::LevelPiece>),
+            )
             .draw_kind(KindDecl {
                 kind: LEVEL,
                 needs: Attributes::BASE.with(Attribute::Uv1),
@@ -146,6 +167,8 @@ impl Brick for LevelBrick {
             .systems(Schedule::Presentation, scene::setup)
             .systems(Schedule::Presentation, scene::light)
             .systems(Schedule::Presentation, scene::blobs)
-            .systems(Schedule::Presentation, scene::count);
+            .systems(Schedule::Presentation, scene::count)
+            .systems(Schedule::Presentation, chunks::pieces)
+            .systems(Schedule::Presentation, sets::adopt);
     }
 }

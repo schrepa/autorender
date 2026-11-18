@@ -72,6 +72,13 @@ pub trait World {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WireRelease {
+    Zapped,
+    Broken,
+    Expired,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum CueKind {
     Cast,
     Throw,
@@ -86,7 +93,9 @@ pub enum CueKind {
     TrapPlaced,
     TrapArmed,
     TrapTriggered,
+    WireChained,
     WireZap,
+    WireReleased,
     SensorPlaced,
     Destroyed,
     StrikeWarning,
@@ -189,9 +198,20 @@ pub enum Event {
     Ended {
         effect: EffectId,
     },
+    WireChained {
+        effect: EffectId,
+        actor: ActorId,
+        until: u64,
+    },
+    WireReleased {
+        effect: EffectId,
+        actor: ActorId,
+        why: WireRelease,
+    },
     Cue {
         cue: CueKind,
         ability: AbilityId,
+        owner: ActorId,
         at: Vec3,
         size: f32,
         ticks: u32,
@@ -296,6 +316,8 @@ pub(super) struct Living {
     pub(super) delivery: Delivery,
     pub(super) action: Action,
     pub(super) object_damage: f32,
+    pub(super) ally_damage: f32,
+    pub(super) affects_team: bool,
     pub(super) born: u64,
     pub(super) state: State,
 }
@@ -377,6 +399,7 @@ impl Living {
 pub(super) struct Buff {
     pub(super) actor: ActorId,
     pub(super) effect: EffectId,
+    pub(super) ability: AbilityId,
     pub(super) modifiers: Modifiers,
     pub(super) until: u64,
 }
@@ -411,7 +434,7 @@ impl Blind {
 pub(super) struct Marks {
     pub(super) buffs: BTreeMap<(ActorId, EffectId), Buff>,
     pub(super) blinds: BTreeMap<ActorId, Vec<Blind>>,
-    pub(super) reveals: BTreeMap<(usize, ActorId), u64>,
+    pub(super) reveals: BTreeMap<(usize, ActorId), (u64, AbilityId)>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -437,6 +460,7 @@ struct Run<'a, W: World> {
     sight: &'a [Living],
     marks: &'a mut Marks,
     solid_id_base: u32,
+    owner: ActorId,
     events: Vec<Event>,
     blows: Vec<Blow>,
 }
@@ -480,12 +504,15 @@ impl Effects {
             delivery: ability.delivery,
             action: ability.action,
             object_damage: ability.object_damage,
+            ally_damage: ability.ally_damage,
+            affects_team: ability.affects_team,
             born: tick,
             state: State::Pending,
         });
         vec![Event::Cue {
             cue: CueKind::Cast,
             ability: ability.id,
+            owner: caster.id,
             at: caster.eye,
             size: caster.radius,
             ticks: 0,
@@ -507,6 +534,7 @@ impl Effects {
             sight: &sight,
             marks: &mut self.marks,
             solid_id_base: self.solid_id_base,
+            owner: ActorId(u32::MAX),
             events: Vec::new(),
             blows: Vec::new(),
         };
@@ -576,6 +604,20 @@ impl Effects {
                     actor: living.caster.id,
                 });
             }
+            if let State::Trap(TrapState {
+                chained: Some((held, _)),
+                a,
+                spec,
+                ..
+            }) = living.state
+            {
+                events.extend(released(
+                    (living.id, living.ability, living.caster.id),
+                    held,
+                    WireRelease::Expired,
+                    (a, spec.hit_radius_m),
+                ));
+            }
             events.push(Event::Ended { effect: living.id });
         }
         for buff in std::mem::take(&mut self.marks.buffs).into_values() {
@@ -604,6 +646,12 @@ impl Effects {
         };
         let living = &mut self.livings[index];
         let (owner, team) = (living.caster.id, living.caster.team);
+        let chained = if let State::Trap(trap) = &living.state {
+            trap.chained
+                .map(|(held, _)| (held, trap.a, trap.spec.hit_radius_m))
+        } else {
+            None
+        };
         let (health, at, size, solid) = match &mut living.state {
             State::Wall(WallState {
                 health: Some(health),
@@ -648,10 +696,19 @@ impl Effects {
         events.push(Event::Cue {
             cue: CueKind::Destroyed,
             ability: living.ability,
+            owner,
             at,
             size,
             ticks: 0,
         });
+        if let Some((held, a, radius)) = chained {
+            events.extend(released(
+                (effect, living.ability, owner),
+                held,
+                WireRelease::Broken,
+                (a, radius),
+            ));
+        }
         events.push(Event::Ended { effect });
         self.livings.remove(index);
         events
@@ -663,6 +720,7 @@ impl<W: World> Run<'_, W> {
         self.events.push(Event::Cue {
             cue,
             ability,
+            owner: self.owner,
             at,
             size,
             ticks,
@@ -697,6 +755,7 @@ impl<W: World> Run<'_, W> {
             Buff {
                 actor,
                 effect,
+                ability: living.ability,
                 modifiers,
                 until,
             },
@@ -713,9 +772,11 @@ impl<W: World> Run<'_, W> {
     fn reveal(&mut self, living: &Living, actor: ActorId, until: u64) {
         let team = living.caster.team;
         match self.marks.reveals.get_mut(&(team, actor)) {
-            Some(existing) => *existing = (*existing).max(until),
+            Some(existing) => existing.0 = existing.0.max(until),
             None => {
-                self.marks.reveals.insert((team, actor), until);
+                self.marks
+                    .reveals
+                    .insert((team, actor), (until, living.ability));
                 self.events.push(Event::RevealStarted {
                     actor,
                     team,
@@ -799,9 +860,14 @@ impl<W: World> Run<'_, W> {
             } else {
                 0.0
             };
+            let team_share = if actor.team == living.caster.team {
+                living.ally_damage
+            } else {
+                1.0
+            };
             self.events.push(Event::Damage {
                 target: actor.id,
-                amount: falloff.max + (falloff.min - falloff.max) * share,
+                amount: (falloff.max + (falloff.min - falloff.max) * share) * team_share,
                 by: living.caster.id,
                 ability: living.ability,
             });
@@ -830,6 +896,7 @@ impl<W: World> Run<'_, W> {
     }
 
     fn advance(&mut self, living: &mut Living) {
+        self.owner = living.caster.id;
         loop {
             if living.born > self.tick || living.state == State::Done {
                 return;
@@ -1081,7 +1148,11 @@ impl<W: World> Run<'_, W> {
             {
                 self.events.push(Event::Damage {
                     target: actor.id,
-                    amount,
+                    amount: if enemy {
+                        amount
+                    } else {
+                        amount * living.ally_damage
+                    },
                     by: living.caster.id,
                     ability: living.ability,
                 });
@@ -1096,7 +1167,7 @@ impl<W: World> Run<'_, W> {
                     ability: living.ability,
                 });
             }
-            if enemy && slows_or_blinds {
+            if (enemy || living.affects_team) && slows_or_blinds {
                 self.buff(living, actor.id, hostile, self.tick + 1);
             }
             if enemy && spec.reveal {
@@ -1123,6 +1194,9 @@ impl<W: World> Run<'_, W> {
 
     fn trap_step(&mut self, living: &Living, trap: &mut TrapState, age: u32) -> Step {
         if trap.spec.life_ticks.is_some_and(|life| age >= life) {
+            if let Some((held, _)) = trap.chained {
+                self.release(living, trap, held, WireRelease::Expired);
+            }
             return Step::Finish;
         }
         if !trap.armed {
@@ -1160,8 +1234,13 @@ impl<W: World> Run<'_, W> {
             actor: actor.id,
         });
         if let Some(chain) = trap_now.spec.chain {
+            self.events.push(Event::WireChained {
+                effect: living.id,
+                actor: actor.id,
+                until: self.tick + u64::from(chain.windup_ticks),
+            });
             self.cue(
-                CueKind::TrapTriggered,
+                CueKind::WireChained,
                 living.ability,
                 actor.feet,
                 trap_now.spec.hit_radius_m,
@@ -1204,6 +1283,7 @@ impl<W: World> Run<'_, W> {
         };
         trap.chained = Some((held, since));
         let Some(actor) = self.present(held).copied() else {
+            self.release(living, trap, held, WireRelease::Expired);
             return Step::Finish;
         };
         let away = segment_distance(trap.a, trap.b, actor.feet, actor.top());
@@ -1242,7 +1322,17 @@ impl<W: World> Run<'_, W> {
             trap.spec.hit_radius_m,
             trap.spec.slow_ticks,
         );
+        self.release(living, trap, held, WireRelease::Zapped);
         Step::Finish
+    }
+
+    fn release(&mut self, living: &Living, trap: &TrapState, held: ActorId, why: WireRelease) {
+        self.events.extend(released(
+            (living.id, living.ability, living.caster.id),
+            held,
+            why,
+            (trap.a, trap.spec.hit_radius_m),
+        ));
     }
 
     fn sensor_step(&mut self, living: &Living, sensor: &mut SensorState, age: u32) -> Step {
@@ -1704,7 +1794,7 @@ impl<W: World> Run<'_, W> {
             blinds.retain(|blind| blind.start + blind.ticks as u64 > tick);
             alive(*actor) && !blinds.is_empty()
         });
-        self.marks.reveals.retain(|(team, actor), until| {
+        self.marks.reveals.retain(|(team, actor), (until, _)| {
             let keep = *until > tick && alive(*actor);
             if !keep {
                 ended.push(Event::RevealEnded {
@@ -1716,6 +1806,26 @@ impl<W: World> Run<'_, W> {
         });
         self.events.append(&mut ended);
     }
+}
+
+fn released(
+    (effect, ability, owner): (EffectId, AbilityId, ActorId),
+    actor: ActorId,
+    why: WireRelease,
+    (at, size): (Vec3, f32),
+) -> Vec<Event> {
+    let mut events = vec![Event::WireReleased { effect, actor, why }];
+    if why != WireRelease::Zapped {
+        events.push(Event::Cue {
+            cue: CueKind::WireReleased,
+            ability,
+            owner,
+            at,
+            size,
+            ticks: 0,
+        });
+    }
+    events
 }
 
 fn finish_at(age: u32, ticks: u32) -> Step {

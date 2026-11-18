@@ -21,7 +21,7 @@ pub struct LoadoutInput {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum HandMotion {
     Equip,
-    Swing { heavy: bool },
+    Swing { heavy: bool, step: u8 },
 }
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -66,6 +66,8 @@ pub struct Loadout {
     melee_total: u32,
     melee_swing: Option<bool>,
     melee_armed: bool,
+    melee_step: u8,
+    melee_idle: u32,
     rng: ShotRng,
     pace: Pace,
 }
@@ -85,6 +87,8 @@ impl Loadout {
             melee_total: 0,
             melee_swing: None,
             melee_armed: false,
+            melee_step: 0,
+            melee_idle: 0,
             rng,
             pace: Pace::SAME,
         };
@@ -139,9 +143,12 @@ impl Loadout {
                 (HandMotion::Equip, left, total)
             }
             None if self.active == Slot::Melee && self.melee_wait > 0 => {
-                let motion = self
-                    .melee_swing
-                    .map_or(HandMotion::Equip, |heavy| HandMotion::Swing { heavy });
+                let motion =
+                    self.melee_swing
+                        .map_or(HandMotion::Equip, |heavy| HandMotion::Swing {
+                            heavy,
+                            step: self.melee_step,
+                        });
                 (motion, self.melee_wait, self.melee_total)
             }
             None => return None,
@@ -177,8 +184,13 @@ impl Loadout {
         order.get(next).copied().filter(|slot| *slot != self.active)
     }
 
-    pub fn view_zoom(&self, numbers: &WeaponNumbers) -> f32 {
-        self.active_gun().map_or(1.0, |gun| gun.view_zoom(numbers))
+    pub fn view_zoom(&self, numbers: &WeaponNumbers, ticks_per_second: u32) -> f32 {
+        self.active_gun()
+            .map_or(1.0, |gun| gun.view_zoom(numbers, ticks_per_second))
+    }
+
+    pub fn scoped(&self) -> bool {
+        self.active_gun().is_some_and(|gun| gun.scope_level() > 0)
     }
 
     pub fn view<'a>(&self, numbers: &'a WeaponNumbers, stance: Stance) -> LoadoutView<'a> {
@@ -315,8 +327,17 @@ impl Loadout {
         } else if input.fire_held && self.melee_armed {
             (false, melee.swing_seconds)
         } else {
+            self.melee_idle = self.melee_idle.saturating_add(1);
             return None;
         };
+        let chained = self.melee_swing == Some(false)
+            && self.melee_idle <= ticks(melee.combo_reset_seconds, ticks_per_second);
+        self.melee_step = if heavy || !chained {
+            0
+        } else {
+            (self.melee_step + 1) % melee.combo_swings.max(1)
+        };
+        self.melee_idle = 0;
         self.melee_armed = false;
         self.melee_wait = ticks(seconds, ticks_per_second);
         self.melee_total = self.melee_wait;

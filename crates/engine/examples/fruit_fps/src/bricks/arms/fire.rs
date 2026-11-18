@@ -133,7 +133,9 @@ pub(super) fn act(
         let recoil = arms.loadout.recoil();
         offsets.recoil_pitch_radians = recoil.pitch_radians;
         offsets.recoil_yaw_radians = recoil.yaw_radians;
-        offsets.zoom = arms.loadout.view_zoom(&numbers.weapons);
+        arms.zoom = arms.loadout.view_zoom(&numbers.weapons, tps);
+        arms.scoped = arms.loadout.scoped();
+        offsets.zoom = arms.zoom;
         let applied = if arms.busy {
             numbers.combat.device_hand.busy_run_speed_factor
         } else {
@@ -163,20 +165,7 @@ pub(super) fn act(
         pending.extend(wounding);
     }
     book.shots += events.shots.len() as u64;
-    let walls = (events.shots.iter())
-        .filter(|shot| matches!(shot.weapon, Weapon::Gun(_)))
-        .flat_map(|shot| [shot.kind, shot.pierced_kind])
-        .flatten();
-    for kind in walls {
-        let known = numbers
-            .combat
-            .surfaces
-            .keys()
-            .any(|name| Kind::named(name) == kind);
-        if !known && !book.unknown_surfaces.contains(&kind) {
-            book.unknown_surfaces.push(kind);
-        }
-    }
+    note_walls(&mut book, numbers, &events.shots);
     if let Some(powers) = powers.as_deref() {
         for wounding in &mut pending {
             wounding.damage *= powers.damage_taken(wounding.victim);
@@ -383,7 +372,7 @@ fn hand_of(numbers: &ArmsNumbers, tps: u32, role: Role, arms: &Arms) -> Hand {
         held,
         action: moving.map(|moving| match moving.motion {
             HandMotion::Equip => HandAction::Equip,
-            HandMotion::Swing { heavy } => HandAction::Swing { heavy },
+            HandMotion::Swing { heavy, step } => HandAction::Swing { heavy, step },
         }),
         progress: moving.map_or(0.0, |moving| moving.progress),
         seconds: moving.map_or(0.0, |moving| moving.seconds),
@@ -449,6 +438,23 @@ fn handled(events: &mut ArmsEvents, slot: u32, arms: &Arms, ticked: &LoadoutTick
             .filter(|(raised, _)| *raised)
             .map(|(_, kind)| HandlingEvent { slot, weapon, kind }),
     );
+}
+
+fn note_walls(book: &mut Book, numbers: &ArmsNumbers, shots: &[ShotEvent]) {
+    let walls = (shots.iter())
+        .filter(|shot| matches!(shot.weapon, Weapon::Gun(_)))
+        .flat_map(|shot| [shot.kind, shot.pierced_kind])
+        .flatten();
+    for kind in walls {
+        let known = numbers
+            .combat
+            .surfaces
+            .keys()
+            .any(|name| Kind::named(name) == kind);
+        if !known && !book.unknown_surfaces.contains(&kind) {
+            book.unknown_surfaces.push(kind);
+        }
+    }
 }
 
 fn pace_of(powers: Option<&Powers>, slot: u32) -> Pace {
@@ -788,6 +794,7 @@ impl Wounds {
                 armor_lost: hurt.armor_lost,
                 health: hurt.after.health,
                 armor: hurt.after.armor,
+                armor_broke: hurt.armor_lost > 0.0 && hurt.after.armor <= 0.0,
                 killed: hurt.killed,
                 headshot: hurt.headshot,
             });

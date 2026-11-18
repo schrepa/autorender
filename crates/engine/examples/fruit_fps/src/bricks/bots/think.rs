@@ -6,25 +6,26 @@ use super::senses::{self, Events, Noise, ReadTicks, Sight, Who};
 use super::shop::{Counter, Shopping};
 use super::world::{BotWorld, Thrower};
 use super::{Book, BotsTest, LevelChoice, Loaded, Reach, level_of};
-use crate::abilities::{self as powers_maths, ActorId};
+use crate::abilities::{self as powers_maths, ActorId, DrawKind, DrawShape, OrbState};
 use crate::bots::{
-    self, Brain, BuySense, Call, Gait as BotGait, Heard, Intent, MatchSense, Mate, Member, Places,
-    Purchase, Role, Seen, Sense, Smoke, Squad, SquadSense, WeaponChoice,
+    self, Brain, BuySense, Call, Gait as BotGait, Heard, Intent, Level, MatchSense, Mate, Member,
+    ObjectKind, ObjectSense, OrbSense, Places, Purchase, Role, Seen, Sense, Smoke, SoundKind,
+    Squad, SquadSense, WeaponChoice,
 };
 use crate::play::actors::{Actor, Alive, Body, Equip, Gait, Health, Human, Wish};
 use crate::play::arms::{Arms, Drops};
-use crate::play::bots::{BotMind, BotMinds, WishSummary};
+use crate::play::bots::{BotMind, BotMinds, TeamSight, WishSummary};
 use crate::play::events::arms::ArmsEvents;
 use crate::play::events::body::BodyEvents;
 use crate::play::events::powers::PowerEvents;
 use crate::play::events::round::RoundEvents;
 use crate::play::flow::Flow;
-use crate::play::paths::{Hazards, Paths};
+use crate::play::paths::{HazardKind, Hazards, Paths};
 use crate::play::powers::Powers;
 use crate::play::round::Round;
 use crate::play::view::ViewOffsets;
 use crate::play::world::Arena;
-use crate::rules::{AbilitySlot, Phase, Team, View};
+use crate::rules::{AbilitySlot, BuyRequest, Phase, Team, View};
 use crate::weapons::forward;
 
 const BRAIN_MIX: u64 = 0x9E37_79B9_7F4A_7C15;
@@ -60,6 +61,10 @@ pub(super) struct Minds {
     heard: Vec<Heard>,
     mates: Vec<Mate>,
     smokes: Vec<Smoke>,
+    hazards: [Vec<bots::Hazard>; 2],
+    orbs: Vec<OrbSense>,
+    reserved: Vec<(u32, u32)>,
+    objects: Vec<ObjectSense>,
     members: [Vec<Member>; 2],
     shopping: Shopping,
 }
@@ -219,7 +224,7 @@ fn ensure_brains(state: &mut Minds, round: &Round, choice: LevelChoice) {
     }
 }
 
-fn member(who: &Who, view: &View<'_>, carrier: Option<u32>) -> Member {
+fn member(who: &Who, view: &View<'_>, carrier: Option<u32>, tools: u16) -> Member {
     let player = view.players.get(who.slot as usize);
     let role = player
         .and_then(|player| view.catalog.characters.get(player.character))
@@ -239,6 +244,7 @@ fn member(who: &Who, view: &View<'_>, carrier: Option<u32>) -> Member {
         role,
         carrying_device: carrier == Some(who.slot),
         gun_cost,
+        tools,
     }
 }
 
@@ -248,8 +254,12 @@ fn plan(state: &mut Minds, ctx: &Ctx<'_>, games: &[MatchSense; 2]) {
         let index = team.index();
         let members = &mut state.members[index];
         members.clear();
-        for who in state.whos.iter().filter(|who| who.team == team) {
-            members.push(member(who, ctx.view, carrier));
+        for (who, reach) in state.whos.iter().zip(&state.reaches) {
+            if who.team != team {
+                continue;
+            }
+            let tools = bots::tools_of(&senses::abilities_of(ctx.powers, who.slot, *reach));
+            members.push(member(who, ctx.view, carrier, tools));
         }
         let enemies_alive = state
             .whos
@@ -329,6 +339,12 @@ fn think_one(
     gather(state, ctx, &who);
     let order = state.squads[index].as_ref()?.order(me);
     let player = ctx.view.players.get(who.slot as usize);
+    let level = state
+        .brains
+        .get(who.slot as usize)
+        .and_then(Option::as_ref)
+        .map(|brain| brain.debug().level);
+    fill_objects(&mut state.objects, ctx, &who, level);
     let sense = Sense {
         me,
         alive: who.alive,
@@ -350,15 +366,20 @@ fn think_one(
         mates: &state.mates,
         calls: &state.calls[index],
         smokes: &state.smokes,
+        hazards: &state.hazards[index],
+        revealed: ctx.powers.is_some_and(|powers| {
+            let enemy = if who.team == Team::First {
+                Team::Second
+            } else {
+                Team::First
+            };
+            powers.revealed(who.slot, enemy)
+        }),
+        orbs: &state.orbs,
+        objects: &state.objects,
         game: games[index],
         order,
         buy: BuySense {
-            gift_to: state
-                .shopping
-                .gift_to(who.slot as usize)
-                .and_then(|seat| state.whos.iter().find(|w| w.slot as usize == seat))
-                .filter(|w| w.alive)
-                .map(|w| w.feet),
             device_asked: asked_for_device(state, ctx, &who),
         },
     };
@@ -398,6 +419,7 @@ fn think_one(
         drops: ctx.drops,
         arena: ctx.arena,
         loaded: ctx.loaded,
+        reserved: &state.reserved,
     };
     let slot = who.slot as usize;
     let before = state.picking.get(slot).copied().unwrap_or(false);
@@ -409,6 +431,153 @@ fn think_one(
         state.next_calls[index].push(call);
     }
     Some(intent)
+}
+
+fn read_powers(state: &mut Minds, ctx: &Ctx<'_>) {
+    if let Some(powers) = ctx.powers {
+        state.noises.retain(|noise| {
+            noise.kind != SoundKind::Step || powers.modifiers(noise.slot).speed >= 1.0
+        });
+    }
+    state.orbs.clear();
+    if let Some(powers) = ctx.powers {
+        state.orbs.extend(powers.orbs().iter().map(|orb| OrbSense {
+            at: orb.at,
+            waiting: orb.state == OrbState::Waiting,
+        }));
+    }
+}
+
+fn read_hazards(state: &mut Minds, hazards: Option<&Hazards>) {
+    state.smokes.clear();
+    state.hazards.iter_mut().for_each(Vec::clear);
+    let Some(hazards) = hazards else {
+        return;
+    };
+    state
+        .smokes
+        .extend(hazards.smokes.iter().map(|smoke| Smoke {
+            center: smoke.centre,
+            radius: smoke.radius,
+        }));
+    for (out, team) in state.hazards.iter_mut().zip(&hazards.teams) {
+        out.extend(
+            team.iter()
+                .filter(|hazard| {
+                    matches!(
+                        hazard.kind,
+                        HazardKind::Damage | HazardKind::Strike | HazardKind::Slow
+                    )
+                })
+                .map(|hazard| bots::Hazard {
+                    center: hazard.centre,
+                    radius: hazard.radius,
+                }),
+        );
+    }
+}
+
+fn reserve_gifts(state: &mut Minds, ctx: &Ctx<'_>) {
+    state.reserved.clear();
+    let Some(drops) = ctx.drops else {
+        return;
+    };
+    let players = ctx.view.players;
+    for item in &drops.items {
+        let Some(by) = item.by else {
+            continue;
+        };
+        let Some(giver) = state.whos.iter().find(|w| w.slot == by && w.human) else {
+            continue;
+        };
+        let receiver = state
+            .whos
+            .iter()
+            .filter(|w| w.alive && w.team == giver.team && w.slot != by && !w.gun.has_primary)
+            .filter_map(|w| players.get(w.slot as usize).map(|p| (p.credits, w.slot)))
+            .min()
+            .map(|(_, slot)| slot);
+        if let Some(receiver) = receiver {
+            state.reserved.push((item.id, receiver));
+        }
+    }
+}
+
+fn team_sight(state: &Minds, ctx: &Ctx<'_>, sight_out: &mut TeamSight) {
+    let sight = Sight {
+        arena: ctx.arena,
+        powers: ctx.powers,
+        loaded: ctx.loaded,
+    };
+    let carrier = senses::carrier(ctx.round);
+    for team in 0..2 {
+        sight_out.seen[team].clear();
+        for viewer in state
+            .whos
+            .iter()
+            .filter(|w| w.alive && w.team.index() == team)
+        {
+            for target in state
+                .whos
+                .iter()
+                .filter(|t| t.alive && t.team.index() != team)
+            {
+                if senses::seen(&sight, viewer, target, carrier).is_some() {
+                    sight_out.seen[team].push((target.slot, viewer.slot));
+                    let last = &mut sight_out.last[team];
+                    match last.iter_mut().find(|l| l.0 == target.slot) {
+                        Some(entry) => *entry = (target.slot, ctx.tick, target.feet),
+                        None => last.push((target.slot, ctx.tick, target.feet)),
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn fill_objects(out: &mut Vec<ObjectSense>, ctx: &Ctx<'_>, who: &Who, level: Option<Level>) {
+    out.clear();
+    let (Some(powers), Some(level)) = (ctx.powers, level) else {
+        return;
+    };
+    let play = &ctx.loaded.bots.play;
+    let notice = ctx.loaded.bots.level(level).notice_wire;
+    let team = who.team.index();
+    for drawn in powers.drawables() {
+        let kind = match drawn.kind {
+            DrawKind::Trap => ObjectKind::Trap,
+            DrawKind::Wire => ObjectKind::Wire,
+            DrawKind::Sensor => ObjectKind::Sensor,
+            DrawKind::Wall => ObjectKind::Wall,
+            DrawKind::Projectile
+            | DrawKind::Smoke
+            | DrawKind::Zone
+            | DrawKind::Curtain
+            | DrawKind::StrikeMark => continue,
+        };
+        let at = match drawn.shape {
+            DrawShape::Sphere { centre, .. } | DrawShape::Box { centre, .. } => centre,
+            DrawShape::Segment { a, .. } => a,
+        };
+        let enemy = drawn.team != team;
+        if (at - who.eye).length() > play.object_shoot_m || !ctx.arena.sees(who.eye, at) {
+            continue;
+        }
+        if kind == ObjectKind::Wire && enemy {
+            let mix = u64::from(who.slot)
+                .wrapping_mul(0x9E37_79B9)
+                .wrapping_add(u64::from(drawn.effect.0).wrapping_mul(0x85EB_CA6B));
+            if (mix % 1000) as f32 / 1000.0 >= notice {
+                continue;
+            }
+        }
+        out.push(ObjectSense {
+            id: drawn.effect.0,
+            kind,
+            at,
+            enemy,
+        });
+    }
 }
 
 fn asked_for_device(state: &Minds, ctx: &Ctx<'_>, carrier: &Who) -> bool {
@@ -449,7 +618,7 @@ fn cast_of(slot: usize) -> Option<AbilitySlot> {
     .copied()
 }
 
-fn apply(wish: &mut Wish, intent: &Intent, fired_before: bool, shopping: &Shopping, slot: u32) {
+fn apply(wish: &mut Wish, intent: &Intent, fired_before: bool, buys: Vec<BuyRequest>) {
     let still = intent.gait == BotGait::Still;
     let flat = Vec3::new(intent.wish.x, 0.0, intent.wish.z);
     *wish = Wish {
@@ -470,24 +639,18 @@ fn apply(wish: &mut Wish, intent: &Intent, fired_before: bool, shopping: &Shoppi
         fire_held: intent.fire,
         fire_pressed: intent.fire && !fired_before,
         reload: intent.reload,
-        drop: intent.drop_device || intent.drop_gun,
+        drop: intent.drop_device,
         cycle: 0,
         ready: false,
         scope: intent.scope,
         equip: if intent.drop_device {
             Some(Equip::Device)
-        } else if intent.drop_gun {
-            Some(equip_of(WeaponChoice::Primary))
         } else {
             intent.switch.map(equip_of)
         },
-        interact_held: intent.plant || intent.defuse,
+        interact_held: intent.plant || intent.defuse || intent.interact,
         cast: intent.ability.and_then(|ability| cast_of(ability.slot)),
-        buys: match intent.buy {
-            Purchase::Nothing => Vec::new(),
-            Purchase::Gift => shopping.requests(slot as usize, true),
-            Purchase::Own => shopping.requests(slot as usize, false),
-        },
+        buys,
         buy_menu: false,
         scoreboard: false,
     };
@@ -513,7 +676,12 @@ fn write(state: &mut Minds, actors: &mut Query<Row<'_>>) {
         match state.intents.iter().find(|(at, _)| *at == actor.slot) {
             Some((_, intent)) => {
                 let before = state.fired.get(slot).copied().unwrap_or(false);
-                apply(&mut wish, intent, before, &state.shopping, actor.slot);
+                let buys = state.shopping.requests(slot, intent.buy == Purchase::Own);
+                state.gifts += buys
+                    .iter()
+                    .filter(|buy| matches!(buy, BuyRequest::BuyFor(..)))
+                    .count() as u32;
+                apply(&mut wish, intent, before, buys);
                 if let Some(fired) = state.fired.get_mut(slot) {
                     *fired = intent.fire;
                 }
@@ -521,7 +689,6 @@ fn write(state: &mut Minds, actors: &mut Query<Row<'_>>) {
                     wish.interact_held = true;
                 }
                 state.drops += u32::from(intent.drop_device);
-                state.gifts += u32::from(intent.drop_gun);
                 state.wishes.push((actor.slot, summary(&wish)));
             }
             None => rest(&mut wish),
@@ -675,17 +842,12 @@ pub(super) fn think(
         loaded,
         &mut state.noises,
     );
-    state.smokes.clear();
-    if let Some(hazards) = facts.hazards.as_deref() {
-        state
-            .smokes
-            .extend(hazards.smokes.iter().map(|smoke| Smoke {
-                center: smoke.centre,
-                radius: smoke.radius,
-            }));
-    }
+    read_powers(state, &ctx);
+    read_hazards(state, facts.hazards.as_deref());
     let games = [0, 1].map(|team| senses::match_sense(round, view, places, view.sides[team]));
     let before = facts.paths.counts();
+    team_sight(state, &ctx, &mut minds.sight);
+    reserve_gifts(state, &ctx);
     plan(state, &ctx, &games);
     let roles = |slot: u32| {
         state

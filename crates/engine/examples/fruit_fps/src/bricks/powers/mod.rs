@@ -10,6 +10,8 @@ use engine::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use std::collections::BTreeMap;
+
 use crate::abilities::{AbilityBook, AbilityId, OrbNumbers};
 use crate::play::events::powers::PowerEvents;
 use crate::play::numbers::Numbers;
@@ -235,6 +237,7 @@ struct Book {
     orb_problem: Option<String>,
     recent_orbs: Vec<OrbEventStat>,
     cast_at_done: Option<u32>,
+    hurt: BTreeMap<u32, u64>,
 }
 
 pub struct PowersBrick;

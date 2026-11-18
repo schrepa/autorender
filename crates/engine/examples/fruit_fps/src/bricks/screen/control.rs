@@ -4,10 +4,10 @@ use engine_core::Closing;
 
 use crate::play::flow::{Flow, Stage};
 use crate::play::numbers::{KeyMap, Numbers};
-use crate::play::screen::{Card, HudFacts, ScreenBuys, ScreenDraw, ScreenState, Shown};
+use crate::play::screen::{Card, HudFacts, Reticle, ScreenBuys, ScreenDraw, ScreenState, Shown};
 use crate::play::sound::Volume;
 use crate::play::view::Controls;
-use crate::rules::Phase;
+use crate::rules::{BuyRequest, Phase};
 
 use super::layout::{CardList, Layout};
 use super::menu::{self, MenuState, Nav, Options, OptionsWrite, Values};
@@ -51,6 +51,19 @@ pub(super) fn card(facts: &HudFacts, (list, index): (CardList, usize)) -> Option
         CardList::Weapons => facts.buy.weapons.get(index),
         CardList::Armor => facts.buy.armor.get(index),
         CardList::Abilities => facts.buy.abilities.get(index),
+        CardList::Team => None,
+    }
+}
+
+fn actions(
+    facts: &HudFacts,
+    (list, index): (CardList, usize),
+) -> (Option<BuyRequest>, Option<BuyRequest>) {
+    match list {
+        CardList::Team => (facts.buy.team.get(index).and_then(|mate| mate.give), None),
+        CardList::Weapons | CardList::Armor | CardList::Abilities => {
+            card(facts, (list, index)).map_or((None, None), |found| (found.buy, found.sell))
+        }
     }
 }
 
@@ -80,12 +93,12 @@ fn buying(
             book.buys += 1;
         }
     };
-    if let Some(found) = over.and_then(|over| card(facts, over)) {
+    if let Some((take, give_back)) = over.map(|over| actions(facts, over)) {
         if KeyMap::pressed(devices, &keys.take) {
-            asked(found.buy);
+            asked(take);
         }
         if KeyMap::pressed(devices, &keys.give_back) {
-            asked(found.sell);
+            asked(give_back);
         }
     }
     for (binding, found) in keys.pick.iter().zip(facts.cards()) {
@@ -127,6 +140,14 @@ fn options_facts(
     menu::slider_facts(&mut settings.sliders, &source.menu.sliders, values);
     settings.crosshair = values.options.crosshair as usize;
     settings.invert = values.controls.invert_pitch;
+    let options = &values.options;
+    settings.reticle = Reticle {
+        gap: options.crosshair_gap,
+        length: options.crosshair_length,
+        thickness: options.crosshair_thickness,
+        outline: options.crosshair_outline,
+        dot: options.crosshair_dot,
+    };
     let color = source
         .menu
         .crosshairs
@@ -271,5 +292,8 @@ pub(super) fn control(
         for (index, card) in cards.iter_mut().enumerate() {
             card.focus = hovered == Some((list, index));
         }
+    }
+    for (index, mate) in facts.buy.team.iter_mut().enumerate() {
+        mate.focus = hovered == Some((CardList::Team, index));
     }
 }

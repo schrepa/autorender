@@ -1,8 +1,8 @@
 use crate::play::screen::{
-    AbilityFacts, ActionFacts, BoardRow, BuyFacts, Card, CastFacts, FeedLine, HudFacts, MapItem,
-    Mate, MenuFacts, MinimapFacts, OrbFacts, PickupFacts, PlaceFacts, PlateFacts, PlayerFacts,
-    PointFacts, ResultFacts, RoundFacts, SpectateFacts, StatusFacts, TeamFacts, Tone, WeaponFacts,
-    WeaponStats,
+    AbilityFacts, ActionFacts, BoardRow, BuyFacts, Card, CastFacts, DamageMark, FeedLine, HudFacts,
+    KillFacts, MapItem, Mate, MenuFacts, MinimapFacts, OrbFacts, PickupFacts, PlaceFacts,
+    PlateFacts, PlayerFacts, PointFacts, ResultFacts, RoundFacts, SpectateFacts, StatusFacts,
+    TeamFacts, Tone, UltFacts, WeaponFacts, WeaponStats,
 };
 use crate::rules::{AbilitySlot, ArmorTier, BuyRequest, Item, Phase, WeaponId};
 
@@ -70,7 +70,7 @@ fn line(
         world: weapon == "world_fall",
         killer_char: format!("char_{}", killer.2),
         victim_char: format!("char_{}", victim.2),
-        wall: false,
+        ..FeedLine::default()
     }
 }
 
@@ -105,9 +105,9 @@ fn card(
     }
 }
 
-fn weapons(words: &Words) -> Vec<Card> {
+fn weapons() -> Vec<Card> {
     let weapons = [
-        ("sidearm", "Pip", words.free.as_str(), true, true),
+        ("sidearm", "Pip", "0", true, true),
         ("smg", "Zest", "1,600", false, true),
         ("rifle", "Rind", "2,900", false, true),
         ("sniper", "Stem", "4,700", false, false),
@@ -190,7 +190,7 @@ fn buy(words: &Words) -> BuyFacts {
     BuyFacts {
         time: 14.0,
         time_low: false,
-        weapons: weapons(words),
+        weapons: weapons(),
         armor: armor
             .into_iter()
             .map(|(tier, name, icon, price, points, owned)| Card {
@@ -218,8 +218,18 @@ fn buy(words: &Words) -> BuyFacts {
                 icon: format!("char_{fruit}"),
                 credits,
                 can_rifle: credits >= 2900,
+                asked: credits < 1000,
+                ask_icon: if credits < 1000 {
+                    "weapon_rind".to_owned()
+                } else {
+                    String::new()
+                },
+                ask_price: 2900,
+                giveable: credits < 1000,
+                ..Mate::default()
             })
             .collect(),
+        gate: String::new(),
         signature: Card {
             kind: words.signature_free.clone(),
             name: "Split".to_owned(),
@@ -246,6 +256,35 @@ const KEYS: [(&str, &str); 9] = [
     ("give_back", "Mouse Right"),
 ];
 
+fn statuses(words: &Words) -> Vec<StatusFacts> {
+    let status = |kind: &str, label: &String, left: f32| StatusFacts {
+        kind: kind.to_owned(),
+        label: label.clone(),
+        left,
+    };
+    vec![
+        status("chained", &words.status_chained, 0.4),
+        status("slowed", &words.status_slowed, 3.4),
+        status("revealed", &words.status_revealed, 1.2),
+    ]
+}
+
+fn spectating() -> SpectateFacts {
+    SpectateFacts {
+        active: false,
+        name: "Strawberina".to_owned(),
+        icon: "char_strawberry".to_owned(),
+        color: Tone::Attack.key().to_owned(),
+    }
+}
+
+fn damage() -> Vec<DamageMark> {
+    [(1.2, 0.1), (-2.6, 0.6)]
+        .into_iter()
+        .map(|(angle_radians, age)| DamageMark { angle_radians, age })
+        .collect()
+}
+
 fn feed() -> Vec<FeedLine> {
     let (attack, defend) = (Tone::Attack, Tone::Defend);
     vec![
@@ -256,13 +295,30 @@ fn feed() -> Vec<FeedLine> {
             (RIGHT[2], defend, FRUIT[2]),
             true,
         ),
-        line(
-            (RIGHT[3], defend, FRUIT[3]),
-            "weapon_stem",
-            false,
-            (LEFT[2], attack, FRUIT[2]),
-            false,
-        ),
+        FeedLine {
+            assist_char: format!("char_{}", FRUIT[1]),
+            assist_color: defend,
+            assist_more: 1,
+            ..line(
+                (RIGHT[3], defend, FRUIT[3]),
+                "weapon_stem",
+                false,
+                (LEFT[2], attack, FRUIT[2]),
+                false,
+            )
+        },
+        FeedLine {
+            assist_char: format!("char_{}", FRUIT[1]),
+            assist_color: attack,
+            assisted: true,
+            ..line(
+                (LEFT[4], attack, FRUIT[4]),
+                "weapon_rind",
+                false,
+                (RIGHT[0], defend, FRUIT[0]),
+                false,
+            )
+        },
         line(
             (LEFT[3], attack, FRUIT[3]),
             "ability_seed_grenade",
@@ -307,13 +363,15 @@ fn minimap() -> MinimapFacts {
         device: vec![item([-24.0, 12.0], 0.0, None)],
         planted: Vec::new(),
         orbs: vec![item([-14.0, 2.0], 0.0, None), item([14.0, 2.0], 0.0, None)],
-        enemies: vec![
-            item([-23.0, 27.0], 180.0, Some(Tone::Defend)),
-            MapItem {
-                fade: 0.5,
-                ..item([-8.0, 20.0], 200.0, Some(Tone::Defend))
-            },
-        ],
+        enemies: vec![MapItem {
+            icon: "char_orange_defend".to_owned(),
+            ..item([-23.0, 27.0], 0.0, Some(Tone::Defend))
+        }],
+        lost: vec![MapItem {
+            fade: 0.5,
+            radius_m: 1.6,
+            ..item([-8.0, 20.0], 0.0, Some(Tone::Defend))
+        }],
         smokes: vec![MapItem {
             radius_m: 4.5,
             ..item([-17.0, 14.0], 0.0, None)
@@ -349,6 +407,7 @@ fn board(words: &Words) -> [Vec<BoardRow>; 2] {
                 },
                 ult,
                 ult_need: 7,
+                ult_ready: ult >= 7,
                 alive,
                 me: mine && at == 0,
             })
@@ -463,7 +522,7 @@ pub(super) fn demo(words: &Words) -> HudFacts {
         board: board(words),
         result: result(words),
         menu: MenuFacts::default(),
-        spectate: SpectateFacts::default(),
+        spectate: spectating(),
         place: PlaceFacts::default(),
         scope: 0,
         pickup: PickupFacts::default(),
@@ -473,24 +532,21 @@ pub(super) fn demo(words: &Words) -> HudFacts {
             hint: true,
             ..OrbFacts::default()
         },
-        statuses: vec![
-            StatusFacts {
-                kind: "slowed".to_owned(),
-                label: words.status_slowed.clone(),
-                icon: "ability_jam_pool".to_owned(),
-                left: 3.4,
-            },
-            StatusFacts {
-                kind: "revealed".to_owned(),
-                label: words.status_revealed.clone(),
-                icon: "ability_thump".to_owned(),
-                left: 1.2,
-            },
-        ],
+        statuses: statuses(words),
         blind: 0.0,
+        ult: UltFacts {
+            active: true,
+            ally: false,
+            name: "Watermelina".to_owned(),
+            icon: "char_watermelon_defend".to_owned(),
+            ultimate: "Melon Drop".to_owned(),
+            color: Tone::Defend,
+        },
         minimap: minimap(),
-        hit: None,
-        damage: Vec::new(),
+        armor_break: None,
+        kill: KillFacts::default(),
+        scope_ease: 0.0,
+        damage: damage(),
         phase: Some(Phase::Buy),
         live: false,
     }

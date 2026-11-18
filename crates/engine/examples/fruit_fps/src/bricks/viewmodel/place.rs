@@ -2,6 +2,7 @@ use engine::prelude::*;
 use engine_core::math::{clamp, max, min, sin_cos};
 use engine_core::{Mobility, Parent, SceneContext};
 
+use super::hands::Hands;
 use super::{FirstPersonWeapon, ViewModelBrick, ViewModelStats};
 use crate::names::CAMERA;
 use crate::play::actors::{Actor, Alive, Body, Motion, Wish};
@@ -29,6 +30,7 @@ pub(super) struct Held {
     scope: f32,
     lower: f32,
     sway: Vec3,
+    bob: Vec3,
     phase: f32,
     kick_back: f32,
     kick_angle: f32,
@@ -37,6 +39,14 @@ pub(super) struct Held {
     reloading: bool,
     swing: Option<bool>,
     look: Option<(f32, f32)>,
+    hidden: Option<&'static str>,
+    ability: bool,
+}
+
+impl Held {
+    pub(super) fn offset(&self) -> Vec3 {
+        self.sway + self.bob + Vec3::new(0.0, 0.0, self.kick_back)
+    }
 }
 
 fn eased(share: f32) -> f32 {
@@ -66,7 +76,7 @@ fn about_y(angle: f32) -> Quat {
     Quat::from_xyzw(0.0, sin, 0.0, cos)
 }
 
-fn moving(visible: bool) -> Node {
+pub(super) fn moving(visible: bool) -> Node {
     Node {
         visible,
         mobility: Some(Mobility::Moving),
@@ -201,8 +211,14 @@ fn refused(
     };
 }
 
-fn equipped(held: &mut Held, weapon: Option<&'static str>, equip_seconds: f32, delta: f32) -> f32 {
-    if weapon != held.weapon {
+fn equipped(
+    held: &mut Held,
+    (weapon, (ability, returned)): (Option<&'static str>, (bool, bool)),
+    equip_seconds: f32,
+    delta: f32,
+) -> f32 {
+    held.ability = ability;
+    if weapon != held.weapon || returned {
         held.weapon = weapon;
         held.equip_total = equip_seconds;
         held.equip_left = equip_seconds;
@@ -259,7 +275,8 @@ fn bobbing(held: &mut Held, table: &PuppetTable, body: &Body, delta: f32) -> Vec
     };
     let (side, _) = sin_cos(held.phase);
     let (_, twice) = sin_cos(held.phase * 2.0);
-    Vec3::new(bob.side_m * side, bob.up_m * (twice - 1.0) * 0.5, 0.0) * amount
+    held.bob = Vec3::new(bob.side_m * side, bob.up_m * (twice - 1.0) * 0.5, 0.0) * amount;
+    held.bob
 }
 
 fn kicked(held: &mut Held, table: &PuppetTable, (events, slot): (&ArmsEvents, u32), delta: f32) {
@@ -402,7 +419,7 @@ struct Part {
     figure: Figure,
     wanted: FigurePlay,
     placed: Transform,
-    visible: bool,
+    hidden: Option<&'static str>,
     camera: Entity,
 }
 
@@ -417,9 +434,11 @@ fn kept(
         figure,
         wanted,
         placed,
-        visible,
+        hidden,
         camera,
     } = part;
+    let visible = hidden.is_none();
+    held.hidden = hidden;
     let existing = held
         .entity
         .and_then(|entity| parts.get_mut(entity).ok().map(|part| (entity, part)));
@@ -462,13 +481,56 @@ fn kept(
     }
 }
 
+fn zoom_share(arms: &Arms, numbers: &Numbers) -> f32 {
+    let first = numbers
+        .get()
+        .zip(arms.loadout.active_gun())
+        .and_then(|(numbers, gun)| numbers.weapons.gun(gun.kind()).scope.as_ref())
+        .and_then(|scope| scope.zoom.first().copied())
+        .unwrap_or(1.0);
+    if !arms.scoped {
+        0.0
+    } else if first <= 1.0 {
+        1.0
+    } else {
+        clamp((arms.zoom - 1.0) / (first - 1.0), 0.0, 1.0)
+    }
+}
+
+fn hidden(place: &ViewPlace, held: &Held) -> bool {
+    place.hide_from_share.is_some_and(|from| held.scope >= from)
+}
+
+fn hidden_why(
+    alive: bool,
+    (flow, test): (Option<&Flow>, Option<&TestCamera>),
+    (place, held): (&ViewPlace, &Held),
+) -> Option<&'static str> {
+    if !alive {
+        Some("dead")
+    } else if !playing(flow) {
+        Some("not playing")
+    } else if test.is_some_and(|test| test.outside) {
+        Some("free camera")
+    } else if held.ability {
+        Some("ability")
+    } else if hidden(place, held) {
+        Some("scoped")
+    } else {
+        None
+    }
+}
+
 fn stances(
     held: &mut Held,
     table: &PuppetTable,
-    (place, loadout): (Option<&ViewPlace>, Option<&Loadout>),
-    (body, aiming): (&Body, bool),
+    (place, arms, numbers): (Option<&ViewPlace>, Option<&Arms>, &Numbers),
+    (body, powers, slot): (&Body, Option<&Powers>, u32),
     delta: f32,
 ) {
+    let aiming = powers.and_then(|powers| powers.held(slot)).is_some();
+    let loadout = arms.map(|arms| &arms.loadout);
+    let share = arms.map_or(0.0, |arms| zoom_share(arms, numbers));
     let scoped = loadout
         .and_then(Loadout::active_gun)
         .is_some_and(|gun| gun.scope_level() > 0);
@@ -476,11 +538,15 @@ fn stances(
         && body.grounded
         && body.motion == Motion::Running;
     let running = running || aiming;
-    held.scope = toward(
-        held.scope,
-        f32::from(u8::from(scoped)),
-        delta / max(table.view.scope_seconds, delta),
-    );
+    held.scope = if place.is_some_and(|place| place.hide_from_share.is_some()) {
+        share
+    } else {
+        toward(
+            held.scope,
+            f32::from(u8::from(scoped)),
+            delta / max(table.view.scope_seconds, delta),
+        )
+    };
     held.lower = toward(
         held.lower,
         f32::from(u8::from(running)),
@@ -551,7 +617,10 @@ fn published(
         lower: held.lower,
         kick: held.kick_back,
         muzzle: muzzle.map(|at| at.to_array()),
+        bound: stats.bound.take(),
+        hidden: stats.hidden.take(),
         refusal: None,
+        hands: std::mem::take(&mut stats.hands),
     };
     *stats = report;
 }
@@ -566,7 +635,7 @@ type Subject<'a> = (
     bool,
 );
 
-fn subject_of<'a>(watched: Option<&Watched>, humans: &'a Humans) -> Option<Subject<'a>> {
+pub(super) fn subject_of<'a>(watched: Option<&Watched>, humans: &'a Humans) -> Option<Subject<'a>> {
     let entity = watched?.entity?;
     humans.get(entity).ok()
 }
@@ -579,7 +648,7 @@ fn followed(held: &mut Held, entity: Entity) {
     }
 }
 
-fn playing(flow: Option<&Flow>) -> bool {
+pub(super) fn playing(flow: Option<&Flow>) -> bool {
     flow.is_none_or(|flow| flow.stage == Stage::Playing)
 }
 
@@ -587,6 +656,7 @@ type Viewer<'w> = (
     Option<Res<'w, Watched>>,
     Option<Res<'w, TestCamera>>,
     Option<Res<'w, Muzzles>>,
+    Res<'w, Hands>,
 );
 
 fn body_muzzle(
@@ -602,38 +672,61 @@ fn body_muzzle(
 
 type Veiled<'w> = (Option<Res<'w, Flow>>, Option<Res<'w, TestCamera>>);
 
-fn shown_now(flow: Option<&Flow>, test: Option<&TestCamera>) -> bool {
+pub(super) fn shown_now(flow: Option<&Flow>, test: Option<&TestCamera>) -> bool {
     playing(flow) && !test.is_some_and(|test| test.outside)
 }
 
 pub(super) fn veil(
-    (flow, test): Veiled,
+    ((flow, test), scene): (Veiled, Option<Res<SceneContext>>),
     held: Res<Held>,
-    parts: Query<&Node, With<FirstPersonWeapon>>,
-    mut spawner: Spawner<ViewModelBrick>,
+    parts: Query<(&Node, &Drawn), With<FirstPersonWeapon>>,
+    (mut stats, mut spawner): (ResMut<ViewModelStats>, Spawner<ViewModelBrick>),
 ) {
-    if shown_now(flow.as_deref(), test.as_deref()) {
+    let part = held.entity.and_then(|entity| parts.get(entity).ok());
+    let bound = part
+        .and_then(|(_, drawn)| drawn.geometry)
+        .zip(scene.as_deref())
+        .and_then(|(geometry, scene)| {
+            scene
+                .assets
+                .meshes
+                .iter()
+                .find(|(_, handle)| **handle == geometry)
+                .map(|(name, _)| name.clone())
+        });
+    let shown = shown_now(flow.as_deref(), test.as_deref());
+    let hidden = match (shown, test.as_deref().is_some_and(|test| test.outside)) {
+        (true, _) => held.hidden,
+        (false, true) => Some("free camera"),
+        (false, false) => Some("not playing"),
+    }
+    .map(str::to_owned);
+    if stats.bound != bound || stats.hidden != hidden {
+        stats.bound = bound;
+        stats.hidden = hidden;
+    }
+    if shown {
         return;
     }
-    if let Some(entity) = held.entity
-        && parts.get(entity).is_ok_and(|node| node.visible)
+    if let (Some(entity), Some((node, _))) = (held.entity, part)
+        && node.visible
     {
         spawner.insert(entity, moving(false));
     }
 }
 
-fn camera_lit(mut drawn: Drawn) -> Drawn {
+pub(super) fn camera_lit(mut drawn: Drawn) -> Drawn {
     drawn.values.floats = FIELD_AT_CAMERA.to_vec();
     drawn
 }
 
-fn camera_of(scene: &SceneContext) -> Option<Entity> {
+pub(super) fn camera_of(scene: &SceneContext) -> Option<Entity> {
     scene.entities.get(CAMERA).copied()
 }
 
 pub(super) fn place(
     (fixed, numbers, scene, files, (arms_events, flow, powers, tasks)): Reads,
-    (humans, (watched, test, muzzles)): (Humans, Viewer),
+    (humans, (watched, test, muzzles, hands)): (Humans, Viewer),
     mut parts: Parts,
     (mut held, mut view, mut stats, mut moves, mut spawner): Writes,
 ) {
@@ -670,17 +763,21 @@ pub(super) fn place(
     };
     let table = &book.table;
     let delta = fixed.delta_seconds;
-    let loadout = arms.filter(|_| alive).map(|arms| &arms.loadout);
+    let living = arms.filter(|_| alive);
+    let loadout = living.map(|arms| &arms.loadout);
     let (weapon, timing) = chosen(&numbers, loadout, (tasks.as_deref(), actor.slot));
-    let raised = equipped(&mut held, weapon, timing.equip, delta);
+    let ability = (hands.shown, hands.returned);
+    let raised = equipped(&mut held, (weapon, ability), timing.equip, delta);
     let raise = table.view.equip.as_ref().map_or(raised, |_| 1.0);
     let look = weapon.and_then(|weapon| book.weapons.get(weapon).map(|look| (weapon, look)));
     let place = weapon.and_then(|weapon| table.view.weapons.get(weapon));
-    let aiming = powers
-        .as_deref()
-        .and_then(|powers| powers.held(actor.slot))
-        .is_some();
-    stances(&mut held, table, (place, loadout), (body, aiming), delta);
+    stances(
+        &mut held,
+        table,
+        (place, living, &numbers),
+        (body, powers.as_deref(), actor.slot),
+        delta,
+    );
     let yaw = wish.yaw_radians + offsets.map_or(0.0, ViewOffsets::yaw_radians);
     let pitch = wish.pitch_radians + offsets.map_or(0.0, ViewOffsets::pitch_radians);
     swayed(&mut held, table, (yaw, pitch), delta);
@@ -733,7 +830,7 @@ pub(super) fn place(
         figure: look.files.figure.clone(),
         wanted,
         placed,
-        visible: alive && shown_now(flow.as_deref(), test.as_deref()),
+        hidden: hidden_why(alive, (flow.as_deref(), test.as_deref()), (place, &held)),
         camera,
     };
     kept(&mut held, &mut parts, (&mut moves, &mut spawner), part);

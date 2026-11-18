@@ -13,6 +13,8 @@ pub const REVEALED: DrawKind = DrawKind("revealed");
 pub const FIELD_AT_CAMERA: [f32; 8] = [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
 
 pub const HIP: &str = "Hip";
+pub const LEFT_EYE: &str = "L_Eye";
+pub const RIGHT_EYE: &str = "R_Eye";
 pub const RIGHT_ARM: [&str; 3] = ["R_Upperarm", "R_Forearm", "R_Hand"];
 pub const LEFT_ARM: [&str; 3] = ["L_Upperarm", "L_Forearm", "L_Hand"];
 pub const RIGHT_LEG: [&str; 3] = ["R_Thigh", "R_Calf", "R_Foot"];
@@ -53,8 +55,25 @@ impl std::fmt::Debug for FigureBytes {
 pub struct Figure {
     pub skeleton: String,
     pub clips: BTreeMap<String, String>,
+    #[serde(default)]
+    pub forms: Option<Forms>,
     #[serde(skip)]
     pub bytes: FigureBytes,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Forms {
+    pub mid: String,
+    pub far: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Form {
+    #[default]
+    Full,
+    Mid,
+    Far,
 }
 
 impl Figure {
@@ -123,6 +142,14 @@ pub struct UpperLayer {
     pub cue: u32,
     #[serde(default)]
     pub window: Option<[f32; 2]>,
+    #[serde(default)]
+    pub fit_seconds: Option<f32>,
+    #[serde(default)]
+    pub additive: bool,
+    #[serde(default)]
+    pub played_from: Option<String>,
+    #[serde(default)]
+    pub fade_seconds: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -153,9 +180,18 @@ pub struct HandTarget {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
+pub struct ChestFrame {
+    pub joint: String,
+    pub reference: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
 pub struct Hold {
     pub space: HoldSpace,
     pub weight: f32,
+    #[serde(default)]
+    pub chest: Option<ChestFrame>,
     #[serde(default)]
     pub right: Option<HandTarget>,
     #[serde(default)]
@@ -218,6 +254,14 @@ impl FigurePlay {
         if let Some(upper) = &self.upper {
             finite_at_least(upper.speed, 0.0, format!("{path}.upper.speed"))?;
             unit_weight(upper.weight, format!("{path}.upper.weight"))?;
+            finite_at_least(
+                upper.fade_seconds,
+                0.0,
+                format!("{path}.upper.fade_seconds"),
+            )?;
+            if let Some(fit) = upper.fit_seconds {
+                finite_at_least(fit, 0.0, format!("{path}.upper.fit_seconds"))?;
+            }
         }
         if let Some(aim) = &self.aim {
             finite_all(&[aim.pitch, aim.yaw], format!("{path}.aim"))?;
@@ -275,11 +319,23 @@ pub struct FigureJoints {
     #[serde(skip)]
     pub upper_cue: Option<u32>,
     #[serde(skip)]
+    pub upper_rate: f32,
+    #[serde(skip)]
     pub strides: BTreeMap<String, f32>,
     #[serde(skip)]
     pub steps: BTreeMap<String, f32>,
     #[serde(skip)]
+    pub drifts: BTreeMap<String, f32>,
+    #[serde(skip)]
     pub head_top: Option<Vec3>,
+    #[serde(skip)]
+    pub crown: Option<Vec3>,
+    #[serde(skip)]
+    pub hold_shift: Vec3,
+    #[serde(skip)]
+    pub fit: f32,
+    #[serde(skip)]
+    pub rest_eye_m: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -287,6 +343,15 @@ pub struct FigureJoints {
 pub struct Offset {
     pub translation: [f32; 3],
     pub rotation: [f32; 4],
+    pub scale: f32,
+}
+
+impl Offset {
+    pub const STILL: Offset = Offset {
+        translation: [0.0; 3],
+        rotation: [0.0, 0.0, 0.0, 1.0],
+        scale: 1.0,
+    };
 }
 
 #[derive(Component, Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -320,6 +385,7 @@ impl Held {
             .translation
             .iter()
             .chain(&self.offset.rotation)
+            .chain([&self.offset.scale])
             .copied()
             .collect();
         finite_all(&values, format!("{path}.offset"))

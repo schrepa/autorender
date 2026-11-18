@@ -1,5 +1,5 @@
 use engine::prelude::{Component, Resource};
-use engine_core::{Error, ErrorCode, Expected, TextureRef};
+use engine_core::{Error, ErrorCode, Expected, Filter, Sampler, TextureRef};
 use glam::Vec3;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -119,6 +119,143 @@ pub struct LightField {
     pub scale: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MipFilter {
+    Linear,
+    Nearest,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MapFilter {
+    pub anisotropy: u16,
+    pub mip: MipFilter,
+}
+
+impl MapFilter {
+    pub const ENGINE: Self = Self {
+        anisotropy: Sampler::ANISOTROPY,
+        mip: MipFilter::Linear,
+    };
+
+    pub fn checked(&self, path: &str) -> Result<(), String> {
+        if !(1..=16).contains(&self.anisotropy) {
+            return Err(format!(
+                "{path}.anisotropy: {} is not within 1..=16",
+                self.anisotropy
+            ));
+        }
+        if self.anisotropy > 1 && self.mip != MipFilter::Linear {
+            return Err(format!(
+                "{path}: anisotropy {} needs mip \"linear\" (WebGPU allows anisotropy only with linear filters)",
+                self.anisotropy
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn applied(self, sampler: Sampler) -> Sampler {
+        let mip = match self.mip {
+            MipFilter::Linear => Filter::Linear,
+            MipFilter::Nearest => Filter::Nearest,
+        };
+        let linear = sampler.mag_filter == Filter::Linear
+            && sampler.min_filter == Filter::Linear
+            && self.mip == MipFilter::Linear;
+        Sampler {
+            mipmap_filter: sampler.mipmap_filter.map(|_| mip),
+            anisotropy: if linear { self.anisotropy } else { 1 },
+            ..sampler
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Filtering {
+    pub base_color: MapFilter,
+    pub normal: MapFilter,
+    pub orm: MapFilter,
+    pub lightmap: MapFilter,
+    #[serde(rename = "macro")]
+    pub macro_map: MapFilter,
+    pub sky_picture: MapFilter,
+    pub light_field: MapFilter,
+}
+
+impl Default for Filtering {
+    fn default() -> Self {
+        Self {
+            base_color: MapFilter::ENGINE,
+            normal: MapFilter::ENGINE,
+            orm: MapFilter::ENGINE,
+            lightmap: MapFilter::ENGINE,
+            macro_map: MapFilter::ENGINE,
+            sky_picture: MapFilter::ENGINE,
+            light_field: MapFilter::ENGINE,
+        }
+    }
+}
+
+impl Filtering {
+    pub fn checked(&self) -> Result<(), String> {
+        [
+            (self.base_color, "base_color"),
+            (self.normal, "normal"),
+            (self.orm, "orm"),
+            (self.lightmap, "lightmap"),
+            (self.macro_map, "macro"),
+            (self.sky_picture, "sky_picture"),
+            (self.light_field, "light_field"),
+        ]
+        .into_iter()
+        .try_for_each(|(filter, name)| filter.checked(&format!("$.lighting.filtering.{name}")))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct DetailLimit {
+    pub least_px: f32,
+    pub overlap: f32,
+    pub never_m: f32,
+}
+
+impl DetailLimit {
+    pub fn checked(&self) -> Result<(), String> {
+        if !(self.least_px.is_finite() && self.least_px >= 0.0) {
+            return Err(format!(
+                "$.lighting.detail.least_px: {} is not 0 or more",
+                self.least_px
+            ));
+        }
+        if !(0.0..1.0).contains(&self.overlap) {
+            return Err(format!(
+                "$.lighting.detail.overlap: {} is not within 0..1",
+                self.overlap
+            ));
+        }
+        if !(self.never_m.is_finite() && self.never_m > 0.0) {
+            return Err(format!(
+                "$.lighting.detail.never_m: {} is not above 0",
+                self.never_m
+            ));
+        }
+        Ok(())
+    }
+}
+
+impl Default for DetailLimit {
+    fn default() -> Self {
+        Self {
+            least_px: 0.0,
+            overlap: 0.0,
+            never_m: 1.0,
+        }
+    }
+}
+
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Lighting {
     pub lit: bool,
@@ -133,4 +270,7 @@ pub struct Lighting {
     pub ambient: Ambient,
     pub antialias: bool,
     pub field: Option<LightField>,
+    pub filtering: Filtering,
+    pub detail: DetailLimit,
+    pub visible_sets: bool,
 }

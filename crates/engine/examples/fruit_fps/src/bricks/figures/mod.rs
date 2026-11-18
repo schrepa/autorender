@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use crate::names::COLOR_PASS;
 use crate::play::figures::{FIGURE, Figure, FigureJoints, FigurePlay, GROUND, Held, REVEALED};
 use crate::play::light::Light;
+use crate::play::puppet::ShadeMaps;
 
 pub use clock::FigureClocks;
 pub use files::FigureFiles;
@@ -54,10 +55,34 @@ pub struct FigureHead {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct FigureForms {
+    pub entity: String,
+    pub named: bool,
+    pub mid: bool,
+    pub far: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
 pub struct FigureRefused {
     pub entity: String,
     pub part: String,
     pub reason: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, JsonSchema)]
+pub struct FigureView {
+    pub posed: u32,
+    pub drawn: u32,
+    pub out_of_view: u32,
+    pub behind_map: u32,
+    pub held: u32,
+    pub full: u32,
+    pub mid: u32,
+    pub far: u32,
+    pub vertices: u64,
+    pub nearest_m: f32,
+    pub farthest_m: f32,
+    pub unposed: u32,
 }
 
 stats! {
@@ -73,7 +98,11 @@ stats! {
         pub indices: u64,
         pub triangles: u64,
         pub lit: bool,
+        pub revealed: u32,
+        pub view: FigureView,
+        pub maps: Option<ShadeMaps>,
         pub heads: Vec<FigureHead>,
+        pub forms: Vec<FigureForms>,
         pub refused: Vec<FigureRefused>,
     }
 }

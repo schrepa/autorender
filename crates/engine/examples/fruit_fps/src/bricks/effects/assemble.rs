@@ -3,14 +3,19 @@ use engine::prelude::*;
 use glam::Mat3;
 
 use super::gather::{Setup, Spawns, SprayKind, device_spot, view_direction};
-use super::numbers::{BarrierLook, DeviceLook, EffectsNumbers, PropsLook, Spray};
+use super::models::{ShowcaseModels, traps_layout};
+use super::numbers::{
+    BarrierLook, DeviceLook, EffectsNumbers, OrbLook, PropsLook, SmokeLook, Spray,
+};
 use super::{
     Device, EffectsDrawing, EffectsFrame, EffectsShow, EffectsStats, Item, ScreenStats, Show,
 };
+use crate::abilities::OrbState;
 use crate::play::actors::{Body, Human, Wish};
 use crate::play::camera::TestCamera;
 use crate::play::effects::{EffectsFeed, Form, GroundMarks, Look, PropPlace, Shown};
 use crate::play::puppet::DeviceLamp;
+use crate::play::screen::Covered;
 use bevy_ecs::system::SystemParam;
 
 use super::previews::preview_items;
@@ -29,7 +34,8 @@ const FLASH: f32 = 1.0;
 const SPRAY: f32 = 2.0;
 const HALO: f32 = 3.0;
 
-const PANEL: f32 = 0.0;
+const RIND: f32 = 4.0;
+const CURTAIN: f32 = 5.0;
 const GLOWING: f32 = 1.0;
 const BODY: f32 = 2.0;
 const STRAND: f32 = 3.0;
@@ -75,6 +81,59 @@ fn spray_of(look: &EffectsNumbers, kind: SprayKind) -> (&Spray, [f32; 3]) {
         }
         SprayKind::Juice(color) => (&look.juice.spray, color),
         SprayKind::Blast => (&look.blast.spray, look.blast.spray.color),
+        SprayKind::Pieces(color) => (&look.shatter.pieces, color),
+        SprayKind::Sparks(color) => (&look.shatter.sparks, color),
+    }
+}
+
+fn spray_item(
+    spray: &Spray,
+    color: [f32; 3],
+    (at, normal): (Vec3, Vec3),
+    (age, seed, scale): (f32, u32, f32),
+) -> Item {
+    Item {
+        rows: [
+            row(at, age),
+            row(normal, spray.seconds),
+            rgb(color, spray.size_m * scale),
+            [
+                SPRAY,
+                seeded(seed),
+                spray.sprites as f32,
+                spray.speed_mps * scale,
+            ],
+            [
+                spray.gravity_mps2,
+                spray.opacity,
+                spray.spread,
+                spray.streak_seconds,
+            ],
+            [0.0; 4],
+            [0.0; 4],
+            [0.0; 4],
+        ],
+    }
+}
+
+fn flash_item(
+    look: &EffectsNumbers,
+    (at, toward): (Vec3, Vec3),
+    (age, seconds): (f32, f32),
+    (seed, scale): (u32, f32),
+) -> Item {
+    let flash = &look.flash;
+    Item {
+        rows: [
+            row(at, age),
+            row(toward, seconds),
+            rgb(flash.color, flash.size_m * scale),
+            [FLASH, seeded(seed), 1.0, 0.0],
+            [0.0; 4],
+            [0.0, flash.points, 0.0, 0.0],
+            [0.0; 4],
+            [0.0; 4],
+        ],
     }
 }
 
@@ -104,23 +163,16 @@ fn glow_items(
             });
         }
     }
-    let flash = &look.flash;
     for burst in spawns.flashes.iter() {
         let age = age_of(now, burst.born);
         if age < burst.seconds {
             stats.flashes += 1;
-            items.push(Item {
-                rows: [
-                    row(burst.at, age),
-                    row(burst.toward, burst.seconds),
-                    rgb(flash.color, flash.size_m * burst.scale),
-                    [FLASH, seeded(burst.seed), 1.0, 0.0],
-                    [0.0; 4],
-                    [0.0, flash.points, 0.0, 0.0],
-                    [0.0; 4],
-                    [0.0; 4],
-                ],
-            });
+            items.push(flash_item(
+                look,
+                (burst.at, burst.toward),
+                (age, burst.seconds),
+                (burst.seed, burst.scale),
+            ));
         }
     }
     for burst in spawns.sprays.iter() {
@@ -128,28 +180,12 @@ fn glow_items(
         let age = age_of(now, burst.born);
         if age < spray.seconds {
             stats.sprays += 1;
-            items.push(Item {
-                rows: [
-                    row(burst.at, age),
-                    row(burst.normal, spray.seconds),
-                    rgb(color, spray.size_m * burst.scale),
-                    [
-                        SPRAY,
-                        seeded(burst.seed),
-                        spray.sprites as f32,
-                        spray.speed_mps * burst.scale,
-                    ],
-                    [
-                        spray.gravity_mps2,
-                        spray.opacity,
-                        spray.spread,
-                        spray.streak_seconds,
-                    ],
-                    [0.0; 4],
-                    [0.0; 4],
-                    [0.0; 4],
-                ],
-            });
+            items.push(spray_item(
+                spray,
+                color,
+                (burst.at, burst.normal),
+                (age, burst.seed, burst.scale),
+            ));
         }
     }
 }
@@ -284,6 +320,14 @@ fn team_color(look: &EffectsNumbers, team: Team) -> [f32; 3] {
     look.teams[team.index()]
 }
 
+fn relative(team: Team, viewer: Option<Team>) -> Team {
+    if viewer.is_none_or(|viewer| viewer == team) {
+        Team::First
+    } else {
+        Team::Second
+    }
+}
+
 fn progress(shown: &Shown) -> f32 {
     shown
         .lifetime_ticks
@@ -309,19 +353,98 @@ fn smoke_item(look: &EffectsNumbers, centre: Vec3, radius: f32, strength: f32, s
             row(centre, radius),
             row(Vec3::splat(outer), 0.0),
             rgb(smoke.color, smoke.rim_m),
-            [0.0, seed, smoke.sight_m, strength],
+            [0.0, seed, 0.0, strength],
             row(Vec3::X, smoke.noise_scale),
             row(Vec3::Y, smoke.noise_speed),
-            [0.0; 4],
-            [0.0; 4],
+            rgb(smoke.tint, smoke.tint_share),
+            [smoke.under, 0.0, 0.0, 0.0],
         ],
     }
 }
 
+fn panel_item(look: &EffectsNumbers, thing: &Shown, tick_seconds: f32) -> Item {
+    let (_, radius) = centre_radius(&thing.form);
+    let rise = math::clamp(
+        thing.age_ticks as f32 * tick_seconds / math::max(look.panels.rise_seconds, 1.0e-3),
+        0.0,
+        1.0,
+    );
+    let mut shape = boxed(&thing.form, radius);
+    let sunk = shape.half.y * (1.0 - rise);
+    shape.centre -= shape.axes.y_axis * sunk;
+    shape.half.y -= sunk;
+    let edge = team_color(look, thing.team);
+    let panel = Solid {
+        shape,
+        kind: if thing.look == Look::Wall {
+            RIND
+        } else {
+            CURTAIN
+        },
+        fill: edge,
+        glow: 1.0,
+        edge,
+        armed: thing.armed,
+        strength: thing.strength,
+        pulse_hz: 0.0,
+    };
+    solid_item(&panel, look)
+}
+
+fn trim_ring(look: &EffectsNumbers, thing: &Shown) -> Item {
+    let (centre, _) = centre_radius(&thing.form);
+    let radius = look.traps.size_m * 1.2;
+    let mut ring = disc(look, centre, radius, team_color(look, thing.team), DISC);
+    ring.fill = 0.0;
+    ring.half.y = look.traps.size_m;
+    mark_item(&ring)
+}
+
+type Things<'a> = (
+    &'a [Shown],
+    &'a EffectsFeed,
+    &'a Spawns,
+    (Option<Team>, Show, &'a ShowcaseModels),
+);
+
+fn shown_things(
+    look: &EffectsNumbers,
+    (shown, feed, spawns, (team, show, models)): Things<'_>,
+    (eye, tick_seconds, now): (Option<Vec3>, f32, f64),
+    (sorted, stats): (&mut Sorted, &mut EffectsStats),
+) {
+    let mut meshed: Vec<u32> = feed.props.iter().map(|prop| prop.effect).collect();
+    if models.traps {
+        meshed.push(u32::MAX);
+    }
+    stats.showcase_model.clone_from(&models.shown);
+    let faded = faded_wires(look, feed, (team, show));
+    let sided: Vec<Shown> = shown
+        .iter()
+        .map(|thing| Shown {
+            team: relative(thing.team, team),
+            ..*thing
+        })
+        .collect();
+    sort_shown(
+        look,
+        (&sided, &meshed, &faded),
+        (eye, tick_seconds),
+        sorted,
+        stats,
+    );
+    pooled_marks(look, spawns, now, sorted, stats);
+}
+
+fn cover_color(smoke: &SmokeLook) -> [f32; 3] {
+    let share = math::clamp(smoke.tint_share, 0.0, 1.0);
+    std::array::from_fn(|at| smoke.color[at] + (smoke.tint[at] - smoke.color[at]) * share)
+}
+
 fn sort_shown(
     look: &EffectsNumbers,
-    (shown, meshed): (&[Shown], &[u32]),
-    eye: Option<Vec3>,
+    (shown, meshed, faded): (&[Shown], &[u32], &[(u32, f32)]),
+    (eye, tick_seconds): (Option<Vec3>, f32),
     out: &mut Sorted,
     stats: &mut EffectsStats,
 ) {
@@ -330,10 +453,13 @@ fn sort_shown(
         if meshed.contains(&thing.effect)
             && matches!(
                 thing.look,
-                Look::Projectile | Look::Trap | Look::Sensor | Look::Wall
+                Look::Projectile | Look::Trap | Look::Sensor | Look::Wall | Look::Curtain
             )
         {
             stats.meshed += 1;
+            if matches!(thing.look, Look::Trap | Look::Sensor) {
+                out.marks.push(trim_ring(look, thing));
+            }
             continue;
         }
         let (centre, radius) = centre_radius(&thing.form);
@@ -384,22 +510,7 @@ fn sort_shown(
             }
             Look::Curtain | Look::Wall => {
                 stats.panels += 1;
-                let fill = if thing.look == Look::Wall {
-                    look.panels.wall
-                } else {
-                    look.panels.curtain
-                };
-                let panel = Solid {
-                    shape: boxed(&thing.form, radius),
-                    kind: PANEL,
-                    fill,
-                    glow: 1.0,
-                    edge,
-                    armed: thing.armed,
-                    strength: thing.strength,
-                    pulse_hz: 0.0,
-                };
-                out.solids.push(solid_item(&panel, look));
+                out.solids.push(panel_item(look, thing, tick_seconds));
             }
             Look::Trap | Look::Sensor => {
                 stats.glowing += 1;
@@ -407,13 +518,28 @@ fn sort_shown(
             }
             Look::Wire => {
                 stats.glowing += 1;
+                let width = eye.map_or(traps.wire_width_m, |eye| {
+                    math::max(
+                        traps.wire_width_m,
+                        eye.distance(centre) * look.props.wire_least_per_m,
+                    )
+                });
                 let strand = Solid {
                     kind: STRAND,
                     glow: look.props.wire_glow,
                     edge: look.props.wire_color,
-                    ..glowing(traps.wire_width_m)
+                    ..glowing(width)
                 };
-                out.solids.push(solid_item(&strand, look));
+                let share = faded
+                    .iter()
+                    .find(|(effect, _)| *effect == thing.effect)
+                    .map_or(1.0, |&(_, share)| math::clamp(share, 0.0, 1.0));
+                stats.faded_wires += u32::from(share < 1.0);
+                let mut item = solid_item(&strand, look);
+                item.rows[3][1] = share;
+                item.rows[7][1] = look.props.wire_pulse_mps;
+                item.rows[7][2] = look.props.wire_pulse_m;
+                out.solids.push(item);
             }
             Look::Projectile => {
                 stats.glowing += 1;
@@ -495,6 +621,7 @@ fn showcase_shown(
     let life = 1000;
     let shown = |look: Look, form: Form, team: Team| Shown {
         effect: u32::MAX,
+        owner: None,
         look,
         form,
         team,
@@ -558,27 +685,35 @@ fn showcase_shown(
         }
     }
     if all || show == Show::Traps {
-        let near = body.feet + flat * case.distance_m * 0.5;
-        list.push(shown(
-            Look::Trap,
-            sphere(near - side, look.traps.size_m),
-            Team::Second,
-        ));
-        list.push(shown(
-            Look::Sensor,
-            sphere(near, look.traps.size_m),
-            Team::First,
-        ));
+        let at = traps_layout(body, wish, case);
+        let size = look.traps.size_m;
+        list.push(shown(Look::Trap, sphere(at.trap, size), Team::Second));
+        list.push(shown(Look::Sensor, sphere(at.sensor, size), Team::First));
         let wire = Form::Segment {
-            a: near + side + Vec3::Y * 0.2,
-            b: near + side * 3.0 + Vec3::Y * 0.2,
+            a: at.wire.0 + Vec3::Y * 0.2,
+            b: at.wire.1 + Vec3::Y * 0.2,
         };
         list.push(shown(Look::Wire, wire, Team::Second));
         list.push(shown(
             Look::Projectile,
-            sphere(near + Vec3::Y * (1.0 + cycle), 0.1),
+            sphere(at.projectile, 0.1),
             Team::First,
         ));
+    }
+    if show == Show::Wire {
+        for (lift, effect, team) in [
+            (0.3, u32::MAX, Team::First),
+            (0.6, u32::MAX - 1, Team::Second),
+        ] {
+            let wire = Form::Segment {
+                a: ahead - side * 1.5 + Vec3::Y * lift,
+                b: ahead + side * 1.5 + Vec3::Y * lift,
+            };
+            list.push(Shown {
+                effect,
+                ..shown(Look::Wire, wire, team)
+            });
+        }
     }
     if show == Show::Strike {
         list.push(shown(
@@ -682,6 +817,27 @@ fn device_items(
     items.push(solid_item(&light, look));
     let halo = device.light.map(|value| value * glow * 0.5);
     (items, Some((halo_item(lamp, halo, device.halo_m), glow)))
+}
+
+fn device_part(
+    look: &EffectsNumbers,
+    seen: &Seen<'_, '_>,
+    (round, show, human, stand_in): (Option<&Round>, Show, Option<(&Body, &Wish)>, bool),
+    (timing, now): ((f32, f32, f32), f64),
+    (items, stats): (&mut Vec<Item>, &mut EffectsStats),
+) -> Vec<Item> {
+    let seen_device = DeviceSeen {
+        spot: device_spot(round, show, human, look),
+        lamp: seen.lamp.as_deref().and_then(|lamp| lamp.position),
+        showcase: matches!(show, Show::Device | Show::All),
+        stand_in,
+    };
+    let (solids, halo) = device_items(look, &seen_device, timing, now);
+    if let Some((item, glow)) = halo {
+        items.push(item);
+        stats.lamp = glow;
+    }
+    solids
 }
 
 struct Raised {
@@ -825,6 +981,191 @@ fn barrier_part(
         .collect()
 }
 
+struct OrbSeen {
+    at: Vec3,
+    waiting: bool,
+    progress: f32,
+    taker: Option<Vec3>,
+    taken: Option<f32>,
+    fading: Option<f32>,
+    seed: u32,
+}
+
+fn beam_item(orb: &OrbLook, from: Vec3, to: Vec3, share: f32) -> Item {
+    Item {
+        rows: [
+            row(from, 0.0),
+            row(to, 1.0),
+            rgb(
+                orb.color.map(|value| value * orb.beam_glow * share),
+                orb.beam_width_m * share,
+            ),
+            [TRACER, 0.0, 1.0, 0.0],
+            [0.0; 4],
+            [0.8, 0.0, 0.0, 0.0],
+            [0.0; 4],
+            [0.0; 4],
+        ],
+    }
+}
+
+fn orb_items(
+    look: &EffectsNumbers,
+    orbs: &[OrbSeen],
+    now: f64,
+    items: &mut Vec<Item>,
+    stats: &mut EffectsStats,
+) {
+    let orb = &look.orbs;
+    let turn = (now * f64::from(orb.pulse_hz)).fract() as f32;
+    let beat = 0.5 + 0.5 * math::cos(turn * std::f32::consts::TAU);
+    for seen in orbs {
+        let centre = seen.at + Vec3::Y * orb.lift_m;
+        let strength = match (seen.waiting, seen.fading) {
+            (true, _) => 1.0,
+            (false, Some(age)) => 1.0 - age / math::max(orb.fade_seconds, 0.01),
+            (false, None) => 0.0,
+        };
+        if strength > 0.0 {
+            stats.orbs += 1;
+            let glow = (orb.dim + (1.0 - orb.dim) * beat)
+                * (1.0 + orb.channel_boost * seen.progress)
+                * strength;
+            let core = orb.color.map(|value| value * orb.glow * glow);
+            let halo = orb.color.map(|value| value * orb.halo_glow * glow);
+            items.push(halo_item(centre, core, orb.core_m));
+            items.push(halo_item(
+                centre,
+                halo,
+                orb.halo_m * (1.0 + 0.3 * seen.progress),
+            ));
+        }
+        if let (true, Some(taker)) = (seen.waiting, seen.taker) {
+            stats.orb_beams += 1;
+            let share = orb.beam_least + (1.0 - orb.beam_least) * seen.progress;
+            items.push(beam_item(orb, centre, taker, share));
+        }
+        if let Some(age) = seen.taken.filter(|age| *age < orb.burst.seconds) {
+            stats.orb_bursts += 1;
+            let burst = &orb.burst;
+            items.push(spray_item(
+                burst,
+                burst.color,
+                (centre, Vec3::Y),
+                (age, seen.seed, 1.0),
+            ));
+            if age < look.flash.seconds {
+                items.push(flash_item(
+                    look,
+                    (centre, Vec3::Y),
+                    (age, look.flash.seconds),
+                    (seen.seed, orb.burst_flash),
+                ));
+            }
+        }
+    }
+}
+
+fn showcase_orbs(look: &EffectsNumbers, human: Option<(&Body, &Wish)>, now: f64) -> Vec<OrbSeen> {
+    let Some((body, wish)) = human else {
+        return Vec::new();
+    };
+    let toward = view_direction(wish);
+    let flat = Vec3::new(toward.x, 0.0, toward.z).normalize_or(Vec3::NEG_Z);
+    let every = f64::from(math::max(look.showcase.every_seconds, 0.1));
+    let count = (now / (every * 2.0)) as u64;
+    let phase = (now - count as f64 * every * 2.0) as f32;
+    let every = every as f32;
+    let channel = phase < every;
+    let after = (!channel).then_some(phase - every);
+    vec![OrbSeen {
+        at: body.feet + flat * look.showcase.distance_m,
+        waiting: channel,
+        progress: if channel { phase / every } else { 0.0 },
+        taker: Some(body.feet.lerp(body.eye, 0.75)),
+        taken: after.filter(|_| count.is_multiple_of(2)),
+        fading: after.filter(|_| !count.is_multiple_of(2)),
+        seed: count as u32,
+    }]
+}
+
+fn powers_orbs(
+    seen: &Seen<'_, '_>,
+    (fixed, alpha): (&FixedTime, f32),
+    vanished: &[(usize, f64)],
+    now: f64,
+) -> Vec<OrbSeen> {
+    let Some(powers) = seen.powers.as_deref() else {
+        return Vec::new();
+    };
+    let since = |tick: u64| (fixed.tick.saturating_sub(tick) as f32 + alpha) * fixed.delta_seconds;
+    let mut list = Vec::new();
+    for (index, orb) in powers.orbs().iter().enumerate() {
+        let best = orb
+            .channels
+            .iter()
+            .filter_map(|channel| {
+                powers
+                    .orb_progress(channel.actor.0, fixed.tick)
+                    .filter(|(at, _)| *at == index)
+                    .map(|(_, share)| (channel.actor.0, share))
+            })
+            .max_by(|a, b| a.1.total_cmp(&b.1));
+        list.push(OrbSeen {
+            at: orb.at,
+            waiting: orb.state == OrbState::Waiting,
+            progress: best.map_or(0.0, |(_, share)| math::clamp(share, 0.0, 1.0)),
+            taker: best.and_then(|(slot, _)| seen.chest(slot)),
+            taken: match orb.state {
+                OrbState::Taken { tick, .. } => Some(since(tick)),
+                OrbState::Waiting | OrbState::Gone => None,
+            },
+            fading: vanished
+                .iter()
+                .find(|(known, _)| *known == index)
+                .filter(|_| orb.state == OrbState::Gone)
+                .map(|&(_, born)| age_of(now, born)),
+            seed: index as u32 * 7919 + 13,
+        });
+    }
+    list
+}
+
+fn faded_wires(
+    look: &EffectsNumbers,
+    feed: &EffectsFeed,
+    (viewer, show): (Option<Team>, Show),
+) -> Vec<(u32, f32)> {
+    let mut faded: Vec<(u32, f32)> = feed
+        .props
+        .iter()
+        .filter(|prop| viewer.is_some_and(|team| team != prop.team))
+        .map(|prop| (prop.effect, prop.enemy_share))
+        .collect();
+    if show == Show::Wire {
+        faded.push((u32::MAX - 1, look.showcase.wire_share));
+    }
+    faded
+}
+
+fn power_glows(
+    look: &EffectsNumbers,
+    (seen, feed, spawns): (&Seen<'_, '_>, &EffectsFeed, &Spawns),
+    (fixed, alpha, now): (&FixedTime, f32, f64),
+    (show, human): (Show, Option<(&Body, &Wish)>),
+    (glows, marks): (&mut Vec<Item>, &mut Vec<Item>),
+    stats: &mut EffectsStats,
+) {
+    stats.previews = preview_items(look, seen.powers.as_deref(), seen.slot(), glows, marks);
+    prop_items(look, (feed, seen.team()), (glows, marks), stats);
+    let mut orbs = powers_orbs(seen, (fixed, alpha), &spawns.vanished, now);
+    if show == Show::Orbs {
+        orbs.extend(showcase_orbs(look, human, now));
+    }
+    orb_items(look, &orbs, now, glows, stats);
+    (stats.puffs, stats.shatters) = (spawns.puffs, spawns.shatters);
+}
+
 fn trail_item(look: &PropsLook, color: [f32; 3], from: Vec3, to: Vec3) -> Item {
     Item {
         rows: [
@@ -845,7 +1186,7 @@ fn trail_item(look: &PropsLook, color: [f32; 3], from: Vec3, to: Vec3) -> Item {
 
 fn prop_items(
     look: &EffectsNumbers,
-    feed: &EffectsFeed,
+    (feed, viewer): (&EffectsFeed, Option<Team>),
     (glows, marks): (&mut Vec<Item>, &mut Vec<Item>),
     stats: &mut EffectsStats,
 ) {
@@ -859,7 +1200,8 @@ fn prop_items(
             } if velocity_mps.length_squared() > 0.25 => {
                 stats.trails += 1;
                 let from = centre - velocity_mps * props.trail_seconds;
-                glows.push(trail_item(props, team_color(look, prop.team), from, centre));
+                let side = team_color(look, relative(prop.team, viewer));
+                glows.push(trail_item(props, side, from, centre));
             }
             PropPlace::Drop {
                 target,
@@ -911,16 +1253,27 @@ fn screen_frame(
         feed.human.blindness
     };
     let damage = spawns.hurt.now(now, screen.damage_seconds);
+    let panels = &look.panels;
+    let (rind, curtain) = (&panels.rind, &panels.curtain);
     let frame = EffectsFrame {
         clock: [(now % 3600.0) as f32, screen.damage_edge, 0.0, 0.0],
         flash: rgb(screen.flash, math::clamp(flash, 0.0, 1.0)),
         damage: rgb(screen.damage, damage),
-        cover: rgb(look.smoke.color, 0.0),
+        cover: rgb(cover_color(&look.smoke), 0.0),
         sun: [0.0; 4],
         sun_color: [0.0; 4],
         sky_color: [0.0; 4],
         field: [0.0; 4],
         field_shape: [0.0; 4],
+        rind_skin: rgb(rind.skin, rind.stripe_m),
+        rind_stripe: rgb(rind.stripe, rind.pith_m),
+        rind_pith: rgb(rind.pith, rind.seed_m),
+        rind_flesh: rgb(rind.flesh, 0.0),
+        rind_seed: rgb(rind.seed, 0.0),
+        curtain_peel: rgb(curtain.peel, curtain.cell_m),
+        curtain_pulp: rgb(curtain.pulp, curtain.glow),
+        panel: [panels.trim_m, panels.rim_glow, curtain.pleat_m, 0.0],
+        zones: [look.zones.dashes, look.zones.dash_speed, 0.0, 0.0],
     };
     let stats = ScreenStats {
         flash: frame.flash[3],
@@ -984,7 +1337,20 @@ fn lit_frame(
     let [min_x, min_z, max_x, max_z] = field.rect;
     frame.field = [min_x, min_z, 1.0 / (max_x - min_x), 1.0 / (max_z - min_z)];
     frame.field_shape = [field.height_m, field.scale, 1.0, 0.0];
-    Some(field.map)
+    let mut map = field.map;
+    map.sampler = lighting.filtering.light_field.applied(map.sampler);
+    Some(map)
+}
+
+fn covered_frame(drawing: &mut EffectsDrawing, stats: &mut EffectsStats) {
+    *drawing = EffectsDrawing {
+        covered: true,
+        ..EffectsDrawing::default()
+    };
+    *stats = EffectsStats {
+        covered: true,
+        ..EffectsStats::default()
+    };
 }
 
 fn span(items: &[Item], start: usize) -> std::ops::Range<u32> {
@@ -997,10 +1363,12 @@ pub(super) struct Seen<'w, 's> {
     lamp: Option<Res<'w, DeviceLamp>>,
     barrier: Option<Res<'w, Barrier>>,
     camera: Option<Res<'w, TestCamera>>,
+    covered: Option<Res<'w, Covered>>,
     watched: Option<Res<'w, Watched>>,
     powers: Option<Res<'w, Powers>>,
     flow: Option<Res<'w, Flow>>,
     bodies: Query<'w, 's, &'static Body>,
+    actors: Query<'w, 's, (&'static Actor, &'static Body)>,
     humans: Query<'w, 's, &'static Actor, With<Human>>,
 }
 
@@ -1020,6 +1388,25 @@ impl Seen<'_, '_> {
             .or_else(|| self.humans.iter().next().map(|actor| actor.slot))
     }
 
+    fn team(&self) -> Option<Team> {
+        let slot = self.slot()?;
+        self.actors
+            .iter()
+            .find(|(actor, _)| actor.slot == slot)
+            .map(|(actor, _)| actor.team)
+    }
+
+    fn chest(&self, slot: u32) -> Option<Vec3> {
+        self.actors
+            .iter()
+            .find(|(actor, _)| actor.slot == slot)
+            .map(|(_, body)| body.feet.lerp(body.eye, 0.75))
+    }
+
+    fn covered(&self) -> bool {
+        self.covered.as_deref().is_some_and(|covered| covered.0)
+    }
+
     fn playing(&self) -> bool {
         self.flow
             .as_deref()
@@ -1035,7 +1422,7 @@ impl Seen<'_, '_> {
 pub(super) fn assemble(
     time: Res<FrameTime>,
     fixed: Res<FixedTime>,
-    setup: Res<Setup>,
+    (setup, models): (Res<Setup>, Res<ShowcaseModels>),
     show: Res<EffectsShow>,
     spawns: Res<Spawns>,
     feed: Res<EffectsFeed>,
@@ -1058,8 +1445,10 @@ pub(super) fn assemble(
         });
         return;
     };
-    let look = &parsed.look;
-    let now = time.elapsed;
+    if seen.covered() {
+        return covered_frame(&mut drawing, &mut stats);
+    }
+    let (look, now) = (&parsed.look, time.elapsed);
     let human = humans.iter().next();
     let eye = seen
         .viewer(human.map(|(body, _)| body))
@@ -1068,27 +1457,20 @@ pub(super) fn assemble(
     let mut items = Vec::new();
     let mut sorted = Sorted::default();
     glow_items(look, &spawns, now, &mut items, &mut next);
-    next.previews = preview_items(
+    let sources = (&seen, &*feed, &*spawns);
+    let timing = (&*fixed, time.alpha, now);
+    power_glows(
         look,
-        seen.powers.as_deref(),
-        seen.slot(),
-        &mut items,
-        &mut sorted.marks,
+        sources,
+        timing,
+        (show.show, human),
+        (&mut items, &mut sorted.marks),
+        &mut next,
     );
-    prop_items(look, &feed, (&mut items, &mut sorted.marks), &mut next);
-    next.puffs = spawns.puffs;
-    let seen_device = DeviceSeen {
-        spot: device_spot(round.as_deref(), show.show, human, look),
-        lamp: seen.lamp.as_deref().and_then(|lamp| lamp.position),
-        showcase: matches!(show.show, Show::Device | Show::All),
-        stand_in: devices.iter().any(|device| device.stand_in),
-    };
+    let stand_in = devices.iter().any(|device| device.stand_in);
     let timing = (parsed.fuse_seconds, fixed.delta_seconds, time.alpha);
-    let (device_solids, halo) = device_items(look, &seen_device, timing, now);
-    if let Some((item, glow)) = halo {
-        items.push(item);
-        next.lamp = glow;
-    }
+    let place = (round.as_deref(), show.show, human, stand_in);
+    let device_solids = device_part(look, &seen, place, (timing, now), (&mut items, &mut next));
     let glow = span(&items, 0);
     let mut shown = feed.shown.clone();
     if show.show != Show::Off {
@@ -1097,9 +1479,10 @@ pub(super) fn assemble(
     if let Some(ground) = ground.as_deref() {
         blob_marks(ground, &mut sorted, &mut next);
     }
-    let meshed: Vec<u32> = feed.props.iter().map(|prop| prop.effect).collect();
-    sort_shown(look, (&shown, &meshed), eye, &mut sorted, &mut next);
-    pooled_marks(look, &spawns, now, &mut sorted, &mut next);
+    let viewer = (seen.team(), show.show, &*models);
+    let timing = (eye, fixed.delta_seconds, now);
+    let things = (&shown[..], &*feed, &*spawns, viewer);
+    shown_things(look, things, timing, (&mut sorted, &mut next));
     let start = items.len();
     items.extend(sorted.solids);
     let solid = span(&items, start);
@@ -1165,6 +1548,7 @@ pub(super) fn assemble(
         frame,
         screen: screened,
         field,
+        covered: false,
     };
     stats.set_if_neq(next);
 }

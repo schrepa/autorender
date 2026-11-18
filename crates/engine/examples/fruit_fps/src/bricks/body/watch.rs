@@ -16,6 +16,14 @@ fn teammate_after(listed: &[(Entity, u32, bool)], after: Option<u32>) -> Option<
         .map(|&(entity, slot, _)| (entity, slot))
 }
 
+fn teammate_before(listed: &[(Entity, u32, bool)], before: Option<u32>) -> Option<(Entity, u32)> {
+    let living = || listed.iter().rev().filter(|(_, _, alive)| *alive);
+    before
+        .and_then(|slot| living().find(|(_, other, _)| *other < slot))
+        .or_else(|| living().next())
+        .map(|&(entity, slot, _)| (entity, slot))
+}
+
 fn teammate(entity: Entity, slot: u32) -> Watched {
     Watched {
         slot: Some(slot),
@@ -78,10 +86,16 @@ pub(super) fn watch(
             let still = listed
                 .iter()
                 .any(|&(entity, _, alive)| alive && Some(entity) == watched.entity);
-            if still && !wish.fire_pressed {
+            let back = still && wish.scope && !wish.fire_pressed;
+            if still && !wish.fire_pressed && !wish.scope {
                 *watched
             } else {
-                match teammate_after(&listed, watched.slot) {
+                let stepped = if back {
+                    teammate_before(&listed, watched.slot)
+                } else {
+                    teammate_after(&listed, watched.slot)
+                };
+                match stepped {
                     Some((entity, slot)) => teammate(entity, slot),
                     None => Watched {
                         slot: None,

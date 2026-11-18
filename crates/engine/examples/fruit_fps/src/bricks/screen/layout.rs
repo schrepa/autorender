@@ -168,6 +168,7 @@ pub(super) enum Kind {
         min_w: f32,
         items: Vec<FlowItem>,
     },
+    Reticle,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -180,8 +181,8 @@ pub(super) struct Knob {
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Picture {
     pub image: Template,
-    pub small: Option<Template>,
     pub cover: bool,
+    pub opaque: bool,
     pub cell: Option<(String, Template)>,
 }
 
@@ -203,6 +204,7 @@ pub(super) enum CardList {
     Weapons,
     Armor,
     Abilities,
+    Team,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -220,6 +222,15 @@ pub(super) struct Element {
     pub serial: usize,
     pub kind: Kind,
     pub card: Option<(CardList, usize)>,
+    pub row: Option<usize>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Stack {
+    pub gap: f32,
+    pub ceiling: ([f32; 4], Anchor),
+    pub floor: ([f32; 4], Anchor),
+    pub rows: std::ops::Range<usize>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -248,7 +259,11 @@ pub(super) struct Layout {
     pub ability_texts: BTreeMap<String, String>,
     pub tips: Vec<String>,
     pub key_cap: Option<KeyCap>,
-    pub damage_tip: Option<DamageTip>,
+    pub damage_edge: Option<DamageEdge>,
+    pub crosshair: Option<CrosshairPiece>,
+    pub stickers: Option<String>,
+    pub stacks: Vec<Stack>,
+    pub rows: usize,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -261,11 +276,22 @@ pub(super) struct KeyCap {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub(super) struct DamageTip {
+pub(super) struct DamageEdge {
     pub atlas: String,
-    pub icon: String,
-    pub scale: f32,
-    pub radius_add_px: f32,
+    pub tip: String,
+    pub tip_scale: f32,
+    pub radius_share: f32,
+    pub length_deg: f32,
+    pub band_px: f32,
+    pub rim_px: f32,
+    pub color: Rgba,
+    pub fade_seconds: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct CrosshairPiece {
+    pub outline: Rgba,
+    pub outline_px: f32,
 }
 
 impl Layout {
@@ -308,7 +334,8 @@ impl Layout {
                     | Kind::Image(_)
                     | Kind::Markers(_)
                     | Kind::Bar { .. }
-                    | Kind::Pips { .. } => Ok(()),
+                    | Kind::Pips { .. }
+                    | Kind::Reticle => Ok(()),
                 };
                 match settled {
                     Ok(()) => true,
@@ -707,6 +734,7 @@ fn kind_of(read: &Reader<'_>, cx: &Context<'_>) -> Result<Kind, String> {
     };
     Ok(match read.text("kind")? {
         "plate" => Kind::Plate,
+        "reticle" => Kind::Reticle,
         "text" => Kind::Text(text_kind(read, cx)?),
         "icon" => Kind::Icon(
             match read.get("fit") {
@@ -722,13 +750,7 @@ fn kind_of(read: &Reader<'_>, cx: &Context<'_>) -> Result<Kind, String> {
         "arc" => Kind::Arc(arc_of(read, palette)?),
         "image" => Kind::Image(Picture {
             image: template(read.text("image")?, &read.within("image"))?,
-            small: match read.get("image_small") {
-                None => None,
-                Some(_) => Some(template(
-                    read.text("image_small")?,
-                    &read.within("image_small"),
-                )?),
-            },
+            opaque: read.flag("opaque")?,
             cover: match read.get("fit") {
                 None => false,
                 Some(_) => match read.text("fit")? {
@@ -839,6 +861,7 @@ fn texts_of(read: &Reader<'_>) -> Result<(BTreeMap<String, String>, Vec<String>)
 
 fn markers_of(read: &Reader<'_>, cx: &Context<'_>) -> Result<Markers, String> {
     let palette = cx.palette;
+    let disc = read.flag("disc")?;
     let backing = match read.get("backing") {
         None => None,
         Some(value) => {
@@ -861,13 +884,17 @@ fn markers_of(read: &Reader<'_>, cx: &Context<'_>) -> Result<Markers, String> {
     Ok(Markers {
         map: read.text("map")?.to_owned(),
         items: path(read.text("items")?),
-        icon: read.text("icon")?.to_owned(),
-        size: read.number("size")?,
+        icon: if disc {
+            String::new()
+        } else {
+            read.text("icon")?.to_owned()
+        },
+        size: if disc { 0.0 } else { read.number("size")? },
         rotate: read.flag("rotate")?,
         backing,
         outline,
         atlas: sticker_of(read, cx)?,
-        disc: read.flag("disc")?,
+        disc,
     })
 }
 
@@ -881,6 +908,7 @@ fn card_of(styles: &[(Conds, Set)]) -> Option<(CardList, usize)> {
                     "weapons" => CardList::Weapons,
                     "armor" => CardList::Armor,
                     "abilities" => CardList::Abilities,
+                    "team" => CardList::Team,
                     _ => return None,
                 };
                 Some((list, *index))
@@ -897,6 +925,7 @@ struct Context<'a> {
     font_atlas: &'a str,
     icons_atlas: Option<&'a str>,
     key_cap: bool,
+    rows: &'a [String],
 }
 
 const SHADOWED: &str = "shadows draw under plate, text, flow, bar and image elements only";
@@ -904,7 +933,9 @@ const SHADOWED: &str = "shadows draw under plate, text, flow, bar and image elem
 fn shadowed(kind: &Kind) -> bool {
     match kind {
         Kind::Plate | Kind::Text(_) | Kind::Flow { .. } | Kind::Bar { .. } | Kind::Image(_) => true,
-        Kind::Icon(..) | Kind::Arc(_) | Kind::Markers(_) | Kind::Pips { .. } => false,
+        Kind::Icon(..) | Kind::Arc(_) | Kind::Markers(_) | Kind::Pips { .. } | Kind::Reticle => {
+            false
+        }
     }
 }
 
@@ -1001,6 +1032,15 @@ fn element(value: &Value, cx: &Context<'_>, at: String) -> Result<Element, Strin
         serial: 0,
         kind,
         card,
+        row: match read.get("stack") {
+            None => None,
+            Some(_) => {
+                let name = read.text("stack")?;
+                Some(cx.rows.iter().position(|row| row == name).ok_or_else(|| {
+                    format!("{}: no stack has the row `{name}`", read.within("stack"))
+                })?)
+            }
+        },
     })
 }
 
@@ -1031,7 +1071,47 @@ fn named_files(read: &Reader<'_>) -> Result<Named, String> {
     Ok((atlases, fonts))
 }
 
-type Pieces = (Option<KeyCap>, Option<DamageTip>);
+type Pieces = (Option<KeyCap>, Option<DamageEdge>, Option<CrosshairPiece>);
+
+fn swatch(read: &Reader<'_>, key: &str, palette: &BTreeMap<String, Rgba>) -> Result<Rgba, String> {
+    let name = read.text(key)?;
+    palette
+        .get(name)
+        .copied()
+        .ok_or_else(|| format!("{}: `{name}` is not in the palette", read.within(key)))
+}
+
+fn edge_of(
+    pieces: &Reader<'_>,
+    palette: &BTreeMap<String, Rgba>,
+    atlases: &BTreeMap<String, String>,
+) -> Result<Option<DamageEdge>, String> {
+    let Some(given) = pieces.get("damage_edge") else {
+        return Ok(None);
+    };
+    let edge = Reader::of(given, pieces.within("damage_edge"))?;
+    let tip = Reader::of(
+        pieces.get("damage_tip").unwrap_or(&Value::Null),
+        pieces.within("damage_tip"),
+    )?;
+    let atlas = atlases.get(STICKERS).ok_or_else(|| {
+        format!(
+            "{}: the tip is a sticker and `$.{STICKERS}` is missing",
+            edge.at
+        )
+    })?;
+    Ok(Some(DamageEdge {
+        atlas: atlas.clone(),
+        tip: tip.text("icon")?.to_owned(),
+        tip_scale: edge.number("tip_scale")?,
+        radius_share: edge.number("radius_share")?,
+        length_deg: edge.number("length_deg")?,
+        band_px: edge.number("band_px")?,
+        rim_px: edge.number("rim_px")?,
+        color: swatch(&edge, "color", palette)?,
+        fade_seconds: edge.number("fade_seconds")?,
+    }))
+}
 
 fn key_cap_of(cap: &Reader<'_>, palette: &BTreeMap<String, Rgba>) -> Result<KeyCap, String> {
     let border = Reader::of(
@@ -1074,7 +1154,7 @@ fn pieces_of(
     atlases: &BTreeMap<String, String>,
 ) -> Result<Pieces, String> {
     let Some(given) = read.get("pieces") else {
-        return Ok((None, None));
+        return Ok((None, None, None));
     };
     let pieces = Reader::of(given, read.within("pieces"))?;
     let key_cap = match pieces.get("key_cap") {
@@ -1084,28 +1164,75 @@ fn pieces_of(
             palette,
         )?),
     };
-    let damage_tip = match pieces.get("damage_tip") {
+    let crosshair = match pieces.get("crosshair") {
         None => None,
         Some(given) => {
-            let tip = Reader::of(given, pieces.within("damage_tip"))?;
-            let atlas = atlases.get(STICKERS).ok_or_else(|| {
-                format!(
-                    "{}: the tip is a sticker and `$.{STICKERS}` is missing",
-                    tip.at
-                )
-            })?;
-            Some(DamageTip {
-                atlas: atlas.clone(),
-                icon: tip.text("icon")?.to_owned(),
-                scale: tip.number("scale")?,
-                radius_add_px: tip.number("radius_add_px")?,
+            let cross = Reader::of(given, pieces.within("crosshair"))?;
+            Some(CrosshairPiece {
+                outline: swatch(&cross, "outline", palette)?,
+                outline_px: cross.number("outline_px")?,
             })
         }
     };
-    Ok((key_cap, damage_tip))
+    Ok((key_cap, edge_of(&pieces, palette, atlases)?, crosshair))
 }
 
 const STICKERS: &str = "stickers";
+
+fn edge_at(
+    given: &Value,
+    at: String,
+    anchors: &BTreeMap<String, Anchor>,
+) -> Result<([f32; 4], Anchor), String> {
+    let read = Reader::of(given, at)?;
+    let named = read.text("anchor")?;
+    let anchor = *anchors
+        .get(named)
+        .ok_or_else(|| format!("{}: unknown anchor `{named}`", read.within("anchor")))?;
+    Ok(([0.0, read.number("y")?, 0.0, 0.0], anchor))
+}
+
+fn stacks_of(
+    read: &Reader<'_>,
+    anchors: &BTreeMap<String, Anchor>,
+) -> Result<(Vec<Stack>, Vec<String>), String> {
+    let mut stacks = Vec::new();
+    let mut rows: Vec<String> = Vec::new();
+    let Some(_) = read.get("stacks") else {
+        return Ok((stacks, rows));
+    };
+    for (index, given) in read.list("stacks")?.iter().enumerate() {
+        let stack = Reader::of(given, format!("{}[{index}]", read.within("stacks")))?;
+        let first = rows.len();
+        for (place, row) in stack.list("rows")?.iter().enumerate() {
+            let at = format!("{}[{place}]", stack.within("rows"));
+            let name = row
+                .as_str()
+                .ok_or_else(|| format!("{at}: expected a string"))?;
+            if rows.iter().any(|known| known == name) {
+                return Err(format!("{at}: the row `{name}` is in two places"));
+            }
+            rows.push(name.to_owned());
+        }
+        let ceiling = edge_at(
+            stack.get("ceiling").unwrap_or(&Value::Null),
+            stack.within("ceiling"),
+            anchors,
+        )?;
+        let floor = edge_at(
+            stack.get("floor").unwrap_or(&Value::Null),
+            stack.within("floor"),
+            anchors,
+        )?;
+        stacks.push(Stack {
+            gap: stack.number("gap")?,
+            ceiling,
+            floor,
+            rows: first..rows.len(),
+        });
+    }
+    Ok((stacks, rows))
+}
 
 fn shown_of(name: &str) -> Option<Shown> {
     Shown::ALL.into_iter().find(|shown| shown.key() == name)
@@ -1150,7 +1277,8 @@ pub(super) fn parse(text: &str) -> Result<Layout, String> {
         read.within("font"),
     )?;
     let (atlases, fonts) = named_files(&read)?;
-    let (key_cap, damage_tip) = pieces_of(&read, &palette, &atlases)?;
+    let (key_cap, damage_edge, crosshair) = pieces_of(&read, &palette, &atlases)?;
+    let (stacks, rows) = stacks_of(&read, &anchors)?;
     let cx = Context {
         palette: &palette,
         anchors: &anchors,
@@ -1159,6 +1287,7 @@ pub(super) fn parse(text: &str) -> Result<Layout, String> {
         font_atlas: font.text("atlas")?,
         icons_atlas: atlases.get("icons").map(String::as_str),
         key_cap: key_cap.is_some(),
+        rows: &rows,
     };
     let listed = Reader::of(
         read.get("screens").unwrap_or(&Value::Null),
@@ -1218,7 +1347,11 @@ pub(super) fn parse(text: &str) -> Result<Layout, String> {
         ability_texts,
         tips,
         key_cap,
-        damage_tip,
+        damage_edge,
+        crosshair,
+        stickers: atlases.get(STICKERS).cloned(),
+        stacks,
+        rows: rows.len(),
     })
 }
 
@@ -1319,7 +1452,7 @@ fn shadow_list(
 
 fn kind_paths(kind: &Kind, found: &mut Vec<Path>) {
     match kind {
-        Kind::Plate | Kind::Icon(..) => {}
+        Kind::Plate | Kind::Icon(..) | Kind::Reticle => {}
         Kind::Arc(arc) => {
             number_paths(&arc.value, found);
             number_paths(&arc.max, found);
@@ -1329,9 +1462,6 @@ fn kind_paths(kind: &Kind, found: &mut Vec<Path>) {
         }
         Kind::Image(picture) => {
             template_paths(&picture.image, found);
-            if let Some(small) = &picture.small {
-                template_paths(small, found);
-            }
             if let Some((_, key)) = &picture.cell {
                 template_paths(key, found);
             }

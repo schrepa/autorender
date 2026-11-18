@@ -9,7 +9,7 @@ use engine_render::{
 
 use super::assemble::BOX_VERTICES;
 use super::shaders::effects::{barrier, field, glow, items, screen, solid, volume};
-use super::{EFFECTS_PASS, EffectsDrawing, EffectsFrame, Item};
+use super::{DEVICE, EFFECTS, EFFECTS_PASS, EffectsDrawing, EffectsFrame, Item};
 use crate::names::{COLOR, COLOR_PASS, DEPTH};
 
 const FULLSCREEN_VERTICES: u32 = 3;
@@ -217,6 +217,10 @@ impl GpuPart for EffectsGpu {
         drawing: SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
+        if drawing.covered {
+            cx.skip_kind(DEVICE, "covered");
+            cx.skip_kind(EFFECTS, "covered");
+        }
         let slots = drawing.items.len().max(1).next_power_of_two();
         let _ = cx.allocate_buffer(self.items, (slots * size_of::<Item>()) as u64);
         if !drawing.items.is_empty() {
@@ -240,7 +244,7 @@ impl GpuPart for EffectsGpu {
         self.barrier_range = drawing.barrier.clone();
         self.glow_vertices = drawing.glow_vertices;
         self.screened = drawing.screen;
-        self.own = drawing.own_pass();
+        self.own = !drawing.covered && drawing.own_pass();
     }
 
     fn view(&mut self, _view: &ViewFacts, cx: &mut Prepare<'_, Self>) {

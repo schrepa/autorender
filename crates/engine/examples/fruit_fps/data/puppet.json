@@ -4,16 +4,48 @@
       "Spine01",
       "Spine02"
     ],
-    "share": 1.0
+    "share": 1.0,
+    "chest": {
+      "joint": "Spine02",
+      "reference": "idle"
+    }
+  },
+  "head_check": {
+    "slice_m": 0.02,
+    "solid_share": 0.5
+  },
+  "eye_fit": {
+    "reference": "idle"
+  },
+  "view_test": {
+    "frustum": true,
+    "map": true,
+    "mesh_margin_m": 0.45,
+    "map_pad_m": 0.5,
+    "aspect_max": 2.4,
+    "item_radius_m": 1.0,
+    "hold_frames": 3,
+    "cut_m": 2.0,
+    "see_through": [
+      "glass",
+      "grate"
+    ]
+  },
+  "forms": {
+    "full_to_m": 7.5,
+    "mid_from_m": 8.5,
+    "mid_back_m": 19.0,
+    "far_from_m": 21.0,
+    "reference_fov_degrees": 70.0
   },
   "crouch": {
-    "drop_m": 0.4,
-    "use_clips": false,
+    "drop_m": 0.0,
+    "use_clips": true,
     "clips": {
-      "from": 0.5,
+      "from": 0.05,
       "idle": {
-        "clip": "crouch_idle",
-        "fade_seconds": 0.2
+        "clip": "move_crouch_hold",
+        "fade_seconds": 0.15
       }
     }
   },
@@ -21,8 +53,8 @@
   "locomotion": {
     "gaits": [
       {
-        "clip": "walk",
-        "planted_mps": 0.99,
+        "clip": "move_walk",
+        "planted_mps": 2.865,
         "direction": "forward",
         "from_mps": 0.0,
         "to_mps": 4.1,
@@ -30,115 +62,124 @@
         "dropped": false
       },
       {
-        "clip": "run",
-        "planted_mps": 2.15,
+        "clip": "move_run",
+        "planted_mps": 5.4,
         "direction": "forward",
         "from_mps": 4.1,
+        "to_mps": 6.1,
+        "crouch": false,
+        "dropped": false
+      },
+      {
+        "clip": "move_sprint",
+        "planted_mps": 6.75,
+        "direction": "forward",
+        "from_mps": 6.1,
         "to_mps": 99.0,
         "crouch": false,
         "dropped": false
       },
       {
-        "clip": "walk",
-        "planted_mps": 0.99,
+        "clip": "move_walk_left",
+        "planted_mps": 2.865,
+        "direction": "left",
+        "from_mps": 0.0,
+        "to_mps": 4.1,
+        "crouch": false,
+        "dropped": false
+      },
+      {
+        "clip": "move_run_left",
+        "planted_mps": 5.4,
+        "direction": "left",
+        "from_mps": 4.1,
+        "to_mps": 99.0,
+        "crouch": false,
+        "dropped": false
+      },
+      {
+        "clip": "move_walk_right",
+        "planted_mps": 2.865,
+        "direction": "right",
+        "from_mps": 0.0,
+        "to_mps": 4.1,
+        "crouch": false,
+        "dropped": false
+      },
+      {
+        "clip": "move_run_right",
+        "planted_mps": 5.4,
+        "direction": "right",
+        "from_mps": 4.1,
+        "to_mps": 99.0,
+        "crouch": false,
+        "dropped": false
+      },
+      {
+        "clip": "move_walk_back",
+        "planted_mps": 2.865,
+        "direction": "back",
+        "from_mps": 0.0,
+        "to_mps": 4.1,
+        "crouch": false,
+        "dropped": false
+      },
+      {
+        "clip": "move_run_back",
+        "planted_mps": 5.4,
+        "direction": "back",
+        "from_mps": 4.1,
+        "to_mps": 99.0,
+        "crouch": false,
+        "dropped": false
+      },
+      {
+        "clip": "move_crouch_walk",
+        "planted_mps": 2.292,
         "direction": "forward",
         "from_mps": 0.0,
         "to_mps": 99.0,
         "crouch": true,
-        "dropped": true
-      },
-      {
-        "clip": "walk",
-        "planted_mps": 0.99,
-        "direction": "left",
-        "from_mps": 0.0,
-        "to_mps": 4.1,
-        "crouch": false,
         "dropped": false
       },
       {
-        "clip": "run",
-        "planted_mps": 2.15,
-        "direction": "left",
-        "from_mps": 4.1,
-        "to_mps": 99.0,
-        "crouch": false,
-        "dropped": false
-      },
-      {
-        "clip": "walk",
-        "planted_mps": 0.99,
+        "clip": "move_crouch_walk_left",
+        "planted_mps": 2.292,
         "direction": "left",
         "from_mps": 0.0,
         "to_mps": 99.0,
         "crouch": true,
-        "dropped": true
-      },
-      {
-        "clip": "walk",
-        "planted_mps": 0.99,
-        "direction": "right",
-        "from_mps": 0.0,
-        "to_mps": 4.1,
-        "crouch": false,
         "dropped": false
       },
       {
-        "clip": "run",
-        "planted_mps": 2.15,
-        "direction": "right",
-        "from_mps": 4.1,
-        "to_mps": 99.0,
-        "crouch": false,
-        "dropped": false
-      },
-      {
-        "clip": "walk",
-        "planted_mps": 0.99,
+        "clip": "move_crouch_walk_right",
+        "planted_mps": 2.292,
         "direction": "right",
         "from_mps": 0.0,
         "to_mps": 99.0,
         "crouch": true,
-        "dropped": true
-      },
-      {
-        "clip": "walk",
-        "planted_mps": 0.99,
-        "direction": "back",
-        "from_mps": 0.0,
-        "to_mps": 4.1,
-        "crouch": false,
         "dropped": false
       },
       {
-        "clip": "run",
-        "planted_mps": 2.15,
-        "direction": "back",
-        "from_mps": 4.1,
-        "to_mps": 99.0,
-        "crouch": false,
-        "dropped": false
-      },
-      {
-        "clip": "walk",
-        "planted_mps": 0.99,
+        "clip": "move_crouch_walk_back",
+        "planted_mps": 2.292,
         "direction": "back",
         "from_mps": 0.0,
         "to_mps": 99.0,
         "crouch": true,
-        "dropped": true
+        "dropped": false
       }
     ],
     "speed_fade_mps": 0.3,
-    "fade_seconds": 0.2,
+    "fade_seconds": 0.15,
     "hip_turn_limit_radians": 0.8,
     "rate": {
-      "min": 0.5,
-      "max": 3.0
+      "min": 0.85,
+      "max": 1.15
     },
     "stride": {
-      "min": 1.0,
-      "max": 1.0
+      "min": 0.87,
+      "max": 1.15
     }
   },
   "idle": {
@@ -155,7 +196,7 @@
     "catch_up_radians_per_second": 5.0
   },
   "rise": {
-    "clip": "jump",
+    "clip": "move_jump_takeoff",
     "fade_seconds": 0.08,
     "looping": false
   },
@@ -208,17 +249,6 @@
         4.6
       ]
     },
-    "throw": {
-      "clip": "throw",
-      "from": "Spine02",
-      "feather": 2,
-      "weight": 1.0,
-      "speed": 1.4,
-      "window": [
-        0.7,
-        2.1
-      ]
-    },
     "place": {
       "clip": "dig",
       "from": "Spine02",
@@ -229,6 +259,54 @@
         1.4,
         6.3
       ]
+    }
+  },
+  "upper": {
+    "from": "Spine02",
+    "feather": 0,
+    "weight": 1.0,
+    "fade_seconds": 0.03,
+    "played_from": "L_Clavicle",
+    "played": [
+      "fire_sniper",
+      "reload_pistol",
+      "reload_long",
+      "throw_ready",
+      "throw_hold",
+      "throw_release",
+      "throw_roll"
+    ],
+    "fire": {
+      "sidearm": "fire_pistol",
+      "smg": "fire_long",
+      "rifle": "fire_long",
+      "sniper": "fire_sniper"
+    },
+    "reload": {
+      "sidearm": "reload_pistol",
+      "smg": "reload_long",
+      "rifle": "reload_long",
+      "sniper": "reload_long"
+    },
+    "throw": {
+      "ready": "throw_ready",
+      "hold": "throw_hold",
+      "release": "throw_release",
+      "roll": "throw_roll",
+      "rolled": [
+        "Jam Pool",
+        "Zest Bomb",
+        "Sweet Spot",
+        "Pulp Cloud",
+        "Nightshade"
+      ],
+      "release_leave_seconds": 0.12,
+      "roll_leave_seconds": 0.27,
+      "hand": {
+        "joint": "L_Hand",
+        "along_m": 0.07,
+        "out_m": 0.03
+      }
     }
   },
   "victory": {
@@ -260,19 +338,11 @@
     "fade_seconds": 0.2
   },
   "land": {
-    "clip": "land",
+    "clip": "move_land_hard",
     "from": "Hip",
     "feather": 0,
     "weight": 1.0,
     "speed": 1.0
-  },
-  "reload_hand": {
-    "to": [
-      0.12,
-      0.98,
-      0.08
-    ],
-    "share": 0.3
   },
   "switch": {
     "dip_m": 0.25,
@@ -298,22 +368,48 @@
   },
   "props": {
     "spin_radians_per_second": 9.0,
-    "tile_m": 1.0,
-    "wall_height_m": 3.0
+    "trim": {
+      "ally": [
+        0.2,
+        0.6,
+        1.0
+      ],
+      "enemy": [
+        1.0,
+        0.35,
+        0.2
+      ],
+      "strength": 1.0
+    }
   },
   "shade": {
-    "indirect_floor": 0.5
+    "indirect_floor": 0.5,
+    "maps": {
+      "base_color": {
+        "anisotropy": 4,
+        "mip": "linear"
+      },
+      "normal": {
+        "anisotropy": 2,
+        "mip": "linear"
+      },
+      "orm": {
+        "anisotropy": 1,
+        "mip": "linear"
+      }
+    }
   },
   "pin_feet": {
     "contact_m": 0.03,
     "clips": [
       "idle",
-      "crouch_idle",
       "plant_in",
       "plant_loop",
       "defuse_loop",
       "victory",
-      "turn"
+      "turn",
+      "move_land_hard",
+      "move_crouch_hold"
     ]
   },
   "hold_blend_seconds": 0.15,
@@ -514,6 +610,163 @@
     "device": "device"
   },
   "view": {
+    "hands": {
+      "socket": "item_r",
+      "ready": "fp_ability_ready",
+      "hold": "fp_ability_hold",
+      "abilities": {
+        "Bunch": {
+          "clip": "fp_ability_ultimate",
+          "speed": 1.0,
+          "fade_seconds": 0.1
+        },
+        "Citrus Curtain": {
+          "clip": "fp_ability_wall",
+          "speed": 1.0,
+          "fade_seconds": 0.1
+        },
+        "Glare": {
+          "clip": "fp_ability_cast",
+          "speed": 1.0,
+          "fade_seconds": 0.1
+        },
+        "Jam Pool": {
+          "clip": "fp_ability_roll",
+          "speed": 1.0,
+          "fade_seconds": 0.0,
+          "prop": {
+            "key": "prop_jam_pool",
+            "leave_seconds": 0.24,
+            "size_m": 0.12
+          }
+        },
+        "Juice Flood": {
+          "clip": "fp_ability_ultimate",
+          "speed": 1.0,
+          "fade_seconds": 0.1
+        },
+        "Made Man": {
+          "clip": "fp_ability_ultimate",
+          "speed": 1.0,
+          "fade_seconds": 0.1
+        },
+        "Melon Drop": {
+          "clip": "fp_ability_ultimate",
+          "speed": 1.0,
+          "fade_seconds": 0.1
+        },
+        "Nightshade": {
+          "clip": "fp_ability_roll",
+          "speed": 1.0,
+          "fade_seconds": 0.0,
+          "prop": {
+            "key": "prop_nightshade",
+            "leave_seconds": 0.24,
+            "size_m": 0.12
+          }
+        },
+        "Peel": {
+          "clip": "fp_ability_place",
+          "speed": 1.0,
+          "fade_seconds": 0.1,
+          "prop": {
+            "key": "prop_peel",
+            "leave_seconds": 0.22,
+            "size_m": 0.22
+          }
+        },
+        "Pulp Cloud": {
+          "clip": "fp_ability_roll",
+          "speed": 1.0,
+          "fade_seconds": 0.0,
+          "prop": {
+            "key": "prop_pulp_cloud",
+            "leave_seconds": 0.24,
+            "size_m": 0.12
+          }
+        },
+        "Rind Wall": {
+          "clip": "fp_ability_wall",
+          "speed": 1.0,
+          "fade_seconds": 0.1
+        },
+        "Ripe Flash": {
+          "clip": "fp_ability_throw",
+          "speed": 1.0,
+          "fade_seconds": 0.0,
+          "prop": {
+            "key": "prop_ripe_flash",
+            "leave_seconds": 0.16,
+            "size_m": 0.12
+          }
+        },
+        "Seed Grenade": {
+          "clip": "fp_ability_throw",
+          "speed": 1.0,
+          "fade_seconds": 0.0,
+          "prop": {
+            "key": "prop_seed_grenade",
+            "leave_seconds": 0.16,
+            "size_m": 0.11
+          }
+        },
+        "Seed Sensor": {
+          "clip": "fp_ability_press",
+          "speed": 1.0,
+          "fade_seconds": 0.1,
+          "prop": {
+            "key": "prop_seed_sensor",
+            "leave_seconds": 0.2,
+            "size_m": 0.16
+          }
+        },
+        "Split": {
+          "clip": "fp_ability_self",
+          "speed": 2.0,
+          "fade_seconds": 0.1
+        },
+        "Sugar Rush": {
+          "clip": "fp_ability_ultimate",
+          "speed": 1.0,
+          "fade_seconds": 0.1
+        },
+        "Sweet Spot": {
+          "clip": "fp_ability_roll",
+          "speed": 1.0,
+          "fade_seconds": 0.0,
+          "prop": {
+            "key": "prop_sweet_spot",
+            "leave_seconds": 0.24,
+            "size_m": 0.12
+          }
+        },
+        "Thump": {
+          "clip": "fp_ability_self",
+          "speed": 1.0,
+          "fade_seconds": 0.1
+        },
+        "Vine Wire": {
+          "clip": "fp_ability_press",
+          "speed": 1.0,
+          "fade_seconds": 0.1,
+          "prop": {
+            "key": "prop_vine_wire",
+            "leave_seconds": 0.2,
+            "size_m": 0.14
+          }
+        },
+        "Zest Bomb": {
+          "clip": "fp_ability_roll",
+          "speed": 1.0,
+          "fade_seconds": 0.0,
+          "prop": {
+            "key": "prop_zest_bomb",
+            "leave_seconds": 0.24,
+            "size_m": 0.13
+          }
+        }
+      }
+    },
     "scale": 0.25,
     "scope_seconds": 0.15,
     "lower_seconds": 0.2,
@@ -588,16 +841,17 @@
           -0.4
         ],
         "scoped": [
-          0.0,
-          0.0,
-          -0.28
+          0.16,
+          -0.55,
+          -0.4
         ],
         "lowered": [
           0.18,
           -0.38,
           -0.25
         ],
-        "lower_running": false
+        "lower_running": false,
+        "hide_from_share": 0.4
       },
       "sidearm": {
         "rest": [

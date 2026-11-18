@@ -1,6 +1,6 @@
 use glam::{Mat3, Vec3};
 
-use super::effects::{EffectId, Effects, Living, State};
+use super::effects::{ActorId, EffectId, Effects, Living, State};
 use super::numbers::{AbilityId, Delivery, TrapShape};
 use super::shapes::flat;
 
@@ -37,6 +37,7 @@ pub enum PropPose {
 pub struct PropState {
     pub effect: EffectId,
     pub ability: AbilityId,
+    pub owner: ActorId,
     pub team: usize,
     pub born: u64,
     pub pose: PropPose,
@@ -119,6 +120,7 @@ impl Effects {
                 Some(PropState {
                     effect: living.id,
                     ability: living.ability,
+                    owner: living.caster.id,
                     team: living.caster.team,
                     born: living.born,
                     pose: pose_of(living)?,

@@ -132,9 +132,9 @@
     "crouch_height_m": 1.25,
     "jump_apex_seconds": 0.3,
     "crouch_seconds": 0.12,
-    "stride_run_m": 1.343,
-    "stride_walk_m": 1.157,
-    "stride_crouch_m": 1.157,
+    "stride_run_m": 1.8,
+    "stride_walk_m": 0.931,
+    "stride_crouch_m": 0.726,
     "hard_landing_mps": 7.5,
     "push_apart_mps": 1.5,
     "slow_jump_share": 1.0,
@@ -270,6 +270,7 @@
           "land": 7.0
         },
         "fire_rate_factor": 0.9,
+        "recoil_factor": 0.9,
         "scope_in_seconds": 0.1,
         "breaks_on_shot": false
       }
@@ -330,6 +331,7 @@
           "land": 7.0
         },
         "fire_rate_factor": 0.9,
+        "recoil_factor": 0.9,
         "scope_in_seconds": 0.1,
         "breaks_on_shot": false
       }
@@ -390,6 +392,7 @@
           "land": 10.0
         },
         "fire_rate_factor": 1.0,
+        "recoil_factor": 0.9,
         "scope_in_seconds": 0.25,
         "breaks_on_shot": true
       },
@@ -405,7 +408,9 @@
       "equip_seconds": 0.6,
       "heavy_front": 75.0,
       "heavy_back": 150.0,
-      "heavy_swing_seconds": 1.0
+      "heavy_swing_seconds": 1.0,
+      "combo_swings": 3,
+      "combo_reset_seconds": 0.5
     }
   },
   "ability_slots": {
@@ -487,6 +492,7 @@
       "role": "support",
       "c": {
         "name": "Jam Pool",
+        "affects_team": true,
         "block": "zone_slow",
         "cost": 200,
         "charges": 2,
@@ -526,6 +532,7 @@
       },
       "e": {
         "name": "Sweet Spot",
+        "heal_pause_seconds": 1.0,
         "block": "zone_heal",
         "radius_m": 4.0,
         "seconds": 5,
@@ -545,6 +552,7 @@
       },
       "x": {
         "name": "Sugar Rush",
+        "heal_pause_seconds": 1.0,
         "block": "team_heal",
         "points": 7,
         "radius_m": 15.0,
@@ -558,6 +566,7 @@
       "role": "controller",
       "c": {
         "name": "Zest Bomb",
+        "ally_damage": 0.33,
         "object_damage": 0.5,
         "block": "zone_damage",
         "cost": 300,
@@ -585,7 +594,8 @@
         "length_m": 16.0,
         "height_m": 4.0,
         "seconds": 12,
-        "thickness_m": 0.3
+        "thickness_m": 0.3,
+        "prop": "prop_citrus_curtain"
       },
       "e": {
         "name": "Pulp Cloud",
@@ -623,6 +633,7 @@
       "role": "initiator",
       "c": {
         "name": "Seed Grenade",
+        "ally_damage": 0.33,
         "object_damage": 1.0,
         "block": "grenade",
         "cost": 300,
@@ -673,6 +684,7 @@
       },
       "x": {
         "name": "Melon Drop",
+        "ally_damage": 0.33,
         "object_damage": 1.0,
         "block": "airstrike",
         "points": 8,
@@ -770,6 +782,9 @@
     },
     "plant": {
       "bounce": 0.4
+    },
+    "dirt": {
+      "bounce": 0.4
     }
   },
   "ultimate_orbs": {
@@ -799,6 +814,10 @@
         "spray_settle_seconds": 0.3,
         "ability_skill": 0.5,
         "checks_corners": false,
+        "run_and_gun": 0.3,
+        "notice_wire": 0.25,
+        "post_close": 0.5,
+        "post_peek": 0.5,
         "turn_deg_per_second": 220,
         "settle_seconds": 0.9,
         "move_error": 1.5,
@@ -815,6 +834,10 @@
         "spray_settle_seconds": 0.12,
         "ability_skill": 0.8,
         "checks_corners": true,
+        "run_and_gun": 0.1,
+        "notice_wire": 0.5,
+        "post_close": 0.25,
+        "post_peek": 0.25,
         "turn_deg_per_second": 320,
         "settle_seconds": 0.7,
         "move_error": 1.0,
@@ -831,6 +854,10 @@
         "spray_settle_seconds": 0.05,
         "ability_skill": 0.95,
         "checks_corners": true,
+        "run_and_gun": 0.0,
+        "notice_wire": 0.8,
+        "post_close": 0.0,
+        "post_peek": 0.1,
         "turn_deg_per_second": 480,
         "settle_seconds": 0.45,
         "move_error": 0.6,
@@ -853,11 +880,18 @@
       "spray_m": 8,
       "sweep_quiet_seconds": 8,
       "pickup_detour_m": 8,
-      "burst_shots": [
-        3,
-        5
-      ],
-      "stop_to_shoot": 0.8,
+      "spray_hold_share": 1.0,
+      "blind_sight": 0.5,
+      "flash_mate_m": 10,
+      "flash_mate_deg": 70.0,
+      "reveal_shift_m": 4.0,
+      "orb_detour_m": 20.0,
+      "orb_stand_m": 0.8,
+      "object_shoot_m": 15.0,
+      "object_block_m": 1.5,
+      "wall_stuck_seconds": 2.0,
+      "post_clear_m": 3.0,
+      "cover_plant_m": 12.0,
       "burst_pause_seconds": 0.35,
       "over_peek": 0.15,
       "hesitate_seconds": [
@@ -872,7 +906,8 @@
       "safe_margin_m": 10,
       "crossfire_deg": 35,
       "retake_group": 2,
-      "lone_save_enemies": 3,
+      "retake_down": 2,
+      "retake_smoke_m": 4.0,
       "handoff_m": 5.0,
       "line_up_m": 2.0,
       "throw_pitch_deg": [
@@ -943,17 +978,14 @@
       "ask_device_m": 2.0,
       "ask_device_deg": 20.0,
       "sniper_spare": 400,
-      "gift_wait_seconds": 0.3,
       "eco_gun_cost": 1000,
       "rotate_seen": 2,
       "info_seconds": 8,
       "site_near_m": 14,
-      "retake_wait_seconds": 8,
       "clear_seconds": 3,
       "defuse_margin_seconds": 2,
       "plan_seconds": 0.25,
       "heal_below": 60,
-      "flash_mate_m": 10,
       "flash_inside_m": 5,
       "smoke_inside_m": 5,
       "utility_aim_deg": 8,
@@ -1518,28 +1550,72 @@
     },
     "smoke": {
       "color": [
-        0.62,
-        0.64,
-        0.66
+        0.86,
+        0.86,
+        0.86
       ],
       "rim_m": 0.6,
-      "sight_m": 3.0,
+      "tint": [
+        1.0,
+        0.58,
+        0.22
+      ],
+      "tint_share": 0.35,
+      "under": 0.55,
       "noise_scale": 0.9,
       "noise_speed": 0.25
     },
     "panels": {
-      "wall": [
-        0.55,
-        0.6,
-        0.7
-      ],
-      "curtain": [
-        0.25,
-        0.3,
-        0.35
-      ],
+      "rind": {
+        "skin": [
+          0.03,
+          0.16,
+          0.04
+        ],
+        "stripe": [
+          0.16,
+          0.38,
+          0.1
+        ],
+        "pith": [
+          0.86,
+          0.92,
+          0.72
+        ],
+        "flesh": [
+          0.86,
+          0.12,
+          0.14
+        ],
+        "seed": [
+          0.03,
+          0.025,
+          0.02
+        ],
+        "stripe_m": 0.32,
+        "pith_m": 0.06,
+        "seed_m": 0.12
+      },
+      "curtain": {
+        "peel": [
+          1.0,
+          0.42,
+          0.04
+        ],
+        "pulp": [
+          1.0,
+          0.6,
+          0.1
+        ],
+        "glow": 0.25,
+        "cell_m": 0.08,
+        "pleat_m": 0.5
+      },
+      "trim_m": 0.06,
       "edge_glow": 2.0,
-      "edge_power": 3.0
+      "edge_power": 3.0,
+      "rim_glow": 0.35,
+      "rise_seconds": 0.2
     },
     "teams": [
       [
@@ -1579,11 +1655,13 @@
         0.9,
         0.3
       ],
-      "fill": 0.25,
+      "fill": 0.35,
       "rim_m": 0.15,
       "pattern_m": 0.6,
       "pattern_speed": 0.4,
-      "height_m": 0.6
+      "height_m": 0.6,
+      "dashes": 24.0,
+      "dash_speed": 0.15
     },
     "traps": {
       "size_m": 0.25,
@@ -1600,7 +1678,7 @@
         0.1
       ],
       "rim_m": 0.2,
-      "fill": 0.15,
+      "fill": 0.35,
       "height_m": 1.0
     },
     "pulse": {
@@ -1688,7 +1766,10 @@
       ],
       "wire_glow": 0.6,
       "shadow_radius_m": 0.32,
-      "shadow_opacity": 0.75
+      "shadow_opacity": 0.75,
+      "wire_least_per_m": 0.0055,
+      "wire_pulse_mps": 2.0,
+      "wire_pulse_m": 1.5
     },
     "barrier": {
       "friendly": [
@@ -1724,7 +1805,16 @@
         4.0,
         3.0,
         0.3
-      ]
+      ],
+      "wire_share": 0.25,
+      "model_m": 5.0,
+      "model_prefix": "prop_",
+      "trap_models": {
+        "trap": "prop_peel",
+        "sensor": "prop_seed_sensor",
+        "wire": "prop_vine_wire",
+        "projectile": "prop_seed_grenade"
+      }
     },
     "enemy": {
       "rim": [
@@ -1754,6 +1844,76 @@
       "rim_m": 0.08,
       "height_m": 1.5,
       "every_points": 3
+    },
+    "orbs": {
+      "color": [
+        1.0,
+        0.644,
+        0.0497
+      ],
+      "lift_m": 1.0,
+      "core_m": 0.16,
+      "halo_m": 0.9,
+      "glow": 3.0,
+      "halo_glow": 0.6,
+      "dim": 0.65,
+      "pulse_hz": 0.4,
+      "channel_boost": 1.5,
+      "beam_width_m": 0.06,
+      "beam_glow": 1.6,
+      "beam_least": 0.25,
+      "fade_seconds": 0.5,
+      "burst": {
+        "sprites": 28,
+        "seconds": 0.7,
+        "speed_mps": 4.5,
+        "spread": 1.0,
+        "size_m": 0.07,
+        "gravity_mps2": 2.0,
+        "color": [
+          3.0,
+          1.93,
+          0.15
+        ],
+        "opacity": 0.0,
+        "streak_seconds": 0.05
+      },
+      "burst_flash": 6.0
+    },
+    "shatter": {
+      "pieces": {
+        "sprites": 22,
+        "seconds": 0.9,
+        "speed_mps": 3.5,
+        "spread": 1.0,
+        "size_m": 0.06,
+        "gravity_mps2": 9.8,
+        "color": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "opacity": 0.95,
+        "streak_seconds": 0.0
+      },
+      "sparks": {
+        "sprites": 16,
+        "seconds": 0.35,
+        "speed_mps": 6.0,
+        "spread": 1.0,
+        "size_m": 0.03,
+        "gravity_mps2": 3.0,
+        "color": [
+          1.0,
+          1.0,
+          1.0
+        ],
+        "opacity": 0.0,
+        "streak_seconds": 0.03
+      },
+      "reference_m": 0.5,
+      "least_scale": 0.6,
+      "most_scale": 3.0
     }
   },
   "spectate": {
@@ -1811,6 +1971,42 @@
       "floor_m": 0.0,
       "black_floor": 0.06
     },
-    "antialias": "fxaa"
+    "antialias": "fxaa",
+    "filtering": {
+      "base_color": {
+        "anisotropy": 4,
+        "mip": "linear"
+      },
+      "normal": {
+        "anisotropy": 2,
+        "mip": "linear"
+      },
+      "orm": {
+        "anisotropy": 1,
+        "mip": "linear"
+      },
+      "lightmap": {
+        "anisotropy": 1,
+        "mip": "nearest"
+      },
+      "macro": {
+        "anisotropy": 1,
+        "mip": "nearest"
+      },
+      "sky_picture": {
+        "anisotropy": 1,
+        "mip": "nearest"
+      },
+      "light_field": {
+        "anisotropy": 1,
+        "mip": "nearest"
+      }
+    },
+    "detail": {
+      "least_px": 8.0,
+      "overlap": 0.15,
+      "never_m": 1.0
+    },
+    "visible_sets": true
   }
 }

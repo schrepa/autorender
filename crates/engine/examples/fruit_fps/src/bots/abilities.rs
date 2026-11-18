@@ -1,8 +1,11 @@
 use glam::Vec3;
 
-use super::aim::{angle_between, flat, flat_distance, look_angles, max, radians, sin_cos, wrap};
+use super::aim::{
+    angle_between, direction, flat, flat_distance, look_angles, max, radians, sin_cos, wrap,
+};
 use super::debug::{Activity, Why};
-use super::sense::{AbilityUse, Block, DeviceSense, Gait, Intent, Side, SoundKind};
+use super::memory::Source;
+use super::sense::{AbilityUse, Block, Call, CallKind, DeviceSense, Gait, Intent, Side, SoundKind};
 use super::team::{Duty, Line, LineKind, Step};
 use super::throws::{Progress, Search, Shot};
 use super::{Brain, Ctx};
@@ -217,12 +220,6 @@ fn push_tools(brain: &Brain, ctx: &Ctx<'_, '_>) -> Option<(usize, Vec3)> {
             ));
         }
     }
-    if order.step == Step::Retake
-        && let DeviceSense::Planted { at, .. } = ctx.sense.game.device
-        && let Some(slot) = slot_with(ctx, brain, Block::Reveal)
-    {
-        return Some((slot, at));
-    }
     None
 }
 
@@ -239,6 +236,35 @@ fn nearest_choke(ctx: &Ctx<'_, '_>, skip_face: bool) -> Option<Vec3> {
         })
 }
 
+fn answer_push(brain: &Brain, ctx: &Ctx<'_, '_>) -> Option<(usize, Vec3)> {
+    let play = &ctx.numbers.play;
+    let slot = slot_with(ctx, brain, Block::Flash)?;
+    let within = ctx.numbers.ticks(play.heard_seconds);
+    let track = brain
+        .memory
+        .heard(ctx.tick, within)
+        .filter(|track| track.sound == Some(SoundKind::Step))?;
+    let me = ctx.sense.position;
+    let gate = ctx
+        .world
+        .places()
+        .chokes
+        .iter()
+        .map(|choke| choke.middle())
+        .min_by(|a, b| flat_distance(*a, track.at).total_cmp(&flat_distance(*b, track.at)))?;
+    let reach = max(ctx.sense.abilities[slot].range_m, play.flash_mate_m);
+    let mine = flat_distance(me, gate);
+    let coming = flat_distance(gate, track.at) <= play.walk_near_m
+        && mine < flat_distance(me, track.at)
+        && mine <= reach;
+    if !coming {
+        return None;
+    }
+    let out = flat(track.at - gate).normalize_or_zero();
+    let target = gate + out * play.flash_inside_m + ctx.up;
+    flash_spot(ctx, slot, target).map(|spot| (slot, spot))
+}
+
 fn hold_tools(brain: &Brain, ctx: &Ctx<'_, '_>) -> Option<(usize, Vec3)> {
     let order = brain.order;
     let play = &ctx.numbers.play;
@@ -252,6 +278,12 @@ fn hold_tools(brain: &Brain, ctx: &Ctx<'_, '_>) -> Option<(usize, Vec3)> {
         if in_range(ctx, slot, flank) || ctx.sense.abilities[slot].range_m <= 0.0 {
             return Some((slot, flank));
         }
+    }
+    if side == Side::Defend
+        && matches!(order.step, Step::Setup | Step::Rotate)
+        && let Some(choice) = answer_push(brain, ctx)
+    {
+        return Some(choice);
     }
     if side == Side::Defend && matches!(order.step, Step::Setup | Step::Rotate) {
         let within = ctx.numbers.ticks(play.heard_seconds);
@@ -301,6 +333,7 @@ fn line_of(ctx: &Ctx<'_, '_>, slot: usize, target: Vec3) -> Option<Line> {
         (Block::DamageZone, Side::Attack, Step::PostPlant) => LineKind::DamagePlant,
         (Block::Smoke | Block::Wall | Block::DamageZone, Side::Defend, _) => LineKind::StallChoke,
         (Block::Flash, Side::Defend, Step::Retake) => LineKind::RetakeFlash,
+        (Block::Flash, Side::Defend, Step::Setup | Step::Rotate) => LineKind::AnswerPush,
         (Block::Flash, _, _) => LineKind::FlashCorner,
         (Block::Reveal, _, _) => LineKind::RevealSite,
         (Block::Smoke, _, _) => LineKind::SmokeHold,
@@ -334,6 +367,7 @@ fn choose(brain: &mut Brain, ctx: &Ctx<'_, '_>) -> Option<(Choice, bool)> {
 
 pub fn consider(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
     let play = &ctx.numbers.play;
+    warned(brain, ctx);
     if let Some((from, until)) = brain.utilities.avert {
         if ctx.tick < until {
             let away = ctx.eye + flat(ctx.eye - from).normalize_or_zero() * play.flash_shift_m;
@@ -357,13 +391,20 @@ pub fn consider(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
         || brain
             .memory
             .lost(ctx.tick, ctx.numbers.ticks(play.cast_clear_seconds))
-            .is_some_and(|track| flat_distance(track.at, ctx.sense.position) <= play.cast_clear_m);
+            .is_some_and(|track| {
+                track.source == Source::Seen
+                    && flat_distance(track.at, ctx.sense.position) <= play.cast_clear_m
+            });
     if fight_near {
         return;
     }
     let Some(((slot, target, line), ordered)) = choose(brain, ctx) else {
         return;
     };
+    if ctx.sense.abilities[slot].block == Some(Block::Flash) && blinds_mate(ctx, target) {
+        brain.utilities.quiet_until[slot] = ctx.tick + ctx.numbers.ticks(play.utility_seconds);
+        return;
+    }
     let quiet = ctx.tick + ctx.numbers.ticks(play.utility_repeat_seconds);
     brain.utilities.quiet_until[slot] = quiet;
     let sense = ctx.sense.abilities[slot];
@@ -471,6 +512,50 @@ fn throw(brain: &mut Brain, ctx: &Ctx<'_, '_>, pending: Pending, intent: &mut In
     if ctx.sense.abilities[pending.slot].block == Some(Block::Flash) {
         let until = ctx.tick + ctx.numbers.ticks(play.flash_avert_seconds);
         brain.utilities.avert = Some((pending.target, until));
+        intent.call = Some(Call {
+            from: ctx.sense.me as u32,
+            kind: CallKind::Flash,
+            at: pending.target,
+            zone: None,
+            count: 1,
+            tick: ctx.tick,
+        });
+    }
+}
+
+fn blinds_mate(ctx: &Ctx<'_, '_>, at: Vec3) -> bool {
+    let play = &ctx.numbers.play;
+    let up = ctx.eye - ctx.sense.position;
+    let facing = sin_cos(radians(play.flash_mate_deg)).1;
+    ctx.sense
+        .mates
+        .iter()
+        .filter(|mate| mate.alive)
+        .any(|mate| {
+            let to = flat(at - mate.position);
+            to.length() <= play.flash_mate_m
+                && flat(direction(mate.yaw, 0.0))
+                    .normalize_or_zero()
+                    .dot(to.normalize_or_zero())
+                    >= facing
+                && ctx.world.sees(mate.position + up, at)
+        })
+}
+
+fn warned(brain: &mut Brain, ctx: &Ctx<'_, '_>) {
+    let play = &ctx.numbers.play;
+    if brain.utilities.avert.is_some() {
+        return;
+    }
+    let call = ctx.sense.calls.iter().find(|call| {
+        call.kind == CallKind::Flash
+            && call.from != ctx.sense.me as u32
+            && ctx.tick.saturating_sub(call.tick) <= 2
+            && ctx.world.sees(ctx.eye, call.at)
+    });
+    if let Some(call) = call {
+        let until = ctx.tick + ctx.numbers.ticks(play.flash_avert_seconds);
+        brain.utilities.avert = Some((call.at, until));
     }
 }
 

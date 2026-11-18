@@ -161,6 +161,7 @@ impl Squad {
             | Step::Hunt => self.attack_execute(plan, &alive),
         }
         self.hand_over_orders(plan);
+        self.cover_human(plan, &alive);
         if let DeviceSense::Dropped { at } = plan.sense.game.device {
             let members = plan.sense.members;
             let handed = self
@@ -237,6 +238,41 @@ impl Squad {
         }
         let sum: Vec3 = alive.iter().map(|&m| members[m].position).sum();
         sum / alive.len().max(1) as f32
+    }
+
+    fn cover_human(&mut self, plan: &Plan<'_, '_>, alive: &[usize]) {
+        let members = plan.sense.members;
+        let Some(human) = alive
+            .iter()
+            .copied()
+            .find(|&m| !members[m].bot && members[m].carrying_device)
+        else {
+            return;
+        };
+        let at = members[human].position;
+        let Some(site) = plan.places().site_at(at) else {
+            return;
+        };
+        let near = plan.numbers.play.cover_plant_m;
+        let mut bots: Vec<(usize, f32)> = alive
+            .iter()
+            .copied()
+            .filter(|&m| members[m].bot)
+            .map(|m| (m, flat_distance(members[m].position, at)))
+            .collect();
+        if bots.iter().any(|&(_, d)| d <= near * 0.5) {
+            return;
+        }
+        bots.sort_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)));
+        let st = plan.site(site);
+        if st.ways.is_empty() {
+            return;
+        }
+        for (k, &(m, _)) in bots.iter().take(2).enumerate() {
+            let post = st.ways[k % st.ways.len()].post;
+            self.simple(plan, m, Duty::Cover, Step::Execute, post, false);
+        }
+        self.site = Some(site);
     }
 
     fn follow_human(&mut self, plan: &Plan<'_, '_>, alive: &[usize]) {

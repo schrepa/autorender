@@ -1,7 +1,7 @@
 use engine::prelude::*;
 
-use crate::play::actors::{Actor, Body, Health, Human};
-use crate::play::arms::{Arms, Drops};
+use crate::play::actors::{Actor, Body, Human};
+use crate::play::arms::{Arms, Drops, Held as Holding};
 use crate::play::flow::Flow;
 use crate::play::numbers::{GameNumbers, Numbers};
 use crate::play::paths::Paths;
@@ -10,6 +10,7 @@ use crate::play::round::Round;
 use crate::play::screen::{HudFacts, SelectCard};
 use crate::play::view::{Watch, Watched};
 use crate::rules::{AbilitySlot, Player, View};
+use crate::weapons::GunKind;
 
 use super::ScreenSource;
 use super::facts::Recent;
@@ -66,6 +67,23 @@ fn pickup_part(
     named(&mut pickup.icon, "weapon_", weapon);
 }
 
+fn scope_ease((arms, numbers): (&Arms, &GameNumbers)) -> f32 {
+    if !arms.scoped || arms.hand.held != Holding::Gun(GunKind::Sniper) {
+        return 0.0;
+    }
+    let first = numbers
+        .weapons
+        .gun(GunKind::Sniper)
+        .scope
+        .as_ref()
+        .and_then(|scope| scope.zoom.first().copied())
+        .unwrap_or(1.0);
+    if first <= 1.0 {
+        return 1.0;
+    }
+    engine::math::clamp((arms.zoom - 1.0) / (first - 1.0), 0.0, 1.0)
+}
+
 fn cast_part(facts: &mut HudFacts, held: Option<&Held>) {
     let cast = &mut facts.cast;
     let Some(held) = held else {
@@ -83,35 +101,17 @@ fn cast_part(facts: &mut HudFacts, held: Option<&Held>) {
     named(&mut cast.icon, "ability_", &held.name);
 }
 
-type Watchee<'a> = (&'a Actor, Option<&'a Health>, Option<&'a Arms>);
+type Watchee<'a> = (&'a Actor, Option<&'a Arms>);
 
-fn spectate_part(
-    facts: &mut HudFacts,
-    view: &View<'_>,
-    watching: Option<(&Player, Option<Watchee<'_>>)>,
-    numbers: Option<&GameNumbers>,
-) {
+fn spectate_part(facts: &mut HudFacts, view: &View<'_>, watching: Option<&Player>) {
     let spectate = &mut facts.spectate;
     spectate.active = watching.is_some();
-    let Some((player, body)) = watching else {
+    let Some(player) = watching else {
         spectate.name.clear();
         spectate.icon.clear();
         spectate.color.clear();
-        spectate.weapon_icon.clear();
-        spectate.health = 0.0;
         return;
     };
-    let (health, arms) = body.map_or((None, None), |(_, health, arms)| (health, arms));
-    spectate.health = health.map_or(0.0, |health| health.health);
-    match arms.zip(numbers) {
-        Some((arms, numbers)) => {
-            let shown = arms
-                .loadout
-                .view(&numbers.weapons, crate::weapons::Stance::Stand);
-            named(&mut spectate.weapon_icon, "weapon_", shown.name);
-        }
-        None => spectate.weapon_icon.clear(),
-    }
     set(&mut spectate.name, character_name(view.catalog, player));
     named(
         &mut spectate.icon,
@@ -142,47 +142,51 @@ pub(super) fn fill_more(
         .as_deref()
         .filter(|watched| watched.watch == Watch::Teammate)
         .and_then(|watched| watched.slot)
-        .and_then(|slot| {
-            let body = others.iter().find(|(actor, _, _)| actor.slot == slot);
-            Some((view.players.get(slot as usize)?, body))
-        });
-    spectate_part(facts, &view, watching, game);
+        .and_then(|slot| Some((slot, view.players.get(slot as usize)?)));
+    spectate_part(facts, &view, watching.map(|(_, player)| player));
+    let viewer = watching.map_or(actor.slot, |(slot, _)| slot);
+    let seen_arms = match watching {
+        Some((slot, _)) => others
+            .iter()
+            .find(|(other, _)| other.slot == slot)
+            .and_then(|(_, arms)| arms),
+        None => arms,
+    };
     let place = paths
         .as_deref()
         .zip(body)
         .and_then(|(paths, body)| paths.place_at(body.feet));
     set(
-        &mut facts.place.name,
-        place.map_or("", |place| place.name.as_str()),
-    );
-    set(
         &mut facts.place.callout,
         place.map_or("", |place| place.callout.as_str()),
     );
-    facts.scope = arms
+    facts.scope = seen_arms
         .and_then(|arms| arms.loadout.active_gun())
         .map_or(0, |gun| gun.scope_level() as u32);
+    facts.scope_ease = seen_arms.zip(game).map_or(0.0, scope_ease);
     pickup_part(facts, (arms, game, drops.as_deref()));
     cast_part(
         facts,
-        powers.as_deref().and_then(|powers| powers.held(actor.slot)),
+        powers.as_deref().and_then(|powers| powers.held(viewer)),
     );
     let until = powers
         .as_deref()
-        .and_then(|powers| powers.weapon_down_until(actor.slot));
+        .and_then(|powers| powers.weapon_down_until(viewer));
     facts.weapon.down_left = until.map_or(0.0, |until| {
         until.saturating_sub(time.tick) as f32 * time.delta_seconds
     });
-    let Some(powered) = powers
-        .as_deref()
-        .and_then(|powers| powers.actor(actor.slot))
-    else {
+    let (Some(powered), Some(own)) = (
+        powers.as_deref().and_then(|powers| powers.actor(viewer)),
+        powers
+            .as_deref()
+            .and_then(|powers| powers.actor(actor.slot)),
+    ) else {
         return;
     };
-    let me = view.players.get(actor.slot as usize);
+    let me = view.players.get(viewer as usize);
     for (index, (shown, slot)) in facts.abilities.iter_mut().zip(&powered.slots).enumerate() {
-        shown.equipped = powered.held == Some(ABILITY_SLOTS[index]);
         if index < 3 {
+            shown.equipped = powered.held == Some(ABILITY_SLOTS[index]);
             shown.charges = slot.charges;
             shown.max = slot.max;
             shown.empty = slot.charges == 0;
@@ -191,7 +195,8 @@ pub(super) fn fill_more(
             shown.cooldown_frac = me.map_or(0.0, |player| {
                 cooldown_share(view.catalog, player, (index, slot.cooldown_ticks))
             });
-        } else {
+        } else if let Some(slot) = own.slots.get(index) {
+            shown.equipped = own.held == Some(ABILITY_SLOTS[index]);
             shown.ready = slot.ready;
         }
     }

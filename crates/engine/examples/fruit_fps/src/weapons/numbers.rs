@@ -93,8 +93,22 @@ pub struct ScopeNumbers {
     pub aim_speed_factor: f32,
     pub spread_deg: SpreadDeg,
     pub fire_rate_factor: f32,
+    pub recoil_factor: f32,
     pub scope_in_seconds: f32,
     pub breaks_on_shot: bool,
+}
+
+impl RecoilNumbers {
+    #[must_use]
+    pub fn scaled(&self, factor: f32) -> RecoilNumbers {
+        RecoilNumbers {
+            up_deg_per_shot: self.up_deg_per_shot * factor,
+            max_up_deg: self.max_up_deg * factor,
+            side_deg: self.side_deg * factor,
+            side_jitter_deg: self.side_jitter_deg * factor,
+            ..*self
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -122,6 +136,8 @@ pub struct MeleeNumbers {
     pub heavy_front: f32,
     pub heavy_back: f32,
     pub heavy_swing_seconds: f32,
+    pub combo_swings: u8,
+    pub combo_reset_seconds: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]

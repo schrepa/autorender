@@ -82,7 +82,8 @@ impl Memory {
     ) {
         let play = &numbers.play;
         let reset = numbers.ticks(play.reaction_reset_seconds);
-        for seen in sense.enemies {
+        let blinded = sense.blind >= play.blind_sight;
+        for seen in sense.enemies.iter().filter(|_| !blinded) {
             let (yaw, pitch) = look_angles(look.eye, seen.chest);
             let preaimed =
                 angle_between(look.yaw, look.pitch, yaw, pitch) < radians(play.preaim_cone_deg);
@@ -232,7 +233,7 @@ impl Memory {
                         eye_up,
                     );
                 }
-                CallKind::Hurt => {}
+                CallKind::Hurt | CallKind::Flash => {}
             }
         }
     }

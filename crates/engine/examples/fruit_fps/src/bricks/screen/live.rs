@@ -6,8 +6,8 @@ use crate::play::screen::{
     AbilityFacts, BoardRow, Card, HudFacts, Mate, PlateFacts, Tone, WeaponStats,
 };
 use crate::rules::{
-    AbilitySlot, ArmorTier, BuyRequest, Catalog, Defusing, Device, Item, Phase, Player, Refund,
-    Side, Team, View, WeaponId, WeaponSlot,
+    AbilitySlot, ArmorTier, BuyRefusal, BuyRequest, Catalog, Defusing, Device, Item, Phase, Player,
+    PlayerId, Refund, Side, Team, View, WeaponId, WeaponSlot,
 };
 
 use crate::weapons::{GunKind, GunNumbers, WeaponNumbers};
@@ -167,7 +167,7 @@ pub(super) fn round_part(
     round.fuse_low = planted && round.fuse <= lows.fuse_seconds;
     round.overtime = view.overtime;
     round.decider = view.decider;
-    round.first_of_half = view.first_round_of_half;
+    round.swapped = view.first_round_of_half && view.round > 1;
     round.last_of_half = view.last_round_of_half;
     round.buying = view.phase == Phase::Buy;
     facts.phase = Some(view.phase);
@@ -216,7 +216,11 @@ pub(super) fn plates_part(
     }
 }
 
-pub(super) fn abilities_part(facts: &mut HudFacts, view: &View<'_>, player: &Player) {
+pub(super) fn abilities_part(
+    facts: &mut HudFacts,
+    view: &View<'_>,
+    (player, me): (&Player, &Player),
+) {
     let catalog = view.catalog;
     let Some(entry) = catalog.characters.get(player.character) else {
         return;
@@ -236,11 +240,14 @@ pub(super) fn abilities_part(facts: &mut HudFacts, view: &View<'_>, player: &Pla
             shown.cooldown_frac = cooldown_share(catalog, player, (index, ability.cooldown_ticks));
         }
     }
+    let Some(own) = catalog.characters.get(me.character) else {
+        return;
+    };
     let ultimate: &mut AbilityFacts = &mut facts.abilities[3];
-    named(&mut ultimate.icon, "ability_", &entry.ability_names[3]);
-    ultimate.points = player.ultimate.points;
-    ultimate.points_needed = player.ultimate.cost;
-    ultimate.ready = player.ultimate.points >= player.ultimate.cost;
+    named(&mut ultimate.icon, "ability_", &own.ability_names[3]);
+    ultimate.points = me.ultimate.points;
+    ultimate.points_needed = me.ultimate.cost;
+    ultimate.ready = me.ultimate.points >= me.ultimate.cost;
 }
 
 pub(super) fn cooldown_share(
@@ -349,35 +356,65 @@ fn stats_of(numbers: Option<&WeaponNumbers>, name: &str) -> WeaponStats {
     }
 }
 
-fn settle(card: &mut Card, (cost, credits): (u32, u32), (back, refund): (u32, Option<u32>)) {
-    card.afford = card.owned || cost <= credits + back;
-    card.need = if card.afford {
-        0
+fn gated(refusal: BuyRefusal) -> bool {
+    match refusal {
+        BuyRefusal::WrongPhase
+        | BuyRefusal::Dead
+        | BuyRefusal::OutsideBuyZone
+        | BuyRefusal::UnknownPlayer => true,
+        BuyRefusal::NotForSale
+        | BuyRefusal::TooFewCredits
+        | BuyRefusal::AlreadyOwned
+        | BuyRefusal::AtMaximum
+        | BuyRefusal::NothingToSell => false,
+    }
+}
+
+fn settle(
+    card: &mut Card,
+    (view, human, player): (&View<'_>, PlayerId, &Player),
+    (item, cost, back): (Item, u32, u32),
+    refund: Option<u32>,
+) {
+    let quote = view.price(human, item);
+    card.afford = card.owned || quote.is_ok();
+    card.closed = quote.is_err_and(gated);
+    card.need = if quote == Err(BuyRefusal::TooFewCredits) {
+        cost.saturating_sub(player.credits + back)
     } else {
-        cost - credits - back
+        0
     };
+    credits_into(&mut card.price, quote.unwrap_or(cost));
+    card.buy = quote.is_ok().then_some(BuyRequest::Buy(item));
+    card.ask = false;
+    card.asked = false;
+    if let Item::Weapon(weapon) = item
+        && view.catalog.weapon(weapon).map(|entry| entry.slot) == Some(WeaponSlot::Primary)
+    {
+        card.asked = view.asked(human) == Some(weapon);
+        card.ask = quote == Err(BuyRefusal::TooFewCredits) && !card.asked;
+        if card.ask {
+            card.buy = Some(BuyRequest::Ask(weapon));
+        }
+    }
+    let refund = refund.filter(|_| !card.closed);
     card.sell_credits = refund.unwrap_or(0);
+    card.sell = refund.map(|_| BuyRequest::Sell(item));
 }
 
 fn weapon_card(
     card: &mut Card,
-    (catalog, numbers): (&Catalog, Option<&WeaponNumbers>),
+    (view, numbers): (&View<'_>, Option<&WeaponNumbers>),
     id: WeaponId,
-    (player, refund): (&Player, &Refund),
-    words: &Words,
+    (human, player, refund): (PlayerId, &Player, &Refund),
 ) {
-    let Some(entry) = catalog.weapon(id) else {
+    let Some(entry) = view.catalog.weapon(id) else {
         return;
     };
     let cost = entry.cost.unwrap_or(0);
     set(&mut card.kind, &entry.key);
     set(&mut card.name, &entry.name);
     named(&mut card.icon, "weapon_", &entry.name);
-    if cost == 0 {
-        set(&mut card.price, &words.free);
-    } else {
-        credits_into(&mut card.price, cost);
-    }
     card.max = 0;
     card.charges = 0;
     card.points = 0;
@@ -388,21 +425,22 @@ fn weapon_card(
     let refund = refund
         .primary
         .filter(|_| sold && player.primary == Some(id));
-    settle(card, (cost, player.credits), (back, refund));
-    card.buy = sold.then_some(BuyRequest::Buy(Item::Weapon(id)));
-    card.sell = refund
-        .is_some()
-        .then_some(BuyRequest::Sell(Item::Weapon(id)));
+    settle(
+        card,
+        (view, human, player),
+        (Item::Weapon(id), cost, back),
+        refund,
+    );
 }
 
 fn armor_card(
     card: &mut Card,
-    catalog: &Catalog,
+    view: &View<'_>,
     tier: ArmorTier,
-    (player, refund): (&Player, &Refund),
+    (human, player, refund): (PlayerId, &Player, &Refund),
     words: &Words,
 ) {
-    let numbers = catalog.armor(tier);
+    let numbers = view.catalog.armor(tier);
     card.price.clear();
     let _ = write!(card.price, "{}", numbers.points);
     worded(
@@ -416,7 +454,6 @@ fn armor_card(
     };
     set(&mut card.name, name);
     set(&mut card.icon, icon);
-    credits_into(&mut card.price, numbers.cost);
     let held = player.armor;
     card.owned = held.is_some_and(|armor| armor.points >= numbers.points);
     card.max = 0;
@@ -427,23 +464,20 @@ fn armor_card(
         .filter(|_| held.is_some_and(|armor| armor.tier == tier));
     settle(
         card,
-        (numbers.cost, player.credits),
-        (refund.armor.unwrap_or(0), mine),
+        (view, human, player),
+        (Item::Armor(tier), numbers.cost, refund.armor.unwrap_or(0)),
+        mine,
     );
-    card.buy = (!card.owned).then_some(BuyRequest::Buy(Item::Armor(tier)));
-    card.sell = mine
-        .is_some()
-        .then_some(BuyRequest::Sell(Item::Armor(tier)));
 }
 
 fn ability_card(
     card: &mut Card,
-    catalog: &Catalog,
+    view: &View<'_>,
     index: usize,
-    (player, refund): (&Player, &Refund),
+    (human, player, refund): (PlayerId, &Player, &Refund),
     words: &Words,
 ) {
-    let Some(entry) = catalog.characters.get(player.character) else {
+    let Some(entry) = view.catalog.characters.get(player.character) else {
         return;
     };
     let slot = [AbilitySlot::C, AbilitySlot::Q][index];
@@ -451,7 +485,6 @@ fn ability_card(
     set(&mut card.kind, &words.per_charge);
     set(&mut card.name, &entry.ability_names[index]);
     named(&mut card.icon, "ability_", &entry.ability_names[index]);
-    credits_into(&mut card.price, bought.cost);
     let ability = player.ability(slot);
     card.max = ability.map_or(bought.charges, |ability| ability.max);
     card.charges = ability.map_or(0, |ability| ability.charges);
@@ -459,11 +492,10 @@ fn ability_card(
     let sellable = refund.charges[index] > 0 && card.charges > 0;
     settle(
         card,
-        (bought.cost, player.credits),
-        (0, sellable.then_some(bought.cost)),
+        (view, human, player),
+        (Item::Ability(slot), bought.cost, 0),
+        sellable.then_some(bought.cost),
     );
-    card.buy = (!card.owned).then_some(BuyRequest::Buy(Item::Ability(slot)));
-    card.sell = sellable.then_some(BuyRequest::Sell(Item::Ability(slot)));
 }
 
 fn signature_card(card: &mut Card, catalog: &Catalog, player: &Player, words: &Words) {
@@ -497,11 +529,24 @@ fn team_part(team: &mut Vec<Mate>, view: &View<'_>, (human, player): (usize, &Pl
         .enumerate()
         .filter(|(slot, mate)| *slot != human && mate.team == player.team);
     team.resize_with(mates.clone().count(), Mate::default);
-    for (shown, (_, mate)) in team.iter_mut().zip(mates) {
+    for (shown, (slot, mate)) in team.iter_mut().zip(mates) {
         set(&mut shown.name, character_name(catalog, mate));
         named(&mut shown.icon, "char_", character_key(catalog, mate));
         shown.credits = mate.credits;
         shown.can_rifle = rifle.is_some_and(|cost| mate.credits >= cost);
+        let asked = view.asked(slot);
+        shown.asked = asked.is_some();
+        let entry = asked.and_then(|weapon| catalog.weapon(weapon));
+        match entry {
+            Some(entry) => named(&mut shown.ask_icon, "weapon_", &entry.name),
+            None => shown.ask_icon.clear(),
+        }
+        let quote = asked.map(|weapon| (weapon, view.price_for(human, weapon, slot)));
+        shown.ask_price = entry.and_then(|entry| entry.cost).unwrap_or(0);
+        shown.giveable = matches!(quote, Some((_, Ok(_))));
+        shown.give = quote
+            .filter(|(_, price)| price.is_ok())
+            .map(|(weapon, _)| BuyRequest::BuyFor(weapon, slot));
     }
 }
 
@@ -530,20 +575,35 @@ pub(super) fn buy_part(
     }
     order[start..].sort_unstable();
     let refund = view.refund(human);
-    let mine = (player, &refund);
+    let mine = (human, player, &refund);
     buy.weapons.resize_with(order.len(), Card::default);
     for (card, (_, id)) in buy.weapons.iter_mut().zip(order.iter()) {
-        weapon_card(card, (catalog, numbers), *id, mine, words);
+        weapon_card(card, (view, numbers), *id, mine);
     }
     let tiers = [ArmorTier::Light, ArmorTier::Heavy];
     buy.armor.resize_with(tiers.len(), Card::default);
     for (card, tier) in buy.armor.iter_mut().zip(tiers) {
-        armor_card(card, catalog, tier, mine, words);
+        armor_card(card, view, tier, mine, words);
     }
     buy.abilities.resize_with(2, Card::default);
     for (index, card) in buy.abilities.iter_mut().enumerate() {
-        ability_card(card, catalog, index, mine, words);
+        ability_card(card, view, index, mine, words);
     }
+    let gate = match view.can_buy(human) {
+        Ok(()) => "",
+        Err(BuyRefusal::OutsideBuyZone) => words.shop_zone.as_str(),
+        Err(BuyRefusal::Dead) => words.shop_dead.as_str(),
+        Err(
+            BuyRefusal::WrongPhase
+            | BuyRefusal::UnknownPlayer
+            | BuyRefusal::NotForSale
+            | BuyRefusal::TooFewCredits
+            | BuyRefusal::AlreadyOwned
+            | BuyRefusal::AtMaximum
+            | BuyRefusal::NothingToSell,
+        ) => words.shop_closed.as_str(),
+    };
+    set(&mut buy.gate, gate);
     signature_card(&mut buy.signature, catalog, player, words);
     buy.reward_win = catalog.economy.round_win;
     buy.reward_loss = catalog.loss_reward(view.loss_streak[player.team.index()]);
@@ -601,6 +661,7 @@ pub(super) fn board_part(
             }
             row.ult = player.ultimate.points;
             row.ult_need = player.ultimate.cost;
+            row.ult_ready = player.ultimate.points >= player.ultimate.cost;
             row.alive = player.alive;
             row.me = slot == human;
         }

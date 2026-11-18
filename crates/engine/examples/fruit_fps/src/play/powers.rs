@@ -3,7 +3,7 @@ use glam::Vec3;
 
 use crate::abilities::{
     self, AbilityId, AbilitySpec, ActorId, Aim, Danger, Drawable, Effects, Modifiers, Orb,
-    OrbState, Orbs, Preview, WorldHit,
+    OrbState, Orbs, Preview, Status, WireChain, WorldHit,
 };
 use crate::play::world::Arena;
 use crate::rules::{AbilitySlot, Team};
@@ -195,6 +195,14 @@ impl Powers {
 
     pub fn blindness(&self, slot: u32) -> f32 {
         self.effects.blindness(ActorId(slot))
+    }
+
+    pub fn statuses(&self, slot: u32) -> Vec<Status> {
+        self.effects.statuses(ActorId(slot))
+    }
+
+    pub fn wire_chain(&self, slot: u32) -> Option<WireChain> {
+        self.effects.wire_chain(ActorId(slot))
     }
 
     pub fn blindness_at(&self, slot: u32, tick: f64) -> f32 {

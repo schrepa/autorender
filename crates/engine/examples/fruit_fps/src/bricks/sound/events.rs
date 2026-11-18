@@ -1,14 +1,16 @@
+use std::collections::BTreeMap;
+
 use engine::math;
 use glam::Vec3;
 
-use crate::abilities::{ActorId, CueKind, Event as PowerEvent, Orb, OrbEvent, Slot};
+use crate::abilities::{ActorId, CueKind, EffectId, Event as PowerEvent, Orb, OrbEvent, Slot};
 use crate::play::arms::Drops;
 use crate::play::events::arms::{ArmsEvents, Handling, Weapon};
 use crate::play::events::body::BodyEvents;
 use crate::play::events::powers::PowerEvents;
 use crate::play::sound::{Anchor, Cue};
 use crate::play::world::{Arena, Barrier};
-use crate::rules::{CreditReason, Event, Phase, Team};
+use crate::rules::{AbilitySlot, CreditReason, Event, Phase, Team};
 use crate::weapons::BodyPart;
 
 use super::table::Table;
@@ -40,7 +42,12 @@ impl Human {
     }
 }
 
-pub(super) fn arms(events: &ArmsEvents, human: Human, table: &Table, out: &mut Vec<Cue>) {
+pub(super) fn arms(
+    events: &ArmsEvents,
+    (human, round_kills): (Human, Option<u32>),
+    table: &Table,
+    out: &mut Vec<Cue>,
+) {
     for shot in &events.shots {
         let weight = if shot.heavy { "_heavy" } else { "" };
         out.push(cue(
@@ -71,6 +78,16 @@ pub(super) fn arms(events: &ArmsEvents, human: Human, table: &Table, out: &mut V
             (Weapon::Gun(_), BodyPart::Leg) => "hit.leg",
         };
         out.push(cue(event, Anchor::Actor(hit.victim), Some(hit.shooter)));
+        if hit.armor_broke && human.is(hit.shooter as usize) {
+            out.push(cue(
+                "armor.break.dealt",
+                Anchor::Listener,
+                Some(hit.shooter),
+            ));
+        }
+        if hit.armor_broke && human.is(hit.victim as usize) {
+            out.push(cue("armor.break.taken", Anchor::Listener, Some(hit.victim)));
+        }
     }
     let mut equipped: Vec<u32> = Vec::new();
     for handling in &events.handling {
@@ -94,7 +111,12 @@ pub(super) fn arms(events: &ArmsEvents, human: Human, table: &Table, out: &mut V
     }
     for death in &events.deaths {
         if death.killer.is_some_and(|killer| human.is(killer as usize)) {
-            out.push(cue("kill.confirm", Anchor::Listener, death.killer));
+            let step = round_kills.unwrap_or(1).clamp(1, table.kill_steps);
+            out.push(cue(
+                format!("kill.confirm.{step}"),
+                Anchor::Listener,
+                death.killer,
+            ));
         }
     }
 }
@@ -331,7 +353,9 @@ fn cue_name(kind: CueKind, slot: Slot) -> &'static str {
         CueKind::TrapPlaced => "power.trap_placed",
         CueKind::TrapArmed => "power.trap_armed",
         CueKind::TrapTriggered => "power.trap_triggered",
+        CueKind::WireChained => "power.wire_chained",
         CueKind::WireZap => "power.wire_zap",
+        CueKind::WireReleased => "power.wire_released",
         CueKind::SensorPlaced => "power.sensor_placed",
         CueKind::Destroyed => "power.destroyed",
         CueKind::StrikeWarning => "power.strike_warning",
@@ -355,9 +379,14 @@ fn held(event: &'static str, anchor: Anchor, source: Option<u32>, ticks: u64) ->
 pub(super) struct Heard<'a> {
     pub human: Human,
     pub listener: Option<u32>,
+    pub casters: &'a [(u32, Team, String)],
     pub now: u64,
     pub table: &'a Table,
     pub orbs: &'a [Orb],
+}
+
+fn wire_tag(effect: EffectId) -> u64 {
+    (1 << 61) | u64::from(effect.0)
 }
 
 fn reveal_tag(actor: ActorId, team: usize) -> u64 {
@@ -398,85 +427,18 @@ pub(super) fn powers(
     out: &mut Vec<Cue>,
     stops: &mut Vec<u64>,
 ) {
-    let (human, now) = (heard.human, heard.now);
     orbs(events, heard, out, stops);
+    ultimates(events, heard, out);
     for event in &events.events {
         match event {
-            PowerEvent::Cue {
-                cue: CueKind::Destroyed,
-                at,
-                size,
-                ..
-            } => {
-                let event = if *size >= heard.table.break_large_m {
-                    "power.destroyed.large"
-                } else {
-                    "power.destroyed.small"
-                };
-                out.push(cue(event, Anchor::Point(*at), None));
-            }
             PowerEvent::Cue {
                 cue: kind,
                 ability,
                 at,
+                size,
                 ticks,
                 ..
-            } => {
-                let anchor = Anchor::Point(*at);
-                let hold = u64::from(*ticks);
-                match kind {
-                    CueKind::ZoneStart => out.push(held("power.zone_start", anchor, None, hold)),
-                    CueKind::HealStart => {
-                        out.push(cue("power.heal_start", anchor, None));
-                        out.push(held("power.heal_loop", anchor, None, hold));
-                    }
-                    CueKind::Cast
-                    | CueKind::Throw
-                    | CueKind::Bounce
-                    | CueKind::BounceBody
-                    | CueKind::FlashBurst
-                    | CueKind::Explosion
-                    | CueKind::SmokeBurst
-                    | CueKind::WallUp
-                    | CueKind::WallDown
-                    | CueKind::TrapPlaced
-                    | CueKind::TrapArmed
-                    | CueKind::TrapTriggered
-                    | CueKind::WireZap
-                    | CueKind::SensorPlaced
-                    | CueKind::Destroyed
-                    | CueKind::StrikeWarning
-                    | CueKind::StrikeImpact
-                    | CueKind::Pulse
-                    | CueKind::Dash
-                    | CueKind::TransformStart
-                    | CueKind::TransformEnd
-                    | CueKind::Glare => out.push(cue(cue_name(*kind, ability.slot), anchor, None)),
-                }
-            }
-            PowerEvent::Blinded { actor, until, .. } if human.slot == Some(actor.0) => {
-                let hold = until.saturating_sub(now);
-                out.push(held("power.blinded", Anchor::Listener, Some(actor.0), hold));
-            }
-            PowerEvent::RevealStarted {
-                actor, team, until, ..
-            } if heard.listener == Some(actor.0) => {
-                out.push(Cue {
-                    tag: Some(reveal_tag(*actor, *team)),
-                    ..held(
-                        "status.revealed",
-                        Anchor::Listener,
-                        Some(actor.0),
-                        until.saturating_sub(now),
-                    )
-                });
-            }
-            PowerEvent::RevealEnded { actor, team } => stops.push(reveal_tag(*actor, *team)),
-            PowerEvent::Destroyed { team, .. }
-                if human.team.is_some_and(|own| own.index() == *team) =>
-            {
-                out.push(cue("power.destroyed.own", Anchor::Listener, None));
-            }
+            } => cued(*kind, ability.slot, (*at, *size, *ticks), heard.table, out),
             PowerEvent::Damage { .. }
             | PowerEvent::Heal { .. }
             | PowerEvent::Shield { .. }
@@ -484,16 +446,146 @@ pub(super) fn powers(
             | PowerEvent::BuffEnded { .. }
             | PowerEvent::Blinded { .. }
             | PowerEvent::RevealStarted { .. }
+            | PowerEvent::RevealEnded { .. }
             | PowerEvent::Moved { .. }
             | PowerEvent::SolidAdded { .. }
             | PowerEvent::SolidRemoved { .. }
             | PowerEvent::TrapArmed { .. }
             | PowerEvent::TrapTriggered { .. }
+            | PowerEvent::WireChained { .. }
+            | PowerEvent::WireReleased { .. }
             | PowerEvent::Destroyed { .. }
             | PowerEvent::Transformed { .. }
             | PowerEvent::TransformEnded { .. }
-            | PowerEvent::Ended { .. } => {}
+            | PowerEvent::Ended { .. } => status(event, heard, out, stops),
         }
+    }
+}
+
+fn ultimates(events: &PowerEvents, heard: &Heard<'_>, out: &mut Vec<Cue>) {
+    for cast in events
+        .casts
+        .iter()
+        .filter(|cast| cast.ability == AbilitySlot::X)
+    {
+        let Some((_, team, character)) = heard.casters.iter().find(|row| row.0 == cast.slot) else {
+            continue;
+        };
+        let side = if heard.human.team == Some(*team) {
+            "ally"
+        } else {
+            "enemy"
+        };
+        out.push(cue(
+            format!("ult.{character}.{side}"),
+            Anchor::Listener,
+            None,
+        ));
+    }
+}
+
+fn cued(
+    kind: CueKind,
+    slot: Slot,
+    (at, size, ticks): (Vec3, f32, u32),
+    table: &Table,
+    out: &mut Vec<Cue>,
+) {
+    let anchor = Anchor::Point(at);
+    let hold = u64::from(ticks);
+    match kind {
+        CueKind::ZoneStart => out.push(held("power.zone_start", anchor, None, hold)),
+        CueKind::WireChained => {}
+        CueKind::HealStart => {
+            out.push(cue("power.heal_start", anchor, None));
+            out.push(held("power.heal_loop", anchor, None, hold));
+        }
+        CueKind::Destroyed if size >= table.break_large_m => {
+            out.push(cue("power.destroyed.large", anchor, None));
+        }
+        CueKind::Destroyed => out.push(cue("power.destroyed.small", anchor, None)),
+        CueKind::Cast
+        | CueKind::Throw
+        | CueKind::Bounce
+        | CueKind::BounceBody
+        | CueKind::FlashBurst
+        | CueKind::Explosion
+        | CueKind::SmokeBurst
+        | CueKind::WallUp
+        | CueKind::WallDown
+        | CueKind::TrapPlaced
+        | CueKind::TrapArmed
+        | CueKind::TrapTriggered
+        | CueKind::WireZap
+        | CueKind::WireReleased
+        | CueKind::SensorPlaced
+        | CueKind::StrikeWarning
+        | CueKind::StrikeImpact
+        | CueKind::Pulse
+        | CueKind::Dash
+        | CueKind::TransformStart
+        | CueKind::TransformEnd
+        | CueKind::Glare => out.push(cue(cue_name(kind, slot), anchor, None)),
+    }
+}
+
+fn status(event: &PowerEvent, heard: &Heard<'_>, out: &mut Vec<Cue>, stops: &mut Vec<u64>) {
+    let (human, now) = (heard.human, heard.now);
+    match event {
+        PowerEvent::Blinded { actor, until, .. } if human.slot == Some(actor.0) => {
+            let hold = until.saturating_sub(now);
+            out.push(held("power.blinded", Anchor::Listener, Some(actor.0), hold));
+        }
+        PowerEvent::RevealStarted {
+            actor, team, until, ..
+        } if heard.listener == Some(actor.0) => {
+            out.push(Cue {
+                tag: Some(reveal_tag(*actor, *team)),
+                ..held(
+                    "status.revealed",
+                    Anchor::Listener,
+                    Some(actor.0),
+                    until.saturating_sub(now),
+                )
+            });
+        }
+        PowerEvent::RevealEnded { actor, team } => stops.push(reveal_tag(*actor, *team)),
+        PowerEvent::WireChained {
+            effect,
+            actor,
+            until,
+        } => out.push(Cue {
+            tag: Some(wire_tag(*effect)),
+            ..held(
+                "wire.taut",
+                Anchor::Actor(actor.0),
+                None,
+                until.saturating_sub(now),
+            )
+        }),
+        PowerEvent::WireReleased { effect, .. } => stops.push(wire_tag(*effect)),
+        PowerEvent::Destroyed { team, .. }
+            if human.team.is_some_and(|own| own.index() == *team) =>
+        {
+            out.push(cue("power.destroyed.own", Anchor::Listener, None));
+        }
+        PowerEvent::Damage { .. }
+        | PowerEvent::Heal { .. }
+        | PowerEvent::Shield { .. }
+        | PowerEvent::BuffStarted { .. }
+        | PowerEvent::BuffEnded { .. }
+        | PowerEvent::Blinded { .. }
+        | PowerEvent::RevealStarted { .. }
+        | PowerEvent::Moved { .. }
+        | PowerEvent::SolidAdded { .. }
+        | PowerEvent::SolidRemoved { .. }
+        | PowerEvent::TrapArmed { .. }
+        | PowerEvent::TrapTriggered { .. }
+        | PowerEvent::Destroyed { .. }
+        | PowerEvent::Transformed { .. }
+        | PowerEvent::TransformEnded { .. }
+        | PowerEvent::Ended { .. }
+        | PowerEvent::Cue { .. } => {}
     }
 }
 
@@ -549,4 +641,34 @@ pub(super) fn drops(
         ));
     }
     *seen = drops.items.iter().map(|item| item.id).collect();
+}
+
+pub(super) fn scopes(
+    now: &[(u32, Option<(Weapon, usize)>)],
+    was: &mut BTreeMap<u32, (Weapon, usize)>,
+    fired: &[u32],
+    out: &mut Vec<Cue>,
+) {
+    for (slot, scope) in now {
+        let before = was.get(slot).copied();
+        let here = (Anchor::Actor(*slot), Some(*slot));
+        match (before, *scope) {
+            (Some((weapon, from)), Some((held, to))) if weapon == held && to > from => {
+                out.push(cue(format!("scope.in.{}", held.key()), here.0, here.1));
+            }
+            (Some((weapon, from)), Some((held, 0)))
+                if weapon == held && from > 0 && !fired.contains(slot) =>
+            {
+                out.push(cue(format!("scope.out.{}", held.key()), here.0, here.1));
+            }
+            (None, Some((held, to))) if to > 0 => {
+                out.push(cue(format!("scope.in.{}", held.key()), here.0, here.1));
+            }
+            (Some(_) | None, Some(_) | None) => {}
+        }
+    }
+    *was = now
+        .iter()
+        .filter_map(|(slot, scope)| scope.map(|scope| (*slot, scope)))
+        .collect();
 }

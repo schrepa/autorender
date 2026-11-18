@@ -112,7 +112,7 @@ impl RoundFacts {
             "fuse_low" => Val::Bool(self.fuse_low),
             "overtime" => Val::Bool(self.overtime),
             "decider" => Val::Bool(self.decider),
-            "first_of_half" => Val::Bool(self.first_of_half),
+            "swapped" => Val::Bool(self.swapped),
             "last_of_half" => Val::Bool(self.last_of_half),
             "device" => Val::Text(&self.device),
             "buying" => Val::Bool(self.buying),
@@ -191,6 +191,10 @@ impl FeedLine {
             "killer_char" => Val::Text(&self.killer_char),
             "victim_char" => Val::Text(&self.victim_char),
             "wall" => Val::Bool(self.wall),
+            "assist_char" => Val::Text(&self.assist_char),
+            "assist_color" => Val::Text(self.assist_color.key()),
+            "assist_more" => whole(self.assist_more),
+            "assisted" => Val::Bool(self.assisted),
             _ => Val::Unknown,
         })
     }
@@ -265,6 +269,9 @@ impl ActionFacts {
 
 impl Card {
     fn value<'a>(&'a self, path: &[Seg]) -> Val<'a> {
+        if path.is_empty() {
+            return Val::Bool(!self.name.is_empty());
+        }
         if let Some(("stats", rest)) = key(path) {
             let stats = self.stats;
             return leaf(rest, |name| match name {
@@ -284,6 +291,9 @@ impl Card {
             "afford" => Val::Bool(self.afford),
             "focus" => Val::Bool(self.focus),
             "need" => whole(self.need),
+            "closed" => Val::Bool(self.closed),
+            "ask" => Val::Bool(self.ask),
+            "asked" => Val::Bool(self.asked),
             "sell" => whole(self.sell_credits),
             "max" => whole(self.max),
             "charges" => whole(self.charges),
@@ -301,6 +311,7 @@ impl BuyFacts {
             Some(("armor", rest)) => within(&self.armor, rest, Card::value),
             Some(("abilities", rest)) => within(&self.abilities, rest, Card::value),
             Some(("reward_win", [])) => whole(self.reward_win),
+            Some(("gate", [])) => Val::Text(&self.gate),
             Some(("reward_loss", [])) => whole(self.reward_loss),
             Some(("team", rest)) => within(&self.team, rest, Mate::value),
             Some(("signature", rest)) => self.signature.value(rest),
@@ -319,18 +330,36 @@ impl Mate {
             "icon" => Val::Text(&self.icon),
             "credits" => whole(self.credits),
             "can_rifle" => Val::Bool(self.can_rifle),
+            "asked" => Val::Bool(self.asked),
+            "ask_icon" => Val::Text(&self.ask_icon),
+            "ask_price" => whole(self.ask_price),
+            "giveable" => Val::Bool(self.giveable),
+            "focus" => Val::Bool(self.focus),
             _ => Val::Unknown,
         })
     }
 }
 
 impl MinimapFacts {
+    fn list(&self, name: &str) -> Option<&[MapItem]> {
+        Some(match name {
+            "me" => &self.me,
+            "players" => &self.players,
+            "device" => &self.device,
+            "planted" => &self.planted,
+            "orbs" => &self.orbs,
+            "enemies" => &self.enemies,
+            "lost" => &self.lost,
+            "smokes" => &self.smokes,
+            "utility" => &self.utility,
+            _ => return None,
+        })
+    }
+
     fn value(&self, path: &[Seg]) -> Val<'static> {
-        leaf(path, |name| match name {
-            "me" => whole(self.me.len() as u32),
-            "players" => whole(self.players.len() as u32),
-            "device" => whole(self.device.len() as u32),
-            _ => Val::Unknown,
+        leaf(path, |name| {
+            self.list(name)
+                .map_or(Val::Unknown, |items| whole(items.len() as u32))
         })
     }
 }
@@ -351,6 +380,7 @@ impl BoardRow {
             "credits" => Val::Text(&self.credits),
             "ult" => whole(self.ult),
             "ult_need" => whole(self.ult_need),
+            "ult_ready" => Val::Bool(self.ult_ready),
             "alive" => Val::Bool(self.alive),
             "me" => Val::Bool(self.me),
             _ => Val::Unknown,
@@ -388,13 +418,18 @@ fn listed<'a, T>(
     }
 }
 
-const SLIDERS: [&str; 6] = [
+const SLIDERS: [&str; 11] = [
     "sensitivity",
     "fov",
     "master",
     "effects",
     "interface",
     "render_scale",
+    "crosshair_gap",
+    "crosshair_length",
+    "crosshair_thickness",
+    "crosshair_outline",
+    "footsteps",
 ];
 
 impl Slider {
@@ -422,6 +457,7 @@ impl SettingsFacts {
         match key(path) {
             Some(("crosshair_color", [])) => Val::Text(&self.crosshair_color),
             Some(("invert", [])) => Val::Bool(self.invert),
+            Some(("crosshair_dot", [])) => Val::Bool(self.reticle.dot),
             Some(("keys", rest)) => listed(&self.keys, rest, KeyRow::value),
             Some((name, rest)) => {
                 if let Some(level) = name.strip_prefix("bots_") {
@@ -562,19 +598,8 @@ fn ability_slot(name: &str) -> Option<usize> {
 
 impl HudFacts {
     pub(super) fn map_items(&self, path: &[Seg]) -> Option<&[MapItem]> {
-        let minimap = &self.minimap;
         match key(path) {
-            Some(("minimap", [Seg::Key(name)])) => match name.as_str() {
-                "me" => Some(&minimap.me),
-                "players" => Some(&minimap.players),
-                "device" => Some(&minimap.device),
-                "planted" => Some(&minimap.planted),
-                "orbs" => Some(&minimap.orbs),
-                "enemies" => Some(&minimap.enemies),
-                "smokes" => Some(&minimap.smokes),
-                "utility" => Some(&minimap.utility),
-                _ => None,
-            },
+            Some(("minimap", [Seg::Key(name)])) => self.minimap.list(name),
             Some(_) | None => None,
         }
     }
@@ -632,12 +657,9 @@ impl HudFacts {
                 "name" => Val::Text(&self.spectate.name),
                 "icon" => Val::Text(&self.spectate.icon),
                 "color" => Val::Text(&self.spectate.color),
-                "health" => Val::Num(self.spectate.health),
-                "weapon_icon" => Val::Text(&self.spectate.weapon_icon),
                 _ => Val::Unknown,
             }),
             "place" => leaf(rest, |name| match name {
-                "name" => Val::Text(&self.place.name),
                 "callout" => Val::Text(&self.place.callout),
                 _ => Val::Unknown,
             }),
@@ -662,12 +684,27 @@ impl HudFacts {
                 leaf(rest, |name| match name {
                     "kind" => Val::Text(&status.kind),
                     "label" => Val::Text(&status.label),
-                    "icon" => Val::Text(&status.icon),
                     "left" => Val::Num(status.left),
                     _ => Val::Unknown,
                 })
             }),
             "blind" if rest.is_empty() => Val::Num(self.blind),
+            "kill" => leaf(rest, |name| match name {
+                "active" => Val::Bool(self.kill.active),
+                "count" => whole(self.kill.count),
+                "label" => Val::Text(&self.kill.label),
+                "victim_icon" => Val::Text(&self.kill.victim_icon),
+                _ => Val::Unknown,
+            }),
+            "ult" => leaf(rest, |name| match name {
+                "active" => Val::Bool(self.ult.active),
+                "ally" => Val::Bool(self.ult.ally),
+                "name" => Val::Text(&self.ult.name),
+                "icon" => Val::Text(&self.ult.icon),
+                "ultimate" => Val::Text(&self.ult.ultimate),
+                "color" => Val::Text(self.ult.color.key()),
+                _ => Val::Unknown,
+            }),
             _ => Val::Unknown,
         }
     }

@@ -65,7 +65,9 @@ fn cue_look(cue: CueKind) -> Option<CueLook> {
         | CueKind::TrapPlaced
         | CueKind::TrapArmed
         | CueKind::TrapTriggered
+        | CueKind::WireChained
         | CueKind::WireZap
+        | CueKind::WireReleased
         | CueKind::SensorPlaced
         | CueKind::Destroyed
         | CueKind::StrikeWarning
@@ -105,6 +107,8 @@ pub(super) fn event_key(event: &Event) -> &'static str {
         Event::SolidRemoved { .. } => "solid_removed",
         Event::TrapArmed { .. } => "trap_armed",
         Event::TrapTriggered { .. } => "trap_triggered",
+        Event::WireChained { .. } => "wire_chained",
+        Event::WireReleased { .. } => "wire_released",
         Event::Destroyed { .. } => "destroyed",
         Event::Transformed { .. } => "transformed",
         Event::TransformEnded { .. } => "transform_ended",
@@ -169,6 +173,7 @@ impl Sheet<'_> {
         };
         Shown {
             effect: drawable.effect.0,
+            owner: Some(drawable.owner.0),
             look,
             form: form_of(drawable.shape),
             team: team_of(drawable.team),
@@ -186,12 +191,14 @@ impl Sheet<'_> {
             .filter_map(|event| match event {
                 Event::Cue {
                     cue,
+                    owner,
                     at,
                     size,
                     ticks,
                     ..
                 } => cue_look(*cue).map(|look| Cue {
                     look,
+                    owner: owner.0,
                     at: *at,
                     size: *size,
                     ticks: *ticks,
@@ -209,6 +216,8 @@ impl Sheet<'_> {
                 | Event::SolidRemoved { .. }
                 | Event::TrapArmed { .. }
                 | Event::TrapTriggered { .. }
+                | Event::WireChained { .. }
+                | Event::WireReleased { .. }
                 | Event::Destroyed { .. }
                 | Event::Transformed { .. }
                 | Event::TransformEnded { .. }
@@ -303,6 +312,7 @@ impl Sheet<'_> {
                 };
                 Some(PropShown {
                     effect: state.effect.0,
+                    owner: state.owner.0,
                     prop,
                     team: team_of(state.team),
                     born_tick: state.born,

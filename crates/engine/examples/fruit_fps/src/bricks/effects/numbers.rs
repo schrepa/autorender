@@ -90,8 +90,9 @@ pub(super) struct DecalLook {
 pub(super) struct SmokeLook {
     pub color: [f32; 3],
     pub rim_m: f32,
-    #[serde(alias = "fade_m")]
-    pub sight_m: f32,
+    pub tint: [f32; 3],
+    pub tint_share: f32,
+    pub under: f32,
     pub noise_scale: f32,
     pub noise_speed: f32,
 }
@@ -99,10 +100,36 @@ pub(super) struct SmokeLook {
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(super) struct PanelLook {
-    pub wall: [f32; 3],
-    pub curtain: [f32; 3],
+    pub rind: RindLook,
+    pub curtain: CurtainLook,
+    pub trim_m: f32,
     pub edge_glow: f32,
     pub edge_power: f32,
+    pub rim_glow: f32,
+    pub rise_seconds: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct RindLook {
+    pub skin: [f32; 3],
+    pub stripe: [f32; 3],
+    pub pith: [f32; 3],
+    pub flesh: [f32; 3],
+    pub seed: [f32; 3],
+    pub stripe_m: f32,
+    pub pith_m: f32,
+    pub seed_m: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct CurtainLook {
+    pub peel: [f32; 3],
+    pub pulp: [f32; 3],
+    pub glow: f32,
+    pub cell_m: f32,
+    pub pleat_m: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -118,6 +145,8 @@ pub(super) struct ZoneLook {
     pub pattern_m: f32,
     pub pattern_speed: f32,
     pub height_m: f32,
+    pub dashes: f32,
+    pub dash_speed: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -204,17 +233,63 @@ pub(super) struct PropsLook {
     pub puff_scale: f32,
     pub wire_color: [f32; 3],
     pub wire_glow: f32,
+    pub wire_least_per_m: f32,
+    pub wire_pulse_mps: f32,
+    pub wire_pulse_m: f32,
     pub shadow_radius_m: f32,
     pub shadow_opacity: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(super) struct OrbLook {
+    pub color: [f32; 3],
+    pub lift_m: f32,
+    pub core_m: f32,
+    pub halo_m: f32,
+    pub glow: f32,
+    pub halo_glow: f32,
+    pub dim: f32,
+    pub pulse_hz: f32,
+    pub channel_boost: f32,
+    pub beam_width_m: f32,
+    pub beam_glow: f32,
+    pub beam_least: f32,
+    pub fade_seconds: f32,
+    pub burst: Spray,
+    pub burst_flash: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ShatterLook {
+    pub pieces: Spray,
+    pub sparks: Spray,
+    pub reference_m: f32,
+    pub least_scale: f32,
+    pub most_scale: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct ShowcaseLook {
     pub every_seconds: f32,
     pub distance_m: f32,
     pub radius_m: f32,
     pub wall_m: [f32; 3],
+    pub wire_share: f32,
+    pub model_m: f32,
+    pub model_prefix: String,
+    pub trap_models: TrapModels,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(super) struct TrapModels {
+    pub trap: String,
+    pub sensor: String,
+    pub wire: String,
+    pub projectile: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -238,6 +313,8 @@ pub(super) struct EffectsNumbers {
     pub device: DeviceLook,
     pub props: PropsLook,
     pub barrier: BarrierLook,
+    pub orbs: OrbLook,
+    pub shatter: ShatterLook,
     pub showcase: ShowcaseLook,
     #[serde(default)]
     pub enemy: Option<EnemyLook>,
@@ -270,6 +347,9 @@ impl EffectsNumbers {
             self.impacts.default.sprites,
             self.juice.spray.sprites,
             self.blast.spray.sprites,
+            self.orbs.burst.sprites,
+            self.shatter.pieces.sprites,
+            self.shatter.sparks.sprites,
         ]
         .into_iter()
         .chain(self.impacts.kinds.values().map(|spray| spray.sprites))

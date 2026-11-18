@@ -7,10 +7,11 @@ use engine_core::{
     MaterialHandle, SceneContext, Views,
 };
 
-use super::chunks;
+use super::chunks::{self, PieceSizes, Sized};
 use super::gpu::problems_of;
 use super::numbers::Antialias;
 use super::numbers::{self, LightingNumbers};
+use super::sets::VisibleSets;
 use super::{
     FIELD_HEIGHT, FIELD_MAP, FIELD_RECT, LEVEL_DETAIL, LIGHT_FIELD, LevelStats, MACRO_COLOR,
     MACRO_ROUGH, MIRROR, PICTURE_MAP, SKY,
@@ -18,7 +19,7 @@ use super::{
 use crate::bricks::figures::{LEVEL, LIGHTMAP_MAP};
 use crate::play::actors::{Alive, Body};
 use crate::play::effects::{Blob, GroundMarks};
-use crate::play::light::{Ambient, Fog, Grade, Light, LightField, Lighting, SkyLook};
+use crate::play::light::{Ambient, DetailLimit, Fog, Grade, Light, LightField, Lighting, SkyLook};
 use crate::play::numbers::Numbers;
 use crate::play::world::Arena;
 
@@ -153,6 +154,9 @@ pub(super) fn light(
             saturation: numbers.grade.saturation,
         }),
         antialias: numbers.and_then(|numbers| numbers.antialias) == Some(Antialias::Fxaa),
+        filtering: numbers.map_or_else(Default::default, |numbers| numbers.filtering),
+        detail: numbers.map_or_else(Default::default, |numbers| numbers.detail),
+        visible_sets: numbers.is_some_and(|numbers| numbers.visible_sets),
         ..Lighting::default()
     };
     let mut listed: Vec<&Light> = lights.iter().collect();
@@ -229,17 +233,24 @@ pub(super) fn blobs(
     }
 }
 
+type LevelAssets<'w> = (
+    Option<Res<'w, AssetLibrary>>,
+    Option<Res<'w, AssetResidency>>,
+    Option<Res<'w, SceneContext>>,
+);
+
 pub(super) fn count(
     setup: Res<Setup>,
     lighting: Res<Lighting>,
     lights: Query<&Light>,
     marks: Res<GroundMarks>,
-    (table, views): (Res<DrawnTable>, Res<Views>),
-    (library, residency, scene): (
-        Option<Res<AssetLibrary>>,
-        Option<Res<AssetResidency>>,
-        Option<Res<SceneContext>>,
+    (table, views, pieces, sets): (
+        Res<DrawnTable>,
+        Res<Views>,
+        Res<PieceSizes>,
+        Res<VisibleSets>,
     ),
+    (library, residency, scene): LevelAssets<'_>,
     mut stats: ResMut<LevelStats>,
 ) {
     let mut next = LevelStats {
@@ -288,7 +299,11 @@ pub(super) fn count(
         scene.as_deref(),
         &mut next,
     );
-    submitted(&mut next, &table, library, (&views, &judged));
+    let sources = (&*table, library, &*pieces);
+    next.sets_loaded = sets.loaded();
+    next.sets_unknown = sets.unknown;
+    let set = (lighting.visible_sets, &*sets);
+    submitted(&mut next, sources, (&views, &judged, set), lighting.detail);
     next.lightmap = next.baked > 0;
     let sky = table.batches(SKY).next();
     next.sky = sky.is_some();
@@ -372,19 +387,37 @@ fn judged(
 
 fn submitted(
     next: &mut LevelStats,
-    table: &DrawnTable,
-    library: Option<&AssetLibrary>,
-    (views, judged): (&Views, &BTreeMap<MaterialHandle, Judged>),
+    sources: (&DrawnTable, Option<&AssetLibrary>, &PieceSizes),
+    (views, judged, (on, sets)): (
+        &Views,
+        &BTreeMap<MaterialHandle, Judged>,
+        (bool, &VisibleSets),
+    ),
+    limit: DetailLimit,
 ) {
     let mut listed = Vec::new();
     let mut order = Vec::new();
+    let set = views
+        .main()
+        .filter(|_| on)
+        .and_then(|facts| sets.at(facts.eye));
+    next.sets = set.is_some();
+    next.set_cell = set.map(|set| set.cell);
+    let mut sized = Sized {
+        limit,
+        held: None,
+        set,
+    };
     for kind in [LEVEL, LEVEL_DETAIL] {
-        chunks::listed(table, library, kind, &mut listed);
+        chunks::listed(sources, kind, &mut listed);
         next.chunks += listed.len() as u32;
         let Some(facts) = views.main() else {
             continue;
         };
-        chunks::ordered(&listed, facts, &mut order);
+        let counts = chunks::ordered(&listed, facts, &mut sized, &mut order);
+        next.skipped_small += counts.small;
+        next.kept_by_frustum += counts.framed;
+        next.kept_by_set += counts.framed - counts.hidden;
         for chunk in order.iter().map(|&at| &listed[at as usize]) {
             let verdict = chunk.material.map_or(Judged::Ready, |handle| {
                 judged.get(&handle).copied().unwrap_or(Judged::Waiting)
@@ -393,6 +426,7 @@ fn submitted(
                 Judged::Ready => {
                     next.submitted += 1;
                     next.vertices += chunk.vertices;
+                    next.triangles_submitted += chunk.vertices / 3;
                 }
                 Judged::Broken => next.skipped += 1,
                 Judged::Waiting => next.waiting += 1,

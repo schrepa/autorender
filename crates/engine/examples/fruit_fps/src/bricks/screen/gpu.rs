@@ -67,6 +67,8 @@ impl GpuPart for ScreenGpu {
                 (quads::SCREEN_PICTURE_7, Bind::Asset),
                 (quads::SCREEN_PICTURE_8, Bind::Asset),
                 (quads::SCREEN_PICTURE_9, Bind::Asset),
+                (quads::SCREEN_PICTURE_10, Bind::Asset),
+                (quads::SCREEN_PICTURE_11, Bind::Asset),
                 (quads::SCREEN_SAMPLER, Bind::Sampler(sampler)),
             ],
         )?;

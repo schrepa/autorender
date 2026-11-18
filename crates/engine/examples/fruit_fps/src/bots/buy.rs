@@ -62,7 +62,7 @@ pub struct Cart {
 }
 
 impl Shop {
-    fn rifle(&self) -> Option<usize> {
+    pub fn rifle(&self) -> Option<usize> {
         match self.guns.len() {
             0 => None,
             1 => Some(0),

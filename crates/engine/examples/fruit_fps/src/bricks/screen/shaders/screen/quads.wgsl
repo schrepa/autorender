@@ -36,7 +36,9 @@ struct ScreenQuads {
 @group(2) @binding(11) var screen_picture_7: texture_2d<f32>;
 @group(2) @binding(12) var screen_picture_8: texture_2d<f32>;
 @group(2) @binding(13) var screen_picture_9: texture_2d<f32>;
-@group(2) @binding(14) var screen_sampler: sampler;
+@group(2) @binding(14) var screen_picture_10: texture_2d<f32>;
+@group(2) @binding(15) var screen_picture_11: texture_2d<f32>;
+@group(2) @binding(16) var screen_sampler: sampler;
 
 const PLATE: u32 = 0u;
 const ICON: u32 = 1u;
@@ -192,7 +194,9 @@ fn picture_of(slot: u32, uv: vec2<f32>, lod: f32) -> vec4<f32> {
         case 6u: { return sampled(screen_picture_6, uv, lod); }
         case 7u: { return sampled(screen_picture_7, uv, lod); }
         case 8u: { return sampled(screen_picture_8, uv, lod); }
-        default: { return sampled(screen_picture_9, uv, lod); }
+        case 9u: { return sampled(screen_picture_9, uv, lod); }
+        case 10u: { return sampled(screen_picture_10, uv, lod); }
+        default: { return sampled(screen_picture_11, uv, lod); }
     }
 }
 

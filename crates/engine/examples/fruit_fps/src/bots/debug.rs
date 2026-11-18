@@ -41,6 +41,10 @@ pub enum Why {
     PlanDied,
     HumanLead,
     InLine,
+    Orb,
+    Object,
+    Revealed,
+    Hazard,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

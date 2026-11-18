@@ -256,6 +256,9 @@ pub struct AbilitySpec {
     pub recover_ticks: u32,
     pub object_damage: f32,
     pub enemy_visibility: f32,
+    pub ally_damage: f32,
+    pub affects_team: bool,
+    pub heal_pause_ticks: Option<u32>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -466,6 +469,9 @@ struct Head {
     recover_seconds: Option<f32>,
     object_damage: Option<f32>,
     enemy_visibility: Option<f32>,
+    ally_damage: Option<f32>,
+    affects_team: Option<bool>,
+    heal_pause_seconds: Option<f32>,
 }
 
 #[derive(Deserialize)]
@@ -741,6 +747,9 @@ fn spec(
         })),
         object_damage: head.object_damage.unwrap_or(1.0),
         enemy_visibility: head.enemy_visibility.unwrap_or(1.0),
+        ally_damage: head.ally_damage.unwrap_or(1.0),
+        affects_team: head.affects_team == Some(true),
+        heal_pause_ticks: head.heal_pause_seconds.map(|seconds| rate.ticks(seconds)),
     })
 }
 

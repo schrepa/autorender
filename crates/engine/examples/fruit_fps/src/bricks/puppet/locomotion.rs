@@ -58,16 +58,25 @@ fn speed_share(gait: &Gait, speed: f32, fade: f32) -> f32 {
     }
 }
 
-fn gaits_for(
-    table: &Locomotion,
+type Has<'a> = &'a dyn Fn(&str) -> bool;
+
+fn serves(table: &Locomotion, (wanted, crouch): (Heading, bool), has: Has<'_>) -> bool {
+    table
+        .gaits
+        .iter()
+        .any(|gait| gait.direction == wanted && gait.crouch == crouch && has(&gait.clip))
+}
+
+fn gaits_for<'a>(
+    table: &'a Locomotion,
     (heading, crouch): (Heading, bool),
     speed: f32,
-) -> Vec<(&Gait, f32)> {
+    has: Has<'_>,
+) -> Vec<(&'a Gait, f32)> {
     let serving = |wanted: Heading| {
-        table
-            .gaits
-            .iter()
-            .filter(move |gait| gait.direction == wanted && gait.crouch == crouch)
+        table.gaits.iter().filter(move |gait| {
+            gait.direction == wanted && gait.crouch == crouch && has(&gait.clip)
+        })
     };
     let found: Vec<&Gait> = if serving(heading).next().is_some() {
         serving(heading).collect()
@@ -93,7 +102,12 @@ fn gaits_for(
     nearest.map(|gait| vec![(gait, 1.0)]).unwrap_or_default()
 }
 
-fn weighed(table: &Locomotion, crouch: bool, (speed, residual): (f32, f32)) -> Vec<(&Gait, f32)> {
+fn weighed<'a>(
+    table: &'a Locomotion,
+    crouch: bool,
+    (speed, residual): (f32, f32),
+    has: Has<'_>,
+) -> Vec<(&'a Gait, f32)> {
     let quarter = residual / FRAC_PI_2;
     let low = quarter.floor();
     let share = quarter - low;
@@ -103,24 +117,41 @@ fn weighed(table: &Locomotion, crouch: bool, (speed, residual): (f32, f32)) -> V
         if weight <= 0.0 {
             continue;
         }
-        for (gait, part) in gaits_for(table, (heading, crouch), speed) {
+        for (gait, part) in gaits_for(table, (heading, crouch), speed, has) {
             rows.push((gait, weight * part));
         }
     }
     rows
 }
 
+fn nearest_served(table: &Locomotion, crouch: bool, angle: f32, has: Has<'_>) -> f32 {
+    let quarters = [
+        (0.0, Heading::Forward),
+        (FRAC_PI_2, Heading::Left),
+        (-FRAC_PI_2, Heading::Right),
+        (PI, Heading::Back),
+        (-PI, Heading::Back),
+    ];
+    quarters
+        .into_iter()
+        .filter(|(_, heading)| serves(table, (*heading, crouch), has))
+        .map(|(at, _)| at)
+        .min_by(|a, b| (angle - a).abs().total_cmp(&(angle - b).abs()))
+        .unwrap_or(0.0)
+}
+
 pub(super) fn moved(
     table: &Locomotion,
     crouch: bool,
     (body, wish): (&Body, &Wish),
+    has: Has<'_>,
 ) -> Option<Moved> {
     let (speed, angle) = travel(body, wish);
-    let nearest = (angle / FRAC_PI_2).round() * FRAC_PI_2;
+    let nearest = nearest_served(table, crouch, angle, has);
     let limit = max(table.hip_turn_limit_radians, 0.0);
     let hip_turn = clamp(angle - nearest, -limit, limit);
     let residual = (angle - hip_turn + PI).rem_euclid(2.0 * PI) - PI;
-    let rows = weighed(table, crouch, (speed, residual));
+    let rows = weighed(table, crouch, (speed, residual), has);
     let planted: f32 = rows
         .iter()
         .map(|(gait, weight)| gait.planted_mps * weight)

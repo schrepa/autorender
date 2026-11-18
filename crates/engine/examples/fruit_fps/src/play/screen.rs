@@ -107,7 +107,7 @@ pub struct RoundFacts {
     pub fuse_low: bool,
     pub overtime: bool,
     pub decider: bool,
-    pub first_of_half: bool,
+    pub swapped: bool,
     pub last_of_half: bool,
     pub device: String,
     pub buying: bool,
@@ -145,6 +145,10 @@ pub struct FeedLine {
     pub killer_char: String,
     pub victim_char: String,
     pub wall: bool,
+    pub assist_char: String,
+    pub assist_color: Tone,
+    pub assist_more: u32,
+    pub assisted: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -208,6 +212,9 @@ pub struct Card {
     pub afford: bool,
     pub focus: bool,
     pub need: u32,
+    pub closed: bool,
+    pub ask: bool,
+    pub asked: bool,
     pub sell_credits: u32,
     pub max: u32,
     pub charges: u32,
@@ -230,6 +237,12 @@ pub struct Mate {
     pub icon: String,
     pub credits: u32,
     pub can_rifle: bool,
+    pub asked: bool,
+    pub ask_icon: String,
+    pub ask_price: u32,
+    pub giveable: bool,
+    pub focus: bool,
+    pub give: Option<BuyRequest>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -243,6 +256,7 @@ pub struct BuyFacts {
     pub reward_loss: u32,
     pub team: Vec<Mate>,
     pub signature: Card,
+    pub gate: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -263,6 +277,7 @@ pub struct MinimapFacts {
     pub planted: Vec<MapItem>,
     pub orbs: Vec<MapItem>,
     pub enemies: Vec<MapItem>,
+    pub lost: Vec<MapItem>,
     pub smokes: Vec<MapItem>,
     pub utility: Vec<MapItem>,
 }
@@ -275,10 +290,19 @@ pub struct OrbFacts {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
+pub struct UltFacts {
+    pub active: bool,
+    pub ally: bool,
+    pub name: String,
+    pub icon: String,
+    pub ultimate: String,
+    pub color: Tone,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct StatusFacts {
     pub kind: String,
     pub label: String,
-    pub icon: String,
     pub left: f32,
 }
 
@@ -294,6 +318,7 @@ pub struct BoardRow {
     pub credits: String,
     pub ult: u32,
     pub ult_need: u32,
+    pub ult_ready: bool,
     pub alive: bool,
     pub me: bool,
 }
@@ -363,12 +388,22 @@ pub struct KeyRow {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SettingsFacts {
-    pub sliders: [Slider; 6],
+    pub sliders: [Slider; 11],
+    pub reticle: Reticle,
     pub crosshair: usize,
     pub crosshair_color: String,
     pub invert: bool,
     pub level: String,
     pub keys: Vec<KeyRow>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Reticle {
+    pub gap: f32,
+    pub length: f32,
+    pub thickness: f32,
+    pub outline: f32,
+    pub dot: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -387,8 +422,6 @@ pub struct SpectateFacts {
     pub name: String,
     pub icon: String,
     pub color: String,
-    pub health: f32,
-    pub weapon_icon: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -420,15 +453,15 @@ pub struct CastFacts {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PlaceFacts {
-    pub name: String,
     pub callout: String,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct HitMark {
-    pub age: f32,
-    pub headshot: bool,
-    pub killed: bool,
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct KillFacts {
+    pub active: bool,
+    pub count: u32,
+    pub label: String,
+    pub victim_icon: String,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -436,6 +469,9 @@ pub struct DamageMark {
     pub angle_radians: f32,
     pub age: f32,
 }
+
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Covered(pub bool);
 
 #[derive(Resource, Clone, Debug, Default, PartialEq)]
 pub struct HudFacts {
@@ -464,7 +500,10 @@ pub struct HudFacts {
     pub orb: OrbFacts,
     pub statuses: Vec<StatusFacts>,
     pub blind: f32,
-    pub hit: Option<HitMark>,
+    pub ult: UltFacts,
+    pub armor_break: Option<f32>,
+    pub kill: KillFacts,
+    pub scope_ease: f32,
     pub damage: Vec<DamageMark>,
     pub phase: Option<Phase>,
     pub live: bool,
@@ -638,7 +677,7 @@ pub struct Picture {
 }
 
 pub const GLYPH_SLOTS: usize = 2;
-pub const PICTURE_SLOTS: usize = 10;
+pub const PICTURE_SLOTS: usize = 12;
 pub const BOUND_SLOTS: usize = 1 + GLYPH_SLOTS + PICTURE_SLOTS;
 
 pub const PLATE: u32 = 0;
@@ -697,6 +736,60 @@ impl Quad {
 
 pub const PLATE_PAD: f32 = 1.0;
 
+fn plain(quad: &Quad) -> bool {
+    quad.mode == PLATE
+        && quad.case == 0
+        && quad.stroke_width == 0.0
+        && quad.radius == 0.0
+        && quad.angle == 0.0
+        && quad.uv[0] == 0.0
+}
+
+fn covers([x, y, w, h]: [f32; 4], [cx, cy, cw, ch]: [f32; 4]) -> bool {
+    x <= cx && y <= cy && x + w >= cx + cw && y + h >= cy + ch
+}
+
+fn opaque(color: u32) -> bool {
+    color >> 24 == 0xFF
+}
+
+fn area_of([left, top, right, low]: [f32; 4]) -> f32 {
+    (right - left) * (low - top)
+}
+
+fn inside(quad: &Quad) -> Option<[f32; 4]> {
+    if quad.mode != PLATE || !opaque(quad.fill) || quad.angle != 0.0 || quad.uv[0] != 0.0 {
+        return None;
+    }
+    let [x, y, w, h] = quad.rect;
+    let r = math::clamp(quad.radius, 0.0, math::min(w, h) * 0.5);
+    let margin = math::max(quad.scale, 1.0);
+    let (across, down) = if w - 2.0 * r >= h - 2.0 * r {
+        (r + margin, margin)
+    } else {
+        (margin, r + margin)
+    };
+    let box_ = [
+        (x + across).ceil(),
+        (y + down).ceil(),
+        (x + w - across).floor(),
+        (y + h - down).floor(),
+    ];
+    (box_[2] > box_[0] && box_[3] > box_[1]).then_some(box_)
+}
+
+fn over(top: u32, below: u32) -> u32 {
+    let unpack = |color: u32| [0, 8, 16, 24].map(|shift| ((color >> shift) & 0xFF) as f32 / 255.0);
+    let [tr, tg, tb, ta] = unpack(top);
+    let [br, bg, bb, ba] = unpack(below);
+    let a = ta + ba * (1.0 - ta);
+    if a <= 0.0 {
+        return 0;
+    }
+    let mix = |t: f32, b: f32| (t * ta + b * ba * (1.0 - ta)) / a;
+    Rgba([mix(tr, br), mix(tg, bg), mix(tb, bb), a]).packed()
+}
+
 fn span(size: f32, grow: f32, (offset, doubled): (f32, bool)) -> f32 {
     let half = size * 0.5;
     let (far, near) = if doubled {
@@ -723,6 +816,9 @@ pub struct ScreenDraw {
     pub glyphs_missing: u32,
     pub icons_missing: u32,
     pub fitted: u32,
+    pub floor: usize,
+    pub opaque: bool,
+    pub floor_quad: Option<Quad>,
 }
 
 impl ScreenDraw {
@@ -734,6 +830,89 @@ impl ScreenDraw {
         self.glyphs_missing = 0;
         self.icons_missing = 0;
         self.fitted = 0;
+        self.floor = 0;
+        self.opaque = false;
+    }
+
+    pub fn settle(&mut self) {
+        let canvas = [0.0, 0.0, self.size.x, self.size.y];
+        let whole = |quad: &Quad| plain(quad) && covers(quad.rect, canvas);
+        let found = self
+            .quads
+            .iter()
+            .rposition(|quad| whole(quad) && opaque(quad.fill));
+        self.opaque = self.opaque || found.is_some();
+        let floor = found.unwrap_or(0).max(self.floor);
+        self.quads.drain(..floor.min(self.quads.len()));
+        self.floor_quad = if self.opaque {
+            self.quads.first().copied()
+        } else {
+            None
+        };
+        while let [below, above, ..] = self.quads.as_slice()
+            && whole(below)
+            && whole(above)
+        {
+            let fill = over(above.fill, below.fill);
+            self.quads.remove(0);
+            self.quads[0].fill = fill;
+        }
+        self.punch();
+    }
+
+    pub fn floor_at(&mut self, at: usize) {
+        let canvas = [0.0, 0.0, self.size.x, self.size.y];
+        if self
+            .quads
+            .get(at)
+            .is_some_and(|quad| covers(quad.rect, canvas))
+        {
+            self.floor = at;
+            self.opaque = true;
+        }
+    }
+
+    fn punch(&mut self) {
+        let Some(bottom) = self.quads.first().copied().filter(plain) else {
+            return;
+        };
+        let hole = self
+            .quads
+            .iter()
+            .skip(1)
+            .filter_map(inside)
+            .max_by(|a, b| area_of(*a).total_cmp(&area_of(*b)));
+        let [x, y, w, h] = bottom.rect;
+        let Some([left, top, right, low]) = hole.map(|[hx, hy, hr, hb]| {
+            [
+                math::max(hx, x),
+                math::max(hy, y),
+                math::min(hr, x + w),
+                math::min(hb, y + h),
+            ]
+        }) else {
+            return;
+        };
+        if right <= left || low <= top {
+            return;
+        }
+        let band = |rect: [f32; 4]| Quad {
+            rect,
+            scale: math::min(bottom.scale, 1.0),
+            ..bottom
+        };
+        let bands = [
+            [x, y, w, top - y],
+            [x, low, w, y + h - low],
+            [x, top, left - x, low - top],
+            [right, top, x + w - right, low - top],
+        ];
+        let kept: Vec<Quad> = bands
+            .into_iter()
+            .filter(|rect| rect[2] > 0.0 && rect[3] > 0.0)
+            .map(band)
+            .collect();
+        self.quads.splice(0..1, kept);
     }
 
     pub fn scale(&self) -> f32 {
@@ -823,13 +1002,6 @@ impl ScreenDraw {
             rim_grow: case.and_then(|case| case.rim).map_or(0.0, |(_, grow)| grow),
             align: [0; 2],
         });
-    }
-
-    pub fn picture_size(&self, name: &str) -> Option<[f32; 2]> {
-        self.pictures
-            .iter()
-            .find(|picture| picture.name == name)
-            .map(|picture| picture.size)
     }
 
     pub fn image(

@@ -34,4 +34,11 @@ pub struct BotMinds {
     pub drops: u32,
     pub gifts: u32,
     pub buy_calls: [Option<&'static str>; 2],
+    pub sight: TeamSight,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TeamSight {
+    pub seen: [Vec<(u32, u32)>; 2],
+    pub last: [Vec<(u32, u64, Vec3)>; 2],
 }

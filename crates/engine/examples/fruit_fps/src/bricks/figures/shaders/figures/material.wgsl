@@ -12,6 +12,7 @@ struct MaterialTexels {
     normal: vec3<f32>,
     roughness: f32,
     metallic: f32,
+    trim: f32,
 }
 
 fn material_texels(uv: vec2<f32>) -> MaterialTexels {
@@ -22,6 +23,7 @@ fn material_texels(uv: vec2<f32>) -> MaterialTexels {
     let orm = textureSample(orm_map, orm_sampler, uv);
     texels.roughness = orm.g;
     texels.metallic = orm.b;
+    texels.trim = orm.a;
     return texels;
 }
 

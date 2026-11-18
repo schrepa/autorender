@@ -38,6 +38,7 @@ fn fresh_player(catalog: &Catalog, slot: &Slot) -> Result<Player, RulesError> {
             active_ticks: 0,
         },
         kills: 0,
+        round_kills: 0,
         deaths: 0,
         assists: 0,
     })
@@ -95,8 +96,11 @@ impl Match {
             overtime_rounds: 0,
             ready: Vec::new(),
             in_zone: Vec::new(),
+            asks: Vec::new(),
+            held: false,
         };
         game.ready = vec![false; game.players.len()];
+        game.asks = vec![None; game.players.len()];
         let mut events = Vec::new();
         game.reset_for_half(CreditReason::Start, &mut events);
         game.begin_round(&mut events);
@@ -157,6 +161,7 @@ impl Match {
             let p = &mut self.players[player];
             let team = p.team.index();
             p.alive = true;
+            p.round_kills = 0;
             events.push(Event::Respawn {
                 player,
                 side,
@@ -238,6 +243,7 @@ impl Match {
             for ledger in &mut self.ledgers {
                 ledger.close_buying();
             }
+            self.asks.fill(None);
             let sidearm = self.catalog.sidearm;
             for (player, p) in self.players.iter_mut().enumerate() {
                 if p.alive && p.primary.is_none() && p.sidearm.is_none() {
@@ -479,6 +485,7 @@ impl Match {
             |p: PlayerId, players: &[Player]| players.get(p).is_some_and(|q| q.team != victim_team);
         if let Some(killer) = death.killer.filter(|&k| enemy(k, &self.players)) {
             self.players[killer].kills += 1;
+            self.players[killer].round_kills += 1;
             let kill = i64::from(self.catalog.economy.kill);
             self.credit(killer, kill, CreditReason::Kill, events);
             self.ultimate_point(killer, events);

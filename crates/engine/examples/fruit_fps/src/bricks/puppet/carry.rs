@@ -3,10 +3,12 @@ use std::collections::BTreeMap;
 use engine::prelude::*;
 use engine_core::{Error, ErrorCode, Mobility, Refusals, SceneContext};
 
-use super::{CarriedWeapon, Memories, PuppetBrick, PuppetStats};
+use engine_core::{GlobalTransforms, Parent};
+
+use super::{CarriedStats, CarriedWeapon, Memories, PuppetBrick, PuppetStats};
 use crate::names::RIGHT_HAND;
-use crate::play::figures::{GROUND, Held};
-use crate::play::puppet::{ActorMuzzle, Muzzles, PuppetFile, Tasks};
+use crate::play::figures::{FigureJoints, GROUND, Held};
+use crate::play::puppet::{ActorMuzzle, Muzzles, PuppetFile, Seen, Tasks};
 
 const HELD_PART: &str = "puppet_held";
 
@@ -153,5 +155,64 @@ pub(super) fn carry(
     muzzles.set_if_neq(fresh);
     if stats.held != shown {
         stats.held = shown;
+    }
+}
+
+type Checked<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        (&'static CarriedWeapon, &'static Held),
+        &'static Node,
+        Option<&'static Parent>,
+    ),
+>;
+
+fn grip_gap(
+    (weapon, held): (Entity, &Held),
+    holder: Option<&FigureJoints>,
+    globals: &GlobalTransforms,
+) -> Option<f32> {
+    let joints = holder?;
+    let at = joints.names.iter().position(|name| name == RIGHT_HAND)?;
+    let hand = joints.joints.get(at).filter(|joint| joint.found)?;
+    let matrix = globals.get(weapon)?.matrix()?;
+    let offset = Quat::from_array(held.offset.rotation).normalize();
+    let grip = -(offset.inverse() * Vec3::from_array(held.offset.translation)) * joints.fit;
+    Some(matrix.transform_point3(grip).distance(hand.position))
+}
+
+pub(super) fn checked(
+    (globals, seen): (Res<GlobalTransforms>, Option<Res<Seen>>),
+    carried: Checked,
+    holders: Query<&FigureJoints>,
+    mut stats: ResMut<PuppetStats>,
+) {
+    let mut listed: Vec<CarriedStats> = carried
+        .iter()
+        .map(|(entity, (weapon, held), node, parent)| {
+            let holder = held.target();
+            let parented = holder.is_some() && parent.map(Parent::parent) == holder;
+            let holder_shown = holder
+                .zip(seen.as_deref())
+                .is_some_and(|(holder, seen)| seen.shows(holder));
+            CarriedStats {
+                slot: weapon.slot,
+                parented,
+                shown: node.visible,
+                holder_shown,
+                drawn: parented && node.visible && holder_shown,
+                grip_gap_m: grip_gap(
+                    (entity, held),
+                    holder.and_then(|holder| holders.get(holder).ok()),
+                    &globals,
+                ),
+            }
+        })
+        .collect();
+    listed.sort_unstable_by_key(|row| row.slot);
+    if stats.carried != listed {
+        stats.carried = listed;
     }
 }

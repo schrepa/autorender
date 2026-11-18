@@ -74,6 +74,18 @@ impl Block {
             _ => None,
         }
     }
+
+    pub fn bit(self) -> u16 {
+        1 << self as u16
+    }
+}
+
+pub fn tools_of(abilities: &[AbilitySense]) -> u16 {
+    abilities
+        .iter()
+        .filter(|ability| ability.ready)
+        .filter_map(|ability| ability.block)
+        .fold(0, |tools, block| tools | block.bit())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -130,6 +142,12 @@ pub struct Smoke {
     pub radius: f32,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Hazard {
+    pub center: Vec3,
+    pub radius: f32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum CallKind {
     Spotted,
@@ -137,6 +155,29 @@ pub enum CallKind {
     Device,
     Hurt,
     Down,
+    Flash,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OrbSense {
+    pub at: Vec3,
+    pub waiting: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ObjectKind {
+    Trap,
+    Wire,
+    Sensor,
+    Wall,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ObjectSense {
+    pub id: u32,
+    pub kind: ObjectKind,
+    pub at: Vec3,
+    pub enemy: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -206,12 +247,16 @@ pub struct Sense<'a> {
     pub abilities: [AbilitySense; 4],
     pub credits: u32,
     pub carrying_device: bool,
+    pub revealed: bool,
+    pub orbs: &'a [OrbSense],
+    pub objects: &'a [ObjectSense],
     pub blind: f32,
     pub enemies: &'a [Seen],
     pub sounds: &'a [Heard],
     pub mates: &'a [Mate],
     pub calls: &'a [Call],
     pub smokes: &'a [Smoke],
+    pub hazards: &'a [Hazard],
     pub game: MatchSense,
     pub order: Order,
     pub buy: BuySense,
@@ -219,14 +264,12 @@ pub struct Sense<'a> {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct BuySense {
-    pub gift_to: Option<Vec3>,
     pub device_asked: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Purchase {
     Nothing,
-    Gift,
     Own,
 }
 
@@ -256,10 +299,10 @@ pub struct Intent {
     pub scope: bool,
     pub switch: Option<WeaponChoice>,
     pub plant: bool,
+    pub interact: bool,
     pub defuse: bool,
     pub ability: Option<AbilityUse>,
     pub drop_device: bool,
-    pub drop_gun: bool,
     pub buy: Purchase,
     pub call: Option<Call>,
     pub goal: Vec3,
@@ -279,10 +322,10 @@ impl Intent {
             scope: false,
             switch: None,
             plant: false,
+            interact: false,
             defuse: false,
             ability: None,
             drop_device: false,
-            drop_gun: false,
             buy: Purchase::Nothing,
             call: None,
             goal: sense.position,

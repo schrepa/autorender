@@ -30,6 +30,14 @@
  "barrier_keep_ticks": 120,
  "orb_hold_ticks": 150,
  "break_large_m": 1.0,
+ "kill_steps": 5,
+ "clashes": [
+  {
+   "winner": "round_loss",
+   "loser": "ult_sting_enemy",
+   "seconds": 0.5
+  }
+ ],
  "countdown_seconds": 3,
  "device": {
   "plant_repeat_seconds": 0.45,
@@ -157,6 +165,36 @@
    "curve": "ability",
    "own_gain": 0.9,
    "group": "effects"
+  },
+  "armor_break_dealt": {
+   "files": [
+    {
+     "file": "assets/sfx/armor_break_dealt.ogg",
+     "seconds": 0.261437
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 95,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
+  "armor_break_taken": {
+   "files": [
+    {
+     "file": "assets/sfx/armor_break_taken.ogg",
+     "seconds": 0.305875
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 95,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
   },
   "barrier_drop": {
    "files": [
@@ -729,11 +767,71 @@
    "own_gain": 0.5,
    "group": "footsteps"
   },
-  "kill_confirm": {
+  "kill_confirm_1": {
    "files": [
     {
-     "file": "assets/sfx/kill_confirm.ogg",
-     "seconds": 0.605979
+     "file": "assets/sfx/kill_confirm_1.ogg",
+     "seconds": 0.256604
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 95,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
+  "kill_confirm_2": {
+   "files": [
+    {
+     "file": "assets/sfx/kill_confirm_2.ogg",
+     "seconds": 0.2895
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 95,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
+  "kill_confirm_3": {
+   "files": [
+    {
+     "file": "assets/sfx/kill_confirm_3.ogg",
+     "seconds": 0.327604
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 95,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
+  "kill_confirm_4": {
+   "files": [
+    {
+     "file": "assets/sfx/kill_confirm_4.ogg",
+     "seconds": 0.359521
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 95,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
+  "kill_confirm_5": {
+   "files": [
+    {
+     "file": "assets/sfx/kill_confirm_5.ogg",
+     "seconds": 0.399604
     }
    ],
    "loops": false,
@@ -1138,6 +1236,36 @@
    "curve": "flat",
    "own_gain": 1.0,
    "group": "interface"
+  },
+  "scope_in_sniper": {
+   "files": [
+    {
+     "file": "assets/sfx/scope_in_sniper.ogg",
+     "seconds": 0.204875
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 50,
+   "curve": "near",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "scope_out_sniper": {
+   "files": [
+    {
+     "file": "assets/sfx/scope_out_sniper.ogg",
+     "seconds": 0.151104
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 50,
+   "curve": "near",
+   "own_gain": 1.0,
+   "group": "effects"
   },
   "sidearm_bolt": {
    "files": [
@@ -1832,6 +1960,36 @@
    "own_gain": 0.9,
    "group": "effects"
   },
+  "ult_sting_ally": {
+   "files": [
+    {
+     "file": "assets/sfx/ult_sting_ally.ogg",
+     "seconds": 1.206333
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 100,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
+  "ult_sting_enemy": {
+   "files": [
+    {
+     "file": "assets/sfx/ult_sting_enemy.ogg",
+     "seconds": 1.198063
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 100,
+   "curve": "flat",
+   "own_gain": 1.0,
+   "group": "interface"
+  },
   "vo_prop_lost": {
    "files": [
     {
@@ -1845,7 +2003,7 @@
    "priority": 95,
    "curve": "flat",
    "own_gain": 1.0,
-   "group": "interface"
+   "group": "footsteps"
   },
   "wall_break": {
    "files": [
@@ -1877,6 +2035,51 @@
    "own_gain": 0.9,
    "group": "effects"
   },
+  "wire_release": {
+   "files": [
+    {
+     "file": "assets/sfx/wire_release.ogg",
+     "seconds": 0.236063
+    }
+   ],
+   "loops": false,
+   "gain": 0.7,
+   "jitter": 0.03,
+   "priority": 55,
+   "curve": "near",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "wire_taut_loop": {
+   "files": [
+    {
+     "file": "assets/sfx/wire_taut_loop.ogg",
+     "seconds": 1.0
+    }
+   ],
+   "loops": true,
+   "gain": 1.0,
+   "jitter": 0.0,
+   "priority": 70,
+   "curve": "near",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "wire_zap": {
+   "files": [
+    {
+     "file": "assets/sfx/wire_zap.ogg",
+     "seconds": 0.305
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.03,
+   "priority": 75,
+   "curve": "near",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
   "zone_sizzle": {
    "files": [
     {
@@ -1891,9 +2094,41 @@
    "curve": "ability",
    "own_gain": 0.9,
    "group": "effects"
+  },
+  "zoom_in": {
+   "files": [
+    {
+     "file": "assets/sfx/zoom_in.ogg",
+     "seconds": 0.108792
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 50,
+   "curve": "near",
+   "own_gain": 1.0,
+   "group": "effects"
+  },
+  "zoom_out": {
+   "files": [
+    {
+     "file": "assets/sfx/zoom_out.ogg",
+     "seconds": 0.091729
+    }
+   ],
+   "loops": false,
+   "gain": 1.0,
+   "jitter": 0.02,
+   "priority": 50,
+   "curve": "near",
+   "own_gain": 1.0,
+   "group": "effects"
   }
  },
  "events": {
+  "armor.break.dealt": "armor_break_dealt",
+  "armor.break.taken": "armor_break_taken",
   "barrier.drop": "barrier_drop",
   "barrier.hum": "barrier_hum",
   "bolt.rifle": "rifle_bolt",
@@ -1944,7 +2179,11 @@
   "impact.water": "impact_stone",
   "impact.wood": "impact_wood",
   "jump": "jump",
-  "kill.confirm": "kill_confirm",
+  "kill.confirm.1": "kill_confirm_1",
+  "kill.confirm.2": "kill_confirm_2",
+  "kill.confirm.3": "kill_confirm_3",
+  "kill.confirm.4": "kill_confirm_4",
+  "kill.confirm.5": "kill_confirm_5",
   "land.hard.cloth": "land_hard",
   "land.hard.dirt": "land_hard_dirt",
   "land.hard.glass": "land_hard",
@@ -2006,11 +2245,19 @@
   "power.ultimate": "ult_cast",
   "power.wall_down": "wall_break",
   "power.wall_up": "wall_rise",
+  "power.wire_released": "wire_release",
+  "power.wire_zap": "wire_zap",
   "power.zone_start": "zone_sizzle",
   "round.countdown": "countdown_tick",
   "round.loss": "round_loss",
   "round.start": "round_start",
   "round.win": "round_win",
+  "scope.in.rifle": "zoom_in",
+  "scope.in.smg": "zoom_in",
+  "scope.in.sniper": "scope_in_sniper",
+  "scope.out.rifle": "zoom_out",
+  "scope.out.smg": "zoom_out",
+  "scope.out.sniper": "scope_out_sniper",
   "shot.melee": "melee_swing",
   "shot.melee_heavy": "melee_heavy_swing",
   "shot.rifle": "rifle_fire",
@@ -2034,6 +2281,17 @@
   "ui.deny": "ui_deny",
   "ui.hover": "ui_hover",
   "ui.ready": "ui_ready",
-  "ult.ready": "ult_ready"
+  "ult.banana.ally": "ult_sting_ally",
+  "ult.banana.enemy": "ult_sting_enemy",
+  "ult.eggplant.ally": "ult_sting_ally",
+  "ult.eggplant.enemy": "ult_sting_enemy",
+  "ult.orange.ally": "ult_sting_ally",
+  "ult.orange.enemy": "ult_sting_enemy",
+  "ult.ready": "ult_ready",
+  "ult.strawberry.ally": "ult_sting_ally",
+  "ult.strawberry.enemy": "ult_sting_enemy",
+  "ult.watermelon.ally": "ult_sting_ally",
+  "ult.watermelon.enemy": "ult_sting_enemy",
+  "wire.taut": "wire_taut_loop"
  }
 }

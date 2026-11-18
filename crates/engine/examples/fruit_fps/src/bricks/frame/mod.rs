@@ -14,6 +14,7 @@ use engine_render::{
 
 use crate::names::{COLOR, COLOR_PASS, COMPOSITE_PASS, DEPTH};
 use crate::play::light::{Grade, Lighting};
+use crate::play::screen::Covered;
 use crate::play::view::Controls;
 
 gpu_struct! {
@@ -27,6 +28,8 @@ const GENERATED: &[&str] = &[<FrameGrade as GpuStruct>::WGSL];
 const TONED: TargetName = TargetName("toned");
 
 const TONE_PASS: &str = "tone";
+
+const COVER_PASS: &str = "cover";
 
 pub struct ColorPass;
 
@@ -56,8 +59,10 @@ struct Composite {
     tone: Pipeline<Self, Own>,
     pass: engine_render::Pass<Self>,
     pipeline: Pipeline<Self, Own>,
+    cover: engine_render::Pass<Self>,
     grade: Buffer<Self>,
     sent: Option<FrameGrade>,
+    covered: bool,
 }
 
 fn graded(grade: Grade, antialias: bool) -> FrameGrade {
@@ -90,6 +95,7 @@ impl GpuPart for Composite {
     type Reads = (
         Option<Res<'static, Lighting>>,
         Option<Res<'static, Controls>>,
+        Option<Res<'static, Covered>>,
     );
     const NAME: &'static str = "frame";
 
@@ -143,21 +149,30 @@ impl GpuPart for Composite {
                 (composite::TONED_SAMPLER, Bind::Sampler(sampler)),
             ],
         )?;
+        let cover = cx
+            .pass(COVER_PASS)
+            .label("fruit_fps/cover")
+            .span("cover")
+            .target(TargetName::CANVAS, Access::Clear)
+            .id();
         Ok(Self {
             tone_pass,
             tone,
             pass,
             pipeline,
+            cover,
             grade,
             sent: None,
+            covered: false,
         })
     }
 
     fn prepare(
         &mut self,
-        (lighting, controls): SystemParamItem<'_, '_, Self::Reads>,
+        (lighting, controls, covered): SystemParamItem<'_, '_, Self::Reads>,
         cx: &mut Prepare<'_, Self>,
     ) {
+        self.covered = covered.is_some_and(|covered| covered.0);
         let scale = controls.map_or(1.0, |controls| controls.render_scale);
         cx.scale_target(COLOR, scale);
         cx.scale_target(DEPTH, scale);
@@ -174,11 +189,19 @@ impl GpuPart for Composite {
     }
 
     fn view(&mut self, _view: &ViewFacts, cx: &mut Prepare<'_, Self>) {
+        if self.covered {
+            cx.run(self.cover);
+            return;
+        }
         cx.run(self.tone_pass);
         cx.run(self.pass);
     }
 
     fn encode(&mut self, pass: engine_render::Pass<Self>, cx: &mut Encode<'_, Self>) {
+        if pass == self.cover {
+            let _ = cx.render(Attach::Declared);
+            return;
+        }
         let pipeline = if pass == self.tone_pass {
             &self.tone
         } else {

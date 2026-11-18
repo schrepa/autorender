@@ -21,6 +21,7 @@ pub(super) struct Voice {
     pub source: Option<u32>,
     pub group: Group,
     pub tag: Option<u64>,
+    pub started: u64,
     pub occlusion: f32,
     pub looping: bool,
     pub ends: u64,

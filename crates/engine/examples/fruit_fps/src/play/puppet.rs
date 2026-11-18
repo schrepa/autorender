@@ -1,14 +1,16 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use engine::prelude::{Component, Resource};
+use engine::prelude::{Component, Entity, Resource};
 use engine_core::{Error, ErrorCode, SceneCx};
 use glam::{Mat3, Quat, Vec3};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::play::events::arms::Weapon;
-use crate::play::figures::{Figure, HandTarget};
+use crate::play::figures::{ChestFrame, Figure, Form, HandTarget, Offset};
+use crate::play::light::MapFilter;
+use crate::rules::AbilitySlot;
 use crate::weapons::{Loadout, Slot};
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -32,15 +34,53 @@ pub struct LookTable {
 #[serde(deny_unknown_fields)]
 pub struct Casts {
     pub caster: OneShot,
-    pub throw: OneShot,
     pub place: OneShot,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct ReloadHand {
-    pub to: [f32; 3],
-    pub share: f32,
+pub struct ThrowClips {
+    pub ready: String,
+    pub hold: String,
+    pub release: String,
+    pub roll: String,
+    pub rolled: Vec<String>,
+    pub release_leave_seconds: f32,
+    pub roll_leave_seconds: f32,
+    pub hand: ThrowHand,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ThrowHand {
+    pub joint: String,
+    pub along_m: f32,
+    pub out_m: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct UpperTable {
+    pub from: String,
+    pub feather: u32,
+    pub weight: f32,
+    pub fade_seconds: f32,
+    pub played_from: String,
+    pub played: Vec<String>,
+    pub fire: BTreeMap<String, String>,
+    pub reload: BTreeMap<String, String>,
+    pub throw: ThrowClips,
+}
+
+impl UpperTable {
+    pub fn clips(&self) -> impl Iterator<Item = &str> {
+        let throw = &self.throw;
+        self.fire
+            .values()
+            .chain(self.reload.values())
+            .chain([&throw.ready, &throw.hold, &throw.release, &throw.roll])
+            .map(String::as_str)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -64,13 +104,6 @@ pub struct DroppedLook {
 pub struct Switch {
     pub dip_m: f32,
     pub dip_radians: f32,
-}
-
-#[derive(Clone, Debug, PartialEq, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct HardLanding {
-    pub from_mps: f32,
-    pub shot: OneShot,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -185,9 +218,82 @@ pub struct Locomotion {
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub struct ViewTest {
+    pub frustum: bool,
+    pub map: bool,
+    pub mesh_margin_m: f32,
+    pub map_pad_m: f32,
+    pub aspect_max: f32,
+    pub item_radius_m: f32,
+    pub hold_frames: u64,
+    pub cut_m: f32,
+    pub see_through: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct FormsTable {
+    pub full_to_m: f32,
+    pub mid_from_m: f32,
+    pub mid_back_m: f32,
+    pub far_from_m: f32,
+    pub reference_fov_degrees: f32,
+}
+
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct Seen {
+    pub frame: u64,
+    pub shown: Vec<(Entity, Form, f32)>,
+    pub judged: Vec<Entity>,
+    pub frustum: u32,
+    pub map: u32,
+    pub held: u32,
+}
+
+impl Seen {
+    pub fn judges(&self, entity: Entity) -> bool {
+        self.judged.binary_search(&entity).is_ok()
+    }
+
+    pub fn shows(&self, entity: Entity) -> bool {
+        self.form(entity).is_some()
+    }
+
+    pub fn form(&self, entity: Entity) -> Option<Form> {
+        self.at(entity).map(|at| self.shown[at].1)
+    }
+
+    pub fn distance(&self, entity: Entity) -> Option<f32> {
+        self.at(entity).map(|at| self.shown[at].2)
+    }
+
+    fn at(&self, entity: Entity) -> Option<usize> {
+        self.shown
+            .binary_search_by_key(&entity, |(known, ..)| *known)
+            .ok()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct EyeFit {
+    pub reference: String,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HeadCheck {
+    pub slice_m: f32,
+    pub solid_share: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct AimTable {
     pub chain: Vec<String>,
     pub share: f32,
+    #[serde(default)]
+    pub chest: Option<ChestFrame>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
@@ -256,6 +362,8 @@ pub struct ViewPlace {
     pub scoped: [f32; 3],
     pub lowered: [f32; 3],
     pub lower_running: bool,
+    #[serde(default)]
+    pub hide_from_share: Option<f32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
@@ -283,19 +391,76 @@ pub struct Throw {
 #[serde(deny_unknown_fields)]
 pub struct Shade {
     pub indirect_floor: f32,
+    pub maps: ShadeMaps,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ShadeMaps {
+    pub base_color: MapFilter,
+    pub normal: MapFilter,
+    pub orm: MapFilter,
+}
+
+impl ShadeMaps {
+    pub fn checked(&self, path: &str) -> Result<(), Error> {
+        [
+            (self.base_color, "base_color"),
+            (self.normal, "normal"),
+            (self.orm, "orm"),
+        ]
+        .into_iter()
+        .try_for_each(|(filter, key)| filter.checked(&format!("{path}.{key}")))
+        .map_err(|problem| Error::new(ErrorCode::InvalidRecord, path).got(problem))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PropsLook {
     pub spin_radians_per_second: f32,
-    pub tile_m: f32,
-    pub wall_height_m: f32,
+    pub trim: PropTrim,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PropTrim {
+    pub ally: [f32; 3],
+    pub enemy: [f32; 3],
+    pub strength: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct InHandProp {
+    pub key: String,
+    pub leave_seconds: f32,
+    pub size_m: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HandCast {
+    pub clip: String,
+    pub speed: f32,
+    pub fade_seconds: f32,
+    #[serde(default)]
+    pub prop: Option<InHandProp>,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HandsTable {
+    pub socket: String,
+    pub ready: String,
+    pub hold: String,
+    pub abilities: BTreeMap<String, HandCast>,
 }
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ViewTable {
+    pub hands: HandsTable,
     pub scale: f32,
     pub scope_seconds: f32,
     pub lower_seconds: f32,
@@ -315,6 +480,11 @@ pub struct ViewTable {
 #[serde(deny_unknown_fields)]
 pub struct PuppetTable {
     pub aim: AimTable,
+    pub head_check: HeadCheck,
+    #[serde(default)]
+    pub eye_fit: Option<EyeFit>,
+    pub view_test: ViewTest,
+    pub forms: FormsTable,
     pub crouch: CrouchTable,
     pub still_below_mps: f32,
     pub locomotion: Locomotion,
@@ -325,6 +495,7 @@ pub struct PuppetTable {
     pub fall: BaseClip,
     pub hits: Hits,
     pub casts: Casts,
+    pub upper: UpperTable,
     pub melee: OneShot,
     pub melee_heavy: OneShot,
     pub victory: OneShot,
@@ -332,9 +503,6 @@ pub struct PuppetTable {
     pub plant: Plant,
     pub defuse: BaseClip,
     pub land: OneShot,
-    #[serde(default)]
-    pub land_hard: Option<HardLanding>,
-    pub reload_hand: ReloadHand,
     pub switch: Switch,
     pub aiming: Aiming,
     pub dropped: DroppedLook,
@@ -392,11 +560,20 @@ pub struct PlantedLook {
     pub markers: Markers,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct HandsFiles {
+    pub figure: Figure,
+    pub mesh: String,
+    pub material: String,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct PuppetBook {
     pub table: PuppetTable,
     pub weapons: BTreeMap<String, WeaponLook>,
     pub planted: Option<PlantedLook>,
+    pub hands: Option<HandsFiles>,
 }
 
 #[derive(Deserialize)]
@@ -417,6 +594,8 @@ pub struct PuppetFile {
     pub weapons: BTreeMap<String, WeaponFiles>,
     #[serde(default)]
     pub planted: Option<PlantedFiles>,
+    #[serde(default)]
+    pub hands: Option<HandsFiles>,
     #[serde(skip)]
     book: Option<Arc<PuppetBook>>,
 }
@@ -458,6 +637,7 @@ impl PuppetFile {
             files.push(weapon.markers.clone());
         }
         files.extend(self.planted.iter().map(|planted| planted.markers.clone()));
+        files.extend(self.hands.iter().flat_map(|hands| hands.figure.files()));
         files
     }
 
@@ -473,6 +653,11 @@ impl PuppetFile {
         let whole = engine::bricks::parse_json(&text).map_err(|error| error.within(&at))?;
         let table: PuppetTable =
             engine::bricks::parse_value_at(whole, "$").map_err(|error| error.within(&at))?;
+        table
+            .shade
+            .maps
+            .checked("$.shade.maps")
+            .map_err(|error| error.within(&at))?;
         let mut weapons = BTreeMap::new();
         for (key, files) in std::mem::take(&mut self.weapons) {
             let figure_at = format!("{path}.weapons.{key}.figure");
@@ -497,10 +682,19 @@ impl PuppetFile {
             }
             None => None,
         };
+        let hands = match self.hands.clone() {
+            Some(files) => {
+                let figure = files.figure.present(cx, &format!("{path}.hands.figure"))?;
+                Some(HandsFiles { figure, ..files })
+            }
+            None => None,
+        };
+        self.hands.clone_from(&hands);
         self.book = Some(Arc::new(PuppetBook {
             table,
             weapons,
             planted,
+            hands,
         }));
         Ok(self)
     }
@@ -509,6 +703,19 @@ impl PuppetFile {
 impl Axes {
     pub fn frame(&self) -> Mat3 {
         frame(Vec3::from_array(self.fingers), Vec3::from_array(self.palm))
+    }
+
+    pub fn seat(&self, hand: &ThrowHand) -> Offset {
+        let palm = Vec3::from_array(self.palm).normalize_or(Vec3::Y);
+        let fingers = Vec3::from_array(self.fingers);
+        let along =
+            (fingers - palm * fingers.dot(palm)).normalize_or(palm.any_orthonormal_vector());
+        let turn = Quat::from_mat3(&Mat3::from_cols(palm.cross(along), palm, along)).normalize();
+        Offset {
+            translation: (along * hand.along_m + palm * hand.out_m).to_array(),
+            rotation: turn.to_array(),
+            scale: 1.0,
+        }
     }
 }
 
@@ -598,4 +805,51 @@ pub struct ViewModel {
     pub sight: Vec3,
     pub hands: [Option<HandTarget>; 2],
     pub scale: f32,
+}
+
+#[derive(Resource, Clone, Debug, Default, PartialEq)]
+pub struct Holding {
+    pub held: Option<InHand>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct InHand {
+    pub holder: Entity,
+    pub socket: String,
+    pub seat: Offset,
+    pub prop: String,
+    pub size_m: f32,
+    pub owner: u32,
+    pub team: usize,
+    pub ability: usize,
+    pub cast: Option<u64>,
+    pub release: Option<u64>,
+}
+
+impl InHand {
+    pub fn holds(&self, tick: u64) -> bool {
+        self.release.is_none_or(|release| tick < release)
+    }
+
+    pub fn hides(&self, (owner, ability, born): (u32, usize, u64)) -> bool {
+        self.owner == owner && self.ability == ability && self.cast.is_some_and(|cast| born >= cast)
+    }
+}
+
+pub fn leave_tick(cast: u64, seconds: f32, delta: f32) -> u64 {
+    let ticks = if delta > 0.0 {
+        (seconds / delta).ceil() as u64
+    } else {
+        0
+    };
+    cast + ticks
+}
+
+pub fn ability_index(slot: AbilitySlot) -> usize {
+    match slot {
+        AbilitySlot::C => 0,
+        AbilitySlot::Q => 1,
+        AbilitySlot::E => 2,
+        AbilitySlot::X => 3,
+    }
 }

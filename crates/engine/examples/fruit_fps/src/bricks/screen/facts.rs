@@ -4,7 +4,6 @@ use engine::math;
 use engine::prelude::*;
 use engine::{FrameTime, Projection, Views};
 
-use crate::abilities::{AbilityId, Event as PowerEvent, Modifiers};
 use crate::play::actors::{Actor, Body, Health, Human, Motion, Wish};
 use crate::play::arms::Arms;
 use crate::play::events::arms::{ArmsEvents, Target};
@@ -12,8 +11,11 @@ use crate::play::events::powers::PowerEvents;
 use crate::play::events::round::RoundEvents;
 use crate::play::numbers::Numbers;
 use crate::play::round::{DeviceSpot, Round};
-use crate::play::screen::{DamageMark, FeedLine, HitMark, HudFacts, MapItem, ResultFacts};
-use crate::rules::{AbilitySlot, Cause, Event, Phase, RoundEndReason, Team, View, WeaponId};
+use crate::play::screen::{DamageMark, FeedLine, HudFacts, MapItem, ResultFacts};
+use crate::play::view::{Watch, Watched};
+use crate::rules::{
+    AbilitySlot, Cause, Event, Phase, Player, RoundEndReason, Team, View, WeaponId,
+};
 use crate::weapons::Stance;
 
 use super::live::{self, character_key, character_name, named, set, tone, worded};
@@ -22,34 +24,23 @@ use super::{ScreenSetup, ScreenSource, Words};
 const WALL_SECONDS: f64 = 1.0;
 const DEVICE_ICON: &str = "device";
 const DEMO_CHANNEL: f32 = 0.6;
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) enum Hold {
-    Buff(u32, Modifiers),
-    Reveal(usize),
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct Mark {
-    pub actor: u32,
-    pub hold: Hold,
-    pub until: u64,
-    pub ability: AbilityId,
-}
+const DEMO_VICTIM: &str = "char_banana_defend";
+const DEMO_SCORE: [&str; 2] = ["5", "3"];
+const DEMO_POOR_NEED: [u32; 4] = [0, 1150, 2450, 4250];
 
 #[derive(Resource, Default)]
 pub(super) struct Recent {
-    pub(super) marks: Vec<Mark>,
+    pub(super) ultimate: Option<(f64, u32)>,
     power_tick: Option<u64>,
     feed: Vec<(f64, usize, FeedLine)>,
     walls: Vec<(f64, usize)>,
     went_live: Option<f64>,
     point: Option<(f64, String)>,
-    round_kills: Vec<u32>,
     dealt: Vec<f32>,
     round_result: Option<ResultFacts>,
     match_result: Option<ResultFacts>,
-    hit: Option<(f64, HitMark)>,
+    armor_break: Option<f64>,
+    kill: Option<(f64, u32, String)>,
     damage: Vec<(f64, Vec3)>,
     round_tick: Option<u64>,
     arms_tick: Option<u64>,
@@ -123,6 +114,58 @@ fn feed_line(
     }
     cause_icon(&mut line, view, killer, cause);
     line
+}
+
+fn kill_part(
+    recent: &mut Recent,
+    view: &View<'_>,
+    (killer, victim, human): (Option<usize>, usize, Option<usize>),
+    now: f64,
+) {
+    let (Some(killer), Some(human)) = (killer, human) else {
+        return;
+    };
+    let (Some(me), Some(fallen)) = (view.players.get(killer), view.players.get(victim)) else {
+        return;
+    };
+    if killer != human || fallen.team == me.team {
+        return;
+    }
+    let mut icon = String::new();
+    named(&mut icon, "char_", character_key(view.catalog, fallen));
+    icon.push('_');
+    icon.push_str(tone(view.side_of(fallen.team)).key());
+    recent.kill = Some((now, me.round_kills, icon));
+}
+
+fn assist_part(
+    line: &mut FeedLine,
+    view: &View<'_>,
+    (killer, victim, assistants): (Option<usize>, usize, &[usize]),
+    human: Option<usize>,
+) {
+    let victim_team = view.players.get(victim).map(|player| player.team);
+    let mut helped: Vec<usize> = Vec::new();
+    for &slot in assistants {
+        let enemy = view
+            .players
+            .get(slot)
+            .is_some_and(|player| Some(player.team) != victim_team);
+        if enemy && Some(slot) != killer && !helped.contains(&slot) {
+            helped.push(slot);
+        }
+    }
+    line.assisted = human.is_some_and(|human| helped.contains(&human));
+    line.assist_more = helped.len().saturating_sub(1) as u32;
+    let Some(player) = helped.first().and_then(|slot| view.players.get(*slot)) else {
+        return;
+    };
+    named(
+        &mut line.assist_char,
+        "char_",
+        character_key(view.catalog, player),
+    );
+    line.assist_color = tone(view.side_of(player.team));
 }
 
 fn point_reason<'a>(events: &[Event], human: usize, words: &'a Words) -> Option<&'a str> {
@@ -281,10 +324,23 @@ fn match_result(
         color: tone(view.side_of(winner)),
         ..ResultFacts::default()
     };
-    let won = human_team == Some(winner);
-    set(
+    let us = human_team.unwrap_or(winner);
+    let them = Team::BOTH
+        .into_iter()
+        .find(|team| *team != us)
+        .unwrap_or(us);
+    let mut ours = String::new();
+    let mut theirs = String::new();
+    let _ = write!(ours, "{}", view.score[us.index()]);
+    let _ = write!(theirs, "{}", view.score[them.index()]);
+    worded(
         &mut result.title,
-        if won { &words.victory } else { &words.defeat },
+        if us == winner {
+            &words.victory
+        } else {
+            &words.defeat
+        },
+        &[("us", &ours), ("them", &theirs)],
     );
     let best = most(view.players.iter().map(|player| player.kills).enumerate());
     mvp_into(&mut result, view, best, (words, dealt));
@@ -299,49 +355,19 @@ type Sources<'w, 's> = (
     Res<'w, FrameTime>,
 );
 
-fn powers_part(recent: &mut Recent, events: &PowerEvents) {
+fn powers_part(recent: &mut Recent, events: &PowerEvents, now: f64) {
     if recent.power_tick == Some(events.tick) {
         return;
     }
     recent.power_tick = Some(events.tick);
-    for event in &events.events {
-        match *event {
-            PowerEvent::BuffStarted {
-                actor,
-                effect,
-                modifiers,
-                until,
-                ability,
-            } => recent.marks.push(Mark {
-                actor: actor.0,
-                hold: Hold::Buff(effect.0, modifiers),
-                until,
-                ability,
-            }),
-            PowerEvent::BuffEnded { actor, effect } => recent.marks.retain(|mark| {
-                mark.actor != actor.0
-                    || !matches!(mark.hold, Hold::Buff(held, _) if held == effect.0)
-            }),
-            PowerEvent::RevealStarted {
-                actor,
-                team,
-                until,
-                ability,
-                ..
-            } => recent.marks.push(Mark {
-                actor: actor.0,
-                hold: Hold::Reveal(team),
-                until,
-                ability,
-            }),
-            PowerEvent::RevealEnded { actor, team } => recent
-                .marks
-                .retain(|mark| mark.actor != actor.0 || mark.hold != Hold::Reveal(team)),
-            _ => {}
-        }
+    if let Some(cast) = events
+        .casts
+        .iter()
+        .rev()
+        .find(|cast| cast.ability == AbilitySlot::X)
+    {
+        recent.ultimate = Some((now, cast.slot));
     }
-    let now = events.tick;
-    recent.marks.retain(|mark| mark.until > now);
 }
 
 pub(super) fn collect(
@@ -360,13 +386,12 @@ pub(super) fn collect(
     let now = time.elapsed;
     let recent = &mut *recent;
     if let Some(powers) = powers.as_deref() {
-        powers_part(recent, powers);
+        powers_part(recent, powers, now);
     }
     let human = humans.iter().next().map(|actor| actor.slot as usize);
     let human_team = human
         .and_then(|slot| view.players.get(slot))
         .map(|player| player.team);
-    recent.round_kills.resize(view.players.len(), 0);
     recent.dealt.resize(view.players.len(), 0.0);
     if let Some(events) = events.filter(|events| recent.round_tick != Some(events.tick)) {
         recent.round_tick = Some(events.tick);
@@ -376,15 +401,14 @@ pub(super) fn collect(
                 victim,
                 headshot,
                 cause,
-                ..
+                assistants,
             } = event
             {
                 let mut line = feed_line(&view, (*killer, *victim), (*headshot, *cause), human);
+                assist_part(&mut line, &view, (*killer, *victim, assistants), human);
                 line.wall = recent.walls.iter().any(|(_, slot)| slot == victim);
                 recent.feed.push((now, *victim, line));
-                if let Some(kills) = killer.and_then(|killer| recent.round_kills.get_mut(killer)) {
-                    *kills += 1;
-                }
+                kill_part(recent, &view, (*killer, *victim, human), now);
             } else if let Event::Phase {
                 phase: Phase::Buy,
                 round,
@@ -394,8 +418,6 @@ pub(super) fn collect(
                 if *round <= 1 {
                     recent.dealt.fill(0.0);
                 }
-                recent.round_kills.fill(0);
-                recent.marks.clear();
                 recent.round_result = None;
                 recent.match_result = None;
             } else if let Event::Phase {
@@ -409,7 +431,11 @@ pub(super) fn collect(
                     (*winner, *reason),
                     (human_team, round.device),
                     &source.words,
-                    &recent.round_kills,
+                    &view
+                        .players
+                        .iter()
+                        .map(|player| player.round_kills)
+                        .collect::<Vec<_>>(),
                 );
                 recent.round_result = Some(result);
             } else if let Event::MatchEnd { winner, .. } = event {
@@ -444,6 +470,9 @@ fn arms_part(
     (source, now): (&ScreenSource, f64),
 ) {
     recent.arms_tick = Some(arms.tick);
+    let edge = source
+        .loaded()
+        .and_then(|loaded| loaded.layout.damage_edge.as_ref());
     recent.walls.retain(|(born, _)| now - born < WALL_SECONDS);
     for hit in arms.hits.iter().filter(|hit| hit.killed) {
         let walled = arms.shots.iter().any(|shot| {
@@ -465,24 +494,38 @@ fn arms_part(
         if let Some(dealt) = recent.dealt.get_mut(hit.shooter as usize) {
             *dealt += hit.health_lost + hit.armor_lost;
         }
-        if Some(hit.shooter as usize) == human {
-            recent.hit = Some((
-                now,
-                HitMark {
-                    age: 0.0,
-                    headshot: hit.headshot,
-                    killed: hit.killed,
-                },
-            ));
+        if Some(hit.shooter as usize) == human && hit.armor_broke {
+            recent.armor_break = Some(now);
         }
         if Some(hit.victim as usize) == human
             && let Some((_, body)) = bodies.iter().find(|(actor, _)| actor.slot == hit.shooter)
         {
+            let me = bodies
+                .iter()
+                .find(|(actor, _)| actor.slot == hit.victim)
+                .map(|(_, mine)| mine.feet);
+            let half = edge.map_or(0.0, |edge| edge.length_deg.to_radians() * 0.5);
+            if let Some(me) = me {
+                let new = bearing(body.feet, me);
+                recent
+                    .damage
+                    .retain(|(_, from)| turned(bearing(*from, me) - new).abs() > half);
+            }
             recent.damage.push((now, body.feet));
         }
     }
-    let keep = f64::from(source.marks.damage.seconds);
+    let keep = f64::from(edge.map_or(0.0, |edge| edge.fade_seconds));
     recent.damage.retain(|(born, _)| now - born < keep);
+}
+
+fn bearing(from: Vec3, at: Vec3) -> f32 {
+    let toward = from - at;
+    math::atan2(-toward.x, -toward.z)
+}
+
+fn turned(angle: f32) -> f32 {
+    let turn = std::f32::consts::TAU;
+    angle - (angle / turn).round() * turn
 }
 
 fn stance(motion: Motion) -> Stance {
@@ -568,26 +611,37 @@ fn marks_part(
     (source, now): (&ScreenSource, f64),
 ) {
     let marks = &source.marks;
-    facts.hit = recent.hit.and_then(|(born, hit)| {
+    facts.armor_break = recent.armor_break.and_then(|born| {
         let age = (now - born) as f32;
-        (age < marks.hit.seconds).then_some(HitMark { age, ..hit })
+        (age < marks.armor.seconds).then_some(age)
     });
+    let kill = &mut facts.kill;
+    kill.active = false;
+    if let Some((born, count, victim)) = &recent.kill
+        && now - born < f64::from(source.low.kill_seconds)
+    {
+        kill.active = true;
+        kill.count = *count;
+        set(&mut kill.victim_icon, victim);
+        let words = &source.words.kills;
+        let at = (*count as usize).clamp(1, words.len()) - 1;
+        set(&mut kill.label, &words[at]);
+    }
     facts.damage.clear();
+    let fade = source
+        .loaded()
+        .and_then(|loaded| loaded.layout.damage_edge.as_ref())
+        .map_or(0.0, |edge| edge.fade_seconds);
     let (Some(wish), Some(body)) = (wish, body) else {
         return;
     };
     for (born, from) in &recent.damage {
         let age = (now - born) as f32;
-        if age >= marks.damage.seconds {
+        if age >= fade {
             continue;
         }
-        let toward = *from - body.feet;
-        let bearing = math::atan2(-toward.x, -toward.z);
-        let mut angle = bearing - wish.yaw_radians;
-        let turn = std::f32::consts::TAU;
-        angle -= (angle / turn).round() * turn;
         facts.damage.push(DamageMark {
-            angle_radians: angle,
+            angle_radians: turned(bearing(*from, body.feet) - wish.yaw_radians),
             age,
         });
     }
@@ -612,7 +666,7 @@ pub(super) fn spot(feet: Vec3) -> [f32; 2] {
     [feet.x, -feet.z]
 }
 
-pub(super) fn compass(yaw_radians: f32) -> f32 {
+fn compass(yaw_radians: f32) -> f32 {
     -yaw_radians.to_degrees()
 }
 
@@ -719,12 +773,102 @@ type Reads<'w, 's> = (
     Option<Res<'w, Numbers>>,
     Res<'w, Views>,
     Res<'w, FrameTime>,
-    Res<'w, ScreenSetup>,
+    (Res<'w, ScreenSetup>, Option<Res<'w, Watched>>),
 );
 
+fn watched_slot(watched: Option<&Watched>) -> Option<u32> {
+    watched
+        .filter(|watched| watched.watch == Watch::Teammate)
+        .and_then(|watched| watched.slot)
+}
+
+fn vitals_part(
+    facts: &mut HudFacts,
+    view: &View<'_>,
+    (player, health): (&Player, Option<&Health>),
+    lows: &super::Lows,
+) {
+    let me = &mut facts.player;
+    me.health = health.map_or(0.0, |health| health.health);
+    me.armor = health.map_or(0.0, |health| health.armour);
+    me.health_low = player.alive && me.health <= lows.health;
+    let entry = view.catalog.characters.get(player.character);
+    set(
+        &mut me.char_name,
+        entry.map_or("", |entry| entry.name.as_str()),
+    );
+    set(&mut me.role, entry.map_or("", |entry| entry.role.as_str()));
+    named(
+        &mut me.icon,
+        "char_",
+        entry.map_or("", |entry| entry.key.as_str()),
+    );
+    let tier = player.armor.map(|armor| armor.tier);
+    set(
+        &mut me.armor_icon,
+        match tier {
+            Some(crate::rules::ArmorTier::Light) => "armor_light",
+            Some(crate::rules::ArmorTier::Heavy) | None => "armor_heavy",
+        },
+    );
+}
+
+fn poor_part(facts: &mut HudFacts, poor: bool, source: &ScreenSource) {
+    let Some(loaded) = source.loaded() else {
+        return;
+    };
+    let shown = facts.buy.weapons.iter_mut().zip(&loaded.demo.buy.weapons);
+    for (index, (card, base)) in shown.enumerate() {
+        let short = poor && !base.owned;
+        card.afford = base.afford && !short;
+        card.need = if short {
+            DEMO_POOR_NEED[index % DEMO_POOR_NEED.len()]
+        } else {
+            base.need
+        };
+        card.ask = short && index + 1 < DEMO_POOR_NEED.len();
+        card.asked = short && index + 1 == DEMO_POOR_NEED.len();
+    }
+}
+
+fn demo_part(facts: &mut HudFacts, setup: &ScreenSetup, source: &ScreenSource) {
+    facts.blind = setup.demo_blind;
+    facts.spectate.active = setup.demo_spectate;
+    let orb = &mut facts.orb;
+    orb.channel = setup.demo_channel;
+    orb.hint = !setup.demo_channel;
+    orb.progress = if setup.demo_channel {
+        DEMO_CHANNEL
+    } else {
+        0.0
+    };
+    let words = &source.words;
+    if setup.show == super::Showing::MatchEnd {
+        worded(
+            &mut facts.result.title,
+            &words.victory,
+            &[("us", DEMO_SCORE[0]), ("them", DEMO_SCORE[1])],
+        );
+    } else {
+        set(&mut facts.result.title, &words.round_won);
+    }
+    poor_part(facts, setup.demo_poor, source);
+    facts.scope_ease = setup.demo_scope;
+    facts.scope = u32::from(setup.demo_scope > 0.0);
+    facts.armor_break = setup.demo_armor.then_some(0.1);
+    let kill = &mut facts.kill;
+    kill.active = setup.demo_kills > 0;
+    kill.count = setup.demo_kills;
+    set(&mut kill.victim_icon, DEMO_VICTIM);
+    let words = &source.words.kills;
+    let at = (setup.demo_kills as usize).clamp(1, words.len().max(1)) - 1;
+    set(&mut kill.label, words.get(at).map_or("", String::as_str));
+}
+
 pub(super) fn fill(
-    (round, numbers, views, time, setup): Reads,
+    (round, numbers, views, time, (setup, watched)): Reads,
     humans: Query<HumanRow, With<Human>>,
+    rows: Query<HumanRow>,
     actors: Query<Placed>,
     sources: Query<&ScreenSource>,
     mut recent: ResMut<Recent>,
@@ -744,15 +888,7 @@ pub(super) fn fill(
             facts.clone_from(&loaded.demo);
             recent.demo_shown = true;
         }
-        facts.blind = setup.demo_blind;
-        let orb = &mut facts.orb;
-        orb.channel = setup.demo_channel;
-        orb.hint = !setup.demo_channel;
-        orb.progress = if setup.demo_channel {
-            DEMO_CHANNEL
-        } else {
-            0.0
-        };
+        demo_part(&mut facts, &setup, source);
         return;
     };
     recent.demo_shown = false;
@@ -773,7 +909,13 @@ pub(super) fn fill(
     facts.live = true;
     live::round_part(facts, &view, player.team, (lows, words));
     live::plates_part(facts, &view, player.team, &recent.healths);
-    live::abilities_part(facts, &view, player);
+    let seen = watched_slot(watched.as_deref()).and_then(|watched| {
+        let row = rows.iter().find(|row| row.0.slot == watched)?;
+        Some((view.players.get(watched as usize)?, row))
+    });
+    let (seen_player, (_, seen_health, seen_arms, seen_body, _)) =
+        seen.unwrap_or((player, (actor, health, arms, body, wish)));
+    live::abilities_part(facts, &view, (seen_player, player));
     live::action_part(facts, &view, slot, words);
     live::device_part(facts, &view, slot);
     let weapons = numbers
@@ -788,32 +930,16 @@ pub(super) fn fill(
         (weapons, &mut recent.order),
     );
     live::board_part(facts, &view, (slot, player.team, &recent.dealt), words);
-    let me = &mut facts.player;
-    me.health = health.map_or(0.0, |health| health.health);
-    me.armor = health.map_or(0.0, |health| health.armour);
-    me.health_low = player.alive && me.health <= lows.health;
-    me.credits = player.credits;
-    let entry = view.catalog.characters.get(player.character);
-    set(
-        &mut me.char_name,
-        entry.map_or("", |entry| entry.name.as_str()),
-    );
-    set(&mut me.role, entry.map_or("", |entry| entry.role.as_str()));
-    named(
-        &mut me.icon,
-        "char_",
-        entry.map_or("", |entry| entry.key.as_str()),
-    );
-    let tier = player.armor.map(|armor| armor.tier);
-    set(
-        &mut me.armor_icon,
-        match tier {
-            Some(crate::rules::ArmorTier::Light) => "armor_light",
-            Some(crate::rules::ArmorTier::Heavy) | None => "armor_heavy",
-        },
-    );
+    vitals_part(facts, &view, (seen_player, seen_health), lows);
+    facts.player.credits = player.credits;
     if let Some(numbers) = numbers.as_deref() {
-        weapon_part(facts, (arms, body), numbers, &views, lows.magazine_share);
+        weapon_part(
+            facts,
+            (seen_arms, seen_body),
+            numbers,
+            &views,
+            lows.magazine_share,
+        );
     }
     if let Some(round) = round.as_deref() {
         minimap_part(facts, (&view, round), (slot, wish, body), &actors);

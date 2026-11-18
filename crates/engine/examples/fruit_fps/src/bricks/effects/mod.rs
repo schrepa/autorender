@@ -4,6 +4,7 @@ mod assemble;
 mod foes;
 mod gather;
 mod gpu;
+mod models;
 mod numbers;
 mod previews;
 
@@ -36,6 +37,15 @@ gpu_struct! {
         pub sky_color: [f32; 4],
         pub field: [f32; 4],
         pub field_shape: [f32; 4],
+        pub rind_skin: [f32; 4],
+        pub rind_stripe: [f32; 4],
+        pub rind_pith: [f32; 4],
+        pub rind_flesh: [f32; 4],
+        pub rind_seed: [f32; 4],
+        pub curtain_peel: [f32; 4],
+        pub curtain_pulp: [f32; 4],
+        pub panel: [f32; 4],
+        pub zones: [f32; 4],
     }
 }
 
@@ -58,6 +68,7 @@ pub(crate) struct EffectsDrawing {
     pub frame: EffectsFrame,
     pub screen: bool,
     pub field: Option<engine_core::TextureRef>,
+    pub covered: bool,
 }
 
 impl EffectsDrawing {
@@ -93,6 +104,10 @@ pub enum Show {
     Damage,
     InsideSmoke,
     Barrier,
+    Orbs,
+    Shatter,
+    Wire,
+    Models,
 }
 
 settings! {
@@ -129,9 +144,16 @@ stats! {
         pub trails: u32,
         pub barrier_faces: u32,
         pub barrier_drop: f32,
+        pub orbs: u32,
+        pub orb_beams: u32,
+        pub orb_bursts: u32,
+        pub shatters: u32,
+        pub faded_wires: u32,
+        pub covered: bool,
         pub shadows: u32,
         pub puffs: u32,
         pub meshed: u32,
+        pub showcase_model: Option<String>,
         pub lamp: f32,
         pub device: bool,
         pub screen: ScreenStats,
@@ -157,7 +179,9 @@ impl Brick for EffectsBrick {
             .resource::<gather::Setup>()
             .resource::<gather::Spawns>()
             .resource::<EffectsDrawing>()
+            .resource::<models::ShowcaseModels>()
             .moves::<Device>(Pace::Tick)
+            .moves::<models::ShowcaseModel>(Pace::Tick)
             .draw_kind(KindDecl {
                 kind: DEVICE,
                 needs: Attributes::NONE,
@@ -176,6 +200,7 @@ impl Brick for EffectsBrick {
             .systems(Schedule::FixedSimulation, gather::setup)
             .systems(Schedule::FixedSimulation, gather::gather)
             .systems(Schedule::FixedSimulation, gather::place_device)
+            .systems(Schedule::FixedSimulation, models::showcase_models)
             .systems(Schedule::Presentation, assemble::assemble)
             .systems(Schedule::Presentation, foes::mark_figures);
     }

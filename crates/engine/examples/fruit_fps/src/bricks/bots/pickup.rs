@@ -12,6 +12,7 @@ pub(super) struct Ground<'a> {
     pub drops: Option<&'a Drops>,
     pub arena: &'a Arena,
     pub loaded: &'a Loaded,
+    pub reserved: &'a [(u32, u32)],
 }
 
 fn wanted(ground: &Ground<'_>, who: &Who) -> Option<Dropped> {
@@ -22,6 +23,14 @@ fn wanted(ground: &Ground<'_>, who: &Who) -> Option<Dropped> {
         .items
         .iter()
         .filter(|item| item.weapon != GunKind::Sidearm)
+        .filter(|item| item.by != Some(who.slot))
+        .filter(|item| {
+            ground
+                .reserved
+                .iter()
+                .find(|(id, _)| *id == item.id)
+                .is_none_or(|(_, receiver)| *receiver == who.slot)
+        })
         .filter(|item| {
             let flat = Vec3::new(
                 item.position.x - who.feet.x,

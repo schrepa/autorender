@@ -68,7 +68,9 @@ fn landing(cue: CueKind) -> bool {
         | CueKind::WallDown
         | CueKind::TrapArmed
         | CueKind::TrapTriggered
+        | CueKind::WireChained
         | CueKind::WireZap
+        | CueKind::WireReleased
         | CueKind::Destroyed
         | CueKind::Dash
         | CueKind::TransformStart

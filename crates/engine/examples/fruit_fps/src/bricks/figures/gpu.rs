@@ -15,8 +15,10 @@ use super::play::FigureDrawing;
 use super::shaders::figures::{figure, ground, light, material, reveal};
 use super::{JOINTS, WEIGHTS};
 use crate::names::COLOR_PASS;
+use crate::play::figures::{FIGURE, GROUND, REVEALED};
 use crate::play::light::{Light, LightField, Lighting};
-use crate::play::puppet::PuppetFile;
+use crate::play::puppet::{PuppetFile, ShadeMaps};
+use crate::play::screen::Covered;
 
 gpu_struct! {
     pub struct FigureLight {
@@ -88,6 +90,8 @@ pub(super) struct FiguresGpu {
     synced: Option<u64>,
     unlit: Texture<Self>,
     field_bound: Option<Option<TextureRef>>,
+    covered: bool,
+    maps: Option<ShadeMaps>,
 }
 
 fn pipeline<'a>(vertex: engine_core::Entry, vertices: &'a [VertexLayout]) -> RenderPipeline<'a> {
@@ -227,6 +231,7 @@ impl GpuPart for FiguresGpu {
         (
             Option<Res<'static, Lighting>>,
             Query<'static, 'static, &'static PuppetFile>,
+            Option<Res<'static, Covered>>,
         ),
     );
     const NAME: &'static str = "figures";
@@ -267,22 +272,36 @@ impl GpuPart for FiguresGpu {
             synced: None,
             unlit,
             field_bound: None,
+            covered: false,
+            maps: None,
         })
     }
 
     fn prepare(
         &mut self,
-        (book, lights, residency, library, (lighting, files)): SystemParamItem<'_, '_, Self::Reads>,
+        (book, lights, residency, library, (lighting, files, covered)): SystemParamItem<
+            '_,
+            '_,
+            Self::Reads,
+        >,
         cx: &mut Prepare<'_, Self>,
     ) {
+        self.covered = covered.is_some_and(|covered| covered.0);
+        if self.covered {
+            for kind in [FIGURE, REVEALED, GROUND] {
+                cx.skip_kind(kind, "covered");
+            }
+        }
         let field = lighting.as_deref().and_then(|lighting| lighting.field);
         let bound = self.bind_field(field.map(|field| field.map), cx);
-        let floor = files
+        let shade = files
             .iter()
             .find_map(PuppetFile::book)
-            .map_or(0.0, |book| book.table.shade.indirect_floor);
-        if let (Some(residency), Some(library)) = (residency, library) {
-            self.sync(&residency, &library, cx);
+            .map(|book| book.table.shade);
+        let floor = shade.map_or(0.0, |shade| shade.indirect_floor);
+        self.filter(shade.map(|shade| shade.maps), cx);
+        if let (Some(residency), Some(library), Some(maps)) = (residency, library, self.maps) {
+            self.sync(&residency, &library, maps, cx);
         }
         let mut listed: Vec<(Entity, Light)> = lights
             .iter()
@@ -361,6 +380,17 @@ impl FiguresGpu {
         shown
     }
 
+    fn filter(&mut self, maps: Option<ShadeMaps>, cx: &mut Prepare<'_, Self>) {
+        if self.maps == maps {
+            return;
+        }
+        self.maps = maps;
+        for handle in std::mem::take(&mut self.held).into_keys() {
+            cx.clear_batch(self.group, Some(handle));
+        }
+        self.synced = None;
+    }
+
     fn field_entries(&self) -> [(Var, GroupEntry<Self>); 2] {
         let (texture, sampler) = match self.field_bound.flatten() {
             Some(map) => (GroupEntry::Asset(map.texture), map.sampler),
@@ -376,23 +406,31 @@ impl FiguresGpu {
     }
 
     pub(super) fn draw_figures(&self, draw: &mut Draw<'_, Self, Scene>) {
-        draw.batches(&self.figure, 0..0);
+        if !self.covered {
+            draw.batches(&self.figure, 0..0);
+        }
     }
 
     pub(super) fn draw_revealed(&self, draw: &mut Draw<'_, Self, Scene>) {
-        draw.batches(&self.revealed, 0..0);
+        if !self.covered {
+            draw.batches(&self.revealed, 0..0);
+        }
     }
 
     pub(super) fn draw_ground(&self, draw: &mut Draw<'_, Self, Scene>) {
-        draw.batches(&self.ground, 0..0);
+        if !self.covered {
+            draw.batches(&self.ground, 0..0);
+        }
     }
 
     fn sync(
         &mut self,
         residency: &AssetResidency,
         library: &AssetLibrary,
+        maps: ShadeMaps,
         cx: &mut Prepare<'_, Self>,
     ) {
+        let filters = [maps.base_color, maps.normal, maps.orm];
         let generation = residency.revision();
         if self.synced == Some(generation) {
             return;
@@ -451,9 +489,12 @@ impl FiguresGpu {
                 );
             }
             let mut entries = Vec::with_capacity(2 * MAPS.len() + 2);
-            for ((_, texture, sampler), map) in MAPS.iter().zip(&maps) {
+            for (((_, texture, sampler), map), filter) in MAPS.iter().zip(&maps).zip(filters) {
                 entries.push((*texture, GroupEntry::Asset(map.texture)));
-                entries.push((*sampler, GroupEntry::AssetSampler(map.sampler)));
+                entries.push((
+                    *sampler,
+                    GroupEntry::AssetSampler(filter.applied(map.sampler)),
+                ));
             }
             entries.extend(self.field_entries());
             let variant = Variant {

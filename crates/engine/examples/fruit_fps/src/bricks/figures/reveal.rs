@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use engine::prelude::*;
 use engine_core::{Drawn, Mobility, Spawner, Transform};
 
-use super::FiguresBrick;
+use super::{FiguresBrick, FiguresStats};
 use crate::play::figures::{FIGURE, Figure, REVEALED};
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -28,14 +28,21 @@ fn outlined(drawn: &Drawn) -> Option<Drawn> {
     })
 }
 
-pub(super) fn outline(figures: Shown, outlines: Outlines, mut spawner: Spawner<FiguresBrick>) {
+pub(super) fn outline(
+    figures: Shown,
+    outlines: Outlines,
+    (mut stats, mut spawner): (ResMut<FiguresStats>, Spawner<FiguresBrick>),
+) {
+    let mut shown = 0;
     let mut held: BTreeMap<Entity, (Entity, &Drawn)> = outlines
         .iter()
         .map(|(entity, of, drawn)| (of.0, (entity, drawn)))
         .collect();
     for (entity, drawn) in &figures {
         let found = held.remove(&entity);
-        match (outlined(drawn), found) {
+        let wanted = outlined(drawn);
+        shown += u32::from(wanted.is_some());
+        match (wanted, found) {
             (Some(wanted), None) => {
                 let outline =
                     spawner.spawn((Transform::default(), riding(), wanted, RevealOf(entity)));
@@ -52,5 +59,8 @@ pub(super) fn outline(figures: Shown, outlines: Outlines, mut spawner: Spawner<F
     }
     for (outline, _) in held.into_values() {
         spawner.despawn(outline);
+    }
+    if stats.revealed != shown {
+        stats.revealed = shown;
     }
 }

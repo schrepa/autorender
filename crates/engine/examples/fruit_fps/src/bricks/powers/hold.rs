@@ -95,7 +95,12 @@ impl Casting<'_> {
         let Some(held) = seat.held else {
             return Move::Stay;
         };
-        if seat.switched {
+        if seat.switched
+            || self
+                .asked
+                .check(seat.slot, seat.character, seat.alive, held)
+                .is_err()
+        {
             return Move::Cancel;
         }
         if !seat.fire {

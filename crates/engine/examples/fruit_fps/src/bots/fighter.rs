@@ -7,16 +7,16 @@ use super::aim::{
 use super::debug::{Activity, Why};
 use super::memory::{Source, Track};
 use super::sense::{
-    CallKind, DeviceSense, Gait, GamePhase, GunClass, Intent, Purchase, Side, WeaponChoice,
+    CallKind, DeviceSense, Gait, GamePhase, Intent, ObjectKind, Purchase, Side, WeaponChoice,
 };
 use super::team::{Duty, Step};
-use super::{Brain, Ctx, Gift};
+use super::{Brain, Ctx};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fight {
     target: Option<u32>,
     head: bool,
-    stop: bool,
+    sloppy: bool,
     over_peek: bool,
     burst_left: u32,
     pause_until: u64,
@@ -36,7 +36,7 @@ impl Fight {
         Fight {
             target: None,
             head: false,
-            stop: true,
+            sloppy: false,
             over_peek: false,
             burst_left: 0,
             pause_until: 0,
@@ -97,40 +97,11 @@ pub fn buy(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
         .get_or_insert(tick + ctx.numbers.ticks(delay));
     let late = u64::from(ctx.sense.game.ticks_left) <= ctx.numbers.ticks(play.buy_late_seconds);
     let due = if late { due.min(tick) } else { due };
-    let wait = ctx.numbers.ticks(play.gift_wait_seconds);
-    let gift_to = ctx.sense.buy.gift_to;
-    let mut face = ctx.sense.order.face;
-    let mut share = play.idle_turn_share;
-    match (gift_to, brain.gift) {
-        (Some(_), Gift::Idle) if tick >= due => {
-            intent.buy = Purchase::Gift;
-            brain.gift = Gift::Bought(tick);
-        }
-        (Some(to), Gift::Bought(at)) => {
-            face = to + (ctx.eye - ctx.sense.position) * 0.3;
-            share = 1.0;
-            let (yaw, pitch) = look_angles(ctx.eye, face);
-            let facing = angle_between(brain.aim.yaw, brain.aim.pitch, yaw, pitch)
-                <= radians(play.throw_aim_deg);
-            let holding = ctx.sense.gun.has_primary
-                && ctx.sense.gun.holding == WeaponChoice::Primary
-                && !ctx.sense.carrying_device;
-            if tick >= at + wait && facing && holding {
-                intent.drop_gun = true;
-                brain.gift = Gift::Dropped(tick);
-            }
-        }
-        (None, Gift::Bought(at)) | (_, Gift::Dropped(at)) if tick >= at + wait => {
-            intent.buy = Purchase::Own;
-            brain.gift = Gift::Done;
-        }
-        (None, Gift::Idle) if tick >= due => {
-            intent.buy = Purchase::Own;
-            brain.gift = Gift::Done;
-        }
-        _ => {}
+    if !brain.bought && tick >= due {
+        intent.buy = Purchase::Own;
+        brain.bought = true;
     }
-    turn_to(brain, ctx, face, share);
+    turn_to(brain, ctx, ctx.sense.order.face, play.idle_turn_share);
     switch_primary(ctx, intent);
     brain.mover.reset_progress(tick);
     brain.mind(Activity::Wait, Why::RoundStart, tick);
@@ -194,11 +165,10 @@ fn acquire(brain: &mut Brain, ctx: &Ctx<'_, '_>, target: &Track) {
     if brain.fight.target == target.id {
         return;
     }
-    let play = &ctx.numbers.play;
     brain.fight.target = target.id;
     brain.fight.head = brain.rng.chance(ctx.level.head_share);
-    brain.fight.stop = brain.rng.chance(play.stop_to_shoot);
-    brain.fight.over_peek = brain.rng.chance(play.over_peek);
+    brain.fight.sloppy = brain.rng.chance(ctx.level.run_and_gun);
+    brain.fight.over_peek = brain.rng.chance(peek_share(brain, ctx));
     brain.fight.burst_left = 0;
     brain.fight.cover = None;
     brain.fight.hunt_at = None;
@@ -245,15 +215,9 @@ fn engage(brain: &mut Brain, ctx: &Ctx<'_, '_>, target: &Track, intent: &mut Int
         .aim
         .turn_toward(want_yaw, want_pitch, turn, play, ctx.dt);
     let gun = ctx.sense.gun;
-    if gun.magazine == 0 && !gun.reloading {
-        let close = distance <= play.spray_m && gun.holding == WeaponChoice::Primary;
-        if close {
-            intent.switch = Some(WeaponChoice::Sidearm);
-        } else if gun.reserve > 0 {
-            intent.reload = true;
-        } else if gun.holding == WeaponChoice::Primary {
-            intent.switch = Some(WeaponChoice::Sidearm);
-        }
+    let empty = gun.magazine == 0 && !gun.reloading && gun.holding == WeaponChoice::Primary;
+    if empty && (distance <= play.spray_m || gun.reserve == 0) {
+        intent.switch = Some(WeaponChoice::Sidearm);
     }
     if let Some(why) = needs_cover(brain, ctx, distance) {
         retreat(brain, ctx, target, why, intent);
@@ -315,13 +279,7 @@ fn fight_moves(
     intent: &mut Intent,
 ) {
     let play = &ctx.numbers.play;
-    let gun = ctx.sense.gun;
-    let steady_gun = matches!(
-        gun.class,
-        GunClass::Rifle | GunClass::Sniper | GunClass::Sidearm
-    );
     let at_range = distance > play.spray_m;
-    let stopping = at_range || (brain.fight.stop && steady_gun);
     let pausing = brain.fight.burst_left == 0 && ctx.tick < brain.fight.pause_until;
     let objective = matches!(brain.order.step, Step::Plant | Step::Defuse)
         && matches!(brain.order.duty, Duty::Carrier | Duty::Defuser);
@@ -334,7 +292,13 @@ fn fight_moves(
         intent.gait = Gait::Run;
         return;
     }
-    if stopping && !pausing {
+    if !pausing && !(brain.fight.sloppy && !at_range) {
+        intent.wish = if ctx.speed_share >= ctx.numbers.combat.deadzone_share {
+            -flat(ctx.sense.velocity).normalize_or_zero()
+        } else {
+            Vec3::ZERO
+        };
+        intent.gait = Gait::Run;
         return;
     }
     if ctx.tick >= brain.fight.strafe_until {
@@ -370,8 +334,14 @@ fn trigger(brain: &mut Brain, ctx: &Ctx<'_, '_>, point: Vec3, off: f32, intent: 
     } else {
         0
     };
-    if brain.fight.burst_left > 0 {
-        brain.fight.burst_left = brain.fight.burst_left.saturating_sub(fired);
+    if brain.fight.burst_left > 0 && fired > 0 {
+        let hold = play.head_radius_m * play.spray_hold_share / distance;
+        let grown = radians(gun.spread_deg) > hold;
+        brain.fight.burst_left = if grown {
+            0
+        } else {
+            brain.fight.burst_left.saturating_sub(fired)
+        };
         if brain.fight.burst_left == 0 {
             let stretch = clamp(distance / play.spray_m, 1.0, play.burst_pause_stretch);
             let pause = play.burst_pause_seconds * stretch;
@@ -398,7 +368,7 @@ fn trigger(brain: &mut Brain, ctx: &Ctx<'_, '_>, point: Vec3, off: f32, intent: 
             tolerance
         };
     let still = ctx.speed_share < ctx.numbers.combat.deadzone_share;
-    let moving_ok = (!at_range || still) && ctx.sense.grounded;
+    let moving_ok = (still || (brain.fight.sloppy && !at_range)) && ctx.sense.grounded;
     let ready = gun.ready && gun.magazine > 0 && !gun.reloading;
     if shot_line_blocked(brain, ctx, point, distance) {
         brain.mind(Activity::Fight, Why::MateInLine, ctx.tick);
@@ -408,14 +378,11 @@ fn trigger(brain: &mut Brain, ctx: &Ctx<'_, '_>, point: Vec3, off: f32, intent: 
         return;
     }
     if !bursting && ctx.tick >= brain.fight.pause_until {
-        brain.fight.burst_left = if distance <= play.spray_m {
-            gun.magazine
-        } else {
-            brain.rng.between(play.burst_shots)
-        };
+        brain.fight.burst_left = gun.magazine;
     }
     if brain.fight.burst_left > 0 {
         intent.fire = gun.auto || !brain.last_fire;
+        intent.crouch = gun.auto && brain.last_fire && distance <= play.spray_m;
     }
 }
 
@@ -479,7 +446,11 @@ fn hunt(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) -> bool {
         order.step,
         Step::Plant | Step::Defuse | Step::Save | Step::Pickup
     ) && matches!(order.duty, Duty::Carrier | Duty::Defuser | Duty::Saver);
-    if busy {
+    let taking_orb = track.source == Source::Called
+        && brain
+            .orb_spot
+            .is_some_and(|stand| flat_distance(stand, ctx.sense.position) <= play.arrive_m);
+    if busy || taking_orb {
         return false;
     }
     let new_episode = brain
@@ -491,7 +462,7 @@ fn hunt(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) -> bool {
         brain.fight.hunt_done = false;
         brain.fight.peek_until =
             ctx.tick + ctx.numbers.ticks(brain.rng.range(play.peek_wait_seconds));
-        brain.fight.over_peek = brain.rng.chance(play.over_peek);
+        brain.fight.over_peek = brain.rng.chance(peek_share(brain, ctx));
         let why = if track.source == Source::Called {
             Why::Called
         } else {
@@ -502,7 +473,12 @@ fn hunt(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) -> bool {
     if brain.fight.hunt_done {
         return false;
     }
-    let far_from_post = flat_distance(ctx.sense.position, order.goal) > play.walk_near_m;
+    let post_reach = if order.wait_contact && order.step == Step::Retake {
+        play.spacing_m * 2.0
+    } else {
+        play.walk_near_m
+    };
+    let far_from_post = flat_distance(ctx.sense.position, order.goal) > post_reach;
     let pushes = (matches!(order.step, Step::Execute | Step::Retake | Step::Hunt)
         || order.duty == Duty::Entry
         || brain.fight.over_peek)
@@ -647,18 +623,260 @@ fn idle_reload(brain: &Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
         .memory
         .lost(ctx.tick, ctx.numbers.ticks(play.reaction_reset_seconds))
         .is_none();
-    if low && calm && !gun.reloading && gun.reserve > 0 {
+    let exposed = brain
+        .memory
+        .lost(ctx.tick, ctx.numbers.ticks(ctx.level.memory_seconds))
+        .map(|track| track.head)
+        .into_iter()
+        .chain(
+            ctx.sense
+                .sounds
+                .iter()
+                .map(|heard| heard.at + (ctx.eye - ctx.sense.position)),
+        )
+        .any(|from| ctx.world.sees(from, ctx.eye));
+    if low && calm && !exposed && !gun.reloading && gun.reserve > 0 {
         intent.reload = true;
     }
 }
 
-fn follow(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
+fn quiet(brain: &Brain, ctx: &Ctx<'_, '_>) -> bool {
+    let fresh = ctx.numbers.ticks(ctx.level.memory_seconds);
+    let quiet_calls = ctx.sense.calls.iter().all(|call| {
+        ctx.tick.saturating_sub(call.tick) > fresh
+            || !matches!(
+                call.kind,
+                CallKind::Spotted | CallKind::Heard | CallKind::Down | CallKind::Device
+            )
+    });
+    quiet_calls
+        && ctx.sense.sounds.is_empty()
+        && brain.memory.visible_count() == 0
+        && brain.memory.lost(ctx.tick, fresh).is_none()
+}
+
+fn quiet_near(brain: &Brain, ctx: &Ctx<'_, '_>, reach: f32) -> bool {
+    let fresh = ctx.numbers.ticks(ctx.level.memory_seconds);
+    let me = ctx.sense.position;
+    let near = |at: Vec3| flat_distance(at, me) <= reach;
+    let calls = ctx.sense.calls.iter().any(|call| {
+        ctx.tick.saturating_sub(call.tick) <= fresh
+            && matches!(
+                call.kind,
+                CallKind::Spotted | CallKind::Heard | CallKind::Down | CallKind::Device
+            )
+            && near(call.at)
+    });
+    let tracks = brain
+        .memory
+        .tracks
+        .iter()
+        .any(|track| ctx.tick.saturating_sub(track.seen_tick) <= fresh && near(track.at));
+    let sounds = ctx.sense.sounds.iter().any(|heard| near(heard.at));
+    brain.memory.visible_count() == 0 && !calls && !tracks && !sounds
+}
+
+fn object_in_way(brain: &Brain, ctx: &Ctx<'_, '_>) -> Option<Vec3> {
+    let play = &ctx.numbers.play;
+    let me = ctx.sense.position;
+    let ahead = flat(brain.order.goal - me).normalize_or_zero();
+    let stuck = ctx.tick < brain.stuck_tick + ctx.numbers.ticks(play.wall_stuck_seconds)
+        && brain.stuck_tick > 0;
+    ctx.sense
+        .objects
+        .iter()
+        .filter(|object| match object.kind {
+            ObjectKind::Wall => stuck,
+            ObjectKind::Trap | ObjectKind::Wire | ObjectKind::Sensor => object.enemy,
+        })
+        .filter(|object| {
+            let to = flat(object.at - me);
+            let along = to.dot(ahead);
+            let reach = if object.kind == ObjectKind::Wall {
+                play.object_block_m * 3.0
+            } else {
+                play.object_shoot_m
+            };
+            along > 0.0
+                && along <= reach
+                && (to - ahead * along).length() <= play.object_block_m * 2.0
+        })
+        .map(|object| object.at)
+        .min_by(|a, b| flat_distance(*a, me).total_cmp(&flat_distance(*b, me)))
+}
+
+fn shoot_object(brain: &mut Brain, ctx: &Ctx<'_, '_>, at: Vec3, intent: &mut Intent) {
+    turn_to(brain, ctx, at, 1.0);
+    let (yaw, pitch) = look_angles(ctx.eye, at);
+    let on = angle_between(brain.aim.yaw, brain.aim.pitch, yaw, pitch) <= radians(1.0);
+    let gun = ctx.sense.gun;
+    let still = ctx.speed_share < ctx.numbers.combat.deadzone_share;
+    intent.wish = Vec3::ZERO;
+    intent.gait = Gait::Still;
+    intent.fire = on && still && gun.ready && gun.magazine > 0 && !brain.last_fire;
+    brain.mind(Activity::Fight, Why::Object, ctx.tick);
+}
+
+fn orb_wanted(brain: &Brain, ctx: &Ctx<'_, '_>) -> Option<Vec3> {
     let order = brain.order;
+    let taker = brain.orb_spot.is_some()
+        || match ctx.sense.game.side {
+            Side::Attack => matches!(order.step, Step::Wait | Step::Gather),
+            Side::Defend => matches!(order.step, Step::Setup | Step::Rotate),
+        };
+    if !taker
+        || ctx.sense.game.phase != GamePhase::Live
+        || ctx.sense.carrying_device
+        || ctx.sense.abilities[3].ready
+        || !quiet_near(brain, ctx, ctx.numbers.play.cast_clear_m)
+    {
+        return None;
+    }
+    let me = ctx.sense.position;
+    ctx.sense
+        .orbs
+        .iter()
+        .filter(|orb| orb.waiting)
+        .map(|orb| orb.at)
+        .filter(|at| flat_distance(*at, me) <= ctx.numbers.play.orb_detour_m)
+        .find(|at| {
+            let mine = flat_distance(*at, me);
+            !ctx.sense
+                .mates
+                .iter()
+                .any(|mate| mate.alive && flat_distance(*at, mate.position) < mine)
+        })
+}
+
+fn orb_stand(brain: &Brain, ctx: &Ctx<'_, '_>, at: Vec3) -> Option<Vec3> {
+    let reach = ctx.numbers.play.orb_stand_m;
+    if let Some(stand) = brain
+        .orb_spot
+        .filter(|stand| flat_distance(*stand, at) <= reach)
+    {
+        return Some(stand);
+    }
+    let mut corners = Vec::new();
+    if !ctx.world.path(ctx.sense.position, at, &mut corners) {
+        return None;
+    }
+    let stand = corners.last().copied().unwrap_or(at);
+    (flat_distance(stand, at) <= reach).then_some(stand)
+}
+
+fn peek_share(brain: &Brain, ctx: &Ctx<'_, '_>) -> f32 {
+    if brain.order.step == Step::PostPlant {
+        ctx.level.post_peek
+    } else {
+        ctx.numbers.play.over_peek
+    }
+}
+
+fn post_goal(brain: &Brain, ctx: &Ctx<'_, '_>) -> Vec3 {
+    let order = brain.order;
+    match ctx.sense.game.device {
+        DeviceSense::Planted { at, .. } if order.step == Step::PostPlant => order
+            .goal
+            .lerp(Vec3::new(at.x, order.goal.y, at.z), ctx.level.post_close),
+        DeviceSense::Planted { .. }
+        | DeviceSense::Unknown
+        | DeviceSense::Carried { .. }
+        | DeviceSense::Dropped { .. }
+        | DeviceSense::Over => order.goal,
+    }
+}
+
+fn hazard_dodge(brain: &mut Brain, ctx: &Ctx<'_, '_>, goal: Vec3) -> Option<Vec3> {
+    let order = brain.order;
+    let holding = matches!(
+        order.step,
+        Step::Setup | Step::Wait | Step::Gather | Step::PostPlant | Step::Retake
+    );
+    let reach = ctx.numbers.player.radius_m;
+    let hazard = ctx
+        .sense
+        .hazards
+        .iter()
+        .find(|hazard| flat_distance(hazard.center, goal) <= hazard.radius + reach)
+        .filter(|_| holding);
+    let Some(hazard) = hazard else {
+        brain.hazard_spot = None;
+        return None;
+    };
+    let play = &ctx.numbers.play;
+    let spot = *brain.hazard_spot.get_or_insert_with(|| {
+        let out = flat(goal - hazard.center).normalize_or_zero();
+        let out = if out == Vec3::ZERO {
+            let side = flat(order.face - goal).normalize_or_zero();
+            Vec3::new(-side.z, 0.0, side.x)
+        } else {
+            out
+        };
+        let near = hazard.center + out * (hazard.radius + play.spacing_m);
+        ctx.world
+            .cover_from(order.face, near, play.cover_search_m)
+            .filter(|spot| flat_distance(*spot, hazard.center) > hazard.radius + reach)
+            .unwrap_or(near)
+    });
+    Some(spot)
+}
+
+fn reveal_dodge(brain: &mut Brain, ctx: &Ctx<'_, '_>, goal: Vec3) -> Vec3 {
+    let order = brain.order;
+    if !ctx.sense.revealed || !matches!(order.step, Step::Setup | Step::Wait | Step::PostPlant) {
+        brain.reveal_spot = None;
+        return goal;
+    }
+    let play = &ctx.numbers.play;
+    *brain.reveal_spot.get_or_insert_with(|| {
+        let side = flat(order.face - goal).normalize_or_zero();
+        let near = goal + Vec3::new(-side.z, 0.0, side.x) * play.reveal_shift_m;
+        ctx.world
+            .cover_from(order.face, near, play.cover_search_m)
+            .unwrap_or(near)
+    })
+}
+
+fn follow(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
+    let mut order = brain.order;
     let tick = ctx.tick;
     switch_primary(ctx, intent);
     idle_reload(brain, ctx, intent);
+    if let Some(at) = object_in_way(brain, ctx).filter(|_| quiet(brain, ctx)) {
+        shoot_object(brain, ctx, at, intent);
+        return;
+    }
+    let wanted = orb_wanted(brain, ctx);
+    let orb = wanted.and_then(|at| orb_stand(brain, ctx, at));
+    brain.orb_spot = orb;
+    if let (Some(at), Some(stand)) = (wanted, orb)
+        && flat_distance(stand, ctx.sense.position) <= ctx.numbers.play.arrive_m
+    {
+        let to = flat(at - ctx.sense.position);
+        intent.goal = at;
+        if to.length() > ctx.numbers.play.orb_stand_m {
+            intent.wish = to.normalize_or_zero();
+            intent.gait = Gait::Walk;
+        } else {
+            intent.wish = Vec3::ZERO;
+            intent.gait = Gait::Still;
+            intent.interact = true;
+        }
+        brain.mind(Activity::Wait, Why::Orb, tick);
+        return;
+    }
+    let held = post_goal(brain, ctx);
+    let dodged = hazard_dodge(brain, ctx, held);
+    order.goal = orb
+        .or(dodged)
+        .unwrap_or_else(|| reveal_dodge(brain, ctx, held));
+    if dodged.is_some() {
+        brain.debug.why = Why::Hazard;
+    } else if ctx.sense.revealed && brain.reveal_spot.is_some() {
+        brain.debug.why = Why::Revealed;
+    }
     intent.goal = order.goal;
-    if tick < brain.hesitate_until || tick < order.go_tick {
+    if tick < brain.hesitate_until || (orb.is_none() && tick < order.go_tick) {
         brain.mover.reset_progress(tick);
         hold_look(brain, ctx);
         let why = if tick < brain.hesitate_until {
@@ -679,6 +897,7 @@ fn follow(brain: &mut Brain, ctx: &Ctx<'_, '_>, intent: &mut Intent) {
     );
     if steering.stuck {
         intent.jump = true;
+        brain.stuck_tick = tick;
         brain.debug.why = Why::Stuck;
     }
     if !steering.arrived {

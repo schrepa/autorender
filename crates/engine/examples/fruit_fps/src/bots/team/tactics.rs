@@ -22,6 +22,9 @@ pub struct Way {
     pub defend_stage: Vec3,
     pub attack_length: f32,
     pub defend_length: f32,
+    pub retake_stage: Vec3,
+    pub retake_length: f32,
+    pub retake_clear: bool,
     pub hold: Hold,
     pub cross: Hold,
     pub post: Hold,
@@ -34,6 +37,7 @@ pub struct SiteTactics {
     pub ways: Vec<Way>,
     pub plant: Vec3,
     pub defend_order: Vec<usize>,
+    pub retake_order: Vec<usize>,
     pub back: Option<usize>,
 }
 
@@ -125,6 +129,32 @@ pub fn safe_path(
     true
 }
 
+pub fn crosses(
+    world: &dyn World,
+    from: Vec3,
+    corners: &[Vec3],
+    zone: Option<ZoneId>,
+    step: f32,
+) -> bool {
+    let Some(zone) = zone else {
+        return false;
+    };
+    let places = world.places();
+    let mut at = from;
+    for &corner in corners {
+        let length = flat_distance(at, corner);
+        let samples = (length / max(step, 0.1)).ceil() as usize;
+        for k in 0..=samples {
+            let point = at + (corner - at) * (k as f32 / samples.max(1) as f32);
+            if places.zone_at(point) == Some(zone) {
+                return true;
+            }
+        }
+        at = corner;
+    }
+    false
+}
+
 fn cover_or(world: &dyn World, threat: Vec3, near: Vec3, search: f32) -> Vec3 {
     world.cover_from(threat, near, search).unwrap_or(near)
 }
@@ -208,6 +238,15 @@ fn build_way(
         stage_on_path(world, input.attack_home, inside, back, buffer);
     let (defend_stage, defend_length) =
         stage_on_path(world, input.defend_home, inside, back, buffer);
+    let (retake_stage, retake_length) =
+        stage_on_path(world, input.defend_home, outside, play.stage_back_m, buffer);
+    let retake_clear = !crosses(
+        world,
+        input.defend_home,
+        buffer,
+        Some(input.site.zone),
+        play.gate_step_m,
+    );
     let up = Vec3::new(0.0, numbers.player.eye_height_m, 0.0);
     let face = mid + up;
     let far = mid - inward * back + up;
@@ -222,10 +261,16 @@ fn build_way(
     let hold = watch_spot(world, far, watch, hold_nears, search, up);
     let cross = cross_spot(world, numbers, far, hold, [inside, center, inward]);
     let post_nears = [
+        input.plant.lerp(inside, 0.5),
         input.plant.lerp(inside, 0.35),
-        input.plant,
-        input.plant.lerp(inside, 0.6),
+        input.plant.lerp(inside, 0.65),
     ];
+    let post = watch_spot(world, far, watch, post_nears, search, up);
+    let post = if flat_distance(post, input.plant) < play.post_clear_m {
+        hold
+    } else {
+        post
+    };
     Way {
         choke: input.choke,
         mid,
@@ -236,12 +281,12 @@ fn build_way(
         defend_stage,
         attack_length,
         defend_length,
+        retake_stage,
+        retake_length,
+        retake_clear,
         hold: Hold { at: hold, face },
         cross: Hold { at: cross, face },
-        post: Hold {
-            at: watch_spot(world, far, watch, post_nears, search, up),
-            face,
-        },
+        post: Hold { at: post, face },
         smoke_at: hold.lerp(inside, 0.5),
         flash_at: inside + inward * play.flash_inside_m + up,
     }
@@ -319,6 +364,13 @@ fn build_site(
             .total_cmp(&ways[b].defend_length)
             .then(a.cmp(&b))
     });
+    let mut retake_order: Vec<usize> = (0..ways.len()).filter(|&w| ways[w].retake_clear).collect();
+    retake_order.sort_by(|&a, &b| {
+        ways[a]
+            .retake_length
+            .total_cmp(&ways[b].retake_length)
+            .then(a.cmp(&b))
+    });
     let up = Vec3::new(0.0, numbers.player.eye_height_m, 0.0);
     let plant = match ways.first() {
         Some(main) => {
@@ -341,6 +393,7 @@ fn build_site(
         ways,
         plant,
         defend_order,
+        retake_order,
     }
 }
 

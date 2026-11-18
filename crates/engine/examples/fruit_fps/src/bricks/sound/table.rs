@@ -47,6 +47,14 @@ pub(super) struct SoundEntry {
 
 #[derive(Clone, Debug, PartialEq, Deserialize)]
 #[serde(deny_unknown_fields)]
+pub(super) struct Clash {
+    pub winner: String,
+    pub loser: String,
+    pub seconds: f32,
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub(super) struct DeviceTiming {
     pub plant_repeat_seconds: f32,
     pub defuse_repeat_seconds: f32,
@@ -76,6 +84,8 @@ pub(super) struct Table {
     pub barrier_keep_ticks: u32,
     pub orb_hold_ticks: u32,
     pub break_large_m: f32,
+    pub clashes: Vec<Clash>,
+    pub kill_steps: u32,
     #[serde(skip)]
     pub named: BTreeMap<Kind, String>,
     pub countdown_seconds: u32,
@@ -109,12 +119,19 @@ impl Table {
         if table.voices == 0 {
             return Err("voices: 0".to_owned());
         }
-        if table.occlusion_every_ticks == 0 {
-            return Err("occlusion_every_ticks: 0".to_owned());
+        if table.occlusion_every_ticks == 0 || table.kill_steps == 0 {
+            return Err("occlusion_every_ticks and kill_steps must be above 0".to_owned());
         }
         for (event, sound) in &table.events {
             if !table.sounds.contains_key(sound) {
                 return Err(format!("events.{event}: no sound {sound}"));
+            }
+        }
+        for clash in &table.clashes {
+            for name in [&clash.winner, &clash.loser] {
+                if !table.sounds.contains_key(name) {
+                    return Err(format!("clashes: no sound {name}"));
+                }
             }
         }
         for (name, sound) in &table.sounds {

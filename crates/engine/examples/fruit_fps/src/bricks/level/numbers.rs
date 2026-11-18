@@ -1,6 +1,8 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::play::light::{DetailLimit, Filtering};
+
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct SkyNumbers {
@@ -71,6 +73,9 @@ pub struct LightingNumbers {
     pub ambient: Option<AmbientNumbers>,
     #[serde(default)]
     pub antialias: Option<Antialias>,
+    pub filtering: Filtering,
+    pub detail: DetailLimit,
+    pub visible_sets: bool,
 }
 
 #[derive(Deserialize)]
@@ -79,7 +84,10 @@ struct FilePart {
 }
 
 pub(super) fn parse(text: &str) -> Result<LightingNumbers, String> {
-    serde_json::from_str::<FilePart>(text)
+    let lighting = serde_json::from_str::<FilePart>(text)
         .map(|part| part.lighting)
-        .map_err(|error| error.to_string())
+        .map_err(|error| error.to_string())?;
+    lighting.filtering.checked()?;
+    lighting.detail.checked()?;
+    Ok(lighting)
 }

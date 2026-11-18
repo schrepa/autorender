@@ -3,14 +3,17 @@ use engine::prelude::*;
 
 use super::numbers::{self, EffectsNumbers, Parsed};
 use super::{Device, EffectsBrick, EffectsShow, Show};
+use crate::abilities::{CueKind, Event as PowerEvent, OrbEvent};
 use crate::play::actors::{Actor, Body, Human, Wish};
-use crate::play::effects::{CueLook, EffectsFeed, PropPlace};
+use crate::play::effects::{CueLook, EffectsFeed, Look, PropPlace};
 use crate::play::events::arms::{ArmsEvents, Target, Weapon};
+use crate::play::events::powers::PowerEvents;
 use crate::play::numbers::Numbers;
 use crate::play::puppet::{Muzzles, ViewModel};
 use crate::play::round::{DeviceSpot, Round};
 use crate::play::view::Watched;
 use crate::play::world::Arena;
+use crate::rules::Team;
 use crate::solids::Kind;
 
 #[derive(Clone, Debug)]
@@ -79,6 +82,8 @@ pub(super) enum SprayKind {
     Impact(Option<Kind>),
     Juice([f32; 3]),
     Blast,
+    Pieces([f32; 3]),
+    Sparks([f32; 3]),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -143,6 +148,10 @@ pub(super) struct Spawns {
     device_was: DeviceSpot,
     resting: Vec<u32>,
     pub puffs: u32,
+    powers_seen: Option<u64>,
+    looks: Vec<(u32, Look, Team)>,
+    pub vanished: Vec<(usize, f64)>,
+    pub shatters: u32,
 }
 
 impl Spawns {
@@ -219,6 +228,25 @@ impl Spawns {
             scale: look.blast.flash_scale,
             seconds: look.blast.spray.seconds,
         });
+    }
+
+    fn shatter(
+        &mut self,
+        look: &EffectsNumbers,
+        at: Vec3,
+        size: f32,
+        colors: [[f32; 3]; 2],
+        born: f64,
+    ) {
+        let shatter = &look.shatter;
+        let scale = math::clamp(
+            size / math::max(shatter.reference_m, 1.0e-3),
+            shatter.least_scale,
+            shatter.most_scale,
+        );
+        self.spray(at, Vec3::Y, born, SprayKind::Pieces(colors[0]), scale);
+        self.spray(at, Vec3::Y, born, SprayKind::Sparks(colors[1]), scale);
+        self.shatters = self.shatters.wrapping_add(1);
     }
 
     fn hurt(&mut self, look: &EffectsNumbers, amount: f32, now: f64) {
@@ -364,6 +392,60 @@ fn take_arms(
     }
 }
 
+fn broken_colors(
+    look: &EffectsNumbers,
+    seen: Option<(Look, Team)>,
+    (team, viewer): (usize, Option<usize>),
+) -> [[f32; 3]; 2] {
+    let ally = viewer.is_none_or(|viewer| viewer == team);
+    let edge = look.teams[usize::from(!ally)];
+    match seen {
+        Some((Look::Wall, _)) => [look.panels.rind.flesh, look.panels.rind.skin],
+        Some((Look::Curtain, _)) => [look.panels.curtain.peel, look.panels.curtain.pulp],
+        Some((Look::Wire, _)) => [look.props.wire_color, edge],
+        Some(_) | None => [edge, edge],
+    }
+}
+
+fn take_powers(
+    look: &EffectsNumbers,
+    (events, viewer): (&PowerEvents, Option<usize>),
+    spawns: &mut Spawns,
+    now: f64,
+) {
+    let mut broken: Option<(Option<(Look, Team)>, usize)> = None;
+    for event in &events.events {
+        if let PowerEvent::Destroyed { effect, team, .. } = *event {
+            let seen = spawns
+                .looks
+                .iter()
+                .find(|(known, _, _)| *known == effect.0)
+                .map(|&(_, look, team)| (look, team));
+            broken = Some((seen, team));
+        } else if let PowerEvent::Cue {
+            cue: CueKind::Destroyed,
+            at,
+            size,
+            ..
+        } = *event
+        {
+            let (seen, team) = broken.take().unwrap_or((None, 0));
+            let colors = broken_colors(look, seen, (team, viewer));
+            spawns.shatter(look, at, size, colors, now);
+        }
+    }
+    for event in &events.orbs {
+        match *event {
+            OrbEvent::Vanished { orb } => {
+                spawns.vanished.retain(|(known, _)| *known != orb);
+                spawns.vanished.push((orb, now));
+            }
+            OrbEvent::Restored { orb } => spawns.vanished.retain(|(known, _)| *known != orb),
+            OrbEvent::Started { .. } | OrbEvent::Stopped { .. } | OrbEvent::Taken { .. } => {}
+        }
+    }
+}
+
 fn take_feed(
     look: &EffectsNumbers,
     feed: &EffectsFeed,
@@ -371,6 +453,11 @@ fn take_feed(
     now: f64,
     tick_seconds: f32,
 ) {
+    spawns.looks = feed
+        .shown
+        .iter()
+        .map(|shown| (shown.effect, shown.look, shown.team))
+        .collect();
     for cue in &feed.cues {
         match cue.look {
             CueLook::Explosion | CueLook::StrikeImpact => spawns.blast(look, cue.at, now),
@@ -426,7 +513,15 @@ fn showcase(
     let Some((_, body, Some(wish))) = cast.human else {
         return;
     };
-    if now - spawns.showcase_at < f64::from(look.showcase.every_seconds) {
+    let every = if show == Show::Shatter {
+        math::min(
+            look.showcase.every_seconds,
+            look.shatter.pieces.seconds * 0.8,
+        )
+    } else {
+        look.showcase.every_seconds
+    };
+    if now - spawns.showcase_at < f64::from(every) {
         return;
     }
     spawns.showcase_at = now;
@@ -473,6 +568,17 @@ fn showcase(
     if show == Show::Damage {
         spawns.hurt(look, look.screen.damage_full * 0.5, now);
     }
+    if show == Show::Shatter {
+        let cases = [
+            (Look::Wire, look.traps.wire_width_m * 5.0),
+            (Look::Trap, look.traps.size_m),
+            (Look::Wall, look.showcase.wall_m[0] * 0.5),
+        ];
+        let (seen, size) = cases[step as usize % cases.len()];
+        let team = (step as usize / cases.len()) % 2;
+        let colors = broken_colors(look, Some((seen, Team::BOTH[team])), (team, Some(0)));
+        spawns.shatter(look, ahead, size, colors, now);
+    }
 }
 
 #[expect(
@@ -485,7 +591,7 @@ pub(super) fn gather(
     show: Res<EffectsShow>,
     arms: Option<Res<ArmsEvents>>,
     round: Option<Res<Round>>,
-    feed: Option<Res<EffectsFeed>>,
+    (feed, powers): (Option<Res<EffectsFeed>>, Option<Res<PowerEvents>>),
     arena: Option<Res<Arena>>,
     muzzles: Option<Res<Muzzles>>,
     watched: Option<Res<Watched>>,
@@ -507,9 +613,21 @@ pub(super) fn gather(
         let origins = Origins {
             muzzles: muzzles.as_deref(),
             view: view.as_deref(),
-            watched: watched.and_then(|watched| watched.slot),
+            watched: watched.as_deref().and_then(|watched| watched.slot),
         };
         take_arms(look, events, &cast, origins, &mut spawns, now);
+    }
+    if let Some(events) = powers.as_deref()
+        && spawns.powers_seen != Some(events.tick)
+    {
+        spawns.powers_seen = Some(events.tick);
+        let slot = watched.as_deref().and_then(|watched| watched.slot);
+        let slot = slot.or(cast.human.map(|(slot, ..)| slot));
+        let viewer = actors
+            .iter()
+            .find(|(actor, ..)| Some(actor.slot) == slot)
+            .map(|(actor, ..)| actor.team.index());
+        take_powers(look, (events, viewer), &mut spawns, now);
     }
     if let Some(feed) = feed.as_deref()
         && spawns.feed_seen != Some(feed.tick)

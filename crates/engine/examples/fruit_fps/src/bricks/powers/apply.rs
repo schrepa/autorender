@@ -13,7 +13,7 @@ use crate::abilities::{self, AbilityId, ActorId, Event, World, WorldHit};
 use crate::play::actors::{Actor, Alive, Body, Health, Human, SpeedFactor, Wish};
 use crate::play::effects::EffectsFeed;
 use crate::play::events::arms::{AbilityKill, ArmsEvents, DeathEvent, Target, Weapon};
-use crate::play::events::powers::PowerEvents;
+use crate::play::events::powers::{Hold, HoldChange, PowerEvents};
 use crate::play::events::round::RoundEvents;
 use crate::play::paths::{Hazards, Paths};
 use crate::play::powers::{Powers, Push, world_hit};
@@ -192,6 +192,19 @@ fn ability_death(
     }
 }
 
+fn paused(book: &Book, (target, ability): (u32, AbilityId), tick: u64) -> bool {
+    let Some(pause) = book
+        .abilities
+        .as_ref()
+        .and_then(|abilities| abilities.ability(ability).heal_pause_ticks)
+    else {
+        return false;
+    };
+    book.hurt
+        .get(&target)
+        .is_some_and(|hurt| tick < hurt + u64::from(pause))
+}
+
 fn apply_events(
     events: &[Event],
     rows: &mut Query<Row<'_>>,
@@ -231,6 +244,9 @@ fn apply_events(
                 let hurt = wound(before, amount * taken, BodyPart::Body, parts.armor_absorb);
                 row.4.health = hurt.after.health;
                 row.4.armour = hurt.after.armor;
+                if hurt.damage > 0.0 {
+                    book.hurt.insert(target.0, tick);
+                }
                 if row.9 {
                     applied.human_damage += hurt.damage;
                 }
@@ -251,7 +267,15 @@ fn apply_events(
                 book.ledger.forget_victim(target.0);
                 spawner.remove::<Alive>(row.0);
             }
-            Event::Heal { target, amount, .. } => {
+            Event::Heal {
+                target,
+                amount,
+                ability,
+                ..
+            } => {
+                if paused(book, (target.0, *ability), tick) {
+                    continue;
+                }
                 if let Some(Ok(mut row)) = entity_of(target.0).map(|entity| rows.get_mut(entity))
                     && row.8
                     && row.4.health > 0.0
@@ -297,6 +321,8 @@ fn apply_events(
             | Event::SolidRemoved { .. }
             | Event::TrapArmed { .. }
             | Event::TrapTriggered { .. }
+            | Event::WireChained { .. }
+            | Event::WireReleased { .. }
             | Event::Destroyed { .. }
             | Event::Transformed { .. }
             | Event::TransformEnded { .. }
@@ -387,7 +413,7 @@ fn faces(rows: &Query<Row<'_>>, order: &[(u32, Entity)]) -> Vec<(u32, Team, Stri
 
 fn opening(
     world: &mut ArenaWorld<'_>,
-    powers: &mut Powers,
+    (powers, events): (&mut Powers, &mut PowerEvents),
     book: &mut Book,
     restarted: bool,
 ) -> Vec<Event> {
@@ -395,9 +421,16 @@ fn opening(
     if restarted {
         ticked.extend(powers.effects.end_round(world));
         book.shields.clear();
-        powers.held.clear();
+        events
+            .holds
+            .extend(powers.held.drain(..).map(|held| HoldChange {
+                slot: held.slot,
+                ability: held.ability,
+                change: Hold::Cancelled,
+            }));
         powers.recovering.clear();
         book.ledger = Default::default();
+        book.hurt.clear();
     }
     ticked
 }
@@ -413,11 +446,16 @@ const SHOT_SLACK_M: f32 = 0.05;
 
 fn shot_objects(
     world: &mut ArenaWorld<'_>,
-    (powers, book): (&mut Powers, &Book),
+    (powers, book): (&mut Powers, &mut Book),
     arms: Option<&ArmsEvents>,
     (rows, order): (&Query<Row<'_>>, &[(u32, Entity)]),
 ) -> Vec<Event> {
     let shots = arms.map_or(&[][..], |arms| arms.shots.as_slice());
+    if let Some(arms) = arms {
+        for hit in &arms.hits {
+            book.hurt.insert(hit.victim, arms.tick);
+        }
+    }
     let teams: Vec<(u32, usize)> = faces(rows, order)
         .iter()
         .map(|face| (face.0, face.1.index()))
@@ -569,7 +607,7 @@ pub(super) fn act(
         kinds: &kinds,
     };
     let restarted = round_restarted(book, facts.round.as_deref(), facts.round_events.as_deref());
-    let mut ticked = opening(&mut world, powers, book, restarted);
+    let mut ticked = opening(&mut world, (powers, events), book, restarted);
     ticked.extend(shot_objects(
         &mut world,
         (powers, book),

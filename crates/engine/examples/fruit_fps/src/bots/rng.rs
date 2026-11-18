@@ -36,12 +36,6 @@ impl Rng {
         self.unit() < share
     }
 
-    pub fn between(&mut self, span: [u32; 2]) -> u32 {
-        let low = span[0].min(span[1]);
-        let high = span[0].max(span[1]);
-        low + (self.next_u64() % u64::from(high - low + 1)) as u32
-    }
-
     pub fn below(&mut self, count: usize) -> usize {
         if count == 0 {
             return 0;

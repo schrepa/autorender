@@ -1,6 +1,36 @@
 use glam::{Mat3, Vec3};
 
 use super::effects::{ActorId, EffectId, Effects, Living, State};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatusKind {
+    Chained,
+    Slowed,
+    SightCut,
+    Vulnerable,
+    Revealed,
+    Boosted,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Status {
+    pub kind: StatusKind,
+    pub ability: AbilityId,
+    pub effect: Option<EffectId>,
+    pub to_team: Option<usize>,
+    pub until: u64,
+    pub ticks_left: u64,
+    pub strength: Option<f32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WireChain {
+    pub wire: EffectId,
+    pub ability: AbilityId,
+    pub since: u64,
+    pub until: u64,
+    pub slow: f32,
+}
 use super::numbers::{AbilityId, Modifiers, TrapShape};
 use super::shapes::{ray_box, ray_sphere};
 
@@ -65,6 +95,7 @@ pub struct Drawable {
     pub effect: EffectId,
     pub kind: DrawKind,
     pub ability: AbilityId,
+    pub owner: ActorId,
     pub team: usize,
     pub shape: DrawShape,
     pub age: u32,
@@ -143,6 +174,94 @@ impl Effects {
             })
     }
 
+    pub fn wire_chain(&self, actor: ActorId) -> Option<WireChain> {
+        self.livings.iter().find_map(|living| {
+            let State::Trap(trap) = &living.state else {
+                return None;
+            };
+            let (held, since) = trap.chained?;
+            let chain = trap.spec.chain?;
+            (held == actor).then_some(WireChain {
+                wire: living.id,
+                ability: living.ability,
+                since,
+                until: since + u64::from(chain.windup_ticks),
+                slow: chain.slow,
+            })
+        })
+    }
+
+    pub fn statuses(&self, actor: ActorId) -> Vec<Status> {
+        let now = self.now;
+        let status = |kind, ability, effect, until: u64, strength| Status {
+            kind,
+            ability,
+            effect,
+            to_team: None,
+            until,
+            ticks_left: until.saturating_sub(now),
+            strength,
+        };
+        let chain = self.wire_chain(actor);
+        let mut out: Vec<Status> = chain
+            .iter()
+            .map(|chain| {
+                status(
+                    StatusKind::Chained,
+                    chain.ability,
+                    Some(chain.wire),
+                    chain.until,
+                    Some(chain.slow),
+                )
+            })
+            .collect();
+        let buffs = self
+            .marks
+            .buffs
+            .range((actor, EffectId(0))..=(actor, EffectId(u32::MAX)))
+            .map(|(_, buff)| buff)
+            .filter(|buff| chain.is_none_or(|chain| chain.wire != buff.effect));
+        for buff in buffs {
+            let made = |kind, strength| {
+                status(
+                    kind,
+                    buff.ability,
+                    Some(buff.effect),
+                    buff.until,
+                    Some(strength),
+                )
+            };
+            let m = buff.modifiers;
+            if m.speed < 1.0 {
+                out.push(made(StatusKind::Slowed, 1.0 - m.speed));
+            }
+            if let Some(sight) = m.sight_m {
+                out.push(made(StatusKind::SightCut, sight));
+            }
+            if m.damage_taken > 1.0 {
+                out.push(made(StatusKind::Vulnerable, m.damage_taken - 1.0));
+            }
+            let boost = [m.fire_rate, m.reload, m.speed]
+                .into_iter()
+                .fold(1.0, |best, value| if value > best { value } else { best });
+            if boost > 1.0 {
+                out.push(made(StatusKind::Boosted, boost - 1.0));
+            }
+        }
+        for (&(team, _), &(until, ability)) in self
+            .marks
+            .reveals
+            .iter()
+            .filter(|((_, revealed), _)| *revealed == actor)
+        {
+            out.push(Status {
+                to_team: Some(team),
+                ..status(StatusKind::Revealed, ability, None, until, None)
+            });
+        }
+        out
+    }
+
     pub fn revealed(&self, actor: ActorId, team: usize) -> bool {
         self.marks.reveals.contains_key(&(team, actor))
     }
@@ -151,7 +270,7 @@ impl Effects {
         self.marks
             .reveals
             .iter()
-            .map(|(&(team, actor), &until)| (team, actor, until))
+            .map(|(&(team, actor), &(until, _))| (team, actor, until))
             .collect()
     }
 
@@ -354,6 +473,7 @@ impl Effects {
             effect: living.id,
             kind,
             ability: living.ability,
+            owner: living.caster.id,
             team: living.caster.team,
             shape,
             age,

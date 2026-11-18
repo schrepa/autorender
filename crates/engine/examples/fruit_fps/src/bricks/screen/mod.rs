@@ -29,8 +29,8 @@ use crate::play::camera::TestCamera;
 use crate::play::flow::Flow;
 use crate::play::numbers::Input;
 use crate::play::screen::{
-    BOUND_SLOTS, Face, Font, GLYPH_SLOTS, Glyph, HudFacts, Icons, PICTURE_SLOTS, Picture, Quad,
-    ScreenBuys, ScreenDraw, ScreenState, Shown,
+    BOUND_SLOTS, Covered, Face, Font, GLYPH_SLOTS, Glyph, HudFacts, Icons, PICTURE_SLOTS, Picture,
+    Quad, ScreenBuys, ScreenDraw, ScreenState, Shown,
 };
 
 use layout::{Layout, Seg};
@@ -47,6 +47,7 @@ pub struct ScreenKeys {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Lows {
+    pub kill_seconds: f32,
     pub time_seconds: f32,
     pub fuse_seconds: f32,
     pub health: f32,
@@ -55,6 +56,7 @@ pub struct Lows {
     pub go_seconds: f32,
     pub point_seconds: f32,
     pub lost_seconds: f32,
+    pub ult_seconds: f32,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
@@ -66,22 +68,17 @@ pub struct FeedNumbers {
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-pub struct MarkNumbers {
-    pub gap_px: f32,
-    pub length_px: f32,
-    pub width_px: f32,
-    pub rim_px: f32,
+pub struct ArmorMark {
+    pub icon: String,
+    pub size_px: f32,
+    pub offset_px: [f32; 2],
     pub seconds: f32,
-    pub color: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Marks {
-    pub hit: MarkNumbers,
-    pub damage: MarkNumbers,
-    pub head_color: String,
-    pub kill_color: String,
+    pub armor: ArmorMark,
     pub outline_color: String,
 }
 
@@ -96,6 +93,7 @@ pub struct FontSource {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct Words {
+    pub kills: Vec<String>,
     pub attackers: String,
     pub defenders: String,
     pub round_won: String,
@@ -119,6 +117,9 @@ pub struct Words {
     pub mvp_stats: String,
     pub mvp_char: String,
     pub signature_free: String,
+    pub shop_zone: String,
+    pub shop_dead: String,
+    pub shop_closed: String,
     pub point_kill: String,
     pub point_death: String,
     pub point_plant: String,
@@ -129,6 +130,7 @@ pub struct Words {
     pub status_vulnerable: String,
     pub status_revealed: String,
     pub status_boosted: String,
+    pub status_chained: String,
 }
 
 pub(super) struct Keys {
@@ -378,14 +380,11 @@ impl ScreenSource {
     }
 
     fn checked(&self) -> Result<(), String> {
-        let marks = [
-            ("marks.hit", &self.marks.hit),
-            ("marks.damage", &self.marks.damage),
-        ];
-        for (name, numbers) in marks {
-            if !above_zero(numbers.seconds) {
-                return Err(format!("{name}.seconds must be above 0"));
-            }
+        if !above_zero(self.marks.armor.seconds) {
+            return Err("marks.armor.seconds must be above 0".to_owned());
+        }
+        if self.words.kills.is_empty() {
+            return Err("words.kills must name at least one kill".to_owned());
         }
         if !above_zero(self.feed.seconds) {
             return Err("feed.seconds must be above 0".to_owned());
@@ -457,7 +456,8 @@ impl ScreenSource {
             | layout::Kind::Icon(..)
             | layout::Kind::Arc(_)
             | layout::Kind::Bar { .. }
-            | layout::Kind::Pips { .. } => {}
+            | layout::Kind::Pips { .. }
+            | layout::Kind::Reticle => {}
         }
         for (_, path) in element.listed() {
             if demo.value(&path) == Val::Unknown {
@@ -648,6 +648,11 @@ settings! {
         pub demo: bool = false => any,
         pub demo_blind: f32 = 0.0 => range(0.0, 1.0),
         pub demo_channel: bool = false => any,
+        pub demo_spectate: bool = false => any,
+        pub demo_scope: f32 = 0.0 => range(0.0, 1.0),
+        pub demo_kills: u32 = 0 => range(0, 5),
+        pub demo_armor: bool = false => any,
+        pub demo_poor: bool = false => any,
     }
 }
 
@@ -660,6 +665,7 @@ stats! {
         pub bytes_written: u64,
         pub covered_pixels: u64,
         pub covered_share: f32,
+        pub opaque: bool,
         pub texts: u32,
         pub glyphs: u32,
         pub glyphs_missing: u32,
@@ -693,6 +699,9 @@ pub(super) struct ScreenBook {
     hovered: Option<(layout::CardList, usize)>,
     pointer: Option<Vec2>,
     pulses: Vec<paint::PulseState>,
+    rows: Vec<paint::RowState>,
+    held: Option<Quad>,
+    opaque: bool,
 }
 
 pub struct ScreenBrick;
@@ -715,6 +724,7 @@ impl Brick for ScreenBrick {
             .resource::<ScreenState>()
             .resource::<ScreenBuys>()
             .resource::<ScreenBook>()
+            .resource::<Covered>()
             .resource::<facts::Recent>()
             .settings::<menu::Options>()
             .resource::<menu::OptionsWrite>()
@@ -726,6 +736,7 @@ impl Brick for ScreenBrick {
             .systems(Schedule::Presentation, tactics::fill_tactics)
             .systems(Schedule::Presentation, more::fill_menu)
             .systems(Schedule::Presentation, control::control)
+            .systems(Schedule::FrameStart, cover)
             .systems(Schedule::Presentation, draw_screen)
             .systems(Schedule::Presentation, report_flow)
             .systems(Schedule::Presentation, menu::write_options);
@@ -746,6 +757,11 @@ fn adopt(draw: &mut ScreenDraw, book: &mut ScreenBook, loaded: Option<&Arc<Loade
     book.pulses.resize_with(
         loaded.map_or(0, |loaded| loaded.layout.elements()),
         paint::PulseState::default,
+    );
+    book.rows.clear();
+    book.rows.resize(
+        loaded.map_or(0, |loaded| loaded.layout.rows),
+        paint::RowState::default(),
     );
     draw.atlases = None;
     match loaded {
@@ -812,12 +828,17 @@ type Shared<'w, 's> = (
 
 const IN_ROUND: [Shown; 4] = [Shown::Hud, Shown::Buy, Shown::Scoreboard, Shown::RoundEnd];
 
+fn cover(book: Res<ScreenBook>, mut covered: ResMut<Covered>) {
+    covered.set_if_neq(Covered(book.opaque));
+}
+
 fn draw_screen(
     (sources, scene, views, facts, state, flow, time, camera): Shared,
     mut draw: ResMut<ScreenDraw>,
     mut book: ResMut<ScreenBook>,
     mut stats: ResMut<ScreenStats>,
     (mut scratch, mut spare): (Local<String>, Local<String>),
+    covered: Res<Covered>,
 ) {
     let shown = views.frame().display_size;
     let size = Vec2::new(shown.x as f32, shown.y as f32);
@@ -847,6 +868,7 @@ fn draw_screen(
             scratch: &mut scratch,
             spare: &mut spare,
             pulses: &mut book.pulses,
+            rows: &mut book.rows,
             now: time.real_elapsed,
             zoom: 1.0,
         };
@@ -858,20 +880,36 @@ fn draw_screen(
         if behind_menu {
             painter.backdrop(&source.menu.backdrop);
         }
-        if facts.scope > 0 && state.shown == Shown::Hud {
-            painter.scope(&source.menu.scope);
-        }
-        painter.screen(state.shown, facts.spread_px);
-        if matches!(state.shown, Shown::Hud | Shown::RoundEnd) {
-            painter.marks(&source.marks);
-        }
         if matches!(
             state.shown,
             Shown::Hud | Shown::RoundEnd | Shown::Scoreboard
         ) {
             painter.blind(facts.blind);
         }
+        let sniping = facts.scope_ease > 0.0 && state.shown == Shown::Hud;
+        if sniping {
+            painter.scope(&source.menu.scope, facts.scope_ease);
+        }
+        painter.screen(state.shown, facts.spread_px);
+        let cross = facts.menu.settings.reticle;
+        let reach = cross.gap + cross.length + cross.outline + facts.spread_px;
+        if state.shown == Shown::Hud && !painter.crossed(Shown::Hud, reach) {
+            let center = (painter.draw.size * 0.5).round();
+            if !sniping {
+                painter.reticle(center, facts.spread_px);
+            }
+            painter.marks(&source.marks);
+        }
     }
+    draw.settle();
+    if covered.0
+        && !draw.opaque
+        && let Some(held) = book.held
+    {
+        draw.quads.insert(0, held);
+    }
+    book.held = draw.floor_quad;
+    book.opaque = draw.opaque;
     let changed = draw.quads != book.previous || size != book.previous_size;
     if changed {
         book.previous.clone_from(&draw.quads);
@@ -889,6 +927,7 @@ fn draw_screen(
         0
     };
     stats.covered_pixels = draw.covered_pixels();
+    stats.opaque = draw.opaque;
     let screen = draw.size.x * draw.size.y;
     stats.covered_share = if screen > 0.0 {
         stats.covered_pixels as f32 / screen

@@ -53,10 +53,12 @@ stats! {
         pub overtime: bool,
         pub decider: bool,
         pub credits: Vec<u32>,
+        pub round_kills: Vec<u32>,
         pub carried: Vec<Option<String>>,
         pub armor: Vec<u32>,
         pub human_refund: RefundStats,
         pub human_ready: bool,
+        pub held: bool,
     }
 }
 
@@ -177,6 +179,7 @@ fn report(round: Res<Round>, book: Res<RoundBook>, mut stats: ResMut<RoundStats>
         next.overtime = view.overtime;
         next.decider = view.decider;
         next.credits = view.players.iter().map(|p| p.credits).collect();
+        next.round_kills = view.players.iter().map(|p| p.round_kills).collect();
         next.carried = view
             .players
             .iter()
@@ -192,6 +195,7 @@ fn report(round: Res<Round>, book: Res<RoundBook>, mut stats: ResMut<RoundStats>
             .iter()
             .find(|p| p.control == Control::Human)
             .map_or(0, |p| p.credits);
+        next.held = view.held;
         next.armor = (view.players.iter())
             .map(|p| p.armor.map_or(0, |armor| armor.points))
             .collect();

@@ -1,6 +1,6 @@
 import package::engine::view::{camera, stable_normalize, view_clip};
 import package::effects::items::{EFFECT_TAU, EffectItem, effect_axes, effect_box_corner,
-    effect_items, effect_lit, effect_noise, effect_seconds};
+    effect_items, effect_lit, effect_noise, effect_seconds, effects_frame};
 import package::effects::field::effect_field;
 
 @group(0) @binding(1) var effects_depth: texture_depth_2d;
@@ -66,49 +66,80 @@ fn seen_from(corner: VolumeCorner, pixel: vec2<f32>) -> Seen {
     return Seen(eye, stable_normalize(offset), length(offset), scene_distance(pixel, eye, corner.world));
 }
 
+fn smoke_billow(point: vec3<f32>) -> f32 {
+    var total = 0.0;
+    var weight = 0.5;
+    var at = point;
+    for (var octave = 0u; octave < 3u; octave += 1u) {
+        total += weight * effect_noise(at);
+        at = at * 2.03 + vec3<f32>(5.2, 1.3, 7.7);
+        weight *= 0.5;
+    }
+    return total / 0.875;
+}
+
 @fragment fn fs_smoke(corner: VolumeCorner) -> @location(0) vec4<f32> {
     let item = effect_items[corner.index];
     let seen = seen_from(corner, corner.clip.xy);
     let centre = item.p0.xyz;
     let radius = item.p0.w;
     let rim = item.p2.w;
+    let outer = radius + rim;
     let offset = centre - seen.eye;
     let closest = dot(offset, seen.toward);
     let miss_squared = max(dot(offset, offset) - closest * closest, 0.0);
-    let widest = max(abs(radius + rim), abs(radius + rim * 0.5));
-    let widest_squared = widest * widest - miss_squared;
-    if widest_squared <= 0.0 {
+    let outer_squared = outer * outer - miss_squared;
+    if outer_squared <= 0.0 {
         discard;
     }
-    let widest_chord = sqrt(widest_squared);
-    if closest - widest_chord >= seen.scene || closest + widest_chord <= 0.0 {
+    let outer_chord = sqrt(outer_squared);
+    if closest - outer_chord >= seen.scene || closest + outer_chord <= 0.0 {
         discard;
     }
-    let swirl = seen.eye + seen.toward * closest;
-    let drift = vec3<f32>(0.0, effect_seconds() * item.p5.w, item.p3.y * 17.0);
-    let noise = effect_noise(swirl * item.p4.w + drift);
-    let reach = radius + rim * (0.5 + 0.5 * noise);
-    let half_squared = reach * reach - miss_squared;
-    if half_squared <= 0.0 {
+    let nearest = clamp(closest, 0.0, seen.scene);
+    let miss = length(seen.eye + seen.toward * nearest - centre);
+    let inside = dot(offset, offset) < radius * radius;
+    let core_squared = radius * radius - miss_squared;
+    var surface = seen.eye + seen.toward * nearest;
+    if !inside && core_squared > 0.0 {
+        surface = seen.eye + seen.toward * clamp(closest - sqrt(core_squared), 0.0, seen.scene);
+    }
+    let drift = vec3<f32>(item.p3.y * 17.0, -effect_seconds() * item.p5.w, 0.0);
+    let at = surface * item.p4.w + drift;
+    var billow = effect_noise(at);
+    if !inside {
+        billow = smoke_billow(at);
+    }
+    let edge = radius + rim * (0.35 + 0.65 * billow);
+    let core = select(0.0, 1.0, miss <= radius);
+    let alpha = max(core, (1.0 - smoothstep(radius, edge, miss)) * item.p3.w);
+    if alpha <= 0.0 {
         discard;
     }
-    let half_chord = sqrt(half_squared);
-    let entry = max(closest - half_chord, 0.0);
-    let leave = min(closest + half_chord, seen.scene);
-    let through = leave - entry;
-    if through <= 0.0 {
-        discard;
+    let up = (surface - centre) / max(radius, 1.0e-3);
+    let height = saturate(0.5 + 0.5 * up.y);
+    var normal = stable_normalize(up + (billow - 0.5) * vec3<f32>(0.6, 0.9, 0.6));
+    if inside {
+        normal = -seen.toward;
     }
-    let density = 3.0 / max(item.p3.z, 1.0e-3) * max(item.p3.w, 0.05);
-    let alpha = 1.0 - exp(-density * through);
-    let surface = seen.eye + seen.toward * entry - centre;
-    let normal = select(-seen.toward, surface / max(length(surface), 1.0e-3), closest - half_chord > 0.0);
-    let shade = 0.85 + 0.3 * noise;
-    let color = effect_lit(item.p2.rgb * shade, normal, corner.field);
+    let rimmed = saturate((miss - radius) / max(rim, 1.0e-3));
+    let tint = saturate(item.p6.w * (1.0 - 0.6 * height) + 0.3 * rimmed);
+    let body = mix(item.p7.x, 1.0, height) * (0.8 + 0.4 * billow);
+    let color = effect_lit(mix(item.p2.rgb, item.p6.rgb, tint) * body, normal, corner.field);
     return vec4<f32>(color * alpha, alpha);
 }
 
-fn wall_glow(item: EffectItem, seen: Seen, radius: f32) -> f32 {
+fn zone_dashes(across: vec2<f32>) -> f32 {
+    let count = effects_frame.zones.x;
+    if count <= 0.0 {
+        return 1.0;
+    }
+    let turn = atan2(across.y, across.x) / EFFECT_TAU;
+    let dash = fract(turn * count - effect_seconds() * effects_frame.zones.y);
+    return 0.55 + 0.45 * smoothstep(0.35, 0.5, abs(dash - 0.5));
+}
+
+fn wall_glow(item: EffectItem, seen: Seen, radius: f32, dashed: bool) -> f32 {
     let axes = effect_axes(item);
     let eye = (seen.eye - item.p0.xyz) * axes;
     let toward = seen.toward * axes;
@@ -127,7 +158,8 @@ fn wall_glow(item: EffectItem, seen: Seen, radius: f32) -> f32 {
         let y = eye.y + t * toward.y;
         if t > 0.0 && t < seen.scene && y >= 0.0 && y <= height {
             let up = 1.0 - y / height;
-            most = max(most, up * up);
+            let around = eye.xz + t * toward.xz;
+            most = max(most, up * up * select(1.0, zone_dashes(around), dashed));
         }
     }
     return most;
@@ -177,13 +209,13 @@ fn marked(item: EffectItem, local: vec3<f32>, seen: Seen) -> f32 {
     }
     if kind == 1u {
         let wave = 0.5 + 0.5 * sin((across - effect_seconds() * item.p5.w) / max(item.p4.w, 1.0e-3) * EFFECT_TAU);
-        let edge = smoothstep(radius - rim, radius, across);
-        return max(fill * (0.6 + 0.4 * wave), edge);
+        let edge = smoothstep(radius - rim, radius, across) * zone_dashes(local.xz);
+        return max(fill * (0.8 + 0.2 * wave), edge);
     }
     if kind == 2u {
         let closing = ring(across, radius * (1.0 - progress), rim);
-        let edge = ring(across, radius - rim * 0.5, rim);
-        return max(max(edge, closing), fill * (0.5 + 0.5 * progress));
+        let edge = ring(across, radius - rim * 0.5, rim) * zone_dashes(local.xz);
+        return max(max(edge, closing), fill * (0.7 + 0.3 * progress));
     }
     let front = radius * progress;
     let inside = select(0.0, fill, across <= front);
@@ -201,9 +233,9 @@ fn marked(item: EffectItem, local: vec3<f32>, seen: Seen) -> f32 {
     let kind = u32(item.p3.x);
     var wall = 0.0;
     if kind == 1u || kind == 2u || kind == 6u {
-        wall = wall_glow(item, seen, item.p0.w) * 0.85;
+        wall = wall_glow(item, seen, item.p0.w, kind != 6u) * 0.85;
     } else if kind == 3u {
-        wall = wall_glow(item, seen, max(item.p0.w * item.p6.x, 1.0e-3)) * (1.0 - item.p6.x);
+        wall = wall_glow(item, seen, max(item.p0.w * item.p6.x, 1.0e-3), false) * (1.0 - item.p6.x);
     }
     let alpha = saturate(max(marked(item, local, seen), wall));
     if alpha <= 0.0 {

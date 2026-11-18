@@ -1,4 +1,4 @@
-import package::engine::drawn::{drawn_floats, drawn_tint};
+import package::engine::drawn::{drawn_float_count, drawn_floats, drawn_tint};
 import package::engine::view::{camera, stable_normalize};
 import package::generated::figures::FigureLight;
 import package::figures::material::{field_texel, material_texels};
@@ -24,7 +24,8 @@ fn figure_field(world: vec3<f32>, slot: u32) -> vec4<f32> {
     if shape.z == 0.0 {
         return vec4<f32>(0.0);
     }
-    let at = select(world, camera.position.xyz, drawn_floats(slot, 1u).w > 0.5);
+    let at_camera = drawn_float_count(slot) >= 8u && drawn_floats(slot, 1u).w > 0.5;
+    let at = select(world, camera.position.xyz, at_camera);
     let to_sun = normalize(figure_light.direction.xyz);
     let along = to_sun.xz * ((at.y - shape.x) / max(to_sun.y, 0.05));
     let uv = (at.xz - along - figure_light.field.xy) * figure_light.field.zw;
@@ -95,13 +96,17 @@ fn lit_color(base_color: vec3<f32>, normal: vec3<f32>, view: vec3<f32>, roughnes
 @fragment fn fs_figures(corner: FigureCorner, @builtin(front_facing) front: bool)
         -> @location(0) vec4<f32> {
     let texels = material_texels(corner.uv);
+    let trimmed = drawn_float_count(corner.slot) >= 7u;
+    let trim = saturate(drawn_floats(corner.slot, 0u).w * texels.trim);
+    let tinted = mix(texels.base_color, drawn_floats(corner.slot, 1u).xyz, trim);
+    let base_color = select(texels.base_color, tinted, trimmed);
     let facing = stable_normalize(select(-corner.normal, corner.normal, front));
     let normal = deflected_normal(facing, dpdx(corner.world), dpdy(corner.world),
         dpdx(corner.uv), dpdy(corner.uv), texels.normal);
     let view = stable_normalize(camera.position.xyz - corner.world);
-    let lit = lit_color(texels.base_color, normal, view, texels.roughness, texels.metallic,
+    let lit = lit_color(base_color, normal, view, texels.roughness, texels.metallic,
         corner.field);
-    let shown = select(texels.base_color, lit, figure_light.direction.w != 0.0);
+    let shown = select(base_color, lit, figure_light.direction.w != 0.0);
     let tint = drawn_tint(corner.slot);
     let rim = (1.0 - tint.a) * pow(1.0 - saturate(dot(normal, view)), 3.0);
     return vec4<f32>(scene_fogged(shown, corner.world) + tint.rgb * rim, 1.0);
