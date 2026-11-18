@@ -1,4 +1,6 @@
-use crate::RigError;
+use engine_codec::Error;
+
+use crate::error::Fault;
 
 pub(crate) fn put_u32(bytes: &mut Vec<u8>, value: u32) {
     bytes.extend_from_slice(&value.to_le_bytes());
@@ -27,47 +29,46 @@ pub(crate) struct Reader<'a> {
 }
 
 impl<'a> Reader<'a> {
-    pub(crate) fn new(
-        bytes: &'a [u8],
-        item: &'static str,
-        magic: [u8; 4],
-    ) -> Result<Self, RigError> {
+    pub(crate) fn new(bytes: &'a [u8], item: &'static str, magic: [u8; 4]) -> Result<Self, Error> {
         let mut reader = Self { bytes, at: 0, item };
         let held = reader.take(4)?;
         if held != magic {
-            return Err(RigError::Magic {
+            return Err(Error::from(Fault::Magic {
                 item,
                 got: held.to_vec(),
-            });
+            }));
         }
         Ok(reader)
     }
 
-    fn take(&mut self, length: usize) -> Result<&'a [u8], RigError> {
+    fn take(&mut self, length: usize) -> Result<&'a [u8], Error> {
         let end = self.at.saturating_add(length);
-        let taken = self.bytes.get(self.at..end).ok_or(RigError::Truncated {
-            item: self.item,
-            needed: end,
-            held: self.bytes.len(),
-        })?;
+        let taken = self
+            .bytes
+            .get(self.at..end)
+            .ok_or(Error::from(Fault::Truncated {
+                item: self.item,
+                needed: end,
+                held: self.bytes.len(),
+            }))?;
         self.at = end;
         Ok(taken)
     }
 
-    pub(crate) fn u32(&mut self) -> Result<u32, RigError> {
+    pub(crate) fn u32(&mut self) -> Result<u32, Error> {
         let word = self.take(4)?;
         Ok(u32::from_le_bytes([word[0], word[1], word[2], word[3]]))
     }
 
-    pub(crate) fn count(&mut self) -> Result<usize, RigError> {
+    pub(crate) fn count(&mut self) -> Result<usize, Error> {
         self.u32().map(|count| count as usize)
     }
 
-    pub(crate) fn f32(&mut self) -> Result<f32, RigError> {
+    pub(crate) fn f32(&mut self) -> Result<f32, Error> {
         self.u32().map(f32::from_bits)
     }
 
-    pub(crate) fn floats<const N: usize>(&mut self) -> Result<[f32; N], RigError> {
+    pub(crate) fn floats<const N: usize>(&mut self) -> Result<[f32; N], Error> {
         let mut values = [0.0; N];
         for value in &mut values {
             *value = self.f32()?;
@@ -75,27 +76,29 @@ impl<'a> Reader<'a> {
         Ok(values)
     }
 
-    pub(crate) fn name(&mut self) -> Result<String, RigError> {
+    pub(crate) fn name(&mut self) -> Result<String, Error> {
         let length = self.count()?;
         let start = self.at;
         let raw = self.take(length)?;
         let name = std::str::from_utf8(raw)
-            .map_err(|_| RigError::NameNotUtf8 {
-                item: self.item,
-                at: start,
+            .map_err(|_| {
+                Error::from(Fault::NameNotUtf8 {
+                    item: self.item,
+                    at: start,
+                })
             })?
             .to_owned();
         self.take(length.next_multiple_of(4) - length)?;
         Ok(name)
     }
 
-    pub(crate) fn finish(self) -> Result<(), RigError> {
+    pub(crate) fn finish(self) -> Result<(), Error> {
         match self.bytes.len() - self.at {
             0 => Ok(()),
-            bytes => Err(RigError::TrailingBytes {
+            bytes => Err(Error::from(Fault::TrailingBytes {
                 item: self.item,
                 bytes,
-            }),
+            })),
         }
     }
 }

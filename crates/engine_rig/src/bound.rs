@@ -1,6 +1,9 @@
 use glam::{Mat4, Quat, Vec3};
 
-use crate::{Clip, Keys, Posed, RigError, Skeleton};
+use engine_codec::Error;
+
+use crate::error::Fault;
+use crate::{Clip, Keys, Posed, Skeleton};
 
 pub type PaletteRow = [f32; 12];
 
@@ -94,11 +97,14 @@ impl Bound {
         self.root.map(|(joint, _)| joint)
     }
 
-    fn rotation(&self, clip: &Clip, track: usize, at: &Key) -> Result<Quat, RigError> {
-        let held = clip.rotations().get(track).ok_or(RigError::TrackMissing {
-            track,
-            tracks: clip.rotations().len(),
-        })?;
+    fn rotation(&self, clip: &Clip, track: usize, at: &Key) -> Result<Quat, Error> {
+        let held = clip
+            .rotations()
+            .get(track)
+            .ok_or(Error::from(Fault::TrackMissing {
+                track,
+                tracks: clip.rotations().len(),
+            }))?;
         let (from, to) = (held.values[at.first], held.values[at.second]);
         Ok(match held.keys {
             Keys::Linear => nlerp(from, to, at.fraction),
@@ -106,22 +112,22 @@ impl Bound {
         })
     }
 
-    fn hip(&self, clip: &Clip, at: &Key) -> Result<Vec3, RigError> {
-        let held = clip.root().ok_or(RigError::TrackMissing {
+    fn hip(&self, clip: &Clip, at: &Key) -> Result<Vec3, Error> {
+        let held = clip.root().ok_or(Error::from(Fault::TrackMissing {
             track: clip.rotations().len(),
             tracks: clip.rotations().len(),
-        })?;
+        }))?;
         Ok(vector(held.keys, &held.values, at))
     }
 
-    fn offset(&self, clip: &Clip, track: usize, at: &Key) -> Result<Vec3, RigError> {
+    fn offset(&self, clip: &Clip, track: usize, at: &Key) -> Result<Vec3, Error> {
         let held = clip
             .translations()
             .get(track)
-            .ok_or(RigError::TrackMissing {
+            .ok_or(Error::from(Fault::TrackMissing {
                 track,
                 tracks: clip.translations().len(),
-            })?;
+            }))?;
         Ok(vector(held.keys, &held.values, at))
     }
 
@@ -131,21 +137,21 @@ impl Bound {
         seconds: f32,
         skeleton: &Skeleton,
         out: &mut [Posed],
-    ) -> Result<(), RigError> {
+    ) -> Result<(), Error> {
         for (item, got) in [
             ("posed joints", out.len()),
             ("bound joints", self.tracks.len()),
         ] {
             if got != skeleton.len() {
-                return Err(RigError::Length {
+                return Err(Error::from(Fault::Length {
                     item,
                     expected: skeleton.len(),
                     got,
-                });
+                }));
             }
         }
         if !seconds.is_finite() {
-            return Err(RigError::Seconds { seconds });
+            return Err(Error::from(Fault::Seconds { seconds }));
         }
         let held = if seconds < 0.0 {
             0.0
@@ -185,13 +191,13 @@ impl Bound {
     }
 }
 
-pub fn model_matrices(posed: &[Posed], out: &mut [Mat4]) -> Result<(), RigError> {
+pub fn model_matrices(posed: &[Posed], out: &mut [Mat4]) -> Result<(), Error> {
     if out.len() != posed.len() {
-        return Err(RigError::Length {
+        return Err(Error::from(Fault::Length {
             item: "model matrices",
             expected: posed.len(),
             got: out.len(),
-        });
+        }));
     }
     for (matrix, joint) in out.iter_mut().zip(posed) {
         *matrix = Mat4::from_rotation_translation(joint.rotation, joint.position);
@@ -199,18 +205,14 @@ pub fn model_matrices(posed: &[Posed], out: &mut [Mat4]) -> Result<(), RigError>
     Ok(())
 }
 
-pub fn palette(
-    skeleton: &Skeleton,
-    model: &[Mat4],
-    out: &mut [PaletteRow],
-) -> Result<(), RigError> {
+pub fn palette(skeleton: &Skeleton, model: &[Mat4], out: &mut [PaletteRow]) -> Result<(), Error> {
     for (item, got) in [("model matrices", model.len()), ("palette rows", out.len())] {
         if got != skeleton.len() {
-            return Err(RigError::Length {
+            return Err(Error::from(Fault::Length {
                 item,
                 expected: skeleton.len(),
                 got,
-            });
+            }));
         }
     }
     for ((row, matrix), joint) in out.iter_mut().zip(model).zip(skeleton.joints()) {

@@ -1,7 +1,9 @@
 use glam::{Quat, Vec3};
 
-use crate::RigError;
+use engine_codec::Error;
+
 use crate::bytes::{Reader, put_count, put_floats, put_name, put_u32};
+use crate::error::Fault;
 
 const MAGIC: [u8; 4] = *b"CLIP";
 
@@ -19,14 +21,14 @@ impl Keys {
         }
     }
 
-    fn of_code(code: u32, bone: &str) -> Result<Self, RigError> {
+    fn of_code(code: u32, bone: &str) -> Result<Self, Error> {
         match code {
             0 => Ok(Self::Linear),
             1 => Ok(Self::Step),
-            code => Err(RigError::KeysCode {
+            code => Err(Error::from(Fault::KeysCode {
                 bone: bone.to_owned(),
                 code,
-            }),
+            })),
         }
     }
 }
@@ -67,38 +69,38 @@ fn track_shape(
     keys: usize,
     values: usize,
     finite: impl Iterator<Item = bool>,
-) -> Result<(), RigError> {
+) -> Result<(), Error> {
     if bone.is_empty() {
-        return Err(RigError::EmptyName {
+        return Err(Error::from(Fault::EmptyName {
             item: "track",
             index,
-        });
+        }));
     }
     if values != keys {
-        return Err(RigError::TrackLength {
+        return Err(Error::from(Fault::TrackLength {
             bone: bone.to_owned(),
             keys,
             values,
-        });
+        }));
     }
     let mut finite = finite;
     match finite.position(|held| !held) {
-        Some(key) => Err(RigError::NotFinite {
+        Some(key) => Err(Error::from(Fault::NotFinite {
             bone: bone.to_owned(),
             key,
-        }),
+        })),
         None => Ok(()),
     }
 }
 
-fn unique<'a>(item: &'static str, bones: impl Iterator<Item = &'a str>) -> Result<(), RigError> {
+fn unique<'a>(item: &'static str, bones: impl Iterator<Item = &'a str>) -> Result<(), Error> {
     let bones: Vec<&str> = bones.collect();
     for (index, bone) in bones.iter().enumerate() {
         if bones[..index].contains(bone) {
-            return Err(RigError::NameTwice {
+            return Err(Error::from(Fault::NameTwice {
                 item,
                 name: (*bone).to_owned(),
-            });
+            }));
         }
     }
     Ok(())
@@ -116,7 +118,7 @@ fn read_vectors(
     reader: &mut Reader<'_>,
     keys: usize,
     held: usize,
-) -> Result<(String, Keys, Vec<Vec3>), RigError> {
+) -> Result<(String, Keys, Vec<Vec3>), Error> {
     let bone = reader.name()?;
     let kind = Keys::of_code(reader.u32()?, &bone)?;
     let mut values = Vec::with_capacity(keys.min(held));
@@ -133,17 +135,17 @@ impl Clip {
         rotations: Vec<RotationTrack>,
         translations: Vec<TranslationTrack>,
         root: Option<RootTrack>,
-    ) -> Result<Self, RigError> {
+    ) -> Result<Self, Error> {
         if !duration.is_finite() || duration < 0.0 {
-            return Err(RigError::Duration { duration });
+            return Err(Error::from(Fault::Duration { duration }));
         }
         if times.is_empty() {
-            return Err(RigError::NoKeys);
+            return Err(Error::from(Fault::NoKeys));
         }
         for (at, &time) in times.iter().enumerate() {
             let after_previous = at == 0 || time > times[at - 1];
             if !time.is_finite() || time < 0.0 || time > duration || !after_previous {
-                return Err(RigError::KeyTimes { at, time });
+                return Err(Error::from(Fault::KeyTimes { at, time }));
             }
         }
         unique(
@@ -235,7 +237,7 @@ impl Clip {
         bytes
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, RigError> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
         let mut reader = Reader::new(bytes, "clip", MAGIC)?;
         let duration = reader.f32()?;
         let keys = reader.count()?;
@@ -271,7 +273,7 @@ impl Clip {
                 let (bone, keys, values) = read_vectors(&mut reader, keys, held)?;
                 Some(RootTrack { bone, keys, values })
             }
-            code => return Err(RigError::RootFlag { code }),
+            code => return Err(Error::from(Fault::RootFlag { code })),
         };
         reader.finish()?;
         Self::new(duration, times, rotations, translations, root)

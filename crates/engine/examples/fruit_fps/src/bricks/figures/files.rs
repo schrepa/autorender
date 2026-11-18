@@ -4,12 +4,12 @@ use std::sync::Arc;
 use bevy_ecs::prelude::*;
 use engine_core::glam::Vec3;
 use engine_core::{Error, ErrorCode, Expected};
-use engine_rig::{Bound, Clip, Posed, RigError, Skeleton};
+use engine_rig::{Bound, Clip, Posed, Skeleton};
 
 use crate::names::HEAD;
 use crate::play::figures::{Figure, FigureBytes, HIP, LEFT_ARM, LEFT_LEG, RIGHT_ARM, RIGHT_LEG};
 
-pub(super) fn unreadable(path: String, error: &RigError) -> Error {
+pub(super) fn unreadable(path: String, error: &Error) -> Error {
     Error::new(ErrorCode::InvalidRecord, path).got(error.to_string())
 }
 
@@ -126,7 +126,7 @@ fn parsed<T>(held: &BTreeMap<String, Parsed<T>>) -> u32 {
 fn read<T>(
     held: &mut BTreeMap<String, Parsed<T>>,
     (bytes, uri, path): (&FigureBytes, &str, &str),
-    parse: impl FnOnce(&[u8]) -> Result<T, engine_rig::RigError>,
+    parse: impl FnOnce(&[u8]) -> Result<T, Error>,
 ) -> Result<Arc<T>, Error> {
     let bytes = bytes.get(uri).ok_or_else(|| missing(uri, path))?;
     if let Some((known, found)) = held.get(uri)

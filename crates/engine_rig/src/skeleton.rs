@@ -1,7 +1,9 @@
 use glam::{Mat4, Quat, Vec3};
 
-use crate::RigError;
+use engine_codec::Error;
+
 use crate::bytes::{Reader, put_count, put_floats, put_name, put_u32};
+use crate::error::Fault;
 
 const MAGIC: [u8; 4] = *b"SKEL";
 const NO_PARENT: u32 = u32::MAX;
@@ -34,34 +36,36 @@ pub struct Skeleton {
 }
 
 impl Skeleton {
-    pub fn new(joints: Vec<Joint>) -> Result<Self, RigError> {
+    pub fn new(joints: Vec<Joint>) -> Result<Self, Error> {
         let mut rest = Vec::with_capacity(joints.len());
         for (index, joint) in joints.iter().enumerate() {
             if joint.name.is_empty() {
-                return Err(RigError::EmptyName {
+                return Err(Error::from(Fault::EmptyName {
                     item: "joint",
                     index,
-                });
+                }));
             }
             if joints[..index]
                 .iter()
                 .any(|earlier| earlier.name == joint.name)
             {
-                return Err(RigError::NameTwice {
+                return Err(Error::from(Fault::NameTwice {
                     item: "joint",
                     name: joint.name.clone(),
-                });
+                }));
             }
             if let Some(parent) = joint.parent
                 && parent >= index
             {
-                return Err(RigError::ParentAfterChild {
+                return Err(Error::from(Fault::ParentAfterChild {
                     joint: joint.name.clone(),
                     parent,
-                });
+                }));
             }
-            let singular = || RigError::InverseBindNotInvertible {
-                joint: joint.name.clone(),
+            let singular = || {
+                Error::from(Fault::InverseBindNotInvertible {
+                    joint: joint.name.clone(),
+                })
             };
             if !joint.inverse_bind.is_finite() || joint.inverse_bind.determinant() == 0.0 {
                 return Err(singular());
@@ -116,9 +120,11 @@ impl Skeleton {
         self.rest[joint]
     }
 
-    pub fn mask(&self, joint: &str, feather_levels: usize) -> Result<Vec<f32>, RigError> {
-        let top = self.find(joint).ok_or_else(|| RigError::JointMissing {
-            name: joint.to_owned(),
+    pub fn mask(&self, joint: &str, feather_levels: usize) -> Result<Vec<f32>, Error> {
+        let top = self.find(joint).ok_or_else(|| {
+            Error::from(Fault::JointMissing {
+                name: joint.to_owned(),
+            })
         })?;
         let mut depths: Vec<Option<usize>> = vec![None; self.joints.len()];
         depths[top] = Some(0);
@@ -179,7 +185,7 @@ impl Skeleton {
         bytes
     }
 
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, RigError> {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
         let mut reader = Reader::new(bytes, "skeleton", MAGIC)?;
         let count = reader.count()?;
         let mut joints = Vec::with_capacity(count.min(bytes.len() / 72));

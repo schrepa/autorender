@@ -1,7 +1,9 @@
 use std::fmt;
 
+use engine_codec::{Error, ErrorCode, Expected};
+
 #[derive(Clone, Debug, PartialEq)]
-pub enum RigError {
+pub(crate) enum Fault {
     Truncated {
         item: &'static str,
         needed: usize,
@@ -84,7 +86,7 @@ pub enum RigError {
     },
 }
 
-impl fmt::Display for RigError {
+impl fmt::Display for Fault {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Truncated { item, needed, held } => write!(
@@ -163,4 +165,85 @@ impl fmt::Display for RigError {
     }
 }
 
-impl std::error::Error for RigError {}
+impl From<Fault> for Error {
+    fn from(fault: Fault) -> Self {
+        let (code, path, expected) = match &fault {
+            Fault::Truncated { item, .. }
+            | Fault::Magic { item, .. }
+            | Fault::TrailingBytes { item, .. }
+            | Fault::EmptyName { item, .. }
+            | Fault::NameNotUtf8 { item, .. }
+            | Fault::NameTwice { item, .. } => {
+                (ErrorCode::InvalidRecord, format!("$.{item}"), None)
+            }
+            Fault::ParentAfterChild { .. } => (
+                ErrorCode::InvalidRecord,
+                "$.skeleton.parent".to_owned(),
+                Some(Expected::Sorted),
+            ),
+            Fault::InverseBindNotInvertible { .. } => (
+                ErrorCode::InvalidRecord,
+                "$.skeleton.inverse_bind".to_owned(),
+                Some(Expected::Invertible),
+            ),
+            Fault::KeysCode { .. } | Fault::RootFlag { .. } | Fault::TrackLength { .. } => {
+                (ErrorCode::InvalidRecord, "$.clip.tracks".to_owned(), None)
+            }
+            Fault::NotFinite { .. } => (
+                ErrorCode::InvalidRecord,
+                "$.clip.tracks".to_owned(),
+                Some(Expected::Finite),
+            ),
+            Fault::Duration { .. } => (
+                ErrorCode::InvalidRecord,
+                "$.clip.duration".to_owned(),
+                Some(Expected::Finite),
+            ),
+            Fault::NoKeys => (
+                ErrorCode::InvalidRecord,
+                "$.clip.keys".to_owned(),
+                Some(Expected::NonEmpty),
+            ),
+            Fault::KeyTimes { .. } => (
+                ErrorCode::InvalidRecord,
+                "$.clip.keys".to_owned(),
+                Some(Expected::Sorted),
+            ),
+            Fault::Seconds { .. } => (
+                ErrorCode::OutOfRange,
+                "$.seconds".to_owned(),
+                Some(Expected::Finite),
+            ),
+            Fault::Length { item, .. } => (
+                ErrorCode::InvalidInput,
+                format!("$.{item}"),
+                Some(Expected::Matching),
+            ),
+            Fault::TrackMissing { .. } => (
+                ErrorCode::InvalidInput,
+                "$.bound".to_owned(),
+                Some(Expected::Matching),
+            ),
+            Fault::JointMissing { .. } => (
+                ErrorCode::UnknownReference,
+                "$.joint".to_owned(),
+                Some(Expected::Present),
+            ),
+            Fault::JointIndex { .. } => (
+                ErrorCode::OutOfRange,
+                "$.joint".to_owned(),
+                Some(Expected::Present),
+            ),
+            Fault::Chain { .. } => (
+                ErrorCode::InvalidInput,
+                "$.chain".to_owned(),
+                Some(Expected::Acyclic),
+            ),
+        };
+        let error = Error::new(code, path).got(fault.to_string());
+        match expected {
+            Some(expected) => error.expected(expected),
+            None => error,
+        }
+    }
+}

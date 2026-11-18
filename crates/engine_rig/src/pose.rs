@@ -1,16 +1,19 @@
 use glam::{Mat3, Quat, Vec3};
 
 use crate::bound::nlerp;
-use crate::{Posed, RigError, Skeleton};
+use engine_codec::Error;
 
-fn lengths(skeleton: &Skeleton, held: &[(&'static str, usize)]) -> Result<(), RigError> {
+use crate::error::Fault;
+use crate::{Posed, Skeleton};
+
+fn lengths(skeleton: &Skeleton, held: &[(&'static str, usize)]) -> Result<(), Error> {
     for &(item, got) in held {
         if got != skeleton.len() {
-            return Err(RigError::Length {
+            return Err(Error::from(Fault::Length {
                 item,
                 expected: skeleton.len(),
                 got,
-            });
+            }));
         }
     }
     Ok(())
@@ -23,7 +26,7 @@ pub fn blend(
     weights: &[f32],
     root_motion: Option<usize>,
     out: &mut [Posed],
-) -> Result<(), RigError> {
+) -> Result<(), Error> {
     lengths(
         skeleton,
         &[
@@ -54,14 +57,14 @@ pub fn blend(
     Ok(())
 }
 
-fn index(skeleton: &Skeleton, joint: usize) -> Result<(), RigError> {
+fn index(skeleton: &Skeleton, joint: usize) -> Result<(), Error> {
     if joint < skeleton.len() {
         Ok(())
     } else {
-        Err(RigError::JointIndex {
+        Err(Error::from(Fault::JointIndex {
             joint,
             joints: skeleton.len(),
-        })
+        }))
     }
 }
 
@@ -81,7 +84,7 @@ pub fn turn(
     skeleton: &Skeleton,
     posed: &mut [Posed],
     turns: &[(usize, Quat)],
-) -> Result<(), RigError> {
+) -> Result<(), Error> {
     lengths(skeleton, &[("turned joints", posed.len())])?;
     for &(top, turn) in turns {
         index(skeleton, top)?;
@@ -95,7 +98,7 @@ pub fn shift(
     posed: &mut [Posed],
     top: usize,
     offset: Vec3,
-) -> Result<(), RigError> {
+) -> Result<(), Error> {
     lengths(skeleton, &[("shifted joints", posed.len())])?;
     index(skeleton, top)?;
     for (joint, held) in posed.iter_mut().enumerate().skip(top) {
@@ -184,7 +187,7 @@ pub fn reach(
     posed: &mut [Posed],
     chain: [usize; 3],
     reach: &Reach,
-) -> Result<(), RigError> {
+) -> Result<(), Error> {
     lengths(skeleton, &[("reaching joints", posed.len())])?;
     let [upper, middle, end] = chain;
     for joint in chain {
@@ -197,7 +200,7 @@ pub fn reach(
     let lengths_held = (posed[middle].position - posed[upper].position).length_squared() > 0.0
         && (posed[end].position - posed[middle].position).length_squared() > 0.0;
     if !ordered || !lengths_held {
-        return Err(RigError::Chain { upper, middle, end });
+        return Err(Error::from(Fault::Chain { upper, middle, end }));
     }
     let Some(goal) = goal(posed, chain, reach) else {
         return Ok(());

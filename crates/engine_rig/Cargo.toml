@@ -6,6 +6,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+engine_codec.workspace = true
 glam.workspace = true
 
 [lints]

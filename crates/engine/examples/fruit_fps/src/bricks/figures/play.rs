@@ -100,7 +100,7 @@ fn named_clips(rig: &Rig, play: Option<&FigurePlay>) -> Result<(), Error> {
     Ok(())
 }
 
-fn rigged(error: &engine_rig::RigError) -> Error {
+fn rigged(error: &Error) -> Error {
     unreadable("$.figure".to_owned(), error)
 }
 
