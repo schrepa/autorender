@@ -54,9 +54,12 @@ export async function loadSceneFiles<Files>(sceneUrl: string, source: string, bi
     const url = new URL(uri, base).href;
     const bytes = await fetchBytes(url, signal);
     if (load.read(uri, bytes)) {
-      const image = pool && await pool.decodeImage(uri, bytes.slice()).catch(() => undefined);
-      if (image) load.image(uri, image.width, image.height, image.pixels);
-      else load.decode(uri, bytes);
+      if (pool) {
+        const image = await pool.decodeImage(uri, bytes.slice()).catch((error: unknown) => {
+          throw engineFailure({ code: "invalid_texture", path: "$", got: { file: uri, failed: String(error) } });
+        });
+        load.image(uri, image.width, image.height, image.pixels);
+      } else load.decode(uri, bytes);
     }
   };
   try {

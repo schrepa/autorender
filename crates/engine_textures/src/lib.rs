@@ -7,7 +7,7 @@
 pub mod bc7;
 mod image;
 
-pub use image::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
+pub use image::{IMAGE_FORMATS, Image, ImageFormat, decode_image, decode_texture, image_format};
 
 use engine_assets::{ColorSpace, Texture, TextureFormat, TextureSummary};
 use engine_codec::{Error, ErrorCode, Expected};
@@ -129,6 +129,7 @@ pub fn record(texture: &Texture) -> Vec<u8> {
         TextureFormat::Bc7 => 1,
         TextureFormat::Etc2Rgba8 => 2,
         TextureFormat::Astc4x4 => 3,
+        TextureFormat::Bc5 => 4,
     });
     out.push(texture.levels().len() as u8);
     out.push(texture.color_space().tag());
@@ -155,6 +156,7 @@ pub fn decode(bytes: &[u8]) -> Result<Texture, String> {
         1 => TextureFormat::Bc7,
         2 => TextureFormat::Etc2Rgba8,
         3 => TextureFormat::Astc4x4,
+        4 => TextureFormat::Bc5,
         other => return Err(format!("a texture record names format {other}")),
     };
     let count = usize::from(header[5]);

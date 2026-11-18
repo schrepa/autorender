@@ -177,10 +177,21 @@ impl SceneDocument {
             .iter()
             .enumerate()
             .map(|(index, texture)| {
-                let space = spaces.get(texture.id.as_str()).copied().unwrap_or_default();
-                texture
-                    .texture(&format!("$.textures[{index}]"), files)
-                    .map(|made| made.with_color_space(space))
+                let path = format!("$.textures[{index}]");
+                let named = spaces.get(texture.id.as_str()).copied();
+                let (made, stated) = texture.texture(&path, files)?;
+                match (stated, named) {
+                    (true, Some(named)) if named != made.color_space() => {
+                        Err(Error::new(ErrorCode::InvalidTexture, path)
+                            .expected(Expected::Matching)
+                            .got(format!(
+                                "the file states {:?}, its material map needs {named:?}",
+                                made.color_space()
+                            )))
+                    }
+                    (true, _) => Ok(made),
+                    (false, named) => Ok(made.with_color_space(named.unwrap_or_default())),
+                }
             })
             .collect::<Result<Vec<_>, _>>()?;
         let meshes = self

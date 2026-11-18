@@ -10,13 +10,14 @@ pub enum TextureFormat {
     Bc7,
     Etc2Rgba8,
     Astc4x4,
+    Bc5,
 }
 
 impl TextureFormat {
     pub fn level_bytes(self, width: u32, height: u32) -> usize {
         let (columns, rows, block) = match self {
             Self::Rgba8 => (width, height, 4),
-            Self::Bc7 | Self::Etc2Rgba8 | Self::Astc4x4 => {
+            Self::Bc7 | Self::Etc2Rgba8 | Self::Astc4x4 | Self::Bc5 => {
                 (width.div_ceil(4), height.div_ceil(4), 16)
             }
         };

@@ -85,7 +85,9 @@ pub use engine_settings::{
     Allowed, Expected, ExtraRules, ID_PATTERN, InvalidSetting, MAX_ID_BYTES, Rule, Setting, fields,
     is_id, parse_value, parse_value_at, rule, settings, state, stated, stats, valid_uri,
 };
-pub use engine_textures::{IMAGE_FORMATS, Image, ImageFormat, decode_image, image_format};
+pub use engine_textures::{
+    IMAGE_FORMATS, Image, ImageFormat, decode_image, decode_texture, image_format,
+};
 pub use files::Files;
 pub use glam;
 pub use hierarchy::*;

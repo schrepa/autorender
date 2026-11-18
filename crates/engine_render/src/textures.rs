@@ -23,6 +23,33 @@ pub(crate) struct GpuTexture {
     pub mip_bytes: u64,
     target: bool,
     revision: u64,
+    generates: bool,
+}
+
+fn mipped(
+    mips: &MipGenerator,
+    (device, encoder): (&wgpu::Device, &mut Option<wgpu::CommandEncoder>),
+    compiler: &mut Compiler<'_>,
+    handle: TextureHandle,
+    texture: &wgpu::Texture,
+) -> Result<Option<u32>, Error> {
+    let encoder = encoder.get_or_insert_with(|| {
+        device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("engine/texture-mips"),
+        })
+    });
+    let wanted = texture.mip_level_count() - 1;
+    match mips.record((device, encoder), compiler, texture, None) {
+        None => Ok(None),
+        Some(made) if made == wanted => Ok(Some(made)),
+        Some(made) => Err(Error::new(
+            engine_core::ErrorCode::InvalidTexture,
+            format!("$.textures.{}", handle.slot()),
+        )
+        .expected(engine_core::Expected::Matching)
+        .range(f64::from(wanted), f64::from(wanted))
+        .got(serde_json::json!({ "mip_levels_made": made }))),
+    }
 }
 
 pub(crate) struct TextureStore {
@@ -31,8 +58,9 @@ pub(crate) struct TextureStore {
     generation: u64,
     synced: Option<u64>,
     mips: MipGenerator,
-    owed: Vec<TextureHandle>,
+    owed: BTreeMap<TextureHandle, GpuTexture>,
     refused: Vec<Error>,
+    declined: BTreeMap<TextureHandle, u64>,
 }
 
 impl TextureStore {
@@ -43,8 +71,9 @@ impl TextureStore {
             generation: 0,
             synced: None,
             mips: MipGenerator::new(device),
-            owed: Vec::new(),
+            owed: BTreeMap::new(),
             refused: Vec::new(),
+            declined: BTreeMap::new(),
         }
     }
 
@@ -71,55 +100,41 @@ impl TextureStore {
             return (0, levels);
         }
         let before = self.textures.len();
-        self.textures.retain(|handle, gpu| {
-            residency.texture_resident(*handle)
-                && library.revision_of(*handle) == Some(gpu.revision)
-        });
+        let kept = |handle: &TextureHandle, revision: u64| {
+            residency.texture_resident(*handle) && library.revision_of(*handle) == Some(revision)
+        };
+        self.textures.retain(|handle, gpu| kept(handle, gpu.revision));
+        self.owed.retain(|handle, gpu| kept(handle, gpu.revision));
+        self.declined.retain(|handle, revision| kept(handle, *revision));
         if self.textures.len() != before {
             self.generation += 1;
         }
         let mut bytes = 0;
-        for (handle, _) in residency.materials() {
-            let Some(material) = library.material(handle) else {
+        let named: Vec<TextureHandle> = residency
+            .materials()
+            .filter_map(|(handle, _)| library.material(handle))
+            .flat_map(|material| material.textures())
+            .collect();
+        for texture in &named {
+            library
+                .texture(*texture)
+                .expect("material_textures_validated");
+        }
+        let wanted: Vec<TextureHandle> = named.into_iter().chain(residency.textures()).collect();
+        for texture in wanted {
+            let Some(source) = library.texture(texture) else {
                 continue;
             };
-            for texture in material.textures() {
-                if self.textures.contains_key(&texture) {
-                    continue;
-                }
-                let source = library
-                    .texture(texture)
-                    .expect("material_textures_validated");
-                let revision = library.revision_of(texture).unwrap_or_default();
-                let gpu = create_texture(
-                    device,
-                    queue,
-                    (texture, source, revision),
-                    (&self.mips, &mut *compiler),
-                    encoder,
-                    (&mut levels, &mut self.refused, &mut self.owed),
-                );
-                bytes += gpu.byte_len;
-                self.textures.insert(texture, gpu);
-                self.generation += 1;
-            }
-        }
-        for handle in residency.textures() {
-            if self.textures.contains_key(&handle) {
-                continue;
-            }
-            if let Some(source) = library.texture(handle) {
-                let revision = library.revision_of(handle).unwrap_or_default();
-                let (more, generated) = self.upload_texture(
-                    device,
-                    queue,
-                    (handle, revision),
-                    source,
-                    (&mut *encoder, &mut *compiler),
-                );
-                bytes += more;
-                levels += generated;
-            }
+            let revision = library.revision_of(texture).unwrap_or_default();
+            let (more, generated) = self.upload_texture(
+                device,
+                queue,
+                (texture, revision),
+                source,
+                (&mut *encoder, &mut *compiler),
+            );
+            bytes += more;
+            levels += generated;
         }
         self.synced = Some(generation);
         (bytes, levels)
@@ -131,21 +146,20 @@ impl TextureStore {
         (encoder, compiler): (&mut Option<wgpu::CommandEncoder>, &mut Compiler<'_>),
     ) -> u32 {
         let mut levels = 0;
-        for handle in std::mem::take(&mut self.owed) {
-            let Some(gpu) = self.textures.get(&handle) else {
-                continue;
-            };
-            let encoder = encoder.get_or_insert_with(|| {
-                device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("engine/texture-mips"),
-                })
-            });
-            match self
-                .mips
-                .record((device, encoder), compiler, &gpu.texture, None)
-            {
-                Some(more) => levels += more,
-                None => self.owed.push(handle),
+        for (handle, gpu) in std::mem::take(&mut self.owed) {
+            match mipped(&self.mips, (device, &mut *encoder), compiler, handle, &gpu.texture) {
+                Ok(Some(more)) => {
+                    levels += more;
+                    self.textures.insert(handle, gpu);
+                    self.generation += 1;
+                }
+                Ok(None) => {
+                    self.owed.insert(handle, gpu);
+                }
+                Err(error) => {
+                    self.refused.push(error);
+                    self.declined.insert(handle, gpu.revision);
+                }
             }
         }
         levels
@@ -163,22 +177,42 @@ impl TextureStore {
         source: &Texture,
         (encoder, compiler): (&mut Option<wgpu::CommandEncoder>, &mut Compiler<'_>),
     ) -> (u64, u32) {
-        let std::collections::btree_map::Entry::Vacant(entry) = self.textures.entry(handle) else {
+        if self.textures.contains_key(&handle)
+            || self.owed.contains_key(&handle)
+            || self.declined.get(&handle) == Some(&revision)
+        {
             return (0, 0);
+        }
+        let gpu = match create_texture(device, queue, (handle, source, revision)) {
+            Ok(gpu) => gpu,
+            Err(error) => {
+                self.refused.push(error);
+                self.declined.insert(handle, revision);
+                return (0, 0);
+            }
         };
-        let mut levels = 0;
-        let gpu = create_texture(
-            device,
-            queue,
-            (handle, source, revision),
-            (&self.mips, compiler),
-            encoder,
-            (&mut levels, &mut self.refused, &mut self.owed),
-        );
         let bytes = gpu.byte_len;
-        entry.insert(gpu);
-        self.generation += 1;
-        (bytes, levels)
+        if !gpu.generates {
+            self.textures.insert(handle, gpu);
+            self.generation += 1;
+            return (bytes, 0);
+        }
+        match mipped(&self.mips, (device, &mut *encoder), compiler, handle, &gpu.texture) {
+            Ok(Some(levels)) => {
+                self.textures.insert(handle, gpu);
+                self.generation += 1;
+                (bytes, levels)
+            }
+            Ok(None) => {
+                self.owed.insert(handle, gpu);
+                (bytes, 0)
+            }
+            Err(error) => {
+                self.refused.push(error);
+                self.declined.insert(handle, revision);
+                (0, 0)
+            }
+        }
     }
 
     pub(crate) fn texture_view(&self, handle: TextureHandle) -> Option<&wgpu::TextureView> {
@@ -209,6 +243,22 @@ impl TextureStore {
 
     pub(crate) fn is_texture_resident(&self, handle: TextureHandle) -> bool {
         self.textures.contains_key(&handle)
+    }
+
+    #[cfg_attr(
+        not(any(feature = "dev", feature = "profiling")),
+        expect(dead_code, reason = "read by the gpu.assets names")
+    )]
+    pub(crate) fn texture_formats(&self) -> BTreeMap<String, (u32, u64)> {
+        let mut formats = BTreeMap::new();
+        for texture in self.textures.values() {
+            let held: &mut (u32, u64) = formats
+                .entry(format!("{:?}", texture.texture.format()))
+                .or_default();
+            held.0 += 1;
+            held.1 += texture.byte_len + texture.mip_bytes;
+        }
+        formats
     }
 
     #[cfg_attr(
@@ -294,13 +344,13 @@ pub(crate) fn gpu_sampler(
 pub fn gpu_format(
     format: TextureFormat,
     space: ColorSpace,
-) -> (wgpu::TextureFormat, wgpu::Features) {
+) -> Option<(wgpu::TextureFormat, wgpu::Features)> {
     use wgpu::TextureFormat as Gpu;
     let srgb = match space {
         ColorSpace::Srgb => true,
         ColorSpace::Linear => false,
     };
-    match format {
+    Some(match format {
         TextureFormat::Rgba8 => (
             if srgb {
                 Gpu::Rgba8UnormSrgb
@@ -336,7 +386,9 @@ pub fn gpu_format(
             },
             wgpu::Features::TEXTURE_COMPRESSION_ASTC,
         ),
-    }
+        TextureFormat::Bc5 if srgb => return None,
+        TextureFormat::Bc5 => (Gpu::Bc5RgUnorm, wgpu::Features::TEXTURE_COMPRESSION_BC),
+    })
 }
 
 pub fn write_level(
@@ -366,7 +418,8 @@ pub fn write_level(
 }
 
 fn create_target(device: &wgpu::Device, source: &Texture, revision: u64) -> GpuTexture {
-    let (format, _) = gpu_format(source.format(), source.color_space());
+    let (format, _) =
+        gpu_format(source.format(), source.color_space()).expect("targets_are_rgba8");
     let texture = crate::gpu_calls::create_texture(device, &wgpu::TextureDescriptor {
         label: Some("engine/target-texture"),
         size: wgpu::Extent3d {
@@ -392,6 +445,7 @@ fn create_target(device: &wgpu::Device, source: &Texture, revision: u64) -> GpuT
         mip_bytes: 0,
         target: true,
         revision,
+        generates: false,
     }
 }
 
@@ -399,54 +453,42 @@ fn create_texture(
     device: &wgpu::Device,
     queue: &crate::gpu_calls::Queue,
     (handle, source, revision): (TextureHandle, &Texture, u64),
-    (mips, compiler): (&MipGenerator, &mut Compiler<'_>),
-    encoder: &mut Option<wgpu::CommandEncoder>,
-    (generated, refused, owed): (&mut u32, &mut Vec<Error>, &mut Vec<TextureHandle>),
-) -> GpuTexture {
+) -> Result<GpuTexture, Error> {
+    let path = format!("$.textures.{}", handle.slot());
     let most = device.limits().max_texture_dimension_2d;
-    let fits = source.width().max(source.height()) <= most;
-    if !fits {
-        refused.push(
-            Error::new(
-                engine_core::ErrorCode::InvalidTexture,
-                format!("$.textures.{}", handle.slot()),
-            )
+    if source.width().max(source.height()) > most {
+        return Err(Error::new(engine_core::ErrorCode::InvalidTexture, path)
             .at_most(u64::from(most))
-            .got([source.width(), source.height()]),
-        );
+            .got([source.width(), source.height()]));
     }
-    if source.is_target() && fits {
-        return create_target(device, source, revision);
+    if source.is_target() {
+        return Ok(create_target(device, source, revision));
     }
     let space = source.color_space();
-    let (format, feature) = gpu_format(source.format(), space);
-    if !fits || !device.features().contains(feature) {
-        let texture = crate::targets::texel(
-            device,
-            queue,
-            "engine/unsupported-texture",
-            wgpu::TextureFormat::Rgba8Unorm,
-            [255; 4],
-        );
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        return GpuTexture {
-            texture,
-            view,
-            byte_len: 4,
-            mip_bytes: 0,
-            target: false,
-            revision,
-        };
+    let unsupported = |feature: Option<wgpu::Features>| {
+        Error::new(engine_core::ErrorCode::InvalidTexture, path.clone())
+            .expected(engine_core::Expected::Supported)
+            .got(serde_json::json!({
+                "format": format!("{:?}", source.format()),
+                "space": format!("{space:?}"),
+                "missing_feature": feature.map(|feature| format!("{feature:?}")),
+            }))
+    };
+    let (format, feature) =
+        gpu_format(source.format(), space).ok_or_else(|| unsupported(None))?;
+    if !device.features().contains(feature) {
+        return Err(unsupported(Some(feature)));
     }
     let (width, height) = (source.width(), source.height());
-    let generate = !source.format().is_compressed() && source.levels().len() == 1;
-    let levels = if generate {
+    let single = !source.format().is_compressed() && source.levels().len() == 1;
+    let levels = if single {
         mip_levels(width, height)
     } else {
         source.levels().len() as u32
     };
+    let generates = single && levels > 1;
     let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
-    if generate && levels > 1 {
+    if generates {
         usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
     }
     let label = match (source.format().is_compressed(), space) {
@@ -466,28 +508,18 @@ fn create_texture(
             bytes,
         );
     }
-    if generate && levels > 1 {
-        let encoder = encoder.get_or_insert_with(|| {
-            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("engine/texture-mips"),
-            })
-        });
-        match mips.record((device, encoder), compiler, &texture, None) {
-            Some(levels) => *generated += levels,
-            None => owed.push(handle),
-        }
-    }
     let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-    GpuTexture {
+    Ok(GpuTexture {
         texture,
         view,
         byte_len: source.byte_len() as u64,
-        mip_bytes: if generate && levels > 1 {
+        mip_bytes: if generates {
             mip_chain_bytes(width, height)
         } else {
             0
         },
         target: false,
         revision,
-    }
+        generates,
+    })
 }

@@ -23,39 +23,6 @@ pub fn texture_2d(
     })
 }
 
-pub fn texel(
-    device: &wgpu::Device,
-    queue: &crate::gpu_calls::Queue,
-    label: &str,
-    format: wgpu::TextureFormat,
-    texel: [u8; 4],
-) -> wgpu::Texture {
-    let texture = texture_2d(
-        device,
-        label,
-        (1, 1),
-        1,
-        1,
-        format,
-        wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-    );
-    queue.write_texture(
-        texture.as_image_copy(),
-        &texel,
-        wgpu::TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(4),
-            rows_per_image: Some(1),
-        },
-        wgpu::Extent3d {
-            width: 1,
-            height: 1,
-            depth_or_array_layers: 1,
-        },
-    );
-    texture
-}
-
 pub use crate::graph::Clear as TargetClear;
 
 #[derive(Clone, Copy, Debug, PartialEq)]

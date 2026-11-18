@@ -1,3 +1,4 @@
+use engine_assets::{ColorSpace, Texture, TextureFormat};
 use engine_codec::{Error, ErrorCode, Expected};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -8,7 +9,7 @@ pub struct ImageFormat {
 pub const IMAGE_FORMATS: &[ImageFormat] = &[
     ImageFormat { name: "png" },
     ImageFormat { name: "jpeg" },
-    ImageFormat { name: "ktx2-rgba8" },
+    ImageFormat { name: "ktx2" },
 ];
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -20,7 +21,7 @@ pub struct Image {
 
 pub fn image_format(bytes: &[u8]) -> Option<&'static ImageFormat> {
     let name = if bytes.starts_with(&KTX2_IDENTIFIER) {
-        "ktx2-rgba8"
+        "ktx2"
     } else if bytes.starts_with(b"\x89PNG") {
         "png"
     } else if bytes.starts_with(&[0xff, 0xd8]) {
@@ -31,19 +32,31 @@ pub fn image_format(bytes: &[u8]) -> Option<&'static ImageFormat> {
     IMAGE_FORMATS.iter().find(|format| format.name == name)
 }
 
-pub fn decode_image(uri: &str, bytes: &[u8]) -> Result<Image, Error> {
-    let failed = |error: String| {
+fn failed(uri: &str) -> impl Fn(String) -> Error + '_ {
+    move |error: String| {
         Error::new(ErrorCode::InvalidTexture, "$")
             .expected(Expected::Image)
             .got(serde_json::json!({ "file": uri, "failed": error }))
-    };
+    }
+}
+
+pub fn decode_image(uri: &str, bytes: &[u8]) -> Result<Image, Error> {
     match image_format(bytes).map(|format| format.name) {
-        Some("png") => decode_png(bytes).map_err(failed),
-        Some("jpeg") => decode_jpeg(bytes).map_err(failed),
-        Some("ktx2-rgba8") => read_rgba8_ktx2(uri, bytes),
+        Some("png") => decode_png(bytes).map_err(failed(uri)),
+        Some("jpeg") => decode_jpeg(bytes).map_err(failed(uri)),
         Some(_) | None => Err(Error::new(ErrorCode::InvalidTexture, "$")
             .expected(Expected::Image)
             .got(uri)),
+    }
+}
+
+pub fn decode_texture(uri: &str, bytes: &[u8]) -> Result<Texture, Error> {
+    match image_format(bytes).map(|format| format.name) {
+        Some("ktx2") => read_ktx2(uri, bytes),
+        Some(_) | None => {
+            let image = decode_image(uri, bytes)?;
+            Texture::from_rgba(image.width, image.height, image.pixels)
+        }
     }
 }
 
@@ -51,46 +64,66 @@ const KTX2_IDENTIFIER: [u8; 12] = [
     0xab, 0x4b, 0x54, 0x58, 0x20, 0x32, 0x30, 0xbb, 0x0d, 0x0a, 0x1a, 0x0a,
 ];
 
-const RGBA8_FORMATS: [u32; 2] = [37, 43];
+const KTX2_FORMATS: [(u32, TextureFormat, ColorSpace); 5] = [
+    (37, TextureFormat::Rgba8, ColorSpace::Linear),
+    (43, TextureFormat::Rgba8, ColorSpace::Srgb),
+    (141, TextureFormat::Bc5, ColorSpace::Linear),
+    (145, TextureFormat::Bc7, ColorSpace::Linear),
+    (146, TextureFormat::Bc7, ColorSpace::Srgb),
+];
 
 fn word(bytes: &[u8], at: usize) -> u32 {
     u32::from_le_bytes(bytes[at..at + 4].try_into().expect("four_bytes"))
 }
 
-fn read_rgba8_ktx2(uri: &str, bytes: &[u8]) -> Result<Image, Error> {
-    let invalid = |expected: Expected| {
-        Error::new(ErrorCode::InvalidTexture, "$")
+fn read_ktx2(uri: &str, bytes: &[u8]) -> Result<Texture, Error> {
+    let invalid = |expected: Expected, field: &str, got: serde_json::Value| {
+        Error::new(ErrorCode::InvalidTexture, format!("$.{field}"))
             .expected(expected)
-            .got(uri)
+            .got(serde_json::json!({ "file": uri, "value": got }))
     };
-    if bytes.len() < 104 {
-        return Err(invalid(Expected::Image));
+    if bytes.len() < 80 {
+        return Err(invalid(Expected::Image, "header", bytes.len().into()));
     }
-    if !RGBA8_FORMATS.contains(&word(bytes, 12)) || word(bytes, 44) != 0 {
-        return Err(invalid(Expected::Supported));
-    }
+    let vk_format = word(bytes, 12);
+    let (format, space) = KTX2_FORMATS
+        .iter()
+        .find(|(known, _, _)| *known == vk_format)
+        .map(|(_, format, space)| (*format, *space))
+        .ok_or_else(|| invalid(Expected::Supported, "vkFormat", vk_format.into()))?;
     let (width, height) = (word(bytes, 20), word(bytes, 24));
-    if word(bytes, 28) > 1
-        || word(bytes, 32) > 1
-        || word(bytes, 36) != 1
-        || width == 0
-        || height == 0
-    {
-        return Err(invalid(Expected::Supported));
+    for (field, at, most) in [
+        ("pixelDepth", 28, 1),
+        ("layerCount", 32, 1),
+        ("faceCount", 36, 1),
+        ("supercompressionScheme", 44, 0),
+    ] {
+        let value = word(bytes, at);
+        if value > most || (field == "faceCount" && value != 1) {
+            return Err(invalid(Expected::Supported, field, value.into()));
+        }
     }
-    let (offset, length) = (word(bytes, 80) as usize, word(bytes, 88) as usize);
-    if word(bytes, 84) != 0
-        || word(bytes, 92) != 0
-        || length != width as usize * height as usize * 4
-        || offset + length > bytes.len()
-    {
-        return Err(invalid(Expected::Image));
+    let count = word(bytes, 40) as usize;
+    let chain = (u32::BITS - width.max(height).max(1).leading_zeros()) as usize;
+    if count == 0 || count > chain || bytes.len() < 80 + 24 * count {
+        return Err(invalid(Expected::Supported, "levelCount", count.into()));
     }
-    Ok(Image {
-        width,
-        height,
-        pixels: bytes[offset..offset + length].to_vec(),
-    })
+    let mut levels = Vec::with_capacity(count);
+    for level in 0..count {
+        let at = 80 + 24 * level;
+        let (offset, length) = (word(bytes, at) as usize, word(bytes, at + 8) as usize);
+        let expected = format.level_bytes((width >> level).max(1), (height >> level).max(1));
+        let field = format!("levels[{level}]");
+        if word(bytes, at + 4) != 0 || word(bytes, at + 12) != 0 || length != expected {
+            return Err(invalid(Expected::Matching, &field, length.into()));
+        }
+        let held = bytes
+            .get(offset..offset.saturating_add(length))
+            .ok_or_else(|| invalid(Expected::Image, &field, offset.into()))?;
+        levels.push(held.to_vec());
+    }
+    Texture::from_levels(format, width, height, levels)
+        .map(|texture| texture.with_color_space(space))
 }
 
 fn decode_png(bytes: &[u8]) -> Result<Image, String> {

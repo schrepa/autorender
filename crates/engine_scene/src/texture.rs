@@ -51,7 +51,11 @@ impl SceneTexture {
         }
     }
 
-    pub(crate) fn texture(&self, path: &str, files: Option<&SceneFiles>) -> Result<Texture, Error> {
+    pub(crate) fn texture(
+        &self,
+        path: &str,
+        files: Option<&SceneFiles>,
+    ) -> Result<(Texture, bool), Error> {
         match (
             &self.provided,
             &self.uri,
@@ -61,13 +65,19 @@ impl SceneTexture {
         ) {
             (Some(name), None, None, None, None) => {
                 identifier(name, &format!("{path}.provided"))?;
-                Ok(Texture::new(1, 1, vec![255; 4]).expect("opaque_texel_valid"))
+                Ok((
+                    Texture::new(1, 1, vec![255; 4]).expect("opaque_texel_valid"),
+                    false,
+                ))
             }
             (None, Some(uri), None, None, None) => {
                 let uri_path = format!("{path}.uri");
                 valid_uri(uri, &uri_path)?;
                 match files {
-                    None => Ok(Texture::new(1, 1, vec![255; 4]).expect("opaque_texel_valid")),
+                    None => Ok((
+                        Texture::new(1, 1, vec![255; 4]).expect("opaque_texel_valid"),
+                        false,
+                    )),
                     Some(files) => files.texture(uri, &uri_path),
                 }
             }
@@ -97,6 +107,7 @@ impl SceneTexture {
                         .expected(Expected::Base64)
                 })?;
                 Texture::from_rgba(width, height, pixels)
+                    .map(|texture| (texture, false))
                     .map_err(|error| error.coded(ErrorCode::InvalidTexture).within(path))
             }
             (provided, uri, width, height, rgba8) => {

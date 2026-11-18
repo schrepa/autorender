@@ -67,11 +67,16 @@ impl SceneLoad {
                 Ok(None)
             }
             SceneFileKind::Image => {
-                engine_worker::image_format(&bytes).ok_or_else(|| {
+                let format = engine_worker::image_format(&bytes).ok_or_else(|| {
                     Error::new(ErrorCode::InvalidTexture, "$")
                         .expected(Expected::Image)
                         .got(uri)
                 })?;
+                if format.name == "ktx2" {
+                    self.files.add_texture_file(uri, bytes)?;
+                    self.entries[at].2 = Stage::Held;
+                    return Ok(None);
+                }
                 self.entries[at].2 = Stage::Decoding;
                 Ok(Some(bytes))
             }

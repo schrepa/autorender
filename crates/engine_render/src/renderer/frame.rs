@@ -1163,7 +1163,14 @@ pub(super) mod names {
 
     fn resident(_: &Renderer, run: &Run, _: &World) -> Value {
         let (textures, _, _) = run.assets.textures.texture_totals();
-        json!({"meshes": run.assets.meshes.len(), "textures": textures})
+        let formats: Map<String, Value> = run
+            .assets
+            .textures
+            .texture_formats()
+            .into_iter()
+            .map(|(format, (count, bytes))| (format, json!({"textures": count, "bytes": bytes})))
+            .collect();
+        json!({"meshes": run.assets.meshes.len(), "textures": textures, "texture_formats": formats})
     }
 
     fn asset_bytes(_: &Renderer, run: &Run, world: &World) -> Value {
